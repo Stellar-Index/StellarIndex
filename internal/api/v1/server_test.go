@@ -176,6 +176,37 @@ func TestMethodMismatch(t *testing.T) {
 	}
 }
 
+func TestMiddlewareStackAppliedEndToEnd(t *testing.T) {
+	// Hit a real endpoint and assert the full stack fired:
+	// RequestID preserves client values + mints when absent.
+	ts := newTestServer(t)
+
+	// 1. Client-supplied X-Request-ID is preserved verbatim.
+	req, err := http.NewRequest("GET", ts.URL+"/v1/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Request-ID", "test-trace-abc")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("X-Request-ID"); got != "test-trace-abc" {
+		t.Errorf("client-supplied X-Request-ID not preserved: %q", got)
+	}
+
+	// 2. Absent header → middleware mints 32-char hex ID.
+	resp2, err := http.Get(ts.URL + "/v1/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if id := resp2.Header.Get("X-Request-ID"); len(id) != 32 {
+		t.Errorf("minted X-Request-ID len = %d, want 32 hex chars", len(id))
+	}
+}
+
 func readAll(resp *http.Response) (string, error) {
 	b, err := ioReadAll(resp.Body)
 	if err != nil {
