@@ -1,0 +1,45 @@
+// Package stellarrpc is a minimal JSON-RPC client for stellar-rpc.
+//
+// Why roll our own instead of importing
+// github.com/stellar/go-stellar-sdk/clients/stellarrpc? Two reasons:
+//
+//  1. The SDK brings a large dependency surface (full XDR codegen,
+//     sdk-internal helpers). For our pricing use case we need a
+//     small, auditable surface covering the ~6 RPC methods we
+//     actually call.
+//  2. Our callers (indexers, probes, health checks) need a client
+//     they can mock in unit tests without instantiating the full SDK.
+//
+// If a complex method shows up in our roadmap (e.g. simulating
+// Soroban transactions), we take the SDK dep for that one path and
+// keep this package for the simple read methods.
+//
+// # Methods
+//
+// The package exposes thin wrappers over:
+//
+//   - getHealth                  — liveness + staleness
+//   - getLatestLedger            — sequence + closeTime at tip
+//   - getNetwork                 — network passphrase + protocol
+//   - getVersionInfo             — build version, captive-core version
+//   - getEvents                  — contract event stream with filters
+//   - getLedgers                 — raw ledger XDR batch (headerXdr + metadataXdr)
+//   - getFeeStats                — inclusion-fee percentiles (divergence input)
+//
+// XDR decoding is NOT this package's job — callers pass
+// headerXdr / metadataXdr / event topic+value bytes to whichever
+// decoder they already use (stellar-extract for ledger meta,
+// canonical.Amount.FromString for strkey-style amounts, etc.).
+//
+// # Usage
+//
+//	c := stellarrpc.New("http://localhost:8000")
+//	h, err := c.Health(ctx)
+//	if err != nil { return err }
+//	if h.Status != "healthy" {
+//	    log.Warnf("rpc stale: %s", h.Status)
+//	}
+//
+// See [cmd/ratesengine-ops]'s `rpc-probe` subcommand for a real
+// example.
+package stellarrpc
