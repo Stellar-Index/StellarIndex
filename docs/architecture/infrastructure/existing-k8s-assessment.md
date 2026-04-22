@@ -9,8 +9,8 @@ status: investigation — read-only probe, no changes made
 **Owner:** @ash.
 **Context:** @ash granted read-only access (via `~/.kube/ctx.conf`) to
 explore an existing Talos-on-Proxmox Kubernetes cluster that is
-already running a stellar-core, stellar-rpc, and the legacy CTX Rates
-production API. No changes were made during this investigation.
+already running a stellar-core, stellar-rpc, and the legacy pricing
+API in the `ctx-rates` namespace (our predecessor system). No changes were made during this investigation.
 
 **Cofounder note:** the existing stellar-core "has been struggling to
 stay synced — maybe ZFS, maybe something else." This doc diagnoses
@@ -57,7 +57,7 @@ ephemeral** across 5 worker VMs. Heavily under-utilised today.
 | `crypto-stellar` | `stellar-db` (Postgres) | Running 28 d, no restarts | `stellar-db-pvc` — **2 TiB NVMe** (Retain) |
 | `crypto-stellar` | `stellar-rpc` v26.0.0 | Running 12 d, keeping up with tip | `stellar-rpc` — **400 GiB NVMe** (Retain) |
 | `crypto-stellar` | `horizon` | scaled to 0 | — |
-| `ctx-rates` | `rates-deployment` (the legacy CTX Rates API) | Running 28 d | `rates-service` ClusterIP |
+| `ctx-rates` | `rates-deployment` (the legacy pricing API this project replaces) | Running 28 d | `rates-service` ClusterIP |
 | `ctx` | `dash` | — | 150 GiB NVMe |
 | `ctx-staging` | `spend-api` | — | 50 GiB SATA |
 | `mongodb` | MongoDB + backup | — | 20+50 GiB |
