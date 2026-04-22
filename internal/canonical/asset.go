@@ -23,15 +23,20 @@ const (
 	// is a single C-address; code/issuer may be resolvable via
 	// SEP-41 symbol()/decimals() but are not part of canonical identity.
 	AssetSoroban AssetType = "soroban"
+
+	// AssetFiat is an off-chain reference currency (USD, EUR, …).
+	// NOT a Stellar asset. Wire form: `fiat:<ISO4217>`. See ADR-0010.
+	AssetFiat AssetType = "fiat"
 )
 
 // Asset is a canonical identifier for any asset we price.
 //
-// The three valid shapes:
+// The four valid shapes:
 //
 //   - Native:  {Type: AssetNative}
 //   - Classic: {Type: AssetClassic, Code: "USDC", Issuer: "G..."}
 //   - Soroban: {Type: AssetSoroban, ContractID: "C..."}
+//   - Fiat:    {Type: AssetFiat, Code: "USD"}             ADR-0010
 //
 // A SAC-wrapped classic asset can be represented either way —
 // canonical form is the **classic** representation; the SAC contract
@@ -101,6 +106,8 @@ func (a Asset) String() string {
 		return a.Code + "-" + a.Issuer
 	case AssetSoroban:
 		return a.ContractID
+	case AssetFiat:
+		return "fiat:" + a.Code
 	default:
 		return "invalid-asset"
 	}
@@ -133,6 +140,14 @@ func (a Asset) Validate() error {
 			return fmt.Errorf("%w: soroban asset must not carry code/issuer", ErrInvalidAsset)
 		}
 		return validateContractID(a.ContractID)
+	case AssetFiat:
+		if a.Issuer != "" || a.ContractID != "" {
+			return fmt.Errorf("%w: fiat asset must not carry issuer/contract_id", ErrInvalidAsset)
+		}
+		if !IsKnownFiat(a.Code) {
+			return fmt.Errorf("%w: unknown fiat code %q (see ADR-0010)", ErrInvalidAsset, a.Code)
+		}
+		return nil
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalidAsset, a.Type)
 	}
@@ -159,6 +174,11 @@ func ParseAsset(s string) (Asset, error) {
 	// Native
 	if s == "native" {
 		return NativeAsset(), nil
+	}
+
+	// Fiat — unambiguous prefix dispatch (ADR-0010).
+	if rest, ok := strings.CutPrefix(s, "fiat:"); ok {
+		return NewFiatAsset(rest)
 	}
 
 	// Soroban — starts with C, 56 chars

@@ -69,18 +69,29 @@ func TestOracle_Validate_errors(t *testing.T) {
 	}
 }
 
-func TestOracle_FiatSentinelQuoteAccepted(t *testing.T) {
-	// The USD quote-asset with no issuer is the current fiat
-	// placeholder (TODO(#0) — ADR pending). Validate should accept.
-	u := validOracle()
-	u.Quote = c.Asset{Type: c.AssetClassic, Code: "USD"}
-	if err := u.Validate(); err != nil {
-		t.Fatalf("USD fiat sentinel rejected: %v", err)
+func TestOracle_FiatQuoteAccepted(t *testing.T) {
+	// Per ADR-0010 fiat is a first-class AssetType variant, not a
+	// sentinel. The USD fiat quote should validate cleanly via the
+	// ordinary Asset.Validate path.
+	usd, err := c.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("NewFiatAsset: %v", err)
 	}
-	// But a non-fiat "code-only" Asset should still be caught.
-	u.Quote = c.Asset{Type: c.AssetClassic, Code: "GARBAGE"}
+	u := validOracle()
+	u.Quote = usd
+	if err := u.Validate(); err != nil {
+		t.Fatalf("USD fiat quote rejected: %v", err)
+	}
+	// Unknown fiat codes still rejected (allow-list in ADR-0010).
+	_, err = c.NewFiatAsset("XYZ")
+	if err == nil {
+		t.Fatal("unknown fiat code should have been rejected")
+	}
+	// And a code-only classic asset (the former sentinel shape) is
+	// now legitimately invalid.
+	u.Quote = c.Asset{Type: c.AssetClassic, Code: "USD"}
 	if err := u.Validate(); err == nil {
-		t.Fatal("non-fiat code-only asset should have been rejected")
+		t.Fatal("classic-with-empty-issuer should fail after ADR-0010")
 	}
 }
 
