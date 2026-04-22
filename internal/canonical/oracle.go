@@ -125,13 +125,10 @@ func (u OracleUpdate) Validate() error {
 	if err := u.Asset.Validate(); err != nil {
 		return fmt.Errorf("%w: asset: %v", ErrInvalidOracle, err)
 	}
-	// Quote is allowed to be "USD"-coded with empty issuer for the
-	// off-chain-fiat placeholder. Validate only the non-sentinel
-	// cases; a proper ADR upgrades this.
-	if !isFiatSentinel(u.Quote) {
-		if err := u.Quote.Validate(); err != nil {
-			return fmt.Errorf("%w: quote: %v", ErrInvalidOracle, err)
-		}
+	// Quote validates via the ordinary Asset.Validate path —
+	// AssetFiat is a first-class variant per ADR-0010. No sentinel.
+	if err := u.Quote.Validate(); err != nil {
+		return fmt.Errorf("%w: quote: %v", ErrInvalidOracle, err)
 	}
 	if u.Price.Sign() <= 0 {
 		return fmt.Errorf("%w: price must be positive, got %s", ErrInvalidOracle, u.Price)
@@ -172,22 +169,8 @@ func (u OracleUpdate) Equal(o OracleUpdate) bool {
 
 // ─── internal helpers ──────────────────────────────────────────────
 
-// isFiatSentinel reports whether a is our placeholder representation
-// for off-chain fiat currencies. See the TODO(#0) in the type doc.
-// Temporary until an ADR formalises the representation.
-func isFiatSentinel(a Asset) bool {
-	if a.Type != AssetClassic {
-		return false
-	}
-	if a.Issuer != "" {
-		return false
-	}
-	switch a.Code {
-	case "USD", "EUR", "GBP", "JPY", "CNY", "BRL":
-		return true
-	}
-	return false
-}
+// (Formerly had isFiatSentinel here — removed per ADR-0010 which
+// promoted fiat to a first-class AssetType variant.)
 
 // validTxHash defined in trade.go; we re-use it here.
 // This file only references hex.DecodeString through that helper.

@@ -1,6 +1,15 @@
 package canonical
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
+
+// errorf wraps a sentinel with a formatted message. Keeps the
+// canonical package's error-construction pattern one-liner-short.
+func errorf(sentinel error, format string, args ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{sentinel}, args...)...)
+}
 
 // Error taxonomy for the canonical package.
 //
