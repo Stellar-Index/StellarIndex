@@ -1,0 +1,106 @@
+---
+# Ingestion alerts — matches docs/operations/alerts-catalog.md
+# "Ingestion alerts" section. Every alert here has a runbook
+# under docs/operations/runbooks/.
+
+groups:
+  - name: ratesengine.ingestion
+    interval: 30s
+    rules:
+
+      - alert: ratesengine_ingestion_source_stopped
+        expr: |
+          sum by (source) (rate(ratesengine_source_events_total[5m])) == 0
+          and on (source) ratesengine_source_enabled == 1
+        for: 5m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+        annotations:
+          summary: "Source {{ $labels.source }} has stopped ingesting"
+          description: |
+            No events from source {{ $labels.source }} in the last 5 minutes,
+            but it's configured as enabled in ingestion.enabled_sources.
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+
+      - alert: ratesengine_ingestion_all_sources_stopped
+        expr: sum(rate(ratesengine_source_events_total[5m])) == 0
+        for: 3m
+        labels:
+          severity: page
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/all-ingestion-down.md
+        annotations:
+          summary: "All ingestion sources have stopped (SEV-1)"
+          description: |
+            No events from any source in the last 3 minutes. API data will go
+            stale within 60 s. This is a P1 — check shared upstream (stellar-rpc)
+            or shared storage (Timescale) before restarting the indexer.
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/all-ingestion-down.md
+
+      - alert: ratesengine_ingestion_lag_high
+        expr: ratesengine_source_lag_ledgers > 1000
+        for: 10m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-lag.md
+        annotations:
+          summary: "Source {{ $labels.source }} lagging by {{ $value }} ledgers"
+          description: |
+            Source {{ $labels.source }} is more than 1000 ledgers behind the
+            network tip for 10+ minutes. At 5 s per ledger, that's ~1.4 hours
+            of freshness debt.
+
+      - alert: ratesengine_ingestion_cursor_stuck
+        expr: |
+          increase(ratesengine_cursor_last_ledger[5m]) == 0
+          and on (source) ratesengine_source_enabled == 1
+        for: 5m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/cursor-stuck.md
+        annotations:
+          summary: "Cursor for {{ $labels.source }} not advancing"
+          description: |
+            The persisted cursor hasn't moved in 5 minutes while the source is
+            enabled. Typical cause: indexer consumed events but UpsertCursor
+            failed silently, or the orchestrator's cursor-persister goroutine
+            is wedged.
+
+      - alert: ratesengine_ingestion_orphan_events
+        expr: rate(ratesengine_soroswap_orphan_events_total[10m]) > 10/60
+        for: 15m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/orphan-events.md
+        annotations:
+          summary: "Soroswap orphan events {{ $value | humanize }}/sec"
+          description: |
+            Soroswap swap-without-sync or sync-without-swap events exceed
+            10/min sustained. Likely a page-boundary issue in our backfill
+            that drops swap/sync pairs — or a contract change we haven't
+            accounted for.
+
+      - alert: ratesengine_ingestion_decode_error
+        expr: rate(ratesengine_source_decode_errors_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/decode-errors.md
+        annotations:
+          summary: "Decode errors on {{ $labels.source }} at {{ $value }}/sec"
+          description: |
+            Source {{ $labels.source }} failed to decode > 1 event/sec for 5+
+            minutes. Usually a contract-event-schema change or a regression
+            in the decoder.

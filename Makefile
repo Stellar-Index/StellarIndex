@@ -108,6 +108,14 @@ test-all: lint vet test test-integration ## Everything short of load + chaos
 lint-docs: ## Doc-code consistency linter (freshness, links, ADR integrity, TODO discipline)
 	@./scripts/ci/lint-docs.sh
 
+.PHONY: monitoring-check
+monitoring-check: ## Validate Prometheus rule files with promtool
+	@if ! command -v promtool >/dev/null 2>&1; then \
+	  echo "promtool not found — install via 'brew install prometheus' or the Prometheus GH release"; \
+	  exit 1; \
+	fi
+	@promtool check rules deploy/monitoring/rules/*.yml
+
 .PHONY: verify
 verify: ## Sequential local quality gate (fmt, vet, lint, docs, test) — run before every push
 	@./scripts/dev/verify.sh
