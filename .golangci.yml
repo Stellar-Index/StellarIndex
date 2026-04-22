@@ -1,0 +1,101 @@
+# golangci-lint config for Rates Engine.
+#
+# Lives at repo root. Applied via `make lint` and in CI. Any rule
+# change requires a PR + rationale; we don't weaken lint "just to
+# unblock something." See docs/discovery/engineering-standards.md §8.
+
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  # Tests are first-class code — they get linted too.
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - govet
+    - staticcheck
+    - errcheck
+    - errorlint
+    - bodyclose
+    - contextcheck
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - wastedassign
+    - ineffassign
+    - gosec
+
+    # Style / clarity
+    - gofmt
+    - goimports
+    - gosimple
+    - unparam
+    - unused
+    - misspell
+    - predeclared
+    - usestdlibvars
+
+    # Complexity guards
+    - gocognit
+    - gocyclo
+    - funlen
+
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes: github.com/RatesEngine/rates-engine
+    gocognit:
+      min-complexity: 15
+    gocyclo:
+      min-complexity: 15
+    funlen:
+      # Soft limit. See engineering-standards.md §4.8. Enforced via
+      # code review for genuine exceptions.
+      lines: 80
+      statements: 50
+    gosec:
+      excludes:
+        # G104 — we use errorlint/errcheck for unchecked errors;
+        # gosec's G104 is noisy on intentional ignores.
+        - G104
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+  exclusions:
+    generated: strict
+    rules:
+      # Test files can have longer setups.
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocognit
+          - gocyclo
+      # Generated files: never lint.
+      - path: "(^|/)zz_generated.*\\.go$"
+        linters:
+          - unused
+          - staticcheck
+      # cmd/* main.go has fatal-on-error patterns.
+      - path: cmd/.*/main\.go
+        linters:
+          - errcheck
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+  # CI posts a summary of new issues only; but local runs show everything.
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+      print-issued-lines: true
+      colors: true

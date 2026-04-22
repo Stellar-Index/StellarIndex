@@ -1,0 +1,144 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel old runs on the same ref when a new one starts.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # Fast path — runs on every commit. < 2 min target.
+  # Path filters below skip unneeded jobs when only docs changed.
+  # ────────────────────────────────────────────────────────────────
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci')"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install tools
+        run: |
+          go install mvdan.cc/gofumpt@latest
+          go install golang.org/x/tools/cmd/goimports@latest
+      - name: gofmt / gofumpt
+        run: |
+          if [ -n "$(gofumpt -l .)" ]; then
+            echo "::error::gofumpt found unformatted files:"
+            gofumpt -l .
+            exit 1
+          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+      - name: go vet
+        run: go vet ./...
+
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod download
+      - name: Test with race detector
+        run: go test -race -timeout 2m -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.txt
+
+  # ────────────────────────────────────────────────────────────────
+  # Policy checks — keep the repo enterprise-grade per
+  # docs/discovery/engineering-standards.md.
+  # ────────────────────────────────────────────────────────────────
+
+  doc-checks:
+    name: doc-code consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: lint-docs
+        # Single script covers: doc freshness (90-day warn, 180-day
+        # fail on frontmatter-dated docs), config/API/metrics
+        # round-trip between code + reference, TODO-issue-link
+        # discipline, generated-file banner integrity, ADR status
+        # + superseded-by validity.
+        run: ./scripts/ci/lint-docs.sh
+
+  # ────────────────────────────────────────────────────────────────
+  # Security — fast scans on every PR.
+  # Heavier scans (trivy, SBOM) live in security.yml on a schedule.
+  # ────────────────────────────────────────────────────────────────
+
+  vuln:
+    name: govulncheck + gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ────────────────────────────────────────────────────────────────
+  # Build — the binaries must compile on every PR.
+  # ────────────────────────────────────────────────────────────────
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make build
+      - name: Upload binaries (short retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ github.sha }}
+          path: bin/
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────
+  # API contract check — OpenAPI lint + docs-regen drift detection.
+  # ────────────────────────────────────────────────────────────────
+
+  openapi:
+    name: openapi lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Spectral lint
+        uses: stoplightio/spectral-action@v0.8
+        with:
+          file_glob: openapi/*.yaml

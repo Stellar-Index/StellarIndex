@@ -1,0 +1,48 @@
+version: 2
+
+updates:
+  # Go modules — our direct + transitive deps.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    groups:
+      stellar-ecosystem:
+        patterns:
+          - "github.com/stellar/*"
+          - "github.com/withObsrvr/*"
+      observability:
+        patterns:
+          - "github.com/prometheus/*"
+          - "go.opentelemetry.io/*"
+      storage:
+        patterns:
+          - "github.com/jackc/*"
+          - "github.com/redis/*"
+          - "github.com/minio/*"
+
+  # GitHub Actions versions used in .github/workflows/
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci
+
+  # Docker base images.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker

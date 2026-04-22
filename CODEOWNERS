@@ -1,0 +1,51 @@
+# CODEOWNERS — review routing for Rates Engine.
+#
+# Lines are patterns + owners (GitHub handles or teams). The last
+# matching pattern wins. PRs touching matched paths require review
+# from the listed owners.
+#
+# See docs/discovery/repo-structure-plan.md §12.
+
+# Default owner — every PR without a more specific match.
+*                               @ash
+
+# Documentation
+/docs/                          @ash
+/docs/adr/                      @ash
+/CLAUDE.md                      @ash
+/README.md                      @ash
+/CONTRIBUTING.md                @ash
+/CODE_OF_CONDUCT.md             @ash
+/SECURITY.md                    @ash
+
+# Build / CI / release
+/Makefile                       @ash
+/.github/                       @ash
+/.golangci.yml                  @ash
+/.goreleaser.yaml               @ash
+/go.mod                         @ash
+/go.sum                         @ash
+/VERSIONS.md                    @ash
+
+# Core types — changes here propagate everywhere. Extra care.
+/internal/canonical/            @ash
+
+# Per-source indexers — subject-matter ownership will expand as
+# team grows; for now @ash for all.
+/internal/sources/              @ash
+
+# API surface — public-facing contract.
+/openapi/                       @ash
+/internal/api/                  @ash
+/pkg/                           @ash
+
+# Storage + infra
+/internal/storage/              @ash
+/deploy/                        @ash
+/migrations/                    @ash
+
+# Security-sensitive: any change needs @ash review regardless of
+# other matches below.
+/internal/auth/                 @ash
+/internal/ratelimit/            @ash
+/SECURITY.md                    @ash
