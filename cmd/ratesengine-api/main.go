@@ -33,9 +33,11 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
+	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
+	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
@@ -121,12 +123,29 @@ func run(cfgPath string, dryRun bool) error {
 	})
 	sep1Cache := metadata.NewCache(sep1Resolver, rdb)
 
+	// Rate limit — per-IP anonymous bucket only for now. Per-API-key
+	// buckets arrive with SEP-10 / apikey auth (see docs/reference/
+	// api-design.md §6). When Redis is unavailable, no bucket is
+	// constructed — the middleware is omitted and the stack runs
+	// uncapped. An operator who cares will see this in readyz.
+	var rateLimit middleware.Middleware
+	if rdb != nil && cfg.API.AnonRateLimitPerMin > 0 {
+		bucket := ratelimit.New(rdb, cfg.API.AnonRateLimitPerMin, time.Minute)
+		rateLimit = middleware.RateLimit(
+			bucket,
+			nil, // default KeyFn — resolveRemoteIP from Logger middleware
+			middleware.SkipHealthAndMetrics,
+			logger.With("component", "ratelimit"),
+		)
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
 		Assets:      storeAssetReader{s: store},
 		Prices:      storePriceReader{s: store},
 		Meta:        sep1Cache,
+		RateLimit:   rateLimit,
 	})
 
 	if dryRun {

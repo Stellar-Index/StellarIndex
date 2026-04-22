@@ -32,13 +32,14 @@ type ReadyChecker interface {
 //
 // Thread-safe.
 type Server struct {
-	logger  *slog.Logger
-	checks  []ReadyChecker
-	assets  AssetReader
-	prices  PriceReader
-	meta    MetadataResolver
-	mux     *http.ServeMux
-	started time.Time
+	logger    *slog.Logger
+	checks    []ReadyChecker
+	assets    AssetReader
+	prices    PriceReader
+	meta      MetadataResolver
+	rateLimit middleware.Middleware
+	mux       *http.ServeMux
+	started   time.Time
 }
 
 // Options configures a [Server] at construction.
@@ -60,6 +61,13 @@ type Options struct {
 	// /v1/assets/{id}. Typically a *metadata.Cache wrapping a
 	// *metadata.Resolver backed by Redis.
 	Meta MetadataResolver
+
+	// RateLimit, when non-nil, is appended to the middleware stack
+	// as the innermost wrapper — so the Logger middleware has
+	// already populated remote_ip into the request context.
+	// Typically constructed via middleware.RateLimit(...) with a
+	// ratelimit.Bucket built against the shared Redis client.
+	RateLimit middleware.Middleware
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -69,34 +77,41 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:  logger,
-		checks:  opts.ReadyChecks,
-		assets:  opts.Assets,
-		prices:  opts.Prices,
-		meta:    opts.Meta,
-		mux:     http.NewServeMux(),
-		started: time.Now().UTC(),
+		logger:    logger,
+		checks:    opts.ReadyChecks,
+		assets:    opts.Assets,
+		prices:    opts.Prices,
+		meta:      opts.Meta,
+		rateLimit: opts.RateLimit,
+		mux:       http.NewServeMux(),
+		started:   time.Now().UTC(),
 	}
 	s.mountRoutes()
 	return s
 }
 
 // Handler returns the mux wrapped in the standard middleware stack
-// (outermost-first): RequestID → HTTPMetrics → Logger → Recoverer.
-// RateLimit + CORS are applied by callers that have those pieces
-// wired (typically the api binary, per docs/reference/api-design.md
-// §6–§7).
+// (outermost-first): RequestID → HTTPMetrics → Logger → Recoverer
+// → [optional RateLimit].
 //
 // HTTPMetrics sits inside RequestID so future trace-exemplar links
 // work, and outside Logger+Recoverer so metrics count every
 // request including those where the handler panicked.
+//
+// RateLimit runs innermost — AFTER Logger populates remote_ip into
+// the context, so middleware.RemoteIPFrom returns a meaningful key.
+// When opts.RateLimit is nil the middleware is skipped entirely.
 func (s *Server) Handler() http.Handler {
-	return middleware.Chain(s.mux,
+	stack := []middleware.Middleware{
 		middleware.RequestID,
 		obs.HTTPMetrics,
 		middleware.Logger(s.logger),
 		middleware.Recoverer(s.logger),
-	)
+	}
+	if s.rateLimit != nil {
+		stack = append(stack, s.rateLimit)
+	}
+	return middleware.Chain(s.mux, stack...)
 }
 
 // Uptime returns how long this server has been running. Exposed
