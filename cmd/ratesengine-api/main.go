@@ -99,6 +99,7 @@ func run(cfgPath string, dryRun bool) error {
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
 		Assets:      storeAssetReader{s: store},
+		Prices:      storePriceReader{s: store},
 	})
 
 	if dryRun {
@@ -180,6 +181,36 @@ func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 		return v1.AssetDetail{}, v1.ErrAssetNotFound
 	}
 	return assetToDetail(a), nil
+}
+
+// storePriceReader adapts *timescale.Store to v1.PriceReader.
+//
+// This MVP impl always falls back to "last trade in the trades
+// hypertable" and reports stale=true. Once the aggregator ships,
+// swap this for an adapter that reads `price:<asset>` from Redis
+// first and this trade-based path becomes the second-level
+// fallback.
+type storePriceReader struct{ s *timescale.Store }
+
+func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	pair, err := canonical.NewPair(asset, quote)
+	if err != nil {
+		return v1.PriceSnapshot{}, nil, false, err
+	}
+	trades, err := r.s.LatestTradesForPair(ctx, pair, 1)
+	if err != nil {
+		return v1.PriceSnapshot{}, nil, false, err
+	}
+	if len(trades) == 0 {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+	}
+	// decimals=7 matches Stellar's default stroop scale. A future
+	// revision reads per-asset decimals from internal/metadata.
+	snap := v1.LastTradeToSnapshot(trades[0], 7)
+	// This path is always "stale" from the serving-plane's POV —
+	// it's not an aggregated VWAP. Clients expecting freshness
+	// should treat this as degraded.
+	return snap, []string{trades[0].Source}, true, nil
 }
 
 // assetToDetail converts canonical.Asset → v1.AssetDetail. Nullable

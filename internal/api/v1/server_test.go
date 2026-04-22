@@ -68,7 +68,10 @@ func TestReadyz_AllChecksPass(t *testing.T) {
 		&stubCheck{name: "postgres"},
 		&stubCheck{name: "redis"},
 	)
-	resp, _ := http.Get(ts.URL + "/v1/readyz")
+	resp, err := http.Get(ts.URL + "/v1/readyz")
+	if err != nil {
+		t.Fatalf("GET /v1/readyz: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -102,7 +105,10 @@ func TestReadyz_OneFailure(t *testing.T) {
 		&stubCheck{name: "postgres"},
 		&stubCheck{name: "redis", err: errors.New("connection refused")},
 	)
-	resp, _ := http.Get(ts.URL + "/v1/readyz")
+	resp, err := http.Get(ts.URL + "/v1/readyz")
+	if err != nil {
+		t.Fatalf("GET /v1/readyz: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 503 {
@@ -123,7 +129,10 @@ func TestReadyz_OneFailure(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	ts := newTestServer(t)
-	resp, _ := http.Get(ts.URL + "/v1/version")
+	resp, err := http.Get(ts.URL + "/v1/version")
+	if err != nil {
+		t.Fatalf("GET /v1/version: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -143,7 +152,10 @@ func TestVersion(t *testing.T) {
 
 func TestUnknownRouteReturns404(t *testing.T) {
 	ts := newTestServer(t)
-	resp, _ := http.Get(ts.URL + "/v1/nonsense")
+	resp, err := http.Get(ts.URL + "/v1/nonsense")
+	if err != nil {
+		t.Fatalf("GET /v1/nonsense: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
