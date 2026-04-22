@@ -1,0 +1,60 @@
+---
+# Price-quality alerts — cross-source divergence detection +
+# oracle-staleness. These are "data correctness" signals, not
+# infrastructure — but they escalate as P2 when the numbers are bad.
+
+groups:
+  - name: ratesengine.divergence
+    interval: 60s
+    rules:
+
+      - alert: ratesengine_price_divergence_warning
+        expr: |
+          abs(ratesengine_our_price - ratesengine_reference_price)
+            / ratesengine_reference_price > 0.05
+        for: 2m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-divergence.md
+        annotations:
+          summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference"
+          description: |
+            Our aggregated price for {{ $labels.asset }} differs from reference
+            ({{ $labels.reference_source }}) by > 5 % sustained 2 min.
+            Normal during rapid market moves; investigate if sustained.
+
+      - alert: ratesengine_price_divergence_critical
+        expr: |
+          abs(ratesengine_our_price - ratesengine_reference_price)
+            / ratesengine_reference_price > 0.10
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-divergence.md
+        annotations:
+          summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference (critical)"
+          description: |
+            Divergence > 10 % from reference sustained 2 min. This is usually
+            a bad ingest (wrong decimals, stale source contributing) rather
+            than a real market move.
+
+      - alert: ratesengine_oracle_stale
+        expr: |
+          (time() - ratesengine_oracle_last_update_unix)
+            > 10 * ratesengine_oracle_resolution_seconds
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/oracle-stale.md
+        annotations:
+          summary: "Oracle {{ $labels.source }} stale for {{ $labels.asset }}"
+          description: |
+            {{ $labels.source }} hasn't published a price for {{ $labels.asset }}
+            in > 10× its resolution. May be legitimate (oracle paused) or a
+            signal of oracle failure — check the oracle's own status page.
