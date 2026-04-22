@@ -38,4 +38,8 @@ var (
 	// ErrInvalidTrade — a Trade is missing a required field or has a
 	// nonsense combination of values (e.g., zero base amount).
 	ErrInvalidTrade = errors.New("canonical: invalid trade")
+
+	// ErrInvalidOracle — an OracleUpdate is malformed (zero price,
+	// out-of-range decimals, bad tx_hash, etc.).
+	ErrInvalidOracle = errors.New("canonical: invalid oracle update")
 )
