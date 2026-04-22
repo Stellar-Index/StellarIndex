@@ -1,0 +1,233 @@
+package consumer_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/RatesEngine/rates-engine/internal/consumer"
+)
+
+// fakeSource implements consumer.Source. Emits N events then sleeps
+// until ctx cancels; optionally returns a configurable error.
+type fakeSource struct {
+	name       string
+	emit       []consumer.Event
+	streamErr  error
+	streamDone atomic.Int32 // increments every time StreamLive returns
+	started    atomic.Int32 // increments every time StreamLive starts
+}
+
+func (f *fakeSource) Name() string { return f.name }
+
+func (f *fakeSource) BackfillRange(ctx context.Context, from, to uint32, out chan<- consumer.Event) error {
+	return nil
+}
+
+func (f *fakeSource) StreamLive(ctx context.Context, out chan<- consumer.Event) error {
+	f.started.Add(1)
+	defer f.streamDone.Add(1)
+
+	for _, ev := range f.emit {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- ev:
+		}
+	}
+	if f.streamErr != nil {
+		return f.streamErr
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (f *fakeSource) Health() consumer.HealthStatus {
+	return consumer.HealthStatus{Connected: true}
+}
+
+// testEvent is a trivial consumer.Event for the orchestrator tests.
+type testEvent struct{ kind string }
+
+func (t testEvent) EventKind() string { return t.kind }
+
+// inmemCursors is a minimal CursorStore.
+type inmemCursors struct {
+	mu sync.Mutex
+	m  map[string]consumer.Cursor
+}
+
+func newInmemCursors() *inmemCursors {
+	return &inmemCursors{m: map[string]consumer.Cursor{}}
+}
+
+func (s *inmemCursors) GetCursor(ctx context.Context, source, sub string) (consumer.Cursor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.m[source+":"+sub]
+	if !ok {
+		return consumer.Cursor{}, consumer.ErrNoCursor
+	}
+	return c, nil
+}
+
+func (s *inmemCursors) UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[source+":"+sub] = consumer.Cursor{
+		Source: source, Sub: sub, LastLedger: lastLedger, UpdatedAt: time.Now(),
+	}
+	return nil
+}
+
+// ─── Tests ────────────────────────────────────────────────────────
+
+func TestOrchestrator_EventsFlow(t *testing.T) {
+	src := &fakeSource{
+		name: "fake",
+		emit: []consumer.Event{
+			testEvent{kind: "t1"},
+			testEvent{kind: "t2"},
+			testEvent{kind: "t3"},
+		},
+	}
+	o := consumer.New(newInmemCursors(), []consumer.Source{src}, consumer.Config{
+		MinBackoff: 50 * time.Millisecond, MaxBackoff: 100 * time.Millisecond,
+		CursorPersistEvery: 50 * time.Millisecond,
+	}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = o.Run(ctx) }()
+
+	var got []string
+	timeout := time.After(2 * time.Second)
+	for len(got) < 3 {
+		select {
+		case ev, ok := <-o.Events():
+			if !ok {
+				t.Fatal("events channel closed early")
+			}
+			got = append(got, ev.EventKind())
+		case <-timeout:
+			t.Fatalf("only got %d events: %v", len(got), got)
+		}
+	}
+	if got[0] != "t1" || got[1] != "t2" || got[2] != "t3" {
+		t.Errorf("wrong order: %v", got)
+	}
+}
+
+func TestOrchestrator_RestartsOnError(t *testing.T) {
+	// Source returns an error after emitting one event → orchestrator
+	// should sleep-backoff + restart + emit the next iteration's
+	// event.
+	src := &fakeSource{
+		name:      "flaky",
+		emit:      []consumer.Event{testEvent{kind: "once"}},
+		streamErr: errors.New("boom"),
+	}
+	o := consumer.New(newInmemCursors(), []consumer.Source{src}, consumer.Config{
+		MinBackoff: 10 * time.Millisecond, MaxBackoff: 50 * time.Millisecond,
+		CursorPersistEvery: 20 * time.Millisecond,
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Drain events in background so the orchestrator doesn't block
+	// on the event channel.
+	var drained atomic.Int32
+	go func() {
+		for range o.Events() {
+			drained.Add(1)
+		}
+	}()
+
+	_ = o.Run(ctx)
+
+	// Should have restarted the source multiple times (bounded by
+	// how many "emit once → err → backoff" cycles fit in 1s with
+	// 10-50ms backoff).
+	started := src.started.Load()
+	if started < 2 {
+		t.Errorf("expected at least 2 StreamLive starts (restart loop), got %d", started)
+	}
+	if drained.Load() == 0 {
+		t.Error("expected at least one event drained")
+	}
+}
+
+func TestOrchestrator_HonoursContextCancel(t *testing.T) {
+	src := &fakeSource{
+		name: "long",
+		emit: []consumer.Event{testEvent{kind: "x"}},
+	}
+	o := consumer.New(newInmemCursors(), []consumer.Source{src}, consumer.Config{
+		MinBackoff: 10 * time.Millisecond,
+	}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Drain while running.
+		for range o.Events() {
+		}
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- o.Run(ctx) }()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancel")
+	}
+}
+
+func TestOrchestrator_RejectsEmptySourceList(t *testing.T) {
+	o := consumer.New(newInmemCursors(), nil, consumer.Config{}, nil)
+	err := o.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty source list")
+	}
+}
+
+func TestOrchestrator_CursorPersisted(t *testing.T) {
+	cursors := newInmemCursors()
+	src := &fakeSource{
+		name: "cursor-test",
+		emit: []consumer.Event{testEvent{kind: "one"}},
+	}
+	o := consumer.New(cursors, []consumer.Source{src}, consumer.Config{
+		MinBackoff:         10 * time.Millisecond,
+		CursorPersistEvery: 20 * time.Millisecond,
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		for range o.Events() {
+		}
+	}()
+	_ = o.Run(ctx)
+
+	// After the ticker fires at least once, the cursor should be upserted.
+	got, err := cursors.GetCursor(context.Background(), "cursor-test", "")
+	if err != nil {
+		t.Fatalf("cursor should have been persisted at least once, got: %v", err)
+	}
+	if got.Source != "cursor-test" {
+		t.Errorf("wrong cursor stored: %+v", got)
+	}
+}

@@ -16,22 +16,20 @@
 // the binary waits up to 30 s for in-flight work to finish before
 // hard-exiting.
 //
-// Current scope: this is a thin end-to-end wiring, not the final
-// orchestrator. Full orchestration (per-source restart backoffs,
-// cursor-driven backfill bootstrap, Prometheus metrics, health
-// endpoint) lands in a follow-up PR that extracts
-// internal/consumer/orchestrator.go.
+// Orchestration lives in internal/consumer/orchestrator.go — this
+// binary is a thin launcher that wires config + storage + RPC +
+// sources together and hands them to the Orchestrator.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -132,52 +130,71 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Orchestration ──────────────────────────────────────────
-	// Run each source's StreamLive in its own goroutine, draining
-	// events into the store. Very minimal: no backfill-on-gap yet,
-	// no per-source restart backoffs, no metrics. This is the
-	// "binary starts and does something useful" milestone.
-	out := make(chan consumer.Event, 1024)
+	// consumer.Orchestrator runs each source in its own goroutine
+	// with restart-backoff + periodic cursor persistence.
+	orch := consumer.New(
+		cursorAdapter{store},
+		sources,
+		consumer.Config{
+			BackfillFromLedger: cfg.Ingestion.BackfillFromLedger,
+		},
+		logger,
+	)
 
-	var wg sync.WaitGroup
-	for _, src := range sources {
-		src := src // capture
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			err := src.StreamLive(rootCtx, out)
-			if err != nil && rootCtx.Err() == nil {
-				logger.Error("source stream ended with error", "source", src.Name(), "err", err)
-			}
-		}()
-	}
+	orchDone := make(chan error, 1)
+	go func() { orchDone <- orch.Run(rootCtx) }()
 
-	// Consumer goroutine: pull events, persist, loop until ctx done.
-	wg.Add(1)
+	// Consumer goroutine: pull events off the orchestrator, persist.
+	sinkDone := make(chan struct{})
 	go func() {
-		defer wg.Done()
-		persistEvents(rootCtx, logger, store, out)
+		defer close(sinkDone)
+		persistEvents(rootCtx, logger, store, orch.Events())
 	}()
 
-	// Wait for shutdown signal.
-	<-rootCtx.Done()
-	logger.Info("shutdown signal received — draining for up to 30s")
+	// Wait for shutdown signal OR orchestrator exit.
+	select {
+	case <-rootCtx.Done():
+		logger.Info("shutdown signal received — draining for up to 30s")
+	case err := <-orchDone:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("orchestrator exited with error", "err", err)
+			return err
+		}
+	}
 
 	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stopDrain()
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
 	select {
-	case <-done:
+	case <-sinkDone:
 		logger.Info("clean shutdown")
 	case <-shutdownCtx.Done():
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
 	return nil
+}
+
+// cursorAdapter bridges *timescale.Store and consumer.CursorStore.
+// Translates timescale.ErrNotFound → consumer.ErrNoCursor and
+// converts between the twin Cursor shapes.
+type cursorAdapter struct{ s *timescale.Store }
+
+func (a cursorAdapter) GetCursor(ctx context.Context, source, sub string) (consumer.Cursor, error) {
+	c, err := a.s.GetCursor(ctx, source, sub)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return consumer.Cursor{}, consumer.ErrNoCursor
+	}
+	if err != nil {
+		return consumer.Cursor{}, err
+	}
+	return consumer.Cursor{
+		Source: c.Source, Sub: c.Sub,
+		LastLedger: c.LastLedger, UpdatedAt: c.UpdatedAt,
+	}, nil
+}
+
+func (a cursorAdapter) UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
+	return a.s.UpsertCursor(ctx, source, sub, lastLedger)
 }
 
 // buildSources constructs a Source per configured name. Unknown
