@@ -73,7 +73,7 @@ record `metadata_status: "unavailable"`.
 - Respect `Cache-Control: max-age` if provided.
 - Max file size: 100 KB. Anything larger we reject with
   `metadata_status: "too_large"`.
-- User-Agent: `ctx-rates/<version> (+https://ratesengine.ctx.io)`.
+- User-Agent: `rates-engine/<version> (+https://ratesengine.net)`.
 
 ## Parsing
 

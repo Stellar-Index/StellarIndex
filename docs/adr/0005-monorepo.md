@@ -13,11 +13,11 @@ superseded_by: null
 
 The Rates Engine codebase has natural component boundaries:
 
-- `ctx-indexer` — ingestion pipeline.
-- `ctx-aggregator` — VWAP/TWAP/OHLC computation.
-- `ctx-api` — REST + SSE server.
-- `ctx-ops` — admin CLI.
-- `ctx-migrate` — DB migration runner.
+- `ratesengine-indexer` — ingestion pipeline.
+- `ratesengine-aggregator` — VWAP/TWAP/OHLC computation.
+- `ratesengine-api` — REST + SSE server.
+- `ratesengine-ops` — admin CLI.
+- `ratesengine-migrate` — DB migration runner.
 - A Go client SDK that downstream consumers import.
 - A shared `types` surface they all depend on.
 

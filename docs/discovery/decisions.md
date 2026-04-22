@@ -12,7 +12,7 @@ justification so future-us can tell whether the reasoning still holds.
 
 ## 2026-04-22 — Horizon is deprecated; we will not use it
 
-**Verdict:** ❌ **Horizon is not a component of the CTX Rates architecture.**
+**Verdict:** ❌ **Horizon is not a component of the Rates Engine architecture.**
 We do not ingest from Horizon, we do not run Horizon, and we do not
 proxy any client request to Horizon.
 
@@ -173,7 +173,7 @@ ergonomic trade-off. Any code that holds an amount in `int64` or
 we stand up three geographically-separated Full Validators and pursue
 Tier 1 inclusion.
 
-**Why:** User directive, 2026-04-22. Consistent with CTX Rates'
+**Why:** User directive, 2026-04-22. Consistent with Rates Engine'
 existing network-participation posture and with our product story —
 being *both* the canonical pricing API *and* a contributing
 infrastructure operator strengthens our position materially.

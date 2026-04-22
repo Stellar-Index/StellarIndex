@@ -58,7 +58,7 @@ confirm. Action captured in Open items.
 
 DIA advertises a "Request a Custom Oracle" service — tailored data
 sources, pricing methodology, and update triggers. Potentially useful
-if a specific CTX Rates customer needs an asset or methodology we
+if a specific Rates Engine customer needs an asset or methodology we
 don't otherwise cover. Not Phase 1.
 
 ## Verdict

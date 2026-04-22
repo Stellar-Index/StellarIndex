@@ -1,0 +1,809 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/schemas/v3.1/schema.json
+#
+# Source of truth for the Rates Engine public API.
+#
+# Every breaking change requires a PR that:
+#   1. Updates this file.
+#   2. Adds a new /vN path alongside the old one (never edit in place).
+#   3. Regenerates docs via `make docs-api`.
+#   4. Updates docs/reference/api-design.md if the design intent
+#      changed (as opposed to an additive clarification).
+#
+# Skeleton only — handlers arrive Weeks 7–8. See docs/reference/api-design.md.
+
+openapi: 3.1.0
+info:
+  title: Rates Engine API
+  version: "1.0.0-draft"
+  summary: Aggregated Stellar asset pricing — real-time and historical.
+  description: |
+    The Rates Engine API exposes normalised, VWAP-aggregated pricing
+    for every classic and SEP-41 Soroban asset on Stellar.
+
+    Design intent: see
+    https://github.com/RatesEngine/rates-engine/blob/main/docs/reference/api-design.md
+
+    **Amounts are always strings.** JSON numbers lose precision above
+    2^53 and break i128 Soroban token amounts.
+  contact:
+    name: Rates Engine
+    url: https://ratesengine.net
+    email: hello@ratesengine.net
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://api.ratesengine.net/v1
+    description: Production
+  - url: https://api.staging.ratesengine.net/v1
+    description: Staging
+  - url: http://localhost:3000/v1
+    description: Self-hosted / dev
+
+tags:
+  - name: health
+    description: Liveness + readiness.
+  - name: assets
+    description: Asset catalogue + metadata.
+  - name: price
+    description: Current prices, batch, SSE stream.
+  - name: history
+    description: Historical TWAP / VWAP series.
+  - name: ohlc
+    description: OHLC candles.
+  - name: markets
+    description: Liquidity + venue breakdown per asset.
+  - name: oracle
+    description: SEP-40-shaped passthrough so third parties can consume our prices.
+  - name: account
+    description: Self-service for API-key holders.
+
+security:
+  - {}                          # anonymous allowed on most endpoints
+  - APIKeyAuth: []              # API-key authenticated
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness — process is up.
+      security: []
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness — all dependencies reachable.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "503":
+          description: Dependencies unreachable.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /version:
+    get:
+      tags: [health]
+      summary: Build metadata.
+      security: []
+      responses:
+        "200":
+          description: Version string, build date, git SHA.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionResponse" }
+
+  /assets:
+    get:
+      tags: [assets]
+      summary: List indexed assets.
+      parameters:
+        - { $ref: "#/components/parameters/TypeFilter" }
+        - { $ref: "#/components/parameters/CodeFilter" }
+        - { $ref: "#/components/parameters/IssuerFilter" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of assets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetListEnvelope" }
+
+  /assets/{asset_id}:
+    get:
+      tags: [assets]
+      summary: Asset detail.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: Asset + metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /assets/{asset_id}/metadata:
+    get:
+      tags: [assets]
+      summary: Extended metadata (SEP-1 CURRENCIES block).
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: Extended metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetMetadataEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /price:
+    get:
+      tags: [price]
+      summary: Current aggregated price for one asset.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+      responses:
+        "200":
+          description: Current price with freshness flags.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceEnvelope" }
+
+  /price/batch:
+    get:
+      tags: [price]
+      summary: Current prices for up to 100 assets.
+      parameters:
+        - name: asset_ids
+          in: query
+          required: true
+          schema: { type: string }
+          description: Comma-separated, max 100.
+        - { $ref: "#/components/parameters/Quote" }
+      responses:
+        "200":
+          description: Batch prices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceBatchEnvelope" }
+    post:
+      tags: [price]
+      summary: Current prices for up to 1000 assets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                  maxItems: 1000
+                quote:
+                  type: string
+                  default: USD
+              required: [asset_ids]
+      responses:
+        "200":
+          description: Batch prices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceBatchEnvelope" }
+
+  /price/stream:
+    get:
+      tags: [price]
+      summary: SSE stream of price updates.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+      responses:
+        "200":
+          description: SSE stream (`text/event-stream`).
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /history:
+    get:
+      tags: [history]
+      summary: Historical TWAP / VWAP series.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/Timeframe" }
+        - { $ref: "#/components/parameters/Granularity" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/PriceType" }
+      responses:
+        "200":
+          description: Price series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistoryEnvelope" }
+
+  /history/since-inception:
+    get:
+      tags: [history]
+      summary: Alias for `/history?timeframe=all`.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/Granularity" }
+      responses:
+        "200":
+          description: Since-inception series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistoryEnvelope" }
+
+  /ohlc:
+    get:
+      tags: [ohlc]
+      summary: OHLC candles.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/Timeframe" }
+        - { $ref: "#/components/parameters/Granularity" }
+      responses:
+        "200":
+          description: OHLC series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OHLCEnvelope" }
+
+  /markets:
+    get:
+      tags: [markets]
+      summary: Venue breakdown for one asset.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+      responses:
+        "200":
+          description: Venues + per-venue last trade + 24h volume.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarketsEnvelope" }
+
+  /pairs:
+    get:
+      tags: [markets]
+      summary: Direct markets for a pair.
+      parameters:
+        - name: base
+          in: query
+          required: true
+          schema: { type: string }
+        - name: quote
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pairs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PairsEnvelope" }
+
+  /oracle/lastprice:
+    get:
+      tags: [oracle]
+      summary: SEP-40 lastprice-equivalent passthrough.
+      parameters:
+        - name: asset
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Price record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OraclePriceEnvelope" }
+
+  /oracle/prices:
+    get:
+      tags: [oracle]
+      summary: SEP-40 prices-equivalent passthrough (N historical).
+      parameters:
+        - name: asset
+          in: query
+          required: true
+          schema: { type: string }
+        - name: records
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 60 }
+      responses:
+        "200":
+          description: Historical records.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OraclePricesEnvelope" }
+
+  /oracle/x_last_price:
+    get:
+      tags: [oracle]
+      summary: SEP-40 x_last_price-equivalent (cross-pair).
+      parameters:
+        - name: base
+          in: query
+          required: true
+          schema: { type: string }
+        - name: quote
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cross-pair last price.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OraclePriceEnvelope" }
+
+  /account/me:
+    get:
+      tags: [account]
+      summary: API-key holder info + quota status.
+      security:
+        - APIKeyAuth: []
+      responses:
+        "200":
+          description: Account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountEnvelope" }
+
+  /account/usage:
+    get:
+      tags: [account]
+      summary: Daily usage summary.
+      security:
+        - APIKeyAuth: []
+      parameters:
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+      responses:
+        "200":
+          description: Usage records.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageEnvelope" }
+
+  /account/keys:
+    post:
+      tags: [account]
+      summary: Create a new API key.
+      security:
+        - APIKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string, maxLength: 128 }
+              required: [label]
+      responses:
+        "201":
+          description: New key — plaintext shown **once**.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyCreatedEnvelope" }
+
+components:
+  securitySchemes:
+    APIKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "rek_* (Rates Engine key)"
+
+  parameters:
+    AssetIdPath:
+      name: asset_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: |
+        Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+        `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+        validated per SEP-23.
+    AssetIdQuery:
+      name: asset_id
+      in: query
+      required: true
+      schema: { type: string }
+    Quote:
+      name: quote
+      in: query
+      schema: { type: string, default: USD }
+      description: ISO-4217 fiat or crypto asset_id. Default `USD`.
+    Timeframe:
+      name: timeframe
+      in: query
+      schema:
+        type: string
+        enum: [1h, 24h, 1w, 1mo, 1y, all]
+        default: 24h
+    Granularity:
+      name: granularity
+      in: query
+      schema:
+        type: string
+        enum: [1m, 15m, 1h, 4h, 1d, 1w, 1mo]
+    From:
+      name: from
+      in: query
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
+    PriceType:
+      name: price_type
+      in: query
+      schema:
+        type: string
+        enum: [vwap, twap]
+        default: vwap
+    TypeFilter:
+      name: type
+      in: query
+      schema:
+        type: string
+        enum: [classic, soroban, any]
+        default: any
+    CodeFilter:
+      name: code
+      in: query
+      schema: { type: string }
+    IssuerFilter:
+      name: issuer
+      in: query
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+
+  responses:
+    NotFound:
+      description: Not found.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # Base envelope pieces
+    Flags:
+      type: object
+      description: Advisory quality markers. See docs/architecture/ha-plan.md §9.
+      properties:
+        stale:              { type: boolean, default: false }
+        reduced_redundancy: { type: boolean, default: false }
+        triangulated:       { type: boolean, default: false }
+        divergence_warning: { type: boolean, default: false }
+      required: [stale, reduced_redundancy, triangulated, divergence_warning]
+
+    Pagination:
+      type: object
+      properties:
+        next: { type: string, nullable: true }
+
+    EnvelopeMeta:
+      type: object
+      description: Every 2xx response carries these.
+      properties:
+        as_of: { type: string, format: date-time }
+        sources:
+          type: array
+          items: { type: string }
+        flags: { $ref: "#/components/schemas/Flags" }
+      required: [as_of, flags]
+
+    # Health
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+      required: [status]
+
+    VersionResponse:
+      type: object
+      properties:
+        version:    { type: string }
+        git_sha:    { type: string }
+        build_date: { type: string, format: date-time }
+
+    # Asset catalogue
+    Asset:
+      type: object
+      properties:
+        asset_id:     { type: string }
+        type:         { type: string, enum: [classic, soroban] }
+        code:         { type: string }
+        issuer:       { type: string, nullable: true }
+        contract_id:  { type: string, nullable: true }
+        home_domain:  { type: string, nullable: true }
+        decimals:     { type: integer }
+        sep1_status:  { type: string, enum: [verified, missing, failed, not_applicable] }
+      required: [asset_id, type, code, decimals]
+
+    AssetEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Asset" }
+          required: [data]
+
+    AssetListEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Asset" }
+            pagination: { $ref: "#/components/schemas/Pagination" }
+          required: [data, pagination]
+
+    AssetMetadata:
+      type: object
+      properties:
+        asset_id:    { type: string }
+        name:        { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        image_url:   { type: string, nullable: true }
+        org_name:    { type: string, nullable: true }
+        conditions:  { type: string, nullable: true }
+        fixed_number:   { type: string, nullable: true, description: "Static-issuance (SEP-1 TOKEN `fixed_number`) as string." }
+        max_number:     { type: string, nullable: true }
+        is_unlimited:   { type: boolean, nullable: true }
+
+    AssetMetadataEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AssetMetadata" }
+          required: [data]
+
+    # Price
+    Price:
+      type: object
+      properties:
+        asset_id:          { type: string }
+        quote:             { type: string }
+        price:             { type: string, description: "Decimal string. Never JSON number." }
+        price_type:        { type: string, enum: [vwap, twap, last_trade] }
+        window_seconds:    { type: integer, nullable: true }
+        last_trade_at:     { type: string, format: date-time, nullable: true }
+        change_24h_pct:    { type: string, nullable: true }
+        volume_24h_usd:    { type: string, nullable: true }
+        market_cap_usd:    { type: string, nullable: true }
+        fdv_usd:           { type: string, nullable: true }
+        circulating_supply:{ type: string, nullable: true }
+        total_supply:      { type: string, nullable: true }
+        max_supply:        { type: string, nullable: true }
+      required: [asset_id, quote, price, price_type]
+
+    PriceEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Price" }
+          required: [data]
+
+    PriceBatchEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Price" }
+          required: [data]
+
+    # History / OHLC
+    HistoryPoint:
+      type: object
+      properties:
+        t:     { type: string, format: date-time }
+        p:     { type: string }
+        v_usd: { type: string, nullable: true }
+      required: [t, p]
+
+    HistoryEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                asset_id:    { type: string }
+                quote:       { type: string }
+                price_type:  { type: string, enum: [vwap, twap] }
+                granularity: { type: string }
+                points:
+                  type: array
+                  items: { $ref: "#/components/schemas/HistoryPoint" }
+              required: [asset_id, quote, price_type, granularity, points]
+          required: [data]
+
+    OHLCCandle:
+      type: object
+      properties:
+        t_open:  { type: string, format: date-time }
+        t_close: { type: string, format: date-time }
+        o: { type: string }
+        h: { type: string }
+        l: { type: string }
+        c: { type: string }
+        v_base: { type: string }
+        v_usd:  { type: string }
+      required: [t_open, t_close, o, h, l, c]
+
+    OHLCEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                asset_id:    { type: string }
+                quote:       { type: string }
+                granularity: { type: string }
+                candles:
+                  type: array
+                  items: { $ref: "#/components/schemas/OHLCCandle" }
+              required: [asset_id, quote, granularity, candles]
+          required: [data]
+
+    # Markets / Pairs
+    MarketRow:
+      type: object
+      properties:
+        venue:          { type: string }
+        pair:           { type: string }
+        last_price:     { type: string }
+        last_trade_at:  { type: string, format: date-time }
+        volume_24h_usd: { type: string }
+      required: [venue, pair, last_price]
+
+    MarketsEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/MarketRow" }
+          required: [data]
+
+    PairsEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/MarketRow" }
+          required: [data]
+
+    # Oracle passthrough
+    OraclePriceEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                asset:     { type: string }
+                price:     { type: string }
+                timestamp: { type: string, format: date-time }
+              required: [asset, price, timestamp]
+          required: [data]
+
+    OraclePricesEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  price:     { type: string }
+                  timestamp: { type: string, format: date-time }
+                required: [price, timestamp]
+          required: [data]
+
+    # Account
+    Account:
+      type: object
+      properties:
+        key_id:           { type: string }
+        label:            { type: string }
+        tier:             { type: string, enum: [anonymous, apikey, partner] }
+        rate_limit_per_min: { type: integer }
+        created_at:       { type: string, format: date-time }
+
+    AccountEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Account" }
+          required: [data]
+
+    UsageRow:
+      type: object
+      properties:
+        date:      { type: string, format: date }
+        requests:  { type: integer }
+        errors:    { type: integer }
+        throttled: { type: integer }
+
+    UsageEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/UsageRow" }
+          required: [data]
+
+    KeyCreatedEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                key_id:    { type: string }
+                plaintext: { type: string, description: "Shown once. Store it now." }
+                label:     { type: string }
+              required: [key_id, plaintext, label]
+          required: [data]
+
+    # Error (RFC 9457)
+    Problem:
+      type: object
+      description: |
+        RFC 9457 problem details. Custom extension fields are snake_case.
+      properties:
+        type:     { type: string, format: uri }
+        title:    { type: string }
+        status:   { type: integer }
+        detail:   { type: string }
+        instance: { type: string }
+      required: [type, title, status]

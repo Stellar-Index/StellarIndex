@@ -55,11 +55,11 @@ development. If one does, it's a bug.
 ├── .github/                   workflows + issue/PR templates
 │
 ├── cmd/                       binary entry points (four in total)
-│   ├── ctx-indexer/              ingestion pipeline: Galexie → Timescale
-│   ├── ctx-aggregator/           VWAP/TWAP + continuous aggregates
-│   ├── ctx-api/                  REST + SSE API server
-│   ├── ctx-ops/                  admin CLI: backfill, gap-detect, …
-│   └── ctx-migrate/              db migration runner
+│   ├── ratesengine-indexer/              ingestion pipeline: Galexie → Timescale
+│   ├── ratesengine-aggregator/           VWAP/TWAP + continuous aggregates
+│   ├── ratesengine-api/                  REST + SSE API server
+│   ├── ratesengine-ops/          admin CLI: backfill, gap-detect, …
+│   └── ratesengine-migrate/      db migration runner
 │
 ├── internal/                  private packages (Go-enforced, not importable externally)
 │   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
@@ -83,7 +83,7 @@ development. If one does, it's a bug.
 │
 ├── migrations/                TimescaleDB migrations (golang-migrate)
 ├── configs/                   default + example YAML configs
-├── openapi/                   ctx-rates.v1.yaml — source of truth for API
+├── openapi/                   rates-engine.v1.yaml — source of truth for API
 ├── deploy/                    docker-compose / k8s / nomad / baremetal kits
 ├── docker/                    Dockerfiles per component
 ├── scripts/                   dev/ops/ci helpers
@@ -230,7 +230,7 @@ If it doesn't, that's a CI failure.
 
 ### "Change the OpenAPI spec"
 
-1. Edit `openapi/ctx-rates.v1.yaml`.
+1. Edit `openapi/rates-engine.v1.yaml`.
 2. `make docs-api` regenerates reference docs.
 3. Handlers in `internal/api/v1/` get updated; contract tests
    verify they match.
@@ -268,7 +268,7 @@ If it doesn't, that's a CI failure.
   [CODEOWNERS](CODEOWNERS)).
 - **Architectural decision:** propose an ADR in `docs/adr/` with
   status `Proposed`. Discuss in PR.
-- **Security issue:** `security@ratesengine.ctx.io` — do not open
+- **Security issue:** `security@ratesengine.net` — do not open
   a public issue. See [SECURITY.md](SECURITY.md).
 - **General contribution questions:** [CONTRIBUTING.md](CONTRIBUTING.md).
 

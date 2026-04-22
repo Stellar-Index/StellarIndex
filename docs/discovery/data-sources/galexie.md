@@ -79,7 +79,7 @@ network                 = "pubnet"          # "pubnet" | "testnet" | "futurenet"
 # storage_path              = "/var/lib/galexie/core"
 
 # Optional:
-# user_agent = "ctx-rates-galexie/1.0"
+# user_agent = "ratesengine-galexie/1.0"
 ```
 
 Env-var mapping: every CLI flag is bound via Viper with
@@ -183,7 +183,7 @@ efficiency.
 durable historical storage + backfill. We never want our current-price
 API to block on object-store reads.
 
-## Fit for CTX Rates
+## Fit for Rates Engine
 
 **Use it for:**
 - Since-inception historical backfill (bounded `scan-and-fill` or

@@ -23,7 +23,7 @@ Stellar's docs distinguish three distinct node roles:
 | **Stellar RPC**        | Client-facing tx submission + state queries                                    | Yes (captive-core) | No            | No                 |
 | **Galexie**            | Bulk ledger-meta export to data lake (no tx submission)                        | Yes (captive-core) | No            | No                 |
 
-A single CTX Rates deployment will need **at minimum**:
+A single Rates Engine deployment will need **at minimum**:
 - 1× Galexie (for historical / Silver table materialisation).
 - 1× Stellar RPC (for live events + tx submission if we ever offer it).
 

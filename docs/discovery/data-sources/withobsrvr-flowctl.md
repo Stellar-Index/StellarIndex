@@ -42,7 +42,7 @@ schemas/cue/    CUE schema for pipeline YAML validation
 
 ## Why it's overkill for us
 
-1. We are **one service** (CTX Rates API). flowctl is designed for
+1. We are **one service** (Rates Engine API). flowctl is designed for
    operators who run many heterogeneous pipelines side-by-side and want
    per-pipeline lifecycle management. That's not our shape.
 2. Out-of-process components mean inter-process gRPC on every event —

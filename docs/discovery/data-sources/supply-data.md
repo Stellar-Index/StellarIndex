@@ -216,7 +216,7 @@ assets:
 ```
 
 File is version-controlled in the deployment repo. Operators of
-self-hosted CTX Rates instances can override locally.
+self-hosted Rates Engine instances can override locally.
 
 ## Data sources we ingest
 

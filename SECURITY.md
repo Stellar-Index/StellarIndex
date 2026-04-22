@@ -26,8 +26,8 @@ We commit to:
 
 In scope:
 
-- The CTX Rates server binaries (`ctx-indexer`, `ctx-aggregator`,
-  `ctx-api`, `ctx-ops`, `ctx-migrate`).
+- The Rates Engine server binaries (`ratesengine-indexer`, `ratesengine-aggregator`,
+  `ratesengine-api`, `ratesengine-ops`, `ratesengine-migrate`).
 - The Go SDK in `pkg/client/`.
 - The deployment kits in `deploy/`.
 - The API surface exposed at our hosted endpoint.

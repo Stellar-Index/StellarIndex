@@ -313,7 +313,7 @@ Contents:
 
 ## What this repo is
 
-CTX Rates — a Stellar asset pricing API. Ingests on-chain and
+Rates Engine — a Stellar asset pricing API. Ingests on-chain and
 off-chain price data, aggregates into VWAP/TWAP/OHLC, serves via
 REST + SSE.
 
@@ -370,7 +370,7 @@ openapi/            the API spec (source of truth for reference docs)
 ## Where to ask for help
 
 - Code review: CODEOWNERS
-- Operations: #ctx-rates-ops channel
+- Operations: #ratesengine-ops channel
 - Architecture: ADR process (docs/adr/)
 ```
 
@@ -469,7 +469,7 @@ sentinels or WRAPS one. Callers use `errors.Is` to classify.
 
 ### 4.6. Machine-readable contracts everywhere
 
-- API: OpenAPI `openapi/ctx-rates.v1.yaml`. Source of truth.
+- API: OpenAPI `openapi/rates-engine.v1.yaml`. Source of truth.
   Handlers validated against it in tests.
 - Config: JSON-Schema generated from Go struct tags at
   `docs/reference/config/schema.json`.

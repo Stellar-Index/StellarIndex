@@ -196,7 +196,7 @@ implementation alongside `stellar-extract`.
 
 ### Open items on Hubble
 
-- [ ] Open a GCP project dedicated to CTX Rates discovery queries.
+- [ ] Open a GCP project dedicated to Rates Engine discovery queries.
       Set a BigQuery query-cost budget alert (e.g. $50/month) to avoid
       surprises.
 - [ ] Clone `stellar/stellar-etl` and audit its extraction logic as a

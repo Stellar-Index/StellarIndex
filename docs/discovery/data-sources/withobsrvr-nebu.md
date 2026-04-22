@@ -122,7 +122,7 @@ in the Stellar SDK.
 - Not focused on multi-sink fan-out within one process. Each run is
   `processor | jq` or `processor | duckdb`.
 
-## Decision for CTX Rates
+## Decision for Rates Engine
 
 1. **Adopt the three-type split (Origin/Transform/Sink) + explicit
    warning/fatal error model** for our own internal processor

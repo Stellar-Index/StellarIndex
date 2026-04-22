@@ -1,8 +1,8 @@
 # Discovery & Data Source Audit
 
-This directory is the living knowledge base for Phase 1 discovery of the **CTX
-Rates / Stellar Prices API** contract (awarded from the Stellar Prices API RFP
-and aligned with the Freighter asset-detail RFP).
+This directory is the living knowledge base for Phase 1 discovery of
+**Rates Engine** — our implementation of the Stellar Prices API RFP,
+aligned with the Freighter asset-detail RFP.
 
 The goal of Phase 1 is **not** to write ingestion code. It is to make an
 informed, documented decision about:

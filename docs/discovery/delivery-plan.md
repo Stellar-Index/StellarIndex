@@ -67,9 +67,9 @@ Environment Setup"*) + §15 repo-migration of
 | `Makefile`, `.golangci.yml`, `.github/workflows/ci.yml` | @ash | Day 1 | any PR |
 | First `internal/canonical/` package (Trade, Price, Asset, Pair, Amount-as-big.Int) with 95 % coverage | @alex | Days 1–2 | every source module |
 | HA infrastructure design docs (10 files under `docs/architecture/infrastructure/`) | @ash | Days 2–3 | Phase 2 deploy prep |
-| API spec (`openapi/ctx-rates.v1.yaml` skeleton) | @ash | Days 3–4 | Phase 5 |
+| API spec (`openapi/rates-engine.v1.yaml` skeleton) | @ash | Days 3–4 | Phase 5 |
 | Send [proposal-corrections.md](proposal-corrections.md) to customer | @ash | Day 2 | customer sign-off on Week 2 design |
-| Procurement: MinIO cluster sizing PO; cloud account (AWS or GCP pick); domain registration (`ratesengine.ctx.io`); TLS (Let's Encrypt) | @alex | Days 3–5 | Weeks 8–9 |
+| Procurement: MinIO cluster sizing PO; cloud account (AWS or GCP pick); domain registration (`ratesengine.net`); TLS (Let's Encrypt) | @alex | Days 3–5 | Weeks 8–9 |
 | Set up secret manager (HashiCorp Vault or equivalent on colo + parallel cloud KMS) | @alex | Day 4–5 | Week 8 |
 | Stellar Discord `#validators` + `#api-producers` introductions | @ash | Day 5 | validator track (post-launch) |
 | Week-1 customer demo: repo public, docs live, canonical types building | — | Fri | gate → Week 2 |
@@ -78,7 +78,7 @@ Environment Setup"*) + §15 repo-migration of
 
 - [ ] Repo public at `github.com/ctx/ratesengine`, Apache-2.0.
 - [ ] `go test ./...` passes on `internal/canonical/`.
-- [ ] Docs site preview live at `docs.ratesengine.ctx.io` (staging).
+- [ ] Docs site preview live at `docs.ratesengine.net` (staging).
 - [ ] Customer acknowledged receipt of proposal corrections.
 - [ ] 5 ADRs landed.
 - [ ] Cloud account + domain + TLS provisioned.
@@ -184,7 +184,7 @@ Proposal Phase 4.
 | ----------- | ----- |
 | TimescaleDB continuous aggregates for 1m / 15m / 1h / 4h / 1d / 1w / 1mo granularities | @alex |
 | Retention policies per [stellar-rfp](../stellar-rfp.md): lower granularities capped, 1h+ indefinite | @alex |
-| Backfill orchestrator (`ctx-ops backfill --from <ledger> --to <ledger>`) | @ash |
+| Backfill orchestrator (`ratesengine-ops backfill --from <ledger> --to <ledger>`) | @ash |
 | **Since-inception historical backfill** for top-20 pairs (XLM + major stables + top Soroban tokens). Run in parallel with continuing work — expect multi-day compute | @alex |
 | Per-pair historical data published to API-staging for internal testing | @ash |
 | OHLC correctness cross-check against Hubble's `history_trades` table for 3 specific ledger ranges | @ash |
@@ -202,14 +202,14 @@ Proposal Phase 5.
 
 | Deliverable | Owner |
 | ----------- | ----- |
-| `internal/api/v1/` — REST handlers for every endpoint in `openapi/ctx-rates.v1.yaml` | @ash |
+| `internal/api/v1/` — REST handlers for every endpoint in `openapi/rates-engine.v1.yaml` | @ash |
 | `internal/auth/` — API-key auth with per-key quota | @ash |
 | `internal/ratelimit/` — Redis-backed token bucket, 1000 req/min default | @ash |
 | `internal/api/streaming/` — SSE for near-real-time price subscription | @ash |
 | Batch endpoint (bulk asset lookup) | @ash |
-| Generated API reference → `docs.ratesengine.ctx.io/reference/api/` | @alex |
+| Generated API reference → `docs.ratesengine.net/reference/api/` | @alex |
 | Go client SDK in `pkg/client/` | @alex |
-| Self-service onboarding page at `docs.ratesengine.ctx.io/getting-started` | @alex |
+| Self-service onboarding page at `docs.ratesengine.net/getting-started` | @alex |
 | CDN caching for historical endpoints (CloudFront or equivalent) | @alex |
 
 **Exit gate — Week 7:**
@@ -254,7 +254,7 @@ Proposal Phase 6b.
 | Chaos suite pass: all scenarios in [repo-structure-plan §9](repo-structure-plan.md) | @alex |
 | Security review (external or community) on the full stack | @ash |
 | SEV-1 / SEV-2 playbook dry-run (kill something, time the response) | @ash |
-| Public status page at `status.ratesengine.ctx.io` | @ash |
+| Public status page at `status.ratesengine.net` | @ash |
 | Documented SEV-1 / SEV-2 response guarantees + escalation chain | @ash |
 
 **Exit gate — Week 9:**
@@ -447,7 +447,7 @@ goal, not part of the 10-week delivery. What starts in parallel now:
 - [ ] Status page published and auto-populated from Prometheus.
 - [ ] Post-mortem template written.
 - [ ] Public release tag cut, signed, published.
-- [ ] docs.ratesengine.ctx.io serving stable URLs with correct
+- [ ] docs.ratesengine.net serving stable URLs with correct
       redirects.
 - [ ] API reference auto-regenerated on build.
 - [ ] SDK (Go) published on `pkg.go.dev`.
@@ -523,7 +523,7 @@ Per the sequence in our earlier plan:
 4. **Next: HA infrastructure design round** — 10 sub-docs in
    `docs/architecture/infrastructure/` (scaffold already at
    [infrastructure/README.md](infrastructure/README.md)).
-5. **Then: API endpoint specification round** — `openapi/ctx-rates.v1.yaml`
+5. **Then: API endpoint specification round** — `openapi/rates-engine.v1.yaml`
    skeleton + endpoint-by-endpoint design doc.
 6. **Then: Day 1 of Week 1** per this plan — repo initialisation.
 

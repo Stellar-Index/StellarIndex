@@ -34,11 +34,11 @@ the working placeholder).
    shape, and the client SDK. One PR, one review, one merge.
 3. **Open-source contribution friction.** An external contributor
    wanting to add a CEX connector should do it in one PR against one
-   repo with one CI run. Multi-repo "please also update ctx-types to
-   v1.8.2 in ctx-api and ctx-indexer" is a well-documented path to
+   repo with one CI run. Multi-repo "please also update rates-types to
+   v1.8.2 in ratesengine-api and ratesengine-indexer" is a well-documented path to
    contributor churn.
 4. **One version, one release.** SemVer + CalVer on a single artifact
-   family. No "ctx-api v2.4 requires ctx-indexer v2.3+" compatibility
+   family. No "ratesengine-api v2.4 requires ratesengine-indexer v2.3+" compatibility
    matrices for operators to track.
 5. **RFP requires open-source.** Our transparency story is stronger if
    every line of production code lives in one auditable place.
@@ -54,7 +54,7 @@ the working placeholder).
 
 ### Rejected alternative: split repos
 
-We considered **ctx-types + ctx-indexer + ctx-api + ctx-deploy-kit**.
+We considered **rates-types + ratesengine-indexer + ratesengine-api + rates-deploy-kit**.
 Rejected because the versioning overhead outweighs every benefit for
 a 10-week delivery. Revisit if the team grows past 5 contributors or
 if we ship a stable v1.x and want to move API development independently.
@@ -92,11 +92,11 @@ ctx/ratesengine/
 ├── .golangci.yml              (lint config)
 ├── .goreleaser.yaml           (multi-arch binary + deb + docker release)
 ├── cmd/
-│   ├── ctx-indexer/
-│   ├── ctx-aggregator/
-│   ├── ctx-api/
-│   ├── ctx-ops/               (admin CLI: backfill, gap-detect, cache-prime)
-│   └── ctx-migrate/           (db-migration runner)
+│   ├── ratesengine-indexer/
+│   ├── ratesengine-aggregator/
+│   ├── ratesengine-api/
+│   ├── ratesengine-ops/               (admin CLI: backfill, gap-detect, cache-prime)
+│   └── ratesengine-migrate/           (db-migration runner)
 ├── internal/                  (not importable externally — Go's rule)
 │   ├── canonical/             (Trade, Price, Asset, Pair, Amount-as-big.Int)
 │   ├── config/
@@ -150,7 +150,7 @@ ctx/ratesengine/
 │   ├── prod.yaml.example
 │   └── asset_supply_policy.yaml.example
 ├── openapi/
-│   ├── ctx-rates.v1.yaml      (source of truth for the API)
+│   ├── rates-engine.v1.yaml      (source of truth for the API)
 │   └── README.md              (how to regenerate clients from here)
 ├── deploy/
 │   ├── docker-compose/        (full-stack single-host)
@@ -312,7 +312,7 @@ Three docs trees, with deliberately different freshness guarantees.
 
   ```yaml
   ---
-  title: Data flow across the CTX Rates pipeline
+  title: Data flow across the Rates Engine pipeline
   last_verified: 2026-04-22
   verified_by: ash
   owners: ['@ash', '@alex']
@@ -362,7 +362,7 @@ exactly one edit — `Superseded by: ADR-NNNN` in its metadata.
 
 ### `docs/reference/` — auto-generated
 
-- **`reference/api/`** from `openapi/ctx-rates.v1.yaml`. Build step:
+- **`reference/api/`** from `openapi/rates-engine.v1.yaml`. Build step:
   `make docs-api`.
 - **`reference/metrics/`** by scraping Prometheus' `/metrics`
   endpoint of a running instance into a machine-readable table.
@@ -530,7 +530,7 @@ Dependabot auto-opens PRs for Go + Docker base image updates.
 ### 7.5. `docs.yml` — on merge to main if `docs/**` changed
 
 Builds the static site (Hugo) and deploys to
-`docs.ratesengine.ctx.io`. OpenAPI spec rendered via Redoc.
+`docs.ratesengine.net`. OpenAPI spec rendered via Redoc.
 
 ---
 
@@ -656,7 +656,7 @@ Run pre-release, quarterly thereafter.
 
 1. **`pkg/*` SemVer** — on `pkg/types` and `pkg/client`. Promised
    API-compat within a major. Breaking change = new major.
-2. **Binary CalVer** — `ctx-rates 2026.06.15.1` etc. Easier for
+2. **Binary CalVer** — `rates-engine 2026.06.15.1` etc. Easier for
    operators to reason about "what we shipped when."
 
 ### Changelog
@@ -752,7 +752,7 @@ compat. Minor release of ours bumps the tested-against line.
 ### Vulnerability disclosure
 
 `SECURITY.md` at repo root describes: how to report
-(`security@ratesengine.ctx.io` + GPG key), 90-day embargo,
+(`security@ratesengine.net` + GPG key), 90-day embargo,
 hall-of-fame policy for researchers.
 
 ---
@@ -844,11 +844,11 @@ Before we flip the repo public:
 - [ ] README.md with quickstart, architecture diagram, status badges.
 - [ ] No secrets ever in git history (check with `gitleaks` full scan).
 - [ ] No internal-only hostnames / URLs hardcoded.
-- [ ] Trademark policy if we register "CTX Rates" as a mark.
+- [ ] Trademark policy if we register "Rates Engine" as a mark.
 - [ ] A published Docker image at `ghcr.io/ctx/ratesengine:<ver>`.
 - [ ] Self-hosted quickstart works from a clean machine
       (`docker-compose up` → query API within 5 min).
-- [ ] docs.ratesengine.ctx.io is live.
+- [ ] docs.ratesengine.net is live.
 
 ---
 
@@ -971,7 +971,7 @@ Each of these is a one-decision doc; they slot into the
   to `docs/_archive/`, write the five ADRs, land the first CI workflow.
 - **Day 3:** Infrastructure design round starts; docs land in
   `docs/architecture/infrastructure/`.
-- **Day 4–5:** API spec round; `openapi/ctx-rates.v1.yaml` + generated
+- **Day 4–5:** API spec round; `openapi/rates-engine.v1.yaml` + generated
   reference lands.
 - **Day 6+:** Phase 2 code (the actual 10-week delivery clock).
 

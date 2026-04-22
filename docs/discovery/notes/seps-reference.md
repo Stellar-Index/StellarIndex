@@ -66,7 +66,7 @@ authenticated session.
 ### What this means for our API auth
 
 If we want to support **"sign in with your Stellar wallet"** style
-auth on the CTX Rates API — users sign a SEP-10 challenge with
+auth on the Rates Engine API — users sign a SEP-10 challenge with
 their wallet keypair to get a JWT that authorises their API calls —
 this is the protocol.
 
@@ -116,7 +116,7 @@ discoverability and quorum-set inclusion.
 
 Per [../decisions.md](../decisions.md) we plan to run three Full
 Validators. When we stand them up we publish a
-`https://ratesengine.ctx.io/.well-known/stellar.toml` (or similar
+`https://ratesengine.net/.well-known/stellar.toml` (or similar
 domain we own) with three `[[VALIDATORS]]` entries — one per
 validator, each linking to its own history archive URL.
 
@@ -130,8 +130,8 @@ Concrete todo for Phase-3 validator track:
    the table above.
 5. Three distinct `HISTORY` URLs — one per validator. Our plan to
    use MinIO-behind-nginx works:
-   `https://history-1.ratesengine.ctx.io/`,
-   `https://history-2.ratesengine.ctx.io/`, etc.
+   `https://history-1.ratesengine.net/`,
+   `https://history-2.ratesengine.net/`, etc.
 
 ### Security concerns (called out in spec §Security Concerns)
 

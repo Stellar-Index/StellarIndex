@@ -175,7 +175,7 @@ Because the Rust port can't write to cloud targets, we split:
 
 ```bash
 rs-stellar-archivist mirror $SRC file:///mnt/history/ -c 64
-aws s3 sync /mnt/history/ s3://ctx-rates-history/ \
+aws s3 sync /mnt/history/ s3://ratesengine-history/ \
   --endpoint-url https://minio.colo.ctx.io \
   --delete
 ```
