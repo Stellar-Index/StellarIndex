@@ -20,11 +20,17 @@
 // preserved in [SEP1.Raw] for callers that need the uncommon
 // fields.
 //
+// # Caching
+//
+// [Resolver] itself is stateless. [Cache] wraps it with a
+// Redis-backed read-through layer keyed by [cachekeys.TOML] with
+// TTL [cachekeys.TOMLTTL]. Errors are NOT cached — a 404 is a real
+// signal callers should see, and typically transient. In-process
+// [singleflight] coalesces concurrent misses so a popular home-domain
+// doesn't get hammered on cache expiry.
+//
 // # What this package deliberately doesn't do
 //
-//   - Value-serving caching is the caller's job (through
-//     [internal/cachekeys.TOML] keys at the Redis layer). This
-//     package is stateless.
 //   - Asset-metadata overlay (attaching SEP-1 fields to
 //     [canonical.Asset]) happens in the API handlers +
 //     aggregator, not here.
