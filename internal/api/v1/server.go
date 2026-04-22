@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
 
@@ -75,13 +76,18 @@ func New(opts Options) *Server {
 }
 
 // Handler returns the mux wrapped in the standard middleware stack
-// (outermost-first): RequestID → Logger → Recoverer. RateLimit +
-// CORS are applied by callers that have those pieces wired
-// (typically the api binary, per docs/reference/api-design.md
+// (outermost-first): RequestID → HTTPMetrics → Logger → Recoverer.
+// RateLimit + CORS are applied by callers that have those pieces
+// wired (typically the api binary, per docs/reference/api-design.md
 // §6–§7).
+//
+// HTTPMetrics sits inside RequestID so future trace-exemplar links
+// work, and outside Logger+Recoverer so metrics count every
+// request including those where the handler panicked.
 func (s *Server) Handler() http.Handler {
 	return middleware.Chain(s.mux,
 		middleware.RequestID,
+		obs.HTTPMetrics,
 		middleware.Logger(s.logger),
 		middleware.Recoverer(s.logger),
 	)
@@ -97,6 +103,10 @@ func (s *Server) mountRoutes() {
 	s.mux.HandleFunc("GET /v1/healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /v1/readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/version", s.handleVersion)
+
+	// Prometheus scrape endpoint. Deliberately unversioned — it's
+	// operator-facing, not part of the public API contract.
+	s.mux.Handle("GET /metrics", obs.Handler())
 
 	// Asset catalogue.
 	s.mux.HandleFunc("GET /v1/assets", s.handleAssetList)
