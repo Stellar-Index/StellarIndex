@@ -1,0 +1,64 @@
+# Go build artefacts
+/bin/
+/dist/
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go tool caches
+/.gocache/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local environment / secrets — NEVER commit any of these.
+.env
+.env.*
+!.env.example
+*.env
+credentials*.json
+service-account*.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Local runtime state
+/bucket-data/
+/galexie-data/
+/postgres-data/
+/redis-data/
+/minio-data/
+/stellar-core-data/
+/tmp/
+*.log
+
+# Deployment overrides (local-only tweaks)
+/configs/local.yaml
+/configs/*.secret.yaml
+/deploy/docker-compose/.env
+
+# Docs build output
+/docs/_site/
+/docs/_build/
+/docs/reference/api/generated/
+/docs/reference/config/generated/
+/docs/reference/metrics/generated/
+
+# Test artefacts
+/test/load/results/*
+!/test/load/results/.gitkeep
+/test/integration/.testcache/
+
+# Discovery scratch — do NOT port to implementation repo
+/.discovery-repos/
+
+# Agent session state — local only
+/.claude/
