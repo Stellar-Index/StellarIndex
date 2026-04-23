@@ -106,6 +106,46 @@ func TestHTTPMetrics_CountsRequests(t *testing.T) {
 	}
 }
 
+func TestHTTPMetrics_LowercaseMethodIsCanonicalised(t *testing.T) {
+	// An attacker sending "get" instead of "GET" would otherwise
+	// double the method-label cardinality. Middleware uppercases
+	// known methods before stamping the label.
+	//
+	// Handler catches everything with no pattern so the method label
+	// is the only axis varying across requests.
+	h := obs.HTTPMetrics(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	for _, verb := range []string{"get", "GeT", "GET"} {
+		r := httptest.NewRequest(verb, "/anything", nil)
+		r.Method = verb // httptest.NewRequest uppercases — override.
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, r)
+	}
+
+	ts := httptest.NewServer(obs.Handler())
+	defer ts.Close()
+	resp, _ := http.Get(ts.URL)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	text := string(body)
+
+	// All three requests must collapse into the same method="GET"
+	// series — i.e. the counter should reach 3.
+	want := `method="GET"`
+	if !strings.Contains(text, want) {
+		t.Errorf("canonical method label missing; expected %q in scrape", want)
+	}
+	// Crucially: "get" and "GeT" variants MUST NOT appear
+	// separately — that would signal the cardinality leak.
+	for _, bad := range []string{`method="get"`, `method="GeT"`} {
+		if strings.Contains(text, bad) {
+			t.Errorf("non-canonical method leaked into labels: %q", bad)
+		}
+	}
+}
+
 func TestHTTPMetrics_UnmatchedRouteLabelled(t *testing.T) {
 	// Hit a path with no pattern registered — middleware labels it
 	// "unmatched" to prevent cardinality blow-up.

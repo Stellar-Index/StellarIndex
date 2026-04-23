@@ -35,10 +35,25 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		route := routeFromPattern(r.Pattern)
+		method := normalizeMethod(r.Method)
 		elapsed := time.Since(start).Seconds()
-		HTTPRequestDuration.WithLabelValues(r.Method, route).Observe(elapsed)
-		HTTPRequestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(rec.status)).Inc()
+		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
+		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(rec.status)).Inc()
 	})
+}
+
+// normalizeMethod canonicalises the HTTP method label. HTTP's spec
+// treats method names as case-sensitive, but in practice standard
+// methods are always uppercase — a client sending "get" instead of
+// "GET" would otherwise double our method-label cardinality.
+// Unknown methods pass through as-is so legit custom verbs
+// (WebDAV PROPFIND, etc.) still work.
+func normalizeMethod(m string) string {
+	switch strings.ToUpper(m) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "CONNECT", "TRACE":
+		return strings.ToUpper(m)
+	}
+	return m
 }
 
 // routeFromPattern extracts just the path from a Go 1.22+ ServeMux
