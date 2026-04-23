@@ -146,8 +146,11 @@ func (s *Server) mountRoutes() {
 	// Trade history within a time window.
 	s.mux.HandleFunc("GET /v1/history", s.handleHistory)
 
-	// TODO(#0): /v1/ohlc, /v1/markets, /v1/pairs, /v1/oracle/*,
-	// /v1/account/* — follow-up PRs per docs/reference/api-design.md §5.
+	// Single-bar OHLC over a time window.
+	s.mux.HandleFunc("GET /v1/ohlc", s.handleOHLC)
+
+	// TODO(#0): /v1/markets, /v1/pairs, /v1/oracle/*, /v1/account/*
+	// — follow-up PRs per docs/reference/api-design.md §5.
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────

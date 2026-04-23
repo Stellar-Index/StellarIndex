@@ -88,35 +88,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	to := time.Now().UTC()
-	if raw := r.URL.Query().Get("to"); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-time",
-				"Invalid `to` timestamp", http.StatusBadRequest,
-				"to must be RFC 3339 (e.g. 2026-04-23T12:00:00Z)")
-			return
-		}
-		to = parsed.UTC()
-	}
-	from := to.Add(-time.Hour)
-	if raw := r.URL.Query().Get("from"); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-time",
-				"Invalid `from` timestamp", http.StatusBadRequest,
-				"from must be RFC 3339 (e.g. 2026-04-23T12:00:00Z)")
-			return
-		}
-		from = parsed.UTC()
-	}
-	if !from.Before(to) {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-time",
-			"`from` must be before `to`", http.StatusBadRequest,
-			"")
+	from, to, ok := parseFromTo(w, r)
+	if !ok {
 		return
 	}
 
