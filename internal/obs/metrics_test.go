@@ -25,6 +25,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.SourceOrphanEventsTotal.WithLabelValues("_warmup").Inc()
 	obs.SourceInsertErrorsTotal.WithLabelValues("_warmup", "trade").Inc()
 	obs.RateLimitFailOpenTotal.Inc()
+	obs.Sep1CacheOpsTotal.WithLabelValues("hit").Inc()
 	obs.CursorLastLedger.WithLabelValues("_warmup").Set(0)
 	obs.PriceStalenessSeconds.WithLabelValues("_warmup").Set(0)
 	obs.OracleLastUpdateUnix.WithLabelValues("_warmup", "_warmup").Set(0)
@@ -56,6 +57,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"ratesengine_source_orphan_events_total",
 		"ratesengine_source_insert_errors_total",
 		"ratesengine_ratelimit_fail_open_total",
+		"ratesengine_sep1_cache_ops_total",
 		"ratesengine_cursor_last_ledger",
 		"ratesengine_price_staleness_seconds",
 		"ratesengine_oracle_last_update_unix",

@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/RatesEngine/rates-engine/internal/cachekeys"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 )
 
 // Cache wraps a [Resolver] with Redis-backed value caching +
@@ -52,21 +53,26 @@ func (c *Cache) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	key := cachekeys.TOML(domain)
 
 	if sep, ok := c.getCached(ctx, key); ok {
+		obs.Sep1CacheOpsTotal.WithLabelValues("hit").Inc()
 		return sep, nil
 	}
 
 	v, err, _ := c.sf.Do(key, func() (any, error) {
 		// Re-check inside the singleflight slot: if another caller
 		// already populated while we were queued, skip the upstream
-		// fetch entirely.
+		// fetch entirely. Counts as a hit — the alternative would
+		// under-count hit rate during high contention.
 		if sep, ok := c.getCached(ctx, key); ok {
+			obs.Sep1CacheOpsTotal.WithLabelValues("hit").Inc()
 			return sep, nil
 		}
 
 		sep, err := c.resolver.Resolve(ctx, domain)
 		if err != nil {
+			obs.Sep1CacheOpsTotal.WithLabelValues("upstream_error").Inc()
 			return nil, err
 		}
+		obs.Sep1CacheOpsTotal.WithLabelValues("miss").Inc()
 		c.setCached(ctx, key, sep)
 		return sep, nil
 	})

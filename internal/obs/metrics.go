@@ -37,6 +37,7 @@ func init() {
 		SourceOrphanEventsTotal,
 		SourceInsertErrorsTotal,
 		RateLimitFailOpenTotal,
+		Sep1CacheOpsTotal,
 		CursorLastLedger,
 
 		PriceStalenessSeconds,
@@ -154,6 +155,25 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 		Help: "Events that arrived without their required correlation partner, per source.",
 	},
 	[]string{"source"},
+)
+
+// Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache
+// operations. Label `result` is one of:
+//
+//	hit         — served from cache.
+//	miss        — fetched upstream + cached.
+//	upstream_error — upstream fetch failed; not cached (see ADR).
+//
+// A rising `upstream_error` rate usually means an issuer's
+// stellar.toml is down; a very low hit rate means the TTL is too
+// short or the caller distribution is too dispersed for caching
+// to help.
+var Sep1CacheOpsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_sep1_cache_ops_total",
+		Help: "SEP-1 resolver cache operations by outcome.",
+	},
+	[]string{"result"},
 )
 
 // RateLimitFailOpenTotal — counter of requests that skipped the
