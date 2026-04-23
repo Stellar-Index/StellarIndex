@@ -9,12 +9,15 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
+	"text/tabwriter"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/stellarrpc"
+	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
 
@@ -40,6 +43,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "rpc-probe: %v\n", err)
 			os.Exit(1)
 		}
+	case "list-cursors":
+		if err := listCursors(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "list-cursors: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
 		fmt.Println(version.String())
 	case "help", "--help", "-h":
@@ -62,6 +70,8 @@ Subcommands:
   docs-config             Emit the generated config reference to stdout.
   rpc-probe [endpoint]    Diagnostic probe against a stellar-rpc endpoint.
                           Default: http://127.0.0.1:8000.
+  list-cursors -config PATH
+                          Print every source's last-indexed ledger + age.
   version                 Print version + build date.
   help                    This help.
 
@@ -71,6 +81,62 @@ TODO subcommands (land with their feature PRs):
   cache-prime             Warm the Redis hot-path cache from Timescale.
   verify-invariants       Cross-check aggregated prices against divergence.
 `, version.String())
+}
+
+// listCursors loads the storage layer and prints every per-source
+// ingestion cursor — source, sub (pair contract or ""), last ledger,
+// and age of the last update.
+//
+// Operators use this to spot lagging sources without needing psql
+// or a dashboard. Empty output means no source has written a cursor
+// yet, which usually indicates a fresh deploy.
+func listCursors(args []string) error {
+	fs := flag.NewFlagSet("list-cursors", flag.ContinueOnError)
+	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *cfgPath == "" {
+		return fmt.Errorf("-config is required")
+	}
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	cfg.ApplyEnvOverrides()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	if err != nil {
+		return fmt.Errorf("storage: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	cursors, err := store.ListCursors(ctx)
+	if err != nil {
+		return err
+	}
+	if len(cursors) == 0 {
+		fmt.Println("(no cursors stored — fresh deploy or ingestion hasn't written yet)")
+		return nil
+	}
+
+	now := time.Now().UTC()
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SOURCE\tSUB\tLAST LEDGER\tAGE\tUPDATED")
+	for _, c := range cursors {
+		sub := c.Sub
+		if sub == "" {
+			sub = "-"
+		}
+		age := now.Sub(c.UpdatedAt.UTC()).Round(time.Second)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
+			c.Source, sub, c.LastLedger, age, c.UpdatedAt.Format(time.RFC3339))
+	}
+	return w.Flush()
 }
 
 // rpcProbe runs a one-shot diagnostic against a stellar-rpc endpoint:

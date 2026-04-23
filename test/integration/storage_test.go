@@ -165,6 +165,30 @@ func TestStoreRoundTrip(t *testing.T) {
 	if cur.LastLedger != 52_430_100 {
 		t.Errorf("root cursor wrong after sub insert: got %d", cur.LastLedger)
 	}
+
+	// ─── ListCursors ────────────────────────────────────────────
+	// After the upserts above we have 2 cursors: soroswap/"" and
+	// soroswap/"pair:CAB...". ListCursors returns both, sorted by
+	// (source, sub_source).
+	all, err := store.ListCursors(ctx)
+	if err != nil {
+		t.Fatalf("ListCursors: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListCursors returned %d, want 2", len(all))
+	}
+	if all[0].Source != "soroswap" || all[0].Sub != "" {
+		t.Errorf("ListCursors[0] = %+v, want soroswap/\"\"", all[0])
+	}
+	if all[1].Source != "soroswap" || all[1].Sub != "pair:CAB..." {
+		t.Errorf("ListCursors[1] = %+v, want soroswap/pair:CAB...", all[1])
+	}
+	// UpdatedAt must be populated by the server-side now() call.
+	for _, c := range all {
+		if c.UpdatedAt.IsZero() {
+			t.Errorf("cursor %s/%s has zero UpdatedAt", c.Source, c.Sub)
+		}
+	}
 }
 
 // startTimescale is extracted so both tests can share it without

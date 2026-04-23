@@ -42,6 +42,34 @@ func (s *Store) GetCursor(ctx context.Context, source, sub string) (Cursor, erro
 	return c, nil
 }
 
+// ListCursors returns every row in ingestion_cursors ordered by
+// (source, sub_source). Used by diagnostic tooling — not a hot path.
+func (s *Store) ListCursors(ctx context.Context) ([]Cursor, error) {
+	const q = `
+        SELECT source, COALESCE(sub_source, ''), last_ledger, last_updated
+          FROM ingestion_cursors
+         ORDER BY source ASC, sub_source ASC
+    `
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListCursors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Cursor
+	for rows.Next() {
+		var c Cursor
+		if err := rows.Scan(&c.Source, &c.Sub, &c.LastLedger, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("timescale: ListCursors scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ListCursors rows: %w", err)
+	}
+	return out, nil
+}
+
 // UpsertCursor stores the cursor, replacing any existing row for
 // (source, sub). The last_updated column is server-side `now()`.
 func (s *Store) UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
