@@ -163,7 +163,13 @@ func (s *Source) StreamLive(ctx context.Context, out chan<- consumer.Event) erro
 		if resp.LatestLedger > 0 {
 			lastSeenLedger = resp.LatestLedger
 			s.mu.Lock()
-			s.health.LagLedgers = 0 // we're current by definition when we read latest
+			// Lag = network tip - our last-processed ledger. Zero at
+			// tip or when we haven't observed any events yet.
+			if s.health.LastLedger > 0 && resp.LatestLedger > s.health.LastLedger {
+				s.health.LagLedgers = resp.LatestLedger - s.health.LastLedger
+			} else {
+				s.health.LagLedgers = 0
+			}
 			s.mu.Unlock()
 		}
 	}

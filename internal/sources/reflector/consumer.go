@@ -147,7 +147,14 @@ func (s *Source) StreamLive(ctx context.Context, out chan<- consumer.Event) erro
 		if resp.LatestLedger > 0 {
 			lastSeenLedger = resp.LatestLedger
 			s.mu.Lock()
-			s.health.LagLedgers = 0
+			// Lag = network tip - our last-processed ledger. Zero when
+			// we've never processed an event (can't compute lag without
+			// a floor). Zero is also valid when we're at tip.
+			if s.health.LastLedger > 0 && resp.LatestLedger > s.health.LastLedger {
+				s.health.LagLedgers = resp.LatestLedger - s.health.LastLedger
+			} else {
+				s.health.LagLedgers = 0
+			}
 			s.mu.Unlock()
 		}
 	}

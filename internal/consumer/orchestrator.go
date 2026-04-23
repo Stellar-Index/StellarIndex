@@ -230,6 +230,11 @@ func (o *Orchestrator) cursorPersister(ctx context.Context, src Source, seedLast
 		}
 
 		h := src.Health()
+		// Mirror every health snapshot into Prometheus regardless of
+		// Connected — dashboards want to see lag stay high during
+		// an outage rather than the metric flatline.
+		obs.SourceLagLedgers.WithLabelValues(src.Name()).Set(float64(h.LagLedgers))
+
 		if !h.Connected {
 			continue
 		}
