@@ -207,6 +207,9 @@ func (s *Source) processPage(events []stellarrpc.Event, buf *buffer, out chan<- 
 				}
 				s.mu.Lock()
 				s.health.LastEvent = trade.Timestamp
+				if trade.Ledger > s.health.LastLedger {
+					s.health.LastLedger = trade.Ledger
+				}
 				s.mu.Unlock()
 				out <- TradeEvent{Trade: trade}
 			}

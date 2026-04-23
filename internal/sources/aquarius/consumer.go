@@ -171,6 +171,9 @@ func (s *Source) processPage(ctx context.Context, events []stellarrpc.Event, out
 		for _, t := range trades {
 			s.mu.Lock()
 			s.health.LastEvent = t.Timestamp
+			if t.Ledger > s.health.LastLedger {
+				s.health.LastLedger = t.Ledger
+			}
 			s.mu.Unlock()
 			select {
 			case <-ctx.Done():

@@ -208,14 +208,14 @@ func (o *Orchestrator) runOne(ctx context.Context, src Source, log *slog.Logger)
 }
 
 // cursorPersister is a companion goroutine that periodically upserts
-// the cursor derived from the source's Health().LastEvent. Rough
-// approach: we don't know the exact ledger of LastEvent from
-// HealthStatus — future work adds it — so today we simply upsert
-// the source's health snapshot ledger (LagLedgers is 0 at tip).
+// the cursor derived from the source's Health().LastLedger. On
+// source restart we'll resume from this checkpoint (give or take
+// the interval, which is why trade inserts are idempotent).
 //
-// This is intentionally minimal; a future revision threads the
-// "last event's ledger" through the orchestrator's event-sink loop
-// instead, which is more accurate.
+// We never persist a cursor that's BEHIND the seed — that would be
+// a regression (e.g. source just restarted with LastLedger=0
+// because it hasn't processed anything yet). Instead we keep the
+// seed as the floor and only advance it.
 func (o *Orchestrator) cursorPersister(ctx context.Context, src Source, seedLastLedger uint32) {
 	t := time.NewTicker(o.cfg.CursorPersistEvery)
 	defer t.Stop()
@@ -233,11 +233,17 @@ func (o *Orchestrator) cursorPersister(ctx context.Context, src Source, seedLast
 		if !h.Connected {
 			continue
 		}
-		// TODO(#0): thread the event-sink's observed-ledger here.
-		// For now we can't distinguish "at tip" from "lagging by N"
-		// without the source reporting its own tip — log + skip.
-		_ = lastPersisted
-		_ = h
+		// Advance only. A source that hasn't yet observed any event
+		// in this session returns LastLedger=0; we don't regress the
+		// checkpoint in that case.
+		if h.LastLedger > lastPersisted {
+			lastPersisted = h.LastLedger
+		}
+		if lastPersisted == 0 {
+			// Nothing to persist yet — fresh deploy, no seed, no
+			// observed events. Come back next tick.
+			continue
+		}
 		if err := o.cursors.UpsertCursor(ctx, src.Name(), "", lastPersisted); err != nil {
 			log.Warn("persist cursor failed", "err", err)
 			continue

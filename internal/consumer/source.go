@@ -68,6 +68,17 @@ type HealthStatus struct {
 	// observed. Zero value means no event yet.
 	LastEvent time.Time
 
+	// LastLedger is the ledger sequence of the most-recently
+	// processed event (NOT the network tip — see LagLedgers for
+	// that). The orchestrator's cursor persister reads this to
+	// checkpoint where we've progressed to; on restart we resume
+	// from here.
+	//
+	// Zero means the source hasn't yet processed any events this
+	// session — the orchestrator keeps the last-persisted cursor
+	// rather than checkpointing a regression.
+	LastLedger uint32
+
 	// LagLedgers is how many ledgers behind the current tip we
 	// are, if the source reports it. Zero when not applicable
 	// (e.g. CEX sources that aren't ledger-indexed).

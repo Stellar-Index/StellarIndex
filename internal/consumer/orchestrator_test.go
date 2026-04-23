@@ -19,6 +19,11 @@ type fakeSource struct {
 	streamErr  error
 	streamDone atomic.Int32 // increments every time StreamLive returns
 	started    atomic.Int32 // increments every time StreamLive starts
+	// lastLedger, when non-zero, is reported via Health.LastLedger —
+	// the orchestrator's cursor persister uses this to advance the
+	// checkpoint. Zero means "source hasn't observed any events yet"
+	// and the persister declines to regress the cursor.
+	lastLedger uint32
 }
 
 func (f *fakeSource) Name() string { return f.name }
@@ -46,7 +51,7 @@ func (f *fakeSource) StreamLive(ctx context.Context, out chan<- consumer.Event) 
 }
 
 func (f *fakeSource) Health() consumer.HealthStatus {
-	return consumer.HealthStatus{Connected: true}
+	return consumer.HealthStatus{Connected: true, LastLedger: f.lastLedger}
 }
 
 // testEvent is a trivial consumer.Event for the orchestrator tests.
@@ -206,8 +211,9 @@ func TestOrchestrator_RejectsEmptySourceList(t *testing.T) {
 func TestOrchestrator_CursorPersisted(t *testing.T) {
 	cursors := newInmemCursors()
 	src := &fakeSource{
-		name: "cursor-test",
-		emit: []consumer.Event{testEvent{kind: "one"}},
+		name:       "cursor-test",
+		emit:       []consumer.Event{testEvent{kind: "one"}},
+		lastLedger: 42_000_000, // source reports progress
 	}
 	o := consumer.New(cursors, []consumer.Source{src}, consumer.Config{
 		MinBackoff:         10 * time.Millisecond,
@@ -223,12 +229,53 @@ func TestOrchestrator_CursorPersisted(t *testing.T) {
 	}()
 	_ = o.Run(ctx)
 
-	// After the ticker fires at least once, the cursor should be upserted.
+	// After the ticker fires at least once, the cursor should be upserted
+	// with the fakeSource's reported LastLedger.
 	got, err := cursors.GetCursor(context.Background(), "cursor-test", "")
 	if err != nil {
 		t.Fatalf("cursor should have been persisted at least once, got: %v", err)
 	}
 	if got.Source != "cursor-test" {
 		t.Errorf("wrong cursor stored: %+v", got)
+	}
+	if got.LastLedger != 42_000_000 {
+		t.Errorf("cursor LastLedger = %d, want 42000000 (from Health.LastLedger)", got.LastLedger)
+	}
+}
+
+func TestOrchestrator_CursorDoesNotRegressWhenSourceReportsZero(t *testing.T) {
+	// A source that hasn't observed any events this session returns
+	// LastLedger=0. The persister must NOT overwrite a prior
+	// non-zero cursor with zero.
+	cursors := newInmemCursors()
+
+	// Seed a cursor at ledger 100.
+	if err := cursors.UpsertCursor(context.Background(), "never-advance", "", 100); err != nil {
+		t.Fatal(err)
+	}
+
+	src := &fakeSource{
+		name:       "never-advance",
+		lastLedger: 0, // never advances
+	}
+	o := consumer.New(cursors, []consumer.Source{src}, consumer.Config{
+		MinBackoff:         10 * time.Millisecond,
+		CursorPersistEvery: 20 * time.Millisecond,
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go func() {
+		for range o.Events() {
+		}
+	}()
+	_ = o.Run(ctx)
+
+	got, err := cursors.GetCursor(context.Background(), "never-advance", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastLedger != 100 {
+		t.Errorf("cursor regressed: got %d, want 100", got.LastLedger)
 	}
 }
