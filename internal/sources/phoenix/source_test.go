@@ -64,7 +64,7 @@ func TestBufferCollectsEightFieldsInOrder(t *testing.T) {
 	var completed *RawSwap
 	for i, e := range events {
 		fieldTopic := e.Topic[1]
-		got, err := buf.absorb(e, fieldTopic)
+		got, _, err := buf.absorb(e, fieldTopic)
 		if err != nil {
 			t.Fatalf("event %d absorb: %v", i, err)
 		}
@@ -94,7 +94,7 @@ func TestBufferHandlesOutOfOrderArrival(t *testing.T) {
 	var completed *RawSwap
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
-		got, _ := buf.absorb(e, e.Topic[1])
+		got, _, _ := buf.absorb(e, e.Topic[1])
 		if i == 0 {
 			completed = got
 		}
@@ -118,12 +118,12 @@ func TestBufferSeparatesSwapsByGroupKey(t *testing.T) {
 	var completedA, completedB *RawSwap
 	for i := 0; i < 8; i++ {
 		eA := evsA[i]
-		got, _ := buf.absorb(eA, eA.Topic[1])
+		got, _, _ := buf.absorb(eA, eA.Topic[1])
 		if i == 7 {
 			completedA = got
 		}
 		eB := evsB[i]
-		got, _ = buf.absorb(eB, eB.Topic[1])
+		got, _, _ = buf.absorb(eB, eB.Topic[1])
 		if i == 7 {
 			completedB = got
 		}
@@ -141,7 +141,7 @@ func TestBufferOrphansReportIncompletes(t *testing.T) {
 	events := allEightSwapEvents()
 	// Only absorb 5 of the 8 — the other 3 never arrive.
 	for _, e := range events[:5] {
-		_, _ = buf.absorb(e, e.Topic[1])
+		_, _, _ = buf.absorb(e, e.Topic[1])
 	}
 	orphans := buf.orphans()
 	if len(orphans) != 1 {
@@ -161,9 +161,38 @@ func TestBufferRejectsUnknownField(t *testing.T) {
 		Ledger: 1, TxHash: phoenixTxHash, OperationIndex: 0,
 		Topic: []string{TopicSymbolSwap, "nonexistent_field"},
 	}
-	_, err := buf.absorb(e, "nonexistent_field")
+	_, _, err := buf.absorb(e, "nonexistent_field")
 	if err == nil {
 		t.Fatal("expected ErrUnknownField for nonsense topic")
+	}
+}
+
+func TestBufferEvictsStaleOrphans(t *testing.T) {
+	buf := newBuffer()
+	buf.maxAge = 100 * time.Millisecond
+
+	// Seed an old partial swap (only 1 field arrived — classic
+	// orphan). Its ClosedAt is well past the cutoff.
+	oldTS := time.Now().UTC().Add(-time.Second).Format(time.RFC3339)
+	events := allEightSwapEvents()
+	old := events[0]
+	old.LedgerClosedAt = oldTS
+
+	if _, evicted, err := buf.absorb(old, old.Topic[1]); err != nil || len(evicted) != 0 {
+		t.Fatalf("first insert: err=%v evicted=%d", err, len(evicted))
+	}
+	if buf.size() != 1 {
+		t.Fatalf("buffer size = %d, want 1", buf.size())
+	}
+
+	// Fresh event from a different swap triggers sweepStale → evict.
+	fresh := allEightSwapEventsKeyed(999, "txFresh", 0)[0]
+	_, evicted, _ := buf.absorb(fresh, fresh.Topic[1])
+	if len(evicted) != 1 {
+		t.Fatalf("expected 1 eviction, got %d", len(evicted))
+	}
+	if buf.size() != 1 {
+		t.Errorf("buffer size after eviction = %d, want 1 (fresh only)", buf.size())
 	}
 }
 
