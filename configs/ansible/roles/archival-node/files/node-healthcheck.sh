@@ -78,13 +78,42 @@ else
   add_fail "stellar-core /info unreachable on :11626"
 fi
 
-# --- Check 4: stellar-rpc getHealth ----------------------------
+# --- Check 4: stellar-rpc is reachable -------------------------
+# On initial catchup stellar-rpc's DB is empty and getHealth
+# returns a JSON-RPC error about that state. That's "still
+# warming up," not "broken." Distinguish:
+#   * transport error (empty response, non-JSON, connection refused)
+#     → stellar-rpc is actually down: FAIL
+#   * valid JSON-RPC response with status=healthy → OK
+#   * valid JSON-RPC response with "data stores are not initialized"
+#     error → warming-up state, treat as OK until we've been in this
+#     state for > STELLAR_RPC_WARMUP_SEC (default 2 h). After that,
+#     escalate — it probably means captive-core is stuck.
+#
+# The warmup timer starts at service ActiveEnterTimestamp, so a
+# stellar-rpc restart resets the grace window automatically.
 rpc_resp=$(curl -sfm 5 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
   http://127.0.0.1:8000 2>&1) || rpc_resp=""
 rpc_status=$(echo "$rpc_resp" | jq -r '.result.status // ""' 2>/dev/null)
-if [ "$rpc_status" != "healthy" ]; then
-  add_fail "stellar-rpc getHealth returned '$rpc_status' (expected healthy)"
+rpc_error=$(echo "$rpc_resp" | jq -r '.error.message // ""' 2>/dev/null)
+
+if [ "$rpc_status" = "healthy" ]; then
+  : # fully healthy, no action
+elif echo "$rpc_error" | grep -q "data stores are not initialized"; then
+  # Warming up. Escalate only if we've been in this state too long.
+  WARMUP_MAX="${STELLAR_RPC_WARMUP_SEC:-7200}"
+  enter_iso=$(systemctl show -p ActiveEnterTimestamp --value stellar-rpc 2>/dev/null)
+  enter_epoch=$(date -d "$enter_iso" +%s 2>/dev/null || echo 0)
+  now_epoch=$(date +%s)
+  age=$(( now_epoch - enter_epoch ))
+  if [ "$age" -gt "$WARMUP_MAX" ]; then
+    add_fail "stellar-rpc still has empty DB after ${age}s (warmup cap ${WARMUP_MAX}s) — captive-core likely stuck"
+  fi
+elif [ -z "$rpc_resp" ] || ! echo "$rpc_resp" | jq -e . >/dev/null 2>&1; then
+  add_fail "stellar-rpc unreachable or non-JSON response"
+else
+  add_fail "stellar-rpc unhealthy: status='$rpc_status' error='$rpc_error'"
 fi
 
 # --- Check 5: ZFS pool state -----------------------------------
