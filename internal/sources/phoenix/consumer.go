@@ -140,7 +140,12 @@ func (s *Source) processPage(ctx context.Context, events []stellarrpc.Event, buf
 			continue
 		}
 
-		completed, err := buf.absorb(e, fieldTopic)
+		completed, evicted, err := buf.absorb(e, fieldTopic)
+		if len(evicted) > 0 {
+			// Stale incompletes; drop silently for now. TODO(#0):
+			// phoenix_orphan_swaps_total metric emission.
+			_ = evicted
+		}
 		if err != nil {
 			// Unknown field: skip silently (future: metric).
 			continue
@@ -200,18 +205,42 @@ func (TradeEvent) EventKind() string { return "phoenix.trade" }
 func (TradeEvent) Source() string { return SourceName }
 
 // ─── 8-field correlation buffer ─────────────────────────────────
+//
+// Phoenix emits one swap as 8 separate events (one per field, per
+// README.md). An entry sits in the buffer until all 8 slots are
+// populated — but a missing field (pagination race, contract bug,
+// malformed pool) leaves it hanging forever. Age-based eviction
+// bounds the memory usage so StreamLive doesn't leak.
+
+// defaultOrphanMaxAge caps how long an incomplete entry waits for
+// its missing fields. 5 minutes is generous — all 8 events should
+// land within a single transaction and therefore within one or two
+// RPC pages.
+const defaultOrphanMaxAge = 5 * time.Minute
 
 type buffer struct {
-	m map[groupKey]*RawSwap
+	m      map[groupKey]*RawSwap
+	maxAge time.Duration
+	nowFn  func() time.Time
 }
 
-func newBuffer() *buffer { return &buffer{m: map[groupKey]*RawSwap{}} }
+func newBuffer() *buffer {
+	return &buffer{
+		m:      map[groupKey]*RawSwap{},
+		maxAge: defaultOrphanMaxAge,
+		nowFn:  time.Now,
+	}
+}
 
 // absorb stores one field-event in the appropriate RawSwap slot.
-// Returns a non-nil *RawSwap when all 8 slots are populated; the
-// caller emits + decodes. Returns ErrUnknownField if fieldTopic
-// doesn't match any of the 8 (caller typically skips).
-func (b *buffer) absorb(e *stellarrpc.Event, fieldTopic string) (*RawSwap, error) {
+// Returns:
+//   - completed: non-nil *RawSwap when all 8 slots are populated.
+//   - evicted:   entries whose ClosedAt is older than maxAge — the
+//                caller emits orphan metrics and drops them.
+//   - err:       ErrUnknownField / decode errors for the current event.
+func (b *buffer) absorb(e *stellarrpc.Event, fieldTopic string) (completed *RawSwap, evicted []RawSwap, err error) {
+	evicted = b.sweepStale()
+
 	k := keyOf(e)
 	r, ok := b.m[k]
 	if !ok {
@@ -223,13 +252,30 @@ func (b *buffer) absorb(e *stellarrpc.Event, fieldTopic string) (*RawSwap, error
 		b.m[k] = r
 	}
 	if err := r.assign(e, fieldTopic); err != nil {
-		return nil, err
+		return nil, evicted, err
 	}
 	if r.Complete() {
 		delete(b.m, k)
-		return r, nil
+		return r, evicted, nil
 	}
-	return nil, nil
+	return nil, evicted, nil
+}
+
+// sweepStale removes entries older than maxAge, returning them as
+// orphans. Called automatically from absorb.
+func (b *buffer) sweepStale() []RawSwap {
+	if b.maxAge <= 0 {
+		return nil
+	}
+	cutoff := b.nowFn().Add(-b.maxAge)
+	var evicted []RawSwap
+	for k, r := range b.m {
+		if r.ClosedAt.Before(cutoff) {
+			evicted = append(evicted, *r)
+			delete(b.m, k)
+		}
+	}
+	return evicted
 }
 
 // orphans returns incomplete entries. Called after a backfill range
@@ -242,3 +288,7 @@ func (b *buffer) orphans() []RawSwap {
 	}
 	return out
 }
+
+// size returns the in-flight entry count. Used by tests to assert
+// the buffer stays bounded.
+func (b *buffer) size() int { return len(b.m) }
