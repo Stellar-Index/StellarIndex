@@ -123,6 +123,15 @@ func run(cfgPath string, dryRun bool) error {
 	})
 	sep1Cache := metadata.NewCache(sep1Resolver, rdb)
 
+	// CORS — only wired when the operator configured allowed origins.
+	// Empty list means same-origin only (no cross-origin clients).
+	var cors middleware.Middleware
+	if len(cfg.API.AllowedOrigins) > 0 {
+		cors = middleware.CORS(middleware.CORSOptions{
+			AllowedOrigins: cfg.API.AllowedOrigins,
+		})
+	}
+
 	// Rate limit — per-IP anonymous bucket only for now. Per-API-key
 	// buckets arrive with SEP-10 / apikey auth (see docs/reference/
 	// api-design.md §6). When Redis is unavailable, no bucket is
@@ -148,6 +157,7 @@ func run(cfgPath string, dryRun bool) error {
 		Markets:     storeMarketsReader{s: store},
 		Oracle:      storeOracleReader{s: store},
 		Meta:        sep1Cache,
+		CORS:        cors,
 		RateLimit:   rateLimit,
 	})
 
