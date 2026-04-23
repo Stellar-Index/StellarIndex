@@ -85,6 +85,20 @@ func main() {
 		if err := cmdStatus(*dir, resolvedDSN); err != nil {
 			die("status: %v", err)
 		}
+	case "force":
+		if len(args) < 2 {
+			die("force: requires a version number. Usage: force <version>")
+		}
+		v, err := strconv.Atoi(args[1])
+		if err != nil || v < 0 {
+			die("force: version must be a non-negative integer (got %q)", args[1])
+		}
+		if resolvedDSN == "" {
+			die("no DSN: set RATESENGINE_POSTGRES_DSN or pass -dsn")
+		}
+		if err := cmdForce(*dir, resolvedDSN, v); err != nil {
+			die("force: %v", err)
+		}
 	case "version", "--version", "-v":
 		fmt.Println(version.String())
 	case "help", "--help", "-h":
@@ -172,6 +186,24 @@ func cmdStatus(dir, dsn string) error {
 	return nil
 }
 
+// cmdForce sets the schema_migrations.version row to `v` and
+// clears the dirty flag. Dangerous — only use when you've
+// manually confirmed the DB's actual schema matches version v
+// (typically after fixing a partially-applied migration).
+func cmdForce(dir, dsn string, v int) error {
+	m, err := newMigrator(dir, dsn)
+	if err != nil {
+		return err
+	}
+	defer closeSilent(m)
+
+	if err := m.Force(v); err != nil {
+		return err
+	}
+	fmt.Printf("forced to version %d (dirty=false)\n", v)
+	return nil
+}
+
 func closeSilent(m *migrate.Migrate) {
 	srcErr, dbErr := m.Close()
 	if srcErr != nil {
@@ -199,6 +231,9 @@ Subcommands:
   up              Apply every pending migration.
   down [N]        Roll back last N migrations (default 1).
   status          Show current applied version.
+  force <V>       Clear dirty flag + set version to V (DANGEROUS —
+                  manually verify the DB's actual schema matches V
+                  first; only use after partial-apply recovery).
   version         Build version.
   help            This help.
 
