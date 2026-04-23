@@ -61,10 +61,10 @@ func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, a
          LIMIT 1
     `
 	var (
-		u          canonical.OracleUpdate
-		assetStr   string
-		quoteStr   string
-		decimals   int
+		u        canonical.OracleUpdate
+		assetStr string
+		quoteStr string
+		decimals int
 	)
 	err := s.db.QueryRowContext(ctx, q, source, asset.String()).Scan(
 		&u.Source, &u.ContractID,

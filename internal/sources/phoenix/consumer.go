@@ -250,7 +250,7 @@ func newBuffer() *buffer {
 // Returns:
 //   - completed: non-nil *RawSwap when all 8 slots are populated.
 //   - evicted:   entries whose ClosedAt is older than maxAge — the
-//                caller emits orphan metrics and drops them.
+//     caller emits orphan metrics and drops them.
 //   - err:       ErrUnknownField / decode errors for the current event.
 func (b *buffer) absorb(e *stellarrpc.Event, fieldTopic string) (completed *RawSwap, evicted []RawSwap, err error) {
 	evicted = b.sweepStale()

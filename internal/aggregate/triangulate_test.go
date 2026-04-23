@@ -44,12 +44,12 @@ func TestTriangulate_Rejects(t *testing.T) {
 	neg := big.NewRat(-1, 1)
 
 	for name, inputs := range map[string][2]*big.Rat{
-		"nil A":    {nil, valid},
-		"nil B":    {valid, nil},
-		"zero A":   {zero, valid},
-		"zero B":   {valid, zero},
-		"neg A":    {neg, valid},
-		"neg B":    {valid, neg},
+		"nil A":  {nil, valid},
+		"nil B":  {valid, nil},
+		"zero A": {zero, valid},
+		"zero B": {valid, zero},
+		"neg A":  {neg, valid},
+		"neg B":  {valid, neg},
 	} {
 		_, err := aggregate.Triangulate(inputs[0], inputs[1])
 		if !errors.Is(err, aggregate.ErrTriangulateZero) {

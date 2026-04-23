@@ -71,8 +71,8 @@ func TestParsePair_bad(t *testing.T) {
 		"/",
 		"native/",
 		"/native",
-		"XLM/USD",           // neither side parses as an asset
-		"native/native",     // same-asset
+		"XLM/USD",       // neither side parses as an asset
+		"native/native", // same-asset
 	}
 	for _, s := range cases {
 		t.Run(s, func(t *testing.T) {

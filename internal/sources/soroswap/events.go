@@ -56,11 +56,11 @@ const (
 // `case` values fails to compile. That's our canary against
 // accidentally setting two placeholders to the same value.
 const (
-	TopicSymbolSwap     = "PLACEHOLDER_TOPIC_SYMBOL_SWAP"      // TODO(#0): replace with real SCVal blob
-	TopicSymbolSync     = "PLACEHOLDER_TOPIC_SYMBOL_SYNC"      // TODO(#0)
-	TopicSymbolDeposit  = "PLACEHOLDER_TOPIC_SYMBOL_DEPOSIT"   // TODO(#0)
-	TopicSymbolWithdraw = "PLACEHOLDER_TOPIC_SYMBOL_WITHDRAW"  // TODO(#0)
-	TopicSymbolNewPair  = "PLACEHOLDER_TOPIC_SYMBOL_NEW_PAIR"  // TODO(#0)
+	TopicSymbolSwap     = "PLACEHOLDER_TOPIC_SYMBOL_SWAP"     // TODO(#0): replace with real SCVal blob
+	TopicSymbolSync     = "PLACEHOLDER_TOPIC_SYMBOL_SYNC"     // TODO(#0)
+	TopicSymbolDeposit  = "PLACEHOLDER_TOPIC_SYMBOL_DEPOSIT"  // TODO(#0)
+	TopicSymbolWithdraw = "PLACEHOLDER_TOPIC_SYMBOL_WITHDRAW" // TODO(#0)
+	TopicSymbolNewPair  = "PLACEHOLDER_TOPIC_SYMBOL_NEW_PAIR" // TODO(#0)
 )
 
 // Errors returned by the decode path. Callers classify via

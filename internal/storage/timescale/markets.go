@@ -11,9 +11,9 @@ import (
 // Market is one distinct (base, quote) pair summary with activity
 // statistics. Returned by [Store.DistinctPairs].
 type Market struct {
-	Pair           canonical.Pair
-	LastTradeAt    time.Time
-	TradeCount24h  int64
+	Pair          canonical.Pair
+	LastTradeAt   time.Time
+	TradeCount24h int64
 }
 
 // DistinctPairs returns one page of (base, quote) pairs present in

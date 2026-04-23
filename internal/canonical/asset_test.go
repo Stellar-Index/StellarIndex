@@ -198,7 +198,7 @@ func TestAsset_SQL_valueScan(t *testing.T) {
 
 func TestAsset_Validate_bad(t *testing.T) {
 	cases := []c.Asset{
-		{Type: c.AssetNative, Code: "USDC"},                 // native + code
+		{Type: c.AssetNative, Code: "USDC"},                  // native + code
 		{Type: c.AssetClassic, Code: "USDC"},                 // classic no issuer
 		{Type: c.AssetClassic, Code: "", Issuer: usdcIssuer}, // classic no code
 		{Type: c.AssetSoroban, Code: "USDC"},                 // soroban + code

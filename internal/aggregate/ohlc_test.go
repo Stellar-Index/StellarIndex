@@ -69,7 +69,7 @@ func TestComputeOHLC_SkipsInvalidTrades(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(0, 999), // invalid (zero base)
 		mkTrade(1, 100),
-		mkTrade(1, 0),   // invalid (zero quote)
+		mkTrade(1, 0), // invalid (zero quote)
 		mkTrade(1, 200),
 	}
 	bar, err := aggregate.ComputeOHLC(trades)
@@ -105,8 +105,8 @@ func TestComputeOHLC_PriceInvariants(t *testing.T) {
 	// Property check: across a randomised mix of prices, the OHLC
 	// invariants must hold.
 	trades := []canonical.Trade{
-		mkTrade(1, 42),  mkTrade(1, 7),   mkTrade(1, 99),
-		mkTrade(1, 13),  mkTrade(1, 256), mkTrade(1, 1),
+		mkTrade(1, 42), mkTrade(1, 7), mkTrade(1, 99),
+		mkTrade(1, 13), mkTrade(1, 256), mkTrade(1, 1),
 	}
 	bar, err := aggregate.ComputeOHLC(trades)
 	if err != nil {

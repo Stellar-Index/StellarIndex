@@ -17,13 +17,13 @@ import (
 //   - TradeCount is the number of trades that contributed (zero-base
 //     trades are silently skipped).
 type OHLC struct {
-	Open       *big.Rat
-	High       *big.Rat
-	Low        *big.Rat
-	Close      *big.Rat
-	BaseVolume canonical.Amount
+	Open        *big.Rat
+	High        *big.Rat
+	Low         *big.Rat
+	Close       *big.Rat
+	BaseVolume  canonical.Amount
 	QuoteVolume canonical.Amount
-	TradeCount int
+	TradeCount  int
 }
 
 // ComputeOHLC produces an [OHLC] bar from the given trades.

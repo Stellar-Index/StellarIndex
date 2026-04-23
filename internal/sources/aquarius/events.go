@@ -15,11 +15,11 @@ const SourceName = "aquarius"
 
 // Event names — topic[0] of every Aquarius event.
 const (
-	EventTrade            = "trade"
-	EventDepositLiquidity = "deposit_liquidity"
+	EventTrade             = "trade"
+	EventDepositLiquidity  = "deposit_liquidity"
 	EventWithdrawLiquidity = "withdraw_liquidity"
-	EventUpdateReserves   = "update_reserves"
-	EventReservesSync     = "reserves_sync" // older pool variant
+	EventUpdateReserves    = "update_reserves"
+	EventReservesSync      = "reserves_sync" // older pool variant
 )
 
 // Mainnet contract addresses — verified during Phase-1 audit against
@@ -59,17 +59,17 @@ func (p PoolType) String() string {
 // as Soroswap — real values land with the XDR codec.
 // Uniqueness enforced by the Go compiler at switch-on time.
 const (
-	TopicSymbolTrade              = "PLACEHOLDER_AQUARIUS_TOPIC_TRADE"
-	TopicSymbolDepositLiquidity   = "PLACEHOLDER_AQUARIUS_TOPIC_DEPOSIT_LIQUIDITY"
-	TopicSymbolWithdrawLiquidity  = "PLACEHOLDER_AQUARIUS_TOPIC_WITHDRAW_LIQUIDITY"
-	TopicSymbolUpdateReserves     = "PLACEHOLDER_AQUARIUS_TOPIC_UPDATE_RESERVES"
-	TopicSymbolReservesSync       = "PLACEHOLDER_AQUARIUS_TOPIC_RESERVES_SYNC"
+	TopicSymbolTrade             = "PLACEHOLDER_AQUARIUS_TOPIC_TRADE"
+	TopicSymbolDepositLiquidity  = "PLACEHOLDER_AQUARIUS_TOPIC_DEPOSIT_LIQUIDITY"
+	TopicSymbolWithdrawLiquidity = "PLACEHOLDER_AQUARIUS_TOPIC_WITHDRAW_LIQUIDITY"
+	TopicSymbolUpdateReserves    = "PLACEHOLDER_AQUARIUS_TOPIC_UPDATE_RESERVES"
+	TopicSymbolReservesSync      = "PLACEHOLDER_AQUARIUS_TOPIC_RESERVES_SYNC"
 )
 
 // Errors returned by the decode path.
 var (
-	ErrUnknownEvent      = errors.New("aquarius: unknown event topic")
-	ErrMalformedPayload  = errors.New("aquarius: malformed event payload")
-	ErrUnknownPool       = errors.New("aquarius: pool not in token cache (router read pending)")
-	ErrConcentratedWIP   = errors.New("aquarius: concentrated-liquidity pools not decoded yet (Phase-1 WIP)")
+	ErrUnknownEvent     = errors.New("aquarius: unknown event topic")
+	ErrMalformedPayload = errors.New("aquarius: malformed event payload")
+	ErrUnknownPool      = errors.New("aquarius: pool not in token cache (router read pending)")
+	ErrConcentratedWIP  = errors.New("aquarius: concentrated-liquidity pools not decoded yet (Phase-1 WIP)")
 )

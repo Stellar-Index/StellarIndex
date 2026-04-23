@@ -18,9 +18,9 @@ import (
 type Source struct {
 	rpc *stellarrpc.Client
 
-	variant     Variant
-	contractID  string // the mainnet address (operator-supplied)
-	decimals    uint8
+	variant      Variant
+	contractID   string // the mainnet address (operator-supplied)
+	decimals     uint8
 	pollInterval time.Duration
 
 	mu     sync.RWMutex

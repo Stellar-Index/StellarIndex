@@ -64,23 +64,23 @@ type StellarConfig struct {
 // strings NEVER include passwords directly — use the `env:` tag
 // pattern to reference a secret store.
 type StorageConfig struct {
-	PostgresDSN      string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"RATESENGINE_POSTGRES_DSN" default:"postgres://ratesengine@127.0.0.1:5432/ratesengine?sslmode=disable"`
-	RedisAddr        string `toml:"redis_addr" doc:"Redis master address host:port." default:"127.0.0.1:6379"`
-	RedisPassword    string `toml:"redis_password_env" doc:"Env var holding the Redis password (reference, not the password itself)." env:"RATESENGINE_REDIS_PASSWORD" default:""`
-	S3Endpoint       string `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
-	S3Region         string `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
-	S3BucketArchive  string `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
-	S3BucketLive     string `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
-	S3AccessKeyEnv   string `toml:"s3_access_key_env" doc:"Env var holding S3 access key ID." env:"RATESENGINE_S3_ACCESS_KEY" default:"RATESENGINE_S3_ACCESS_KEY"`
-	S3SecretKeyEnv   string `toml:"s3_secret_key_env" doc:"Env var holding S3 secret access key." env:"RATESENGINE_S3_SECRET_KEY" default:"RATESENGINE_S3_SECRET_KEY"`
+	PostgresDSN     string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"RATESENGINE_POSTGRES_DSN" default:"postgres://ratesengine@127.0.0.1:5432/ratesengine?sslmode=disable"`
+	RedisAddr       string `toml:"redis_addr" doc:"Redis master address host:port." default:"127.0.0.1:6379"`
+	RedisPassword   string `toml:"redis_password_env" doc:"Env var holding the Redis password (reference, not the password itself)." env:"RATESENGINE_REDIS_PASSWORD" default:""`
+	S3Endpoint      string `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
+	S3Region        string `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
+	S3BucketArchive string `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
+	S3BucketLive    string `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
+	S3AccessKeyEnv  string `toml:"s3_access_key_env" doc:"Env var holding S3 access key ID." env:"RATESENGINE_S3_ACCESS_KEY" default:"RATESENGINE_S3_ACCESS_KEY"`
+	S3SecretKeyEnv  string `toml:"s3_secret_key_env" doc:"Env var holding S3 secret access key." env:"RATESENGINE_S3_SECRET_KEY" default:"RATESENGINE_S3_SECRET_KEY"`
 }
 
 // IngestionConfig controls the indexer's source fleet.
 type IngestionConfig struct {
-	EnabledSources      []string `toml:"enabled_sources" doc:"List of source connector names to run on this indexer replica." default:"[\"sdex\",\"soroswap\",\"aquarius\"]"`
-	BackfillFromLedger  uint32   `toml:"backfill_from_ledger" doc:"Earliest ledger to backfill from; 0 = continue-from-persisted-cursor." default:"0"`
-	BackfillBatchSize   uint32   `toml:"backfill_batch_size" doc:"Ledgers per backfill fetch batch." default:"64"`
-	CursorStoreScheme   string   `toml:"cursor_store_scheme" doc:"Where per-source cursors live — postgres / redis." default:"postgres"`
+	EnabledSources     []string `toml:"enabled_sources" doc:"List of source connector names to run on this indexer replica." default:"[\"sdex\",\"soroswap\",\"aquarius\"]"`
+	BackfillFromLedger uint32   `toml:"backfill_from_ledger" doc:"Earliest ledger to backfill from; 0 = continue-from-persisted-cursor." default:"0"`
+	BackfillBatchSize  uint32   `toml:"backfill_batch_size" doc:"Ledgers per backfill fetch batch." default:"64"`
+	CursorStoreScheme  string   `toml:"cursor_store_scheme" doc:"Where per-source cursors live — postgres / redis." default:"postgres"`
 }
 
 // AggregateConfig controls the aggregator's VWAP/TWAP computation.
@@ -94,9 +94,9 @@ type AggregateConfig struct {
 
 // APIConfig controls the public REST+SSE server.
 type APIConfig struct {
-	ListenAddr         string   `toml:"listen_addr" doc:"Bind address for the HTTP server." default:"0.0.0.0:3000"`
-	ExternalBaseURL    string   `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.ratesengine.net/v1)." default:"https://api.ratesengine.net/v1"`
-	AuthMode           string   `toml:"auth_mode" doc:"Authentication mode — none / apikey / sep10 (future)." default:"apikey"`
+	ListenAddr          string   `toml:"listen_addr" doc:"Bind address for the HTTP server." default:"0.0.0.0:3000"`
+	ExternalBaseURL     string   `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.ratesengine.net/v1)." default:"https://api.ratesengine.net/v1"`
+	AuthMode            string   `toml:"auth_mode" doc:"Authentication mode — none / apikey / sep10 (future)." default:"apikey"`
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
 	CDNEnabled          bool     `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`

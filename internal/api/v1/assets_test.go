@@ -16,9 +16,9 @@ const testUSDCIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
 // stubAssetReader implements v1.AssetReader in-memory. Each test
 // instantiates one with the fixture data it needs.
 type stubAssetReader struct {
-	byID     map[string]v1.AssetDetail
-	page     []v1.AssetDetail
-	nextCur  string
+	byID    map[string]v1.AssetDetail
+	page    []v1.AssetDetail
+	nextCur string
 }
 
 func (r *stubAssetReader) GetAsset(_ context.Context, a canonical.Asset) (v1.AssetDetail, error) {

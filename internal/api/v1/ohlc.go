@@ -190,4 +190,3 @@ func ratToDecimal(r *big.Rat, digits int) string {
 	split := len(s) - digits
 	return sign + s[:split] + "." + s[split:]
 }
-

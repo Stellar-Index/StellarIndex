@@ -11,10 +11,10 @@ import (
 )
 
 type stubOracleReader struct {
-	updates      []canonical.OracleUpdate
-	lastAsset    string
-	lastSource   string
-	err          error
+	updates    []canonical.OracleUpdate
+	lastAsset  string
+	lastSource string
+	err        error
 }
 
 func (r *stubOracleReader) LatestOracleUpdatesForAsset(_ context.Context, asset canonical.Asset, src string) ([]canonical.OracleUpdate, error) {

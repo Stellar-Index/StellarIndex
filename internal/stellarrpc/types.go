@@ -42,19 +42,19 @@ func (e *JSONRPCError) Error() string {
 // or disconnected, this RPC returns an error envelope — callers
 // should check for that error AND then this Status field.
 type Health struct {
-	Status              string `json:"status"`
-	LatestLedger        uint32 `json:"latestLedger,omitempty"`
-	OldestLedger        uint32 `json:"oldestLedger,omitempty"`
-	LedgerRetentionWin  uint32 `json:"ledgerRetentionWindow,omitempty"`
+	Status             string `json:"status"`
+	LatestLedger       uint32 `json:"latestLedger,omitempty"`
+	OldestLedger       uint32 `json:"oldestLedger,omitempty"`
+	LedgerRetentionWin uint32 `json:"ledgerRetentionWindow,omitempty"`
 }
 
 // LatestLedger is the response from getLatestLedger.
 type LatestLedger struct {
-	ID              string `json:"id"`                   // 32-byte hex ledger hash
+	ID              string `json:"id"` // 32-byte hex ledger hash
 	ProtocolVersion int    `json:"protocolVersion"`
 	Sequence        uint32 `json:"sequence"`
-	CloseTime       string `json:"closeTime"`            // Unix seconds as decimal string
-	HeaderXdr       string `json:"headerXdr,omitempty"`  // base64
+	CloseTime       string `json:"closeTime"`           // Unix seconds as decimal string
+	HeaderXdr       string `json:"headerXdr,omitempty"` // base64
 }
 
 // Network is the response from getNetwork.
@@ -74,29 +74,29 @@ type VersionInfo struct {
 
 // Event is a single Soroban contract event from getEvents.
 type Event struct {
-	Type                      string   `json:"type"` // contract | system | diagnostic
-	Ledger                    uint32   `json:"ledger"`
-	LedgerClosedAt            string   `json:"ledgerClosedAt"` // RFC 3339
-	ContractID                string   `json:"contractId"`
-	ID                        string   `json:"id"`
-	OperationIndex            int      `json:"operationIndex"`
-	TransactionIndex          int      `json:"transactionIndex"`
-	TxHash                    string   `json:"txHash"`
-	InSuccessfulContractCall  bool     `json:"inSuccessfulContractCall"`
+	Type                     string `json:"type"` // contract | system | diagnostic
+	Ledger                   uint32 `json:"ledger"`
+	LedgerClosedAt           string `json:"ledgerClosedAt"` // RFC 3339
+	ContractID               string `json:"contractId"`
+	ID                       string `json:"id"`
+	OperationIndex           int    `json:"operationIndex"`
+	TransactionIndex         int    `json:"transactionIndex"`
+	TxHash                   string `json:"txHash"`
+	InSuccessfulContractCall bool   `json:"inSuccessfulContractCall"`
 	// Topic entries are base64-encoded SCVal. Callers decode.
-	Topic                     []string `json:"topic"`
+	Topic []string `json:"topic"`
 	// Value is base64-encoded SCVal. Callers decode.
-	Value                     string   `json:"value"`
+	Value string `json:"value"`
 }
 
 // EventsResponse is the response from getEvents.
 type EventsResponse struct {
-	Events                  []Event `json:"events"`
-	Cursor                  string  `json:"cursor,omitempty"`
-	LatestLedger            uint32  `json:"latestLedger"`
-	OldestLedger            uint32  `json:"oldestLedger"`
-	LatestLedgerCloseTime   string  `json:"latestLedgerCloseTime,omitempty"`
-	OldestLedgerCloseTime   string  `json:"oldestLedgerCloseTime,omitempty"`
+	Events                []Event `json:"events"`
+	Cursor                string  `json:"cursor,omitempty"`
+	LatestLedger          uint32  `json:"latestLedger"`
+	OldestLedger          uint32  `json:"oldestLedger"`
+	LatestLedgerCloseTime string  `json:"latestLedgerCloseTime,omitempty"`
+	OldestLedgerCloseTime string  `json:"oldestLedgerCloseTime,omitempty"`
 }
 
 // EventFilter restricts which events getEvents returns.
@@ -129,8 +129,8 @@ type Ledger struct {
 	Hash            string `json:"hash"`
 	Sequence        uint32 `json:"sequence"`
 	LedgerCloseTime string `json:"ledgerCloseTime"` // Unix seconds string
-	HeaderXdr       string `json:"headerXdr"`        // base64
-	MetadataXdr     string `json:"metadataXdr"`      // base64
+	HeaderXdr       string `json:"headerXdr"`       // base64
+	MetadataXdr     string `json:"metadataXdr"`     // base64
 }
 
 // LedgersResponse is the response from getLedgers.
@@ -174,14 +174,14 @@ type TransactionResponse struct {
 	OldestLedgerCloseTime string `json:"oldestLedgerCloseTime,omitempty"`
 
 	// Present only when Status != NOT_FOUND.
-	Ledger            uint32 `json:"ledger,omitempty"`
-	CreatedAt         string `json:"createdAt,omitempty"` // RFC 3339
-	ApplicationOrder  int    `json:"applicationOrder,omitempty"`
-	FeeBump           bool   `json:"feeBump,omitempty"`
-	EnvelopeXdr       string `json:"envelopeXdr,omitempty"`
-	ResultXdr         string `json:"resultXdr,omitempty"`
-	ResultMetaXdr     string `json:"resultMetaXdr,omitempty"`
-	LedgerCloseTime   string `json:"ledgerCloseTime,omitempty"`
+	Ledger           uint32 `json:"ledger,omitempty"`
+	CreatedAt        string `json:"createdAt,omitempty"` // RFC 3339
+	ApplicationOrder int    `json:"applicationOrder,omitempty"`
+	FeeBump          bool   `json:"feeBump,omitempty"`
+	EnvelopeXdr      string `json:"envelopeXdr,omitempty"`
+	ResultXdr        string `json:"resultXdr,omitempty"`
+	ResultMetaXdr    string `json:"resultMetaXdr,omitempty"`
+	LedgerCloseTime  string `json:"ledgerCloseTime,omitempty"`
 
 	// DiagnosticEventsXdr is populated only on stellar-rpc v23+. On
 	// older nodes this field is empty; decoders should treat absence

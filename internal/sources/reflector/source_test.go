@@ -40,10 +40,10 @@ func TestClassify(t *testing.T) {
 
 func TestVariantSourceName(t *testing.T) {
 	cases := map[Variant]string{
-		VariantDEX:   SourceDEX,
-		VariantCEX:   SourceCEX,
-		VariantFX:    SourceFX,
-		Variant(99):  "reflector-unknown",
+		VariantDEX:  SourceDEX,
+		VariantCEX:  SourceCEX,
+		VariantFX:   SourceFX,
+		Variant(99): "reflector-unknown",
 	}
 	for v, want := range cases {
 		if got := v.SourceName(); got != want {
@@ -167,9 +167,9 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 		}, 0, nil
 	}
 	eA := &stellarrpc.Event{
-		Topic:          []string{TopicSymbolReflector, TopicSymbolUpdate},
-		ContractID:     dexContractID,
-		Ledger:         1, TxHash: reflectorTxHash, OperationIndex: 0,
+		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate},
+		ContractID: dexContractID,
+		Ledger:     1, TxHash: reflectorTxHash, OperationIndex: 0,
 		LedgerClosedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	closedAt, _ := time.Parse(time.RFC3339, eA.LedgerClosedAt)
@@ -188,9 +188,9 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 		}, 0, nil
 	}
 	eB := &stellarrpc.Event{
-		Topic:          []string{TopicSymbolReflector, TopicSymbolUpdate},
-		ContractID:     dexContractID,
-		Ledger:         1, TxHash: reflectorTxHash, OperationIndex: 1,
+		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate},
+		ContractID: dexContractID,
+		Ledger:     1, TxHash: reflectorTxHash, OperationIndex: 1,
 		LedgerClosedAt: eA.LedgerClosedAt,
 	}
 	updatesB, err := decodeUpdate(eB, VariantDEX, DefaultDecimals, "", closedAt)

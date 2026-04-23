@@ -104,7 +104,8 @@ func (b *Bucket) Window() time.Duration { return b.window }
 // ARGV[2]  — max (the limit)
 //
 // Returns  — two-element array [count, retry_after_seconds].
-//            retry_after is 0 when allowed.
+//
+//	retry_after is 0 when allowed.
 const lua = `
 local current = redis.call('INCR', KEYS[1])
 if current == 1 then

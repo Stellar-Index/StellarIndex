@@ -90,7 +90,10 @@ func TestHTTPMetrics_CountsRequests(t *testing.T) {
 	// Scrape the registry + look for the counts.
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()
-	resp, _ := http.Get(ts.URL)
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
@@ -128,7 +131,10 @@ func TestHTTPMetrics_LowercaseMethodIsCanonicalised(t *testing.T) {
 
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()
-	resp, _ := http.Get(ts.URL)
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
@@ -160,7 +166,10 @@ func TestHTTPMetrics_UnmatchedRouteLabelled(t *testing.T) {
 
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()
-	resp, _ := http.Get(ts.URL)
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 

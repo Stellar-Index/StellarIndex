@@ -39,8 +39,8 @@ func TestTWAP_TimeWeighting(t *testing.T) {
 	// TWAP = (100×10 + 200×30) / 40 = 7000/40 = 175.
 	t0 := time.Unix(0, 0).UTC()
 	trades := []canonical.Trade{
-		mkTradeAt(1, 100, t0),                       // 100 for 10s
-		mkTradeAt(1, 200, t0.Add(10*time.Second)),   // 200 for 30s
+		mkTradeAt(1, 100, t0),                     // 100 for 10s
+		mkTradeAt(1, 200, t0.Add(10*time.Second)), // 200 for 30s
 	}
 	got, err := aggregate.TWAP(trades, t0.Add(40*time.Second))
 	if err != nil {
@@ -95,8 +95,8 @@ func TestTWAP_NonPositiveFinalDurationClamps(t *testing.T) {
 	// so the TWAP reflects only the prior trades.
 	t0 := time.Unix(0, 0).UTC()
 	trades := []canonical.Trade{
-		mkTradeAt(1, 100, t0),                       // 100 for 10s
-		mkTradeAt(1, 500, t0.Add(10*time.Second)),   // late trade, ignored
+		mkTradeAt(1, 100, t0),                     // 100 for 10s
+		mkTradeAt(1, 500, t0.Add(10*time.Second)), // late trade, ignored
 	}
 	got, err := aggregate.TWAP(trades, t0.Add(10*time.Second))
 	if err != nil {

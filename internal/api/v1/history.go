@@ -235,4 +235,3 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 	}
 	return base, quote, true
 }
-

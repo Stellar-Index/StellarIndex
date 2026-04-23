@@ -158,8 +158,8 @@ func TestBucket_RetryAfterApproximatesWindowTTL(t *testing.T) {
 	b := ratelimit.New(rdb, 1, time.Minute)
 	ctx := context.Background()
 
-	_, _ = b.Take(ctx, "k")   // consume
-	r, _ := b.Take(ctx, "k")  // should reject
+	_, _ = b.Take(ctx, "k")  // consume
+	r, _ := b.Take(ctx, "k") // should reject
 	if r.Allowed {
 		t.Fatal("second should be denied")
 	}

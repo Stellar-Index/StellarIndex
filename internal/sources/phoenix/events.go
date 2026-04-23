@@ -18,14 +18,14 @@ const SourceName = "phoenix"
 // has embedded spaces (Q2), and our placeholder topic-blobs derive
 // from the exact symbol bytes.
 const (
-	FieldSender          = "sender"
-	FieldSellToken       = "sell_token"
-	FieldOfferAmount     = "offer_amount"
-	FieldActualReceived  = "actual received amount" // note the spaces (Q2)
-	FieldBuyToken        = "buy_token"
-	FieldReturnAmount    = "return_amount"
-	FieldSpreadAmount    = "spread_amount"
-	FieldReferralFee     = "referral_fee_amount"
+	FieldSender         = "sender"
+	FieldSellToken      = "sell_token"
+	FieldOfferAmount    = "offer_amount"
+	FieldActualReceived = "actual received amount" // note the spaces (Q2)
+	FieldBuyToken       = "buy_token"
+	FieldReturnAmount   = "return_amount"
+	FieldSpreadAmount   = "spread_amount"
+	FieldReferralFee    = "referral_fee_amount"
 )
 
 // SwapFieldCount is the number of distinct events per swap (Q1).
@@ -54,15 +54,15 @@ const (
 // codec. Uniqueness enforced by Go's switch-with-duplicate-case
 // compile error.
 const (
-	TopicSymbolSwap              = "PLACEHOLDER_PHOENIX_TOPIC_SWAP"               // topic[0]
-	TopicSymbolSender            = "PLACEHOLDER_PHOENIX_FIELD_SENDER"             // topic[1]
-	TopicSymbolSellToken         = "PLACEHOLDER_PHOENIX_FIELD_SELL_TOKEN"
-	TopicSymbolOfferAmount       = "PLACEHOLDER_PHOENIX_FIELD_OFFER_AMOUNT"
-	TopicSymbolActualReceived    = "PLACEHOLDER_PHOENIX_FIELD_ACTUAL_RECEIVED"
-	TopicSymbolBuyToken          = "PLACEHOLDER_PHOENIX_FIELD_BUY_TOKEN"
-	TopicSymbolReturnAmount      = "PLACEHOLDER_PHOENIX_FIELD_RETURN_AMOUNT"
-	TopicSymbolSpreadAmount      = "PLACEHOLDER_PHOENIX_FIELD_SPREAD_AMOUNT"
-	TopicSymbolReferralFee       = "PLACEHOLDER_PHOENIX_FIELD_REFERRAL_FEE"
+	TopicSymbolSwap           = "PLACEHOLDER_PHOENIX_TOPIC_SWAP"   // topic[0]
+	TopicSymbolSender         = "PLACEHOLDER_PHOENIX_FIELD_SENDER" // topic[1]
+	TopicSymbolSellToken      = "PLACEHOLDER_PHOENIX_FIELD_SELL_TOKEN"
+	TopicSymbolOfferAmount    = "PLACEHOLDER_PHOENIX_FIELD_OFFER_AMOUNT"
+	TopicSymbolActualReceived = "PLACEHOLDER_PHOENIX_FIELD_ACTUAL_RECEIVED"
+	TopicSymbolBuyToken       = "PLACEHOLDER_PHOENIX_FIELD_BUY_TOKEN"
+	TopicSymbolReturnAmount   = "PLACEHOLDER_PHOENIX_FIELD_RETURN_AMOUNT"
+	TopicSymbolSpreadAmount   = "PLACEHOLDER_PHOENIX_FIELD_SPREAD_AMOUNT"
+	TopicSymbolReferralFee    = "PLACEHOLDER_PHOENIX_FIELD_REFERRAL_FEE"
 )
 
 // Errors returned by the decode path.

@@ -176,13 +176,13 @@ func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
 
 func TestSkipHealthAndMetrics(t *testing.T) {
 	cases := map[string]bool{
-		"/v1/healthz":       true,
-		"/v1/readyz":        true,
-		"/v1/version":       true,
-		"/metrics":          true,
-		"/v1/assets":        false,
-		"/v1/price":         false,
-		"/v1/metrics-fake":  false,
+		"/v1/healthz":      true,
+		"/v1/readyz":       true,
+		"/v1/version":      true,
+		"/metrics":         true,
+		"/v1/assets":       false,
+		"/v1/price":        false,
+		"/v1/metrics-fake": false,
 	}
 	for path, want := range cases {
 		r := httptest.NewRequest("GET", path, nil)

@@ -61,8 +61,8 @@ func TestVWAP_PrecisionExact(t *testing.T) {
 	quote := big.NewInt(3)
 	trade := canonical.Trade{
 		Source: "test", Ledger: 1,
-		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
-		OpIndex:     0, Timestamp: time.Unix(0, 0).UTC(),
+		TxHash:  "0000000000000000000000000000000000000000000000000000000000000001",
+		OpIndex: 0, Timestamp: time.Unix(0, 0).UTC(),
 		BaseAmount:  canonical.NewAmount(base),
 		QuoteAmount: canonical.NewAmount(quote),
 	}
@@ -119,17 +119,17 @@ func TestVWAP_I128ScaleExactPrecision(t *testing.T) {
 	// proving the big.Int arithmetic doesn't overflow or round.
 	tradeA := canonical.Trade{ // base=10^36, quote=2*10^36 → price 2
 		Source: "test", Ledger: 1,
-		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
-		OpIndex:     0, Timestamp: time.Unix(0, 0).UTC(),
-		BaseAmount:  mustBigAmount("1000000000000000000000000000000000000"),    // 10^36
-		QuoteAmount: mustBigAmount("2000000000000000000000000000000000000"),    // 2×10^36
+		TxHash:  "0000000000000000000000000000000000000000000000000000000000000001",
+		OpIndex: 0, Timestamp: time.Unix(0, 0).UTC(),
+		BaseAmount:  mustBigAmount("1000000000000000000000000000000000000"), // 10^36
+		QuoteAmount: mustBigAmount("2000000000000000000000000000000000000"), // 2×10^36
 	}
 	tradeB := canonical.Trade{ // base=10^38, quote=3*10^38 → price 3
 		Source: "test", Ledger: 2,
-		TxHash:      "0000000000000000000000000000000000000000000000000000000000000002",
-		OpIndex:     0, Timestamp: time.Unix(0, 0).UTC(),
-		BaseAmount:  mustBigAmount("100000000000000000000000000000000000000"),  // 10^38
-		QuoteAmount: mustBigAmount("300000000000000000000000000000000000000"),  // 3×10^38
+		TxHash:  "0000000000000000000000000000000000000000000000000000000000000002",
+		OpIndex: 0, Timestamp: time.Unix(0, 0).UTC(),
+		BaseAmount:  mustBigAmount("100000000000000000000000000000000000000"), // 10^38
+		QuoteAmount: mustBigAmount("300000000000000000000000000000000000000"), // 3×10^38
 	}
 	// VWAP = (2e36 + 3e38) / (1e36 + 1e38) = 302e36 / 101e36 = 302/101.
 	got, err := aggregate.VWAP([]canonical.Trade{tradeA, tradeB})

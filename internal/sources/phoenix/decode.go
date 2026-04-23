@@ -16,7 +16,7 @@ type RawSwap struct {
 	Ledger   uint32
 	TxHash   string
 	OpIndex  uint32
-	Pool     string    // event.ContractID of the first arriving event
+	Pool     string // event.ContractID of the first arriving event
 	ClosedAt time.Time
 
 	// Populated slots. A nil-valued slot means we haven't seen that
