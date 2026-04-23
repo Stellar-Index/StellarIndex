@@ -36,6 +36,7 @@ type Server struct {
 	checks    []ReadyChecker
 	assets    AssetReader
 	prices    PriceReader
+	history   HistoryReader
 	meta      MetadataResolver
 	rateLimit middleware.Middleware
 	mux       *http.ServeMux
@@ -57,6 +58,10 @@ type Options struct {
 	// integrate against the wire contract before we have a
 	// reader wired.
 	Prices PriceReader
+
+	// History, when non-nil, backs /v1/history. Leave nil to return
+	// 503 on that path.
+	History HistoryReader
 	// Meta, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. Typically a *metadata.Cache wrapping a
 	// *metadata.Resolver backed by Redis.
@@ -81,6 +86,7 @@ func New(opts Options) *Server {
 		checks:    opts.ReadyChecks,
 		assets:    opts.Assets,
 		prices:    opts.Prices,
+		history:   opts.History,
 		meta:      opts.Meta,
 		rateLimit: opts.RateLimit,
 		mux:       http.NewServeMux(),
@@ -137,9 +143,11 @@ func (s *Server) mountRoutes() {
 	// the aggregator ships.
 	s.mux.HandleFunc("GET /v1/price", s.handlePrice)
 
-	// TODO(#0): /v1/history, /v1/ohlc, /v1/markets, /v1/pairs,
-	// /v1/oracle/*, /v1/account/* — follow-up PRs per
-	// docs/reference/api-design.md §5.
+	// Trade history within a time window.
+	s.mux.HandleFunc("GET /v1/history", s.handleHistory)
+
+	// TODO(#0): /v1/ohlc, /v1/markets, /v1/pairs, /v1/oracle/*,
+	// /v1/account/* — follow-up PRs per docs/reference/api-design.md §5.
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────

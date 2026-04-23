@@ -144,6 +144,7 @@ func run(cfgPath string, dryRun bool) error {
 		ReadyChecks: checks,
 		Assets:      storeAssetReader{s: store},
 		Prices:      storePriceReader{s: store},
+		History:     storeHistoryReader{s: store},
 		Meta:        sep1Cache,
 		RateLimit:   rateLimit,
 	})
@@ -236,6 +237,15 @@ func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 		return v1.AssetDetail{}, v1.ErrAssetNotFound
 	}
 	return assetToDetail(a), nil
+}
+
+// storeHistoryReader adapts *timescale.Store to v1.HistoryReader.
+// Pure passthrough: the store already returns []canonical.Trade
+// ordered by ts ASC, which is exactly what the handler expects.
+type storeHistoryReader struct{ s *timescale.Store }
+
+func (r storeHistoryReader) TradesInRange(ctx context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
+	return r.s.TradesInRange(ctx, pair, from, to, limit)
 }
 
 // storePriceReader adapts *timescale.Store to v1.PriceReader.

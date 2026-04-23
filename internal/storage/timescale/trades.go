@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 )
@@ -103,6 +104,81 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradesForPair rows: %w", err)
+	}
+	return out, nil
+}
+
+// TradesInRange returns trades for the given pair whose close-time
+// falls in [from, to). Ordered by (ts ASC, ledger ASC) — chronological,
+// which is what OHLC / VWAP callers want.
+//
+// limit clamps the returned count to avoid runaway queries; pass 0
+// or negative for the default of 1000. The hard ceiling is 10000.
+//
+// An empty slice + nil error means the pair has no trades in the
+// window — not an error. Callers distinguish "empty" from "error"
+// by testing len(rows).
+func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	if to.Before(from) {
+		return nil, fmt.Errorf("timescale: TradesInRange: to %v < from %v", to, from)
+	}
+	const q = `
+        SELECT source, ledger, tx_hash, op_index, ts,
+               base_asset, quote_asset,
+               base_amount, quote_amount,
+               COALESCE(maker, ''), COALESCE(taker, '')
+          FROM trades
+         WHERE base_asset  = $1
+           AND quote_asset = $2
+           AND ts         >= $3
+           AND ts          < $4
+         ORDER BY ts ASC, ledger ASC
+         LIMIT $5
+    `
+	rows, err := s.db.QueryContext(ctx, q,
+		p.Base.String(), p.Quote.String(),
+		from.UTC(), to.UTC(), limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: TradesInRange: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []canonical.Trade
+	for rows.Next() {
+		var t canonical.Trade
+		var baseAsset, quoteAsset string
+		if err := rows.Scan(
+			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
+			&baseAsset, &quoteAsset,
+			&t.BaseAmount, &t.QuoteAmount,
+			&t.Maker, &t.Taker,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: TradesInRange scan: %w", err)
+		}
+		base, err := canonical.ParseAsset(baseAsset)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: TradesInRange base %q: %w", baseAsset, err)
+		}
+		quote, err := canonical.ParseAsset(quoteAsset)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: TradesInRange quote %q: %w", quoteAsset, err)
+		}
+		pair, err := canonical.NewPair(base, quote)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: TradesInRange pair: %w", err)
+		}
+		t.Pair = pair
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: TradesInRange rows: %w", err)
 	}
 	return out, nil
 }
