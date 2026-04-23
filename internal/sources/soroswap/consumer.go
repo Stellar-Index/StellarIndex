@@ -249,10 +249,33 @@ func (s *Source) filters() []stellarrpc.EventFilter {
 
 // recordNewPair learns token mappings from factory events. The new_pair
 // event's topic carries the two token contract addresses.
+//
+// Not yet wired to the real SCVal decoder (stub). When it lands,
+// call setPair with the decoded identities — lock safety is
+// already handled there.
 func (s *Source) recordNewPair(e *stellarrpc.Event) {
 	// TODO(#0): real decode — topic[1] = token0, topic[2] = token1,
-	// event body = pair contract address. Stub for now.
+	// event body = pair contract address. For now the stub does
+	// nothing; pair metadata only comes from WithSeededPairTokens.
 	_ = e
+}
+
+// setPair inserts or replaces a pair → tokens entry. Holds the
+// write lock for the duration, so it's safe to call from any
+// goroutine (including processPage — which runs on the source's
+// main goroutine today but could be parallelised later).
+func (s *Source) setPair(pair string, tokens pairTokens) {
+	s.pairTokensM.Lock()
+	defer s.pairTokensM.Unlock()
+	s.pairTokens[pair] = tokens
+}
+
+// SeedPair is the exported form of setPair for operator tooling
+// (ratesengine-ops) to warm the cache from Timescale on startup.
+// Same locking guarantees — safe to call before Run or concurrent
+// with it.
+func (s *Source) SeedPair(pair string, token0, token1 canonical.Asset) {
+	s.setPair(pair, pairTokens{Token0: token0, Token1: token1})
 }
 
 func (s *Source) lookupPair(pair string) (pairTokens, bool) {
