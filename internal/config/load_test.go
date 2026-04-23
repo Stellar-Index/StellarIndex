@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -114,6 +115,94 @@ func TestLoad_missingFileErrorsNice(t *testing.T) {
 	if !strings.Contains(err.Error(), "not/a/real") {
 		t.Errorf("error should include the path: %v", err)
 	}
+}
+
+func TestApplyEnvOverrides_CoversEveryEnvTag(t *testing.T) {
+	// Drift check: every field in the config schema that declares an
+	// `env:"…"` tag MUST be honoured by ApplyEnvOverrides. Without
+	// this test a new secret-referencing field could ship with the
+	// env override silently ignored.
+	fields := cfg.Describe()
+	var envVars []string
+	for _, f := range fields {
+		if f.Env != "" {
+			envVars = append(envVars, f.Env)
+		}
+	}
+	if len(envVars) == 0 {
+		t.Fatal("schema produced zero env-tagged fields — Describe() regression?")
+	}
+
+	// Use a sentinel that can't arise from defaults so we can tell
+	// whether the override landed.
+	const sentinel = "_test_env_override_sentinel_"
+	for _, name := range envVars {
+		t.Setenv(name, sentinel+name)
+	}
+
+	c := cfg.Default()
+	c.ApplyEnvOverrides()
+
+	// Serialise the fields via reflect and check that every env-
+	// tagged leaf's value starts with the sentinel.
+	for _, f := range envVars {
+		val := lookupFieldByEnv(&c, f, fields)
+		if val == "" {
+			t.Errorf("env override %s: field value is empty — ApplyEnvOverrides didn't wire this field",
+				f)
+			continue
+		}
+		if !strings.HasPrefix(val, sentinel) {
+			t.Errorf("env override %s: field value %q doesn't start with sentinel — ApplyEnvOverrides ignored this env var",
+				f, val)
+		}
+	}
+}
+
+// lookupFieldByEnv walks the config via reflect to find the field
+// whose `env:` tag matches envName, then returns its stringified
+// value. Supports only string leaves (which is what all env-tagged
+// fields are today).
+func lookupFieldByEnv(c *cfg.Config, envName string, fields []cfg.SchemaField) string {
+	v := reflect.ValueOf(c).Elem()
+	for _, f := range fields {
+		if f.Env != envName {
+			continue
+		}
+		return reflectStringFromPath(v, f.Path)
+	}
+	return ""
+}
+
+// reflectStringFromPath walks a dotted path like
+// "storage.postgres_dsn" down the struct via its toml tags.
+func reflectStringFromPath(root reflect.Value, path string) string {
+	parts := strings.Split(path, ".")
+	cur := root
+	for _, p := range parts {
+		cur = findFieldByTOMLTag(cur, p)
+		if !cur.IsValid() {
+			return ""
+		}
+	}
+	if cur.Kind() == reflect.String {
+		return cur.String()
+	}
+	return ""
+}
+
+func findFieldByTOMLTag(v reflect.Value, tag string) reflect.Value {
+	if v.Kind() != reflect.Struct {
+		return reflect.Value{}
+	}
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		ft := t.Field(i)
+		if ft.Tag.Get("toml") == tag {
+			return v.Field(i)
+		}
+	}
+	return reflect.Value{}
 }
 
 func TestApplyEnvOverrides(t *testing.T) {
