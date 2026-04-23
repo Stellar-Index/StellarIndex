@@ -13,6 +13,11 @@ import (
 // OHLCBar is the wire shape for /v1/ohlc entries. All prices are
 // decimal strings (ADR-0003). volume fields are in the asset's
 // smallest unit (stroop-equivalent).
+//
+// Truncated signals the window had more trades than the server's
+// per-request cap — High/Low may not reflect the actual extreme
+// in the window (only in the chronologically-first N trades). See
+// VWAPResult.Truncated for the same semantics.
 type OHLCBar struct {
 	From        time.Time `json:"from"`
 	To          time.Time `json:"to"`
@@ -23,6 +28,7 @@ type OHLCBar struct {
 	BaseVolume  string    `json:"base_volume"`
 	QuoteVolume string    `json:"quote_volume"`
 	TradeCount  int       `json:"trade_count"`
+	Truncated   bool      `json:"truncated"`
 }
 
 // ohlcPriceDigits is how many fractional digits the wire OHLC
@@ -110,6 +116,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		BaseVolume:  bar.BaseVolume.String(),
 		QuoteVolume: bar.QuoteVolume.String(),
 		TradeCount:  bar.TradeCount,
+		Truncated:   len(trades) == maxTradesForOHLC,
 	}, Flags{})
 }
 

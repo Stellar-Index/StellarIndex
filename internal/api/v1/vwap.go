@@ -21,6 +21,12 @@ import (
 // OutliersFiltered reports how many trades the sigma filter
 // removed before the VWAP computation — zero when outlier_sigma=0
 // was passed or there weren't enough samples for the filter.
+//
+// Truncated is true when the window had MORE than the server's
+// max-trades cap (10000 today) — the returned Price is then only
+// over the chronologically-first 10000 trades and is NOT the true
+// window VWAP. Clients should narrow the window and retry, or
+// request the pre-computed rollup from the aggregator once it ships.
 type VWAPResult struct {
 	From             time.Time `json:"from"`
 	To               time.Time `json:"to"`
@@ -29,6 +35,7 @@ type VWAPResult struct {
 	QuoteVolume      string    `json:"quote_volume"`
 	TradeCount       int       `json:"trade_count"`
 	OutliersFiltered int       `json:"outliers_filtered"`
+	Truncated        bool      `json:"truncated"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -78,6 +85,11 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		sigma = v
 	}
 
+	// maxTrades caps each single-shot aggregation. Hitting the cap
+	// means the computed VWAP is only over the first N trades and
+	// we flag the response truncated=true. Once the aggregator binary
+	// is wired, pre-computed rollups replace this raw scan and the
+	// cap becomes irrelevant.
 	const maxTrades = 10000
 	trades, err := reader.TradesInRange(r.Context(), pair, from, to, maxTrades)
 	if err != nil {
@@ -132,5 +144,6 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		QuoteVolume:      aggregate.TotalQuoteVolume(trades).String(),
 		TradeCount:       len(trades),
 		OutliersFiltered: outliersFiltered,
+		Truncated:        pre == maxTrades,
 	}, Flags{})
 }

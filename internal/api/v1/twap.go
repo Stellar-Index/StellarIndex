@@ -13,12 +13,15 @@ import (
 //
 // Price is the time-weighted mean as a decimal string (10-digit
 // precision, consistent with VWAP / OHLC). TradeCount is the number
-// of trades that contributed to the weighting.
+// of trades that contributed to the weighting. Truncated signals
+// the window had more trades than the server's per-request cap;
+// see VWAPResult.Truncated for the same semantics.
 type TWAPResult struct {
 	From       time.Time `json:"from"`
 	To         time.Time `json:"to"`
 	Price      string    `json:"price"`
 	TradeCount int       `json:"trade_count"`
+	Truncated  bool      `json:"truncated"`
 }
 
 // handleTWAP serves GET /v1/twap?base=...&quote=...&from=...&to=...
@@ -91,5 +94,6 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		To:         to,
 		Price:      ratToDecimal(price, ohlcPriceDigits),
 		TradeCount: len(trades),
+		Truncated:  len(trades) == maxTrades,
 	}, Flags{})
 }
