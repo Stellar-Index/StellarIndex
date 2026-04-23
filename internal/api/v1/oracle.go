@@ -1,0 +1,155 @@
+package v1
+
+import (
+	"context"
+	"math/big"
+	"net/http"
+	"time"
+
+	"github.com/RatesEngine/rates-engine/internal/canonical"
+)
+
+// OracleReader is the storage-side interface for /v1/oracle/latest
+// lookups.
+type OracleReader interface {
+	// LatestOracleUpdatesForAsset returns the most-recent observation
+	// per source for asset. sourceFilter="" returns every source;
+	// a non-empty value restricts to that single source.
+	//
+	// Empty slice + nil error means "no observations" — that's
+	// distinct from an error.
+	LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error)
+}
+
+// OracleReading is the wire shape for /v1/oracle/latest entries.
+//
+// Price is rendered as a decimal string scaled by Decimals. We
+// report both the normalised decimal AND the raw integer + decimals
+// scale so sophisticated clients can verify the rendering.
+type OracleReading struct {
+	Source     string    `json:"source"`
+	ContractID string    `json:"contract_id,omitempty"`
+	Asset      string    `json:"asset"`
+	Quote      string    `json:"quote"`
+	Timestamp  time.Time `json:"ts"`
+
+	// Price is the human-facing decimal string at Decimals scale.
+	Price string `json:"price"`
+
+	// PriceRaw is the underlying integer value at Decimals scale,
+	// preserved for cross-checks (ADR-0003 — never lose the raw).
+	PriceRaw string `json:"price_raw"`
+
+	// Decimals is the source-declared scale. 14 for Reflector.
+	Decimals uint8 `json:"decimals"`
+
+	// Confidence is the oracle's own confidence score (0–1) when
+	// published. Zero means "not reported", not "zero confidence."
+	Confidence float64 `json:"confidence,omitempty"`
+
+	// Observer is the on-chain account that published the update
+	// (typically a Reflector relayer). Empty when unknown.
+	Observer string `json:"observer,omitempty"`
+}
+
+// handleOracleLatest serves GET /v1/oracle/latest?asset=<id>&source=<name>.
+//
+// With no source filter: returns an array of OracleReading, one per
+// source that has observed the asset. With a source filter: returns
+// an array of at most one element.
+//
+// 200 with empty array when no observations exist — callers treat
+// this as "nothing to report," not an error. That matches the
+// behaviour of /v1/history.
+func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
+	reader := s.oracle
+	if reader == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/oracle-unavailable",
+			"Oracle readings not configured", http.StatusServiceUnavailable,
+			"this deployment has no OracleReader wired — check binary configuration")
+		return
+	}
+
+	rawAsset := r.URL.Query().Get("asset")
+	if rawAsset == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/missing-asset",
+			"Missing asset parameter", http.StatusBadRequest,
+			"asset query parameter is required")
+		return
+	}
+	asset, err := canonical.ParseAsset(rawAsset)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			err.Error())
+		return
+	}
+
+	source := r.URL.Query().Get("source") // optional
+
+	updates, err := reader.LatestOracleUpdatesForAsset(r.Context(), asset, source)
+	if err != nil {
+		s.logger.Error("LatestOracleUpdatesForAsset failed",
+			"err", err, "asset", asset.String(), "source", source)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+
+	rows := make([]OracleReading, len(updates))
+	for i, u := range updates {
+		rows[i] = oracleReadingFrom(u)
+	}
+	writeJSON(w, rows, Flags{})
+}
+
+// oracleReadingFrom converts canonical.OracleUpdate → wire shape,
+// rendering Price at its declared Decimals scale.
+func oracleReadingFrom(u canonical.OracleUpdate) OracleReading {
+	return OracleReading{
+		Source:     u.Source,
+		ContractID: u.ContractID,
+		Asset:      u.Asset.String(),
+		Quote:      u.Quote.String(),
+		Timestamp:  u.Timestamp,
+		Price:      scaledDecimalString(u.Price.BigInt(), u.Decimals),
+		PriceRaw:   u.Price.String(),
+		Decimals:   u.Decimals,
+		Confidence: u.Confidence,
+		Observer:   u.Observer,
+	}
+}
+
+// scaledDecimalString renders integer/10^decimals as a decimal
+// string, truncating (floor) to `decimals` fractional digits.
+// Preserves sign correctly. Consistent with priceRatioDecimal /
+// ratToDecimal.
+func scaledDecimalString(value *big.Int, decimals uint8) string {
+	if value == nil {
+		return "0"
+	}
+	if decimals == 0 {
+		return value.String()
+	}
+
+	sign := ""
+	abs := new(big.Int).Abs(value)
+	if value.Sign() < 0 {
+		sign = "-"
+	}
+
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	integerPart, fracPart := new(big.Int).DivMod(abs, scale, new(big.Int))
+
+	// Pad fractional part to `decimals` digits.
+	frac := fracPart.String()
+	if len(frac) < int(decimals) {
+		pad := int(decimals) - len(frac)
+		frac = leftPad(frac, pad, '0')
+	}
+	return sign + integerPart.String() + "." + frac
+}

@@ -38,6 +38,7 @@ type Server struct {
 	prices    PriceReader
 	history   HistoryReader
 	markets   MarketsReader
+	oracle    OracleReader
 	meta      MetadataResolver
 	rateLimit middleware.Middleware
 	mux       *http.ServeMux
@@ -68,6 +69,10 @@ type Options struct {
 	// handler serves an empty list (mirrors /v1/assets' pattern so
 	// clients can integrate before the data is available).
 	Markets MarketsReader
+
+	// Oracle, when non-nil, backs /v1/oracle/latest. Leave nil to
+	// return 503 on that path.
+	Oracle OracleReader
 	// Meta, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. Typically a *metadata.Cache wrapping a
 	// *metadata.Resolver backed by Redis.
@@ -94,6 +99,7 @@ func New(opts Options) *Server {
 		prices:    opts.Prices,
 		history:   opts.History,
 		markets:   opts.Markets,
+		oracle:    opts.Oracle,
 		meta:      opts.Meta,
 		rateLimit: opts.RateLimit,
 		mux:       http.NewServeMux(),
@@ -159,7 +165,10 @@ func (s *Server) mountRoutes() {
 	// Distinct trading pairs.
 	s.mux.HandleFunc("GET /v1/markets", s.handleMarkets)
 
-	// TODO(#0): /v1/pairs (alias), /v1/oracle/*, /v1/account/*
+	// Latest oracle readings per source for an asset.
+	s.mux.HandleFunc("GET /v1/oracle/latest", s.handleOracleLatest)
+
+	// TODO(#0): /v1/pairs (alias), /v1/account/*, SSE streams
 	// — follow-up PRs per docs/reference/api-design.md §5.
 }
 

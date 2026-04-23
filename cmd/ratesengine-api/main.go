@@ -146,6 +146,7 @@ func run(cfgPath string, dryRun bool) error {
 		Prices:      storePriceReader{s: store},
 		History:     storeHistoryReader{s: store},
 		Markets:     storeMarketsReader{s: store},
+		Oracle:      storeOracleReader{s: store},
 		Meta:        sep1Cache,
 		RateLimit:   rateLimit,
 	})
@@ -260,6 +261,13 @@ func (r storeMarketsReader) DistinctPairs(ctx context.Context, cursor string, li
 		}
 	}
 	return out, next, nil
+}
+
+// storeOracleReader adapts *timescale.Store to v1.OracleReader.
+type storeOracleReader struct{ s *timescale.Store }
+
+func (r storeOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
+	return r.s.LatestOracleUpdatesForAsset(ctx, asset, sourceFilter)
 }
 
 // storeHistoryReader adapts *timescale.Store to v1.HistoryReader.
