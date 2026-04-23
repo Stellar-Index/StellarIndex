@@ -57,6 +57,7 @@ fi
 
 echo "Checking API routes vs OpenAPI..."
 if [ -d internal/api/v1 ] && [ -f openapi/rates-engine.v1.yaml ]; then
+  # Forward: handlers that aren't in the spec (client misses them).
   grep -rhoE 'HandleFunc\("[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
     sed -E 's|.*"[A-Z]+ /v1||; s|"$||' | \
     sed -E 's|^$|/|' | \
@@ -65,6 +66,33 @@ if [ -d internal/api/v1 ] && [ -f openapi/rates-engine.v1.yaml ]; then
       # OpenAPI path entries look like `  /ohlc:` at 2-space indent.
       if ! grep -qE "^  ${route}:" openapi/rates-engine.v1.yaml; then
         err "Route '$route' is registered in handlers but missing from OpenAPI spec"
+      fi
+  done
+
+  # Reverse: spec entries that have no handler (clients 404).
+  # The planned_regex below is the explicit allow-list of
+  # "documented but not yet shipped" — deliberately adjusted in
+  # a docs PR when endpoints land or get cut.
+  planned_regex='^/(price/batch|price/stream|history/since-inception|pairs|oracle/lastprice|oracle/prices|oracle/x_last_price|account/me|account/usage|account/keys|assets/\{asset_id\}/metadata)$'
+  grep -oE "^  /[^:]+:" openapi/rates-engine.v1.yaml | \
+    sed -E 's|^  ||; s|:$||' | sort -u | while IFS= read -r route; do
+      [ -z "$route" ] && continue
+      if [[ "$route" =~ $planned_regex ]]; then
+        continue
+      fi
+      # Fixed-string search (no regex) so Go 1.22 path params
+      # like /assets/{asset_id} don't get interpreted as regex
+      # quantifiers. Enumerate methods we use today — extend the
+      # list when we add write verbs.
+      found=0
+      for method in GET POST PUT PATCH DELETE; do
+        if grep -qrF "HandleFunc(\"${method} /v1${route}\"" internal/api/v1/ 2>/dev/null; then
+          found=1
+          break
+        fi
+      done
+      if [ "$found" -eq 0 ]; then
+        err "OpenAPI path '$route' has no handler. Add a handler or add it to planned_regex in lint-docs.sh"
       fi
   done
 fi
