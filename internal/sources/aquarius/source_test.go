@@ -139,6 +139,74 @@ func TestDecodeTrade_stableswapFourAssetSingleInOut(t *testing.T) {
 	}
 }
 
+func TestDecodeTrade_multiTradeFanoutUniqueOpIndex(t *testing.T) {
+	// Pathological stableswap event: user put USDC+USDT in, got
+	// BUSD+DAI out (atomic multi-asset swap). The decoder emits 4
+	// (in_i, out_j) records. Without a fanout scheme they'd all
+	// share op_index — and InsertTrade's ON CONFLICT would silently
+	// drop all but the first.
+	usdc, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	usdt, _ := canonical.NewClassicAsset("USDT", "GB5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	busd, _ := canonical.NewClassicAsset("BUSD", "GC5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	dai, _ := canonical.NewClassicAsset("DAI", "GD5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	pool := PoolInfo{
+		Type:   PoolStableswap,
+		Tokens: []canonical.Asset{usdc, usdt, busd, dai},
+	}
+
+	prev := decodeTradeAmounts
+	defer func() { decodeTradeAmounts = prev }()
+	decodeTradeAmounts = func(_ string) ([]canonical.Amount, []canonical.Amount, string, error) {
+		return []canonical.Amount{
+				canonical.NewAmount(big.NewInt(100)),
+				canonical.NewAmount(big.NewInt(100)),
+				canonical.NewAmount(big.NewInt(0)),
+				canonical.NewAmount(big.NewInt(0)),
+			}, []canonical.Amount{
+				canonical.NewAmount(big.NewInt(0)),
+				canonical.NewAmount(big.NewInt(0)),
+				canonical.NewAmount(big.NewInt(100)),
+				canonical.NewAmount(big.NewInt(100)),
+			}, "", nil
+	}
+
+	e := &stellarrpc.Event{
+		Ledger: 42, OperationIndex: 3,
+		TxHash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	}
+	trades, err := decodeTrade(e, pool, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 non-zero in × 2 non-zero out = 4 trades.
+	if len(trades) != 4 {
+		t.Fatalf("got %d trades, want 4 (2×2 fanout)", len(trades))
+	}
+
+	// Every op_index must be unique and distinct from e.OperationIndex
+	// alone (proves the synthetic fanout is applied).
+	seen := map[uint32]bool{}
+	for i, tr := range trades {
+		if seen[tr.OpIndex] {
+			t.Errorf("trade %d has duplicate OpIndex %d", i, tr.OpIndex)
+		}
+		seen[tr.OpIndex] = true
+	}
+	if len(seen) != 4 {
+		t.Errorf("op_index uniqueness violated: %d unique in %d trades", len(seen), len(trades))
+	}
+
+	// Sanity: trade.ID() (source:ledger:tx:opindex) is what the
+	// primary key collides on — every ID must be distinct.
+	ids := map[string]bool{}
+	for _, tr := range trades {
+		ids[tr.ID()] = true
+	}
+	if len(ids) != 4 {
+		t.Errorf("trade ID uniqueness violated: %d unique in %d trades", len(ids), len(trades))
+	}
+}
+
 func TestDecodeTrade_concentratedRefused(t *testing.T) {
 	pool := PoolInfo{Type: PoolConcentrated, Tokens: []canonical.Asset{canonical.NativeAsset(), canonical.NativeAsset()}}
 	_, err := decodeTrade(&stellarrpc.Event{}, pool, time.Now())
