@@ -269,6 +269,78 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OHLCEnvelope" }
 
+  /vwap:
+    get:
+      tags: [prices]
+      summary: Volume-weighted average price over a window.
+      description: |
+        Returns VWAP = Σ(quote) / Σ(base) for every trade in
+        [from, to) for the given pair. Optional outlier filter
+        drops prices > N σ from the window mean. When the window
+        has more than the server's per-request cap (10000 trades)
+        the response carries `truncated: true` — the price
+        reflects only the chronologically-first N trades, not the
+        full window.
+      parameters:
+        - { $ref: "#/components/parameters/Base" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - name: outlier_sigma
+          in: query
+          schema: { type: number, minimum: 0 }
+          description: "Drop trades > N σ from window mean. 0 disables (default)."
+      responses:
+        "200":
+          description: Volume-weighted price + volumes + trade count.
+          content: { application/json: { schema: { type: object } } }
+        "404":
+          description: No trades in window.
+        "422":
+          description: All trades filtered as outliers.
+
+  /twap:
+    get:
+      tags: [prices]
+      summary: Time-weighted average price over a window.
+      description: |
+        Each trade's price is active from its timestamp to the
+        next trade's (or windowEnd for the last). TWAP is the
+        duration-weighted mean. No outlier filter: time-weighting
+        is itself outlier-resistant (spurious prints get only
+        their slot duration, not a full window's worth).
+      parameters:
+        - { $ref: "#/components/parameters/Base" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+      responses:
+        "200":
+          description: Time-weighted price + trade count.
+          content: { application/json: { schema: { type: object } } }
+        "404":
+          description: No trades in window.
+
+  /oracle/latest:
+    get:
+      tags: [oracle]
+      summary: Latest oracle reading per source for an asset.
+      description: |
+        Returns one OracleReading per source (reflector-dex /
+        reflector-cex / reflector-fx / future redstone / band
+        etc.) that has observed the asset. Optional source
+        filter restricts to a single source.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - name: source
+          in: query
+          schema: { type: string }
+          description: "Optional. Restrict to a single source name."
+      responses:
+        "200":
+          description: Array of OracleReading (empty when no observations).
+          content: { application/json: { schema: { type: object } } }
+
   /markets:
     get:
       tags: [markets]
@@ -448,6 +520,12 @@ components:
       schema:
         type: string
         enum: [1m, 15m, 1h, 4h, 1d, 1w, 1mo]
+    Base:
+      name: base
+      in: query
+      required: true
+      schema: { type: string }
+      description: Canonical asset identifier for the base side of a pair.
     From:
       name: from
       in: query
