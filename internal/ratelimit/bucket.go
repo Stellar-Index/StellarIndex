@@ -120,6 +120,12 @@ end
 return {current, 0}
 `
 
+// luaScript is compiled once at package init. go-redis's Script
+// caches the SHA inside the value; re-creating it per Take() call
+// wasted a SHA-1 + string-alloc on every rate-limit check. One
+// compile per process is enough — the Lua source is immutable.
+var luaScript = redis.NewScript(lua)
+
 // Take increments the counter for key in the current window and
 // returns whether the request is allowed. One Redis round-trip.
 //
@@ -130,8 +136,7 @@ func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 	rlKey := b.keyPrefix + key + ":" + strconv.FormatInt(minute, 10)
 	ttlSeconds := int(b.window.Seconds() * 2) // double-window TTL drains naturally
 
-	script := redis.NewScript(lua)
-	resRaw, err := script.Run(ctx, b.rdb, []string{rlKey},
+	resRaw, err := luaScript.Run(ctx, b.rdb, []string{rlKey},
 		ttlSeconds, b.max,
 	).Result()
 	if err != nil {
