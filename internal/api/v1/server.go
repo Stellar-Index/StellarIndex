@@ -41,6 +41,7 @@ type Server struct {
 	markets   MarketsReader
 	oracle    OracleReader
 	meta      MetadataResolver
+	cors      middleware.Middleware
 	rateLimit middleware.Middleware
 	mux       *http.ServeMux
 	started   time.Time
@@ -79,6 +80,13 @@ type Options struct {
 	// *metadata.Resolver backed by Redis.
 	Meta MetadataResolver
 
+	// CORS, when non-nil, is inserted above RateLimit in the
+	// middleware stack. Preflight OPTIONS requests short-circuit
+	// before the rate-limit counter increments. Typically
+	// constructed via middleware.CORS(...) with AllowedOrigins
+	// drawn from cfg.API.AllowedOrigins.
+	CORS middleware.Middleware
+
 	// RateLimit, when non-nil, is appended to the middleware stack
 	// as the innermost wrapper — so the Logger middleware has
 	// already populated remote_ip into the request context.
@@ -102,6 +110,7 @@ func New(opts Options) *Server {
 		markets:   opts.Markets,
 		oracle:    opts.Oracle,
 		meta:      opts.Meta,
+		cors:      opts.CORS,
 		rateLimit: opts.RateLimit,
 		mux:       http.NewServeMux(),
 		started:   time.Now().UTC(),
@@ -112,21 +121,25 @@ func New(opts Options) *Server {
 
 // Handler returns the mux wrapped in the standard middleware stack
 // (outermost-first): RequestID → HTTPMetrics → Logger → Recoverer
-// → [optional RateLimit].
+// → [optional CORS] → [optional RateLimit].
 //
 // HTTPMetrics sits inside RequestID so future trace-exemplar links
 // work, and outside Logger+Recoverer so metrics count every
 // request including those where the handler panicked.
 //
-// RateLimit runs innermost — AFTER Logger populates remote_ip into
-// the context, so middleware.RemoteIPFrom returns a meaningful key.
-// When opts.RateLimit is nil the middleware is skipped entirely.
+// CORS runs outside RateLimit so preflight OPTIONS requests don't
+// consume rate-limit budget. RateLimit runs innermost — AFTER
+// Logger populates remote_ip into the context, so
+// middleware.RemoteIPFrom returns a meaningful key.
 func (s *Server) Handler() http.Handler {
 	stack := []middleware.Middleware{
 		middleware.RequestID,
 		obs.HTTPMetrics,
 		middleware.Logger(s.logger),
 		middleware.Recoverer(s.logger),
+	}
+	if s.cors != nil {
+		stack = append(stack, s.cors)
 	}
 	if s.rateLimit != nil {
 		stack = append(stack, s.rateLimit)
