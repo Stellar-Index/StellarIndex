@@ -220,14 +220,15 @@ func TestHistory_NoCursorWhenPageNotFull(t *testing.T) {
 }
 
 func TestHistory_CursorForwardedToReader(t *testing.T) {
-	// A valid cursor decodes to the (ts, ledger) pair that was
-	// encoded, and gets forwarded to the reader.
-	reader := &stubHistoryReader{trades: []canonical.Trade{mkHistTrade(100)}}
+	// A valid cursor decodes to the full PK tuple (ts, ledger,
+	// tx_hash, op_index, source) and gets forwarded to the reader.
+	// Widening the cursor to full PK (see history.go) means we must
+	// also verify tx_hash and source round-trip.
+	reader := &stubHistoryReader{trades: []canonical.Trade{mkHistTrade(100), mkHistTrade(101)}}
 	srv := v1.New(v1.Options{History: reader})
 	ts := httpTestServer(t, srv)
 
 	// First request → get a cursor back.
-	reader.trades = []canonical.Trade{mkHistTrade(100), mkHistTrade(101)}
 	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=2")
 	var env struct {
 		Pagination *struct {
@@ -240,17 +241,30 @@ func TestHistory_CursorForwardedToReader(t *testing.T) {
 	}
 	next := env.Pagination.Next
 
-	// Second request with that cursor → reader sees non-zero
-	// afterTs / afterLedger.
+	// Second request with that cursor — reader sees every full-PK
+	// component populated.
 	reader.lastCall.afterTs = time.Time{}
 	reader.lastCall.afterLedger = 0
+	reader.lastCall.afterTxHash = ""
+	reader.lastCall.afterSource = ""
+	reader.lastCall.afterOpIndex = 0
 	_ = mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&cursor="+next)
+
+	last := reader.trades[len(reader.trades)-1]
 	if reader.lastCall.afterTs.IsZero() {
 		t.Error("cursor not decoded into afterTs")
 	}
-	if reader.lastCall.afterLedger == 0 {
-		// mkHistTrade uses Ledger=1, so decoded cursor should be 1 too.
-		t.Errorf("afterLedger = 0, want 1 (from the returned trade)")
+	if reader.lastCall.afterLedger != last.Ledger {
+		t.Errorf("afterLedger = %d, want %d", reader.lastCall.afterLedger, last.Ledger)
+	}
+	if reader.lastCall.afterTxHash != last.TxHash {
+		t.Errorf("afterTxHash = %q, want %q", reader.lastCall.afterTxHash, last.TxHash)
+	}
+	if reader.lastCall.afterSource != last.Source {
+		t.Errorf("afterSource = %q, want %q", reader.lastCall.afterSource, last.Source)
+	}
+	if reader.lastCall.afterOpIndex != last.OpIndex {
+		t.Errorf("afterOpIndex = %d, want %d", reader.lastCall.afterOpIndex, last.OpIndex)
 	}
 }
 
