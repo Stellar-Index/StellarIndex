@@ -145,6 +145,7 @@ func run(cfgPath string, dryRun bool) error {
 		Assets:      storeAssetReader{s: store},
 		Prices:      storePriceReader{s: store},
 		History:     storeHistoryReader{s: store},
+		Markets:     storeMarketsReader{s: store},
 		Meta:        sep1Cache,
 		RateLimit:   rateLimit,
 	})
@@ -237,6 +238,28 @@ func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 		return v1.AssetDetail{}, v1.ErrAssetNotFound
 	}
 	return assetToDetail(a), nil
+}
+
+// storeMarketsReader adapts *timescale.Store to v1.MarketsReader.
+// Translates timescale.Market (typed Pair) to v1.Market (string
+// wire shape) so the API layer owns its own schema.
+type storeMarketsReader struct{ s *timescale.Store }
+
+func (r storeMarketsReader) DistinctPairs(ctx context.Context, cursor string, limit int) ([]v1.Market, string, error) {
+	rows, next, err := r.s.DistinctPairs(ctx, cursor, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	out := make([]v1.Market, len(rows))
+	for i, m := range rows {
+		out[i] = v1.Market{
+			Base:          m.Pair.Base.String(),
+			Quote:         m.Pair.Quote.String(),
+			LastTradeAt:   m.LastTradeAt,
+			TradeCount24h: m.TradeCount24h,
+		}
+	}
+	return out, next, nil
 }
 
 // storeHistoryReader adapts *timescale.Store to v1.HistoryReader.

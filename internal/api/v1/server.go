@@ -37,6 +37,7 @@ type Server struct {
 	assets    AssetReader
 	prices    PriceReader
 	history   HistoryReader
+	markets   MarketsReader
 	meta      MetadataResolver
 	rateLimit middleware.Middleware
 	mux       *http.ServeMux
@@ -62,6 +63,11 @@ type Options struct {
 	// History, when non-nil, backs /v1/history. Leave nil to return
 	// 503 on that path.
 	History HistoryReader
+
+	// Markets, when non-nil, backs /v1/markets. Leave nil and the
+	// handler serves an empty list (mirrors /v1/assets' pattern so
+	// clients can integrate before the data is available).
+	Markets MarketsReader
 	// Meta, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. Typically a *metadata.Cache wrapping a
 	// *metadata.Resolver backed by Redis.
@@ -87,6 +93,7 @@ func New(opts Options) *Server {
 		assets:    opts.Assets,
 		prices:    opts.Prices,
 		history:   opts.History,
+		markets:   opts.Markets,
 		meta:      opts.Meta,
 		rateLimit: opts.RateLimit,
 		mux:       http.NewServeMux(),
@@ -149,7 +156,10 @@ func (s *Server) mountRoutes() {
 	// Single-bar OHLC over a time window.
 	s.mux.HandleFunc("GET /v1/ohlc", s.handleOHLC)
 
-	// TODO(#0): /v1/markets, /v1/pairs, /v1/oracle/*, /v1/account/*
+	// Distinct trading pairs.
+	s.mux.HandleFunc("GET /v1/markets", s.handleMarkets)
+
+	// TODO(#0): /v1/pairs (alias), /v1/oracle/*, /v1/account/*
 	// — follow-up PRs per docs/reference/api-design.md §5.
 }
 
