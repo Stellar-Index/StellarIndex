@@ -95,10 +95,19 @@ type Options struct {
 // production callers use NewResolver's built-in client with its
 // SSRF-guarded transport + timeouts.
 //
+// Preserves our CheckRedirect policy on the incoming client so
+// redirect safety (cross-host + downgrade rejection) survives the
+// swap. Without this, tests that replace the client would also
+// drop security policy — making redirect-related regressions
+// invisible to the test suite.
+//
 // Use case: httptest.Server listens on 127.0.0.1 with a
 // self-signed cert; tests need a client that trusts it and allows
 // the loopback address.
 func WithClient(r *Resolver, c *http.Client) *Resolver {
+	if r.client != nil && r.client.CheckRedirect != nil {
+		c.CheckRedirect = r.client.CheckRedirect
+	}
 	r.client = c
 	return r
 }
@@ -131,17 +140,47 @@ func NewResolver(opts Options) *Resolver {
 		client: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
-			// Cap redirect chains — otherwise a malicious domain
-			// could bounce through many redirects to consume our
-			// budget.
+			// Redirect policy — three rules:
+			//
+			//   1. Cap at 5 hops so a malicious domain can't burn
+			//      our request budget with a redirect loop.
+			//   2. Reject scheme downgrade (https → http). An
+			//      attacker controlling the domain MUST NOT force
+			//      plaintext transit.
+			//   3. Reject cross-host redirects. SEP-1 is
+			//      hostname-scoped trust; a domain redirecting to
+			//      someone else's stellar.toml would poison our
+			//      cache under the original domain key.
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 5 {
 					return errors.New("sep1: stopped after 5 redirects")
+				}
+				if req.URL.Scheme != "https" {
+					return fmt.Errorf("sep1: refusing redirect to %s:// (downgrade)", req.URL.Scheme)
+				}
+				// via[0] is the original request. Compare hostnames
+				// case-insensitively + ignore port (:443 same as
+				// plain host is expected).
+				origHost := canonicalHostname(via[0].URL.Host)
+				newHost := canonicalHostname(req.URL.Host)
+				if origHost != newHost {
+					return fmt.Errorf("sep1: refusing cross-host redirect %q → %q",
+						origHost, newHost)
 				}
 				return nil
 			},
 		},
 	}
+}
+
+// canonicalHostname returns a case-folded hostname with the port
+// stripped. Used by the redirect-safety check — "EXAMPLE.com:443"
+// and "example.com" must compare equal.
+func canonicalHostname(host string) string {
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	return strings.ToLower(host)
 }
 
 // ErrSSRFBlocked is returned when a SEP-1 URL resolves to a
