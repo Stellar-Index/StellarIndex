@@ -80,13 +80,15 @@ fetched 2026-04-23:
 ## Known gaps / next-session priorities
 
 ### Blocking
-1. **Galexie not actually exporting yet.** captive-core is downloading
-   catchup data but MinIO `galexie-live` still has only a
-   `.config.json` (155 B). Either captive-core catchup is taking a
-   long time (possible; full pubnet state is ~30 GB) or there's
-   another issue downstream. Next session: check galexie's
-   captive-core storage-path size growth + journalctl for
-   first `Uploaded ledger …` line.
+1. **Galexie catchup finished, export imminent.** (Updated 2026-04-23 13:37.)
+   Galexie's embedded stellar-core completed catchup to ledger
+   62,249,470 in ~12 min from service start. Captive-core stores
+   data at `/var/lib/galexie/captive-core/` (with dash — NOT
+   `/captive/` as earlier role versions predicted). Currently
+   populating in-memory Soroban state (1,369 contracts ≈ 32 MB
+   Wasm). First MinIO upload expected within minutes after state
+   populates. Objects in galexie-live bucket: 1 (the `.config.json`
+   sentinel written at galexie startup).
 
 2. **SCVal decoders are stubs.** Nothing in our Go code actually
    decodes events yet. Even once stellar-rpc's DB is populated,
