@@ -71,6 +71,23 @@ func decodeTrade(e *stellarrpc.Event, pool PoolInfo, closedAt time.Time) ([]cano
 
 	// Find the (in, out) pairs with non-zero amounts on both sides.
 	// A naive N×N loop is fine — N is 2–4 in practice.
+	//
+	// OpIndex MUST differ across the emitted trades. The primary key
+	// on the trades hypertable is (source, ledger, tx_hash, op_index,
+	// ts); if we reused e.OperationIndex for every trade, `InsertTrade`'s
+	// ON CONFLICT DO NOTHING would silently drop all but the first.
+	//
+	// Encode a synthetic sub-index as:
+	//
+	//     op_index = e.OperationIndex × opIndexFanoutStride + subIdx
+	//
+	// where subIdx = i × opIndexFanoutStride + j, scaling the outer
+	// operation index by a stride large enough to avoid collision with
+	// adjacent operations in the same transaction. Max tokens is ~4,
+	// so stride=256 leaves room to 4×4=16 sub-indices with a 16×
+	// safety margin. Soroswap's uint32 op_index is bounded by the
+	// tx-level op count (≤ 100 per Stellar CAP-67), so we're well
+	// within overflow.
 	var out []canonical.Trade
 	for i, inAmt := range amountsIn {
 		if inAmt.Sign() <= 0 {
@@ -84,11 +101,12 @@ func decodeTrade(e *stellarrpc.Event, pool PoolInfo, closedAt time.Time) ([]cano
 			if err != nil {
 				return nil, fmt.Errorf("pair: %w", err)
 			}
+			subIdx := uint32(i)*opIndexFanoutStride + uint32(j)
 			out = append(out, canonical.Trade{
 				Source:      SourceName,
 				Ledger:      e.Ledger,
 				TxHash:      e.TxHash,
-				OpIndex:     uint32(e.OperationIndex),
+				OpIndex:     uint32(e.OperationIndex)*opIndexFanoutStride + subIdx,
 				Timestamp:   closedAt,
 				Pair:        pair,
 				BaseAmount:  inAmt,
@@ -102,6 +120,12 @@ func decodeTrade(e *stellarrpc.Event, pool PoolInfo, closedAt time.Time) ([]cano
 	}
 	return out, nil
 }
+
+// opIndexFanoutStride spaces the synthetic op_index values so
+// multi-trade events from one operation don't collide with adjacent
+// operations. 256 is overkill for 2–4 token pools but leaves
+// headroom for future pool sizes without a schema change.
+const opIndexFanoutStride = 256
 
 // ─── Stubs awaiting the SDK-backed decoder ─────────────────────────
 // decoderHooks lets tests inject fakes. In production these point
