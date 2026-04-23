@@ -101,7 +101,10 @@ fi
 
 echo "Checking metrics registry..."
 if [ -d internal/obs ] && [ -f docs/reference/metrics/README.md ]; then
-  grep -rhE 'Name:\s*"(ctx|ratesengine)_[a-z_]+"' internal/obs/ 2>/dev/null | \
+  # Prefixed metric names only. [a-z0-9_]+ (not [a-z_]+) because
+  # names like `sep1_cache_ops_total` contain digits — early
+  # revision of this regex silently missed them.
+  grep -rhE 'Name:\s*"(ctx|ratesengine)_[a-z0-9_]+"' internal/obs/ 2>/dev/null | \
     sed -E 's|.*Name:\s*"([^"]+)".*|\1|' | sort -u | while read -r metric; do
       if ! grep -qF "$metric" docs/reference/metrics/README.md; then
         err "Metric '$metric' is registered in code but not in docs/reference/metrics/README.md"
