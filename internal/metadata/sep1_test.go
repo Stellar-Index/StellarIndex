@@ -91,6 +91,67 @@ func TestResolver_HappyPath(t *testing.T) {
 	}
 }
 
+func TestResolver_RejectsRedirectToDifferentHost(t *testing.T) {
+	// Malicious issuer returns 302 pointing at someone else's
+	// stellar.toml. We must refuse, otherwise we'd cache the wrong
+	// metadata under the original domain's key.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://evil.example.com/.well-known/stellar.toml", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	r := newLocalResolver(t, srv)
+	_, err := r.Resolve(context.Background(), hostOf(t, srv))
+	if err == nil {
+		t.Fatal("expected error on cross-host redirect")
+	}
+	if !strings.Contains(err.Error(), "cross-host") {
+		t.Errorf("error should flag cross-host redirect: %v", err)
+	}
+}
+
+func TestResolver_RejectsHTTPDowngrade(t *testing.T) {
+	// Issuer redirects https → http. We refuse — SEP-1 transit must
+	// stay encrypted.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/.well-known/stellar.toml", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	r := newLocalResolver(t, srv)
+	_, err := r.Resolve(context.Background(), hostOf(t, srv))
+	if err == nil {
+		t.Fatal("expected error on http downgrade")
+	}
+	if !strings.Contains(err.Error(), "downgrade") {
+		t.Errorf("error should flag downgrade: %v", err)
+	}
+}
+
+func TestResolver_AllowsSameHostRedirect(t *testing.T) {
+	// Legitimate SEP-1 can redirect within-host (e.g. /old-path →
+	// /new-path). Must still succeed.
+	var hits int
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits == 1 {
+			http.Redirect(w, r, "/.well-known/stellar.toml?v=2", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(fixtureTOML))
+	}))
+	defer srv.Close()
+
+	r := newLocalResolver(t, srv)
+	sep, err := r.Resolve(context.Background(), hostOf(t, srv))
+	if err != nil {
+		t.Fatalf("same-host redirect should succeed: %v", err)
+	}
+	if sep.OrgName == "" {
+		t.Error("expected fixture OrgName after same-host redirect")
+	}
+}
+
 func TestResolver_404(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
