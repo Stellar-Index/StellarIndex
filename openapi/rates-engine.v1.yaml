@@ -344,15 +344,24 @@ paths:
   /markets:
     get:
       tags: [markets]
-      summary: Venue breakdown for one asset.
+      summary: Distinct trading pairs with activity summary.
+      description: |
+        One entry per (base, quote) pair present in the trades
+        store. Cursor-paginated (opaque cursor keyed on
+        `<base>|<quote>`). Each entry reports the pair's most
+        recent trade timestamp + a 24h trade count.
       parameters:
-        - { $ref: "#/components/parameters/AssetIdQuery" }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: Opaque cursor from a prior response's pagination.next.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
       responses:
         "200":
-          description: Venues + per-venue last trade + 24h volume.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MarketsEnvelope" }
+          description: Array of markets + optional next cursor.
+          content: { application/json: { schema: { type: object } } }
 
   /pairs:
     get:
