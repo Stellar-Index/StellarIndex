@@ -74,8 +74,13 @@ func New(rdb redis.Cmdable, max int, window time.Duration, opts ...Option) *Buck
 	if max <= 0 {
 		panic("ratelimit: max must be positive")
 	}
-	if window <= 0 {
-		panic("ratelimit: window must be positive")
+	// Windows below 1s would integer-divide to zero in Take()'s
+	// bucket-key derivation (`Unix() / int64(window.Seconds())` →
+	// divide by zero). The bucket scheme is inherently seconds-
+	// based; rejecting sub-second windows fails-fast instead of
+	// surfacing the panic at first request.
+	if window < time.Second {
+		panic("ratelimit: window must be >= 1s")
 	}
 	b := &Bucket{
 		rdb:       rdb,
@@ -134,7 +139,15 @@ var luaScript = redis.NewScript(lua)
 func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 	minute := b.nowFn().Unix() / int64(b.window.Seconds())
 	rlKey := b.keyPrefix + key + ":" + strconv.FormatInt(minute, 10)
-	ttlSeconds := int(b.window.Seconds() * 2) // double-window TTL drains naturally
+	// Double-window TTL so keys drain naturally. Floor-at-1 guards
+	// sub-second windows — Redis treats EXPIRE 0 as "no expiry",
+	// which would leak keys forever for any window < 500ms. 1s
+	// floor is still finite; the exact value doesn't matter because
+	// those windows would roll over on the next Take() anyway.
+	ttlSeconds := int(b.window.Seconds() * 2)
+	if ttlSeconds < 1 {
+		ttlSeconds = 1
+	}
 
 	resRaw, err := luaScript.Run(ctx, b.rdb, []string{rlKey},
 		ttlSeconds, b.max,

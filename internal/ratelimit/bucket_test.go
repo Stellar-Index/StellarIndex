@@ -183,6 +183,8 @@ func TestBucket_ZeroArgsPanic(t *testing.T) {
 		{"negative max", -1, time.Minute},
 		{"zero window", 5, 0},
 		{"negative window", 5, -time.Second},
+		{"sub-second window", 5, 500 * time.Millisecond},
+		{"millisecond window", 5, time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
