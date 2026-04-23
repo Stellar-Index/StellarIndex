@@ -1,6 +1,7 @@
 package obs_test
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -157,6 +158,37 @@ func TestHTTPMetrics_LowercaseMethodIsCanonicalised(t *testing.T) {
 		if strings.Contains(text, bad) {
 			t.Errorf("non-canonical method leaked into labels: %q", bad)
 		}
+	}
+}
+
+func TestHTTPMetrics_ClientAbortLabelled499(t *testing.T) {
+	// A handler that never calls WriteHeader combined with a
+	// ctx-cancelled request simulates the "client hung up before
+	// we wrote anything" case. Without the 499 label it'd record
+	// as 200 (statusRecorder default).
+	h := obs.HTTPMetrics(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Don't write anything; rely on ctx cancellation to
+		// indicate client abort.
+		<-r.Context().Done()
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // immediately cancelled
+	r := httptest.NewRequest("GET", "/v1/slow-op", nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, r)
+
+	ts := httptest.NewServer(obs.Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if !strings.Contains(string(body), `status="499"`) {
+		t.Errorf("expected status=\"499\" for aborted request, got:\n%s", string(body))
 	}
 }
 
