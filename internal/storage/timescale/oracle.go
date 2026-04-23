@@ -95,6 +95,73 @@ func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, a
 	return &u, nil
 }
 
+// LatestOracleUpdatesForAsset returns the most-recent observation
+// for asset from EVERY source that has observed it. Returns an
+// empty slice + nil error when the asset has no observations.
+//
+// Optional filter: if sourceFilter != "", the result is restricted
+// to that single source (equivalent to calling
+// [LatestOracleUpdateForAsset] and wrapping in a 1-element slice,
+// but with an empty slice instead of ErrNotFound for "none").
+//
+// Implementation: DISTINCT ON (source) per Postgres idiom, which
+// pairs with (source, asset, ts DESC, ledger DESC) for a cheap scan.
+func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
+	const q = `
+        SELECT DISTINCT ON (source)
+               source, COALESCE(contract_id, ''),
+               ledger, tx_hash, op_index, ts,
+               asset, quote,
+               price, decimals,
+               COALESCE(confidence, 0),
+               COALESCE(observer, '')
+          FROM oracle_updates
+         WHERE asset = $1
+           AND ($2 = '' OR source = $2)
+         ORDER BY source, ts DESC, ledger DESC
+    `
+	rows, err := s.db.QueryContext(ctx, q, asset.String(), sourceFilter)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestOracleUpdatesForAsset: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []canonical.OracleUpdate
+	for rows.Next() {
+		var (
+			u        canonical.OracleUpdate
+			assetStr string
+			quoteStr string
+			decimals int
+		)
+		if err := rows.Scan(
+			&u.Source, &u.ContractID,
+			&u.Ledger, &u.TxHash, &u.OpIndex, &u.Timestamp,
+			&assetStr, &quoteStr,
+			&u.Price, &decimals,
+			&u.Confidence, &u.Observer,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: LatestOracleUpdatesForAsset scan: %w", err)
+		}
+		parsedAsset, err := canonical.ParseAsset(assetStr)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: asset %q: %w", assetStr, err)
+		}
+		parsedQuote, err := canonical.ParseAsset(quoteStr)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: quote %q: %w", quoteStr, err)
+		}
+		u.Asset = parsedAsset
+		u.Quote = parsedQuote
+		u.Decimals = uint8(decimals)
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestOracleUpdatesForAsset rows: %w", err)
+	}
+	return out, nil
+}
+
 // CountOracleUpdates returns the row count in oracle_updates.
 // Diagnostic helper, not for production hot paths.
 func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {
