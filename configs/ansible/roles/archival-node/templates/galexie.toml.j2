@@ -1,29 +1,36 @@
 # Galexie config — renders from defaults/main.yml + inventory.
+# Schema matches config/config.example.toml in the stellar-galexie
+# source tree (fetched at galexie-v26.0.0). If galexie's config
+# schema changes, cross-reference this file against that example.
 
-network = "{{ stellar_network }}"
+# HTTP port for galexie's own metrics / admin endpoint (bound loopback).
+admin_port = {{ galexie_admin_port }}
 
-[captive_core]
-binary_path          = "/usr/bin/stellar-core"
-storage_path         = "/var/lib/galexie/captive"
-toml_path            = "/etc/stellar/stellar-core.cfg"
-use_db               = true
+# ──── Datastore — where exported ledger meta lands ─────────────────
+[datastore_config]
+type = "{{ 'S3' if galexie_backend_type == 's3' else 'Filesystem' }}"
 
-[datastore]
-{% if galexie_backend_type == "s3" %}
-type = "s3"
-
-[datastore.config.s3]
-endpoint_url    = "{{ galexie_s3_endpoint }}"
-bucket_name     = "{{ galexie_s3_bucket }}"
-region          = "{{ galexie_s3_region }}"
-# Access + secret keys read from environment (systemd Env files)
-{% elif galexie_backend_type == "filesystem" %}
-type = "filesystem"
-
-[datastore.config.filesystem]
-base_dir = "/var/lib/galexie/data"
+[datastore_config.params]
+{% if galexie_backend_type == 's3' %}
+# S3-compatible storage (MinIO in our layout). Access + secret keys
+# come from AWS_* env vars in /etc/default/galexie.
+destination_bucket_path = "{{ galexie_s3_bucket }}/"
+region                  = "{{ galexie_s3_region }}"
+endpoint_url            = "{{ galexie_s3_endpoint }}"
+{% else %}
+destination_path = "/var/lib/galexie/data"
 {% endif %}
 
-[exporter_config]
+[datastore_config.schema]
 ledgers_per_file     = {{ galexie_ledgers_per_file }}
 files_per_partition  = {{ galexie_files_per_partition }}
+
+# ──── Stellar-core — embedded captive core for ledger replay ───────
+[stellar_core_config]
+# network=pubnet|testnet triggers galexie's built-in defaults
+# (quorum + history archives). We also set captive_core_toml_path
+# so our own 7-org tier-1 quorum is used instead of the built-in one,
+# keeping this consistent with the primary stellar-core + stellar-rpc.
+network                  = "{{ stellar_network }}"
+captive_core_toml_path   = "/etc/stellar/captive-core.cfg"
+stellar_core_binary_path = "/usr/bin/stellar-core"

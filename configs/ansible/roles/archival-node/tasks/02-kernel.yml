@@ -64,6 +64,17 @@
     sysctl_file: /etc/sysctl.d/90-ratesengine.conf
   loop: "{{ sysctl_tunings | dict2items }}"
 
+# systemd drop-in directories aren't pre-created on Ubuntu; the
+# presence of /etc/systemd/system.conf.d/ is the operator's cue to
+# create it on demand.
+- name: Ensure systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system.conf.d
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
 - name: Raise systemd default file-descriptor limits
   ansible.builtin.copy:
     dest: /etc/systemd/system.conf.d/limits.conf

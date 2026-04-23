@@ -9,7 +9,10 @@ Type=simple
 User=stellar
 Group=stellar
 WorkingDirectory=/var/lib/stellar-rpc
-EnvironmentFile=-/etc/default/stellar-rpc
+# DO NOT source the apt-shipped /etc/default/stellar-rpc — it was
+# written by the 2022 package install and hard-codes futurenet
+# (NETWORK_PASSPHRASE) plus wrong ENDPOINT. Env vars take precedence
+# over --config-path, so including it silently overrides our cfg.
 ExecStart=/usr/bin/stellar-rpc --config-path /etc/stellar/stellar-rpc.cfg
 
 LimitNOFILE=1048576

@@ -12,7 +12,7 @@
 
 - name: Add PGDG apt repo
   ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+    repo: "deb [signed-by=/etc/apt/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt {{ ansible_facts.distribution_release }}-pgdg main"
     state: present
     filename: pgdg
 
@@ -76,7 +76,7 @@
 
 - name: Enable pg_stat_statements extension
   community.postgresql.postgresql_ext:
-    db: "{{ postgres_db_core }}"
+    login_db: "{{ postgres_db_core }}"
     name: "pg_stat_statements"
     state: present
   become_user: postgres

@@ -51,6 +51,12 @@ service-account*.json
 /configs/*.secret.yaml
 /deploy/docker-compose/.env
 
+# Ansible vault-encrypted secrets — safe in theory but conservative:
+# never commit until we have a team-wide vault key management plan.
+/configs/ansible/inventory/*.secrets.yml
+/configs/ansible/inventory/*.secrets.yaml
+/configs/ansible/vault-password.txt
+
 # Docs build output
 /docs/_site/
 /docs/_build/

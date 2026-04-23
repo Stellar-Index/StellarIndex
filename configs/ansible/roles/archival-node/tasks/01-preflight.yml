@@ -5,16 +5,16 @@
 - name: Verify RAM sufficient (≥ 32 GB per archival-node-spec "minimum" tier)
   ansible.builtin.assert:
     that:
-      - ansible_memtotal_mb >= 30000   # 32 GB DIMMs report ~31.3 GB usable
+      - ansible_facts.memtotal_mb >= 30000   # 32 GB DIMMs report ~31.3 GB usable
     fail_msg: >-
-      This host has {{ (ansible_memtotal_mb / 1024) | round(1) }} GB RAM;
+      This host has {{ (ansible_facts.memtotal_mb / 1024) | round(1) }} GB RAM;
       the archival-node spec requires 32 GB minimum.
       See docs/architecture/infrastructure/archival-node-spec.md §3.2.
 
 - name: Verify x86_64 architecture (stellar-core binaries target x86_64)
   ansible.builtin.assert:
     that:
-      - ansible_architecture == "x86_64"
+      - ansible_facts.architecture == "x86_64"
 
 - name: Check that ZFS data devices are declared
   ansible.builtin.assert:
@@ -22,13 +22,36 @@
       - zfs_data_devices | length >= 2
     fail_msg: "zfs_data_devices must be set in inventory (see inventory/r1.example.yml)."
 
-- name: Verify each declared ZFS device exists
+# Two categories of ZFS devices to validate up-front:
+#   * Whole drives referenced in zfs_data_devices — must exist now.
+#   * OS-mirror drives in zfs_os_drives_needing_data_partition — the
+#     base drive must exist now; the -partN path will be created by
+#     03-zfs.yml, so we don't check for that here. 03-zfs.yml itself
+#     stats every zfs_data_device post-partitioning.
+- name: Verify OS-mirror drives (where we'll carve a ZFS partition) exist
   ansible.builtin.stat:
     path: "{{ item }}"
-  loop: "{{ zfs_data_devices }}"
+  loop: "{{ zfs_os_drives_needing_data_partition }}"
+  register: os_drive_stat
+
+- name: Fail if any OS-mirror drive is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: "OS-mirror drive {{ item.item }} does not exist."
+  loop: "{{ os_drive_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Verify zfs_data_devices that aren't partitions-to-be-created
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  # Skip any device path ending in -partN whose base drive is in
+  # zfs_os_drives_needing_data_partition — those are created later.
+  loop: "{{ zfs_data_devices | reject('match', '.*-part\\d+$') | list }}"
   register: device_stat
 
-- name: Fail if any declared ZFS device is missing
+- name: Fail if any existing-drive ZFS device is missing
   ansible.builtin.assert:
     that:
       - item.stat.exists

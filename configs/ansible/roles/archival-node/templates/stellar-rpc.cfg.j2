@@ -7,7 +7,12 @@ ADMIN_ENDPOINT             = "127.0.0.1:{{ stellar_rpc_admin_port }}"
 
 NETWORK_PASSPHRASE         = "{% if stellar_network == 'pubnet' %}Public Global Stellar Network ; September 2015{% elif stellar_network == 'testnet' %}Test SDF Network ; September 2015{% else %}{{ stellar_network }}{% endif %}"
 
-CAPTIVE_CORE_CONFIG_PATH   = "/etc/stellar/stellar-core.cfg"
+# Captive-core's config is a STRICT SUBSET of stellar-core's — it
+# rejects NODE_IS_VALIDATOR, NODE_HOME_DOMAIN, CATCHUP_*, HTTP_PORT,
+# PEER_PORT, DATABASE (those are driven by stellar-rpc itself).
+# We render it as a separate file from the same Jinja template in
+# "captive" mode.
+CAPTIVE_CORE_CONFIG_PATH   = "/etc/stellar/captive-core.cfg"
 STELLAR_CORE_BINARY_PATH   = "/usr/bin/stellar-core"
 CAPTIVE_CORE_STORAGE_PATH  = "/var/lib/stellar-rpc/captive"
 

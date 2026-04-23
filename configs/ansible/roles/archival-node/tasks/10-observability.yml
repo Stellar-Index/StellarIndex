@@ -62,11 +62,28 @@
     enabled: true
     daemon_reload: true
 
+- name: Install stellar-core-prometheus-exporter apt package
+  # Ships in SDF's stable repo. This provides the binary AND the
+  # base systemd unit that our override below adjusts.
+  ansible.builtin.apt:
+    name: stellar-core-prometheus-exporter
+    state: present
+
+- name: Ensure stellar-core-prometheus-exporter systemd drop-in dir
+  # systemd drop-in directories aren't auto-created when the base
+  # unit installs; we create it explicitly so the override file can
+  # land.
+  ansible.builtin.file:
+    path: /etc/systemd/system/stellar-core-prometheus-exporter.service.d
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
 - name: Install stellar-core-prometheus-exporter systemd override
   ansible.builtin.copy:
     dest: /etc/systemd/system/stellar-core-prometheus-exporter.service.d/override.conf
     mode: "0644"
-    directory_mode: "0755"
     content: |
       [Service]
       ExecStart=

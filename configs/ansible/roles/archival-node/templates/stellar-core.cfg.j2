@@ -1,15 +1,39 @@
 {#
-  stellar-core config template.
+  stellar-core config template. Rendered in two modes:
+
+    mode == "full"         → /etc/stellar/stellar-core.cfg
+      Real stellar-core daemon. Includes HTTP_PORT, PEER_PORT,
+      NODE_IS_VALIDATOR, NODE_HOME_DOMAIN, DATABASE, CATCHUP_*.
+
+    mode == "captive"      → /etc/stellar/captive-core.cfg
+      Consumed by stellar-rpc's embedded (captive) core. Captive
+      core rejects NODE_IS_VALIDATOR, NODE_HOME_DOMAIN, CATCHUP_*,
+      DATABASE, HTTP_PORT, PEER_PORT — those are driven by the
+      parent process (stellar-rpc) instead. [[HOME_DOMAINS]],
+      [[VALIDATORS]], [HISTORY.*], NETWORK_PASSPHRASE are shared.
+
   Rendered from roles/archival-node/defaults/main.yml + inventory.
   See https://github.com/stellar/stellar-core/blob/master/docs/stellar-core_example.cfg
 #}
+{% set cfg_mode = cfg_mode | default('full') %}
 
+{% if cfg_mode == 'full' %}
 HTTP_PORT = {{ stellar_http_port }}
 PUBLIC_HTTP_PORT = false
 PEER_PORT = {{ stellar_peer_port }}
+{% else %}
+# Captive-core runs alongside the primary stellar-core on the same
+# box. Both ports set to 0 disables listening so captive-core
+# doesn't try to bind ports already taken by the primary daemon.
+# Outbound peer connections (needed for catchup) still work.
+HTTP_PORT = 0
+PUBLIC_HTTP_PORT = false
+PEER_PORT = 0
+{% endif %}
 
 NETWORK_PASSPHRASE = "{% if stellar_network == 'pubnet' %}Public Global Stellar Network ; September 2015{% elif stellar_network == 'testnet' %}Test SDF Network ; September 2015{% else %}{{ stellar_network }}{% endif %}"
 
+{% if cfg_mode == 'full' %}
 NODE_IS_VALIDATOR = {{ node_is_validator | lower }}
 NODE_HOME_DOMAIN  = "{{ home_domain }}"
 {% if is_validator %}
@@ -27,37 +51,59 @@ CATCHUP_COMPLETE = true
 {% else %}
 CATCHUP_RECENT = 1024
 {% endif %}
+{% endif %}
 
-# History archives — ours published locally, plus SDF for cross-verify
+# Additional known peers — SCP gossip-bootstrap addresses beyond the
+# ADDRESS fields on [[VALIDATORS]] below. Must appear BEFORE any
+# [SECTION] or [[...]] header; stellar-core's parser has no "return
+# to root" so every key after a section header is scoped to that
+# section.
+{% if stellar_extra_known_peers %}
+KNOWN_PEERS = [
+{% for peer in stellar_extra_known_peers %}
+    "{{ peer }}"{% if not loop.last %},{% endif %}
+{% endfor %}
+]
+{% endif %}
+
+# ──── Our own history archive ────────────────────────────────────────
+# Local publishing target. [HISTORY.*] entries for SDF archives live
+# inside each [[VALIDATORS]] block below via the HISTORY field, which
+# is the preferred 1:1 pairing of validator → their canonical archive.
+
 [HISTORY.ratesengine]
 get = "cp /srv/history-archive/{0} {1}"
 put = "cp {0} /srv/history-archive/{1}"
 mkdir = "mkdir -p /srv/history-archive/{0}"
 
-[HISTORY.sdf1]
-get = "curl -sfL https://history.stellar.org/prd/core-live/core_live_001/{0} -o {1}"
+# ──── Home domain quality tiers ─────────────────────────────────────
+# Must appear BEFORE [[VALIDATORS]] blocks reference them. QUALITY
+# HIGH = tier-1, automatically included in the outer quorum set.
+# stellar-core auto-builds quorum from HOME_DOMAIN groupings: inner
+# set per org (2/3 threshold), outer set across orgs.
+{% for hd in stellar_home_domains %}
 
-[HISTORY.sdf2]
-get = "curl -sfL https://history.stellar.org/prd/core-live/core_live_002/{0} -o {1}"
-
-[HISTORY.sdf3]
-get = "curl -sfL https://history.stellar.org/prd/core-live/core_live_003/{0} -o {1}"
-
-# Known peers — stellar-core gossips more from these
-KNOWN_PEERS = [
-{% for peer in stellar_known_peers %}
-    "{{ peer }}"{% if not loop.last %},{% endif %}
+[[HOME_DOMAINS]]
+HOME_DOMAIN="{{ hd.home_domain }}"
+QUALITY="{{ hd.quality }}"
 {% endfor %}
-]
 
-# ──── Quorum set ────────────────────────────────────────────────────
+# ──── Validators ────────────────────────────────────────────────────
+# Each validator is its own block. HOME_DOMAIN must match one of the
+# entries in [[HOME_DOMAINS]] above.
+#
 # Non-voting archival mode: we trust these validators to decide the
 # ledger. Do not promote to voting without an ADR.
+{% for v in stellar_validators %}
 
-[QUORUM_SET]
-THRESHOLD_PERCENT = {{ stellar_quorum_set.threshold_percent }}
-VALIDATORS = [
-{% for v in stellar_quorum_set.validators %}
-    "{{ v.publickey }} {{ v.name }}"{% if not loop.last %},{% endif %}
+[[VALIDATORS]]
+NAME="{{ v.name }}"
+HOME_DOMAIN="{{ v.home_domain }}"
+PUBLIC_KEY="{{ v.public_key }}"
+{% if v.address is defined %}
+ADDRESS="{{ v.address }}"
+{% endif %}
+{% if v.history is defined %}
+HISTORY="{{ v.history }}"
+{% endif %}
 {% endfor %}
-]

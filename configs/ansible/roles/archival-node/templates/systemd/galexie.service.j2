@@ -11,7 +11,14 @@ User=galexie
 Group=galexie
 WorkingDirectory=/var/lib/galexie
 EnvironmentFile=-/etc/default/galexie
-ExecStart=/usr/local/bin/galexie append --config /etc/galexie/galexie.toml
+# Wrapper handles:
+#  * flag is --config-file (not --config)
+#  * `append` needs an explicit --start ledger; we discover the
+#    current network tip from stellar-core on each service start
+#    so galexie begins exporting from "now" on a fresh deployment,
+#    or resumes from its last-exported-ledger+1 if MinIO already
+#    has a cursor for us (the wrapper probes for it).
+ExecStart=/usr/local/bin/galexie-append.sh
 ExecStop=/bin/kill -TERM $MAINPID
 
 LimitNOFILE=1048576

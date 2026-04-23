@@ -18,13 +18,26 @@ all:
     node_is_validator:   "{{ is_validator }}"
 
     # ───── Storage layout ──────────────────────────────────────────
-    # The four NVMe drives on EX63 as enumerated by the kernel.
-    # Verify with `lsblk` before running — order is not guaranteed.
+    # Typical post-installimage layout:
+    #   * nvme0n1 + nvme1n1: OS-mirror drives. installimage created
+    #     partitions 1-3 (ESP/swap/root) and left the rest free. The
+    #     role carves a p4 on each spanning all free space.
+    #   * nvme2n1 + nvme3n1: completely untouched, used as whole-drive
+    #     ZFS vdevs.
+    # Result: ZFS raidz2 across 4 vdevs of roughly equal size.
+    #
+    # Replace serial numbers with the actual values from
+    # `ls /dev/disk/by-id/ | grep nvme-SAMSUNG` on the target box.
+    zfs_os_drives_needing_data_partition:
+      - /dev/nvme0n1
+      - /dev/nvme1n1
     zfs_data_devices:
-      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-XXXX # replace
-      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-YYYY
-      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-ZZZZ
-      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-WWWW
+      # OS-mirror drives — partition 4 created by the role at apply time
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_SERIAL0-part4
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_SERIAL1-part4
+      # Whole drives — pristine, untouched by installimage
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_SERIAL2
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_SERIAL3
     zfs_data_pool_type:  "raidz2"             # raidz2 | mirror | stripe
     zfs_data_pool_name:  "data"
 

@@ -8,6 +8,21 @@
     name: stellar-rpc
     state: present
 
+- name: Template captive-core.cfg for stellar-rpc's embedded core
+  # Same Jinja template as stellar-core.cfg but rendered in "captive"
+  # mode — omits HTTP_PORT / PEER_PORT / NODE_* / DATABASE / CATCHUP_*,
+  # which captive-core rejects. [[HOME_DOMAINS]], [[VALIDATORS]], and
+  # [HISTORY.*] blocks are identical to the full stellar-core config.
+  ansible.builtin.template:
+    src: stellar-core.cfg.j2
+    dest: /etc/stellar/captive-core.cfg
+    owner: stellar
+    group: stellar
+    mode: "0640"
+  vars:
+    cfg_mode: captive
+  notify: Restart stellar-rpc
+
 - name: Template stellar-rpc.cfg
   ansible.builtin.template:
     src: stellar-rpc.cfg.j2

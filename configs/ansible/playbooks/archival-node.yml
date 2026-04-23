@@ -21,11 +21,11 @@
     - name: Confirm Ubuntu 22.04 or 24.04 LTS
       ansible.builtin.assert:
         that:
-          - ansible_distribution == "Ubuntu"
-          - ansible_distribution_major_version in ["22", "24"]
+          - ansible_facts.distribution == "Ubuntu"
+          - ansible_facts.distribution_major_version in ["22", "24"]
         fail_msg: >-
           This role targets Ubuntu 22.04 or 24.04 LTS. Got
-          {{ ansible_distribution }} {{ ansible_distribution_version }}.
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
 
   roles:
     - role: archival-node

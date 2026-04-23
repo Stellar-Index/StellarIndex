@@ -7,12 +7,64 @@
 # re-creation with `creates:` — if the pool already exists, nothing
 # happens. To re-create, operator must manually `zpool destroy` first.
 
-- name: Install ZFS userspace + kernel modules
+- name: Install ZFS userspace + kernel modules + gdisk for partitioning
   ansible.builtin.apt:
     name:
       - zfsutils-linux
       - zfs-initramfs
+      - gdisk
     state: present
+
+# When the box's OS-mirror drives (drive 0 and drive 1 in the
+# standard layout) share disks with the data pool, installimage has
+# already created partitions 1-3 (ESP, swap, root) and left the
+# remainder of each drive unallocated. We carve a p4 spanning the
+# rest and hand that to ZFS. sgdisk's -n 4:0:0 means "new partition
+# 4, starting at first free block, ending at last" — so we don't
+# have to know the exact byte offset where p3 ended. Typecode BF01
+# is Solaris/ZFS root, which is what zpool expects. The
+# 'creates:' guard makes this idempotent.
+- name: Carve ZFS data partition on OS-mirror drives
+  ansible.builtin.command: >-
+    sgdisk
+    --new={{ zfs_os_drives_data_partition_number }}:0:0
+    --typecode={{ zfs_os_drives_data_partition_number }}:BF01
+    --change-name={{ zfs_os_drives_data_partition_number }}:zfs-data
+    {{ item }}
+  args:
+    creates: "{{ item }}p{{ zfs_os_drives_data_partition_number }}"
+  loop: "{{ zfs_os_drives_needing_data_partition }}"
+  register: sgdisk_result
+
+# Kernel doesn't always pick up new partitions immediately. partprobe
+# forces a re-scan; udevadm settle waits for /dev/disk/by-id/... to
+# populate the new -partN symlinks before we hand those paths to
+# zpool create.
+- name: Reload partition tables after creating ZFS partitions
+  ansible.builtin.command: "partprobe {{ item }}"
+  loop: "{{ zfs_os_drives_needing_data_partition }}"
+  changed_when: false
+  when: sgdisk_result.changed
+
+- name: Wait for /dev/disk/by-id/ symlinks to settle
+  ansible.builtin.command: "udevadm settle --timeout=10"
+  changed_when: false
+  when: sgdisk_result.changed
+
+- name: Verify every zfs_data_device path exists (incl. newly-carved partitions)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ zfs_data_devices }}"
+  register: zfs_device_stat
+
+- name: Fail if any zfs_data_device is still missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: "zfs_data_device {{ item.item }} missing — did partition creation succeed?"
+  loop: "{{ zfs_device_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 - name: Check if pool "{{ zfs_data_pool_name }}" already exists
   ansible.builtin.command: "zpool list -H {{ zfs_data_pool_name }}"
@@ -20,9 +72,16 @@
   failed_when: false
   changed_when: false
 
+# -f bypasses zpool's refusal to create raidz across differently-
+# sized vdevs. We use it deliberately because our layout mixes
+# partitions (on the OS-mirror drives, ~7.63 TB after OS slots) with
+# whole drives (the pristine data drives, 7.68 TB). zpool sizes the
+# raidz to the smallest vdev anyway, so the result is a correct ~15 TB
+# usable pool with ~100 GB of inaccessible trailing space on the
+# whole-drive vdevs — not dangerous, just mildly wasteful.
 - name: Create ZFS pool {{ zfs_data_pool_name }} ({{ zfs_data_pool_type }})
   ansible.builtin.command: >-
-    zpool create
+    zpool create -f
     -o ashift={{ zfs_ashift }}
     -O compression=zstd
     -O atime=off

@@ -1,7 +1,16 @@
 ---
-# Galexie: download the pinned release tarball, install binary, render
-# TOML config, install + enable systemd unit.
+# Galexie: SDF doesn't publish prebuilt binaries or an apt package
+# for this component, so we build from source using the Go toolchain.
+# `go install` with a versioned module path downloads, compiles, and
+# installs in one idempotent command. Binary lands in $GOPATH/bin;
+# we symlink into /usr/local/bin for PATH discoverability.
+#
 # Pinned version lives in defaults/main.yml → VERSIONS.md.
+
+- name: Install Go toolchain (build dependency for galexie)
+  ansible.builtin.apt:
+    name: golang-go
+    state: present
 
 - name: Check existing galexie version
   ansible.builtin.command: /usr/local/bin/galexie version
@@ -9,30 +18,89 @@
   failed_when: false
   changed_when: false
 
-- name: Download pinned galexie release
-  ansible.builtin.get_url:
-    url: "https://github.com/stellar/stellar-galexie/releases/download/{{ galexie_version }}/stellar-galexie-linux-amd64-{{ galexie_version }}.tar.gz"
-    dest: "/tmp/galexie-{{ galexie_version }}.tar.gz"
-    mode: "0644"
-    # TODO(#0): pin checksum — gh release SHA256.
+- name: Build galexie via `go install` at pinned tag
+  # The module's main package lives at the root (main.go), so we
+  # install the module itself — no /cmd/... subpath. Binary filename
+  # derives from the module's last path component → "stellar-galexie".
+  #
+  # Go 1.25+ is required by galexie's go.mod; the toolchain line in
+  # that file makes `go install` auto-download the right compiler
+  # even if the system Go is older.
+  #
+  # GOPATH/GOCACHE pinned under /root to keep build artefacts off
+  # the stellar-core data dataset. go install is idempotent — re-runs
+  # with the same version tag are no-ops once the binary exists.
+  ansible.builtin.command: >-
+    go install github.com/stellar/stellar-galexie@{{ galexie_version }}
+  environment:
+    GOPATH:  /root/go
+    GOCACHE: /root/.cache/go-build
+  args:
+    creates: "/root/go/bin/stellar-galexie"
   when: galexie_version not in galexie_current.stdout
-
-- name: Extract galexie binary
-  ansible.builtin.unarchive:
-    src: "/tmp/galexie-{{ galexie_version }}.tar.gz"
-    dest: /usr/local/bin/
-    remote_src: true
-    extra_opts:
-      - "--strip-components=1"
-  when: galexie_version not in galexie_current.stdout
+  register: galexie_build
   notify: Restart galexie
 
-- name: Ensure galexie binary is executable
+# Remove any stale symlink from a previous run-shape where we
+# thought a symlink would work. A /usr/local/bin/galexie symlink
+# into /root/go/bin/ is unusable by any non-root service account
+# because /root is 0700 → exec → EACCES. A leftover symlink from
+# an earlier apply would still point there, so we nuke whatever's
+# at the dest before the copy lands a real file.
+- name: Remove any stale /usr/local/bin/galexie link
   ansible.builtin.file:
     path: /usr/local/bin/galexie
-    mode: "0755"
+    state: absent
+
+- name: Install galexie binary into /usr/local/bin
+  # Upstream calls the binary stellar-galexie; we rename so systemd
+  # units can reference /usr/local/bin/galexie consistently. `copy`
+  # is content-hash idempotent — runs every time but only actually
+  # touches the file when the source (from go install) has changed.
+  ansible.builtin.copy:
+    src: /root/go/bin/stellar-galexie
+    dest: /usr/local/bin/galexie
+    remote_src: true
     owner: root
     group: root
+    mode: "0755"
+  notify: Restart galexie
+
+- name: Ensure /etc/galexie exists
+  ansible.builtin.file:
+    path: /etc/galexie
+    state: directory
+    owner: galexie
+    group: galexie
+    mode: "0750"
+
+- name: Ensure /var/lib/galexie/captive exists for embedded core
+  # Matches captive_core.storage_path in galexie.toml. Not
+  # auto-created by Galexie; it expects the dir to be writable.
+  ansible.builtin.file:
+    path: /var/lib/galexie/captive
+    state: directory
+    owner: galexie
+    group: galexie
+    mode: "0750"
+
+- name: Install jq (galexie wrapper parses stellar-core /info JSON)
+  ansible.builtin.apt:
+    name: jq
+    state: present
+
+- name: Install galexie-append wrapper script
+  # Galexie's append subcommand requires --start <ledger>. The wrapper
+  # discovers the current tip from stellar-core at service-start time.
+  # Also corrects the flag name: stellar-galexie uses --config-file
+  # (not --config as upstream docs sometimes show).
+  ansible.builtin.copy:
+    src: galexie-append.sh
+    dest: /usr/local/bin/galexie-append.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart galexie
 
 - name: Template galexie.toml
   ansible.builtin.template:
@@ -41,6 +109,26 @@
     owner: galexie
     group: galexie
     mode: "0640"
+  notify: Restart galexie
+
+- name: Template /etc/default/galexie (S3 credentials for captive-core export)
+  # The systemd unit sources this file via EnvironmentFile. Galexie's
+  # S3 client reads AWS_* env vars; we populate them from the vault-
+  # decrypted galexie_s3_access_key / _secret_key. Mode 0640 so only
+  # galexie group can read.
+  ansible.builtin.copy:
+    dest: /etc/default/galexie
+    owner: root
+    group: galexie
+    mode: "0640"
+    content: |
+      # Rendered by Ansible. Do not edit by hand — regenerate via
+      # `ansible-playbook ... --tags galexie`.
+      AWS_ACCESS_KEY_ID={{ galexie_s3_access_key }}
+      AWS_SECRET_ACCESS_KEY={{ galexie_s3_secret_key }}
+      AWS_REGION={{ galexie_s3_region }}
+      AWS_ENDPOINT_URL={{ galexie_s3_endpoint }}
+  no_log: true
   notify: Restart galexie
 
 - name: Install galexie systemd unit

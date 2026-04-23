@@ -12,7 +12,7 @@
 
 - name: Add SDF apt repo (stable)
   ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/sdf.asc] https://apt.stellar.org {{ ansible_distribution_release }} stable"
+    repo: "deb [signed-by=/etc/apt/keyrings/sdf.asc] https://apt.stellar.org {{ ansible_facts.distribution_release }} stable"
     state: present
     filename: sdf
 
@@ -44,12 +44,15 @@
     - Restart stellar-core
 
 - name: Initialise stellar-core DB (first run only)
-  ansible.builtin.command: stellar-core new-db
+  # stellar-core doesn't honour env vars for its config path —
+  # config is only loadable via --conf or from ./stellar-core.cfg in
+  # the process cwd. Pass the explicit path to avoid the "no config
+  # file found" failure that happens when stellar-core is invoked
+  # from outside /etc/stellar.
+  ansible.builtin.command: stellar-core --conf /etc/stellar/stellar-core.cfg new-db
   args:
     creates: /var/lib/stellar-core/buckets/.stellar-core-initialised
   become_user: stellar
-  environment:
-    STELLAR_CORE_CONFIG: /etc/stellar/stellar-core.cfg
 
 - name: Mark stellar-core as initialised
   ansible.builtin.file:
