@@ -16,6 +16,12 @@ CAPTIVE_CORE_CONFIG_PATH   = "/etc/stellar/captive-core.cfg"
 STELLAR_CORE_BINARY_PATH   = "/usr/bin/stellar-core"
 CAPTIVE_CORE_STORAGE_PATH  = "/var/lib/stellar-rpc/captive"
 
+# Disable captive-core's HTTP server. Default is 11626 which is
+# taken by the primary stellar-core on this box. captive-core.cfg
+# also has HTTP_PORT=0; captive-core validates the parent's value
+# against the config's, so both must agree. 0 = don't bind.
+STELLAR_CAPTIVE_CORE_HTTP_PORT = 0
+
 DB_PATH                    = "/var/lib/stellar-rpc/rpc.sqlite"
 
 # Retention — see archival-node-spec.md §3.3.1
