@@ -22,8 +22,14 @@ type Store struct {
 // Configuration:
 //   - max open conns: 25 (conservative; tune per deployment).
 //   - max idle conns: 5.
-//   - conn max lifetime: 30 min (re-dial periodically to survive
-//     rolling Patroni restarts).
+//   - conn max lifetime: 30 min — full re-dial ceiling. Beats
+//     Patroni's typical rolling-restart interval so a swapped
+//     primary never keeps a stale conn longer than this.
+//   - conn max idle time: 5 min — bound the window where an idle
+//     conn the DB-side has already killed (pg_terminate_backend,
+//     firewall tcp-timeout, Patroni failover) might still be
+//     handed out. Without this, an idle conn can live until
+//     ConnMaxLifetime, forcing a retry at serve-time.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -32,6 +38,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
