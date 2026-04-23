@@ -1,7 +1,6 @@
 package canonical
 
 import (
-	"encoding/hex"
 	"fmt"
 	"math/big"
 	"time"
@@ -126,10 +125,26 @@ func (t Trade) Equal(o Trade) bool {
 
 // ─── Internal helpers ──────────────────────────────────────────────
 
+// validTxHash enforces Stellar's canonical lowercase 64-hex-char
+// tx-hash form. Uppercase hex (or mixed case) would decode
+// successfully but produce duplicate trade rows: Postgres treats
+// "DEADBEEF..." and "deadbeef..." as distinct primary-key values,
+// so the same on-chain tx ingested from two sources with different
+// casing would land as two rows.
+//
+// Sources MUST lowercase before handing to the canonical types.
+// stellar-rpc returns lowercase; SDK XDR→hex renderings are
+// lowercase; the constraint is always satisfied by well-behaved
+// upstreams. A rejected tx_hash here is always an upstream bug.
 func validTxHash(s string) bool {
 	if len(s) != 64 {
 		return false
 	}
-	_, err := hex.DecodeString(s)
-	return err == nil
+	for i := 0; i < 64; i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
