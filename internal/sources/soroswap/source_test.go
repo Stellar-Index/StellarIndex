@@ -153,6 +153,49 @@ func TestDecodeSwap_incompleteErrors(t *testing.T) {
 	}
 }
 
+func TestSource_SeedPairIsConcurrentSafe(t *testing.T) {
+	// Race-flag test: many concurrent SeedPair writers + lookupPair
+	// readers must not trip -race. Catches regressions if someone
+	// later inlines pair-cache writes without taking the lock.
+	s := New(nil)
+	xlm := canonical.NativeAsset()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const goroutines = 16
+	done := make(chan struct{}, goroutines*2)
+	for i := 0; i < goroutines; i++ {
+		pair := "CABC" + string(rune('A'+i)) // distinct-enough
+		go func() {
+			s.SeedPair(pair, xlm, usdc)
+			done <- struct{}{}
+		}()
+		go func() {
+			// We don't care if the pair is there yet; we just care
+			// about the lock not racing.
+			_, _ = s.lookupPair(pair)
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < goroutines*2; i++ {
+		<-done
+	}
+
+	// After all writers land, every pair must be readable.
+	for i := 0; i < goroutines; i++ {
+		pair := "CABC" + string(rune('A'+i))
+		tokens, ok := s.lookupPair(pair)
+		if !ok {
+			t.Errorf("pair %q not found post-seed", pair)
+		}
+		if !tokens.Token0.Equal(xlm) || !tokens.Token1.Equal(usdc) {
+			t.Errorf("pair %q tokens mismatched: %+v", pair, tokens)
+		}
+	}
+}
+
 func TestSource_NameAndNewBasics(t *testing.T) {
 	s := New(nil, WithPollInterval(500*time.Millisecond))
 	if s.Name() != SourceName {
