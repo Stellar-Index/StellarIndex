@@ -289,8 +289,8 @@ func (r storeHistoryReader) TradesInRange(ctx context.Context, pair canonical.Pa
 	return r.s.TradesInRange(ctx, pair, from, to, limit)
 }
 
-func (r storeHistoryReader) TradesInRangeAfter(ctx context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, limit int) ([]canonical.Trade, error) {
-	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, limit)
+func (r storeHistoryReader) TradesInRangeAfter(ctx context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
+	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
 // storePriceReader adapts *timescale.Store to v1.PriceReader.

@@ -187,8 +187,8 @@ func (r apiHistoryAdapter) TradesInRange(ctx context.Context, pair c.Pair, from,
 	return r.s.TradesInRange(ctx, pair, from, to, limit)
 }
 
-func (r apiHistoryAdapter) TradesInRangeAfter(ctx context.Context, pair c.Pair, from, to, afterTs time.Time, afterLedger uint32, limit int) ([]c.Trade, error) {
-	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, limit)
+func (r apiHistoryAdapter) TradesInRangeAfter(ctx context.Context, pair c.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]c.Trade, error) {
+	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
 type apiMarketsAdapter struct{ s *timescale.Store }

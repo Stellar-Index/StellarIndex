@@ -183,14 +183,27 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	return out, nil
 }
 
-// TradesInRangeAfter is TradesInRange with a `(ts, ledger)` cursor.
-// Only rows whose (ts, ledger) tuple is strictly greater than
-// (afterTs, afterLedger) are returned. Paired with ts ASC ordering
-// this gives stable, duplicate-free cursor pagination.
+// TradesInRangeAfter is TradesInRange with a full-PK cursor. Rows
+// are returned iff their (ts, ledger, tx_hash, op_index, source)
+// tuple is strictly greater than the corresponding `after*` values.
+//
+// Widening from (ts, ledger) to the full PK closes a pagination
+// edge case: multiple trades can share (ts, ledger), and the naive
+// tuple `(ts, ledger) > (X, Y)` would skip any same-(ts, ledger)
+// row that didn't happen to be the last one on the previous page.
+// The primary key is unique so the full-PK tuple gives total order.
 //
 // afterTs = zero time disables the cursor; use TradesInRange for
 // that case (shorter form).
-func (s *Store) TradesInRangeAfter(ctx context.Context, p canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, limit int) ([]canonical.Trade, error) {
+func (s *Store) TradesInRangeAfter(
+	ctx context.Context,
+	p canonical.Pair,
+	from, to, afterTs time.Time,
+	afterLedger uint32,
+	afterTxHash, afterSource string,
+	afterOpIndex uint32,
+	limit int,
+) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
@@ -200,10 +213,10 @@ func (s *Store) TradesInRangeAfter(ctx context.Context, p canonical.Pair, from, 
 	if to.Before(from) {
 		return nil, fmt.Errorf("timescale: TradesInRangeAfter: to %v < from %v", to, from)
 	}
-	// `(ts, ledger) > ($afterTs, $afterLedger)` is the row-tuple
-	// comparison that makes compound-key cursors work in Postgres.
-	// Combined with the ts lower bound, the planner can use the
-	// (base_asset, quote_asset, ts) index for both predicates.
+	// Full-PK tuple comparison. ORDER BY + WHERE must agree on the
+	// column order so the comparison is monotonic with the sort.
+	// Source sorts last so the common case (single-source trades)
+	// doesn't pay an unnecessary string compare cost on the index.
 	const q = `
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
@@ -214,14 +227,14 @@ func (s *Store) TradesInRangeAfter(ctx context.Context, p canonical.Pair, from, 
            AND quote_asset = $2
            AND ts         >= $3
            AND ts          < $4
-           AND (ts, ledger) > ($5, $6)
-         ORDER BY ts ASC, ledger ASC
-         LIMIT $7
+           AND (ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)
+         ORDER BY ts ASC, ledger ASC, tx_hash ASC, op_index ASC, source ASC
+         LIMIT $10
     `
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(),
 		from.UTC(), to.UTC(),
-		afterTs.UTC(), afterLedger,
+		afterTs.UTC(), afterLedger, afterTxHash, afterOpIndex, afterSource,
 		limit,
 	)
 	if err != nil {

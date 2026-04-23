@@ -16,10 +16,13 @@ import (
 type stubHistoryReader struct {
 	trades   []canonical.Trade
 	lastCall struct {
-		from, to    time.Time
-		limit       int
-		afterTs     time.Time
-		afterLedger uint32
+		from, to     time.Time
+		limit        int
+		afterTs      time.Time
+		afterLedger  uint32
+		afterTxHash  string
+		afterSource  string
+		afterOpIndex uint32
 	}
 	err error
 }
@@ -37,12 +40,15 @@ func (r *stubHistoryReader) TradesInRange(_ context.Context, _ canonical.Pair, f
 // TradesInRangeAfter: the stub ignores the cursor (tests construct
 // their own trade slices per-assertion) but records it so cursor
 // tests can verify the handler forwarded it.
-func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, _ canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, limit int) ([]canonical.Trade, error) {
+func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, _ canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
 	r.lastCall.from = from
 	r.lastCall.to = to
 	r.lastCall.limit = limit
 	r.lastCall.afterTs = afterTs
 	r.lastCall.afterLedger = afterLedger
+	r.lastCall.afterTxHash = afterTxHash
+	r.lastCall.afterSource = afterSource
+	r.lastCall.afterOpIndex = afterOpIndex
 	if r.err != nil {
 		return nil, r.err
 	}
