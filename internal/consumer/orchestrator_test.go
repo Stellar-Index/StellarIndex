@@ -299,6 +299,39 @@ func TestOrchestrator_RecoversFromSourcePanic(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_ShutdownFlushesCursor(t *testing.T) {
+	// Persister ticker is long (5s); we cancel ctx in 100ms.
+	// Without the shutdown flush, the cursor would never advance
+	// because no tick fires. With the flush, final health.LastLedger
+	// lands in the store before Run returns.
+	cursors := newInmemCursors()
+	src := &fakeSource{
+		name:       "shutdown-flush",
+		emit:       []consumer.Event{testEvent{kind: "e"}},
+		lastLedger: 42_000_000,
+	}
+	o := consumer.New(cursors, []consumer.Source{src}, consumer.Config{
+		MinBackoff:         10 * time.Millisecond,
+		CursorPersistEvery: 5 * time.Second, // way past the test window
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go func() {
+		for range o.Events() {
+		}
+	}()
+	_ = o.Run(ctx)
+
+	got, err := cursors.GetCursor(context.Background(), "shutdown-flush", "")
+	if err != nil {
+		t.Fatalf("cursor should have been flushed on shutdown: %v", err)
+	}
+	if got.LastLedger != 42_000_000 {
+		t.Errorf("shutdown flush LastLedger = %d, want 42000000", got.LastLedger)
+	}
+}
+
 func TestOrchestrator_CursorDoesNotRegressWhenSourceReportsZero(t *testing.T) {
 	// A source that hasn't observed any events this session returns
 	// LastLedger=0. The persister must NOT overwrite a prior

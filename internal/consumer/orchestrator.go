@@ -235,11 +235,36 @@ func (o *Orchestrator) runOne(ctx context.Context, src Source, log *slog.Logger)
 // a regression (e.g. source just restarted with LastLedger=0
 // because it hasn't processed anything yet). Instead we keep the
 // seed as the floor and only advance it.
+//
+// On ctx cancellation the persister does a FINAL flush before
+// returning, so a graceful shutdown never loses the last up-to-
+// CursorPersistEvery seconds of advancement. The flush uses a
+// fresh context (parent is cancelled) with a short deadline.
 func (o *Orchestrator) cursorPersister(ctx context.Context, src Source, seedLastLedger uint32) {
 	t := time.NewTicker(o.cfg.CursorPersistEvery)
 	defer t.Stop()
 	log := o.logger.With("source", src.Name())
 	lastPersisted := seedLastLedger
+
+	// flushFinal runs once on exit. Uses a detached context because
+	// the parent is typically the shutdown-triggering one.
+	defer func() {
+		h := src.Health()
+		if h.LastLedger > lastPersisted {
+			lastPersisted = h.LastLedger
+		}
+		if lastPersisted == 0 {
+			return
+		}
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := o.cursors.UpsertCursor(flushCtx, src.Name(), "", lastPersisted); err != nil {
+			log.Warn("shutdown cursor flush failed",
+				"err", err, "last_ledger", lastPersisted)
+			return
+		}
+		log.Info("shutdown cursor flushed", "last_ledger", lastPersisted)
+	}()
 
 	for {
 		select {
