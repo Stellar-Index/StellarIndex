@@ -166,6 +166,9 @@ func (s *Server) mountRoutes() {
 	// Volume-weighted average price over a time window.
 	s.mux.HandleFunc("GET /v1/vwap", s.handleVWAP)
 
+	// Time-weighted average price over a time window.
+	s.mux.HandleFunc("GET /v1/twap", s.handleTWAP)
+
 	// Distinct trading pairs.
 	s.mux.HandleFunc("GET /v1/markets", s.handleMarkets)
 
