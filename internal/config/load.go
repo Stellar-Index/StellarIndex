@@ -43,6 +43,9 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 		return Config{}, fmt.Errorf("config: unknown keys in %s: %s",
 			origin, strings.Join(keys, ", "))
 	}
+	if err := c.Validate(); err != nil {
+		return Config{}, fmt.Errorf("config: %s: %w", origin, err)
+	}
 	return c, nil
 }
 
