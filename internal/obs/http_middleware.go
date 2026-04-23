@@ -37,8 +37,19 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		route := routeFromPattern(r.Pattern)
 		method := normalizeMethod(r.Method)
 		elapsed := time.Since(start).Seconds()
+
+		// Client-abort detection. If the request's context was
+		// cancelled before the handler finished writing, record the
+		// NGINX-style 499 "client closed request" sentinel instead
+		// of whatever status the recorder saw — otherwise an early
+		// disconnect looks like a successful 200 on the dashboard.
+		status := rec.status
+		if err := r.Context().Err(); err != nil && !rec.wrote {
+			status = 499
+		}
+
 		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
-		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(rec.status)).Inc()
+		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
 	})
 }
 
