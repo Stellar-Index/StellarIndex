@@ -255,30 +255,50 @@ func persistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		select {
 		case <-ctx.Done():
 			return
-		case ev := <-in:
-			// Metric emission happens before the type-switch so the
-			// counter reflects every event the orchestrator emitted,
-			// even ones we couldn't type-dispatch (which shouldn't
-			// happen but guards against future-source mis-wiring).
-			source := ev.Source()
-			obs.SourceEventsTotal.WithLabelValues(source).Inc()
-			obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
-
-			switch e := ev.(type) {
-			case soroswap.TradeEvent:
-				persistTrade(ctx, logger, store, e.Trade)
-			case aquarius.TradeEvent:
-				persistTrade(ctx, logger, store, e.Trade)
-			case phoenix.TradeEvent:
-				persistTrade(ctx, logger, store, e.Trade)
-			case reflector.UpdateEvent:
-				persistOracle(ctx, logger, store, e.Update)
-			default:
-				logger.Warn("unhandled event kind",
-					"kind", ev.EventKind(),
-					"source", source)
+		case ev, ok := <-in:
+			if !ok {
+				// Events channel closed — orchestrator is shutting
+				// down. Exit cleanly rather than looping on nil events.
+				return
 			}
+			handleOneEvent(ctx, logger, store, ev)
 		}
+	}
+}
+
+// handleOneEvent processes one event with panic recovery. A panic
+// in a single event (e.g. a malformed Amount that blows up in the
+// SQL driver) must not take down the sink. The source sending the
+// event has its own decoder-error metric; here we focus on keeping
+// the sink alive.
+func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("panic in event sink — recovered",
+				"panic", fmt.Sprintf("%v", r),
+				"kind", ev.EventKind(),
+				"source", ev.Source())
+			obs.SourceInsertErrorsTotal.WithLabelValues(ev.Source(), "panic").Inc()
+		}
+	}()
+
+	source := ev.Source()
+	obs.SourceEventsTotal.WithLabelValues(source).Inc()
+	obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
+
+	switch e := ev.(type) {
+	case soroswap.TradeEvent:
+		persistTrade(ctx, logger, store, e.Trade)
+	case aquarius.TradeEvent:
+		persistTrade(ctx, logger, store, e.Trade)
+	case phoenix.TradeEvent:
+		persistTrade(ctx, logger, store, e.Trade)
+	case reflector.UpdateEvent:
+		persistOracle(ctx, logger, store, e.Update)
+	default:
+		logger.Warn("unhandled event kind",
+			"kind", ev.EventKind(),
+			"source", source)
 	}
 }
 
