@@ -78,11 +78,22 @@ func (s StellarConfig) validate() error {
 		return fmt.Errorf("%w: stellar.rpc_endpoints must have at least one URL",
 			ErrInvalidConfig)
 	}
+	// Reject duplicate endpoints. Failover is the whole point of
+	// providing a list — duplicates don't buy redundancy, they just
+	// look redundant. Case-fold so "http://X" and "HTTP://X" compare
+	// equal (URL schemes are case-insensitive per RFC 3986).
+	seen := make(map[string]struct{}, len(s.RPCEndpoints))
 	for i, ep := range s.RPCEndpoints {
 		if _, err := url.Parse(ep); err != nil || !strings.Contains(ep, "://") {
 			return fmt.Errorf("%w: stellar.rpc_endpoints[%d] %q must be a full URL",
 				ErrInvalidConfig, i, ep)
 		}
+		key := strings.ToLower(strings.TrimRight(ep, "/"))
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("%w: stellar.rpc_endpoints has duplicate %q",
+				ErrInvalidConfig, ep)
+		}
+		seen[key] = struct{}{}
 	}
 	if _, err := url.Parse(s.HistoryArchiveURL); err != nil {
 		return fmt.Errorf("%w: stellar.history_archive_url %q: %v",
