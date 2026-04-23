@@ -121,6 +121,23 @@ func (i IngestionConfig) validate() error {
 		return fmt.Errorf("%w: ingestion.backfill_batch_size must be > 0",
 			ErrInvalidConfig)
 	}
+	// Duplicate source names would spawn multiple consumers on the
+	// same event stream — double-counting metrics and doubling orphan
+	// buffer memory. Case-fold so ["soroswap", "Soroswap"] is caught
+	// too (buildSources lowercases before dispatch).
+	seen := make(map[string]struct{}, len(i.EnabledSources))
+	for _, name := range i.EnabledSources {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			return fmt.Errorf("%w: ingestion.enabled_sources contains empty entry",
+				ErrInvalidConfig)
+		}
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("%w: ingestion.enabled_sources has duplicate %q",
+				ErrInvalidConfig, name)
+		}
+		seen[key] = struct{}{}
+	}
 	return nil
 }
 
