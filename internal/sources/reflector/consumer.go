@@ -71,6 +71,11 @@ func newVariant(rpc *stellarrpc.Client, variant Variant, contractID string, opts
 	for _, opt := range opts {
 		opt(s)
 	}
+	// Declare the oracle's known update cadence so the oracle-stale
+	// alert can reason about "no update in > 10× resolution" without
+	// hard-coding the expected interval in the rule.
+	obs.OracleResolutionSeconds.WithLabelValues(s.variant.SourceName()).
+		Set(float64(DefaultResolutionSeconds))
 	return s
 }
 
