@@ -10,10 +10,13 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -146,18 +149,23 @@ Subcommands:
                           print per-venue first-trade/update samples. Exits
                           early once every enabled venue has emitted at
                           least one output. No DB, no Timescale, no cursors.
-  verify-archive -config PATH [-bucket NAME] [-from N] [-to N]
-                          Walk every LCM in a galexie bucket in order and
-                          assert chain-link integrity: each ledger N's
-                          PreviousLedgerHash equals ledger N-1's Hash.
-                          Catches internal corruption, dropped ledgers, or
-                          replay divergence regardless of upstream trust.
-                          This is Tier A from
-                          docs/operations/galexie-backfill.md. Tier B
-                          (checkpoint anchoring against local
-                          history-archive) lands in a follow-up. Exit
-                          code 0 = chain intact; 1 = first break reported
-                          with ledger numbers + diverging hashes.
+  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH]
+                          Verify a galexie bucket against either or both
+                          of the mandatory tiers from
+                          docs/operations/galexie-backfill.md:
+                            chain      (Tier A) — chain-link hash integrity:
+                                       each ledger N's PreviousLedgerHash
+                                       equals ledger N-1's Hash. Default.
+                            checkpoint (Tier B) — cross-check our LCM's
+                                       hash at every 64-ledger checkpoint
+                                       against the canonical header-hash
+                                       from the local history-archive
+                                       (-archive-root, default
+                                       /srv/history-archive). Cryptographic
+                                       proof our replay matches SDF's.
+                            all        run both.
+                          Exit 0 = clean; 1 = first break with diverging
+                          ledger/hashes.
   backfill-external -config PATH -source SRC -pair SYM -from TS -to TS -granularity D
                           Pull historical candles from an external venue
                           (binance / kraken / bitstamp / coinbase) and
@@ -1303,8 +1311,16 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 	bucketOverride := fs.String("bucket", "", "Override bucket name (default: storage.s3_bucket_archive, then s3_bucket_live)")
 	from := fs.Uint("from", 2, "First ledger to verify (inclusive, default 2 — ledger 1 has no predecessor)")
 	to := fs.Uint("to", 0, "Last ledger to verify (inclusive, 0 = unbounded/live)")
+	tier := fs.String("tier", "chain", "Verification tier: chain (Tier A) | checkpoint (Tier B) | all")
+	archiveRoot := fs.String("archive-root", "/srv/history-archive",
+		"Path to local rs-stellar-archivist mirror (only used by checkpoint/all tier)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	doChain := *tier == "chain" || *tier == "all"
+	doCheckpoint := *tier == "checkpoint" || *tier == "all"
+	if !doChain && !doCheckpoint {
+		return fmt.Errorf("unknown -tier %q (expected chain | checkpoint | all)", *tier)
 	}
 	if *cfgPath == "" {
 		return fmt.Errorf("-config is required")
@@ -1326,7 +1342,10 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 		return fmt.Errorf("no bucket resolved — set -bucket or storage.s3_bucket_archive / storage.s3_bucket_live")
 	}
 
-	fmt.Fprintf(os.Stderr, "verify-archive: bucket=%s range=[%d,%d]\n", bucket, *from, *to)
+	fmt.Fprintf(os.Stderr, "verify-archive: bucket=%s range=[%d,%d] tier=%s\n", bucket, *from, *to, *tier)
+	if doCheckpoint {
+		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor against %s\n", *archiveRoot)
+	}
 
 	lsCfg := ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{
@@ -1345,13 +1364,15 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 	defer cancel()
 
 	var (
-		prevSeq       uint32
-		prevHash      sdkxdr.Hash
-		hasPrev       bool
-		verified      int
-		mismatches    int
-		lastProgress  time.Time
-		progressEvery = 10 * time.Second
+		prevSeq           uint32
+		prevHash          sdkxdr.Hash
+		hasPrev           bool
+		verified          int
+		mismatches        int
+		checkpointsOK     int
+		checkpointsMissed int // archive file absent; skip rather than fail
+		lastProgress      time.Time
+		progressEvery     = 10 * time.Second
 	)
 
 	startedAt := time.Now()
@@ -1364,7 +1385,7 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 				return fmt.Errorf("ledger %d: cannot extract LedgerHeader", seq)
 			}
 
-			if hasPrev {
+			if doChain && hasPrev {
 				// Gap in sequence (missing ledger) is itself a chain
 				// break — the sequence must be dense.
 				if seq != prevSeq+1 {
@@ -1379,6 +1400,34 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 						"  ledger[%d].PreviousLedgerHash = %s",
 						seq, prevSeq, hashToHex(prevHash),
 						seq, hashToHex(header.PreviousLedgerHash))
+				}
+			}
+
+			// Tier B — compare against the local history-archive at
+			// each 64-ledger checkpoint boundary. The archive's
+			// ledger-<hex>.xdr.gz file carries the canonical
+			// LedgerHeaderHistoryEntry for every ledger in the
+			// checkpoint; we match on LedgerSeq and compare the
+			// bundled Hash against our LCM's hash.
+			if doCheckpoint && seq%64 == 63 {
+				expected, hit, cerr := readArchivedLedgerHash(*archiveRoot, seq)
+				switch {
+				case cerr != nil:
+					mismatches++
+					return fmt.Errorf("ledger %d: archive read failed: %w", seq, cerr)
+				case !hit:
+					// File not present (e.g. mirror behind latest
+					// checkpoints) — count and continue rather than
+					// fail the whole sweep.
+					checkpointsMissed++
+				case expected != hash:
+					mismatches++
+					return fmt.Errorf("checkpoint anchor mismatch at ledger %d:\n"+
+						"  our LCM hash          = %s\n"+
+						"  archive-signed hash   = %s",
+						seq, hashToHex(hash), hashToHex(expected))
+				default:
+					checkpointsOK++
 				}
 			}
 
@@ -1399,14 +1448,77 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 
 	fmt.Fprintf(os.Stderr, "\nverify-archive: verified %d ledgers in %s (%.0f ledgers/s)\n",
 		verified, elapsed.Round(time.Second), float64(verified)/elapsed.Seconds())
+	if doCheckpoint {
+		fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d (missed = archive file absent, not a failure)\n",
+			checkpointsOK, checkpointsMissed)
+	}
 	if err != nil {
-		return fmt.Errorf("chain integrity FAILED: %w", err)
+		return fmt.Errorf("verification FAILED: %w", err)
 	}
 	if verified == 0 {
 		return fmt.Errorf("verified 0 ledgers — bucket empty or range out of scope")
 	}
-	fmt.Fprintf(os.Stderr, "verify-archive: chain-link integrity OK ✓\n")
+	if doChain {
+		fmt.Fprintf(os.Stderr, "verify-archive: chain-link integrity OK ✓\n")
+	}
+	if doCheckpoint {
+		if checkpointsOK == 0 && checkpointsMissed > 0 {
+			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor INCONCLUSIVE — %d missed, 0 matched (archive mirror may be stale)\n", checkpointsMissed)
+		} else {
+			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor OK ✓  (%d matched, %d missed)\n", checkpointsOK, checkpointsMissed)
+		}
+	}
 	return nil
+}
+
+// readArchivedLedgerHash fetches the canonical ledger-hash for
+// ledger seq from the local rs-stellar-archivist mirror. seq must
+// be a checkpoint ledger (seq % 64 == 63) — that's the last ledger
+// in the file named ledger-<hex(seq)>.xdr.gz at path
+// <archiveRoot>/ledger/XX/YY/ZZ/ where XX,YY,ZZ are the first three
+// bytes of the hex-encoded sequence.
+//
+// The file is a gzipped, self-delimiting XDR stream of
+// LedgerHeaderHistoryEntry records (64 of them, covering ledgers
+// seq-63 through seq). We scan until the entry matching seq, then
+// return entry.Hash.
+//
+// Returns (hash, true, nil) on success, (_, false, nil) if the file
+// doesn't exist on disk (archive mirror hasn't synced that far), or
+// (_, _, err) on any real read/parse error.
+func readArchivedLedgerHash(archiveRoot string, seq uint32) (sdkxdr.Hash, bool, error) {
+	hexSeq := fmt.Sprintf("%08x", seq)
+	path := filepath.Join(archiveRoot, "ledger",
+		hexSeq[0:2], hexSeq[2:4], hexSeq[4:6],
+		fmt.Sprintf("ledger-%s.xdr.gz", hexSeq))
+
+	f, err := os.Open(path) //nolint:gosec // archiveRoot is operator-supplied via flag
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return sdkxdr.Hash{}, false, nil
+		}
+		return sdkxdr.Hash{}, false, err
+	}
+	stream, err := sdkxdr.NewGzStream(f)
+	if err != nil {
+		_ = f.Close()
+		return sdkxdr.Hash{}, false, fmt.Errorf("open gz stream: %w", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var entry sdkxdr.LedgerHeaderHistoryEntry
+	for {
+		if err := stream.ReadOne(&entry); err != nil {
+			if errors.Is(err, io.EOF) {
+				return sdkxdr.Hash{}, false,
+					fmt.Errorf("checkpoint file %s did not contain ledger %d", path, seq)
+			}
+			return sdkxdr.Hash{}, false, fmt.Errorf("read entry: %w", err)
+		}
+		if uint32(entry.Header.LedgerSeq) == seq {
+			return entry.Hash, true, nil
+		}
+	}
 }
 
 // extractLedgerHeader pulls the header out of an LCM regardless of
