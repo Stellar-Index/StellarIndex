@@ -89,6 +89,29 @@ type Config struct {
 	// pair. Defaults to 10_000.
 	MaxTradesPerWindow int
 
+	// EnableStablecoinFiatProxy, when true, expands each fiat-
+	// denominated target pair into the direct pair plus one
+	// stablecoin-backed source pair per known peg and rewrites the
+	// fetched trades through aggregate.ProxyPair before VWAP
+	// computes. An operator who configures `XLM/fiat:USD` with
+	// this enabled gets a VWAP drawn from XLM/fiat:USD (FX-feed
+	// origins), XLM/crypto:USDT, XLM/crypto:USDC, XLM/crypto:DAI,
+	// XLM/crypto:PYUSD, XLM/crypto:USDP — all collapsed onto the
+	// target pair at the aggregator layer.
+	//
+	// Default (zero value = false): no expansion — the operator's
+	// configured Pairs are fetched verbatim. Eager on-by-default
+	// is held back because the expansion issues N+1 TradesInRange
+	// calls per (pair, window) and many deployments that only
+	// care about XLM/USDT want to opt into that extra IO
+	// deliberately.
+	//
+	// See internal/aggregate/stablecoin.go for the pegged-token
+	// map and the "aggregator policy, not decoder policy"
+	// rationale (late binding keeps depeg signal visible in the
+	// raw trade feed).
+	EnableStablecoinFiatProxy bool
+
 	// DisableClassFilter, when true, suppresses the aggregator's
 	// default "ClassExchange trades only" filter and lets every row
 	// in the fetched window contribute to VWAP regardless of source
@@ -245,7 +268,7 @@ func (o *Orchestrator) refreshPairWindow(
 	now time.Time,
 ) error {
 	from := now.Add(-window)
-	trades, err := o.store.TradesInRange(ctx, pair, from, now, o.cfg.MaxTradesPerWindow)
+	trades, err := o.fetchForTarget(ctx, pair, from, now)
 	if err != nil {
 		return fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
@@ -285,6 +308,59 @@ func (o *Orchestrator) refreshPairWindow(
 	o.vwapWrites++
 	o.mu.Unlock()
 	return nil
+}
+
+// fetchForTarget pulls trades from the store for a single target
+// pair and window. When EnableStablecoinFiatProxy is off this is a
+// single TradesInRange call for pair itself; when on, the pair is
+// expanded via aggregate.ExpandTargetPair into a direct pair plus
+// one backer pair per peg, each backer pair is fetched and its
+// trades are rewritten onto the target pair.
+//
+// Per-backer fetch errors are logged and skipped rather than
+// aborting the whole window — a single connector misbehaving at
+// the Timescale layer shouldn't black out an otherwise-healthy
+// aggregation target.
+func (o *Orchestrator) fetchForTarget(
+	ctx context.Context,
+	target canonical.Pair,
+	from, to time.Time,
+) ([]canonical.Trade, error) {
+	if !o.cfg.EnableStablecoinFiatProxy {
+		return o.store.TradesInRange(ctx, target, from, to, o.cfg.MaxTradesPerWindow)
+	}
+
+	sources, err := aggregate.ExpandTargetPair(target)
+	if err != nil {
+		return nil, fmt.Errorf("expand target %s: %w", target.String(), err)
+	}
+
+	// Collect trades from each source pair. Rewriting non-target
+	// source trades through ProxyPair happens here — by the time
+	// the merged slice leaves this function every trade carries
+	// the target pair and the downstream VWAP math treats them
+	// as homogenous.
+	var merged []canonical.Trade
+	for _, src := range sources {
+		batch, ferr := o.store.TradesInRange(ctx, src, from, to, o.cfg.MaxTradesPerWindow)
+		if ferr != nil {
+			o.logger.Warn("stablecoin-expansion fetch failed",
+				"target", target.String(),
+				"source_pair", src.String(),
+				"err", ferr,
+			)
+			continue
+		}
+		if src.Equal(target) {
+			merged = append(merged, batch...)
+			continue
+		}
+		for i := range batch {
+			batch[i].Pair = target
+			merged = append(merged, batch[i])
+		}
+	}
+	return merged, nil
 }
 
 // filterForVWAP drops trades whose source is not registered as a

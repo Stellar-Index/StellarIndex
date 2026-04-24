@@ -185,6 +185,114 @@ func TestProxyTrade_UnmappedReturnsOriginalAndFalse(t *testing.T) {
 	}
 }
 
+func TestFiatBackers_USD(t *testing.T) {
+	got := FiatBackers("USD")
+	want := map[string]bool{"USDT": true, "USDC": true, "DAI": true, "PYUSD": true, "USDP": true}
+	if len(got) != len(want) {
+		t.Fatalf("FiatBackers(USD) = %v (len %d), want %d entries", got, len(got), len(want))
+	}
+	for _, code := range got {
+		if !want[code] {
+			t.Errorf("unexpected USD backer: %q", code)
+		}
+	}
+}
+
+func TestFiatBackers_EUR(t *testing.T) {
+	got := FiatBackers("EUR")
+	want := map[string]bool{"EURC": true, "EUROC": true, "EUROB": true}
+	if len(got) != len(want) {
+		t.Fatalf("FiatBackers(EUR) = %v, want 3 entries", got)
+	}
+	for _, code := range got {
+		if !want[code] {
+			t.Errorf("unexpected EUR backer: %q", code)
+		}
+	}
+}
+
+func TestFiatBackers_UnpeggedFiatReturnsNil(t *testing.T) {
+	// No stablecoin in the map targets GBP → nil result.
+	if got := FiatBackers("GBP"); got != nil {
+		t.Errorf("FiatBackers(GBP) = %v, want nil", got)
+	}
+}
+
+func TestExpandTargetPair_FiatTargetReturnsDirectPlusBackers(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	target, _ := canonical.NewPair(xlm, usd)
+
+	got, err := ExpandTargetPair(target)
+	if err != nil {
+		t.Fatalf("ExpandTargetPair: %v", err)
+	}
+	// 1 direct + 5 USD backers (USDT, USDC, DAI, PYUSD, USDP).
+	if len(got) != 6 {
+		t.Fatalf("ExpandTargetPair(XLM/USD) len=%d want 6: %v", len(got), got)
+	}
+
+	foundDirect := false
+	foundBackers := map[string]bool{}
+	for _, p := range got {
+		switch p.Quote.Type {
+		case canonical.AssetFiat:
+			if p.Equal(target) {
+				foundDirect = true
+			}
+		case canonical.AssetCrypto:
+			foundBackers[p.Quote.Code] = true
+		}
+	}
+	if !foundDirect {
+		t.Error("ExpandTargetPair did not include direct XLM/fiat:USD target")
+	}
+	for _, want := range []string{"USDT", "USDC", "DAI", "PYUSD", "USDP"} {
+		if !foundBackers[want] {
+			t.Errorf("ExpandTargetPair missing backer XLM/crypto:%s", want)
+		}
+	}
+}
+
+func TestExpandTargetPair_NonFiatTargetReturnsOnlyItself(t *testing.T) {
+	// Crypto/crypto target — no stablecoin expansion.
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	btc, _ := canonical.NewCryptoAsset("BTC")
+	target, _ := canonical.NewPair(xlm, btc)
+
+	got, err := ExpandTargetPair(target)
+	if err != nil {
+		t.Fatalf("ExpandTargetPair: %v", err)
+	}
+	if len(got) != 1 || !got[0].Equal(target) {
+		t.Errorf("ExpandTargetPair(XLM/BTC) = %v, want [%s]", got, target)
+	}
+}
+
+func TestExpandTargetPair_BaseCollisionWithBackerIsSkipped(t *testing.T) {
+	// target USDC/fiat:USD — `base=crypto:USDC` collides with the
+	// USDC backer pair (NewPair would build crypto:USDC/crypto:USDC
+	// which fails validation). Other backers still expand cleanly.
+	usdc, _ := canonical.NewCryptoAsset("USDC")
+	usd, _ := canonical.NewFiatAsset("USD")
+	target, _ := canonical.NewPair(usdc, usd)
+
+	got, err := ExpandTargetPair(target)
+	if err != nil {
+		t.Fatalf("ExpandTargetPair: %v", err)
+	}
+	// Direct + 4 surviving backers (USDT, DAI, PYUSD, USDP) — USDC
+	// skipped because of base collision.
+	if len(got) != 5 {
+		t.Errorf("ExpandTargetPair(USDC/USD) len=%d want 5: %v", len(got), got)
+	}
+	for _, p := range got {
+		if p.Base.Code == p.Quote.Code && p.Quote.Type == canonical.AssetCrypto {
+			t.Errorf("ExpandTargetPair produced self-collision: %s", p)
+		}
+	}
+}
+
 // TestFiatProxy_CodesAreOnCanonicalAllowList guards against a future
 // addition to stablecoinFiatProxy for a ticker that's NOT on the
 // canonical crypto allow-list. Such a code could never originate

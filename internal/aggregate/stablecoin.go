@@ -110,3 +110,72 @@ func ProxyTrade(t canonical.Trade) (canonical.Trade, bool) {
 	t.Pair = p
 	return t, true
 }
+
+// FiatBackers returns the stablecoin crypto tickers pegged to the
+// given fiat code (e.g. "USD" → ["USDT", "USDC", "DAI", "PYUSD",
+// "USDP"]). Returns nil for fiat codes that no stablecoin in the
+// proxy map targets — the orchestrator treats that as "nothing to
+// fetch beyond the direct pair."
+//
+// Deterministic ordering is not promised; callers that need stable
+// output for assertions should sort. The real consumer (the
+// orchestrator) treats the set as a fetch plan and the order of
+// parallel TradesInRange calls doesn't affect the VWAP.
+func FiatBackers(fiat string) []string {
+	var out []string
+	for stable, target := range stablecoinFiatProxy {
+		if target == fiat {
+			out = append(out, stable)
+		}
+	}
+	return out
+}
+
+// ExpandTargetPair enumerates the source pairs the aggregator
+// should fetch from Timescale to populate a fiat-denominated
+// target pair's window.
+//
+//   - If the target's quote is fiat, the result contains the direct
+//     target pair (operators may have real-fiat trades from FX
+//     connectors) plus one entry per stablecoin backer (`BASE/USDT`,
+//     `BASE/USDC`, …). Trades fetched under backer pairs are then
+//     rewritten via ProxyPair before VWAP.
+//   - If the target is NOT fiat-denominated (crypto/crypto,
+//     crypto/classic, etc.), the result is just the target itself
+//     — there is no stablecoin-proxy expansion to do.
+//
+// An error is returned only if the target is malformed (pair
+// validation already happens upstream, so this mostly short-
+// circuits) — callers can safely treat err != nil as a
+// configuration bug.
+func ExpandTargetPair(target canonical.Pair) ([]canonical.Pair, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
+	if target.Quote.Type != canonical.AssetFiat {
+		// Not a fiat target — no stablecoin expansion.
+		return []canonical.Pair{target}, nil
+	}
+	backers := FiatBackers(target.Quote.Code)
+	out := make([]canonical.Pair, 0, 1+len(backers))
+	out = append(out, target)
+	for _, ticker := range backers {
+		stable, err := canonical.NewCryptoAsset(ticker)
+		if err != nil {
+			// Already guarded by TestFiatProxy_CodesAreOnCanonicalAllowList
+			// — skip defensively so a future registry change can't crash
+			// the tick loop.
+			continue
+		}
+		src, err := canonical.NewPair(target.Base, stable)
+		if err != nil {
+			// target.Base happens to equal the stablecoin (e.g.
+			// target is USDC/fiat:USD — base is `crypto:USDC`, and
+			// we'd build `crypto:USDC/crypto:USDC`). Skip the
+			// collision; the direct target entry still stands.
+			continue
+		}
+		out = append(out, src)
+	}
+	return out, nil
+}

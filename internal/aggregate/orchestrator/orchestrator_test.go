@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -18,17 +19,41 @@ type mockStore struct {
 	// regardless of (pair, from, to). Tests set this to simulate
 	// whatever window content they're asserting on.
 	trades []canonical.Trade
+	// perPair, when set, overrides `trades` with a per-pair
+	// fixture. The lookup key is canonical.Pair.String(). Missing
+	// pairs return an empty slice (simulating "no trades in this
+	// window") rather than a store error.
+	perPair map[string][]canonical.Trade
+	// perPairErr injects a fetch error for a specific pair — used
+	// by the stablecoin-expansion tests to verify that a single
+	// backer fetch failing does NOT blow up the whole window.
+	perPairErr map[string]error
 	// returnErr, if set, is returned from TradesInRange — used to
 	// exercise the error path without a live Timescale.
 	returnErr error
 	// calls counts invocations for assertions.
 	calls int
+	// callsByPair records each pair that was fetched so
+	// expansion tests can assert the full fetch set.
+	callsByPair map[string]int
 }
 
 func (m *mockStore) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	m.calls++
+	if m.callsByPair == nil {
+		m.callsByPair = make(map[string]int)
+	}
+	m.callsByPair[p.String()]++
 	if m.returnErr != nil {
 		return nil, m.returnErr
+	}
+	if m.perPairErr != nil {
+		if err, ok := m.perPairErr[p.String()]; ok {
+			return nil, err
+		}
+	}
+	if m.perPair != nil {
+		return m.perPair[p.String()], nil
 	}
 	return m.trades, nil
 }
@@ -410,6 +435,174 @@ func TestTick_ClassFilter_EmptyAfterFilterCountsAsEmpty(t *testing.T) {
 	if orch.Stats().EmptyWindows != 1 {
 		t.Errorf("EmptyWindows = %d want 1 (filtered-empty branch)",
 			orch.Stats().EmptyWindows)
+	}
+}
+
+// xlmUsdFiatPair builds the XLM/fiat:USD target pair used by the
+// stablecoin-expansion tests.
+func xlmUsdFiatPair(t *testing.T) canonical.Pair {
+	t.Helper()
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	p, _ := canonical.NewPair(xlm, usd)
+	return p
+}
+
+// backerTrade builds a trade for XLM/<stable> at (base, quote)
+// volumes with the given source.
+func backerTrade(t *testing.T, stable, source string, base, quote *big.Int, ts time.Time) canonical.Trade {
+	t.Helper()
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	stableAsset, _ := canonical.NewCryptoAsset(stable)
+	pair, _ := canonical.NewPair(xlm, stableAsset)
+	return canonical.Trade{
+		Source:      source,
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
+		OpIndex:     0,
+		Timestamp:   ts,
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(base),
+		QuoteAmount: canonical.NewAmount(quote),
+	}
+}
+
+func TestTick_StablecoinExpansion_FetchesAllBackerPairsAndCollapses(t *testing.T) {
+	// Populate store with XLM/USDT and XLM/USDC trades only —
+	// target is XLM/fiat:USD. Expansion should fetch 6 pairs
+	// (direct + 5 backers), and the two populated backers'
+	// trades rewrite onto XLM/fiat:USD for VWAP.
+	now := time.Now()
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	targetPair, _ := canonical.NewPair(xlm, usd)
+
+	store := &mockStore{
+		perPair: map[string][]canonical.Trade{
+			// 1 XLM @ 0.20 USDT.
+			"crypto:XLM/crypto:USDT": {
+				backerTrade(t, "USDT", "binance",
+					big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-2*time.Minute)),
+			},
+			// 1 XLM @ 0.20 USDC (same equal-weight price).
+			"crypto:XLM/crypto:USDC": {
+				backerTrade(t, "USDC", "coinbase",
+					big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-1*time.Minute)),
+			},
+			// direct XLM/fiat:USD, no FX trades populated here.
+		},
+	}
+	rdb, mr := newTestRedis(t)
+	orch := New(store, rdb, Config{
+		Pairs:                     []canonical.Pair{targetPair},
+		Windows:                   []time.Duration{5 * time.Minute},
+		EnableStablecoinFiatProxy: true,
+	})
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	// All 6 expanded pairs should have been fetched.
+	wantFetched := []string{
+		"crypto:XLM/fiat:USD",
+		"crypto:XLM/crypto:USDT",
+		"crypto:XLM/crypto:USDC",
+		"crypto:XLM/crypto:DAI",
+		"crypto:XLM/crypto:PYUSD",
+		"crypto:XLM/crypto:USDP",
+	}
+	for _, p := range wantFetched {
+		if store.callsByPair[p] == 0 {
+			t.Errorf("expected TradesInRange call for %q (got %d)", p, store.callsByPair[p])
+		}
+	}
+
+	// VWAP should have been written under the target pair's key
+	// (fiat:USD quote), not the original backers' keys.
+	key := "vwap:" + xlm.String() + ":" + usd.String() + ":300"
+	val, err := mr.Get(key)
+	if err != nil {
+		t.Fatalf("miniredis Get %q: %v", key, err)
+	}
+	if val[:4] != "0.20" {
+		t.Errorf("collapsed VWAP = %q want prefix 0.20", val)
+	}
+
+	// No backer-pair-keyed Redis entry should exist — the expansion
+	// funnels everything onto the target.
+	for _, backer := range []string{"crypto:USDT", "crypto:USDC"} {
+		badKey := "vwap:crypto:XLM:" + backer + ":300"
+		if mr.Exists(badKey) {
+			t.Errorf("unexpected backer-keyed VWAP %q", badKey)
+		}
+	}
+}
+
+func TestTick_StablecoinExpansion_SingleBackerFetchFailureDoesNotAbortWindow(t *testing.T) {
+	// Simulate USDC backer throwing — the direct pair and other
+	// backers should still fetch, the good trades should land.
+	now := time.Now()
+	store := &mockStore{
+		perPair: map[string][]canonical.Trade{
+			"crypto:XLM/crypto:USDT": {
+				backerTrade(t, "USDT", "binance",
+					big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-2*time.Minute)),
+			},
+		},
+		perPairErr: map[string]error{
+			"crypto:XLM/crypto:USDC": errors.New("simulated timescale timeout"),
+		},
+	}
+	rdb, mr := newTestRedis(t)
+	orch := New(store, rdb, Config{
+		Pairs:                     []canonical.Pair{xlmUsdFiatPair(t)},
+		Windows:                   []time.Duration{5 * time.Minute},
+		EnableStablecoinFiatProxy: true,
+	})
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	key := "vwap:" + xlm.String() + ":" + usd.String() + ":300"
+	if !mr.Exists(key) {
+		t.Error("VWAP key missing — USDC fetch error should not have aborted the window")
+	}
+}
+
+func TestTick_StablecoinExpansion_DisabledFetchesOnlyDirectPair(t *testing.T) {
+	// With the flag off the orchestrator should issue one fetch
+	// per configured pair, regardless of any backer rows in the
+	// store.
+	now := time.Now()
+	store := &mockStore{
+		perPair: map[string][]canonical.Trade{
+			"crypto:XLM/fiat:USD": {
+				buildTradeFrom(t, "exchangeratesapi",
+					big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-1*time.Minute)),
+			},
+			"crypto:XLM/crypto:USDT": {
+				backerTrade(t, "USDT", "binance",
+					big.NewInt(100_000_000), big.NewInt(20_000_000), now),
+			},
+		},
+	}
+	rdb, _ := newTestRedis(t)
+	orch := New(store, rdb, Config{
+		Pairs:   []canonical.Pair{xlmUsdFiatPair(t)},
+		Windows: []time.Duration{5 * time.Minute},
+		// EnableStablecoinFiatProxy: false (zero value).
+	})
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if got := store.callsByPair["crypto:XLM/fiat:USD"]; got != 1 {
+		t.Errorf("direct-pair calls = %d want 1", got)
+	}
+	if got := store.callsByPair["crypto:XLM/crypto:USDT"]; got != 0 {
+		t.Errorf("USDT backer calls = %d want 0 (expansion disabled)", got)
 	}
 }
 
