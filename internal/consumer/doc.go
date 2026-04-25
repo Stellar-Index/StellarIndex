@@ -1,47 +1,70 @@
-// Package consumer defines the stable interface every source
-// indexer implements — SDEX, Soroswap, Aquarius, Phoenix, Comet,
-// Blend, Reflector, Redstone, Band, CEX connectors, FX feeds,
-// and reference aggregators.
+// Package consumer defines the [Event] sum-type interface that
+// every source's emitted value implements, plus a legacy
+// [Source] + [Orchestrator] pair from the pre-dispatcher
+// architecture.
 //
-// # Contract
+// # What's load-bearing today
 //
-// A Source has two orchestration modes:
+// [Event] is the type the indexer's event sink type-switches on
+// to attribute each row to its source. Concrete shapes — e.g.
+// `soroswap.TradeEvent`, `reflector.UpdateEvent`,
+// `external.TradeEvent` — are defined in the source packages
+// and all satisfy this interface.
 //
-//   - [Source.StreamLive]     — subscribes to the live source and
-//     emits canonical trades / prices as they happen.
-//   - [Source.BackfillRange]  — walks a bounded historical range
-//     and emits every matching canonical trade / price for replay.
+// Every value emitted by a decoder, whether dispatched through
+// the [internal/dispatcher] hot path or produced by an
+// [internal/sources/external] connector goroutine, lands on a
+// `chan consumer.Event` and gets sunk by
+// `cmd/ratesengine-indexer`.
 //
-// Both emit on the same output channel type. Consumers treat
-// them uniformly; orchestration in cmd/ratesengine-indexer
-// decides which mode to run per source.
+// # What's legacy
 //
-// # Invariants
+// [Source] and the orchestrator in this package come from the
+// pre-2026-04-23 architecture, when each venue ran its own
+// goroutine speaking stellar-rpc and exposed
+// [Source.StreamLive] + [Source.BackfillRange] methods. That
+// path was retired when r1 dropped stellar-rpc — see
+// CLAUDE.md's binding rule "Ingest goes via Galexie →
+// dispatcher → decoder. Never stellar-rpc."
 //
-//   - Every emitted event is a fully-formed value from
-//     internal/canonical — never a partial / unvalidated struct.
+// The interface and orchestrator are still in tree because:
+//
+//   - The `external/` connectors (CEX / FX / aggregator pollers)
+//     genuinely need a per-venue goroutine model; they're not
+//     dispatched from a ledger-meta walk. They use a sibling
+//     framework in `internal/sources/external/runner.go`,
+//     not this orchestrator, but the shape rhymes.
+//   - The legacy code path is the simplest reference for
+//     anyone designing a future per-source goroutine that
+//     needs cursor + restart + backoff semantics.
+//
+// New on-chain sources should NOT implement [Source] —
+// they register a [dispatcher.Decoder] / [dispatcher.OpDecoder]
+// / [dispatcher.ContractCallDecoder] instead.
+//
+// # Invariants for Event values (current)
+//
+//   - Every emitted event wraps a fully-formed value from
+//     [internal/canonical] — never a partial / unvalidated
+//     struct.
 //   - Amount fields are *big.Int via canonical.Amount. See
 //     ADR-0003.
-//   - Sources honour ctx.Done() promptly. No unbounded blocking.
-//   - Sources are safe to Stop + re-create; orchestrator
-//     restarts on unrecoverable error and feeds the resumption
-//     cursor back in.
 //
-// # Adding a new source
+// # Adding a new on-chain source
 //
-// Short form (see existing sources in internal/sources/ for
-// templates):
+//   1. Create internal/sources/<name>/ with events.go +
+//      decode.go + consumer.go + dispatcher_adapter.go +
+//      tests. Follow the existing sources as templates.
+//   2. Define a TradeEvent / UpdateEvent in `events.go`:
 //
-//  1. Create internal/sources/<name>/ with doc.go + events.go +
-//     decode.go + consumer.go + source_test.go. Follow the
-//     five-file convention of soroswap / aquarius / phoenix /
-//     reflector.
-//  2. Implement [Source] on a `*Source` struct. Add compile-time
-//     assertions at the bottom of consumer.go:
-//     var _ consumer.Source = (*Source)(nil)
-//     var _ consumer.Event  = TradeEvent{}
-//  3. Register the source name in cmd/ratesengine-indexer/main.go's
-//     buildSources() switch.
-//  4. Add golden-file fixtures under test/fixtures/<name>/ when
-//     the real SCVal decoder wiring is ready.
+//        type TradeEvent struct{ Trade canonical.Trade }
+//        func (TradeEvent) EventKind() string { return "<name>.trade" }
+//        func (e TradeEvent) Source() string  { return e.Trade.Source }
+//        var _ consumer.Event = TradeEvent{}
+//
+//   3. Wire `dispatcher_adapter.go` to register the right
+//      seam (Decoder / OpDecoder / ContractCallDecoder).
+//   4. Add the source name + builder to
+//      cmd/ratesengine-indexer/main.go's `buildDispatcher()`.
+//   5. Add real-fixture tests under test/fixtures/<name>/.
 package consumer
