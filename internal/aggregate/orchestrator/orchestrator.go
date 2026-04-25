@@ -472,7 +472,9 @@ func zeroes(n int) string {
 }
 
 // Stats is a snapshot of the orchestrator's runtime counters.
-// Zero-copy; callers should treat as immutable.
+// All fields are value types; returning by value gives the
+// caller an independent copy that won't change under their feet
+// while the orchestrator keeps ticking.
 type Stats struct {
 	LastTickAt   time.Time
 	TicksTotal   int64
