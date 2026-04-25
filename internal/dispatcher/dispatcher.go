@@ -1,25 +1,38 @@
 // Package dispatcher consumes ledger-meta values from
-// internal/ledgerstream, extracts Soroban contract events per
-// transaction, and routes each event to a decoder registered by
-// one of the internal/sources/<venue> packages. Per
-// docs/architecture/ingest-pipeline.md this is the SINGLE
+// internal/ledgerstream and routes per-transaction artefacts to
+// decoders registered by the internal/sources/<venue> packages.
+// Per docs/architecture/ingest-pipeline.md this is the SINGLE
 // production ingest codepath — every trade / oracle update that
 // lands in Timescale goes through Dispatcher.ProcessLedger.
 //
 // Dispatcher is intentionally small. The decoders carry all
 // protocol-specific logic (topic matching, SCVal parsing,
 // correlation buffers for swap+sync or 8-field swaps); the
-// dispatcher does only three things:
+// dispatcher's per-ledger walk hits three seams in order:
 //
-//  1. Walk a LedgerCloseMeta through ingest.NewLedgerTransactionReader...
-//  2. Call tx.GetTransactionEvents() for each transaction and flatten
-//     to a stream of events.Event values.
-//  3. Invoke each registered Decoder in order; the first one whose
-//     Matches() returns true owns the event.
+//   - [Decoder] (Soroban contract events) — flatten
+//     tx.GetTransactionEvents() to events.Event values; the
+//     first registered Decoder whose Matches() returns true
+//     owns each event. Used by every Soroban source that
+//     publishes contract events: soroswap, aquarius, phoenix,
+//     comet, reflector (all 3 variants), redstone.
+//   - [OpDecoder] (classic XDR operations) — for op types that
+//     don't surface as Soroban events; iterate the tx envelope's
+//     operations and invoke each OpDecoder whose op-type filter
+//     matches. Used by internal/sources/sdex for
+//     ManageSellOffer / ManageBuyOffer / CreatePassiveSellOffer /
+//     PathPayment* trade extraction.
+//   - [ContractCallDecoder] (event-less Soroban contracts) — for
+//     contracts that update storage on a known function call but
+//     emit zero events. Match by (contract_id, function_name);
+//     decoder reads from the InvokeContract op's args. Used by
+//     internal/sources/band (relay / force_relay).
 //
-// This means every source-specific concern stays inside the source
-// package, and the dispatcher has nothing protocol-specific to
-// change when a new source is added.
+// All three seams share the "first-match-wins, non-fatal errors
+// are logged and counted" contract — see each interface's doc
+// comment. Adding a new source is registering against whichever
+// seam fits the venue's wire shape; the dispatcher itself stays
+// unchanged.
 package dispatcher
 
 import (
