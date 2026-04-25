@@ -294,8 +294,11 @@ boil down to event topic shape + amount-decoding quirks.
 
 ### "Investigate a price divergence"
 
-Start at [docs/operations/runbooks/price-divergence.md](docs/operations/runbooks/price-divergence.md)
-(TBD — runbook lands with the aggregation layer).
+Start at [docs/operations/runbooks/price-divergence.md](docs/operations/runbooks/price-divergence.md).
+Aggregator-layer alerts (silent / outlier-storm / class-drop-spike)
+have their own runbooks under the same directory; see
+[docs/architecture/aggregation-plan.md](docs/architecture/aggregation-plan.md)
+for the policy chain that drives them.
 
 ### "Find why a metric is alerting"
 
