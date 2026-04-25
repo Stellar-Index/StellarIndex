@@ -183,6 +183,69 @@ backfill, just to catch any disk corruption before we build an hour
 of replay work on top of it. Long-running — gated by
 `-archivist-timeout` (default 30 min).
 
+## Tuning — when 60 ledgers/sec isn't enough
+
+The 2026-04-25 r1 backfill ran phase 3 at **~59 ledgers/sec** —
+~10–25× under galexie's claimed 500–1500 ledgers/sec ceiling.
+Captive-core CPU was at 1.5%, zpool had headroom, network
+bandwidth peaked at 133 MiB/s. The bottleneck is the
+**single-goroutine S3 PUT loop in galexie's uploader** — ~16 ms
+RTT per object × 60 PUTs/sec ≈ what we observed.
+
+Verified against `stellar/stellar-galexie@6dec23e2`
+(`internal/uploader.go`'s `Run` method) and
+`go-stellar-sdk:support/datastore/s3.go`'s `putFile`. There is
+no `--workers` / `--upload-concurrency` flag exposed.
+
+### Highest-impact lever: parallel `scan-and-fill` processes
+
+Galexie's per-object `IfNoneMatch: "*"` precondition makes
+overlapping writes idempotent (loser gets `PreconditionFailed`,
+treats as success), so multiple processes on **disjoint** ledger
+ranges are safe — no lock file or DB coordinator. Each process
+needs its own captive-core `storage_path` and `admin_port` so
+the LMDB buckets don't collide.
+
+For a full pubnet backfill on r1-class hardware:
+
+```sh
+# 8 workers × ~7.7M ledgers each. CPU at 1.5% per worker means
+# we have plenty of headroom for at least 8 — measure before
+# pushing past 16.
+mkdir -p /var/galexie/{1,2,3,4,5,6,7,8}/captive-core
+for i in 1 2 3 4 5 6 7 8; do
+  start=$(( 2 + (i - 1) * 7781216 ))
+  end=$((   1 +  i      * 7781216 ))
+  systemd-run --unit=galexie-bf-$i \
+    galexie scan-and-fill \
+      --config-file /etc/galexie/galexie-backfill-$i.toml \
+      --start "$start" --end "$end"
+done
+```
+
+…where each `galexie-backfill-$i.toml` overrides:
+
+```toml
+[stellar_core_config]
+storage_path = "/var/galexie/$i/captive-core"
+admin_port   = $((11725 + i))
+```
+
+Expected throughput at 8 workers: ~470 ledgers/sec → full
+pubnet backfill in ~1.5 days instead of ~12.
+
+### Other knobs (lower impact, mostly not exposed)
+
+| Knob | Status | Notes |
+| --- | --- | --- |
+| `[datastore_config.schema] ledgers_per_file` | exposed but locked | Schema is persisted in the bucket manifest on first write; can't change for an existing datastore. Only relevant for greenfield buckets. Bumping from 1 → 64 divides PUT count by 64. |
+| `[datastore_config.schema] files_per_partition` | exposed | Layout only, no PUT-rate impact. |
+| Upload concurrency / worker count | hard-coded (single goroutine) | `internal/uploader.go` `Uploader.Run`. Patching upstream is ~15 lines of code; worth filing as a galexie issue. |
+| `uploadQueueCapacity = 128` | hard-coded constant | Doesn't help when the consumer is single-threaded. |
+| zstd compression level | hard-coded `SpeedDefault` (~level 3) | `support/compressxdr/compressor.go`'s `ZstdCompressor.NewWriter` — no options. Comment in galexie's `config.go` reads `// user-configurable in the future`. |
+| S3 client tuning (PUT timeout, keep-alive pool, multipart) | hard-coded defaults | `s3.go` `NewS3DataStore` calls `config.LoadDefaultConfig(ctx)` with no transport overrides. |
+| Multipart upload | irrelevant | `manager.NewUploader` defaults to 5 MB part size, 5 concurrent parts per upload — but parts only kick in for objects ≥ 5 MB. LCM-per-file is small. |
+
 ## What we do today
 
 - **At backfill time:** Tier A + Tier B + Tier E.
