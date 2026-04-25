@@ -11,8 +11,9 @@
 #
 # Mixed skeleton + live — the /v1/healthz, /readyz, /version, /assets,
 # /assets/{asset_id}, /price, /history, /ohlc, /vwap, /twap,
-# /markets, /oracle/latest paths are implemented today. Other paths
-# (price/batch, price/stream, history/since-inception, account/*,
+# /markets, /oracle/latest, and /sources paths are implemented
+# today. Other paths (price/batch, price/stream, history/since-
+# inception, /pairs, /oracle/lastprice, /oracle/prices, account/*,
 # SEP-40 passthrough) are on the lint's planned_regex allow-list
 # pending their respective feature PRs. See docs/reference/api-design.md.
 
