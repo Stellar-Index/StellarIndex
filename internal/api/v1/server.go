@@ -199,6 +199,9 @@ func (s *Server) mountRoutes() {
 	// Distinct trading pairs.
 	s.mux.HandleFunc("GET /v1/markets", s.handleMarkets)
 
+	// Single-pair activity summary.
+	s.mux.HandleFunc("GET /v1/pairs", s.handlePairs)
+
 	// Latest oracle readings per source for an asset.
 	s.mux.HandleFunc("GET /v1/oracle/latest", s.handleOracleLatest)
 

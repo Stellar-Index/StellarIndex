@@ -112,3 +112,44 @@ func (s *Store) DistinctPairs(ctx context.Context, cursor string, limit int) ([]
 	}
 	return out, nextCursor, nil
 }
+
+// PairMarket returns the activity summary for a single (base, quote)
+// pair. The bool result is false when the pair has no trades in the
+// hypertable; callers translate that to an empty list (200 OK) per
+// the /v1/pairs envelope contract — not a 404 — to match the
+// "array of MarketRow" spec shape.
+//
+// Performance: bounded scan over the trades hypertable for one
+// (base, quote) tuple. The same future market_catalogue
+// materialised view that benefits DistinctPairs benefits this too.
+func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error) {
+	const q = `
+        SELECT MAX(ts) AS last_trade_at,
+               SUM(CASE WHEN ts > NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END) AS count_24h
+          FROM trades
+         WHERE base_asset = $1 AND quote_asset = $2
+    `
+	var (
+		lastAt   *time.Time
+		count24h *int64
+	)
+	if err := s.db.QueryRowContext(ctx, q, base.String(), quote.String()).Scan(&lastAt, &count24h); err != nil {
+		return Market{}, false, fmt.Errorf("timescale: PairMarket: %w", err)
+	}
+	if lastAt == nil {
+		return Market{}, false, nil
+	}
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		return Market{}, false, fmt.Errorf("timescale: PairMarket pair: %w", err)
+	}
+	var n int64
+	if count24h != nil {
+		n = *count24h
+	}
+	return Market{
+		Pair:          pair,
+		LastTradeAt:   lastAt.UTC(),
+		TradeCount24h: n,
+	}, true, nil
+}

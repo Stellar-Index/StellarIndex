@@ -8,12 +8,18 @@ import (
 	"time"
 
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
+	"github.com/RatesEngine/rates-engine/internal/canonical"
 )
 
 type stubMarketsReader struct {
 	pairs   []v1.Market
 	nextCur string
 	err     error
+
+	// PairMarket stub state.
+	pair      v1.Market
+	pairFound bool
+	pairErr   error
 }
 
 func (r *stubMarketsReader) DistinctPairs(_ context.Context, cursor string, limit int) ([]v1.Market, string, error) {
@@ -21,6 +27,13 @@ func (r *stubMarketsReader) DistinctPairs(_ context.Context, cursor string, limi
 		return nil, "", r.err
 	}
 	return r.pairs, r.nextCur, nil
+}
+
+func (r *stubMarketsReader) PairMarket(_ context.Context, _ canonical.Asset, _ canonical.Asset) (v1.Market, bool, error) {
+	if r.pairErr != nil {
+		return v1.Market{}, false, r.pairErr
+	}
+	return r.pair, r.pairFound, nil
 }
 
 func TestMarkets_EmptyWhenReaderNil(t *testing.T) {
