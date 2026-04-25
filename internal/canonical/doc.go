@@ -14,9 +14,13 @@
 //
 //   - Amount values are ALWAYS *big.Int. They never truncate to
 //     int64. See ADR-0003 and docs/discovery/decisions.md §i128.
-//   - Asset identity is unambiguous: a (code, issuer) tuple for
-//     classic Stellar assets, a contract address for Soroban
-//     SEP-41 tokens, or "XLM" for the native asset. Two different
+//   - Asset identity is unambiguous, with five canonical shapes:
+//     native (XLM), classic ((code, issuer) tuple), soroban
+//     (single C-address SEP-41 contract), fiat (off-chain ISO-4217
+//     code, wire form fiat:USD — ADR-0010), and crypto (off-chain
+//     global ticker, wire form crypto:BTC — ADR-0014). The crypto
+//     shape is distinct from soroban: soroban requires a real
+//     on-chain C-address, crypto:BTC does not. Two different
 //     representations of the same underlying asset MUST round-trip
 //     through a single canonical form.
 //   - Pair is a unidirectional (base, quote) ordering. Pair
@@ -36,6 +40,8 @@
 //
 //   - ADR-0003 (i128 no-truncation invariant)
 //   - ADR-0005 (monorepo, single Go module)
+//   - ADR-0010 (off-chain fiat representation)
+//   - ADR-0014 (crypto-ticker representation)
 //   - docs/discovery/decisions.md
 //   - docs/discovery/notes/sep-41-token-events.md (amount shapes
 //     from Soroban token events)
