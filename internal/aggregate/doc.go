@@ -1,12 +1,17 @@
-// Package aggregate computes VWAP / TWAP / OHLC and runs outlier
-// filtering over a window of [canonical.Trade] values.
+// Package aggregate computes VWAP / TWAP / OHLC, runs outlier
+// filtering, and applies stablecoin → fiat proxy mapping over a
+// window of [canonical.Trade] values.
 //
 // # Scope
 //
 // This package is pure functions over in-memory slices. Persistence
 // (TimescaleDB continuous aggregates), scheduling (the aggregator
-// binary), and multi-source reconciliation (the divergence layer)
-// live elsewhere. Here we only do the math.
+// binary's [internal/aggregate/orchestrator]), and multi-source
+// divergence detection live elsewhere. Here we only do the math.
+//
+// See docs/architecture/aggregation-plan.md for how the orchestrator
+// composes these primitives into the policy chain (stablecoin
+// expansion → class filter → outlier filter → VWAP).
 //
 // # VWAP
 //
@@ -29,13 +34,25 @@
 // Phase-1 design settled on a sigma-threshold filter (default 4σ) —
 // drop any trade whose price is more than N standard deviations
 // from the unweighted mean. Over small windows with fat tails this
-// is less defensible than a MAD-based filter, but it's what ADR /
-// RFP cite. See [ADR TBD] for the filter's full rationale.
+// is less defensible than a MAD-based filter, but the σ form is
+// what the RFP cites. The σ-vs-MAD migration plan + on-call
+// guidance lives in
+// docs/operations/runbooks/aggregator-outlier-storm.md.
+//
+// # Stablecoin fiat proxy
+//
+// Quote-side stablecoin tickers map to their pegged fiat at
+// VWAP-compute time, never at decode time — see
+// [FiatProxy] / [ProxyPair] / [ProxyTrade] /
+// [ExpandTargetPair]. Decoders preserve the raw pair so a depeg
+// stays visible in the trade feed; the aggregator applies the
+// rewrite when an operator opts in via
+// orchestrator.Config.EnableStablecoinFiatProxy.
 //
 // # What this package deliberately doesn't do
 //
 //   - No time-windowing. Callers pre-filter trades to the window
 //     they want before passing in.
-//   - No multi-venue weighting / triangulation. Those happen
-//     upstream in [internal/divergence].
+//   - No multi-venue weighting / triangulation. Those are deferred
+//     items captured in docs/architecture/aggregation-plan.md.
 package aggregate
