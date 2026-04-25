@@ -5,16 +5,25 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/RatesEngine/rates-engine/internal/canonical"
 )
 
 // MarketsReader is the storage-side interface for /v1/markets
-// lookups. Implementations: *timescale.Store (DistinctPairs),
-// in-memory stubs for tests.
+// and /v1/pairs lookups. Implementations: *timescale.Store
+// (DistinctPairs + PairMarket), in-memory stubs for tests.
 type MarketsReader interface {
 	// DistinctPairs returns one page of (base, quote) pairs present
 	// in the trades store, each annotated with a recency + activity
 	// stat. Cursor opaque; empty starts at page 1.
 	DistinctPairs(ctx context.Context, cursor string, limit int) ([]Market, string, error)
+
+	// PairMarket returns the activity summary for a single (base,
+	// quote) pair. The bool is false when the pair has no trades —
+	// the /v1/pairs handler translates that to an empty 200 OK array,
+	// not a 404, so the wire shape stays consistent with the
+	// PairsEnvelope contract.
+	PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error)
 }
 
 // Market is the wire shape for /v1/markets entries.

@@ -300,6 +300,19 @@ func (r storeMarketsReader) DistinctPairs(ctx context.Context, cursor string, li
 	return out, next, nil
 }
 
+func (r storeMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (v1.Market, bool, error) {
+	m, ok, err := r.s.PairMarket(ctx, base, quote)
+	if err != nil || !ok {
+		return v1.Market{}, ok, err
+	}
+	return v1.Market{
+		Base:          m.Pair.Base.String(),
+		Quote:         m.Pair.Quote.String(),
+		LastTradeAt:   m.LastTradeAt,
+		TradeCount24h: m.TradeCount24h,
+	}, true, nil
+}
+
 // storeOracleReader adapts *timescale.Store to v1.OracleReader.
 type storeOracleReader struct{ s *timescale.Store }
 

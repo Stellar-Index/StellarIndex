@@ -17,6 +17,16 @@ against.
 
 ### Added
 
+- **`GET /v1/pairs?base=&quote=`**: single-pair activity summary
+  promised by the OpenAPI spec but previously unimplemented.
+  Returns the same `MarketRow` shape as `/v1/markets`, filtered
+  to one pair: zero or one element. Empty array (200 OK), not
+  404, when the pair has no trades — matches the
+  `PairsEnvelope.data: array` contract so clients can
+  distinguish "no data" from "bad request" without branching on
+  status code. Backed by a new `Store.PairMarket(base, quote)`
+  method on the timescale store.
+
 - **PRs 41–73 — As-built audit + galexie tuning playbook**
   (2026-04-25): an autonomous-loop session focused on bringing
   the docs flush with the shipped code and capturing live-run
