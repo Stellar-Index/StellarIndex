@@ -233,7 +233,7 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 // every asset seen. Prometheus recommends <10^4 series per metric;
 // unrestricted per-asset emission blows past that on a busy chain.
 // The aggregator owns this allow-list; see
-// docs/architecture/aggregation-plan.md when it lands.
+// docs/architecture/aggregation-plan.md.
 var PriceStalenessSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "ratesengine_price_staleness_seconds",
