@@ -246,6 +246,50 @@ pubnet backfill in ~1.5 days instead of ~12.
 | S3 client tuning (PUT timeout, keep-alive pool, multipart) | hard-coded defaults | `s3.go` `NewS3DataStore` calls `config.LoadDefaultConfig(ctx)` with no transport overrides. |
 | Multipart upload | irrelevant | `manager.NewUploader` defaults to 5 MB part size, 5 concurrent parts per upload — but parts only kick in for objects ≥ 5 MB. LCM-per-file is small. |
 
+### Alternative: skip the export, mirror from AWS public bucket
+
+AWS hosts a publicly-readable galexie-format Stellar dataset at
+`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`. For
+historical backfill (genesis → live tip), we don't need to run
+galexie ourselves — we can `mc mirror` (or `aws s3 sync`) the
+public bucket into our `galexie-archive` and skip the
+12-day-serial / 1.5-day-parallel export step entirely.
+
+OBSRVR's `nebu` tool does exactly this — its archive mode reads
+straight from the AWS bucket via the SDK's
+`BufferedStorageBackend` (per
+`nebu/docs/ARCHIVE_MODE.md`). The 2026-04-25 OBSRVR-fork
+research (see commit log for the linked agent report) confirmed
+they have **no parallel-write galexie fork** — they just
+piggy-back on the AWS public dataset for backfill and the
+SDK's `NumWorkers` parallel prefetch on the read side.
+
+When this is the right call:
+
+- Bringing up a brand-new archival node from cold (no sunk
+  galexie work yet — switch to mirror immediately).
+- Disaster recovery on a corrupt `galexie-archive` (re-seed
+  from AWS instead of re-running scan-and-fill).
+
+When it isn't:
+
+- AWS's bucket retention isn't guaranteed to genesis (verify
+  per backfill); the lower-bound ledger of their dataset is
+  the de-facto floor.
+- Egress cost — pulling 100s of GB out of AWS to our colo
+  isn't free. Compare against the captive-core CPU cost of
+  the in-house export.
+- We give up cross-validation: re-running our own export +
+  byte-comparing against AWS would be a Tier-C-style
+  audit but we'd have to actually run the export anyway,
+  defeating the purpose.
+
+The verify-archive playbook's Tier C (deferred) was originally
+shaped around the SDF GCS bucket. The AWS public bucket is the
+same shape and accessible via S3-native APIs (no GCS auth
+dance), so a future Tier C implementation should target AWS
+first.
+
 ## What we do today
 
 - **At backfill time:** Tier A + Tier B + Tier E.
