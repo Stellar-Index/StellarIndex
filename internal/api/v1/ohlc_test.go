@@ -1,6 +1,7 @@
 package v1_test
 
 import (
+	"errors"
 	"math/big"
 	"net/http"
 	"testing"
@@ -124,5 +125,29 @@ func TestOHLC_InvalidTime400(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&from=bogus")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// ─── error-path coverage to parity with TWAP ─────────────────
+
+func TestOHLC_InvalidPair400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	// base == quote — NewPair rejects with invalid-pair.
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=native")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestOHLC_ReaderError500(t *testing.T) {
+	reader := &stubHistoryReader{err: errors.New("storage broke")}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
 	}
 }
