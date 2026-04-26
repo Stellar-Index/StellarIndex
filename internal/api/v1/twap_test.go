@@ -1,6 +1,7 @@
 package v1_test
 
 import (
+	"errors"
 	"math/big"
 	"net/http"
 	"testing"
@@ -73,5 +74,39 @@ func TestTWAP_TimeWeightsCorrectly(t *testing.T) {
 	}
 	if env.Data.TradeCount != 2 {
 		t.Errorf("TradeCount = %d, want 2", env.Data.TradeCount)
+	}
+}
+
+// ─── error-path coverage ────────────────────────────────────
+
+func TestTWAP_InvalidTime400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/twap?base=native&quote=fiat:USD&from=bogus")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestTWAP_InvalidPair400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	// base == quote — NewPair rejects with invalid-pair.
+	resp := mustGet(t, ts.URL+"/v1/twap?base=native&quote=native")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestTWAP_ReaderError500(t *testing.T) {
+	reader := &stubHistoryReader{err: errors.New("storage broke")}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/twap?base=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
 	}
 }
