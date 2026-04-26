@@ -92,6 +92,40 @@ func TestHistory_MissingBase400(t *testing.T) {
 	}
 }
 
+// parseBaseQuote has four branches; TestHistory_MissingBase400
+// covers one. The remaining three (bad base, missing quote, bad
+// quote) all share the same shape — quick coverage round-trip.
+
+func TestHistory_BadBase400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=garbage&quote=fiat:USD")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (invalid base id)", resp.StatusCode)
+	}
+}
+
+func TestHistory_MissingQuote400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=native")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHistory_BadQuote400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=garbage")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (invalid quote id)", resp.StatusCode)
+	}
+}
+
 func TestHistory_InvalidTime400(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	ts := httpTestServer(t, srv)
