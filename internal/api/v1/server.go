@@ -212,6 +212,11 @@ func (s *Server) mountRoutes() {
 	// Trade history within a time window.
 	s.mux.HandleFunc("GET /v1/history", s.handleHistory)
 
+	// Aggregated history at a granularity over the asset's full
+	// indexed range. CAGG-served (prices_<granularity>); per
+	// ADR-0015 only closed buckets returned.
+	s.mux.HandleFunc("GET /v1/history/since-inception", s.handleHistorySinceInception)
+
 	// Single-bar OHLC over a time window.
 	s.mux.HandleFunc("GET /v1/ohlc", s.handleOHLC)
 

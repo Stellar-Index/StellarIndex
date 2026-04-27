@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -38,7 +39,36 @@ type HistoryReader interface {
 		afterOpIndex uint32,
 		limit int,
 	) ([]canonical.Trade, error)
+
+	// HistoryPoints returns every CLOSED bucket from the requested
+	// granularity's CAGG (prices_1m / prices_15m / prices_1h / etc.)
+	// for the pair, ordered chronologically. Used by /v1/history/
+	// since-inception to serve the full historical series.
+	//
+	// granularity must be one of the canonical strings: "1m", "15m",
+	// "1h", "4h", "1d", "1w", "1mo". The handler translates the
+	// query-param string into this argument; unknown granularities
+	// return [ErrUnknownGranularity].
+	//
+	// limit clamps the row count; 0 = unbounded. Empty slice + nil
+	// error when the pair has no closed buckets yet.
+	HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]HistoryPoint, error)
 }
+
+// HistoryPoint is one (timestamp, price, optional usd-volume) row
+// from a CAGG, returned by [HistoryReader.HistoryPoints]. The wire
+// shape (`{t, p, v_usd?}`) is the OpenAPI HistoryPoint schema; the
+// reader returns rich types and the handler does the marshalling.
+type HistoryPoint struct {
+	Bucket    time.Time
+	VWAP      string  // NUMERIC text — pass-through, no float round-trip
+	VolumeUSD *string // null when the bucket's underlying trades had no usd_volume
+}
+
+// ErrUnknownGranularity is what HistoryReader.HistoryPoints returns
+// when the granularity arg isn't one of the seven canonical values.
+// Handler translates to HTTP 400 problem+json.
+var ErrUnknownGranularity = fmt.Errorf("unknown granularity")
 
 // TradeRow is the wire shape for /v1/history entries.
 //
@@ -317,4 +347,143 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
 	return base, quote, true
+}
+
+// ─── /v1/history/since-inception ────────────────────────────────
+
+// HistorySeries is the wire shape for /v1/history/since-inception.
+// Mirrors the OpenAPI HistoryEnvelope.data shape exactly.
+type HistorySeries struct {
+	AssetID     string             `json:"asset_id"`
+	Quote       string             `json:"quote"`
+	PriceType   string             `json:"price_type"`  // "vwap" today; TWAP planned
+	Granularity string             `json:"granularity"` // "1m" / "15m" / "1h" / etc.
+	Points      []HistoryPointWire `json:"points"`
+}
+
+// HistoryPointWire is the JSON-tagged shape that marshals as the
+// OpenAPI HistoryPoint ({t, p, v_usd?}). Distinct from the
+// reader-side [HistoryPoint] which carries rich types — keeps the
+// internal type usable by tests + adapters without leaking wire-
+// shape assumptions.
+type HistoryPointWire struct {
+	T    time.Time `json:"t"`
+	P    string    `json:"p"`
+	VUSD *string   `json:"v_usd,omitempty"`
+}
+
+const (
+	defaultHistoryGranularity = "1d"
+
+	// historyMaxPoints is the safety cap on a single response. The
+	// 1m CAGG can grow to ~32 M rows over 5 years (one per minute);
+	// the 1d CAGG is ~1800 rows over 5 years. Cap at 50k so a
+	// granularity=1m request doesn't try to ship a 32M-row JSON
+	// payload. Operators wanting the full series in 1m grain should
+	// paginate (planned cursor surface).
+	historyMaxPoints = 50_000
+)
+
+// handleHistorySinceInception serves GET /v1/history/since-inception?
+// asset=<id>&quote=<id>&granularity=<g>. Returns CLOSED buckets
+// from the granularity's CAGG, oldest to newest, capped at
+// historyMaxPoints.
+//
+// 503 when no HistoryReader is wired. 400 on bad asset/quote/
+// granularity. 200 with empty points[] when the pair has no closed
+// buckets yet — distinct from 404 since the asset itself may be
+// known but just hasn't accrued bucketed history.
+func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Request) {
+	if s.history == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/history-unavailable",
+			"History serving not configured", http.StatusServiceUnavailable,
+			"this deployment has no HistoryReader wired — check binary configuration")
+		return
+	}
+
+	rawAsset := r.URL.Query().Get("asset")
+	if rawAsset == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/missing-asset",
+			"Missing asset parameter", http.StatusBadRequest,
+			"asset query parameter is required")
+		return
+	}
+	asset, err := canonical.ParseAsset(rawAsset)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			err.Error())
+		return
+	}
+
+	quote := defaultPriceQuote
+	if rawQuote := r.URL.Query().Get("quote"); rawQuote != "" {
+		q, err := canonical.ParseAsset(rawQuote)
+		if err != nil {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-quote",
+				"Invalid quote identifier", http.StatusBadRequest,
+				err.Error())
+			return
+		}
+		quote = q
+	}
+
+	if asset.Equal(quote) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/identity-pair",
+			"Asset is the quote", http.StatusBadRequest,
+			"asset and quote must differ")
+		return
+	}
+
+	gran := defaultHistoryGranularity
+	if raw := r.URL.Query().Get("granularity"); raw != "" {
+		gran = raw
+	}
+
+	pair, err := canonical.NewPair(asset, quote)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-pair",
+			"Invalid pair", http.StatusBadRequest,
+			err.Error())
+		return
+	}
+
+	points, err := s.history.HistoryPoints(r.Context(), pair, gran, historyMaxPoints)
+	if errors.Is(err, ErrUnknownGranularity) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-granularity",
+			"Invalid granularity", http.StatusBadRequest,
+			fmt.Sprintf("granularity must be one of: 1m, 15m, 1h, 4h, 1d, 1w, 1mo (got %q)", gran))
+		return
+	}
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("HistoryPoints failed",
+			"err", err, "asset", asset.String(), "quote", quote.String(), "granularity", gran)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+
+	wire := make([]HistoryPointWire, len(points))
+	for i, p := range points {
+		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
+	}
+
+	writeJSON(w, HistorySeries{
+		AssetID:     asset.String(),
+		Quote:       quote.String(),
+		PriceType:   "vwap",
+		Granularity: gran,
+		Points:      wire,
+	}, Flags{})
 }

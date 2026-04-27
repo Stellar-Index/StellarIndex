@@ -17,6 +17,7 @@ import (
 // stubHistoryReader implements v1.HistoryReader with a static slice.
 type stubHistoryReader struct {
 	trades   []canonical.Trade
+	points   []v1.HistoryPoint
 	lastCall struct {
 		from, to     time.Time
 		limit        int
@@ -25,8 +26,13 @@ type stubHistoryReader struct {
 		afterTxHash  string
 		afterSource  string
 		afterOpIndex uint32
+		granularity  string
 	}
-	err error
+	// pointsErr is set by tests that want to drive the
+	// since-inception handler to a specific error code (e.g.
+	// ErrUnknownGranularity).
+	pointsErr error
+	err       error
 }
 
 func (r *stubHistoryReader) TradesInRange(_ context.Context, _ canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
@@ -55,6 +61,16 @@ func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, _ canonical.Pa
 		return nil, r.err
 	}
 	return r.trades, nil
+}
+
+// HistoryPoints stub records the granularity + returns the
+// pre-set fixture (or pointsErr).
+func (r *stubHistoryReader) HistoryPoints(_ context.Context, _ canonical.Pair, granularity string, _ int) ([]v1.HistoryPoint, error) {
+	r.lastCall.granularity = granularity
+	if r.pointsErr != nil {
+		return nil, r.pointsErr
+	}
+	return r.points, nil
 }
 
 func mkHistTrade(price int64) canonical.Trade {
@@ -352,5 +368,113 @@ func TestHistory_EmptyListReturnsEmptyArray(t *testing.T) {
 	}
 	if parsed.Data == nil {
 		t.Error("empty result should be [] not null")
+	}
+}
+
+// ─── /v1/history/since-inception ────────────────────────────────
+
+func TestHistorySinceInception_503WhenReaderNil(t *testing.T) {
+	srv := v1.New(v1.Options{})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestHistorySinceInception_MissingAsset400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestHistorySinceInception_BadGranularity400 confirms unknown
+// granularity surfaces as 400 — the reader returns
+// ErrUnknownGranularity, the handler maps to 400 problem+json.
+func TestHistorySinceInception_BadGranularity400(t *testing.T) {
+	reader := &stubHistoryReader{pointsErr: v1.ErrUnknownGranularity}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&granularity=2h")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for unknown granularity", resp.StatusCode)
+	}
+}
+
+// TestHistorySinceInception_HappyPath verifies the wire shape:
+// envelope wraps a HistorySeries; points are an array of
+// {t, p, v_usd?}; the granularity defaults to 1d when omitted.
+func TestHistorySinceInception_HappyPath(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	v := "1234.56"
+	reader := &stubHistoryReader{
+		points: []v1.HistoryPoint{
+			{Bucket: t0, VWAP: "0.123", VolumeUSD: &v},
+			{Bucket: t0.Add(24 * time.Hour), VWAP: "0.124"},
+		},
+	}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.HistorySeries `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	if env.Data.AssetID != "native" {
+		t.Errorf("asset_id = %q, want native", env.Data.AssetID)
+	}
+	if env.Data.Quote != "fiat:USD" {
+		t.Errorf("quote = %q, want fiat:USD", env.Data.Quote)
+	}
+	if env.Data.Granularity != "1d" {
+		t.Errorf("granularity default = %q, want 1d", env.Data.Granularity)
+	}
+	if env.Data.PriceType != "vwap" {
+		t.Errorf("price_type = %q, want vwap", env.Data.PriceType)
+	}
+	if len(env.Data.Points) != 2 {
+		t.Fatalf("got %d points, want 2", len(env.Data.Points))
+	}
+	if env.Data.Points[0].P != "0.123" || env.Data.Points[1].P != "0.124" {
+		t.Errorf("points prices: %+v", env.Data.Points)
+	}
+	// VolumeUSD is *string so empty is null in JSON; second point omits it.
+	if env.Data.Points[0].VUSD == nil || *env.Data.Points[0].VUSD != "1234.56" {
+		t.Errorf("point[0].v_usd = %+v, want pointer to '1234.56'", env.Data.Points[0].VUSD)
+	}
+	if env.Data.Points[1].VUSD != nil {
+		t.Errorf("point[1].v_usd = %+v, want nil (omitted)", env.Data.Points[1].VUSD)
+	}
+
+	if reader.lastCall.granularity != "1d" {
+		t.Errorf("reader saw granularity=%q, want default-resolved 1d", reader.lastCall.granularity)
+	}
+}
+
+// TestHistorySinceInception_GranularityForwarded confirms a
+// non-default granularity reaches the reader unchanged. Catches a
+// regression where the handler accidentally rewrites the param.
+func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
+	reader := &stubHistoryReader{points: []v1.HistoryPoint{}}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&granularity=15m")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if reader.lastCall.granularity != "15m" {
+		t.Errorf("reader saw granularity=%q, want 15m", reader.lastCall.granularity)
 	}
 }

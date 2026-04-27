@@ -342,6 +342,32 @@ func (r storeHistoryReader) TradesInRangeAfter(ctx context.Context, pair canonic
 	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
+// HistoryPoints adapts [timescale.Store.HistoryPoints] to the
+// v1.HistoryReader interface. Translates the storage-side
+// timescale.HistoryGranularity string-typed enum back to plain
+// strings for the v1 type, and the rich timescale.HistoryPoint to
+// the v1 wire-shape variant. Unknown granularities propagate as
+// v1.ErrUnknownGranularity (handler turns into 400).
+func (r storeHistoryReader) HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]v1.HistoryPoint, error) {
+	g := timescale.HistoryGranularity(granularity)
+	if err := g.Validate(); err != nil {
+		return nil, v1.ErrUnknownGranularity
+	}
+	rows, err := r.s.HistoryPoints(ctx, pair, g, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.HistoryPoint, len(rows))
+	for i, row := range rows {
+		out[i] = v1.HistoryPoint{
+			Bucket:    row.Bucket,
+			VWAP:      row.VWAP,
+			VolumeUSD: row.VolumeUSD,
+		}
+	}
+	return out, nil
+}
+
 // storePriceReader adapts *timescale.Store to v1.PriceReader.
 //
 // This MVP impl always falls back to "last trade in the trades
