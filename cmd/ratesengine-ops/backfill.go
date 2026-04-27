@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -59,6 +61,25 @@ type backfillOpts struct {
 	sources []string // resolved: -source override or cfg.Ingestion.EnabledSources
 	bucket  string   // resolved: -bucket override or cfg.Storage.S3BucketArchive
 	dryRun  bool
+	resume  bool // when true, look up the prior cursor and skip already-processed ledgers
+}
+
+// backfillCursorSource is the value stamped on every backfill
+// cursor row in the ingestion_cursors table. Distinct from the
+// indexer's "ledgerstream" so a backfill crash + restart does NOT
+// pollute the indexer's resume position.
+const backfillCursorSource = "backfill"
+
+// backfillCursorSub returns the sub-source key that distinguishes
+// concurrent / overlapping backfill runs. We need the (from, to,
+// sorted-sources) tuple in the key so two operators replaying
+// different ranges or different source subsets don't share a cursor
+// row and step on each other.
+func backfillCursorSub(opts backfillOpts) string {
+	sorted := make([]string, len(opts.sources))
+	copy(sorted, opts.sources)
+	sort.Strings(sorted)
+	return fmt.Sprintf("%d-%d:%s", opts.from, opts.to, strings.Join(sorted, ","))
 }
 
 func backfill(args []string) error {
@@ -91,6 +112,37 @@ func backfill(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	// ─── Resume from prior cursor (-resume) ───────────────────────
+	// Backfill writes a cursor row keyed on (from, to, sources) — a
+	// crashed multi-day run can pick up where it left off without
+	// re-replaying ledgers we've already inserted (the trades
+	// hypertable's unique index makes re-runs idempotent, but
+	// re-decoding 30M ledgers is wasted compute). Distinct cursor
+	// source ("backfill") so this never corrupts the indexer's
+	// "ledgerstream" cursor.
+	startFrom := opts.from
+	cursorSub := backfillCursorSub(opts)
+	if opts.resume {
+		c, err := store.GetCursor(rootCtx, backfillCursorSource, cursorSub)
+		switch {
+		case errors.Is(err, timescale.ErrNotFound):
+			logger.Info("no prior cursor — starting from -from", "from", opts.from)
+		case err != nil:
+			return fmt.Errorf("load resume cursor: %w", err)
+		case c.LastLedger >= opts.to:
+			logger.Info("prior cursor at or past -to — backfill already complete",
+				"cursor", c.LastLedger, "to", opts.to)
+			return nil
+		default:
+			startFrom = c.LastLedger + 1
+			logger.Info("resuming from prior cursor",
+				"cursor", c.LastLedger,
+				"start_from", startFrom,
+				"to", opts.to,
+				"remaining", opts.to-startFrom+1)
+		}
+	}
+
 	disp, err := pipeline.BuildDispatcher(opts.sources, cfg.Oracle)
 	if err != nil {
 		return fmt.Errorf("build dispatcher: %w", err)
@@ -104,9 +156,22 @@ func backfill(args []string) error {
 	}()
 
 	streamCfg := pipeline.LedgerstreamConfig(cfg, opts.bucket)
-	streamErr := ledgerstream.Stream(rootCtx, streamCfg, opts.from, opts.to,
+	streamErr := ledgerstream.Stream(rootCtx, streamCfg, startFrom, opts.to,
 		func(lcm sdkxdr.LedgerCloseMeta) error {
-			return pipeline.ProcessLedger(rootCtx, disp, events, logger, lcm, cfg.Stellar.Passphrase())
+			if err := pipeline.ProcessLedger(rootCtx, disp, events, logger, lcm, cfg.Stellar.Passphrase()); err != nil {
+				return err
+			}
+			// Cursor write per ledger. Independent of -resume —
+			// always written so a future invocation with -resume
+			// can pick up a backfill that crashed without it.
+			// Failure to upsert is logged + tolerated; the next
+			// successful upsert overwrites.
+			if err := store.UpsertCursor(rootCtx, backfillCursorSource, cursorSub, lcm.LedgerSequence()); err != nil {
+				logger.Warn("backfill cursor upsert",
+					"ledger", lcm.LedgerSequence(),
+					"err", err)
+			}
+			return nil
 		},
 	)
 
@@ -146,6 +211,11 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		"galexie bucket override; default = cfg.Storage.S3BucketArchive")
 	dryRun := fs.Bool("dry-run", false,
 		"validate config + sources + range, then exit without running")
+	resume := fs.Bool("resume", false,
+		"continue from a prior backfill cursor (keyed on -from/-to/-source). "+
+			"On a fresh range with no prior cursor, behaves the same as without "+
+			"-resume. Idempotent: re-runs over already-processed ledgers are a "+
+			"no-op via the trades hypertable's unique index.")
 	if err := fs.Parse(args); err != nil {
 		return opts, cfg, err
 	}
@@ -199,6 +269,7 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		sources: sources,
 		bucket:  bucket,
 		dryRun:  *dryRun,
+		resume:  *resume,
 	}
 	return opts, cfg, nil
 }

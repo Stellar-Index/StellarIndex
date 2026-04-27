@@ -147,6 +147,48 @@ func TestBackfill_BucketOverride(t *testing.T) {
 	}
 }
 
+// TestBackfillCursorSub_StableAcrossSourceOrder verifies the cursor
+// key construction is deterministic regardless of how the operator
+// types -source. Without sorting, `-source soroswap,sdex` and
+// `-source sdex,soroswap` produce different cursor rows and a
+// resume after a typo-driven re-order silently re-runs the whole
+// range — exactly the failure mode -resume exists to prevent.
+func TestBackfillCursorSub_StableAcrossSourceOrder(t *testing.T) {
+	a := backfillOpts{from: 100, to: 200, sources: []string{"soroswap", "sdex", "binance"}}
+	b := backfillOpts{from: 100, to: 200, sources: []string{"binance", "sdex", "soroswap"}}
+	if backfillCursorSub(a) != backfillCursorSub(b) {
+		t.Errorf("cursor sub depends on source-list order:\n  a=%q\n  b=%q",
+			backfillCursorSub(a), backfillCursorSub(b))
+	}
+}
+
+// TestBackfillCursorSub_DistinctRangesAndSources confirms that
+// changing the range OR the source list produces a different
+// cursor row — a different replay shouldn't share state with a
+// previous one.
+func TestBackfillCursorSub_DistinctRangesAndSources(t *testing.T) {
+	base := backfillOpts{from: 100, to: 200, sources: []string{"sdex"}}
+
+	cases := []struct {
+		name string
+		opts backfillOpts
+	}{
+		{"different-from", backfillOpts{from: 101, to: 200, sources: []string{"sdex"}}},
+		{"different-to", backfillOpts{from: 100, to: 201, sources: []string{"sdex"}}},
+		{"different-sources", backfillOpts{from: 100, to: 200, sources: []string{"binance"}}},
+		{"extra-source", backfillOpts{from: 100, to: 200, sources: []string{"sdex", "binance"}}},
+	}
+	baseSub := backfillCursorSub(base)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := backfillCursorSub(tc.opts)
+			if got == baseSub {
+				t.Errorf("cursor sub collided with base: both = %q", got)
+			}
+		})
+	}
+}
+
 // TestUnsafeBackfillSources_PureFunction is a unit-level check on
 // the helper itself — proves we filter rather than fail-on-first.
 // The error message in the gate test relies on getting the FULL

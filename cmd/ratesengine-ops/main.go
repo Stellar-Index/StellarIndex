@@ -293,7 +293,7 @@ Subcommands:
                               -config /etc/ratesengine.toml \
                               -from 21000000 -to 22000000 \
                               -bigquery-project my-gcp-project
-  backfill -config PATH -from N -to N [-source S,S,...] [-bucket NAME] [-dry-run]
+  backfill -config PATH -from N -to N [-source S,S,...] [-bucket NAME] [-dry-run] [-resume]
                           Replay a bounded ledger range through the
                           full ingest pipeline (galexie → dispatcher
                           → decoders → trades hypertable). Same code
