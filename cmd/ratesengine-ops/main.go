@@ -137,6 +137,11 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 			fmt.Fprintf(os.Stderr, "hubble-check: %v\n", err)
 			os.Exit(1)
 		}
+	case "hubble-soroban-events":
+		if err := hubbleSorobanEvents(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "hubble-soroban-events: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
 		fmt.Println(version.String())
 	case "help", "--help", "-h":
@@ -293,6 +298,21 @@ Subcommands:
                               -config /etc/ratesengine.toml \
                               -from 21000000 -to 22000000 \
                               -bigquery-project my-gcp-project
+  hubble-soroban-events -from N -to N -bigquery-project PROJ -contracts CID,CID [-topic0 SYM] [-topic1 SYM] [-output json|total|csv] [-dry-run-bytes]
+                          Per-ledger event-count primitive against
+                          hubble-public.crypto_stellar.history_contract_events
+                          for the supplied Soroban contract IDs, with
+                          optional topic[0]/topic[1] filters. Operators
+                          combine this with knowledge of per-source
+                          (events ↔ trades) ratios to cross-check
+                          decoder coverage on Soroswap / Aquarius /
+                          Phoenix / Comet / Reflector / Redstone.
+                          See docs/operations/hubble-event-counts.md
+                          for the per-source recipe. Auth via
+                          Application Default Credentials (same as
+                          hubble-check). Cost: 20-40 GB scan per
+                          1M-ledger range — use -dry-run-bytes for
+                          a preview.
   backfill -config PATH -from N -to N [-source S,S,...] [-bucket NAME] [-dry-run] [-resume]
                           Replay a bounded ledger range through the
                           full ingest pipeline (galexie → dispatcher
