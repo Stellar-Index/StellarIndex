@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 
 	"cloud.google.com/go/bigquery"
@@ -73,6 +75,13 @@ func hubbleCheck(args []string) error {
 		"cap on number of divergent ledgers reported; the rest are summarised")
 	dryRunBytes := fs.Bool("dry-run-bytes", false,
 		"print the BigQuery dry-run byte estimate, then exit (no real query)")
+	withAmounts := fs.Bool("with-amounts", false,
+		"in addition to per-ledger COUNT(*), compare SUM(selling_amount) + "+
+			"SUM(buying_amount). Catches per-trade amount errors that net to "+
+			"zero at the count level. Slightly higher BigQuery scan cost.")
+	toleranceBps := fs.Int("tolerance-bps", 0,
+		"sum-mismatch tolerance in basis points of the larger side. 0 = strict "+
+			"(any difference is divergence). Useful only when -with-amounts is set.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -122,6 +131,11 @@ func hubbleCheck(args []string) error {
 		return fmt.Errorf("storage: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	if *withAmounts {
+		return runHubbleCheckWithAmounts(ctx, logger, store, bqClient,
+			uint32(*from), uint32(*to), *maxDiffs, *toleranceBps)
+	}
 
 	logger.Info("querying our SDEX trades", "from", *from, "to", *to)
 	ours, err := fetchOurSDEXCounts(ctx, store, uint32(*from), uint32(*to))
@@ -266,6 +280,255 @@ func diffLedgerCounts(ours, theirs map[uint32]int) []ledgerDiff {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ledger < out[j].Ledger })
 	return out
+}
+
+// ─── -with-amounts variant ────────────────────────────────────────
+//
+// Per-ledger COUNT(*) catches missing or extra trades but doesn't
+// catch per-trade amount errors that net to zero across a ledger
+// (one over-counted + one under-counted = same total count). The
+// -with-amounts variant adds SUM(selling_amount) + SUM(buying_amount)
+// to both sides and reports any ledger where ANY of count, sell-sum,
+// or buy-sum diverges past the configured tolerance.
+//
+// Tolerance is in basis points of the larger side's value — covers
+// minor floating-point drift between Postgres NUMERIC sums and
+// BigQuery NUMERIC sums (none expected at integer-stroop scale, but
+// the knob exists for future-proofing).
+
+// ledgerStats is the per-ledger numeric record compared by the
+// -with-amounts path. Counts are int (matches the count-only path);
+// sum_sell + sum_buy are big.Int because Postgres + BigQuery NUMERIC
+// can exceed int64 in pathological ranges.
+type ledgerStats struct {
+	Count   int
+	SumSell *big.Int // ↔ Hubble selling_amount sum  ↔ our base_amount sum
+	SumBuy  *big.Int // ↔ Hubble buying_amount sum   ↔ our quote_amount sum
+}
+
+// ledgerStatDiff is one row of the -with-amounts divergence report.
+type ledgerStatDiff struct {
+	Ledger uint32
+	Ours   ledgerStats
+	Theirs ledgerStats
+	// Reasons names which fields diverged: "count" / "sum_sell" /
+	// "sum_buy", in that order.
+	Reasons []string
+}
+
+func runHubbleCheckWithAmounts(
+	ctx context.Context,
+	logger *slog.Logger,
+	store *timescale.Store,
+	bqClient *bigquery.Client,
+	from, to uint32,
+	maxDiffs, toleranceBps int,
+) error {
+	logger.Info("querying our SDEX trades (with amounts)", "from", from, "to", to)
+	ours, err := fetchOurSDEXStats(ctx, store, from, to)
+	if err != nil {
+		return fmt.Errorf("query trades hypertable: %w", err)
+	}
+
+	logger.Info("querying Hubble (with amounts)", "from", from, "to", to)
+	theirs, err := fetchHubbleStats(ctx, bqClient, from, to)
+	if err != nil {
+		return fmt.Errorf("query Hubble: %w", err)
+	}
+
+	diffs := diffLedgerStats(ours, theirs, toleranceBps)
+	if len(diffs) == 0 {
+		logger.Info("hubble-check OK — every ledger's SDEX count + amounts match",
+			"from", from, "to", to,
+			"tolerance_bps", toleranceBps)
+		return nil
+	}
+
+	reportLedgerStatDiffs(diffs, maxDiffs)
+	return fmt.Errorf("hubble-check FAIL — %d ledger(s) disagree on count or amount sums", len(diffs))
+}
+
+// fetchOurSDEXStats is the -with-amounts counterpart of
+// fetchOurSDEXCounts. Per-ledger (count, sum(base_amount),
+// sum(quote_amount)). NUMERIC sums round-tripped via TEXT to keep
+// big.Int precision.
+func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uint32) (map[uint32]ledgerStats, error) {
+	const q = `
+		SELECT ledger, COUNT(*),
+		       COALESCE(SUM(base_amount)::text,  '0'),
+		       COALESCE(SUM(quote_amount)::text, '0')
+		  FROM trades
+		 WHERE source = 'sdex'
+		   AND ledger BETWEEN $1 AND $2
+		 GROUP BY ledger
+	`
+	rows, err := store.DB().QueryContext(ctx, q, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[uint32]ledgerStats, 1024)
+	for rows.Next() {
+		var ledger uint32
+		var n int
+		var sumBaseStr, sumQuoteStr string
+		if err := rows.Scan(&ledger, &n, &sumBaseStr, &sumQuoteStr); err != nil {
+			return nil, err
+		}
+		sb, ok := new(big.Int).SetString(sumBaseStr, 10)
+		if !ok {
+			return nil, fmt.Errorf("parse SUM(base_amount) for ledger %d: %q", ledger, sumBaseStr)
+		}
+		sq, ok := new(big.Int).SetString(sumQuoteStr, 10)
+		if !ok {
+			return nil, fmt.Errorf("parse SUM(quote_amount) for ledger %d: %q", ledger, sumQuoteStr)
+		}
+		out[ledger] = ledgerStats{Count: n, SumSell: sb, SumBuy: sq}
+	}
+	return out, rows.Err()
+}
+
+// fetchHubbleStats is the -with-amounts counterpart of
+// fetchHubbleCounts. Per-ledger (count, sum(selling_amount),
+// sum(buying_amount)).
+func fetchHubbleStats(ctx context.Context, client *bigquery.Client, from, to uint32) (map[uint32]ledgerStats, error) {
+	q := client.Query("SELECT ledger_sequence AS ledger, COUNT(*) AS n, " +
+		"COALESCE(CAST(SUM(selling_amount) AS STRING), '0') AS sum_sell, " +
+		"COALESCE(CAST(SUM(buying_amount)  AS STRING), '0') AS sum_buy " +
+		"FROM `hubble-public.crypto_stellar.history_trades` " +
+		"WHERE ledger_sequence BETWEEN @from AND @to " +
+		"GROUP BY ledger_sequence")
+	q.Parameters = []bigquery.QueryParameter{
+		{Name: "from", Value: int64(from)},
+		{Name: "to", Value: int64(to)},
+	}
+	it, err := q.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uint32]ledgerStats, 1024)
+	for {
+		var row struct {
+			Ledger  int64  `bigquery:"ledger"`
+			N       int64  `bigquery:"n"`
+			SumSell string `bigquery:"sum_sell"`
+			SumBuy  string `bigquery:"sum_buy"`
+		}
+		err := it.Next(&row)
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		ss, ok := new(big.Int).SetString(row.SumSell, 10)
+		if !ok {
+			return nil, fmt.Errorf("parse Hubble SUM(selling_amount) for ledger %d: %q", row.Ledger, row.SumSell)
+		}
+		sb, ok := new(big.Int).SetString(row.SumBuy, 10)
+		if !ok {
+			return nil, fmt.Errorf("parse Hubble SUM(buying_amount) for ledger %d: %q", row.Ledger, row.SumBuy)
+		}
+		out[uint32(row.Ledger)] = ledgerStats{Count: int(row.N), SumSell: ss, SumBuy: sb}
+	}
+	return out, nil
+}
+
+// diffLedgerStats compares per-ledger stats and returns ledgers where
+// count, sum_sell, or sum_buy diverges past the tolerance. Sparse-map
+// semantics (missing key = zero stats) match diffLedgerCounts so the
+// "missing on one side" case is reported the same way.
+func diffLedgerStats(ours, theirs map[uint32]ledgerStats, toleranceBps int) []ledgerStatDiff {
+	seen := make(map[uint32]struct{}, len(ours)+len(theirs))
+	for k := range ours {
+		seen[k] = struct{}{}
+	}
+	for k := range theirs {
+		seen[k] = struct{}{}
+	}
+	out := make([]ledgerStatDiff, 0, len(seen))
+	for k := range seen {
+		a, b := ours[k], theirs[k]
+		if a.SumSell == nil {
+			a.SumSell = big.NewInt(0)
+		}
+		if a.SumBuy == nil {
+			a.SumBuy = big.NewInt(0)
+		}
+		if b.SumSell == nil {
+			b.SumSell = big.NewInt(0)
+		}
+		if b.SumBuy == nil {
+			b.SumBuy = big.NewInt(0)
+		}
+		var reasons []string
+		if a.Count != b.Count {
+			reasons = append(reasons, "count")
+		}
+		if !sumsWithinTolerance(a.SumSell, b.SumSell, toleranceBps) {
+			reasons = append(reasons, "sum_sell")
+		}
+		if !sumsWithinTolerance(a.SumBuy, b.SumBuy, toleranceBps) {
+			reasons = append(reasons, "sum_buy")
+		}
+		if len(reasons) > 0 {
+			out = append(out, ledgerStatDiff{
+				Ledger: k, Ours: a, Theirs: b, Reasons: reasons,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ledger < out[j].Ledger })
+	return out
+}
+
+// sumsWithinTolerance reports whether |a-b| <= toleranceBps/10000
+// of max(|a|,|b|). Zero tolerance = strict equality. Useful only as
+// a future-proofing knob; integer-stroop sums on both sides should
+// match exactly when the underlying trades match.
+func sumsWithinTolerance(a, b *big.Int, toleranceBps int) bool {
+	if a.Cmp(b) == 0 {
+		return true
+	}
+	if toleranceBps <= 0 {
+		return false
+	}
+	diff := new(big.Int).Abs(new(big.Int).Sub(a, b))
+	larger := new(big.Int).Set(a)
+	if b.CmpAbs(a) > 0 {
+		larger = new(big.Int).Set(b)
+	}
+	larger = larger.Abs(larger)
+	// |a-b| * 10000 <= toleranceBps * larger
+	lhs := new(big.Int).Mul(diff, big.NewInt(10000))
+	rhs := new(big.Int).Mul(big.NewInt(int64(toleranceBps)), larger)
+	return lhs.Cmp(rhs) <= 0
+}
+
+func reportLedgerStatDiffs(diffs []ledgerStatDiff, maxDiffs int) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	limit := maxDiffs
+	if limit > len(diffs) {
+		limit = len(diffs)
+	}
+	for i := 0; i < limit; i++ {
+		d := diffs[i]
+		logger.Warn("ledger stats mismatch",
+			"ledger", d.Ledger,
+			"reasons", strings.Join(d.Reasons, ","),
+			"ours_count", d.Ours.Count,
+			"hubble_count", d.Theirs.Count,
+			"ours_sum_sell", d.Ours.SumSell.String(),
+			"hubble_sum_sell", d.Theirs.SumSell.String(),
+			"ours_sum_buy", d.Ours.SumBuy.String(),
+			"hubble_sum_buy", d.Theirs.SumBuy.String(),
+		)
+	}
+	if len(diffs) > maxDiffs {
+		logger.Warn("output truncated — re-run with -max-mismatches=N to see more",
+			"shown", maxDiffs,
+			"total", len(diffs))
+	}
 }
 
 // reportLedgerDiffs writes a human-readable diff report to stderr.

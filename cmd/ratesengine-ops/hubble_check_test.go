@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/big"
 	"testing"
 )
 
@@ -139,4 +140,108 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// ─── -with-amounts variant ────────────────────────────────────────
+
+// statsOf is a tiny constructor so the table-driven tests below
+// don't drown in big.Int boilerplate.
+func statsOf(count int, sumSell, sumBuy int64) ledgerStats {
+	return ledgerStats{
+		Count:   count,
+		SumSell: big.NewInt(sumSell),
+		SumBuy:  big.NewInt(sumBuy),
+	}
+}
+
+// TestDiffLedgerStats_AllAgree confirms the green path: identical
+// stats on both sides, zero diffs. No false positives from the
+// big.Int comparison.
+func TestDiffLedgerStats_AllAgree(t *testing.T) {
+	ours := map[uint32]ledgerStats{
+		100: statsOf(5, 1_000_000, 12_000_000),
+		101: statsOf(2, 500_000, 6_000_000),
+	}
+	theirs := map[uint32]ledgerStats{
+		100: statsOf(5, 1_000_000, 12_000_000),
+		101: statsOf(2, 500_000, 6_000_000),
+	}
+	if got := diffLedgerStats(ours, theirs, 0); len(got) != 0 {
+		t.Errorf("expected zero diffs on identical stats, got %d", len(got))
+	}
+}
+
+// TestDiffLedgerStats_AmountMismatchAtSameCount is the alert path
+// the -with-amounts variant exists for: counts agree but a per-trade
+// amount diverged. Count-only check would miss this; stats check
+// catches it via the SumSell mismatch.
+func TestDiffLedgerStats_AmountMismatchAtSameCount(t *testing.T) {
+	ours := map[uint32]ledgerStats{200: statsOf(3, 1_000_000, 12_000_000)}
+	theirs := map[uint32]ledgerStats{200: statsOf(3, 1_000_001, 12_000_000)}
+	got := diffLedgerStats(ours, theirs, 0)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 diff, got %d", len(got))
+	}
+	if got[0].Reasons[0] != "sum_sell" {
+		t.Errorf("expected reason=sum_sell, got %v", got[0].Reasons)
+	}
+}
+
+// TestDiffLedgerStats_ToleranceBps confirms that a small drift is
+// tolerated when -tolerance-bps > 0, and rejected at strict zero.
+// Same input produces different outcomes based on the tolerance —
+// that's the whole point of the knob.
+func TestDiffLedgerStats_ToleranceBps(t *testing.T) {
+	// 1 bp ≈ 0.01% — at scale 1_000_000_000 that's a 100k allowance.
+	ours := map[uint32]ledgerStats{300: statsOf(1, 1_000_000_000, 1_000_000_000)}
+	theirs := map[uint32]ledgerStats{300: statsOf(1, 1_000_050_000, 1_000_000_000)}
+	// 50_000 / 1_000_050_000 ≈ 0.5 bps — well within 1 bp tolerance.
+	if got := diffLedgerStats(ours, theirs, 1); len(got) != 0 {
+		t.Errorf("expected tolerance=1bps to absorb 0.5bp drift, got %d diffs", len(got))
+	}
+	// At strict zero, the same delta is divergence.
+	if got := diffLedgerStats(ours, theirs, 0); len(got) != 1 {
+		t.Errorf("expected tolerance=0 to flag any delta, got %d diffs", len(got))
+	}
+}
+
+// TestSumsWithinTolerance_StrictAndLoose is a pure-function unit
+// test for the tolerance comparator. Boundary cases: equal,
+// off-by-one, and the tolerance/larger ratio threshold.
+func TestSumsWithinTolerance_StrictAndLoose(t *testing.T) {
+	mustHold := func(a, b int64, bps int, want bool) {
+		t.Helper()
+		got := sumsWithinTolerance(big.NewInt(a), big.NewInt(b), bps)
+		if got != want {
+			t.Errorf("sumsWithinTolerance(%d, %d, %dbps) = %v, want %v", a, b, bps, got, want)
+		}
+	}
+	mustHold(100, 100, 0, true)              // equal, strict
+	mustHold(100, 101, 0, false)             // off-by-one, strict
+	mustHold(100, 101, 100, true)            // 100bps = 1%, off-by-one (1%) absorbed
+	mustHold(1_000_000, 1_000_001, 1, true)  // 0.0001% within 1 bp
+	mustHold(1_000_000, 1_001_000, 1, false) // 0.1% exceeds 1 bp
+}
+
+// TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums covers
+// the "we have data, Hubble doesn't" (or vice versa) case. Treats
+// absence as zero; reports count + both sum diffs. Important
+// because a complete decoder failure on a ledger looks like this:
+// no rows our side, full rows Hubble side.
+func TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums(t *testing.T) {
+	ours := map[uint32]ledgerStats{}
+	theirs := map[uint32]ledgerStats{500: statsOf(3, 1_000_000, 5_000_000)}
+	got := diffLedgerStats(ours, theirs, 0)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 diff, got %d", len(got))
+	}
+	wantReasons := []string{"count", "sum_sell", "sum_buy"}
+	if len(got[0].Reasons) != 3 {
+		t.Errorf("expected 3 reasons, got %v", got[0].Reasons)
+	}
+	for i, want := range wantReasons {
+		if got[0].Reasons[i] != want {
+			t.Errorf("reason %d: got %q, want %q", i, got[0].Reasons[i], want)
+		}
+	}
 }
