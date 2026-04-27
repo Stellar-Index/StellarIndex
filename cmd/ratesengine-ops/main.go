@@ -122,6 +122,11 @@ func main() { //nolint:gocyclo,gocognit // subcommand switch; each case is trivi
 			fmt.Fprintf(os.Stderr, "cross-region-check: %v\n", err)
 			os.Exit(1)
 		}
+	case "cross-region-monitor":
+		if err := crossRegionMonitor(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "cross-region-monitor: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
 		fmt.Println(version.String())
 	case "help", "--help", "-h":
@@ -215,6 +220,22 @@ Subcommands:
                               -regions r1=https://r1.api.example.net,r2=https://r2.api.example.net \
                               -pairs native/fiat:USD,crypto:BTC/fiat:USD \
                               -metric vwap -samples 5
+  cross-region-monitor -regions name=URL,name=URL,... [-pairs PAIR,...] [-metric vwap|twap|ohlc] [-window DUR] [-samples N] [-interval DUR] [-listen :PORT]
+                          Long-running daemon variant of cross-region-check.
+                          Runs the same per-bucket comparison on a fixed
+                          interval and exposes the outcome as Prometheus
+                          metrics on -listen (default :9479). Designed
+                          to live as a sidecar systemd service on the
+                          observability host. Metrics:
+                            ratesengine_cross_region_checks_total{outcome=ok|divergence|error}
+                            ratesengine_cross_region_divergences_total
+                            ratesengine_cross_region_fetch_errors_total{region}
+                            ratesengine_cross_region_last_run_timestamp_seconds
+                          /healthz returns 503 until the first sweep
+                          completes; 200 thereafter. Example:
+                            ratesengine-ops cross-region-monitor \
+                              -regions r1=...,r2=...,r3=... \
+                              -interval 60s -listen :9479
   wasm-history -config PATH -contracts ID,ID,... [-from N] [-to N] [-bucket NAME]
                           Walk a galexie bucket and emit a per-contract
                           WASM-version timeline. For each watched contract,
