@@ -1,0 +1,105 @@
+---
+# Inventory for R2 (US-East-1 / AWS).
+# Copy to r2.yml and fill in the Xs (the r2.yml file is gitignored).
+#
+# Secrets (DB password, MinIO creds, etc.) live in r2.secrets.yml
+# (ansible-vault).
+#
+# Per ADR-0016 (per-region storage strategies):
+#   - galexie-archive READS from s3://aws-public-blockchain (no
+#     local archive mirror — saves ~5 TB EBS that we don't need
+#     since the bucket is region-local at sub-15 ms latency).
+#   - galexie-live runs locally, mirrored to a per-region MinIO
+#     so the indexer + downstream still hit a uniform S3 endpoint.
+#   - postgres + galexie-live + OS sit on EBS gp3 (no ZFS layer —
+#     EBS provides the durability + snapshot story).
+#   - Verify-archive Tier A + D run weekly here; Tier B + E
+#     delegated to r1 (the integrity leader).
+
+all:
+  vars:
+    # ───── Region identity ─────────────────────────────────────────
+    region_id:           "r2"
+    region_name:         "US-East-1"
+    home_domain:         "ratesengine.net"
+
+    # ───── Stellar network ─────────────────────────────────────────
+    stellar_network:     "pubnet"
+    catchup_mode:        "CATCHUP_RECENT"
+    is_validator:        false
+    node_is_validator:   "{{ is_validator }}"
+
+    # ───── Storage layout ──────────────────────────────────────────
+    # AWS EC2 r7i.4xlarge (16 vCPU / 128 GiB) per the topology doc.
+    # Storage is EBS gp3 attached at /dev/nvme1n1 (or whichever
+    # nitro-enumerated name AWS gives us today). We don't run ZFS —
+    # EBS provides durability + snapshots; the OS uses the EBS volume
+    # directly via a single ext4 partition mounted at /var/lib.
+    #
+    # zfs_data_devices intentionally empty — preflight skips the ZFS
+    # tasks when this is empty AND zfs_data_pool_type is unset.
+    zfs_data_devices: []
+    zfs_data_pool_type: ""    # disables ZFS pool creation
+    zfs_data_pool_name: ""
+
+    # ───── Roles colocated on this host ────────────────────────────
+    run_postgres:        true
+    run_stellar_core:    false      # Phase 3 validator track only
+    run_galexie:         true       # writes the live tail
+    run_stellar_rpc:     false
+    run_minio:           true       # galexie-live ONLY (see minio_buckets)
+    run_observability:   true
+
+    # ───── MinIO buckets — galexie-live ONLY ────────────────────────
+    # galexie-archive lives in s3://aws-public-blockchain (sponsored
+    # open-data bucket, region-local from us-east-1) and is read
+    # directly by the indexer + verify-archive — never mirrored locally.
+    minio_buckets:
+      - "galexie-live"
+      - "backups"
+
+    # ───── Galexie data store overrides ────────────────────────────
+    # Live ingest writes here (local MinIO via the standard endpoint).
+    galexie_backend_type: "s3"
+    galexie_s3_endpoint:  "http://127.0.0.1:9000"
+    galexie_s3_bucket:    "galexie-live"
+    galexie_s3_region:    "{{ region_id }}"
+
+    # Archive bucket points at the AWS public-blockchain galexie
+    # mirror. Note region MUST be us-east-2 (sponsored bucket lives
+    # there), NOT us-east-1 where this region's compute lives.
+    # Verified empirically 2026-04-27 — first wasm-history smoke
+    # test failed with HTTP 301 PermanentRedirect when set to
+    # us-east-1; us-east-2 works.
+    galexie_archive_endpoint: "https://s3.us-east-2.amazonaws.com"
+    galexie_archive_bucket:   "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+    galexie_archive_region:   "us-east-2"
+
+    # ───── Indexer seam — set per-region ───────────────────────────
+    # First ledger that this region's own galexie-live bucket holds.
+    # Below this, indexer reads from the AWS public archive bucket
+    # (galexie_archive_*). Set to the ledger where r2's galexie-live
+    # tail first started writing.
+    ratesengine_live_seam_ledger: 0      # update to the actual seam at provision time
+
+    # ───── Observability targets ───────────────────────────────────
+    prometheus_scrape_allow_cidrs:
+      - "10.0.0.0/8"               # AWS VPC CIDR — tighten to scraper subnet
+      - "127.0.0.1/32"
+    loki_push_url: "https://loki.ratesengine.net/loki/api/v1/push"
+
+    # ───── SSH hardening ───────────────────────────────────────────
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAA... ash@ashfrancis.com"   # replace
+    allowed_ssh_cidrs:
+      - "0.0.0.0/0"                            # tighten to VPN/jump-host CIDR
+
+  children:
+    archival_nodes:
+      hosts:
+        r2-01.ratesengine.net:
+          ansible_host:         "X.X.X.X"      # AWS-assigned EIP
+          ansible_user:         "ubuntu"        # default for AWS Ubuntu AMIs
+          ansible_port:         22
+          ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+          ansible_python_interpreter: /usr/bin/python3

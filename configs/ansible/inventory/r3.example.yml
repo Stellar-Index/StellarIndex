@@ -1,0 +1,121 @@
+---
+# Inventory for R3 (Singapore / Vultr Bare Metal).
+# Copy to r3.yml and fill in the Xs (the r3.yml file is gitignored).
+#
+# Secrets (DB password, MinIO creds, Vultr Object Storage keys,
+# etc.) live in r3.secrets.yml (ansible-vault).
+#
+# Per ADR-0016 (per-region storage strategies):
+#   - Vultr Bare Metal Singapore SKU: Intel Xeon E-2388G
+#     (8c/16t, 128 GB DDR4 ECC) + 2 × 1.92 TB local NVMe.
+#   - galexie-archive lives on Vultr Object Storage — region-local
+#     S3-compatible at ~$25/mo for 5 TB. Mandatory because the
+#     ~4.76 TB galexie-archive doesn't fit in 1.92 TB local NVMe.
+#   - postgres + galexie-live (rolling ~30 days) + captive-core
+#     state + OS sit on local NVMe (RAID-1 = ~1.92 TB usable).
+#   - ZFS mirror across the 2 NVMes (single-drive failure tolerance —
+#     acceptable for an async DR replica; r1's raidz2 is the
+#     two-drive-tolerance integrity leader).
+#   - Verify-archive Tier A + D run weekly here; Tier B + E
+#     delegated to r1.
+
+all:
+  vars:
+    # ───── Region identity ─────────────────────────────────────────
+    region_id:           "r3"
+    region_name:         "Singapore"
+    home_domain:         "ratesengine.net"
+
+    # ───── Stellar network ─────────────────────────────────────────
+    stellar_network:     "pubnet"
+    catchup_mode:        "CATCHUP_RECENT"
+    is_validator:        false
+    node_is_validator:   "{{ is_validator }}"
+
+    # ───── Storage layout ──────────────────────────────────────────
+    # Vultr Singapore E-2388G ships with 2 × 1.92 TB NVMe. Both are
+    # fresh; ZFS mirror across them gives single-drive tolerance and
+    # ~1.92 TB usable. The bare-metal box has no other local storage,
+    # so there's no OS-mirror-vs-data-disk split like on r1's
+    # Hetzner SKU — we mirror the whole drives.
+    #
+    # Replace serial numbers with actual values from
+    # `ls /dev/disk/by-id/ | grep nvme-` on the target box.
+    zfs_os_drives_needing_data_partition: []
+    zfs_data_devices:
+      - /dev/disk/by-id/nvme-VULTR_NVME_SERIAL0    # replace
+      - /dev/disk/by-id/nvme-VULTR_NVME_SERIAL1    # replace
+    zfs_data_pool_type:  "mirror"      # 2-drive mirror, NOT raidz2
+    zfs_data_pool_name:  "data"
+
+    # ───── Roles colocated on this host ────────────────────────────
+    run_postgres:        true
+    run_stellar_core:    false       # Phase 3 validator track only
+    run_galexie:         true        # writes the live tail
+    run_stellar_rpc:     false
+    run_minio:           true        # galexie-live ONLY (see minio_buckets)
+    run_observability:   true
+
+    # ───── MinIO buckets — galexie-live ONLY ────────────────────────
+    # galexie-archive lives on Vultr Object Storage (region-local
+    # S3-compatible). Indexer + verify-archive read from there
+    # directly via the galexie_archive_* overrides; the local MinIO
+    # only carries the live tail.
+    minio_buckets:
+      - "galexie-live"
+      - "backups"
+
+    # ───── Galexie data store overrides ────────────────────────────
+    # Live ingest writes to local MinIO.
+    galexie_backend_type: "s3"
+    galexie_s3_endpoint:  "http://127.0.0.1:9000"
+    galexie_s3_bucket:    "galexie-live"
+    galexie_s3_region:    "{{ region_id }}"
+
+    # Archive bucket → Vultr Object Storage Singapore endpoint.
+    # The bucket name is operator-chosen; suggest "ratesengine-
+    # galexie-archive" with the live r1 mirror as the source.
+    galexie_archive_endpoint: "https://sgp1.vultrobjects.com"
+    galexie_archive_bucket:   "ratesengine-galexie-archive"
+    galexie_archive_region:   "sgp1"
+    # galexie_archive_access_key ← r3.secrets.yml (Vultr Object Storage key)
+    # galexie_archive_secret_key ← r3.secrets.yml
+
+    # ───── Indexer seam — set per-region ───────────────────────────
+    # First ledger that this region's own galexie-live bucket holds.
+    # Below this, indexer reads from the Vultr Object Storage archive
+    # bucket. Set to the ledger where r3's galexie-live tail first
+    # started writing.
+    ratesengine_live_seam_ledger: 0      # update to the actual seam at provision time
+
+    # ───── Postgres replication ────────────────────────────────────
+    # r3 runs as an async replica of r1's primary postgres. Trans-
+    # Pacific RTT (Frankfurt → Singapore is ~165ms) makes sync
+    # replication impractical — async only, with the galexie data
+    # path being the canonical recovery story if replication drifts.
+    # Replication config lives in postgresql.conf via the role's
+    # template; this inventory just declares the role.
+    postgres_replication_role: "async-replica"
+    postgres_replication_primary_host: "r1-01.ratesengine.net"
+
+    # ───── Observability targets ───────────────────────────────────
+    prometheus_scrape_allow_cidrs:
+      - "10.0.0.0/8"               # tighten to scraper subnet
+      - "127.0.0.1/32"
+    loki_push_url: "https://loki.ratesengine.net/loki/api/v1/push"
+
+    # ───── SSH hardening ───────────────────────────────────────────
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAA... ash@ashfrancis.com"   # replace
+    allowed_ssh_cidrs:
+      - "0.0.0.0/0"                            # tighten to VPN/jump-host CIDR
+
+  children:
+    archival_nodes:
+      hosts:
+        r3-01.ratesengine.net:
+          ansible_host:         "X.X.X.X"      # Vultr-assigned IP
+          ansible_user:         "root"
+          ansible_port:         22
+          ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+          ansible_python_interpreter: /usr/bin/python3
