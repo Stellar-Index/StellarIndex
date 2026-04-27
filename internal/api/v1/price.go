@@ -401,6 +401,32 @@ func LastTradeToSnapshot(t canonical.Trade, decimals int) PriceSnapshot {
 	}
 }
 
+// VWAP1mToSnapshot is the CAGG-served counterpart to
+// [LastTradeToSnapshot]. Maps a 1-minute prices_1m row to the
+// neutral [PriceSnapshot] shape the handler returns.
+//
+// `assetID` and `quote` are the request's canonical asset strings —
+// passed in rather than re-derived from the row so the handler's
+// echo of the request parameters stays exactly as the client sent
+// them (matches the last_trade path's behaviour).
+//
+// `vwap` is the row's NUMERIC vwap column, already a decimal string
+// from Postgres' text serialisation — passed through without
+// re-parsing. `bucketStart` is the start of the closed 1-minute
+// window; the snapshot's `observed_at` is the END of that window
+// (`bucketStart + 1m`) since the bucket's price represents trades
+// that closed during it.
+func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceSnapshot {
+	return PriceSnapshot{
+		AssetID:       assetID,
+		Quote:         quote,
+		Price:         vwap,
+		PriceType:     "vwap",
+		ObservedAt:    bucketStart.Add(60 * time.Second),
+		WindowSeconds: 60,
+	}
+}
+
 // priceRatioDecimal returns QuoteAmount / BaseAmount as a decimal
 // string with `decimals` digits after the point. Pure-integer
 // computation via big.Rat — no float in the hot path (ADR-0003).

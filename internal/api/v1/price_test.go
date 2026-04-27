@@ -176,6 +176,35 @@ func TestPrice_InternalErrorReturns500(t *testing.T) {
 
 // ─── LastTradeToSnapshot ─────────────────────────────────────────
 
+// TestVWAP1mToSnapshot is the CAGG-served counterpart to
+// TestLastTradeToSnapshot. Confirms the snapshot's ObservedAt
+// reflects the END of the 1-minute window (not its start) and the
+// VWAP string is passed through unchanged from the prices_1m row.
+func TestVWAP1mToSnapshot(t *testing.T) {
+	bucketStart := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	got := v1.VWAP1mToSnapshot("native", "fiat:USD", "0.123456789", bucketStart)
+
+	if got.AssetID != "native" {
+		t.Errorf("AssetID = %q, want native", got.AssetID)
+	}
+	if got.Quote != "fiat:USD" {
+		t.Errorf("Quote = %q, want fiat:USD", got.Quote)
+	}
+	if got.Price != "0.123456789" {
+		t.Errorf("Price = %q, want pass-through of NUMERIC text 0.123456789", got.Price)
+	}
+	if got.PriceType != "vwap" {
+		t.Errorf("PriceType = %q, want vwap (CAGG-served path)", got.PriceType)
+	}
+	if got.WindowSeconds != 60 {
+		t.Errorf("WindowSeconds = %d, want 60 (1-minute CAGG)", got.WindowSeconds)
+	}
+	wantObserved := bucketStart.Add(60 * time.Second)
+	if !got.ObservedAt.Equal(wantObserved) {
+		t.Errorf("ObservedAt = %v, want %v (END of window, not start)", got.ObservedAt, wantObserved)
+	}
+}
+
 func TestLastTradeToSnapshot(t *testing.T) {
 	usdc, _ := canonical.NewClassicAsset("USDC", testUSDCIssuer)
 	pair, _ := canonical.NewPair(canonical.NativeAsset(), usdc)

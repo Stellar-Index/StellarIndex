@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -347,6 +348,26 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	if err != nil {
 		return v1.PriceSnapshot{}, nil, false, err
 	}
+
+	// Primary path: most-recent CLOSED 1-minute VWAP from the
+	// prices_1m CAGG (per ADR-0015 we serve only closed buckets).
+	// This is preferred because:
+	//   - it's volume-weighted across every contributing source;
+	//   - it's pre-computed by the aggregator policy (sub-100ms read);
+	//   - it labels stale=false in the envelope.
+	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
+	if err == nil {
+		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket),
+			row.Sources, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return v1.PriceSnapshot{}, nil, false, err
+	}
+
+	// Fallback: latest-trade. Hit when no closed 1m bucket exists for
+	// the pair — typical for a brand-new listing that just got its
+	// first trade in the in-progress bucket. Marks the response
+	// stale=true; clients expecting freshness treat this as degraded.
 	trades, err := r.s.LatestTradesForPair(ctx, pair, 1)
 	if err != nil {
 		return v1.PriceSnapshot{}, nil, false, err
@@ -357,9 +378,6 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// decimals=7 matches Stellar's default stroop scale. A future
 	// revision reads per-asset decimals from internal/metadata.
 	snap := v1.LastTradeToSnapshot(trades[0], 7)
-	// This path is always "stale" from the serving-plane's POV —
-	// it's not an aggregated VWAP. Clients expecting freshness
-	// should treat this as degraded.
 	return snap, []string{trades[0].Source}, true, nil
 }
 
