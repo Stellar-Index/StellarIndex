@@ -10,6 +10,131 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 )
 
+// HistoryPoint is a single bucket's worth of aggregated price +
+// volume, returned by [Store.HistoryPoints]. Wire shape mirrors the
+// API's `{t, p, v_usd}` triple — the API binary's adapter is a
+// pure passthrough.
+type HistoryPoint struct {
+	Bucket    time.Time
+	VWAP      string  // NUMERIC text from Postgres
+	VolumeUSD *string // NULL when no usd_volume column entries — e.g. early classic-only ledgers
+}
+
+// HistoryGranularity is the CAGG selector for [Store.HistoryPoints].
+// Stable string values matching the API's `granularity` query
+// parameter and the migration's table names (prices_<granularity>).
+type HistoryGranularity string
+
+const (
+	Granularity1m  HistoryGranularity = "1m"
+	Granularity15m HistoryGranularity = "15m"
+	Granularity1h  HistoryGranularity = "1h"
+	Granularity4h  HistoryGranularity = "4h"
+	Granularity1d  HistoryGranularity = "1d"
+	Granularity1w  HistoryGranularity = "1w"
+	Granularity1mo HistoryGranularity = "1mo"
+)
+
+// Validate reports whether g is one of the seven supported
+// granularities. Caller surfaces unknown granularities as 400.
+func (g HistoryGranularity) Validate() error {
+	switch g {
+	case Granularity1m, Granularity15m, Granularity1h, Granularity4h,
+		Granularity1d, Granularity1w, Granularity1mo:
+		return nil
+	}
+	return fmt.Errorf("unknown granularity %q (want one of: 1m, 15m, 1h, 4h, 1d, 1w, 1mo)", g)
+}
+
+// closedBucketInterval is the Postgres INTERVAL string that the
+// closed-bucket guard subtracts from now() per ADR-0015. Equal to
+// the granularity's bucket size.
+func (g HistoryGranularity) closedBucketInterval() string {
+	switch g {
+	case Granularity1m:
+		return "1 minute"
+	case Granularity15m:
+		return "15 minutes"
+	case Granularity1h:
+		return "1 hour"
+	case Granularity4h:
+		return "4 hours"
+	case Granularity1d:
+		return "1 day"
+	case Granularity1w:
+		return "1 week"
+	case Granularity1mo:
+		return "1 month"
+	}
+	return ""
+}
+
+// HistoryPoints returns every CLOSED bucket for the pair from the
+// CAGG matching `granularity`, ordered chronologically (ASC). Used
+// by /v1/history/since-inception to serve the full historical
+// series at the requested granularity.
+//
+// Per ADR-0015 the in-progress bucket is excluded via a
+// `bucket + <granularity> <= now()` guard.
+//
+// `limit` clamps the row count; passing 0 returns all rows. The
+// API caller passes the spec-bounded value (default unbounded for
+// since-inception; clients paginate via Pagination.next when we
+// add that surface).
+//
+// Returns an empty slice + nil error when the pair has no closed
+// buckets at this granularity yet.
+func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity HistoryGranularity, limit int) ([]HistoryPoint, error) {
+	if err := granularity.Validate(); err != nil {
+		return nil, err
+	}
+	// SQL injection guard: granularity goes via Validate() against
+	// a fixed enum, then composes into the table name. Body of the
+	// query plus params binds via $1/$2. The fmt.Sprintf format is
+	// safe — both `table` and `interval` come from a closed enum
+	// after Validate(), not from user input.
+	table := "prices_" + string(granularity)
+	interval := granularity.closedBucketInterval()
+	// #nosec G201 — table + interval are derived from the validated
+	// enum, not user input. See HistoryGranularity.Validate above.
+	q := fmt.Sprintf(`
+		SELECT bucket, vwap::text, volume_usd::text
+		  FROM %s
+		 WHERE base_asset = $1
+		   AND quote_asset = $2
+		   AND bucket + INTERVAL '%s' <= now()
+		 ORDER BY bucket ASC
+	`, table, interval)
+	args := []any{p.Base.String(), p.Quote.String()}
+	if limit > 0 {
+		q += " LIMIT $3"
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: HistoryPoints[%s]: %w", granularity, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]HistoryPoint, 0, 1024)
+	for rows.Next() {
+		var pt HistoryPoint
+		var vusd sql.NullString
+		if err := rows.Scan(&pt.Bucket, &pt.VWAP, &vusd); err != nil {
+			return nil, fmt.Errorf("timescale: HistoryPoints[%s] scan: %w", granularity, err)
+		}
+		if vusd.Valid {
+			s := vusd.String
+			pt.VolumeUSD = &s
+		}
+		out = append(out, pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: HistoryPoints[%s] rows: %w", granularity, err)
+	}
+	return out, nil
+}
+
 // Vwap1mRow is one row from the prices_1m continuous aggregate.
 // The fields mirror migrations/0002_create_price_aggregates.up.sql
 // — see that file for the SQL semantics. Bucket is the START of the
