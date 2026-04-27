@@ -235,6 +235,7 @@ func (s *Server) mountRoutes() {
 	// readers expect. Quote fixed at fiat:USD on /lastprice;
 	// /x_last_price takes explicit base + quote.
 	s.mux.HandleFunc("GET /v1/oracle/lastprice", s.handleOracleLastPrice)
+	s.mux.HandleFunc("GET /v1/oracle/prices", s.handleOraclePrices)
 	s.mux.HandleFunc("GET /v1/oracle/x_last_price", s.handleOracleXLastPrice)
 
 	// Source catalogue — every venue the aggregator knows about,

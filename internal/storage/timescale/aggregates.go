@@ -27,6 +27,54 @@ type Vwap1mRow struct {
 	Sources    []string
 }
 
+// RecentClosedVWAP1mForPair returns up to `limit` most-recent CLOSED
+// 1-minute buckets from the prices_1m CAGG for the given pair,
+// newest first. Same closed-bucket guard as
+// [LatestClosedVWAP1mForPair] (ADR-0015).
+//
+// Returns an empty slice + nil error when the pair has no closed
+// buckets in scope. The caller (typically the SEP-40 prices
+// endpoint) distinguishes "no observations" from "asset unknown"
+// by combining this with an asset-existence check.
+//
+// limit is the caller's responsibility to clamp; this method
+// assumes a sane bound and doesn't second-guess.
+func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
+	const q = `
+        SELECT bucket, base_asset, quote_asset, vwap::text, trade_count, sources
+          FROM prices_1m
+         WHERE base_asset = $1
+           AND quote_asset = $2
+           AND bucket + INTERVAL '1 minute' <= now()
+         ORDER BY bucket DESC
+         LIMIT $3
+    `
+	rows, err := s.db.QueryContext(ctx, q,
+		p.Base.String(), p.Quote.String(), limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]Vwap1mRow, 0, limit)
+	for rows.Next() {
+		var row Vwap1mRow
+		if err := rows.Scan(
+			&row.Bucket, &row.BaseAsset, &row.QuoteAsset,
+			&row.VWAP, &row.TradeCount,
+			(*stringArray)(&row.Sources),
+		); err != nil {
+			return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair rows: %w", err)
+	}
+	return out, nil
+}
+
 // LatestClosedVWAP1mForPair returns the most-recent CLOSED 1-minute
 // bucket from the prices_1m CAGG for the given pair. Per ADR-0015
 // the API serves only closed buckets — this method explicitly

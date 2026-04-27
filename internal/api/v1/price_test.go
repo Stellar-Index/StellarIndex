@@ -19,7 +19,11 @@ type stubPriceReader struct {
 	snapshots map[string]v1.PriceSnapshot
 	stale     map[string]bool
 	sources   map[string][]string
-	err       error
+	// recent is the per-pair history returned by RecentClosedSnapshots.
+	// Same key shape as `snapshots`. Empty/missing yields []v1.PriceSnapshot{}
+	// (no observations) — matches the production reader's contract.
+	recent map[string][]v1.PriceSnapshot
+	err    error
 }
 
 func (r *stubPriceReader) LatestPrice(_ context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
@@ -32,6 +36,21 @@ func (r *stubPriceReader) LatestPrice(_ context.Context, a, q canonical.Asset) (
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
 	}
 	return snap, r.sources[key], r.stale[key], nil
+}
+
+func (r *stubPriceReader) RecentClosedSnapshots(_ context.Context, a, q canonical.Asset, n int) ([]v1.PriceSnapshot, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	key := a.String() + "/" + q.String()
+	rows, ok := r.recent[key]
+	if !ok {
+		return []v1.PriceSnapshot{}, nil
+	}
+	if n < len(rows) {
+		rows = rows[:n]
+	}
+	return rows, nil
 }
 
 func TestPrice_NoReader_Returns503(t *testing.T) {

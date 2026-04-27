@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -94,6 +95,101 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, out, Flags{Stale: stale}, sources...)
 }
+
+// handleOraclePrices serves GET /v1/oracle/prices?asset=<id>&records=N.
+//
+// SEP-40 `prices(asset, records) -> Option<Vec<PriceData>>`
+// passthrough. Returns up to `records` most-recent CLOSED 1-minute
+// VWAP snapshots for the asset/USD pair (newest first), per the
+// SEP-40 spec semantic that prices() is "the last N price records."
+//
+// Per ADR-0015 only closed buckets are returned; the in-progress
+// bucket is excluded.
+//
+// Defaults + caps from the OpenAPI: records default 60, max 200.
+//
+// 200 with empty array when the asset has no closed buckets yet.
+// 400 when records is out of range or asset is malformed.
+// 503 when no PriceReader is wired.
+func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
+	reader := s.prices
+	if reader == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/price-unavailable",
+			"Price serving not configured", http.StatusServiceUnavailable,
+			"this deployment has no PriceReader wired — check binary configuration")
+		return
+	}
+
+	rawAsset := r.URL.Query().Get("asset")
+	if rawAsset == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/missing-asset",
+			"Missing asset parameter", http.StatusBadRequest,
+			"asset query parameter is required")
+		return
+	}
+	asset, err := canonical.ParseAsset(rawAsset)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			err.Error())
+		return
+	}
+	if asset.Equal(defaultPriceQuote) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/identity-price",
+			"Asset is the SEP-40 quote", http.StatusBadRequest,
+			"price of fiat:USD in itself is always 1; SEP-40 prices() quotes everything in fiat:USD")
+		return
+	}
+
+	records := oraclePricesDefault
+	if raw := r.URL.Query().Get("records"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > oraclePricesMax {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-records",
+				"Invalid records parameter", http.StatusBadRequest,
+				"records must be an integer in [1, 200]")
+			return
+		}
+		records = n
+	}
+
+	snapshots, err := reader.RecentClosedSnapshots(r.Context(), asset, defaultPriceQuote, records)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("RecentClosedSnapshots (sep40 prices) failed",
+			"err", err, "asset", asset.String(), "records", records)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+
+	out := make([]SEP40Price, len(snapshots))
+	for i, snap := range snapshots {
+		out[i] = SEP40Price{
+			Asset:     asset.String(),
+			Price:     snap.Price,
+			Timestamp: snap.ObservedAt,
+		}
+	}
+	writeJSON(w, out, Flags{})
+}
+
+// oraclePricesDefault + Max mirror the OpenAPI bounds for the
+// `records` parameter on /v1/oracle/prices. Documented inline in
+// the spec; pinned here so the handler validates against the same
+// numbers the spec promises.
+const (
+	oraclePricesDefault = 60
+	oraclePricesMax     = 200
+)
 
 // handleOracleXLastPrice serves
 // GET /v1/oracle/x_last_price?base=<id>&quote=<id>.

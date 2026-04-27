@@ -226,3 +226,97 @@ func TestOracleXLastPrice_HappyPath(t *testing.T) {
 		t.Errorf("price = %q, want 0.10", env.Data.Price)
 	}
 }
+
+// ─── /v1/oracle/prices ─────────────────────────────────────────
+
+func TestOraclePrices_NoReader_Returns503(t *testing.T) {
+	srv := v1.New(v1.Options{})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestOraclePrices_MissingAsset400(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestOraclePrices_BadRecords400(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	for _, raw := range []string{"0", "201", "abc", "-1"} {
+		resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records="+raw)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("records=%q: status = %d, want 400", raw, resp.StatusCode)
+		}
+	}
+}
+
+// TestOraclePrices_HappyPath exercises the SEP-40 prices() passthrough
+// — verifies the response is an array of {price, timestamp} records,
+// newest first, and that the records cap is honoured.
+func TestOraclePrices_HappyPath(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		recent: map[string][]v1.PriceSnapshot{
+			"native/fiat:USD": {
+				{AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "vwap", ObservedAt: t0},
+				{AssetID: "native", Quote: "fiat:USD", Price: "0.13", PriceType: "vwap", ObservedAt: t0.Add(-1 * time.Minute)},
+				{AssetID: "native", Quote: "fiat:USD", Price: "0.14", PriceType: "vwap", ObservedAt: t0.Add(-2 * time.Minute)},
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records=2")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.SEP40Price `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 2 {
+		t.Fatalf("returned %d records, want 2 (records= cap)", len(env.Data))
+	}
+	if env.Data[0].Price != "0.12" {
+		t.Errorf("data[0].price = %q, want newest-first 0.12", env.Data[0].Price)
+	}
+}
+
+// TestOraclePrices_EmptyAsArray is the "no closed buckets yet"
+// case — should return 200 with an empty array, not 404. Distinct
+// from /v1/oracle/lastprice which 404s on a bare unknown asset.
+func TestOraclePrices_EmptyAsArray(t *testing.T) {
+	reader := &stubPriceReader{recent: map[string][]v1.PriceSnapshot{}}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.SEP40Price `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data == nil {
+		t.Errorf("data = null, want []  — empty array != null per OpenAPI")
+	}
+	if len(env.Data) != 0 {
+		t.Errorf("expected empty array, got %d entries", len(env.Data))
+	}
+}
+
+// (errors import retained — used by other tests in this file.)
+var _ = errors.New

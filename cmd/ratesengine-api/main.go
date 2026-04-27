@@ -389,6 +389,30 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	return snap, []string{trades[0].Source}, true, nil
 }
 
+// RecentClosedSnapshots is the SEP-40 prices(asset, records)
+// passthrough — most-recent N closed 1-minute VWAP buckets. Empty
+// slice + nil error when the pair has no closed buckets yet (the
+// "asset unknown" distinction is the API handler's job via the
+// asset-existence check, not this reader's).
+func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quote canonical.Asset, n int) ([]v1.PriceSnapshot, error) {
+	pair, err := canonical.NewPair(asset, quote)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.s.RecentClosedVWAP1mForPair(ctx, pair, n)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return []v1.PriceSnapshot{}, nil
+	}
+	out := make([]v1.PriceSnapshot, len(rows))
+	for i, row := range rows {
+		out[i] = v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket)
+	}
+	return out, nil
+}
+
 // assetToDetail converts canonical.Asset → v1.AssetDetail. Nullable
 // fields become nil pointers when empty so the JSON omits them.
 //

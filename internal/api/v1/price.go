@@ -43,6 +43,19 @@ type PriceReader interface {
 	//     aggregated price and is serving a fallback (last trade
 	//     older than the freshness target).
 	LatestPrice(ctx context.Context, asset, quote canonical.Asset) (snapshot PriceSnapshot, sources []string, stale bool, err error)
+
+	// RecentClosedSnapshots returns up to `n` most-recent CLOSED
+	// 1-minute VWAP snapshots for asset/quote, newest first. Used
+	// by the SEP-40 `prices(asset, records)` passthrough at
+	// /v1/oracle/prices. Empty slice + nil error when the pair has
+	// no closed buckets yet (rather than ErrPriceNotFound — the
+	// caller distinguishes "asset is unknown" from "asset has no
+	// historical buckets" by combining this with the asset-existence
+	// check at the storage layer).
+	//
+	// n is clamped to the SEP-40 cap (200) by the caller; the
+	// implementation can assume 1 ≤ n ≤ 200.
+	RecentClosedSnapshots(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error)
 }
 
 // ErrPriceNotFound is what PriceReader.LatestPrice returns when no
