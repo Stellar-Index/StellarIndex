@@ -37,20 +37,21 @@ type ReadyChecker interface {
 //
 // Thread-safe.
 type Server struct {
-	logger    *slog.Logger
-	checks    []ReadyChecker
-	assets    AssetReader
-	prices    PriceReader
-	history   HistoryReader
-	markets   MarketsReader
-	oracle    OracleReader
-	meta      MetadataResolver
-	accounts  AccountStore
-	cors      middleware.Middleware
-	auth      middleware.Middleware
-	rateLimit middleware.Middleware
-	mux       *http.ServeMux
-	started   time.Time
+	logger     *slog.Logger
+	checks     []ReadyChecker
+	assets     AssetReader
+	prices     PriceReader
+	history    HistoryReader
+	markets    MarketsReader
+	oracle     OracleReader
+	meta       MetadataResolver
+	accounts   AccountStore
+	divergence DivergenceLooker
+	cors       middleware.Middleware
+	auth       middleware.Middleware
+	rateLimit  middleware.Middleware
+	mux        *http.ServeMux
+	started    time.Time
 }
 
 // Options configures a [Server] at construction.
@@ -100,6 +101,14 @@ type Options struct {
 	// reachable; the binary's auth.NewRedisAPIKeyStore enforces that.
 	Accounts AccountStore
 
+	// Divergence, when non-nil, is consulted by /v1/price after a
+	// successful LatestPrice lookup. When the lookup says
+	// "warning fired" for the asset, the response carries
+	// flags.divergence_warning=true. Nil means "no divergence
+	// signal available" — the flag stays at its default false.
+	// Wire when both the divergence worker and Redis are running.
+	Divergence DivergenceLooker
+
 	// Auth, when non-nil, is inserted between CORS and RateLimit.
 	// Sets a Subject in the request context that downstream
 	// middleware (rate-limit, request logger) and handlers can
@@ -124,20 +133,21 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:    logger,
-		checks:    opts.ReadyChecks,
-		assets:    opts.Assets,
-		prices:    opts.Prices,
-		history:   opts.History,
-		markets:   opts.Markets,
-		oracle:    opts.Oracle,
-		meta:      opts.Meta,
-		accounts:  opts.Accounts,
-		cors:      opts.CORS,
-		auth:      opts.Auth,
-		rateLimit: opts.RateLimit,
-		mux:       http.NewServeMux(),
-		started:   time.Now().UTC(),
+		logger:     logger,
+		checks:     opts.ReadyChecks,
+		assets:     opts.Assets,
+		prices:     opts.Prices,
+		history:    opts.History,
+		markets:    opts.Markets,
+		oracle:     opts.Oracle,
+		meta:       opts.Meta,
+		accounts:   opts.Accounts,
+		divergence: opts.Divergence,
+		cors:       opts.CORS,
+		auth:       opts.Auth,
+		rateLimit:  opts.RateLimit,
+		mux:        http.NewServeMux(),
+		started:    time.Now().UTC(),
 	}
 	s.mountRoutes()
 	return s

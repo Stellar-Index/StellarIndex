@@ -152,6 +152,103 @@ func TestPrice_StaleFlagSet(t *testing.T) {
 	}
 }
 
+// stubDivergenceLooker is a minimal v1.DivergenceLooker for tests.
+// firing controls what DivergenceFiringFor returns; err is the
+// surfaced error (nil = clean response).
+type stubDivergenceLooker struct {
+	firing bool
+	err    error
+	calls  int
+}
+
+func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _ canonical.Asset) (bool, error) {
+	s.calls++
+	return s.firing, s.err
+}
+
+// TestPrice_DivergenceFires — when the lookup says the warning is
+// firing for this asset, flags.divergence_warning is true.
+func TestPrice_DivergenceFires(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+		},
+	}
+	div := &stubDivergenceLooker{firing: true}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_warning":true`) {
+		t.Errorf("divergence_warning not set: %s", body)
+	}
+	if div.calls != 1 {
+		t.Errorf("divergence lookup calls = %d, want 1", div.calls)
+	}
+}
+
+// TestPrice_DivergenceClean — when the lookup says no warning,
+// flags.divergence_warning stays false.
+func TestPrice_DivergenceClean(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+		},
+	}
+	div := &stubDivergenceLooker{firing: false}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("divergence_warning expected false: %s", body)
+	}
+}
+
+// TestPrice_DivergenceErrorIsBestEffort — a divergence lookup error
+// must NOT cause the price endpoint to fail. Flag stays at default
+// (false); the price still flows.
+func TestPrice_DivergenceErrorIsBestEffort(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+		},
+	}
+	div := &stubDivergenceLooker{err: errors.New("redis exploded")}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — divergence error must NOT fail the price call", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("flag expected default false on lookup error: %s", body)
+	}
+}
+
+// TestPrice_NoDivergenceLookerLeavesFlagFalse — when no
+// DivergenceLooker is wired (typical pre-launch / no-Redis state),
+// the flag never fires and no lookup is attempted.
+func TestPrice_NoDivergenceLookerLeavesFlagFalse(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("flag should default to false without a looker: %s", body)
+	}
+}
+
 func TestPrice_DefaultQuoteIsUSD(t *testing.T) {
 	// Omit quote param — handler defaults to fiat:USD.
 	reader := &stubPriceReader{
