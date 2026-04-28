@@ -38,6 +38,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
@@ -63,7 +64,7 @@ func main() {
 	}
 }
 
-func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen // dispatch-heavy wiring; splitting would reduce linearity
+func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo // dispatch-heavy wiring; splitting would reduce linearity
 	cfg, err := config.LoadWithEnv(cfgPath)
 	if err != nil {
 		return err
@@ -194,6 +195,25 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen // dispat
 		accountStore = auth.NewRedisAPIKeyStore(rdb)
 	}
 
+	// Divergence lookup adapter. Only wired when Redis is reachable
+	// (the worker's cached results live there). Empty References
+	// list means the worker writes no entries — handler treats every
+	// asset as "not yet refreshed" and leaves the flag unset.
+	var divergenceLooker v1.DivergenceLooker
+	if rdb != nil {
+		divSvc, err := divergence.NewService(divergence.ServiceOptions{
+			Cache: rdb,
+			// References list is empty by default — operator wires
+			// concrete refs (CoinGecko, CMC, etc.) when ready. The
+			// service still serves LookupCached against entries the
+			// worker wrote; it just doesn't write any of its own.
+		})
+		if err != nil {
+			return fmt.Errorf("divergence service: %w", err)
+		}
+		divergenceLooker = divergenceAdapter{svc: divSvc}
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -204,6 +224,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen // dispat
 		Oracle:      storeOracleReader{s: store},
 		Meta:        sep1Cache,
 		Accounts:    accountStore,
+		Divergence:  divergenceLooker,
 		CORS:        cors,
 		Auth:        authMW,
 		RateLimit:   rateLimit,
@@ -298,6 +319,25 @@ func buildAuthMiddleware(mode string, rdb *redis.Client, logger *slog.Logger) mi
 	// this branch unreachable.
 	logger.Error("unknown auth_mode — server falling through to no-auth", "mode", mode)
 	return nil
+}
+
+// divergenceAdapter wraps *divergence.Service to satisfy the v1
+// DivergenceLooker interface. v1 deliberately doesn't import the
+// divergence package (kept storage-package-agnostic); this thin
+// shim is the wire between them.
+type divergenceAdapter struct {
+	svc *divergence.Service
+}
+
+func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (bool, error) {
+	cached, found, err := a.svc.LookupCached(ctx, asset)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	return cached.WarningFired, nil
 }
 
 // storeChecker adapts *timescale.Store to the v1.ReadyChecker

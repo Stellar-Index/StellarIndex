@@ -22,6 +22,19 @@ const priceBatchMaxAssets = 100
 // raise the GET ceiling without bloating query strings.
 const priceBatchMaxAssetsPOST = 1000
 
+// DivergenceLooker is the read-side interface the v1 server uses
+// to consult cached divergence results when serving /v1/price.
+// Production implementation: an adapter around
+// `internal/divergence.Service.LookupCached` wired in the binary.
+//
+// The server treats absence (`found=false`) and read errors as
+// "warning unset". Read errors are logged at WARN; absence is the
+// expected steady-state for assets the divergence worker hasn't
+// reached yet (TTL'd out, never refreshed, etc.).
+type DivergenceLooker interface {
+	DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (bool, error)
+}
+
 // PriceReader is the storage-side interface for /v1/price lookups.
 //
 // Production implementation: Redis hot path (the `price:<asset>`
@@ -187,7 +200,21 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// cardinality warning on the metric declaration). The
 	// aggregator owns this metric when it ships and will restrict
 	// emission to a top-N allow-list.
-	writeJSON(w, snapshot, Flags{Stale: stale}, sources...)
+	flags := Flags{Stale: stale}
+	if s.divergence != nil {
+		// Divergence lookup is best-effort. A failure here logs at
+		// WARN and falls through with the flag unset — better to
+		// serve a fresh price without a warning than to 5xx because
+		// a Redis blip lost the cached divergence record.
+		if firing, derr := s.divergence.DivergenceFiringFor(r.Context(), asset); derr == nil {
+			flags.DivergenceWarning = firing
+		} else if !clientAborted(r, derr) {
+			s.logger.Warn("divergence lookup failed",
+				"err", derr,
+				"asset", asset.String())
+		}
+	}
+	writeJSON(w, snapshot, flags, sources...)
 }
 
 // handlePriceBatch serves GET /v1/price/batch?asset_ids=A,B,C&quote=<id>.
