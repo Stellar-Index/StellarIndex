@@ -44,7 +44,7 @@ Within each surface, ordered by dependency.
 |---|---|---|---|---|---|---|---|
 | L1.1 | CEX connectors: Binance, Coinbase, Kraken, Bitstamp | Wk 4 | ~5 days | — | L4.1 | `internal/sources/external/<venue>` | 🔴 |
 | L1.2 | Chainlink HTTP cross-check connector | Wk 4 | half-day | — | L4.4 | `internal/divergence/chainlink` | 🔴 |
-| L1.3 | Asset enumeration / discovery (auto-detect new SEP-41 tokens) | Wk 4 | full day | — | L4.1 | `internal/canonical/discovery` | 🟡 |
+| L1.3 | Asset enumeration / discovery (auto-detect new SEP-41 tokens) — Sniffer + Recorder + `discovered_assets` table; dispatcher integration deferred to follow-up PR | Wk 4 | full day | — | L4.1 | `internal/canonical/discovery`, `internal/storage/timescale/discovery.go` | 🟢 |
 
 ## Aggregator layer
 
