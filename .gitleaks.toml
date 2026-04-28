@@ -25,3 +25,11 @@ description = "Test-only Stellar G-strkey (public account ID, not a secret) used
 paths = [
   '''test/integration/ledgerstream_to_storage_test\.go''',
 ]
+
+[[rules.allowlists]]
+description = "Test-only Stellar C-strkey (public contract ID, not a secret) used as the SAC-wrapped fixture for the supply cross-check tests. Contract IDs are deterministic public ledger entries — not credentials."
+paths = [
+  '''internal/supply/crosscheck_test\.go''',
+  '''internal/supply/classic_test\.go''',
+  '''internal/supply/sep41_test\.go''',
+]
