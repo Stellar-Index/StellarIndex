@@ -193,7 +193,7 @@ Subcommands:
                           print per-venue first-trade/update samples. Exits
                           early once every enabled venue has emitted at
                           least one output. No DB, no Timescale, no cursors.
-  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR]
+  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed]
                           Verify a galexie bucket at one or more tiers:
                             chain      (Tier A) — chain-link hash integrity:
                                        each ledger N's PreviousLedgerHash
@@ -223,6 +223,13 @@ Subcommands:
                                        PATH; long-running, gated by
                                        -archivist-timeout (default 30m).
                             all        run all four.
+                          -fail-on-missed: per ADR-0017 X1.7, treat
+                                       checkpointsMissed > 0 as a hard
+                                       failure. Default off for the
+                                       pre-bootstrap workflow; flip on
+                                       after archive-completeness has
+                                       been run and the cross-anchor
+                                       archive is provably complete.
                           Exit 0 = clean; 1 = first break with details.
   archive-completeness <mode> [flags]
                           Completeness check + repair across the dual-archive
@@ -1515,6 +1522,11 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 		"Archive URL for Tier E (empty → file://<archive-root>)")
 	archivistTimeout := fs.Duration("archivist-timeout", 30*time.Minute,
 		"Maximum runtime for the rs-stellar-archivist scan command")
+	failOnMissed := fs.Bool("fail-on-missed", false,
+		"Treat checkpointsMissed > 0 as a hard failure (ADR-0017 X1.7). "+
+			"Default off for backward compat with the operator workflow that "+
+			"tolerated scattered missed checkpoints; flip to true after the "+
+			"cross-anchor archive bootstrap completes (PRs #200/#202/#203).")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1553,7 +1565,7 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 	// Tier A + B (LCM walk via ledgerstream). Skipped when tier=peers.
 	if doChain || doCheckpoint {
 		if err := verifyArchiveLCMWalk(cfg, bucket, uint32(*from), uint32(*to),
-			doChain, doCheckpoint, *archiveRoot); err != nil {
+			doChain, doCheckpoint, *archiveRoot, *failOnMissed); err != nil {
 			return err
 		}
 	}
@@ -1581,7 +1593,12 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 // verifyArchiveLCMWalk runs the Tier A + B passes over every LCM in
 // the given bucket range. Split from verifyArchive so Tier D can run
 // standalone without the ledgerstream setup.
-func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, doChain, doCheckpoint bool, archiveRoot string) error { //nolint:funlen,gocognit,gocyclo
+//
+// failOnMissed: when true, a non-zero checkpointsMissed at the end
+// of the walk is treated as a hard failure per ADR-0017 X1.7.
+// When false (default), missed checkpoints are reported but tolerated
+// — matches the pre-bootstrap operator workflow.
+func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, doChain, doCheckpoint bool, archiveRoot string, failOnMissed bool) error { //nolint:funlen,gocognit,gocyclo
 	lsCfg := ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{
 			Type: "S3",
@@ -1684,8 +1701,17 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, doC
 	fmt.Fprintf(os.Stderr, "\nverify-archive: verified %d ledgers in %s (%.0f ledgers/s)\n",
 		verified, elapsed.Round(time.Second), float64(verified)/elapsed.Seconds())
 	if doCheckpoint {
-		fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d (missed = archive file absent, not a failure)\n",
-			checkpointsOK, checkpointsMissed)
+		// Note phrasing flip-flops based on failOnMissed: pre-bootstrap
+		// operator workflow tolerated misses (the legacy `not a failure`
+		// note); post-bootstrap workflow per ADR-0017 X1.7 makes them
+		// load-bearing on the exit code.
+		if failOnMissed {
+			fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d (fail-on-missed: any miss = hard failure)\n",
+				checkpointsOK, checkpointsMissed)
+		} else {
+			fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d (missed = archive file absent, not a failure)\n",
+				checkpointsOK, checkpointsMissed)
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("verification FAILED: %w", err)
@@ -1699,8 +1725,18 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, doC
 	if doCheckpoint {
 		if checkpointsOK == 0 && checkpointsMissed > 0 {
 			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor INCONCLUSIVE — %d missed, 0 matched (archive mirror may be stale)\n", checkpointsMissed)
+			if failOnMissed {
+				return fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched (with -fail-on-missed)", checkpointsMissed)
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor OK ✓  (%d matched, %d missed)\n", checkpointsOK, checkpointsMissed)
+		}
+		// Post-bootstrap hard contract per ADR-0017 X1.7: any missed
+		// checkpoint means cross-anchor archive isn't structurally
+		// complete, which means the next layer (anchor verify per
+		// ADR-0017 X1.4) can't be guaranteed.
+		if failOnMissed && checkpointsMissed > 0 {
+			return fmt.Errorf("verification FAILED: %d checkpoint(s) missing from cross-anchor archive (with -fail-on-missed per ADR-0017 X1.7)", checkpointsMissed)
 		}
 	}
 	_ = mismatches // silence unused variable warning; set for future exit-code semantics
