@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // Config is the root configuration for every Rates Engine binary.
 //
 // Fields carry four struct tags:
@@ -339,13 +341,29 @@ type AggregateConfig struct {
 
 // APIConfig controls the public REST+SSE server.
 type APIConfig struct {
-	ListenAddr          string   `toml:"listen_addr" doc:"Bind address for the HTTP server." default:"0.0.0.0:3000"`
-	ExternalBaseURL     string   `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.ratesengine.net/v1)." default:"https://api.ratesengine.net/v1"`
-	AuthMode            string   `toml:"auth_mode" doc:"Authentication mode — none / apikey / sep10. The middleware (internal/api/v1/middleware/Auth) is scaffolded; validators (internal/auth/{APIKeyValidator,SEP10Validator}) ship as Noop stubs that return ErrNotImplemented. A deployment with auth_mode=apikey or sep10 BUT no validator implementation wired in cmd/ratesengine-api/main.go fails-loud at 503 on every request — never silently demotes to anonymous. Stay on 'none' until validators land." default:"none"`
-	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
-	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
-	CDNEnabled          bool     `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
-	AllowedOrigins      []string `toml:"allowed_origins" doc:"CORS allow-list for browser clients." default:"[\"*\"]"`
+	ListenAddr          string      `toml:"listen_addr" doc:"Bind address for the HTTP server." default:"0.0.0.0:3000"`
+	ExternalBaseURL     string      `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.ratesengine.net/v1)." default:"https://api.ratesengine.net/v1"`
+	AuthMode            string      `toml:"auth_mode" doc:"Authentication mode — none / apikey / sep10. The middleware (internal/api/v1/middleware/Auth) is scaffolded; validators (internal/auth/{APIKeyValidator,SEP10Validator}) ship as Noop stubs that return ErrNotImplemented. A deployment with auth_mode=apikey or sep10 BUT no validator implementation wired in cmd/ratesengine-api/main.go fails-loud at 503 on every request — never silently demotes to anonymous. Stay on 'none' until validators land." default:"none"`
+	AnonRateLimitPerMin int         `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
+	KeyRateLimitPerMin  int         `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
+	CDNEnabled          bool        `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
+	AllowedOrigins      []string    `toml:"allowed_origins" doc:"CORS allow-list for browser clients." default:"[\"*\"]"`
+	SEP10               SEP10Config `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
+}
+
+// SEP10Config configures the SEP-10 Web Auth validator. Both
+// SeedEnv and JWTSecretEnv reference environment variable NAMES,
+// not values — the actual secrets stay out of the config file
+// and the docs-config output. A deployment with auth_mode=sep10
+// AND an unset / empty env var fails loud at startup rather than
+// silently 503-ing on every challenge.
+type SEP10Config struct {
+	SeedEnv       string        `toml:"seed_env" doc:"Environment variable holding the server signing keypair S-strkey. Operators rotate this on a schedule; ansible-vault stores the actual value." default:"RATESENGINE_SEP10_SEED"`
+	JWTSecretEnv  string        `toml:"jwt_secret_env" doc:"Environment variable holding the HMAC-SHA256 JWT secret (≥ 32 bytes of entropy required)." default:"RATESENGINE_SEP10_JWT_SECRET"`
+	WebAuthDomain string        `toml:"web_auth_domain" doc:"SEP-10 web_auth_domain — the host that serves /v1/auth/sep10/*. Carried inside the challenge tx so clients verify before signing. Typically the API's external host (e.g. api.ratesengine.net)." default:"api.ratesengine.net"`
+	HomeDomain    string        `toml:"home_domain" doc:"Issuer home_domain. Carried in the JWT iss claim and in the challenge's first manage_data op. Typically same as the project root domain." default:"ratesengine.net"`
+	ChallengeTTL  time.Duration `toml:"challenge_ttl" doc:"How long a SEP-10 challenge is valid for signing. SDK requires ≥ 1s; SEP-10 spec recommends 15m." default:"15m"`
+	JWTTTL        time.Duration `toml:"jwt_ttl" doc:"Lifetime of an issued JWT. Clients refresh by repeating the challenge → verify flow." default:"1h"`
 }
 
 // ObsConfig wires metrics, logs, traces.
@@ -431,6 +449,14 @@ func Default() Config {
 			KeyRateLimitPerMin:  1000,
 			CDNEnabled:          true,
 			AllowedOrigins:      []string{"*"},
+			SEP10: SEP10Config{
+				SeedEnv:       "RATESENGINE_SEP10_SEED",
+				JWTSecretEnv:  "RATESENGINE_SEP10_JWT_SECRET",
+				WebAuthDomain: "api.ratesengine.net",
+				HomeDomain:    "ratesengine.net",
+				ChallengeTTL:  15 * time.Minute,
+				JWTTTL:        1 * time.Hour,
+			},
 		},
 		Obs: ObsConfig{
 			MetricsListen: "127.0.0.1:9464",
