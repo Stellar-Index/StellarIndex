@@ -17,6 +17,24 @@ against.
 
 ### Added
 
+- **Phase 2 freeze policy — 3-signal AND (L2.7 closes)**: per
+  ADR-0019 §"Freeze policy", the orchestrator now runs a second
+  freeze layer alongside Phase 1: `confidence < 0.10 AND z_score >
+  5.0 AND source_count <= 1`. All three signals must agree —
+  catches the USTRY-shape attack pattern (single source, large
+  deviation, confidence-killing combination) without firing on
+  legitimate market events (those have multi-source corroboration).
+  Refactored `refreshPairWindow`: confidence now computes BEFORE
+  the VWAP cache write, so a Phase 2 freeze leaves the prior
+  bucket's value intact in cache (same LKG-preserving semantic
+  as Phase 1). The freeze marker carries
+  `Reason="phase2:3_signal_AND confidence=… z=… sources=…"` so
+  log lines + Redis marker JSON make the source legible without a
+  new wire field. Class label on
+  `ratesengine_anomaly_freeze_engaged_total` consistent with
+  Phase 1 (uses the same Checker's classifier when wired). New
+  exported `Checker.ClassOf` for that consistency.
+
 - **Confidence score on `/v1/price` envelope (L2.6 closes)**: API
   reads the cached `confidence:<base>:<quote>:<window>` Redis key
   written by the aggregator and surfaces both the score

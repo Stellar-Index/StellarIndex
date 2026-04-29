@@ -44,81 +44,83 @@ func confidenceCacheTTL(window time.Duration) time.Duration {
 	return cachekeys.ConfidenceTTL(window)
 }
 
-// computeAndCacheConfidence runs the multi-factor confidence score
-// for one freshly-published (pair, window) bucket and writes the
-// JSON-encoded [confidence.Score] to Redis.
+// confidenceComputation bundles the score with the z-score that
+// produced it. Returned by [Orchestrator.computeConfidence] so the
+// Phase 2 freeze check can read both without recomputing.
+type confidenceComputation struct {
+	Score  confidence.Score
+	ZScore float64
+}
+
+// computeConfidence runs the multi-factor confidence math for the
+// freshly-computed (pair, window) bucket. Returns (_, false) when
+// the inputs aren't ready yet — first tick, no baseline, baseline
+// in full bootstrap.
 //
-// Skipped entirely when:
-//   - Baselines is nil (operator hasn't wired the source);
-//   - prevVWAP is nil (this is the first tick — no return to score
-//     against). The next tick will have a baseline-comparable return
-//     and confidence will start flowing.
-//
-// Per-pair failures are logged + counted but never propagated:
-// confidence is enrichment, not a publish-blocking signal. The
-// VWAP itself is already cached by the time we run.
-func (o *Orchestrator) computeAndCacheConfidence(
+// The split between compute and cache exists so the Phase 2 freeze
+// check (ADR-0019) can read the score before deciding whether to
+// publish — frozen buckets must NOT cache confidence either, or
+// the next API read would surface a stale score from a refused
+// bucket.
+func (o *Orchestrator) computeConfidence(
 	ctx context.Context,
 	pair canonical.Pair,
-	window time.Duration,
 	vwap *big.Rat,
 	prevVWAP *big.Rat,
 	trades []canonicalTrade,
-) {
+) (confidenceComputation, bool) {
 	if o.cfg.Baselines == nil || prevVWAP == nil {
-		// First-tick / unwired-baseline → no z-score input. Emit a
-		// metric so the operator can see how often this happens
-		// without parsing logs.
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("skipped").Inc()
-		return
+		return confidenceComputation{}, false
 	}
 
 	multi, computedAt, err := o.cfg.Baselines.LatestBaseline(ctx, pair)
 	if err != nil {
-		// Baseline-read errors include "not yet computed for this
-		// pair" — treat as bootstrap, not an aggregator-side failure.
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
-		return
+		return confidenceComputation{}, false
 	}
 
-	// Convert big.Rat → float64 for the factor math. Loss of
-	// precision here doesn't matter — confidence is a [0, 1]
-	// statistic, not a money figure.
 	currF, _ := vwap.Float64()
 	prevF, _ := prevVWAP.Float64()
 	if prevF == 0 {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("skipped").Inc()
-		return
+		return confidenceComputation{}, false
 	}
 	returnPct := (currF - prevF) / prevF
 
 	z, _, valid := multi.MaxZScore(returnPct)
 	if !valid {
-		// MultiBaseline is fully bootstrapped — no usable window.
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
-		return
+		return confidenceComputation{}, false
 	}
-
-	classCount := distinctSourceClassCount(trades)
-	usdVolume := approxUSDVolume(trades, pair)
-	ageDays := baselineAgeDays(multi, computedAt)
-	divergencePct := o.lookupDivergencePct(ctx, pair.Base)
 
 	score := confidence.Compute(confidence.Inputs{
 		ZScore:                   z,
 		SourceCount:              distinctSourceCount(trades),
-		SourceClassCount:         classCount,
-		LiquidityUSD:             usdVolume,
-		CrossOracleDivergencePct: divergencePct,
-		BaselineAgeDays:          ageDays,
+		SourceClassCount:         distinctSourceClassCount(trades),
+		LiquidityUSD:             approxUSDVolume(trades, pair),
+		CrossOracleDivergencePct: o.lookupDivergencePct(ctx, pair.Base),
+		BaselineAgeDays:          baselineAgeDays(multi, computedAt),
 	}, confidence.DefaultWeights())
 
+	return confidenceComputation{Score: score, ZScore: z}, true
+}
+
+// cacheConfidence writes a previously-computed [confidence.Score]
+// to Redis. Called only when the bucket is being published (i.e.
+// neither Phase 1 nor Phase 2 has refused). Failures are logged +
+// counted but don't propagate — confidence is enrichment.
+func (o *Orchestrator) cacheConfidence(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	score confidence.Score,
+) {
 	body, err := json.Marshal(score)
 	if err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("marshal_error").Inc()
 		return
 	}
-
 	key := cachekeys.Confidence(pair.Base, pair.Quote, window)
 	if err := o.cache.Set(ctx, key, body, confidenceCacheTTL(window)).Err(); err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("write_error").Inc()
@@ -126,7 +128,6 @@ func (o *Orchestrator) computeAndCacheConfidence(
 			"pair", pair.String(), "window", window.String(), "err", err)
 		return
 	}
-
 	obs.AggregatorConfidenceComputeTotal.WithLabelValues("ok").Inc()
 }
 

@@ -430,23 +430,37 @@ func (o *Orchestrator) refreshPairWindow(
 		return fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
 	}
 
-	// Anomaly evaluation BEFORE cache write — when ActionFreeze
-	// fires we keep the previous bucket's value in cache (don't
-	// overwrite) so the API serves the LKG, and emit a freeze
-	// marker so flags.frozen=true on the next /v1/price read.
+	// Phase 1 anomaly evaluation BEFORE cache write — class-deviation
+	// + source-count threshold (the L2.4 stop-gap). On freeze we
+	// keep the previous bucket's value in cache (don't overwrite)
+	// and emit a freeze marker so flags.frozen=true on the next read.
 	stateKey := pair.String() + ":" + window.String()
 	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, vwap, trades, stateKey); !ok {
-		// ActionFreeze — bail out before touching the cache. The
-		// previous bucket's VWAP stays valid; the marker has been
-		// written by FreezeWriter.
 		_ = action
 		return nil
 	}
 
-	// Serialise to a decimal-string representation. Aggregator
-	// writers stay in big.Rat / big.Int land; API readers parse
-	// the string back to a decimal. Float encoding is prohibited
-	// on this path per ADR-0003.
+	// Phase 2 (ADR-0019): compute confidence + run the 3-signal AND
+	// freeze check. Both happen BEFORE the VWAP cache write so a
+	// Phase 2 freeze leaves the prior bucket's value intact in cache
+	// — same semantic as Phase 1.
+	prevForConfidence := o.prevVWAPs[stateKey]
+	conf, confOK := o.computeConfidence(ctx, pair, vwap, prevForConfidence, trades)
+	if confOK {
+		input := confidenceWithSourceCount{
+			Confidence:  conf.Score.Confidence,
+			ZScore:      conf.ZScore,
+			SourceCount: distinctSourceCount(trades),
+		}
+		if phase2FreezeFires(input) {
+			o.markPhase2Freeze(ctx, pair, input)
+			return nil
+		}
+	}
+
+	// Cache write VWAP. Aggregator writers stay in big.Rat / big.Int
+	// land; API readers parse the string back to a decimal. Float
+	// encoding is prohibited on this path per ADR-0003.
 	value := formatRatFixed(vwap, 12)
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
@@ -454,13 +468,12 @@ func (o *Orchestrator) refreshPairWindow(
 		return fmt.Errorf("redis set %s: %w", key, err)
 	}
 
-	// Confidence score (ADR-0019). Computed AFTER the VWAP cache
-	// write so a confidence-side failure can't block the price
-	// publish. Uses the prior tick's VWAP (saved in prevVWAPs)
-	// as the comparator for return-% computation; first-tick
-	// publishes naturally skip the confidence step.
-	prevForConfidence := o.prevVWAPs[stateKey]
-	o.computeAndCacheConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
+	// Cache write confidence (only on successful publish — frozen
+	// buckets must NOT carry a stale score forward). Best-effort:
+	// confidence enrichment, never a publish-blocking signal.
+	if confOK {
+		o.cacheConfidence(ctx, pair, window, conf.Score)
+	}
 
 	// Update the prev-VWAP comparator slot ONLY on successful
 	// publish — frozen buckets keep the prior slot intact so the

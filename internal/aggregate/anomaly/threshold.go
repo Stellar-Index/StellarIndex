@@ -90,6 +90,14 @@ func NewChecker(thresholds map[AssetClass]Thresholds, classifier *Classifier) (*
 	return &Checker{thresholds: cp, classifier: classifier}, nil
 }
 
+// ClassOf returns the asset's class. Pass-through to the wrapped
+// [Classifier] — exposed so the orchestrator's Phase 2 freeze
+// path can label its metrics with the same per-class breakdown
+// that Phase 1 emits.
+func (c *Checker) ClassOf(asset canonical.Asset) AssetClass {
+	return c.classifier.ClassOf(asset)
+}
+
 // Observation is the input to [Checker.Evaluate]. The aggregator
 // fills this in for each bucket-close before publishing.
 type Observation struct {
