@@ -292,6 +292,94 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 	}
 }
 
+// TestPhase2Freeze_BlocksVWAPPublish — when the 3-signal AND
+// fires, the orchestrator BAILS BEFORE the VWAP cache write. The
+// previous bucket's value (or absence) stays in cache.
+//
+// Setup forces all three signals to fire:
+//   - z >> 5: a return that's huge vs the baseline median+MAD
+//   - source_count == 1: single-source trade slice
+//   - low confidence: small bucket volume + single source
+func TestPhase2Freeze_BlocksVWAPPublish(t *testing.T) {
+	pair := xlmUSDPair(t)
+	now := time.Now().UTC()
+
+	// First-tick prevVWAP comparator setup: tight price.
+	// Second tick has a huge return relative to the prev →
+	// z dominates, source_count=1, confidence collapses.
+	tightPair := []canonical.Trade{
+		makeXLMUSDTrade(t, "soroswap", 1_000_000, 1_000_000, now.Add(-90*time.Second)), // tick 1
+	}
+	bigSpike := []canonical.Trade{
+		makeXLMUSDTrade(t, "soroswap", 1_000_000, 5_000_000, now.Add(-30*time.Second)), // tick 2: 5x jump, single source
+	}
+
+	store := &mockStore{}
+	rdb, _ := newTestRedis(t)
+
+	// Tight baseline so any meaningful return reads as a huge z.
+	bsrc := stubBaselineSource{
+		multi: baseline.MultiBaseline{
+			Day30: &baseline.Baseline{Median: 0.0, MAD: 0.0001, N: 1000},
+		},
+		computedAt: now,
+	}
+
+	orch := New(store, rdb, Config{
+		Pairs:     []canonical.Pair{pair},
+		Windows:   []time.Duration{1 * time.Minute},
+		Interval:  1 * time.Hour,
+		Baselines: bsrc,
+		// No Anomaly checker → Phase 1 runs in skip mode; we're
+		// isolating Phase 2 here.
+	})
+
+	// Tick 1: warms prevVWAP. No freeze possible (no comparator yet).
+	store.trades = tightPair
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, time.Minute)
+	if exists, _ := rdb.Exists(context.Background(), vwapKey).Result(); exists != 1 {
+		t.Fatalf("VWAP key missing after tick 1 — confidence skip shouldn't block tick 1 publish")
+	}
+
+	// Tick 2: huge spike, single source. Phase 2 should fire.
+	// The tick-1 VWAP stays in cache (overwrite suppressed).
+	tick1Value, err := rdb.Get(context.Background(), vwapKey).Result()
+	if err != nil {
+		t.Fatalf("read tick-1 VWAP: %v", err)
+	}
+	store.trades = bigSpike
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	tick2Value, err := rdb.Get(context.Background(), vwapKey).Result()
+	if err != nil {
+		t.Fatalf("read tick-2 VWAP: %v", err)
+	}
+	if tick2Value != tick1Value {
+		t.Errorf("VWAP cache changed across a Phase 2 freeze: tick1=%q tick2=%q (Phase 2 should preserve LKG)",
+			tick1Value, tick2Value)
+	}
+
+	// Confidence cache must NOT carry forward the spike's score.
+	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
+	bodyAfter, err := rdb.Get(context.Background(), confKey).Bytes()
+	if err == nil {
+		// Some entry exists — must be from tick 1 (a fresh tick-1 publish
+		// can write a confidence entry; that's fine). What matters is the
+		// value is NOT from tick 2.
+		var s confidence.Score
+		if err := json.Unmarshal(bodyAfter, &s); err != nil {
+			t.Fatalf("decode confidence: %v", err)
+		}
+		// Tick 1 had no prev → confidence step skipped → no key written.
+		// So the cache should have NO confidence: entry at all.
+		t.Errorf("confidence cache key present after Phase 2 freeze — should not have been written: %v", s)
+	}
+}
+
 // TestConfidence_BaselineMissingDoesNotBlockVWAP — when the
 // Baselines source returns an error, the VWAP cache write must
 // still succeed. Confidence is enrichment, not a publish gate.
