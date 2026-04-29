@@ -61,18 +61,35 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate/anomaly"
+	"github.com/RatesEngine/rates-engine/internal/aggregate/baseline"
 	"github.com/RatesEngine/rates-engine/internal/aggregate/freeze"
 	"github.com/RatesEngine/rates-engine/internal/aggregate/orchestrator"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 	"github.com/RatesEngine/rates-engine/internal/version"
+)
+
+// Baseline-refresh tunables. Deliberately not surfaced as TOML knobs
+// in this slice — sensible defaults today, an operator override only
+// if production usage shows we need it.
+const (
+	// baselineRefreshCadence: how often to recompute every pair's
+	// baseline. 30-day rolling MAD barely moves minute-to-minute, so
+	// hourly is plenty (and cheap on the hypertable).
+	baselineRefreshCadence = 1 * time.Hour
+	// baselineRefreshConcurrency: pairs computed in flight at once.
+	// 4 keeps the DB connection pool well-fed without saturating it
+	// even on the largest pair sets.
+	baselineRefreshConcurrency = 4
 )
 
 func main() {
@@ -219,13 +236,106 @@ func run(cfgPath string, dryRun bool) error {
 		return nil
 	}
 
+	// ─── Baseline refresh worker (ADR-0019 Phase 2) ─────────────
+	// Slow-cadence loop alongside the orchestrator: hourly pulls
+	// each pair's 30-day VWAP window from prices_1m, computes
+	// Median + MAD via internal/aggregate/baseline, and UPSERTs the
+	// row into volatility_baseline_1m. Outcomes go to Prometheus.
+	//
+	// Runs in its own goroutine so a slow refresh cycle never holds
+	// up orch.Run's tick.
+	refresher := baseline.NewRefresher(
+		baselineSourceAdapter{store: store},
+		baselineSinkAdapter{store: store},
+		baseline.DefaultWindow,
+		logger.With("component", "baseline-refresh"),
+	)
+	var refresherWG sync.WaitGroup
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		runBaselineRefresh(rootCtx, refresher, pairs, logger.With("component", "baseline-refresh"))
+	}()
+
 	// ─── Run ─────────────────────────────────────────────────────
 	logger.Info("orchestrator starting")
 	if err := orch.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("orchestrator: %w", err)
 	}
 	logger.Info("orchestrator stopped", "stats", orch.Stats())
+
+	// Wait for the baseline goroutine to honour rootCtx cancellation.
+	refresherWG.Wait()
 	return nil
+}
+
+// runBaselineRefresh ticks the baseline refresher on
+// [baselineRefreshCadence], emitting per-outcome Prometheus counters
+// for each cycle. Returns on rootCtx cancellation.
+//
+// Initial cycle runs immediately on startup so the
+// volatility_baseline_1m table is populated as fast as possible —
+// without this, a fresh deployment waits a full cadence interval
+// before the API can rely on baseline lookups for the confidence
+// score.
+func runBaselineRefresh(ctx context.Context, r *baseline.Refresher, pairs []canonical.Pair, logger *slog.Logger) {
+	tick := func() {
+		started := time.Now()
+		sum := r.RefreshAll(ctx, pairs, baselineRefreshConcurrency)
+		obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok").Add(float64(sum.OK))
+		obs.AggregatorBaselineRefreshTotal.WithLabelValues("not_enough_samples").Add(float64(sum.NotEnoughSamples))
+		obs.AggregatorBaselineRefreshTotal.WithLabelValues("read_error").Add(float64(sum.ReadErrors))
+		obs.AggregatorBaselineRefreshTotal.WithLabelValues("write_error").Add(float64(sum.WriteErrors))
+		logger.Info("baseline refresh complete",
+			"ok", sum.OK,
+			"not_enough_samples", sum.NotEnoughSamples,
+			"read_errors", sum.ReadErrors,
+			"write_errors", sum.WriteErrors,
+			"elapsed", time.Since(started).String(),
+		)
+	}
+
+	tick() // immediate first refresh
+
+	ticker := time.NewTicker(baselineRefreshCadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick()
+		}
+	}
+}
+
+// baselineSourceAdapter wraps *timescale.Store to satisfy
+// baseline.VWAPSource.
+type baselineSourceAdapter struct{ store *timescale.Store }
+
+func (a baselineSourceAdapter) VWAPsForPair1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]float64, error) {
+	return a.store.VWAPsForPair1m(ctx, pair, from, to)
+}
+
+// baselineSinkAdapter wraps *timescale.Store to satisfy
+// baseline.Sink. The adapter builds a timescale.StoredBaseline so
+// the dep direction stays clean — the storage package doesn't need
+// to import the baseline package.
+type baselineSinkAdapter struct{ store *timescale.Store }
+
+func (a baselineSinkAdapter) UpsertBaseline(
+	ctx context.Context,
+	pair canonical.Pair,
+	computedAt, windowStart, windowEnd time.Time,
+	b baseline.Baseline,
+) error {
+	return a.store.UpsertBaseline(ctx, timescale.StoredBaseline{
+		Pair:        pair,
+		ComputedAt:  computedAt,
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+		Baseline:    b,
+	})
 }
 
 // defaultPairs is the v1 aggregator coverage set. XLM/BTC/ETH across

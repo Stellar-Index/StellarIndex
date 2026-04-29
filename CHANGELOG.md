@@ -17,6 +17,20 @@ against.
 
 ### Added
 
+- **Baseline refresh wired into the aggregator binary (L2.5 final
+  slice — closes L2.5)**: `cmd/ratesengine-aggregator` now runs a
+  hourly baseline refresh loop alongside the orchestrator's
+  per-tick VWAP cycle. Adapters wrap `*timescale.Store` to satisfy
+  `baseline.VWAPSource` + `baseline.Sink`. The first refresh fires
+  immediately on startup so a fresh deployment populates
+  `volatility_baseline_1m` without waiting a full hour. Outcomes
+  emit through `ratesengine_aggregator_baseline_refresh_total`
+  labelled by `{ok, not_enough_samples, read_error, write_error}`.
+  Cadence (1h) and concurrency (4) are hardcoded for now —
+  surfaceable as TOML knobs only if production usage shows we need
+  them. Closes L2.5 across 4 slices: math primitive, storage layer,
+  refresh worker, binary wire-up.
+
 - **Baseline refresh worker (L2.5 slice)**: `baseline.Refresher`
   reads bucket-aligned 1m VWAPs over a 30d window via the new
   `Source.VWAPSource` interface, runs `ReturnsFromVWAPs` →
