@@ -233,6 +233,23 @@ entries when a leg's window was empty this tick. Sustained
 upstream regression worth investigating (Redis blip, malformed
 cached value).
 
+### `ratesengine_aggregator_baseline_refresh_total`
+
+Counter, label `outcome` (`ok` / `not_enough_samples` / `read_error` /
+`write_error`).
+
+Baseline refresh outcomes per pair × refresh cycle (ADR-0019 Phase 2).
+The aggregator's baseline-refresh worker recomputes Median + MAD over
+each pair's 30-day VWAP window on an hourly cadence and UPSERTs the
+result into `volatility_baseline_1m`. One increment per pair per cycle.
+
+Steady state is mostly `ok`. Sustained `not_enough_samples` indicates
+pairs in bootstrap (ADR-0019 §"Bootstrap policy") — the API's
+confidence score for those pairs will fall back to the bootstrap
+factor instead of using a per-asset baseline. Sustained `read_error`
+or `write_error` rates indicate the storage layer needs investigation
+(prices_1m read failing or volatility_baseline_1m write conflict).
+
 ### `ratesengine_anomaly_freeze_engaged_total`
 
 Counter, label `class` (`stablecoin` / `treasury` / `crypto` /

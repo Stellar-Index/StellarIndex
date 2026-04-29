@@ -54,6 +54,7 @@ func init() {
 
 		AnomalyFreezeEngagedTotal,
 		AggregatorTriangulationsTotal,
+		AggregatorBaselineRefreshTotal,
 
 		VerifyArchiveLedgersVerified,
 		VerifyArchiveCurrentLedger,
@@ -403,6 +404,21 @@ var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_aggregator_triangulations_total",
 		Help: "Aggregator triangulation outcomes per tick × chain × window. Outcome ∈ {ok, missing_leg, parse_error, redis_error}.",
+	},
+	[]string{"outcome"},
+)
+
+// AggregatorBaselineRefreshTotal — counter of baseline refresh
+// outcomes per pair, per refresh cycle (ADR-0019 Phase 2). One
+// increment per pair per cycle; outcome ∈ {ok, not_enough_samples,
+// read_error, write_error}. Steady state is mostly `ok`; sustained
+// `not_enough_samples` indicates pairs in bootstrap (ADR-0019
+// §"Bootstrap policy"); sustained `read_error` / `write_error`
+// indicate the storage layer needs investigation.
+var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_aggregator_baseline_refresh_total",
+		Help: "Baseline refresh outcomes per pair × refresh cycle. Outcome ∈ {ok, not_enough_samples, read_error, write_error}.",
 	},
 	[]string{"outcome"},
 )
