@@ -68,7 +68,7 @@ Within each surface, ordered by dependency.
 | ID | Item | Phase | Effort | Depends on | Blocks | Owner | Status |
 |---|---|---|---|---|---|---|---|
 | L3.1 | `/v1/price` populated end-to-end (CAGG actually being filled by aggregator) | Wk 7 | (above) | L2.1, L2.7 | launch | `internal/api/v1/price.go` (handler shipped) | 🔴 |
-| L3.2 | `/v1/price/tip` rolling-window + last-good-price (ADR-0018) | Wk 7 | half-day | L2.1 | L3.6 | `internal/api/v1/price_tip.go` | 🟡 |
+| L3.2 | `/v1/price/tip` rolling-window + last-good-price (ADR-0018) | Wk 7 | half-day | L2.1 | L3.6 | `internal/api/v1/price_tip.go` | 🟢 |
 | L3.3 | `/v1/observations` per-source raw (ADR-0018) | Wk 7 | half-day | — | L3.6 | `internal/api/v1/observations.go` | 🟡 |
 | L3.4 | F5.3 Batch / bulk-query endpoint | Wk 7 | half-day | L3.1 | — | `internal/api/v1/batch.go` | 🟡 |
 | L3.5 | F2.* Market Cap / FDV / Circulating / Max Supply on asset detail (24h volume + change_24h_pct deferred — aggregator-driven) | Wk 7 | full day | L2.12, L2.10 | launch | `internal/api/v1/{assets,assets_f2}.go` | 🟢 |

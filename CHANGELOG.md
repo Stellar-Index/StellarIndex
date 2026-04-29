@@ -17,6 +17,20 @@ against.
 
 ### Added
 
+- **`/v1/price/tip` rolling-window tip surface (L3.2)**: implements
+  [ADR-0018](docs/adr/0018-api-consistency-surfaces.md) Surface 2.
+  VWAP over a configurable rolling window (default 5 s, clamp 1–60 s)
+  with last-good-price fallback when the window is empty. Both
+  branches are in-contract — `flags.stale` stays `false` on this
+  surface (the closed-bucket "below-baseline" semantic doesn't
+  apply). Freeze flag is intentionally NOT consulted (freeze is a
+  closed-bucket concept; tip explicitly has no cross-region
+  consistency contract). Divergence flag still applies (asset-level).
+  URL discipline enforced: `?granularity=` returns 400.
+  Hypertable hiccups on the window path silently drop to the
+  fallback so a transient TimescaleDB error doesn't take down the
+  whole tip surface when the LatestPrice path is healthy.
+
 - **`pkg/client/` Go SDK skeleton (#201)**: first public-package
   surface under [ADR-0005](docs/adr/0005-monorepo.md)'s SemVer
   promise. v0.1.0 pre-release. Generic `Envelope[T]` for type-

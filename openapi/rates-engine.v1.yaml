@@ -194,6 +194,49 @@ paths:
         "500":        { $ref: "#/components/responses/InternalError" }
         "503":        { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /price/tip:
+    get:
+      tags: [price]
+      summary: Rolling-window tip price (ADR-0018 tip surface).
+      description: |
+        Realtime "what's the price right now" surface per ADR-0018.
+        Returns a VWAP over a short rolling window (default 5 s, clamp
+        1–60 s); when the window has no trades, falls back to the
+        most-recent observed price for the pair.
+
+        Both branches are **in-contract** — `flags.stale` is always
+        `false` on this surface. Customers read `price_type` and
+        `observed_at` to know what they got. Cross-region consistency
+        is **not** provable here; use `/v1/price` for the closed-bucket
+        guarantee.
+
+        URL discipline: `?granularity=` is rejected with 400 — that's
+        a closed-bucket concept and accepting it would silently change
+        the consistency contract.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - name: window_seconds
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 5
+          description: Rolling-window size in seconds for the VWAP.
+      responses:
+        "200":
+          description: Tip price (VWAP or last-good fallback).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceEnvelope" }
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "404":        { $ref: "#/components/responses/NotFound" }
+        "429":        { $ref: "#/components/responses/RateLimited" }
+        "500":        { $ref: "#/components/responses/InternalError" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
   /price/batch:
     get:
       tags: [price]

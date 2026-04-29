@@ -1,0 +1,286 @@
+package v1
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/RatesEngine/rates-engine/internal/aggregate"
+	"github.com/RatesEngine/rates-engine/internal/canonical"
+)
+
+// Tip-surface tunables per ADR-0018.
+//
+// defaultTipWindowSeconds matches the ADR's default; minTipWindowSeconds
+// and maxTipWindowSeconds enforce the documented clamp. The cap exists
+// to keep the rolling-window scan cheap even when the underlying
+// hypertable has millions of rows in a 60s span on a hot pair — and to
+// keep the surface honest about being a "tip", not a small-window
+// historical aggregator (that's /v1/vwap's job).
+const (
+	defaultTipWindowSeconds = 5
+	minTipWindowSeconds     = 1
+	maxTipWindowSeconds     = 60
+
+	// tipWindowMaxTrades caps the scan within a tip window. The rolling
+	// window is short (≤60s), so this is the worst-case row count we
+	// load into memory for one VWAP. Mirrors /v1/vwap's own cap.
+	tipWindowMaxTrades = 10000
+)
+
+// handlePriceTip serves GET /v1/price/tip per ADR-0018.
+//
+// Two in-contract response branches:
+//
+//   - Window VWAP: at least one trade in [now-window_seconds, now). The
+//     handler returns the VWAP with price_type="vwap", window_seconds=N.
+//   - Last-good fallback: window is empty. The handler returns
+//     PriceReader.LatestPrice's most-recent observation as-is — no
+//     synthetic age cap, the customer reads observed_at and decides.
+//
+// flags.stale is **always false** on this surface — both branches are
+// in-contract per ADR-0018 §"flags.stale semantic". The freeze flag
+// also stays unset here: freeze is a closed-bucket concept and the tip
+// surface has no closed-bucket guarantee. Divergence flagging still
+// applies (asset-level, not bucket-level).
+//
+// URL discipline: ?granularity= is rejected with 400 — granularity is
+// a closed-bucket concept and accepting it on the tip URL would let a
+// stray query string silently turn a tip request into something
+// closed-bucket-shaped (ADR-0018 §"URL discipline").
+func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
+	// PriceReader is the fallback path; without it the tip surface
+	// can't degrade and there's nothing meaningful to serve. The
+	// rolling-window path needs HistoryReader but we'll degrade
+	// gracefully when only one of them is wired.
+	if s.prices == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/price-unavailable",
+			"Price serving not configured", http.StatusServiceUnavailable,
+			"this deployment has no PriceReader wired — check binary configuration")
+		return
+	}
+
+	// Reject URL-discipline violations BEFORE asset/quote parsing —
+	// a request that mixes tip + closed-bucket semantics is malformed
+	// regardless of whether the asset/quote happen to parse.
+	if r.URL.Query().Get("granularity") != "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-tip-param",
+			"granularity is not valid on /v1/price/tip", http.StatusBadRequest,
+			"granularity is a closed-bucket concept (ADR-0018); use /v1/price for closed-bucket VWAP")
+		return
+	}
+
+	asset, quote, ok := s.parseTipAssetQuote(w, r)
+	if !ok {
+		return
+	}
+
+	window, ok := parseTipWindowSeconds(w, r)
+	if !ok {
+		return
+	}
+
+	// Try the rolling window when HistoryReader is wired. On any error
+	// (including "no trades in window"), fall through to LatestPrice.
+	if snap, sources, ok := s.tryTipWindowVWAP(r, asset, quote, window); ok {
+		flags := Flags{SingleSource: len(sources) == 1}
+		flags.DivergenceWarning = s.lookupDivergenceFlag(r, asset)
+		writeJSON(w, snap, flags, sources...)
+		return
+	}
+
+	// Fallback: most-recent known observation for the pair. PriceReader
+	// returns price_type="last_trade" today (MVP) and "vwap" once the
+	// aggregator wires the closed-bucket cache; both are in-contract
+	// for the tip fallback per ADR-0018 (the customer reads price_type
+	// + observed_at to know what they got).
+	snapshot, sources, _, err := s.prices.LatestPrice(r.Context(), asset, quote)
+	if errors.Is(err, ErrPriceNotFound) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/price-not-found",
+			"No price data for pair", http.StatusNotFound,
+			"no trades or oracle observations for "+asset.String()+" / "+quote.String())
+		return
+	}
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("LatestPrice failed (tip fallback)",
+			"err", err, "asset", asset.String(), "quote", quote.String())
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+
+	// Per ADR-0018: stale stays FALSE on the last-good-price branch —
+	// the fallback is in-contract on this surface. We deliberately
+	// IGNORE the staleness bit PriceReader sets for /v1/price; tip
+	// has its own envelope contract.
+	flags := Flags{SingleSource: len(sources) == 1}
+	flags.DivergenceWarning = s.lookupDivergenceFlag(r, asset)
+	writeJSON(w, snapshot, flags, sources...)
+}
+
+// parseTipAssetQuote pulls asset (required) + quote (defaulted to
+// fiat:USD) from the request, writes a 400 + returns ok=false on any
+// validation failure. Mirrors the equivalent parsing in handlePrice
+// rather than sharing a helper — handlePrice writes its own
+// price-specific error type URLs and we want the tip handler's
+// errors to be self-explanatory in problem+json.
+func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, canonical.Asset, bool) {
+	rawAsset := r.URL.Query().Get("asset")
+	if rawAsset == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/missing-asset",
+			"Missing asset parameter", http.StatusBadRequest,
+			"asset query parameter is required")
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	asset, err := canonical.ParseAsset(rawAsset)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest, err.Error())
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+
+	quote := defaultPriceQuote
+	if raw := r.URL.Query().Get("quote"); raw != "" {
+		q, err := canonical.ParseAsset(raw)
+		if err != nil {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-quote",
+				"Invalid quote identifier", http.StatusBadRequest, err.Error())
+			return canonical.Asset{}, canonical.Asset{}, false
+		}
+		quote = q
+	}
+
+	if asset.Equal(quote) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/identity-price",
+			"Asset and quote are the same", http.StatusBadRequest,
+			"price of an asset in itself is always 1; parameters must differ")
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	return asset, quote, true
+}
+
+// parseTipWindowSeconds reads the optional window_seconds query param,
+// defaulting to defaultTipWindowSeconds and rejecting values outside
+// [minTipWindowSeconds, maxTipWindowSeconds]. Returns (seconds, true)
+// on success or (0, false) after writing a 400.
+func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("window_seconds")
+	if raw == "" {
+		return defaultTipWindowSeconds, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < minTipWindowSeconds || n > maxTipWindowSeconds {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-window",
+			"Invalid window_seconds", http.StatusBadRequest,
+			"window_seconds must be an integer in [1, 60]")
+		return 0, false
+	}
+	return n, true
+}
+
+// tryTipWindowVWAP runs the rolling-window VWAP path. Returns
+// (snapshot, sources, true) when at least one trade landed in the
+// window and VWAP succeeded; (_, _, false) otherwise so the caller
+// drops to the LatestPrice fallback.
+//
+// Errors are intentionally swallowed (logged, not surfaced) — the
+// tip contract guarantees the caller a response if the pair has any
+// observation at all, and the LatestPrice fallback is the
+// authoritative answer when the rolling window can't produce one.
+// Surfacing a 5xx here would make a transient hypertable hiccup turn
+// the entire tip surface red even when the fallback is healthy.
+func (s *Server) tryTipWindowVWAP(r *http.Request, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, bool) {
+	if s.history == nil {
+		return PriceSnapshot{}, nil, false
+	}
+	pair, err := canonical.NewPair(asset, quote)
+	if err != nil {
+		// Identity-pair was already rejected upstream; any other
+		// validation error here is unexpected. Drop to fallback.
+		return PriceSnapshot{}, nil, false
+	}
+
+	now := time.Now().UTC()
+	from := now.Add(-time.Duration(windowSeconds) * time.Second)
+	trades, err := s.history.TradesInRange(r.Context(), pair, from, now, tipWindowMaxTrades)
+	if err != nil {
+		if !clientAborted(r, err) {
+			s.logger.Warn("TradesInRange failed (tip window) — falling back to LatestPrice",
+				"err", err, "asset", asset.String(), "quote", quote.String(),
+				"window_seconds", windowSeconds)
+		}
+		return PriceSnapshot{}, nil, false
+	}
+	if len(trades) == 0 {
+		return PriceSnapshot{}, nil, false
+	}
+
+	price, err := aggregate.VWAP(trades)
+	if err != nil {
+		// All-zero-volume input. The fallback path will produce a
+		// usable response.
+		return PriceSnapshot{}, nil, false
+	}
+
+	sources := distinctTradeSources(trades)
+	return PriceSnapshot{
+		AssetID:       asset.String(),
+		Quote:         quote.String(),
+		Price:         ratToDecimal(price, ohlcPriceDigits),
+		PriceType:     "vwap",
+		ObservedAt:    now,
+		WindowSeconds: windowSeconds,
+	}, sources, true
+}
+
+// lookupDivergenceFlag mirrors handlePrice's best-effort divergence
+// lookup. Pulled into a helper so the tip handler doesn't duplicate
+// the error-handling shape. Returns false when no DivergenceLooker is
+// wired or when the lookup errors.
+func (s *Server) lookupDivergenceFlag(r *http.Request, asset canonical.Asset) bool {
+	if s.divergence == nil {
+		return false
+	}
+	firing, err := s.divergence.DivergenceFiringFor(r.Context(), asset)
+	if err != nil {
+		if !clientAborted(r, err) {
+			s.logger.Warn("divergence lookup failed (tip)",
+				"err", err, "asset", asset.String())
+		}
+		return false
+	}
+	return firing
+}
+
+// distinctTradeSources returns the unique source names from a slice
+// of trades, preserving first-occurrence order. Used to populate the
+// envelope's sources array on the tip-window path.
+func distinctTradeSources(trades []canonical.Trade) []string {
+	if len(trades) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(trades))
+	out := make([]string, 0, len(trades))
+	for i := range trades {
+		src := trades[i].Source
+		if _, dup := seen[src]; dup {
+			continue
+		}
+		seen[src] = struct{}{}
+		out = append(out, src)
+	}
+	return out
+}

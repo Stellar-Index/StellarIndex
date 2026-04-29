@@ -259,6 +259,11 @@ func (s *Server) mountRoutes() {
 	// the aggregator ships.
 	s.mux.HandleFunc("GET /v1/price", s.handlePrice)
 
+	// Rolling-window tip surface (ADR-0018) — VWAP over the last
+	// few seconds, falling back to last-good-price when the window
+	// is empty. NOT cross-region consistent; use /v1/price for that.
+	s.mux.HandleFunc("GET /v1/price/tip", s.handlePriceTip)
+
 	// Batch price lookup, up to 100 assets per request.
 	s.mux.HandleFunc("GET /v1/price/batch", s.handlePriceBatch)
 
