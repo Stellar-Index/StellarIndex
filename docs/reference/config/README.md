@@ -132,6 +132,12 @@ the `env:` column.
 | `api.key_rate_limit_per_min` | `int` | `1000` | — | Per-API-key rate limit, default tier. |
 | `api.cdn_enabled` | `bool` | `true` | — | Emit CDN-friendly Cache-Control headers on long-immutable endpoints. |
 | `api.allowed_origins` | `[]string` | `["*"]` | — | CORS allow-list for browser clients. |
+| `api.sep10.seed_env` | `string` | `RATESENGINE_SEP10_SEED` | — | Environment variable holding the server signing keypair S-strkey. Operators rotate this on a schedule; ansible-vault stores the actual value. |
+| `api.sep10.jwt_secret_env` | `string` | `RATESENGINE_SEP10_JWT_SECRET` | — | Environment variable holding the HMAC-SHA256 JWT secret (≥ 32 bytes of entropy required). |
+| `api.sep10.web_auth_domain` | `string` | `api.ratesengine.net` | — | SEP-10 web_auth_domain — the host that serves /v1/auth/sep10/*. Carried inside the challenge tx so clients verify before signing. Typically the API's external host (e.g. api.ratesengine.net). |
+| `api.sep10.home_domain` | `string` | `ratesengine.net` | — | Issuer home_domain. Carried in the JWT iss claim and in the challenge's first manage_data op. Typically same as the project root domain. |
+| `api.sep10.challenge_ttl` | `int64` | `15m` | — | How long a SEP-10 challenge is valid for signing. SDK requires ≥ 1s; SEP-10 spec recommends 15m. |
+| `api.sep10.jwt_ttl` | `int64` | `1h` | — | Lifetime of an issued JWT. Clients refresh by repeating the challenge → verify flow. |
 
 ### `[metadata]`
 

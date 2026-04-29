@@ -36,6 +36,7 @@ import (
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
+	"github.com/RatesEngine/rates-engine/internal/auth/sep10"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/divergence"
@@ -80,13 +81,30 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		"dry_run", dryRun,
 	)
 
-	// Auth wiring happens later, once Redis is up — the apikey
-	// validator needs Redis to read records. SEP-10 still ships as
-	// a Noop; surface that here so an operator sees the gap before
-	// the first failed request.
-	if cfg.API.AuthMode == "sep10" {
-		logger.Error("auth_mode=sep10 requested but SEP-10 validator is NOT IMPLEMENTED — the middleware will return 503 on every request",
-			"configured_mode", cfg.API.AuthMode)
+	// SEP-10 validator — wired regardless of auth_mode so the
+	// /v1/auth/sep10/{challenge,token} endpoints serve. When the
+	// required env vars (cfg.API.SEP10.SeedEnv / .JWTSecretEnv)
+	// are missing or empty, the constructor errors and the binary
+	// fails loud at startup rather than silently 503-ing on every
+	// challenge.
+	sep10Validator, err := buildSEP10Validator(cfg.API.SEP10)
+	if err != nil {
+		// auth_mode=sep10 makes this a hard failure (we MUST have a
+		// validator to bootstrap auth at all). Otherwise log + carry
+		// on with a Noop so the handlers return 503 specifically for
+		// /v1/auth/sep10/* without taking down the rest of the API.
+		if cfg.API.AuthMode == "sep10" {
+			return fmt.Errorf("sep10 validator: %w (auth_mode=sep10 requires it)", err)
+		}
+		logger.Warn("sep10 validator not configured; /v1/auth/sep10/* will return 503",
+			"err", err)
+		sep10Validator = auth.NoopSEP10Validator{}
+	} else {
+		logger.Info("sep10 validator wired",
+			"web_auth_domain", cfg.API.SEP10.WebAuthDomain,
+			"home_domain", cfg.API.SEP10.HomeDomain,
+			"challenge_ttl", cfg.API.SEP10.ChallengeTTL,
+			"jwt_ttl", cfg.API.SEP10.JWTTTL)
 	}
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -183,7 +201,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// is reachable; if Redis is unavailable the middleware still
 	// runs but the validator returns ErrNotImplemented → 503, which
 	// is the correct fail-loud behaviour for an opted-into mode.
-	authMW := buildAuthMiddleware(cfg.API.AuthMode, rdb, logger)
+	authMW := buildAuthMiddleware(cfg.API.AuthMode, rdb, sep10Validator, logger)
 
 	// Account store backs POST /v1/account/keys. Only wired when
 	// Redis is reachable — without Redis there's nowhere to persist
@@ -225,6 +243,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Meta:        sep1Cache,
 		Accounts:    accountStore,
 		Divergence:  divergenceLooker,
+		SEP10:       sep10Validator,
 		CORS:        cors,
 		Auth:        authMW,
 		RateLimit:   rateLimit,
@@ -282,9 +301,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 // auth_mode=apikey requires Redis: when rdb is nil the middleware
 // still wires up but with a Noop validator, so every request 503s
 // — the correct fail-loud behaviour for a deployment that opted in
-// without Redis. Same logic for auth_mode=sep10 (validator is the
-// Noop stub regardless of Redis until the implementation lands).
-func buildAuthMiddleware(mode string, rdb *redis.Client, logger *slog.Logger) middleware.Middleware {
+// without Redis. auth_mode=sep10 wires the same validator as the
+// /v1/auth/sep10/* endpoints — the validator parameter is what
+// `buildSEP10Validator` returned at startup (real or Noop).
+func buildAuthMiddleware(mode string, rdb *redis.Client, sep10Validator auth.SEP10Validator, logger *slog.Logger) middleware.Middleware {
 	switch mode {
 	case "", "none":
 		return nil
@@ -304,13 +324,9 @@ func buildAuthMiddleware(mode string, rdb *redis.Client, logger *slog.Logger) mi
 		})
 
 	case "sep10":
-		// SEP-10 validator implementation lands separately. Wire
-		// the middleware with the Noop validator so the stack is
-		// faithful to the operator's opt-in (every request 503s
-		// rather than silently downgrading to anonymous).
 		return middleware.Auth(middleware.AuthOptions{
 			Mode:  middleware.AuthModeSEP10,
-			SEP10: auth.NoopSEP10Validator{},
+			SEP10: sep10Validator,
 		})
 	}
 	// Unknown mode reaches here only if config validation regressed.
@@ -319,6 +335,54 @@ func buildAuthMiddleware(mode string, rdb *redis.Client, logger *slog.Logger) mi
 	// this branch unreachable.
 	logger.Error("unknown auth_mode — server falling through to no-auth", "mode", mode)
 	return nil
+}
+
+// buildSEP10Validator constructs an [auth.SEP10Validator] from the
+// API's SEP10Config. Reads the seed + JWT secret from the
+// configured env vars; missing or empty values surface as errors
+// the caller can decide to handle (auth_mode=sep10 → fail loud at
+// startup; otherwise → wire a Noop and log).
+//
+// Empty SeedEnv / JWTSecretEnv (config not opted into SEP-10) is
+// also an error — the caller treats it as "feature not configured"
+// and falls back to the Noop. The behaviour is symmetric across
+// "env name unset" and "env value empty": both mean the operator
+// hasn't supplied a credential.
+func buildSEP10Validator(cfg config.SEP10Config) (auth.SEP10Validator, error) {
+	if cfg.SeedEnv == "" || cfg.JWTSecretEnv == "" {
+		return nil, errors.New("sep10: seed_env / jwt_secret_env not configured")
+	}
+	seed := os.Getenv(cfg.SeedEnv)
+	if seed == "" {
+		return nil, fmt.Errorf("sep10: env %s is unset or empty", cfg.SeedEnv)
+	}
+	jwtSecret := os.Getenv(cfg.JWTSecretEnv)
+	if jwtSecret == "" {
+		return nil, fmt.Errorf("sep10: env %s is unset or empty", cfg.JWTSecretEnv)
+	}
+
+	network := stellarNetworkPassphrase()
+
+	v, err := sep10.NewValidator(sep10.Options{
+		ServerSeed:        seed,
+		NetworkPassphrase: network,
+		WebAuthDomain:     cfg.WebAuthDomain,
+		HomeDomain:        cfg.HomeDomain,
+		ChallengeTTL:      cfg.ChallengeTTL,
+		JWTTTL:            cfg.JWTTTL,
+		JWTSecret:         []byte(jwtSecret),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sep10: NewValidator: %w", err)
+	}
+	return v, nil
+}
+
+// stellarNetworkPassphrase returns the SDK-canonical pubnet
+// passphrase. Wrapped in a function so future testnet support can
+// branch on cfg.Stellar.Network without rewriting buildSEP10Validator.
+func stellarNetworkPassphrase() string {
+	return "Public Global Stellar Network ; September 2015"
 }
 
 // divergenceAdapter wraps *divergence.Service to satisfy the v1
