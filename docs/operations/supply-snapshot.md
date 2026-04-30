@@ -80,15 +80,32 @@ prohibits.
    sudo systemctl start supply-snapshot.service
    ```
 
-### Future: live LCM-derived reserve balances
+### Live LCM-derived reserve balances (shipped)
 
-Tracked as Task #54. When that ships, the
-`ConfigReserveBalanceReader` is replaced by an
-`LCMReserveBalanceReader` that watches AccountEntry deltas in the
-existing dispatcher hook and persists per-(account, ledger) balances
-to a new hypertable. The `[supply.reserve_balances_stroops]` block
-becomes optional (overrides the live reader); the manual-update
-procedure above goes away.
+As of PR #300 (Task #54 closed), the supply-snapshot subcommand
+chains the live `LCMReserveBalanceReader` (backed by the
+`account_observations` hypertable populated by the AccountEntry
+observer in #298) with the operator-static `ConfigReserveBalanceReader`
+as fallback. On every run:
+
+1. The live reader queries the most-recent observation
+   at-or-before the ledger being attributed.
+2. If every reserve account has an observation, the live sum
+   wins and the static config is not consulted.
+3. If any account has no observation (the observer hasn't
+   backfilled to a deep enough range yet) OR a transient storage
+   error fires, the chain drops to the static reader for the
+   whole call.
+
+The `[supply.reserve_balances_stroops]` block stays valid as a
+bootstrap fallback. Operators that have backfilled the observer
+across the watched accounts can leave it stale (or empty) without
+behavioral impact; once observations exist, the static map is
+never consulted.
+
+The manual-update procedure above is now bootstrap-only; once
+the observer covers the live operator set, balance changes show
+up in the next snapshot automatically.
 
 ## Daily cron
 

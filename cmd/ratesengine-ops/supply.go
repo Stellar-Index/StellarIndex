@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math/big"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -94,9 +95,15 @@ func supplySnapshot(args []string) error {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, err)
 	}
 
-	reader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
+	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("reserve reader: %w", err))
+	}
+	// Live LCM reader tries first; ErrNoObservation falls back to
+	// static config per ADR-0021. The supplyChainReader wraps both.
+	reader := supplyChainReader{
+		live:   supply.NewLCMReserveBalanceReader(supplyStoreLookup{s: store}),
+		static: staticReader,
 	}
 	computer, err := supply.NewXLMComputer(cfg.Supply.SDFReserveAccounts, reader)
 	if err != nil {
@@ -125,6 +132,51 @@ func supplySnapshot(args []string) error {
 		}
 	}
 	return nil
+}
+
+// supplyStoreLookup adapts *timescale.Store to
+// supply.AccountObservationLookup. The timescale row carries a
+// pointer-or-NULL HomeDomain that the supply reader doesn't need;
+// we project to the smaller AccountObservationRow shape.
+type supplyStoreLookup struct{ s *timescale.Store }
+
+func (a supplyStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (supply.AccountObservationRow, error) {
+	row, err := a.s.LatestAccountObservationAtOrBefore(ctx, accountID, asOfLedger)
+	if err != nil {
+		return supply.AccountObservationRow{}, err
+	}
+	return supply.AccountObservationRow{
+		Balance:   row.Balance,
+		IsRemoval: row.IsRemoval,
+		Ledger:    row.Ledger,
+	}, nil
+}
+
+// supplyChainReader composes the live LCM reader with the
+// operator-static config reader. Tries live first; on
+// ErrNoObservation (any account in the request set has no
+// observation, OR a transient storage error) falls through to
+// the static reader for the whole call. Per ADR-0021 we don't
+// mix live + static within one call — that would silently produce
+// a partially-fresh sum the operator can't audit.
+type supplyChainReader struct {
+	live   supply.ReserveBalanceReader
+	static supply.ReserveBalanceReader
+}
+
+func (c supplyChainReader) ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error) {
+	out, err := c.live.ReserveBalanceTotal(ctx, accounts, ledger)
+	if err == nil {
+		return out, nil
+	}
+	if errors.Is(err, supply.ErrNoObservation) {
+		// Drop to static. The static reader's own error path
+		// (missing-balance, parse error) bubbles up unchanged
+		// because that's an operator-config error, not a transient
+		// LCM gap.
+		return c.static.ReserveBalanceTotal(ctx, accounts, ledger)
+	}
+	return nil, err
 }
 
 // supplySnapshotMaybeEmitFailure writes a fail-marker textfile (so

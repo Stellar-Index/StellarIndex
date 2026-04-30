@@ -17,6 +17,21 @@ against.
 
 ### Added
 
+- **LCM-derived readers — closes Task #54 (#300)**: ships
+  `supply.LCMReserveBalanceReader` and
+  `metadata.LCMHomeDomainResolver`, the two readers that consume
+  the `account_observations` hypertable. Wired into both call
+  sites with a chained-fallback pattern: live wins when the
+  observer has backfilled the watched account; falls through to
+  the operator-static config (`[supply.reserve_balances_stroops]`
+  / `[metadata.issuer_home_domains]`) when no observation exists
+  or a transient storage error fires. The static config blocks
+  stay in tree as bootstrap fallbacks; once the observer covers
+  the live operator set, balance / home-domain changes flow
+  automatically through to the next snapshot / next request
+  without operator-edit-and-redeploy. Closes ADR-0021's full
+  implementation across PRs #297 / #298 / #299 / #300.
+
 - **`account_observations` hypertable + storage writer + sink wiring
   (#299 — ADR-0021 / Task #54 PR 3/3)**: closes the storage gap left
   by #298. Migration 0010 creates the `account_observations`

@@ -236,10 +236,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		divergenceLooker = divergenceAdapter{svc: divSvc}
 	}
 
+	// Home-domain lookup chains the live LCM resolver (#298 +
+	// account_observations table) with the operator-static
+	// MetadataConfig map per ADR-0021. Live wins when an
+	// observation exists; static fallback covers issuers the
+	// observer hasn't backfilled yet OR storage transient errors.
+	homeDomainLookup := metadata.ChainedHomeDomainLookup(
+		metadata.NewLCMHomeDomainResolver(metadataStoreLookup{s: store}),
+		cfg.Metadata.HomeDomainFor,
+		func(msg string, kv ...any) {
+			logger.With("component", "metadata-lcm").Warn(msg, kv...)
+		},
+	)
+
 	apiSrv := v1.New(v1.Options{
 		Logger:       logger.With("component", "api"),
 		ReadyChecks:  checks,
-		Assets:       storeAssetReader{s: store, homeDomainLookup: cfg.Metadata.HomeDomainFor},
+		Assets:       storeAssetReader{s: store, homeDomainLookup: homeDomainLookup},
 		Prices:       storePriceReader{s: store},
 		History:      storeHistoryReader{s: store},
 		Markets:      storeMarketsReader{s: store},
@@ -774,6 +787,30 @@ func assetToDetail(a canonical.Asset, homeDomainLookup func(issuer string) (stri
 		d.ContractID = &v
 	}
 	return d
+}
+
+// metadataStoreLookup adapts *timescale.Store to
+// metadata.AccountObservationLookup. Projects the timescale
+// AccountObservation row's *string HomeDomain into the
+// (string, bool, error) shape the resolver consumes —
+// HomeDomain==nil → ("", false, nil) (no observation), pointer-to-
+// empty → ("", false, nil) (observed but operator never set a
+// domain), pointer-to-non-empty → (value, true, nil).
+type metadataStoreLookup struct{ s *timescale.Store }
+
+func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (string, bool, error) {
+	row, err := a.s.LatestAccountObservationAtOrBefore(ctx, issuer, asOfLedger)
+	if err != nil {
+		// timescale.ErrNotFound → no observation; return ("", false, nil).
+		if errors.Is(err, timescale.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if row.HomeDomain == nil || *row.HomeDomain == "" {
+		return "", false, nil
+	}
+	return *row.HomeDomain, true, nil
 }
 
 // storeVolumeReader adapts *timescale.Store to v1.VolumeReader.
