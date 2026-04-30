@@ -276,6 +276,75 @@ func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, a
 	return scanSum(ctx, s.db, q, assetKey, int(asOfLedger))
 }
 
+// TrustlineBalanceForAccountAtOrBefore returns the most-recent
+// trustline balance for the (account, asset) pair at-or-before
+// the supplied ledger. Returns zero (non-nil) when the account
+// has no trustline observation in scope OR when the latest
+// observation is a removal.
+//
+// Used by the classic-supply reader to compute IssuerBalance
+// (asset issuer's holding of their own asset) and
+// LockedAccountBalances (sum across operator-configured
+// locked-set accounts).
+func (s *Store) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error) {
+	const q = `
+        SELECT balance_stroops::text, is_removal
+          FROM trustline_observations
+         WHERE account_id = $1
+           AND asset_key  = $2
+           AND ledger    <= $3
+         ORDER BY ledger DESC
+         LIMIT 1
+    `
+	return scanLatestBalance(ctx, s.db, q, accountID, assetKey, int(asOfLedger))
+}
+
+// SACBalanceForContractAtOrBefore returns the most-recent SAC
+// balance for the (holder, asset) pair at-or-before the supplied
+// ledger. Returns zero on no-observation OR removal — same
+// semantics as TrustlineBalanceForAccountAtOrBefore.
+//
+// Used by the classic-supply reader to compute
+// LockedContractBalances (sum across operator-configured
+// locked-set contracts holding the SAC).
+func (s *Store) SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error) {
+	const q = `
+        SELECT balance_stroops::text, is_removal
+          FROM sac_balance_observations
+         WHERE holder    = $1
+           AND asset_key = $2
+           AND ledger   <= $3
+         ORDER BY ledger DESC
+         LIMIT 1
+    `
+	return scanLatestBalance(ctx, s.db, q, contractHolder, assetKey, int(asOfLedger))
+}
+
+// scanLatestBalance is the shared helper for the per-(holder,
+// asset) lookup methods. Returns zero on sql.ErrNoRows or
+// is_removal=true; non-nil *big.Int otherwise.
+func scanLatestBalance(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, error) {
+	var (
+		raw       string
+		isRemoval bool
+	)
+	err := db.QueryRowContext(ctx, q, args...).Scan(&raw, &isRemoval)
+	if errors.Is(err, sql.ErrNoRows) {
+		return big.NewInt(0), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("timescale: scanLatestBalance: %w", err)
+	}
+	if isRemoval {
+		return big.NewInt(0), nil
+	}
+	v, ok := new(big.Int).SetString(raw, 10)
+	if !ok {
+		return nil, fmt.Errorf("timescale: scanLatestBalance: parse %q", raw)
+	}
+	return v, nil
+}
+
 // scanSum runs `q` with the supplied positional args, expecting
 // a single TEXT-cast NUMERIC result, and returns it as *big.Int.
 // Shared helper for the four Sum* methods above.

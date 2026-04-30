@@ -272,15 +272,17 @@ func run(cfgPath string, dryRun bool) error {
 	// operator's mechanism. When true, the goroutine path takes
 	// over and the systemd timer should be disabled.
 	if cfg.Supply.AggregatorRefreshEnabled {
-		supplyRefresher, err := buildSupplyRefresher(cfg, store, logger.With("component", "supply-refresh"))
+		refreshers, err := buildSupplyRefreshers(cfg, store, logger.With("component", "supply-refresh"))
 		if err != nil {
 			return fmt.Errorf("supply refresher init: %w", err)
 		}
-		refresherWG.Add(1)
-		go func() {
-			defer refresherWG.Done()
-			runSupplyRefresh(rootCtx, supplyRefresher, cfg.Supply.AggregatorRefreshCadence)
-		}()
+		for _, r := range refreshers {
+			refresherWG.Add(1)
+			go func(refresher *supply.Refresher) {
+				defer refresherWG.Done()
+				runSupplyRefresh(rootCtx, refresher, cfg.Supply.AggregatorRefreshCadence)
+			}(r)
+		}
 	}
 
 	// ─── Run ─────────────────────────────────────────────────────
@@ -296,11 +298,55 @@ func run(cfgPath string, dryRun bool) error {
 	return nil
 }
 
-// buildSupplyRefresher composes the LedgerLookup + chained-fallback
-// reserve-balance reader + XLMComputer + InsertSupply into a
-// supply.Refresher. Returns an error if the operator config's
-// reserve list / balances are inconsistent.
-func buildSupplyRefresher(cfg config.Config, store *timescale.Store, logger *slog.Logger) (*supply.Refresher, error) {
+// buildSupplyRefreshers composes one [supply.Refresher] per
+// watched asset:
+//
+//   - One XLMComputer-backed refresher (Algorithm 1, native XLM).
+//   - One ClassicComputer-backed refresher per entry in
+//     [supply] watched_classic_assets, each bound to its asset
+//     via [supply.NewAssetBoundClassicComputer] so the per-tick
+//     Refresher.Tick path stays single-asset.
+//
+// Returns an error on operator-config inconsistencies (per
+// [config.SupplyConfig.Validate] + per-asset parse errors).
+func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]*supply.Refresher, error) {
+	out := make([]*supply.Refresher, 0, 1+len(cfg.Supply.WatchedClassicAssets))
+
+	xlmRefresher, err := buildXLMRefresher(cfg, store, logger)
+	if err != nil {
+		return nil, fmt.Errorf("xlm refresher: %w", err)
+	}
+	out = append(out, xlmRefresher)
+
+	if len(cfg.Supply.WatchedClassicAssets) == 0 {
+		return out, nil
+	}
+
+	classicReader := supply.NewStorageClassicSupplyReader(store)
+	classicComputer, err := supply.NewClassicComputer(supply.Policy{}, classicReader)
+	if err != nil {
+		return nil, fmt.Errorf("classic computer: %w", err)
+	}
+	for _, raw := range cfg.Supply.WatchedClassicAssets {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse watched classic asset %q: %w", raw, err)
+		}
+		bound, err := supply.NewAssetBoundClassicComputer(classicComputer, asset)
+		if err != nil {
+			return nil, fmt.Errorf("bind classic computer to %q: %w", raw, err)
+		}
+		out = append(out, supply.NewRefresher(
+			supplyAggregatorLedgers{s: store},
+			bound,
+			supplyAggregatorInserter{s: store},
+			logger.With("asset", raw),
+		))
+	}
+	return out, nil
+}
+
+func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.Logger) (*supply.Refresher, error) {
 	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
 	if err != nil {
 		return nil, fmt.Errorf("config reserve reader: %w", err)
@@ -317,7 +363,7 @@ func buildSupplyRefresher(cfg config.Config, store *timescale.Store, logger *slo
 		supplyAggregatorLedgers{s: store},
 		computer,
 		supplyAggregatorInserter{s: store},
-		logger,
+		logger.With("asset", "native"),
 	), nil
 }
 
