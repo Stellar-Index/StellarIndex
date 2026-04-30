@@ -17,6 +17,18 @@ against.
 
 ### Added
 
+- **systemd timer + service + runbook for the SLA probe (#290)**:
+  closes the operator-side gap left by #283. Ships
+  `deploy/systemd/sla-probe.{service,timer}` (every 15 min + 2 min
+  jitter — strikes the balance between SEV-2 detection requirement
+  ≤ 30 min and the anonymous-tier rate budget) plus
+  `docs/operations/sla-probe.md`. Exit-1-on-SLA-breach surfaces via
+  `systemctl is-failed`; node_exporter's `--collector.systemd`
+  picks the failure up so the existing systemd-unit-failed alert
+  pattern covers it. Today the probe writes to journald only — the
+  textfile-collector + alerting integration is the additive
+  follow-up.
+
 - **systemd timer + service + runbook for the supply-snapshot writer
   (#288)**: closes the operator-side gap left by #285. Ships
   `deploy/systemd/supply-snapshot.{service,timer}` (daily 04:42 UTC
