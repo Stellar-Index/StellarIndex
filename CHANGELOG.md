@@ -17,6 +17,19 @@ against.
 
 ### Added
 
+- **ADR-0023 — SEP-41 supply observer (#308)**: bounds the
+  implementation work for Task #56 before code lands. Defines an
+  event-stream observer (`internal/sources/sep41_supply/`)
+  consuming the existing dispatcher `Decoder` hook with a
+  per-contract watched-set filter; aggregates mint/burn/clawback
+  amounts into `Σ mint − Σ(burn + clawback)` per ADR-0011
+  Algorithm 3. New `sep41_supply_events` hypertable + `Insert*` /
+  `SEP41NetMintAtOrBefore` storage primitives. New
+  `[supply] watched_sep41_contracts` config + reader composition
+  follow the Task #54 / #55 sliced pattern. The 4-PR plan
+  (Tasks #67-#70) closes Task #56 and completes ADR-0011's
+  three-domain supply coverage.
+
 - **Classic-supply reader composition + aggregator wiring — closes
   Task #55 (#307)**: ships the final piece of ADR-0022.
   `supply.StorageClassicSupplyReader` composes the four
