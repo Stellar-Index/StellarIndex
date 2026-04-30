@@ -160,6 +160,8 @@ the `env:` column.
 | `supply.reserve_balances_stroops` | `map` | `{}` | — | Operator-managed snapshot of each SDF reserve account's XLM balance in stroops (decimal string). Updated manually on SDF reserve-move announcements; LCM-based live tracking is a future ADR. |
 | `supply.aggregator_refresh_enabled` | `bool` | `false` | — | Run the supply-snapshot writer as a goroutine in the aggregator instead of via the systemd timer. Requires the LCM AccountEntry observer to be backfilled across the watched accounts (or the static reserve_balances_stroops fallback to be valid). |
 | `supply.aggregator_refresh_cadence` | `int64` | `5m` | — | Per-cycle interval for the in-aggregator supply-snapshot worker (only used when aggregator_refresh_enabled is true). |
+| `supply.watched_classic_assets` | `[]string` | `[]` | — | Operator-curated classic credit assets (CODE-ISSUER form) to track for Algorithm 2 supply per ADR-0022. Empty leaves the classic-supply pipeline off. |
+| `supply.sac_wrappers` | `map` | `{}` | — | SAC wrapper contract C-strkey → supply.AssetKey (CODE:ISSUER) map. Drives the SAC balance observer's watched-contract filter. |
 
 ### `[obs]`
 

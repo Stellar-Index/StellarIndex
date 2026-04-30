@@ -459,13 +459,49 @@ type SupplyConfig struct {
 	// NOTHING dedupes per-(asset, ledger), but unique-ledger rows
 	// still accumulate at one-per-tick when the chain advances).
 	AggregatorRefreshCadence time.Duration `toml:"aggregator_refresh_cadence" doc:"Per-cycle interval for the in-aggregator supply-snapshot worker (only used when aggregator_refresh_enabled is true)." default:"5m"`
+
+	// WatchedClassicAssets is the operator-curated list of classic
+	// credit assets the supply pipeline computes Algorithm 2 for.
+	// Per ADR-0022 — drives the four classic-supply observers
+	// (trustlines / claimable_balances / liquidity_pools /
+	// sac_balances) and the aggregator's classic-supply refresh
+	// loop. Each entry is a canonical asset string in CODE-ISSUER
+	// form (e.g. "USDC-GA5...").
+	//
+	// Empty (the default) leaves classic-supply observers + refresh
+	// off — the existing XLM-only path stays the operator's only
+	// surface.
+	WatchedClassicAssets []string `toml:"watched_classic_assets" doc:"Operator-curated classic credit assets (CODE-ISSUER form) to track for Algorithm 2 supply per ADR-0022. Empty leaves the classic-supply pipeline off." default:"[]"`
+
+	// SACWrappers maps the C-strkey of a Stellar-Asset-Contract
+	// wrapper to the supply.AssetKey form (CODE:ISSUER) of the
+	// classic asset it wraps. The SAC observer uses this map to
+	// stamp asset_key on every observation row + filter to the
+	// watched set.
+	//
+	// Each watched classic asset that has a SAC wrapper deployed
+	// should have an entry here. Operators that haven't deployed
+	// SACs (or aren't tracking them) leave this empty; the
+	// SAC-component sum is then zero, which is correct for those
+	// assets.
+	SACWrappers map[string]string `toml:"sac_wrappers" doc:"SAC wrapper contract C-strkey → supply.AssetKey (CODE:ISSUER) map. Drives the SAC balance observer's watched-contract filter." default:"{}"`
 }
 
 // Validate reports inconsistencies in the supply block. Currently
-// only checks that every configured reserve account has a balance
-// entry — silently publishing an over-stated circulating supply
-// because an operator forgot a balance is the failure mode worth
-// guarding.
+// checks:
+//
+//  1. Every configured SDF reserve account has a balance entry —
+//     silently publishing an over-stated circulating supply
+//     because an operator forgot a balance is the failure mode
+//     worth guarding.
+//  2. The aggregator-refresh cadence is at least 30s — tighter
+//     than that costs more than it buys (the chain hasn't
+//     advanced, the refresh writes a no-op snapshot).
+//  3. Each WatchedClassicAssets entry parses cleanly. The actual
+//     parse runs at aggregator startup; this method just rejects
+//     empty strings to catch mistyped TOML before the parser
+//     surfaces a less-obvious error.
+//  4. Every SACWrappers asset_key is non-empty.
 func (sc SupplyConfig) Validate() error {
 	if len(sc.SDFReserveAccounts) != 0 {
 		for _, acc := range sc.SDFReserveAccounts {
@@ -475,10 +511,20 @@ func (sc SupplyConfig) Validate() error {
 		}
 	}
 	if sc.AggregatorRefreshEnabled && sc.AggregatorRefreshCadence < 30*time.Second {
-		// 30s is the orchestrator's default tick cadence — a supply
-		// refresh tighter than that costs more than it buys (the
-		// chain hasn't advanced, the refresh writes a no-op snapshot).
 		return fmt.Errorf("supply: aggregator_refresh_cadence %v < 30s minimum", sc.AggregatorRefreshCadence)
+	}
+	for i, raw := range sc.WatchedClassicAssets {
+		if raw == "" {
+			return fmt.Errorf("supply: watched_classic_assets[%d] is empty", i)
+		}
+	}
+	for cid, ak := range sc.SACWrappers {
+		if cid == "" {
+			return fmt.Errorf("supply: sac_wrappers has empty contract id (asset %q)", ak)
+		}
+		if ak == "" {
+			return fmt.Errorf("supply: sac_wrappers[%q] has empty asset_key", cid)
+		}
 	}
 	return nil
 }

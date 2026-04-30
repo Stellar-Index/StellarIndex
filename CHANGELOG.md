@@ -17,6 +17,25 @@ against.
 
 ### Added
 
+- **Classic-supply reader composition + aggregator wiring — closes
+  Task #55 (#307)**: ships the final piece of ADR-0022.
+  `supply.StorageClassicSupplyReader` composes the four
+  `Sum*AtOrBefore` primitives from #303 plus the new per-account
+  `TrustlineBalanceForAccountAtOrBefore` and per-contract
+  `SACBalanceForContractAtOrBefore` lookups into a single
+  `ClassicSupplyReader` satisfying the existing interface from
+  #199. `supply.AssetBoundClassicComputer` adapts the
+  asset-parameterised `ClassicComputer` to the per-asset
+  `SnapshotComputer` shape that `Refresher.Tick` expects. New
+  `[supply] watched_classic_assets` (CODE-ISSUER list) +
+  `[supply.sac_wrappers]` (C-strkey → asset_key map) drive the
+  aggregator's classic-supply refresh: `buildSupplyRefreshers`
+  spawns one goroutine per watched asset alongside the existing
+  XLM-only refresher; the per-tick outcome counter from #301
+  (`ratesengine_aggregator_supply_refresh_total`) labels by
+  outcome regardless of asset. Closes Task #55 across PRs
+  #303 → #304 → #305 → #306 → #307.
+
 - **`internal/sources/{liquidity_pools,sac_balances}/` observers
   (#306 — Task #55 PR 4/5)**: bundles the LP-reserve and
   SAC-wrapped-balance observers per ADR-0022. The LP observer
