@@ -56,6 +56,7 @@ func init() {
 		AnomalyFreezeEngagedTotal,
 		AggregatorTriangulationsTotal,
 		AggregatorBaselineRefreshTotal,
+		AggregatorSupplyRefreshTotal,
 		AggregatorConfidenceComputeTotal,
 
 		VerifyArchiveLedgersVerified,
@@ -432,6 +433,22 @@ var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_aggregator_baseline_refresh_total",
 		Help: "Baseline refresh outcomes per pair × refresh cycle. Outcome ∈ {ok, not_enough_samples, read_error, write_error}.",
+	},
+	[]string{"outcome"},
+)
+
+// AggregatorSupplyRefreshTotal — counter of supply-snapshot refresh
+// outcomes per cycle (ADR-0011 / ADR-0021 / Task #57). One
+// increment per asset per cycle; outcome ∈ {ok, no_ledger,
+// no_observation, compute_error, write_error}. Steady-state is
+// mostly `ok`; sustained `no_observation` means the AccountEntry
+// observer hasn't backfilled the watched accounts yet (the chain-
+// reader fell through to static config and that also missed) —
+// expected briefly post-deploy, alarming sustained.
+var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_aggregator_supply_refresh_total",
+		Help: "Supply-snapshot refresh outcomes per asset × refresh cycle. Outcome ∈ {ok, no_ledger, no_observation, compute_error, write_error}.",
 	},
 	[]string{"outcome"},
 )

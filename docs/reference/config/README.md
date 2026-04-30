@@ -158,6 +158,8 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `supply.sdf_reserve_accounts` | `[]string` | `[]` | — | G-strkey list of SDF-controlled reserve accounts whose XLM balances are excluded from circulating supply per ADR-0011 Algorithm 1. |
 | `supply.reserve_balances_stroops` | `map` | `{}` | — | Operator-managed snapshot of each SDF reserve account's XLM balance in stroops (decimal string). Updated manually on SDF reserve-move announcements; LCM-based live tracking is a future ADR. |
+| `supply.aggregator_refresh_enabled` | `bool` | `false` | — | Run the supply-snapshot writer as a goroutine in the aggregator instead of via the systemd timer. Requires the LCM AccountEntry observer to be backfilled across the watched accounts (or the static reserve_balances_stroops fallback to be valid). |
+| `supply.aggregator_refresh_cadence` | `int64` | `5m` | — | Per-cycle interval for the in-aggregator supply-snapshot worker (only used when aggregator_refresh_enabled is true). |
 
 ### `[obs]`
 

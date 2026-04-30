@@ -59,6 +59,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"os"
 	"os/signal"
 	"sync"
@@ -75,6 +76,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
+	"github.com/RatesEngine/rates-engine/internal/supply"
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
 
@@ -263,6 +265,24 @@ func run(cfgPath string, dryRun bool) error {
 		runBaselineRefresh(rootCtx, refresher, pairs, logger.With("component", "baseline-refresh"))
 	}()
 
+	// ─── Supply-snapshot refresh worker (ADR-0011 / Task #57) ────
+	// Operator-opted-in via cfg.Supply.AggregatorRefreshEnabled.
+	// When false (the default), the systemd-timer-driven path
+	// (deploy/systemd/supply-snapshot.timer) remains the
+	// operator's mechanism. When true, the goroutine path takes
+	// over and the systemd timer should be disabled.
+	if cfg.Supply.AggregatorRefreshEnabled {
+		supplyRefresher, err := buildSupplyRefresher(cfg, store, logger.With("component", "supply-refresh"))
+		if err != nil {
+			return fmt.Errorf("supply refresher init: %w", err)
+		}
+		refresherWG.Add(1)
+		go func() {
+			defer refresherWG.Done()
+			runSupplyRefresh(rootCtx, supplyRefresher, cfg.Supply.AggregatorRefreshCadence)
+		}()
+	}
+
 	// ─── Run ─────────────────────────────────────────────────────
 	logger.Info("orchestrator starting")
 	if err := orch.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -270,9 +290,135 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	logger.Info("orchestrator stopped", "stats", orch.Stats())
 
-	// Wait for the baseline goroutine to honour rootCtx cancellation.
+	// Wait for the baseline + supply goroutines to honour rootCtx
+	// cancellation.
 	refresherWG.Wait()
 	return nil
+}
+
+// buildSupplyRefresher composes the LedgerLookup + chained-fallback
+// reserve-balance reader + XLMComputer + InsertSupply into a
+// supply.Refresher. Returns an error if the operator config's
+// reserve list / balances are inconsistent.
+func buildSupplyRefresher(cfg config.Config, store *timescale.Store, logger *slog.Logger) (*supply.Refresher, error) {
+	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
+	if err != nil {
+		return nil, fmt.Errorf("config reserve reader: %w", err)
+	}
+	chained := supplyAggregatorChainReader{
+		live:   supply.NewLCMReserveBalanceReader(supplyAggregatorStoreLookup{s: store}),
+		static: staticReader,
+	}
+	computer, err := supply.NewXLMComputer(cfg.Supply.SDFReserveAccounts, chained)
+	if err != nil {
+		return nil, fmt.Errorf("xlm computer: %w", err)
+	}
+	return supply.NewRefresher(
+		supplyAggregatorLedgers{s: store},
+		computer,
+		supplyAggregatorInserter{s: store},
+		logger,
+	), nil
+}
+
+// runSupplyRefresh ticks the supply refresher on `cadence`,
+// emitting per-outcome Prometheus counters for each cycle.
+// Returns on ctx cancellation.
+//
+// Initial cycle runs immediately on startup so a fresh deployment
+// gets at least one snapshot in `asset_supply_history` before the
+// first cadence interval elapses.
+//
+// Per-tick logging happens inside [supply.Refresher.Tick]; the
+// goroutine just drives the loop and emits the outcome metric.
+func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration) {
+	tick := func() {
+		out := r.Tick(ctx)
+		obs.AggregatorSupplyRefreshTotal.WithLabelValues(string(out.Kind)).Inc()
+	}
+
+	tick() // immediate first refresh
+
+	ticker := time.NewTicker(cadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick()
+		}
+	}
+}
+
+// supplyAggregatorLedgers adapts *timescale.Store to
+// supply.LedgerLookup. Resolves the latest known chain ledger as
+// the max last_ledger across every ingestion cursor — same shape
+// as cmd/ratesengine-ops/supply.go::resolveSnapshotLedger but
+// inlined here so the aggregator path stays self-contained.
+type supplyAggregatorLedgers struct{ s *timescale.Store }
+
+func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32, time.Time, error) {
+	cursors, err := a.s.ListCursors(ctx)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("ListCursors: %w", err)
+	}
+	var maxLedger uint32
+	for _, c := range cursors {
+		if c.LastLedger > maxLedger {
+			maxLedger = c.LastLedger
+		}
+	}
+	if maxLedger == 0 {
+		return 0, time.Time{}, errors.New("no ingestion cursors yet — refresher will retry next tick")
+	}
+	return maxLedger, time.Now().UTC(), nil
+}
+
+// supplyAggregatorStoreLookup adapts *timescale.Store to
+// supply.AccountObservationLookup. Mirrors
+// cmd/ratesengine-ops/supply.go::supplyStoreLookup.
+type supplyAggregatorStoreLookup struct{ s *timescale.Store }
+
+func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (supply.AccountObservationRow, error) {
+	row, err := a.s.LatestAccountObservationAtOrBefore(ctx, accountID, asOfLedger)
+	if err != nil {
+		return supply.AccountObservationRow{}, err
+	}
+	return supply.AccountObservationRow{
+		Balance:   row.Balance,
+		IsRemoval: row.IsRemoval,
+		Ledger:    row.Ledger,
+	}, nil
+}
+
+// supplyAggregatorChainReader is the same chained-fallback reader
+// pattern from cmd/ratesengine-ops/supply.go::supplyChainReader.
+// Inlined here because the aggregator is its own binary and we
+// don't want to lift the helper into a shared package — the
+// indirection cost outweighs the duplication for a 20-line struct.
+type supplyAggregatorChainReader struct {
+	live   supply.ReserveBalanceReader
+	static supply.ReserveBalanceReader
+}
+
+func (c supplyAggregatorChainReader) ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error) {
+	out, err := c.live.ReserveBalanceTotal(ctx, accounts, ledger)
+	if err == nil {
+		return out, nil
+	}
+	if errors.Is(err, supply.ErrNoObservation) {
+		return c.static.ReserveBalanceTotal(ctx, accounts, ledger)
+	}
+	return nil, err
+}
+
+// supplyAggregatorInserter adapts *timescale.Store to
+// supply.SnapshotInserter.
+type supplyAggregatorInserter struct{ s *timescale.Store }
+
+func (a supplyAggregatorInserter) InsertSupply(ctx context.Context, snap supply.Supply) error {
+	return a.s.InsertSupply(ctx, snap)
 }
 
 // runBaselineRefresh ticks the baseline refresher on

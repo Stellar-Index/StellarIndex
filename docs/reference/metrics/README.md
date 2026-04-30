@@ -270,6 +270,32 @@ factor instead of using a per-asset baseline. Sustained `read_error`
 or `write_error` rates indicate the storage layer needs investigation
 (prices_1m read failing or volatility_baseline_1m write conflict).
 
+### `ratesengine_aggregator_supply_refresh_total`
+
+Counter, label `outcome` (`ok` / `no_ledger` / `no_observation` /
+`compute_error` / `write_error`).
+
+Supply-snapshot refresh outcomes per asset × refresh cycle (ADR-0011
++ ADR-0021 + Task #57). The aggregator's supply-refresh goroutine
+recomputes the watched assets' supply (XLM at v1; classic + SEP-41
+follow once their computers ship) on the operator-configured cadence
+(`[supply] aggregator_refresh_cadence`, default 5 min) and inserts
+the snapshot into `asset_supply_history` (idempotent on `(asset_key,
+ledger_sequence)`). One increment per asset per cycle.
+
+Only fires when `[supply] aggregator_refresh_enabled = true` —
+operators that drive the writer via the systemd timer in
+`deploy/systemd/supply-snapshot.timer` instead see this counter
+stay at zero.
+
+Steady state is mostly `ok`. Sustained `no_observation` indicates
+the AccountEntry observer hasn't backfilled the watched accounts
+yet AND the static `reserve_balances_stroops` map is also empty
+or missing entries — expected briefly post-deploy, alarming
+sustained. `no_ledger` fires before the indexer produces its first
+ingestion cursor; clears as soon as ingest catches up. `write_error`
+indicates the storage layer needs investigation.
+
 ### `ratesengine_aggregator_confidence_compute_total`
 
 Counter, label `outcome` (`ok` / `skipped` / `baseline_missing` /

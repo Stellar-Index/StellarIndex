@@ -439,6 +439,26 @@ type SupplyConfig struct {
 	// SDFReserveAccounts MUST appear here; missing keys are a
 	// configuration error caught at writer-start.
 	ReserveBalancesStroops map[string]string `toml:"reserve_balances_stroops" doc:"Operator-managed snapshot of each SDF reserve account's XLM balance in stroops (decimal string). Updated manually on SDF reserve-move announcements; LCM-based live tracking is a future ADR." default:"{}"`
+
+	// AggregatorRefreshEnabled, when true, runs the supply-
+	// snapshot writer as a goroutine inside the aggregator on a
+	// fixed cadence (see [AggregatorRefreshCadence]). When false
+	// (the default), operators are expected to drive the writer
+	// via the systemd timer in deploy/systemd/supply-snapshot.timer
+	// instead. Once the LCM observer (Task #54 — shipped) covers
+	// the live operator set, the goroutine path is preferred —
+	// snapshots refresh per-cadence rather than per-day, and the
+	// systemd timer becomes redundant.
+	AggregatorRefreshEnabled bool `toml:"aggregator_refresh_enabled" doc:"Run the supply-snapshot writer as a goroutine in the aggregator instead of via the systemd timer. Requires the LCM AccountEntry observer to be backfilled across the watched accounts (or the static reserve_balances_stroops fallback to be valid)." default:"false"`
+
+	// AggregatorRefreshCadence is the per-cycle interval for the
+	// goroutine path (only relevant when AggregatorRefreshEnabled
+	// is true). Defaults to 5 minutes — a balance between freshness
+	// (operators want observed_at to track current ledger) and
+	// table-write rate (asset_supply_history's ON CONFLICT DO
+	// NOTHING dedupes per-(asset, ledger), but unique-ledger rows
+	// still accumulate at one-per-tick when the chain advances).
+	AggregatorRefreshCadence time.Duration `toml:"aggregator_refresh_cadence" doc:"Per-cycle interval for the in-aggregator supply-snapshot worker (only used when aggregator_refresh_enabled is true)." default:"5m"`
 }
 
 // Validate reports inconsistencies in the supply block. Currently
@@ -447,13 +467,18 @@ type SupplyConfig struct {
 // because an operator forgot a balance is the failure mode worth
 // guarding.
 func (sc SupplyConfig) Validate() error {
-	if len(sc.SDFReserveAccounts) == 0 {
-		return nil
-	}
-	for _, acc := range sc.SDFReserveAccounts {
-		if _, ok := sc.ReserveBalancesStroops[acc]; !ok {
-			return fmt.Errorf("supply: reserve_balances_stroops missing balance for account %q", acc)
+	if len(sc.SDFReserveAccounts) != 0 {
+		for _, acc := range sc.SDFReserveAccounts {
+			if _, ok := sc.ReserveBalancesStroops[acc]; !ok {
+				return fmt.Errorf("supply: reserve_balances_stroops missing balance for account %q", acc)
+			}
 		}
+	}
+	if sc.AggregatorRefreshEnabled && sc.AggregatorRefreshCadence < 30*time.Second {
+		// 30s is the orchestrator's default tick cadence — a supply
+		// refresh tighter than that costs more than it buys (the
+		// chain hasn't advanced, the refresh writes a no-op snapshot).
+		return fmt.Errorf("supply: aggregator_refresh_cadence %v < 30s minimum", sc.AggregatorRefreshCadence)
 	}
 	return nil
 }

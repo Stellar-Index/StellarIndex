@@ -236,6 +236,29 @@ buys nothing on the data side. Daily is enough to keep
 `observed_at` fresh on the asset-detail surface; the bookkeeping
 overhead is negligible.
 
-When Task #54's LCM-derived reader ships and the writer becomes
-goroutine-resident in the aggregator, the cadence flips to per-tick
-(every aggregator window) and this systemd unit becomes redundant.
+## Aggregator-resident goroutine path (preferred once observer is backfilled)
+
+As of PR #301 (Task #57 closed), an alternative to the systemd
+timer is the in-aggregator goroutine:
+
+```toml
+[supply]
+aggregator_refresh_enabled = true
+aggregator_refresh_cadence = "5m"
+```
+
+When enabled, the aggregator runs the supply-snapshot refresher
+on the configured cadence inside its own goroutine — the same
+chained-fallback reader as the systemd-timer path (live LCM →
+operator-static fallback). Per-tick outcomes are emitted as
+`ratesengine_aggregator_supply_refresh_total{outcome=…}` counters.
+
+The two paths are mutually exclusive — operators that flip
+`aggregator_refresh_enabled = true` should disable the systemd
+timer (`sudo systemctl disable --now supply-snapshot.timer`) to
+avoid double-writes (the writes are idempotent on conflict so
+this is correctness-safe; it just doubles the bookkeeping cost).
+
+Once the LCM observer has backfilled the watched accounts, the
+goroutine path is preferred — `observed_at` tracks current ledger
+within `aggregator_refresh_cadence` rather than within a day.

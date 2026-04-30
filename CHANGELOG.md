@@ -17,6 +17,27 @@ against.
 
 ### Added
 
+- **Periodic supply-snapshot worker in the aggregator — closes
+  Task #57 (#301)**: runs the supply-snapshot writer as a
+  goroutine inside the aggregator on a configurable cadence,
+  replacing the systemd-timer-driven path (#288) for operators
+  that have backfilled the LCM observer. New
+  `internal/supply/refresher.go` composes ledger lookup +
+  computer + inserter into a `Tick`-able unit; the aggregator
+  drives it via `runSupplyRefresh` mirroring the baseline-
+  refresher pattern. Operator-opted-in via
+  `[supply] aggregator_refresh_enabled = true`; cadence is
+  `[supply] aggregator_refresh_cadence` (default 5m, validated
+  ≥ 30s). Per-cycle outcomes emit as
+  `ratesengine_aggregator_supply_refresh_total{outcome}` —
+  outcomes are `ok` / `no_ledger` / `no_observation` /
+  `compute_error` / `write_error`. The systemd timer (#288)
+  remains the path for operators that haven't enabled the
+  goroutine; the two paths are mutually exclusive on conflict-
+  safe writes (idempotent ON CONFLICT DO NOTHING) but operators
+  should disable one when flipping to the other to avoid
+  redundant work.
+
 - **LCM-derived readers — closes Task #54 (#300)**: ships
   `supply.LCMReserveBalanceReader` and
   `metadata.LCMHomeDomainResolver`, the two readers that consume
