@@ -130,8 +130,10 @@ type Options struct {
 	// (total_supply, circulating_supply, max_supply, market_cap_usd,
 	// fdv_usd, supply_basis) on /v1/assets/{id} per ADR-0011.
 	// Production wiring: a thin adapter around timescale.Store.LatestSupply.
-	// Nil means "F2 fields unavailable" — the asset-detail body
-	// still serves; F2 fields stay null.
+	// Nil means "F2 fields unavailable" — the asset-detail body still
+	// serves; F2 fields stay null. A non-nil reader still depends on
+	// some other process populating asset_supply_history; this repo
+	// snapshot only wires the read path.
 	Supply SupplyLooker
 
 	// SEP10, when non-nil, backs GET /v1/auth/sep10/challenge and

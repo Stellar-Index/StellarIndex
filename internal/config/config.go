@@ -376,11 +376,12 @@ type TriangulationChainConfig struct {
 type APIConfig struct {
 	ListenAddr          string      `toml:"listen_addr" doc:"Bind address for the HTTP server." default:"0.0.0.0:3000"`
 	ExternalBaseURL     string      `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.ratesengine.net/v1)." default:"https://api.ratesengine.net/v1"`
-	AuthMode            string      `toml:"auth_mode" doc:"Authentication mode — none / apikey / sep10. The middleware (internal/api/v1/middleware/Auth) is scaffolded; validators (internal/auth/{APIKeyValidator,SEP10Validator}) ship as Noop stubs that return ErrNotImplemented. A deployment with auth_mode=apikey or sep10 BUT no validator implementation wired in cmd/ratesengine-api/main.go fails-loud at 503 on every request — never silently demotes to anonymous. Stay on 'none' until validators land." default:"none"`
+	AuthMode            string      `toml:"auth_mode" doc:"Authentication mode — none / apikey / sep10. The API binary wires real validators when the required backing dependencies and secrets are present; a deployment that opts into auth without satisfying those requirements fails loud rather than silently demoting to anonymous." default:"none"`
 	AnonRateLimitPerMin int         `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
 	KeyRateLimitPerMin  int         `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
 	CDNEnabled          bool        `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
 	AllowedOrigins      []string    `toml:"allowed_origins" doc:"CORS allow-list for browser clients." default:"[\"*\"]"`
+	TrustedProxyCIDRs   []string    `toml:"trusted_proxy_cidrs" doc:"Immediate peer CIDR allow-list that is permitted to supply X-Forwarded-For. Empty means the API ignores that header and uses the socket peer address for logging, anonymous identity, and IP-based rate limiting." default:"[]"`
 	SEP10               SEP10Config `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
 }
 
@@ -491,6 +492,7 @@ func Default() Config {
 			KeyRateLimitPerMin:  1000,
 			CDNEnabled:          true,
 			AllowedOrigins:      []string{"*"},
+			TrustedProxyCIDRs:   []string{},
 			SEP10: SEP10Config{
 				SeedEnv:       "RATESENGINE_SEP10_SEED",
 				JWTSecretEnv:  "RATESENGINE_SEP10_JWT_SECRET",

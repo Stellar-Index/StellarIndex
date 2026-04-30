@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate/baseline"
@@ -193,6 +194,7 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair scan: %w", err)
 		}
+		normalizeVwapSources(&row)
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -238,6 +240,7 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	if err != nil {
 		return Vwap1mRow{}, fmt.Errorf("timescale: LatestClosedVWAP1mForPair: %w", err)
 	}
+	normalizeVwapSources(&row)
 	return row, nil
 }
 
@@ -344,6 +347,19 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
 // `{a,b,c}`. Quoted entries (with embedded commas) aren't supported
 // — fine here because source names are identifier-shaped.
 type stringArray []string
+
+// normalizeVwapSources enforces a stable lexical ordering for the
+// materialized-view `sources` array before it crosses the storage
+// boundary. The current CAGG SQL uses `array_agg(DISTINCT source)`
+// without an ORDER BY, so sorting here restores the public contract's
+// deterministic contributor ordering for both existing and future rows
+// without requiring an immediate CAGG rebuild.
+func normalizeVwapSources(row *Vwap1mRow) {
+	if len(row.Sources) < 2 {
+		return
+	}
+	sort.Strings(row.Sources)
+}
 
 // Scan implements [sql.Scanner].
 func (a *stringArray) Scan(src any) error {

@@ -64,8 +64,10 @@ development. If one does, it's a bug.
 ├── internal/                  private packages (Go-enforced, not importable externally)
 │   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
 │   ├── config/                   config loading + schema
-│   ├── consumer/                 the Source interface + orchestration
-│   ├── stellarrpc/               JSON-RPC client for stellar-rpc (getEvents, getTransaction, …)
+│   ├── consumer/                 legacy orchestration seam; current prod ingest is dispatcher-based
+│   ├── ledgerstream/             archive/live LedgerCloseMeta streaming
+│   ├── dispatcher/               production ledger walker + decoder router
+│   ├── stellarrpc/               JSON-RPC client for diagnostics + fixture capture, not prod ingest
 │   ├── sources/                  one package per source (on-chain + CEX + FX)
 │   ├── aggregate/                VWAP/TWAP/outlier/triangulation
 │   ├── storage/                  TimescaleDB + Redis + MinIO adapters
@@ -75,11 +77,11 @@ development. If one does, it's a bug.
 │   ├── cachekeys/                canonical Redis key builders (ADR-0007)
 │   ├── version/                  build-time version info (ldflags-populated)
 │   ├── obs/                      metrics, tracing, logging
-│   ├── supply/        (planned)  circulating/total/max supply derivation
-│   ├── auth/          (planned)  API-key + optional SEP-10
-│   └── divergence/    (planned)  cross-check against CoinGecko/CMC/Chainlink-HTTP
+│   ├── supply/                   circulating/total/max supply derivation
+│   ├── auth/                     API-key + SEP-10 auth primitives
+│   └── divergence/               cross-check against CoinGecko/CMC/Chainlink-HTTP
 │
-├── pkg/            (planned)  public surface — no stable API yet
+├── pkg/                      public surface
 │   ├── client/                   Go client SDK for our API
 │   └── types/                    stable types API consumers depend on
 │

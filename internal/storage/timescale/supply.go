@@ -65,8 +65,7 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 // LatestSupply returns the most-recent snapshot for assetKey. Used
 // by the API's /v1/assets/{id} F2-fields path. Returns
 // [ErrNotFound] when the asset has no recorded supply (the asset-
-// detail handler then publishes nil for every supply field, with a
-// "no_metadata" basis hint).
+// detail handler then publishes nil for every supply field).
 func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
 	const q = `
 		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence

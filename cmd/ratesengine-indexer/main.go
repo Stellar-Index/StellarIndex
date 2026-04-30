@@ -136,6 +136,11 @@ func run(cfgPath string, dryRun bool) error {
 		Logger:        logger.With("component", "discovery"),
 	})
 	discoverySink.Start()
+	discoveryMetricsStop, discoveryMetricsDone := watchDiscoveryDrops(discoverySink, logger.With("component", "discovery"))
+	defer func() {
+		discoveryMetricsStop()
+		<-discoveryMetricsDone
+	}()
 	defer func() {
 		discoverySink.Stop()
 		if dropped := discoverySink.DroppedCount(); dropped > 0 {
@@ -145,6 +150,8 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 	disp.SetDiscoverySink(discoverySink)
 	logger.Info("discovery sink wired", "buffer_size", 1024)
+	setSourceEnabled(cfg.Ingestion.EnabledSources, true)
+	defer setSourceEnabled(cfg.Ingestion.EnabledSources, false)
 
 	// ─── Starting ledger ───────────────────────────────────────
 	from, err := resolveStartLedger(rootCtx, store, cfg.Ingestion.BackfillFromLedger)
@@ -173,10 +180,12 @@ func run(cfgPath string, dryRun bool) error {
 	// Parallel to the Galexie → dispatcher path — same sink.
 	// Per-venue goroutines live inside external.Run; we just
 	// collect the shutdown wait func to block on during drain.
-	externalWait, err := startExternalConnectors(rootCtx, cfg.External, events, logger)
+	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, events, logger)
 	if err != nil {
 		return fmt.Errorf("external connectors: %w", err)
 	}
+	setSourceEnabled(externalSources, true)
+	defer setSourceEnabled(externalSources, false)
 
 	// ─── Ledgerstream → dispatcher loop ─────────────────────────
 	// StreamArchiveThenLive switches from S3BucketArchive to S3BucketLive
@@ -240,18 +249,19 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 	cfg config.ExternalConfig,
 	events chan<- consumer.Event,
 	logger *slog.Logger,
-) (func(), error) {
+) (func(), []string, error) {
 	var streamers []external.StreamerSpec
 	var pollers []external.PollerSpec
+	var enabled []string
 
 	if cfg.Binance.Enabled {
 		pairMap, err := externalbinance.DefaultPairs()
 		if err != nil {
-			return nil, fmt.Errorf("binance default pairs: %w", err)
+			return nil, nil, fmt.Errorf("binance default pairs: %w", err)
 		}
 		pairs, err := externalbinance.DefaultPairList()
 		if err != nil {
-			return nil, fmt.Errorf("binance default pair list: %w", err)
+			return nil, nil, fmt.Errorf("binance default pair list: %w", err)
 		}
 		s := externalbinance.NewStreamer(pairMap)
 		s.Logger = logger
@@ -262,16 +272,17 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external connector enabled",
 			"source", externalbinance.SourceName,
 			"pairs", len(pairs))
+		enabled = append(enabled, externalbinance.SourceName)
 	}
 
 	if cfg.Kraken.Enabled {
 		pairMap, err := externalkraken.DefaultPairs()
 		if err != nil {
-			return nil, fmt.Errorf("kraken default pairs: %w", err)
+			return nil, nil, fmt.Errorf("kraken default pairs: %w", err)
 		}
 		pairs, err := externalkraken.DefaultPairList()
 		if err != nil {
-			return nil, fmt.Errorf("kraken default pair list: %w", err)
+			return nil, nil, fmt.Errorf("kraken default pair list: %w", err)
 		}
 		s := externalkraken.NewStreamer(pairMap)
 		s.Logger = logger
@@ -282,16 +293,17 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external connector enabled",
 			"source", externalkraken.SourceName,
 			"pairs", len(pairs))
+		enabled = append(enabled, externalkraken.SourceName)
 	}
 
 	if cfg.Bitstamp.Enabled {
 		pairMap, err := externalbitstamp.DefaultPairs()
 		if err != nil {
-			return nil, fmt.Errorf("bitstamp default pairs: %w", err)
+			return nil, nil, fmt.Errorf("bitstamp default pairs: %w", err)
 		}
 		pairs, err := externalbitstamp.DefaultPairList()
 		if err != nil {
-			return nil, fmt.Errorf("bitstamp default pair list: %w", err)
+			return nil, nil, fmt.Errorf("bitstamp default pair list: %w", err)
 		}
 		s := externalbitstamp.NewStreamer(pairMap)
 		s.Logger = logger
@@ -302,16 +314,17 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external connector enabled",
 			"source", externalbitstamp.SourceName,
 			"pairs", len(pairs))
+		enabled = append(enabled, externalbitstamp.SourceName)
 	}
 
 	if cfg.Coinbase.Enabled {
 		pairMap, err := externalcoinbase.DefaultPairs()
 		if err != nil {
-			return nil, fmt.Errorf("coinbase default pairs: %w", err)
+			return nil, nil, fmt.Errorf("coinbase default pairs: %w", err)
 		}
 		pairs, err := externalcoinbase.DefaultPairList()
 		if err != nil {
-			return nil, fmt.Errorf("coinbase default pair list: %w", err)
+			return nil, nil, fmt.Errorf("coinbase default pair list: %w", err)
 		}
 		s := externalcoinbase.NewStreamer(pairMap)
 		s.Logger = logger
@@ -322,6 +335,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external connector enabled",
 			"source", externalcoinbase.SourceName,
 			"pairs", len(pairs))
+		enabled = append(enabled, externalcoinbase.SourceName)
 	}
 
 	if cfg.ExchangeRatesApi.Enabled {
@@ -329,7 +343,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		// (see config.ApplyEnvOverrides → EXCHANGERATESAPI_KEY).
 		p, err := externalexchangerates.NewPoller(cfg.ExchangeRatesApi.APIKey)
 		if err != nil {
-			return nil, fmt.Errorf("exchangeratesapi: %w", err)
+			return nil, nil, fmt.Errorf("exchangeratesapi: %w", err)
 		}
 		if cfg.ExchangeRatesApi.Base != "" {
 			p.Base = cfg.ExchangeRatesApi.Base
@@ -341,12 +355,13 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external poller enabled",
 			"source", externalexchangerates.SourceName,
 			"base", p.Base)
+		enabled = append(enabled, externalexchangerates.SourceName)
 	}
 
 	if cfg.PolygonForex.Enabled {
 		p, err := externalpolygonforex.NewPoller(cfg.PolygonForex.APIKey)
 		if err != nil {
-			return nil, fmt.Errorf("polygon-forex: %w", err)
+			return nil, nil, fmt.Errorf("polygon-forex: %w", err)
 		}
 		if cfg.PolygonForex.Base != "" {
 			p.Base = cfg.PolygonForex.Base
@@ -365,6 +380,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 			"source", externalpolygonforex.SourceName,
 			"base", p.Base,
 			"symbols", len(pairs))
+		enabled = append(enabled, externalpolygonforex.SourceName)
 	}
 
 	// Aggregator pollers: cross-check only, class=aggregator →
@@ -383,12 +399,13 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external poller enabled",
 			"source", externalcoingecko.SourceName,
 			"pairs", len(aggregatorPairs))
+		enabled = append(enabled, externalcoingecko.SourceName)
 	}
 
 	if cfg.CoinMarketCap.Enabled {
 		p, err := externalcoinmarketcap.NewPoller(cfg.CoinMarketCap.APIKey)
 		if err != nil {
-			return nil, fmt.Errorf("coinmarketcap: %w", err)
+			return nil, nil, fmt.Errorf("coinmarketcap: %w", err)
 		}
 		pollers = append(pollers, external.PollerSpec{
 			Poller: p,
@@ -397,12 +414,13 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external poller enabled",
 			"source", externalcoinmarketcap.SourceName,
 			"pairs", len(aggregatorPairs))
+		enabled = append(enabled, externalcoinmarketcap.SourceName)
 	}
 
 	if cfg.CryptoCompare.Enabled {
 		p, err := externalcryptocompare.NewPoller(cfg.CryptoCompare.APIKey)
 		if err != nil {
-			return nil, fmt.Errorf("cryptocompare: %w", err)
+			return nil, nil, fmt.Errorf("cryptocompare: %w", err)
 		}
 		pollers = append(pollers, external.PollerSpec{
 			Poller: p,
@@ -411,6 +429,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external poller enabled",
 			"source", externalcryptocompare.SourceName,
 			"pairs", len(aggregatorPairs))
+		enabled = append(enabled, externalcryptocompare.SourceName)
 	}
 
 	if cfg.ECB.Enabled {
@@ -427,14 +446,73 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		logger.Info("external poller enabled",
 			"source", externalecb.SourceName,
 			"pairs", len(pairs))
+		enabled = append(enabled, externalecb.SourceName)
 	}
 
 	if len(streamers) == 0 && len(pollers) == 0 {
 		logger.Info("no external connectors enabled")
-		return func() {}, nil
+		return func() {}, nil, nil
 	}
 
-	return external.Run(ctx, streamers, pollers, events, logger)
+	wait, err := external.Run(ctx, streamers, pollers, events, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return wait, enabled, nil
+}
+
+func setSourceEnabled(sources []string, enabled bool) {
+	val := 0.0
+	if enabled {
+		val = 1
+	}
+	for _, source := range sources {
+		if source == "" {
+			continue
+		}
+		obs.SourceEnabled.WithLabelValues(strings.ToLower(source)).Set(val)
+	}
+}
+
+func watchDiscoveryDrops(sink *discovery.AsyncSink, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		var last uint64
+		flush := func() {
+			last = emitDiscoveryDropMetricDelta(last, sink.DroppedCount(), logger)
+		}
+
+		for {
+			select {
+			case <-ticker.C:
+				flush()
+			case <-ctx.Done():
+				flush()
+				return
+			}
+		}
+	}()
+	return cancel, done
+}
+
+func emitDiscoveryDropMetricDelta(prev, current uint64, logger *slog.Logger) uint64 {
+	if current <= prev {
+		return current
+	}
+	delta := current - prev
+	obs.DiscoveryDroppedHitsTotal.Add(float64(delta))
+	if logger != nil {
+		logger.Warn("discovery: hits dropped",
+			"delta", delta,
+			"total", current,
+		)
+	}
+	return current
 }
 
 // defaultAggregatorPairs is the pair set aggregators (CoinGecko /
@@ -547,8 +625,12 @@ func processAndPersistCursor(
 			"err", err,
 		)
 	}
-	obs.CursorLastLedger.WithLabelValues(cursorSource, "").Set(float64(lcm.LedgerSequence()))
+	recordCursorMetric(lcm.LedgerSequence())
 	return nil
+}
+
+func recordCursorMetric(ledger uint32) {
+	obs.CursorLastLedger.WithLabelValues(cursorSource).Set(float64(ledger))
 }
 
 func startMetricsServer(obsCfg config.ObsConfig, logger *slog.Logger) *http.Server {

@@ -55,8 +55,8 @@ Runtime on a clean Hetzner EX63: ~15 minutes for config, then
 5. **stellar-core** — installed from `apt.stellar.org` (signed by
    SDF); configured as non-voting archival with a Tier-1-style
    quorum set.
-6. **Galexie** — captive-core + exporter; writes to local MinIO or
-   filesystem per config.
+6. **Galexie** — captive-core + exporter; writes to S3-compatible
+   object storage (local MinIO in the default layout).
 7. **stellar-rpc** — captive-core serving `getEvents`;
    retention capped.
 8. **MinIO** (optional) — single-node for local `galexie-live/`

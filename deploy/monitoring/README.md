@@ -44,12 +44,14 @@ make monitoring-check
 # which runs:
 promtool check rules deploy/monitoring/rules/*.yml
 
-# Unit-test a rule (given a synthetic metric input):
-promtool test rules test/monitoring/<name>_test.yml
+# Alert-rule unit tests are planned but not wired in this repo yet.
+# There is currently no checked-in test/monitoring/ tree.
 ```
 
-CI runs both. No rule merges unless `promtool check rules` and all
-`promtool test rules` pass.
+CI does NOT currently run `promtool check rules` or `promtool test rules`.
+The only enforced control today is the documentation/runbook drift check in
+`scripts/ci/lint-docs.sh`. Run `make monitoring-check` locally before merging
+rule changes.
 
 ## Adding an alert
 
@@ -60,7 +62,7 @@ Per [repo-hygiene-plan.md §16](../../docs/architecture/repo-hygiene-plan.md#16-
 3. Write the runbook at `docs/operations/runbooks/<name>.md` (copy
    `_template.md`).
 4. Add a row to `docs/operations/alerts-catalog.md`.
-5. Write a unit test at `test/monitoring/<name>_test.yml`.
+5. If/when the repo adds rule tests, place them under `test/monitoring/`.
 
 All five in one PR. The `scripts/ci/lint-docs.sh` script fails the
 build if any rule's `runbook_url` points at a missing runbook

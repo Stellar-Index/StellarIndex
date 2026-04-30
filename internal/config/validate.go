@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -495,6 +496,12 @@ func (a APIConfig) validate() error {
 	if a.KeyRateLimitPerMin < 0 {
 		return fmt.Errorf("%w: api.key_rate_limit_per_min must be >= 0",
 			ErrInvalidConfig)
+	}
+	for i, raw := range a.TrustedProxyCIDRs {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(raw)); err != nil {
+			return fmt.Errorf("%w: api.trusted_proxy_cidrs[%d] %q must be a valid CIDR: %w",
+				ErrInvalidConfig, i, raw, err)
+		}
 	}
 	return nil
 }

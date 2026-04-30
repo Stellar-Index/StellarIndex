@@ -1,126 +1,87 @@
 # Aquarius connector
 
-Ingests trade events from [Aquarius](https://aqua.network) —
-a Soroban AMM with three pool shapes. Primary Phase-1 reference:
+Ingests Aquarius trade events from Soroban pool contracts. The live
+decoder is topic-driven and stateless: token identities are carried in
+the event topics, so the dispatcher adapter does not need router reads
+or a pool-token cache. Primary Phase-1 reference:
 [`docs/discovery/dexes-amms/aquarius.md`](../../../docs/discovery/dexes-amms/aquarius.md).
 
 ## What this ingests
 
-Aquarius has three distinct pool types and a central router that
-tracks them all:
+Aquarius has multiple pool shapes. The current runtime only cares
+about the common `trade` event shape they share:
 
-1. **Volatile** — Uniswap-v2-style constant-product pool (`x * y = k`).
-   Most pairs on Aquarius.
-2. **Stableswap** — Curve-style invariant for stablecoin bundles.
-   N-asset pools (typically 2–4 assets).
-3. **Concentrated** — Uniswap-v3-style concentrated liquidity
-   (WIP at Phase-1 audit time; may still be on a feature branch).
-   We flag it but don't decode trades through it yet.
+1. **Volatile** — constant-product pools.
+2. **Stableswap** — stablecoin-oriented pools.
+3. **Future variants** — any pool/event shape that does not match the
+   current 4-topic `trade` contract is rejected until explicitly
+   audited and added.
 
-All three emit events through a **unified event module** — not
-per-pool like Soroswap. This means one subscription covers every
-Aquarius pool, and we multiplex by contract ID + event kind.
-
-Mainnet addresses (Phase-1-verified):
-
-| Contract | Address |
-| --- | --- |
-| Router | `CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK` |
-| Factory | derived from router reads |
-| Plane | derived from router reads |
-| XLM SAC (used by Aquarius docs) | `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` |
-
-Factory / plane / calculator / locker-feed / fees-collector
-addresses are fetched at startup via router reads + cached.
-Residual TODO(#0): capture these statically in `events.go` once
-we've confirmed they're stable across protocol upgrades.
+The decoder emits one `canonical.Trade` per accepted trade event.
+Unlike Soroswap, there is no swap+sync correlation buffer.
 
 ## Events we care about
 
 | Event | Topic 0 | Carries | Role |
 | --- | --- | --- | --- |
-| `trade` | `trade` | base_in, base_out, counter_in, counter_out, user | PRIMARY — emits a single row, unlike Soroswap's swap+sync pair |
-| `deposit_liquidity` | `deposit_liquidity` | amounts per asset, LP tokens minted | LP state change (not a trade) |
-| `withdraw_liquidity` | `withdraw_liquidity` | amounts per asset, LP tokens burned | LP state change |
-| `update_reserves` | `update_reserves` | reserves post-operation | redundant signal with `trade` — use for invariant checking |
-| `reserves_sync` | `reserves_sync` | reserves (alternative naming) | older pools; same data as update_reserves |
-| `kill_*` | `kill_*` | admin pool-kill signals | diagnostic, not a trade |
+| `trade` | `trade` | `token_in`, `token_out`, `user` in topics; sold/bought/fee amounts in body | PRIMARY — single event per trade |
+| `deposit_liquidity` | `deposit_liquidity` | LP state change | ignored |
+| `withdraw_liquidity` | `withdraw_liquidity` | LP state change | ignored |
+| `update_reserves` | `update_reserves` | reserve sync state | ignored |
 
-**One event per trade** (unlike Soroswap's swap+sync pairing). We
-decode `trade` directly into `canonical.Trade` — no correlation
-buffer needed. This is the main structural difference from the
-Soroswap consumer.
+The live dispatcher matches only `trade`. Other Aquarius event types
+are intentionally excluded from the ingest path.
 
 ## Quirks
 
-### Q1 — Variable-arity stableswap pools
+### Q1 — Token identity comes from the event topics
 
-Stableswap pools have N assets (typically 2–4, but the contract
-allows larger bundles). A trade event on an N-asset pool carries
-`amounts_in[N]` and `amounts_out[N]` arrays. Of those arrays, at
-least one `in` slot is positive and at least one `out` slot is
-positive; other slots are zero.
+Aquarius `trade` events carry `Address(token_in)`,
+`Address(token_out)`, and `Address(user)` directly in topics 1..3.
+The decoder derives the pair from those topic values; it does not
+consult a router or maintain a pool metadata cache.
 
-Our decoder normalises: `base` = asset corresponding to the
-positive `in` slot, `quote` = asset corresponding to the positive
-`out` slot. If more than one of either is positive we have a
-complex multi-asset swap — we record all of it but emit a
-canonical.Trade for each `(in, out)` pair that's non-trivially
-sized. Design detail in `decode.go`.
+### Q2 — Trade bodies are tuple-shaped SCVals
 
-### Q2 — Token identity requires a router read
+The body is a three-element tuple encoded as `ScvVec`:
 
-Unlike Soroswap where the pair contract ID maps 1:1 to a token
-pair, Aquarius pools are identified by a pool-id + token-list. The
-indexer consults the router's `pool_tokens(pool_id)` function
-(cached) to learn the asset list for each pool.
+1. sold amount (`i128`)
+2. bought amount (`i128`)
+3. fee (`i128`)
 
-### Q3 — Trade events include both in AND out arrays
+This is why the decoder leans on `internal/scval` rather than ad hoc
+XDR parsing.
 
-Soroswap emits `amount0_in / amount1_in / amount0_out / amount1_out`
-as four scalars. Aquarius emits them as two arrays indexed by asset
-position. This means our SCVal decoder needs Vec-of-i128 support,
-not just scalar i128 — handled in `internal/scval` (ADR-0013).
+### Q3 — One event per trade
 
-### Q4 — Concentrated-liquidity pools are WIP
+Aquarius differs from Soroswap and Phoenix operationally:
 
-If we observe `concentrated` pool events at ingest time, we log +
-drop them with a counter (TODO(#0)). Safer than emitting half-
-decoded trades. Re-verify whether the feature branch has merged
-before Week 3 — it may have shipped since Phase-1 audit.
+- Soroswap needs swap+sync correlation.
+- Phoenix needs 8-field event fan-in.
+- Aquarius emits one complete trade event, so decode is a pure
+  single-event function.
 
 ## File layout
 
 | File | Purpose |
 | --- | --- |
 | `README.md` | this file |
-| `events.go` | event-name + topic-symbol constants, pool type enum, mainnet router address |
-| `decode.go` | trade-event → `canonical.Trade` (single-event decode; variable-arity handled via `internal/scval`) |
-| `consumer.go` | implements `consumer.Source` (the dispatcher seam); maintains the pool→tokens map |
-| `dispatcher_adapter.go` | topic-match registration with `internal/dispatcher` |
-| `decode_test.go`, `source_test.go`, `real_fixture_test.go` | unit + golden-file + real-mainnet-fixture tests |
+| `events.go` | topic symbols and source constants |
+| `decode.go` | Aquarius `trade` event -> `canonical.Trade` |
+| `dispatcher_adapter.go` | stateless dispatcher-facing decoder |
+| `consumer.go` | `consumer.Event` wrapper emitted after decode |
+| `decode_test.go`, `adapter_test.go`, `source_test.go`, `topic_decoder_reject_test.go`, `real_fixture_test.go` | unit + reject-path + real-fixture coverage |
 
-## Relationship to Soroswap connector
+## Relationship to other connectors
 
-Both connectors plug into the same Galexie → ledgerstream →
-dispatcher pipeline. Differences that shape the code:
-
-| Aspect | Soroswap | Aquarius |
-| --- | --- | --- |
-| Event correlation | swap + sync, 2 events per trade | 1 event per trade |
-| Assets per pool | always 2 | 2–4 (stableswap) |
-| Pool identity | pair contract address | pool_id + router lookup |
-| Event topics | per-pair contract | per-router contract |
-| Correlation buffer | yes (`(ledger, tx_hash, op_index)`) | no |
-
-The common plumbing (`internal/dispatcher` routing,
-`internal/scval` SCVal decoding, `internal/canonical` types) is
-shared across every Soroban source.
+| Aspect | Soroswap | Phoenix | Aquarius |
+| --- | --- | --- | --- |
+| Event correlation | swap + sync | 8-field fan-in | none |
+| Pair identity | derived from contract/pool context | derived across event set | derived directly from topics |
+| Dispatcher seam | stateful decoder | stateful decoder | stateless decoder |
 
 ## Status
 
-Production. Topic byte-match dispatching, single-event decode,
-variable-arity Vec-of-i128 normalisation, and the pool→tokens
-router lookup all run against real SCVal decoding via
-`internal/scval` (ADR-0013). Real-mainnet event fixtures live in
-`test/fixtures/aquarius/` and run on every `go test` cycle.
+Production. Topic byte-match dispatching, single-event decode, and
+real SCVal parsing all run against real fixtures under
+`test/fixtures/aquarius/`.

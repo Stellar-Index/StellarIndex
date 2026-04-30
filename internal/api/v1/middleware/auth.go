@@ -199,24 +199,3 @@ func anonymousIdentifier(r *http.Request) string {
 	h := sha256.Sum256([]byte(ip + "|" + ua))
 	return "anon-" + hex.EncodeToString(h[:8]) // 64-bit prefix is plenty for bucketing
 }
-
-// remoteIPFor returns the request's effective remote address. Honours
-// X-Forwarded-For when set by an upstream we trust (HAProxy in our
-// stack). Defensive: takes the LEFT-most IP in XFF (the original
-// client) only when XFF is exactly one hop's worth of trusted-prefix —
-// which is our deployment's case. Real production deployments behind
-// untrusted edge proxies should swap this for a more careful
-// implementation; a TODO ticket tracks that work.
-func remoteIPFor(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if comma := strings.IndexByte(xff, ','); comma > 0 {
-			return strings.TrimSpace(xff[:comma])
-		}
-		return strings.TrimSpace(xff)
-	}
-	// RemoteAddr is "ip:port"; strip the port.
-	if colon := strings.LastIndexByte(r.RemoteAddr, ':'); colon > 0 {
-		return r.RemoteAddr[:colon]
-	}
-	return r.RemoteAddr
-}

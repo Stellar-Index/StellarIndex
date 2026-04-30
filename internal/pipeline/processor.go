@@ -2,34 +2,31 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/RatesEngine/rates-engine/internal/consumer"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 )
 
 // ProcessLedger runs the dispatcher over one LedgerCloseMeta and
 // forwards every emitted event to the supplied sink channel.
 //
-// Two error paths:
+// Error paths:
 //
-//   - Dispatcher returns an error (malformed LCM, decoder panic
-//     surfaced through the recover boundary): logged at WARN, then
-//     this function returns nil. We absorb single-ledger failures
-//     so a malformed payload doesn't tear down the whole stream;
-//     the ledgerstream retry layer surfaces persistent failures via
-//     its own error channel.
+//   - Dispatcher returns an error (malformed LCM, reader build
+//     failure, decoder panic surfaced through the recover boundary):
+//     logged at WARN, then returned to the caller unchanged so the
+//     caller can refuse cursor advancement for that ledger.
 //   - ctx is canceled while pushing events: ctx.Err() is returned.
 //     The caller (typically a streamer goroutine) treats this as
 //     shutdown.
 //
-// Caller responsibility: cursor persistence + cursor metric. The
-// long-running indexer wraps this with an UpsertCursor +
-// CursorLastLedger.Set. The bounded-replay backfill skips both —
-// it's a one-shot run with explicit -from/-to and doesn't share
-// the indexer's cursor row.
+// Caller responsibility: cursor persistence + cursor metric. Those
+// must happen only after ProcessLedger returns nil for the ledger.
 func ProcessLedger(
 	ctx context.Context,
 	disp *dispatcher.Dispatcher,
@@ -37,14 +34,25 @@ func ProcessLedger(
 	logger *slog.Logger,
 	lcm sdkxdr.LedgerCloseMeta,
 	networkPassphrase string,
-) error {
+) (err error) {
+	before := disp.Stats()
+	defer func() {
+		emitDispatcherMetricDeltas(before, disp.Stats())
+		if r := recover(); r != nil {
+			err = fmt.Errorf("dispatcher panic for ledger %d: %v", lcm.LedgerSequence(), r)
+			logger.Warn("dispatcher panicked",
+				"ledger", lcm.LedgerSequence(),
+				"panic", fmt.Sprintf("%v", r),
+			)
+		}
+	}()
 	outputs, err := disp.ProcessLedger(lcm, networkPassphrase)
 	if err != nil {
 		logger.Warn("dispatcher rejected ledger",
 			"ledger", lcm.LedgerSequence(),
 			"err", err,
 		)
-		return nil
+		return err
 	}
 	for _, ev := range outputs {
 		select {
@@ -54,4 +62,21 @@ func ProcessLedger(
 		}
 	}
 	return nil
+}
+
+func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
+	for source, n := range after.DecodeErrors {
+		delta := n - before.DecodeErrors[source]
+		if delta <= 0 {
+			continue
+		}
+		obs.SourceDecodeErrorsTotal.WithLabelValues(source).Add(float64(delta))
+	}
+	for source, n := range after.OrphanEvents {
+		delta := n - before.OrphanEvents[source]
+		if delta <= 0 {
+			continue
+		}
+		obs.SourceOrphanEventsTotal.WithLabelValues(source).Add(float64(delta))
+	}
 }

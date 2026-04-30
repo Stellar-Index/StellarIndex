@@ -86,8 +86,7 @@ all:
 
     # ───── Galexie export target ───────────────────────────────────
     # Use the local MinIO endpoint by default. For a remote target,
-    # override `galexie_backend_type=s3` and set galexie_s3_endpoint.
-    galexie_backend_type: "s3"
+    # override the S3 endpoint and bucket settings below.
     galexie_s3_endpoint:  "http://127.0.0.1:9000"
     galexie_s3_bucket:    "galexie-live"
     galexie_s3_region:    "{{ region_id }}"

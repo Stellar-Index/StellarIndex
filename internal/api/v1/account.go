@@ -32,8 +32,8 @@ type Account struct {
 }
 
 // UsageRow is the wire shape for /v1/account/usage entries. The
-// underlying counter store does not yet exist (Phase 5 follow-up);
-// the handler currently returns an empty list.
+// underlying counter store does not yet exist (Phase 5 follow-up),
+// so the handler currently returns an empty list placeholder.
 type UsageRow struct {
 	Date      string `json:"date"` // YYYY-MM-DD
 	Requests  int    `json:"requests"`
@@ -84,14 +84,14 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountUsage serves GET /v1/account/usage.
 //
-// Per-day usage rollups for the authenticated caller. The counter
-// store doesn't exist yet — the handler returns an empty list
-// behind the same envelope shape so clients can integrate against
-// the wire contract today. When the counters land, the only change
-// is the implementation; the wire shape is already locked.
+// Placeholder per-day usage rollups for the authenticated caller.
+// The counter store doesn't exist yet, so the handler returns an
+// empty list behind the same envelope shape. When the counters
+// land, the only change is the implementation; the wire shape is
+// already locked.
 //
-// Anonymous callers receive 401. Date-range parameters from/to are
-// accepted and validated but otherwise ignored at this point.
+// Anonymous callers receive 401. Date-range parameters are reserved
+// for the future implementation and are ignored at this point.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -187,7 +187,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeEnvelope(w, Envelope{
+	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data: KeyCreated{
 			KeyID:     rec.KeyID,
 			Plaintext: plaintext,

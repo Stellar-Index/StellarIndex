@@ -1,9 +1,10 @@
 // Binary ratesengine-api is the public REST + SSE API server.
 //
-// Today: /v1/healthz, /v1/readyz, /v1/version — the infra-facing
-// surface. The full endpoint catalogue (/v1/price, /v1/history,
-// /v1/ohlc, SSE streams, etc.) lands in follow-up PRs per
-// docs/reference/api-design.md §5.
+// Ships the public read surfaces (`/v1/price`, `/v1/history`,
+// `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/assets`,
+// `/v1/sources`), infra endpoints (`/v1/healthz`, `/v1/readyz`,
+// `/v1/version`), and the current auth/self-service surfaces
+// (SEP-10 plus `/v1/account/*`).
 //
 // Flags:
 //
@@ -83,6 +84,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		"auth_mode", cfg.API.AuthMode,
 		"dry_run", dryRun,
 	)
+	if err := middleware.SetTrustedProxyCIDRs(cfg.API.TrustedProxyCIDRs); err != nil {
+		return fmt.Errorf("trusted proxy cidrs: %w", err)
+	}
 
 	// SEP-10 validator — wired regardless of auth_mode so the
 	// /v1/auth/sep10/{challenge,token} endpoints serve. When the
@@ -181,17 +185,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		})
 	}
 
-	// Rate limit — per-IP anonymous bucket only for now. Per-API-key
-	// buckets arrive with SEP-10 / apikey auth (see docs/reference/
-	// api-design.md §6). When Redis is unavailable, no bucket is
-	// constructed — the middleware is omitted and the stack runs
-	// uncapped. An operator who cares will see this in readyz.
+	// Rate limit — separate anonymous and authenticated buckets when
+	// Redis is available. The auth middleware runs outside this layer,
+	// so authenticated requests can be keyed by credential/subject
+	// rather than collapsing onto the anonymous IP bucket.
 	var rateLimit middleware.Middleware
-	if rdb != nil && cfg.API.AnonRateLimitPerMin > 0 {
-		bucket := ratelimit.New(rdb, cfg.API.AnonRateLimitPerMin, time.Minute)
-		rateLimit = middleware.RateLimit(
-			bucket,
-			nil, // default KeyFn — resolveRemoteIP from Logger middleware
+	if rdb != nil && (cfg.API.AnonRateLimitPerMin > 0 || cfg.API.KeyRateLimitPerMin > 0) {
+		var anonBucket, authBucket *ratelimit.Bucket
+		if cfg.API.AnonRateLimitPerMin > 0 {
+			anonBucket = ratelimit.New(rdb, cfg.API.AnonRateLimitPerMin, time.Minute)
+		}
+		if cfg.API.KeyRateLimitPerMin > 0 {
+			authBucket = ratelimit.New(rdb, cfg.API.KeyRateLimitPerMin, time.Minute)
+		}
+		rateLimit = middleware.RateLimitBySubject(
+			anonBucket,
+			authBucket,
 			middleware.SkipHealthAndMetrics,
 			logger.With("component", "ratelimit"),
 		)
@@ -247,6 +256,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Accounts:    accountStore,
 		Divergence:  divergenceLooker,
 		Confidence:  redisConfidenceLooker{rdb: rdb},
+		Supply:      store,
 		SEP10:       sep10Validator,
 		CORS:        cors,
 		Auth:        authMW,

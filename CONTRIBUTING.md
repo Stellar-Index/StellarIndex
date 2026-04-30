@@ -56,8 +56,7 @@ make test      # run unit tests
 ### Local full stack
 
 ```sh
-make dev            # docker-compose up Postgres+Timescale, Redis, MinIO,
-                    # stellar-core watcher, Galexie, stellar-rpc
+make dev            # docker-compose up Postgres+Timescale, Redis, MinIO
 make dev-seed       # load fixture data
 make dev-teardown   # shut it all down
 ```

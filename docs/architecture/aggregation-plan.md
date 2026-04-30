@@ -92,7 +92,7 @@ win; empty falls back to library defaults.
 | `vwap_window_seconds` | 300 | Legacy alias retained for backwards-compat |
 | `twap_window_seconds` | 300 | TWAP-specific cadence (used by api/v1/twap.go) |
 | `min_usd_volume` | 10 000 | Eligibility threshold |
-| `triangulation_enabled` | true | Reserved for cross-pair triangulation (TBD) |
+| `triangulation_enabled` | true | Reserved for a future public-serving triangulation path; current API leaves `flags.triangulated=false` |
 
 The full reference lives at
 [`docs/reference/config/README.md`](../reference/config/README.md);
@@ -190,7 +190,9 @@ re-deriving the design space:
 - **Triangulation.** `XLM/USD × USD/EUR = XLM/EUR` for fiat pairs
   with sparse direct trades. Will live as a separate worker
   running alongside the direct-pair loop, writing to its own Redis
-  key namespace + flagging `triangulated=true` in the envelope.
+  key namespace + flagging `triangulated=true` in the envelope once
+  the public serving path consumes triangulated results. That final
+  API exposure is not wired in this snapshot.
 - **Divergence detection.** Aggregator-class sources (CoinGecko,
   CoinMarketCap, CryptoCompare) currently visible in `/v1/sources`
   but excluded from VWAP. A divergence worker compares our VWAP

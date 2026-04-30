@@ -35,11 +35,17 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | ---- | ------ | --------- | -------- | ------- |
 | `ratesengine_ingestion_source_stopped` | `rate(ratesengine_source_events_total[5m])` per source | == 0 for > 5 min on an enabled source | P2 | [source-stopped](runbooks/source-stopped.md) |
 | `ratesengine_ingestion_all_sources_stopped` | `sum(rate(ratesengine_source_events_total[5m]))` | == 0 for > 3 min | **P1** | [all-ingestion-down](runbooks/all-ingestion-down.md) |
-| `ratesengine_ingestion_lag_high` | `ratesengine_source_lag_ledgers` per source | > 1000 for > 10 min | P2 | [ingestion-lag](runbooks/ingestion-lag.md) |
 | `ratesengine_ingestion_cursor_stuck` | `increase(ratesengine_cursor_last_ledger[5m])` per source | == 0 while source is live | P2 | [cursor-stuck](runbooks/cursor-stuck.md) |
 | `ratesengine_ingestion_orphan_events` | `rate(ratesengine_source_orphan_events_total[10m])` | > 10/min per source | P3 | [orphan-events](runbooks/orphan-events.md) |
 | `ratesengine_ingestion_decode_error` | `rate(ratesengine_source_decode_errors_total[5m])` | > 1/s sustained 5 min | P3 | [decode-errors](runbooks/decode-errors.md) |
+| `ratesengine_ingestion_discovery_drops` | `increase(ratesengine_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | P3 | [discovery-drops](runbooks/discovery-drops.md) |
 | `ratesengine_ingestion_insert_errors` | `rate(ratesengine_source_insert_errors_total[5m])` per (source, kind) | > 0.1/s (≈6/min) sustained 5 min | P2 | [insert-errors](runbooks/insert-errors.md) |
+
+Historical note: the former `ratesengine_ingestion_lag_high` alert was retired
+when the repo moved off the legacy orchestrator topology and the live indexer
+stopped emitting a trustworthy per-source lag gauge. Its last runbook remains
+archived at [ingestion-lag](runbooks/ingestion-lag.md) until a replacement
+signal lands.
 
 ## Storage alerts
 

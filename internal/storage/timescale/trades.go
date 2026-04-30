@@ -11,8 +11,9 @@ import (
 )
 
 // InsertTrade writes one trade. Returns nil for a successful insert
-// OR a duplicate-key clash (idempotent by identity — we re-insert the
-// same trade safely). Other errors propagate.
+// OR a duplicate-key clash (idempotent by storage identity — the
+// current conflict target is source+ledger+tx_hash+op_index+ts).
+// Other errors propagate.
 //
 // The trade is validated via [canonical.Trade.Validate] before
 // touching the DB; a Validate failure returns [canonical.ErrInvalidTrade].

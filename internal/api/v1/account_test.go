@@ -171,7 +171,7 @@ func TestAccountUsage_Unauthenticated(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_Happy returns 200 + the plaintext + key_id.
+// TestAccountKeysCreate_Happy returns 201 + the plaintext + key_id.
 // The fake store records the inbound CreateAPIKeyRequest so the
 // handler's identifier-inheritance + tier-inheritance contract is
 // exercised end-to-end.
@@ -196,7 +196,7 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	var env struct {

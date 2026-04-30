@@ -29,7 +29,7 @@ func validTrade() c.Trade {
 
 func TestTrade_ID(t *testing.T) {
 	tr := validTrade()
-	want := "sdex:52430001:" + goodTxHash + ":0"
+	want := "sdex:52430001:" + goodTxHash + ":0:1745000000000000000"
 	if got := tr.ID(); got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
 	}
@@ -46,8 +46,9 @@ func TestTrade_Validate_errors(t *testing.T) {
 		"empty source": func(t *c.Trade) { t.Source = "" },
 		// "zero ledger" is intentionally NOT an error case —
 		// off-chain sources (Binance/Kraken/Bitstamp/Coinbase)
-		// stamp Ledger=0 deliberately. Uniqueness comes from
-		// Source + TxHash + OpIndex. Documented in Validate().
+		// stamp Ledger=0 deliberately. Storage uniqueness then relies
+		// on Source + TxHash + OpIndex + Timestamp. Documented in
+		// Validate().
 		"short tx hash":   func(t *c.Trade) { t.TxHash = "cafe" },
 		"non-hex tx hash": func(t *c.Trade) { t.TxHash = "z" + goodTxHash[1:] },
 		// Uppercase hex decodes but isn't canonical — Postgres would
@@ -105,6 +106,11 @@ func TestTrade_Equal_identityOnly(t *testing.T) {
 	if !a.Equal(b) {
 		t.Fatal("Maker differs but identity same → Equal should still be true")
 	}
+	b.Timestamp = b.Timestamp.Add(time.Second)
+	if a.Equal(b) {
+		t.Fatal("identity should differ on Timestamp")
+	}
+	b = validTrade()
 	b.OpIndex = 1
 	if a.Equal(b) {
 		t.Fatal("identity should differ on OpIndex")

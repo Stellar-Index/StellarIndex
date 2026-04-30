@@ -22,16 +22,15 @@
 //     in the record. The Noop stub remains as the failure-mode the
 //     middleware lands on when auth_mode=apikey is configured but
 //     no validator is wired (e.g. Redis unavailable at startup).
-//   - SEP10.{Challenge,Verify,VerifyJWT} — still scaffolding;
-//     [NoopSEP10Validator] returns [ErrNotImplemented] from each.
-//     Awaiting Phase-5 implementation.
+//   - SEP10.{Challenge,Verify,VerifyJWT} — implemented by the live
+//     SEP-10 validator package when the API binary is configured
+//     with a signing seed + JWT secret. [NoopSEP10Validator]
+//     remains as the explicit disabled-state fallback.
 //
-// Why ship the scaffolding ahead of the SEP-10 body: the API spec
-// already documents auth_mode and per-tier rate limits. Without the
-// package + the middleware slot, every Phase-5 PR that touches auth
-// has to re-litigate where the code goes. With the scaffolding,
-// "implement SEP-10 challenge generation" is a pure body-fill on an
-// existing signature.
+// The package still keeps noop validators around as the explicit
+// disabled-state fallback, but the runtime auth path is no longer
+// speculative: the API binary can serve API-key and SEP-10-backed
+// authenticated surfaces in this snapshot.
 //
 // References:
 //

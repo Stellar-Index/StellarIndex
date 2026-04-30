@@ -535,7 +535,8 @@ days, because:
 - stellar-rpc already has everything indexed
 - pagination bounded at 200 events/page → indexer processes at
   decoder-throughput speed
-- Our `InsertTrade` is idempotent (ON CONFLICT DO NOTHING), so
+- Our `InsertTrade` is idempotent on the persisted trade key
+  `(source, ledger, tx_hash, op_index, ts)`, so
   restarts are safe.
 
 Monitor via:

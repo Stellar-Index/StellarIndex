@@ -93,6 +93,71 @@ func TestAuth_ModeNone(t *testing.T) {
 	}
 }
 
+func TestAuth_ModeNone_UntrustedPeerIgnoresXForwardedFor(t *testing.T) {
+	var captured auth.Subject
+	mw := middleware.Auth(middleware.AuthOptions{Mode: middleware.AuthModeNone})
+	h := mw(captureSubject(&captured))
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r.RemoteAddr = "198.51.100.9:80"
+	r.Header.Set("User-Agent", "test-client/1.0")
+	r.Header.Set("X-Forwarded-For", "203.0.113.42")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	var direct auth.Subject
+	h2 := mw(captureSubject(&direct))
+	r2 := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r2.RemoteAddr = "198.51.100.9:80"
+	r2.Header.Set("User-Agent", "test-client/1.0")
+	h2.ServeHTTP(httptest.NewRecorder(), r2)
+
+	if captured.Identifier != direct.Identifier {
+		t.Fatalf("identifier changed based on untrusted XFF: %q != %q", captured.Identifier, direct.Identifier)
+	}
+}
+
+func TestAuth_ModeNone_TrustedProxyUsesXForwardedFor(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{"10.0.0.0/8"}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := middleware.SetTrustedProxyCIDRs(nil); err != nil {
+			t.Fatalf("reset trusted proxies: %v", err)
+		}
+	})
+
+	var captured auth.Subject
+	mw := middleware.Auth(middleware.AuthOptions{Mode: middleware.AuthModeNone})
+	h := mw(captureSubject(&captured))
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r.RemoteAddr = "10.0.0.1:80"
+	r.Header.Set("User-Agent", "test-client/1.0")
+	r.Header.Set("X-Forwarded-For", "203.0.113.42, 10.0.0.1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	var direct auth.Subject
+	h2 := mw(captureSubject(&direct))
+	r2 := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r2.RemoteAddr = "203.0.113.42:80"
+	r2.Header.Set("User-Agent", "test-client/1.0")
+	h2.ServeHTTP(httptest.NewRecorder(), r2)
+
+	if captured.Identifier != direct.Identifier {
+		t.Fatalf("trusted XFF should resolve to client identity: %q != %q", captured.Identifier, direct.Identifier)
+	}
+}
+
 // TestAuth_ModeAPIKey_HappyPath confirms a valid key passes auth
 // + the validator's Subject reaches the handler.
 func TestAuth_ModeAPIKey_HappyPath(t *testing.T) {

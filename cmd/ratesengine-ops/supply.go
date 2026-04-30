@@ -119,7 +119,7 @@ func supplyAudit(args []string) error {
 func fetchSupplyOrReport(ctx context.Context, store *timescale.Store, assetKey, displayName string) (supply.Supply, error) {
 	snap, err := store.LatestSupply(ctx, assetKey)
 	if errors.Is(err, timescale.ErrNotFound) {
-		return supply.Supply{}, fmt.Errorf("no supply snapshot for %s (key %s) — run the orchestrator or check the indexer is wired", displayName, assetKey)
+		return supply.Supply{}, fmt.Errorf("no supply snapshot for %s (key %s) — populate asset_supply_history via your supply snapshot writer before using this audit", displayName, assetKey)
 	}
 	if err != nil {
 		return supply.Supply{}, fmt.Errorf("LatestSupply %s: %w", assetKey, err)

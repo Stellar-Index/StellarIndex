@@ -12,6 +12,10 @@ GO              := go
 GOBIN           := $(shell $(GO) env GOPATH)/bin
 GOOS            ?= $(shell $(GO) env GOOS)
 GOARCH          ?= $(shell $(GO) env GOARCH)
+GOFUMPT_VERSION := v0.8.0
+GOIMPORTS_VERSION := v0.42.0
+GOLANGCI_LINT_VERSION := v2.11.4
+GOVULNCHECK_VERSION := v1.1.4
 
 # Project metadata
 MODULE          := github.com/RatesEngine/rates-engine
@@ -50,6 +54,10 @@ help: ## Show this help
 deps: ## Download + verify Go module deps and tools
 	$(GO) mod download
 	$(GO) mod verify
+	@$(GO) install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+	@$(GO) install golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION)
+	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	@if [ -f tools/tools.go ]; then \
 	  cd tools && $(GO) install $$(awk -F\" '/_ "/ {print $$2}' tools.go); \
 	fi
@@ -134,7 +142,7 @@ verify: ## Sequential local quality gate (fmt, vet, lint, docs, test) — run be
 
 .PHONY: audit
 audit: ## Dependency vulnerability audit (govulncheck)
-	@$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
+	@$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	@$(GOBIN)/govulncheck ./...
 
 ##@ Build
@@ -204,7 +212,12 @@ docs-serve: ## Preview docs site locally on :8080
 ##@ Release
 
 .PHONY: release-dryrun
-release-dryrun: ## goreleaser dry run — useful pre-tag
+release-dryrun: ## Validate whether in-repo goreleaser packaging exists for this snapshot
+	@if [ ! -f .goreleaser.yaml ]; then \
+	  echo "release-dryrun: .goreleaser.yaml is not present in this repo snapshot." >&2; \
+	  echo "release-dryrun: use 'make build' plus the external release packaging process documented in docs/operations/release-process.md." >&2; \
+	  exit 2; \
+	fi
 	@goreleaser release --snapshot --clean
 
 ##@ Housekeeping

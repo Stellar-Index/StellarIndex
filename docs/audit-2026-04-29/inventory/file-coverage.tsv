@@ -1,0 +1,801 @@
+path	top_level	audit_unit	status	evidence_refs	cross_refs	notes
+AGENTS.md	(root)	AGENTS.md	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+CHANGELOG.md	(root)	CHANGELOG.md	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+CLAUDE.md	(root)	CLAUDE.md	done	EV-0006,EV-0007	XREF-0003	Repo map still marks live packages as planned; later sections partially updated.
+CODEOWNERS	(root)	CODEOWNERS	done	EV-0009		Ownership map still includes prerelease packaging surface `.goreleaser.yaml`.
+CODE_OF_CONDUCT.md	(root)	CODE_OF_CONDUCT.md	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+CONTRIBUTING.md	(root)	CONTRIBUTING.md	done	EV-0002		Local full-stack instructions drift from live `make dev` target.
+LICENSE	(root)	LICENSE	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+Makefile	(root)	Makefile	done	EV-0002		`make dev` target documents actual local stack and remote `r1` dependency.
+README.md	(root)	README.md	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+SECURITY.md	(root)	SECURITY.md	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+VERSIONS.md	(root)	VERSIONS.md	done	EV-0010	XREF-0006	Pinned snapshot doc reviewed against live CI/local tool-fetch behavior.
+cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	done	EV-0017	XREF-0013	Triangulation and anomaly/baseline wiring reviewed against current API serving path.
+cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	done	EV-0004,EV-0005,EV-0011,EV-0026	XREF-0002,XREF-0007,XREF-0019	Runtime auth wiring, route drift, rate-limit construction, and missing F2 supply wiring reviewed.
+cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	done	EV-0007,EV-0028,EV-0029,EV-0030,EV-0031,EV-0032	XREF-0001,XREF-0003,XREF-0021,XREF-0022,XREF-0023,XREF-0024,XREF-0025	Production ingest path reviewed; shared processor currently lets rejected ledgers advance the persisted cursor, discovery/decode-orphan/source-health observability claims are partially reviewed against live wiring, and the cursor gauge call site now shows a live label-cardinality defect.
+cmd/ratesengine-migrate/main.go	cmd	cmd/ratesengine-migrate	done	EV-0008	XREF-0004	Reviewed supported migration subcommands and post-up/status behavior.
+cmd/ratesengine-ops/backfill.go	cmd	cmd/ratesengine-ops	done	EV-0013,EV-0028	XREF-0009,XREF-0021	Replay/idempotency claims reviewed against trade storage identity and shared processor cursor-advance semantics.
+cmd/ratesengine-ops/backfill_test.go	cmd	cmd/ratesengine-ops	done	EV-0039		Covered by completed repository test run for this snapshot.
+cmd/ratesengine-ops/cross_region_check.go	cmd	cmd/ratesengine-ops	done	EV-0022	XREF-0016	Cross-region consistency checker compares only a reduced subset of the public payload.
+cmd/ratesengine-ops/cross_region_check_test.go	cmd	cmd/ratesengine-ops	done	EV-0022	XREF-0016	Tests assert price-only divergence behavior for VWAP/TWAP and broader field comparison only for OHLC.
+cmd/ratesengine-ops/cross_region_monitor.go	cmd	cmd/ratesengine-ops	done	EV-0022	XREF-0016	Long-running monitor reuses the same reduced comparison path as the one-shot checker.
+cmd/ratesengine-ops/cross_region_monitor_test.go	cmd	cmd/ratesengine-ops	done	EV-0022,EV-0024	XREF-0016	Monitor tests confirm the same price-only comparison model and fetch-error accounting as the live daemon path.
+cmd/ratesengine-ops/discovery.go	cmd	cmd/ratesengine-ops	done	EV-0030	XREF-0023	Operator discovery surface reviewed; it lists persisted discovered-assets rows but does not expose live discovery-drop pressure.
+cmd/ratesengine-ops/hubble_check.go	cmd	cmd/ratesengine-ops	done	EV-0039		Operator CLI surface covered by code review plus full-suite verification.
+cmd/ratesengine-ops/hubble_check_test.go	cmd	cmd/ratesengine-ops	done	EV-0039		Covered by completed repository test run for this snapshot.
+cmd/ratesengine-ops/hubble_soroban_events.go	cmd	cmd/ratesengine-ops	done	EV-0039		Operator CLI surface covered by code review plus full-suite verification.
+cmd/ratesengine-ops/hubble_soroban_events_test.go	cmd	cmd/ratesengine-ops	done	EV-0039		Covered by completed repository test run for this snapshot.
+cmd/ratesengine-ops/main.go	cmd	cmd/ratesengine-ops	done	EV-0022	XREF-0016	CLI help and subcommand wiring reviewed for the operator-facing cross-region contract claims.
+cmd/ratesengine-ops/supply.go	cmd	cmd/ratesengine-ops	done	EV-0026	XREF-0019	Operator supply audit flow reviewed against live snapshot table wiring assumptions.
+cmd/ratesengine-ops/verify_archive_chunks.go	cmd	cmd/ratesengine-ops	done	EV-0039		Operator CLI surface covered by code review plus full-suite verification.
+cmd/ratesengine-ops/verify_archive_chunks_integration_test.go	cmd	cmd/ratesengine-ops	done	EV-0039		Covered by completed repository test run for this snapshot.
+cmd/ratesengine-ops/verify_archive_chunks_test.go	cmd	cmd/ratesengine-ops	done	EV-0039		Covered by completed repository test run for this snapshot.
+cmd/ratesengine-ops/wasm_history_test.go	cmd	cmd/ratesengine-ops	done	EV-0039		Covered by completed repository test run for this snapshot.
+commitlint.config.js	(root)	commitlint.config.js	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+configs/ansible/README.md	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/ansible.cfg	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/inventory/r1.example.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/inventory/r2.example.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/inventory/r3.example.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/playbooks/archival-node.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/requirements.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/defaults/main.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/files/galexie-append.sh	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/files/galexie-archive-fill.sh	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/files/galexie-backfill-status.sh	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/files/node-healthcheck.sh	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/handlers/main.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/01-preflight.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/02-kernel.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/03-zfs.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/04-users.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/05-postgres.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/06-stellar-core.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/07-galexie.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/08-stellar-rpc.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/09-minio.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/11-firewall.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/12-hardening.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/13-healthcheck.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/14-ratesengine-services.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/tasks/main.yml	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/galexie.toml.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/minio.env.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/nftables.conf.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/pg_hba.conf.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/postgresql.conf.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/ratesengine.toml.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/sshd_config.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/stellar-core.cfg.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/stellar-rpc.cfg.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/galexie.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/minio.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/node-healthcheck.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/node-healthcheck.timer.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/ratesengine-aggregator.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/ratesengine-indexer.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/stellar-core.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/ansible/roles/archival-node/templates/systemd/stellar-rpc.service.j2	configs	configs/ansible	done	EV-0042	XREF-0030	Archival-node deployment surface covered in deploy/architecture pass; filesystem-backend violation logged separately.
+configs/example.toml	configs	configs/example.toml	done	EV-0003	XREF-0002	Example config still says auth modes are planned / none-only.
+deploy/docker-compose/.env.example	deploy	deploy/docker-compose	done	EV-0042		Local-stack deploy surface covered in reproducibility/deploy pass.
+deploy/docker-compose/README.md	deploy	deploy/docker-compose	done	EV-0008	XREF-0004	README examples and troubleshooting text are stale relative to migration graph and CLI.
+deploy/docker-compose/dev.yaml	deploy	deploy/docker-compose	done	EV-0002		Actual local dev stack composition reviewed.
+deploy/docker-compose/init/00-timescale-extension.sql	deploy	deploy/docker-compose	done	EV-0042		Local-stack deploy surface covered in reproducibility/deploy pass.
+deploy/monitoring/README.md	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/aggregator.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/anomaly.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/api.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/archive-completeness.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/cache.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/divergence.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/infra.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/ingestion.yml	deploy	deploy/monitoring	done	EV-0029,EV-0032	XREF-0022,XREF-0025	Ingestion rules reviewed; orphan/decode alerts exist despite missing production metric emission, and source-health alerts still depend on legacy-only gauges.
+deploy/monitoring/rules/meta.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/slo.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/stellar.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/storage.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/supply.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/monitoring/rules/verify-archive.yml	deploy	deploy/monitoring	done	EV-0041	XREF-0029	Monitoring-rule/control docs covered in observability pass; CI/test drift logged separately.
+deploy/systemd/archive-completeness.service	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+deploy/systemd/archive-completeness.timer	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+deploy/systemd/ratesengine-aggregator.service	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+deploy/systemd/ratesengine-api.service	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+deploy/systemd/ratesengine-indexer.service	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+deploy/systemd/verify-archive-tier-a.service	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+deploy/systemd/verify-archive-tier-a.timer	deploy	deploy/systemd	done	EV-0025,EV-0042		Systemd control surfaces covered in archive/deploy pass.
+docs/adr/0001-horizon-deprecated.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0002-minio-s3-compat-storage.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0003-i128-no-truncation.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0004-tier1-validator-aspiration.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0005-monorepo.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0006-timescaledb-for-price-time-series.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0007-redis-cache-schema.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0008-ha-topology.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0009-latency-budget.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0010-off-chain-fiat-representation.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0011-supply-algorithm.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0013-go-stellar-sdk-xdr-for-scval.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0014-crypto-ticker-representation.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0015-last-closed-bucket-rate-serving.md	docs	docs/adr	done	EV-0021	XREF-0015	Reviewed against closed-bucket source-order determinism requirements.
+docs/adr/0016-per-region-storage-strategy.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0017-archive-completeness-invariants.md	docs	docs/adr	done	EV-0025	XREF-0018	Accepted archive-completeness ADR reviewed against the live operator implementation and metrics/report surfaces.
+docs/adr/0018-api-consistency-surfaces.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/0019-anomaly-response-and-confidence-scoring.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/README.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/adr/_template.md	docs	docs/adr	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/aggregation-plan.md	docs	docs/architecture	done	EV-0017	XREF-0013	Deferred triangulation notes reviewed against live orchestrator implementation.
+docs/architecture/contract-schema-evolution.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/coverage-matrix.md	docs	docs/architecture	done	EV-0007	XREF-0003	Coverage matrix still assigns live ingest ownership to legacy `internal/consumer` path.
+docs/architecture/ecosystem-review-2026-04-23.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/ha-plan.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/infrastructure/archival-node-spec.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/infrastructure/existing-k8s-assessment.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/infrastructure/hosting-options.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/infrastructure/multi-region-topology.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/infrastructure/validator-rollout.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/ingest-pipeline.md	docs	docs/architecture	done	EV-0007	XREF-0001,XREF-0003	Binding ingest topology reviewed against runtime indexer and legacy consumer package.
+docs/architecture/launch-readiness-backlog.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/oracle-manipulation-defense.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/repo-hygiene-plan.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/architecture/semver-policy.md	docs	docs/architecture	done	EV-0044		Architecture/ADR policy surface used as binding audit baseline.
+docs/audit-2026-04-29/00-plan.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/01-tracker.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/02-protocol.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/03-journeys.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/04-reconciliation.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/05-findings-register.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/06-exclusions-register.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/README.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/evidence/README.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/evidence/cross-file-interactions.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/evidence/log.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/inventory/README.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/inventory/generate.sh	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/audit-2026-04-29/inventory/repo-snapshot.md	docs	docs/audit-2026-04-29	done	X-0002		Audit workspace control artifact; retained as auditable execution record, not product behavior.
+docs/ctx-proposal.md	docs	docs/ctx-proposal.md	done	EV-0044		Documentation surface covered in top-down architecture/docs-truth pass.
+docs/discovery/README.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/VERSIONS.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/adversarial-audit.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/archival-nodes.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/composable-data-platform.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/galexie.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/sep1-home-domain.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/stellar-archivist.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/stellar-data-lakes.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/stellar-etl.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/stellar-ledger-data-indexer.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/supply-data.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/withobsrvr-cdp-pipeline-workflow.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/withobsrvr-flowctl.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/withobsrvr-nebu.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/withobsrvr-overview.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/data-sources/withobsrvr-stellar-extract.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/decisions.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/delivery-plan.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/aquarius.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/blend.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/comet.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/phoenix.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/residual-defi-protocols.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/sdex.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/dexes-amms/soroswap.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/engineering-standards.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/existing-ctx-rates.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/external-refs/cex-feeds.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/external-refs/coingecko.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/external-refs/coinmarketcap.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/external-refs/fx-feeds.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/infrastructure/README.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/notes/cap-67-unified-events.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/notes/getevents-v2-proposal.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/notes/link-log.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/notes/sep-41-token-events.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/notes/seps-reference.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/oracles/band.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/oracles/chainlink.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/oracles/dia.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/oracles/redstone.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/oracles/reflector.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/phase1-closure.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/proposal-corrections.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/protocol-versions.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/repo-structure-plan.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/discovery/rfp-requirements-matrix.md	docs	docs/discovery	excluded	EV-0036		Frozen discovery archive; excluded from live-runtime truth target per X-0003.
+docs/freighter-rfp.md	docs	docs/freighter-rfp.md	done	EV-0044		Documentation surface covered in top-down architecture/docs-truth pass.
+docs/getting-started.md	docs	docs/getting-started.md	done	EV-0023	XREF-0017	Quick-start and endpoint-family guidance still mix legacy historical query shapes with the live handlers.
+docs/operations/alerts-catalog.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/archival-node-bringup.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/archive-completeness.md	docs	docs/operations	done	EV-0025	XREF-0018	Runbook describes a dual-archive daily verifier that the current CLI implementation does not yet provide.
+docs/operations/galexie-backfill.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/hubble-event-counts.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/public-flip.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/r1-deployment-state.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/release-process.md	docs	docs/operations	done	EV-0009	XREF-0005	Release runbook assumes goreleaser-based automation as a live control.
+docs/operations/runbooks/_template.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/aggregator-class-drop-spike.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/aggregator-outlier-storm.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/aggregator-silent.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/alertmanager-bad-config.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/all-ingestion-down.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/anomaly-freeze-engaged.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/api-5xx.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/api-down.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/api-latency.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/archive-completeness-stale.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/archive-divergence.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/archive-files-missing.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/archive-publish.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/archive-repair-source-degraded.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/backup-failed.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/bootstrap-archival-node.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/cagg-stale.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/compression-lag.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/core-lag.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/core-peers.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/cursor-stuck.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/db-disk-full.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/deadmansswitch.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/decode-errors.md	docs	docs/operations	done	EV-0029	XREF-0022	Runbook reviewed; it assumes a live decode-error signal that the current production ingest path never emits.
+docs/operations/runbooks/first-archival-node-deployment.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/host-cpu-high.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/host-down.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/host-memory-high.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/ingestion-lag.md	docs	docs/operations	done	EV-0032	XREF-0025	Runbook reviewed; it assumes a live per-source lag gauge that the current dispatcher indexer does not emit.
+docs/operations/runbooks/insert-errors.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/nvme-smart.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/nvme-thermal.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/oracle-stale.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/orphan-events.md	docs	docs/operations	done	EV-0029	XREF-0022	Runbook reviewed; it assumes a live orphan-events signal and debug-log workflow that the current ingest path does not wire.
+docs/operations/runbooks/pg-conns-saturated.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/price-divergence.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/price-stale.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/redis-master-down.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/redis-memory.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/redis-replication.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/replica-lag.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/rpc-lag.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/scrape-failing.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/source-stopped.md	docs	docs/operations	done	EV-0032	XREF-0025	Runbook reviewed; it assumes a live `source_enabled`/per-source health model from the current indexer that no longer exists in the active ingest path.
+docs/operations/runbooks/supply-cross-check-divergence.md	docs	docs/operations	done	EV-0027	XREF-0020	Runbook mitigation path claims `supply_basis=no_metadata` YAML override that is not implemented.
+docs/operations/runbooks/timescale-primary-down.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/verify-archive-run-stale.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/verify-archive-unit-failed.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/runbooks/zfs-degraded.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/sep1-resolution.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/sev-playbook.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/README.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/aquarius.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/band.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/comet.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/phoenix.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/redstone.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/reflector.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/operations/wasm-audits/soroswap.md	docs	docs/operations	done	EV-0041,EV-0025,EV-0029,EV-0032		Operations/control docs covered in observability and archive-control passes; specific drifts logged as findings.
+docs/reference/api-design.md	docs	docs/reference	done	EV-0003,EV-0011,EV-0012,EV-0020,EV-0023	XREF-0002,XREF-0007,XREF-0008,XREF-0014,XREF-0017	Rate-limit/header/caching and historical-surface contract sections reviewed against runtime auth, middleware, and live handler shapes.
+docs/reference/api/README.md	docs	docs/reference	done	EV-0037,EV-0041		Reference-doc surface covered through generated-doc and observability/docs-truth passes.
+docs/reference/api/index.html	docs	docs/reference	excluded	EV-0037		Generated API render; OpenAPI spec is the audited source of truth per X-0004.
+docs/reference/config/README.md	docs	docs/reference	done	EV-0003	XREF-0002	Generated config reference still describes auth validators as stubs.
+docs/reference/metrics/README.md	docs	docs/reference	done	EV-0029,EV-0030,EV-0032	XREF-0022,XREF-0023,XREF-0025	Metrics reference reviewed against runtime emission sites; decode/orphan counters are documented as live, discovery-drop visibility is absent, and source-health gauges still describe legacy-orchestrator behavior as if it were the current indexer contract.
+docs/stellar-rfp.md	docs	docs/stellar-rfp.md	done	EV-0044		Documentation surface covered in top-down architecture/docs-truth pass.
+go.mod	(root)	go.mod	done	EV-0010	XREF-0006	Dependency posture comments reviewed against mutable tool-install workflow behavior.
+go.sum	(root)	go.sum	done	EV-0043		Root governance/control surface covered by inventory/docs-truth pass.
+internal/aggregate/anomaly/anomaly_test.go	internal	internal/aggregate/anomaly	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/anomaly/class.go	internal	internal/aggregate/anomaly	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/anomaly/decision.go	internal	internal/aggregate/anomaly	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/anomaly/doc.go	internal	internal/aggregate/anomaly	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/anomaly/threshold.go	internal	internal/aggregate/anomaly	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/baseline/baseline.go	internal	internal/aggregate/baseline	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/baseline/baseline_test.go	internal	internal/aggregate/baseline	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/baseline/doc.go	internal	internal/aggregate/baseline	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/baseline/multi.go	internal	internal/aggregate/baseline	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/baseline/multi_test.go	internal	internal/aggregate/baseline	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/baseline/refresh.go	internal	internal/aggregate/baseline	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/baseline/refresh_test.go	internal	internal/aggregate/baseline	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/confidence/doc.go	internal	internal/aggregate/confidence	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/confidence/factors.go	internal	internal/aggregate/confidence	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/confidence/factors_test.go	internal	internal/aggregate/confidence	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/confidence/score.go	internal	internal/aggregate/confidence	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/confidence/score_test.go	internal	internal/aggregate/confidence	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/doc.go	internal	internal/aggregate/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/freeze/doc.go	internal	internal/aggregate/freeze	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/freeze/freeze.go	internal	internal/aggregate/freeze	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/freeze/freeze_test.go	internal	internal/aggregate/freeze	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/ohlc.go	internal	internal/aggregate/ohlc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/ohlc_test.go	internal	internal/aggregate/ohlc_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/orchestrator/confidence.go	internal	internal/aggregate/orchestrator	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/orchestrator/confidence_test.go	internal	internal/aggregate/orchestrator	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/orchestrator/orchestrator.go	internal	internal/aggregate/orchestrator	done	EV-0017	XREF-0013	Confirmed post-refresh triangulation pass is live in orchestrator ticks.
+internal/aggregate/orchestrator/orchestrator_test.go	internal	internal/aggregate/orchestrator	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/orchestrator/phase2_freeze.go	internal	internal/aggregate/orchestrator	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/orchestrator/phase2_freeze_test.go	internal	internal/aggregate/orchestrator	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/orchestrator/triangulate.go	internal	internal/aggregate/orchestrator	done	EV-0017	XREF-0013	Triangulation chain execution writes implied prices into ordinary VWAP cache keys.
+internal/aggregate/orchestrator/triangulate_test.go	internal	internal/aggregate/orchestrator	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/outliers.go	internal	internal/aggregate/outliers.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/outliers_test.go	internal	internal/aggregate/outliers_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/stablecoin.go	internal	internal/aggregate/stablecoin.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/stablecoin_test.go	internal	internal/aggregate/stablecoin_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/triangulate.go	internal	internal/aggregate/triangulate.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/triangulate_test.go	internal	internal/aggregate/triangulate_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/twap.go	internal	internal/aggregate/twap.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/twap_test.go	internal	internal/aggregate/twap_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/aggregate/vwap.go	internal	internal/aggregate/vwap.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/aggregate/vwap_test.go	internal	internal/aggregate/vwap_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/streaming/doc.go	internal	internal/api/streaming	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/streaming/event.go	internal	internal/api/streaming	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/streaming/handler.go	internal	internal/api/streaming	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/streaming/handler_test.go	internal	internal/api/streaming	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/streaming/hub.go	internal	internal/api/streaming	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/streaming/hub_test.go	internal	internal/api/streaming	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/streaming/ring.go	internal	internal/api/streaming	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/account.go	internal	internal/api/v1	done	EV-0014,EV-0015	XREF-0010,XREF-0011	Account self-service handlers reviewed; `/usage` placeholder and `/keys` status mismatch logged.
+internal/api/v1/account_test.go	internal	internal/api/v1	done	EV-0014,EV-0015	XREF-0010,XREF-0011	Tests confirm empty `/usage` placeholder and `200 OK` on key creation.
+internal/api/v1/assets.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/assets_f2.go	internal	internal/api/v1	done	EV-0026,EV-0027	XREF-0019,XREF-0020	F2 overlay path reviewed: best-effort handler exists, but live API binary omits `Supply` wiring and handler cannot synthesize `no_metadata`.
+internal/api/v1/assets_f2_internal_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/assets_f2_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/assets_sep1_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/assets_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/auth_sep10.go	internal	internal/api/v1	done	EV-0004	XREF-0002	Concrete SEP-10 challenge/token handlers reviewed.
+internal/api/v1/auth_sep10_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/clientaborted_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/closed_bucket_internal_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/doc.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/envelope.go	internal	internal/api/v1	done	EV-0015	XREF-0011	Shared envelope writer always emits `200 OK`; relevant to account-key contract mismatch.
+internal/api/v1/handler_middleware_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/helpers_internal_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/history.go	internal	internal/api/v1	done	EV-0023	XREF-0017	Raw trade history and since-inception bucketed history are distinct live surfaces with different query shapes.
+internal/api/v1/history_cursor_errors_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/history_cursor_internal_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/history_test.go	internal	internal/api/v1	done	EV-0023	XREF-0017	Tests lock in the since-inception `asset`+`granularity` path and fixed `price_type=vwap`.
+internal/api/v1/markets.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/markets_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/middleware/auth.go	internal	internal/api/v1	done	EV-0012	XREF-0008	Anonymous identity and XFF trust behavior reviewed.
+internal/api/v1/middleware/auth_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/middleware/cachecontrol.go	internal	internal/api/v1	done	EV-0018,EV-0020	XREF-0014	Cache-control middleware reviewed during docs-truth pass; no ETag/Last-Modified implementation present.
+internal/api/v1/middleware/cachecontrol_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/middleware/chain.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/middleware/context.go	internal	internal/api/v1	done	EV-0012	XREF-0008	Remote IP context propagation reviewed.
+internal/api/v1/middleware/cors.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/middleware/cors_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/middleware/doc.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/middleware/flush_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/middleware/logger.go	internal	internal/api/v1	done	EV-0012	XREF-0008	Remote IP resolution and log trust boundary reviewed.
+internal/api/v1/middleware/middleware_test.go	internal	internal/api/v1	done	EV-0012	XREF-0008	Tests confirm XFF first-hop precedence; no trust-gate coverage.
+internal/api/v1/middleware/ratelimit.go	internal	internal/api/v1	done	EV-0011,EV-0012	XREF-0007,XREF-0008	Default keying and fail-open behavior reviewed.
+internal/api/v1/middleware/ratelimit_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/middleware/recoverer.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/middleware/request_id.go	internal	internal/api/v1	done	EV-0018,EV-0020	XREF-0014	Request-ID middleware reviewed; implementation mints 32-char hex IDs rather than documented UUIDv7.
+internal/api/v1/middleware/security_headers.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/observations.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/observations_stream.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/observations_stream_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/observations_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/ohlc.go	internal	internal/api/v1	done	EV-0023	XREF-0017	Live OHLC handler is a single-bar raw-scan path over `base`/`quote` and `from`/`to`, not `timeframe`+`granularity`.
+internal/api/v1/ohlc_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/oracle.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/oracle_sep40.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/oracle_sep40_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/oracle_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/pairs.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/pairs_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/price.go	internal	internal/api/v1	done	EV-0017,EV-0021	XREF-0013,XREF-0015	Current `/v1/price` flags and source propagation reviewed against triangulation and closed-bucket ordering expectations.
+internal/api/v1/price_batch_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/price_stream.go	internal	internal/api/v1	done	EV-0021	XREF-0015	Closed-bucket stream contract reviewed against byte-identical payload requirement.
+internal/api/v1/price_stream_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/price_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/price_tip.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/price_tip_stream.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/price_tip_stream_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/price_tip_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/scaled_decimal_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/server.go	internal	internal/api/v1	done	EV-0004,EV-0005	XREF-0002	Route registration reviewed against stale binary header and auth docs.
+internal/api/v1/server_test.go	internal	internal/api/v1	done	EV-0018		Request-ID and handler-stack verification covered by targeted package tests.
+internal/api/v1/sources.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/sources_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/test_helpers_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/twap.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/twap_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/api/v1/vwap.go	internal	internal/api/v1	done	EV-0039		API/runtime package covered by handler and full-suite verification; contract findings logged separately.
+internal/api/v1/vwap_test.go	internal	internal/api/v1	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/archivecompleteness/cross_anchor.go	internal	internal/archivecompleteness/cross_anchor.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/archivecompleteness/cross_anchor_fill.go	internal	internal/archivecompleteness/cross_anchor_fill.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/archivecompleteness/cross_anchor_fill_test.go	internal	internal/archivecompleteness/cross_anchor_fill_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/archivecompleteness/cross_anchor_test.go	internal	internal/archivecompleteness/cross_anchor_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/archivecompleteness/doc.go	internal	internal/archivecompleteness/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/archivecompleteness/metrics.go	internal	internal/archivecompleteness/metrics.go	done	EV-0025	XREF-0018	Metrics layer still documents/emits `cross-anchor` as the only archive by default, not the full dual-archive contract.
+internal/archivecompleteness/metrics_test.go	internal	internal/archivecompleteness/metrics_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/archivecompleteness/report.go	internal	internal/archivecompleteness/report.go	done	EV-0025	XREF-0018	Report schema keeps `Primary` optional and currently nil in the live archive-completeness path.
+internal/auth/apikey.go	internal	internal/auth/apikey.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/apikey_redis.go	internal	internal/auth/apikey_redis.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/apikey_redis_test.go	internal	internal/auth/apikey_redis_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/auth/doc.go	internal	internal/auth/doc.go	done	EV-0004	XREF-0002	Package docs still claim SEP-10 scaffolding / Phase-5 implementation pending.
+internal/auth/errors.go	internal	internal/auth/errors.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/sep10.go	internal	internal/auth/sep10.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/sep10/doc.go	internal	internal/auth/sep10	done	EV-0004	XREF-0002	Concrete SEP-10 validator package reviewed.
+internal/auth/sep10/jwt.go	internal	internal/auth/sep10	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/sep10/validator.go	internal	internal/auth/sep10	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/sep10/validator_test.go	internal	internal/auth/sep10	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/auth/store.go	internal	internal/auth/store.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/store_redis_test.go	internal	internal/auth/store_redis_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/auth/subject.go	internal	internal/auth/subject.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/auth/subject_test.go	internal	internal/auth/subject_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/auth/validators_test.go	internal	internal/auth/validators_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/cachekeys/doc.go	internal	internal/cachekeys/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/cachekeys/keys.go	internal	internal/cachekeys/keys.go	done	EV-0017	XREF-0013	Cache-key namespace reviewed; no separate triangulation provenance key family exists.
+internal/cachekeys/keys_test.go	internal	internal/cachekeys/keys_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/amount.go	internal	internal/canonical/amount.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/amount_edge_test.go	internal	internal/canonical/amount_edge_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/amount_test.go	internal	internal/canonical/amount_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/asset.go	internal	internal/canonical/asset.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/asset_crypto.go	internal	internal/canonical/asset_crypto.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/asset_crypto_test.go	internal	internal/canonical/asset_crypto_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/asset_fiat.go	internal	internal/canonical/asset_fiat.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/asset_test.go	internal	internal/canonical/asset_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/discovery/doc.go	internal	internal/canonical/discovery	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/discovery/recorder.go	internal	internal/canonical/discovery	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/discovery/sink.go	internal	internal/canonical/discovery	done	EV-0030	XREF-0023	Discovery sink reviewed; it is intentionally lossy under backpressure and only exposes a local drop counter.
+internal/canonical/discovery/sink_test.go	internal	internal/canonical/discovery	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/discovery/sniffer.go	internal	internal/canonical/discovery	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/discovery/sniffer_test.go	internal	internal/canonical/discovery	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/doc.go	internal	internal/canonical/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/errors.go	internal	internal/canonical/errors.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/oracle.go	internal	internal/canonical/oracle.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/oracle_test.go	internal	internal/canonical/oracle_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/pair.go	internal	internal/canonical/pair.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/pair_test.go	internal	internal/canonical/pair_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/pair_validate_test.go	internal	internal/canonical/pair_validate_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/strkey.go	internal	internal/canonical/strkey.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/canonical/strkey_test.go	internal	internal/canonical/strkey_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/canonical/trade.go	internal	internal/canonical/trade.go	done	EV-0013	XREF-0009	Canonical trade identity and off-chain uniqueness contract reviewed.
+internal/canonical/trade_test.go	internal	internal/canonical/trade_test.go	done	EV-0013	XREF-0009	Tests document off-chain uniqueness assumptions but not storage mismatch.
+internal/config/aggregator_direct_test.go	internal	internal/config/aggregator_direct_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/config/config.go	internal	internal/config/config.go	done	EV-0003	XREF-0002	Source doc tags feeding config reference are stale about auth implementation status.
+internal/config/doc.go	internal	internal/config/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/config/load.go	internal	internal/config/load.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/config/load_test.go	internal	internal/config/load_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/config/metadata_test.go	internal	internal/config/metadata_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/config/passphrase_test.go	internal	internal/config/passphrase_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/config/schema.go	internal	internal/config/schema.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/config/schema_test.go	internal	internal/config/schema_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/config/validate.go	internal	internal/config/validate.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/config/validate_test.go	internal	internal/config/validate_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/consumer/doc.go	internal	internal/consumer/doc.go	done	EV-0007	XREF-0003	Explicitly marks `Source` / `Orchestrator` as legacy after dispatcher cutover.
+internal/consumer/orchestrator.go	internal	internal/consumer/orchestrator.go	done	EV-0007,EV-0031,EV-0032	XREF-0003,XREF-0024,XREF-0025	Legacy orchestrator reviewed for current runtime role; it remains the only writer for several source-health metrics and uses the correct one-label cursor gauge call the live indexer no longer matches.
+internal/consumer/orchestrator_test.go	internal	internal/consumer/orchestrator_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/consumer/source.go	internal	internal/consumer/source.go	done	EV-0007	XREF-0003	Legacy `Source` interface reviewed against current ingest binding rules.
+internal/dispatcher/contract_call_test.go	internal	internal/dispatcher/contract_call_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/dispatcher/contract_event_conv_test.go	internal	internal/dispatcher/contract_event_conv_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/dispatcher/dispatcher.go	internal	internal/dispatcher/dispatcher.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/dispatcher/dispatcher_test.go	internal	internal/dispatcher/dispatcher_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/dispatcher/extract_invoke_reject_test.go	internal	internal/dispatcher/extract_invoke_reject_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/dispatcher/helpers_test.go	internal	internal/dispatcher/helpers_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/dispatcher/routing_test.go	internal	internal/dispatcher/routing_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/dispatcher/testutil_test.go	internal	internal/dispatcher/testutil_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/divergence/coingecko.go	internal	internal/divergence/coingecko.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/divergence/compare.go	internal	internal/divergence/compare.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/divergence/divergence_test.go	internal	internal/divergence/divergence_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/divergence/doc.go	internal	internal/divergence/doc.go	done	EV-0018		Reviewed alongside divergence worker/API integration; targeted package tests passed.
+internal/divergence/reference.go	internal	internal/divergence/reference.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/divergence/worker.go	internal	internal/divergence/worker.go	done	EV-0018		Reviewed for cached warning semantics and current runtime integration; targeted package tests passed.
+internal/divergence/worker_test.go	internal	internal/divergence/worker_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/events/event.go	internal	internal/events/event.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/hashdb/hashdb.go	internal	internal/hashdb/hashdb.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/hashdb/hashdb_test.go	internal	internal/hashdb/hashdb_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/ledgerstream/ledgerstream.go	internal	internal/ledgerstream/ledgerstream.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/ledgerstream/ledgerstream_buffered_test.go	internal	internal/ledgerstream/ledgerstream_buffered_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/ledgerstream/ledgerstream_test.go	internal	internal/ledgerstream/ledgerstream_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/ledgerstream/seamed.go	internal	internal/ledgerstream/seamed.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/ledgerstream/seamed_test.go	internal	internal/ledgerstream/seamed_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/metadata/cache.go	internal	internal/metadata/cache.go	done	EV-0019		SEP-1 cache reviewed; lowercase keying and singleflight miss coalescing noted.
+internal/metadata/cache_test.go	internal	internal/metadata/cache_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/metadata/doc.go	internal	internal/metadata/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/metadata/domain_validator_test.go	internal	internal/metadata/domain_validator_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/metadata/helpers_test.go	internal	internal/metadata/helpers_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/metadata/sep1.go	internal	internal/metadata/sep1.go	done	EV-0019		SEP-1 resolver reviewed; SSRF, redirect, and body-size controls noted.
+internal/metadata/sep1_test.go	internal	internal/metadata/sep1_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/metadata/ssrf_internal_test.go	internal	internal/metadata/ssrf_internal_test.go	done	EV-0019		Private/reserved-range SSRF test grid reviewed.
+internal/obs/doc.go	internal	internal/obs/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/obs/http_middleware.go	internal	internal/obs/http_middleware.go	done	EV-0020	XREF-0014	HTTP metrics middleware reviewed; no Server-Timing or correlation-header implementation present.
+internal/obs/metrics.go	internal	internal/obs/metrics.go	done	EV-0029,EV-0030,EV-0031,EV-0032	XREF-0022,XREF-0023,XREF-0024,XREF-0025	Metrics registry reviewed against live emission sites; decode/orphan counters are registered but unwired, no discovery-drop metric exists, and multiple source-health contracts still point at legacy-only writers.
+internal/obs/metrics_test.go	internal	internal/obs/metrics_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/obs/middleware_unit_test.go	internal	internal/obs/middleware_unit_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/pipeline/datastore.go	internal	internal/pipeline/datastore.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/pipeline/dispatcher.go	internal	internal/pipeline/dispatcher.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/pipeline/processor.go	internal	internal/pipeline/processor.go	done	EV-0028	XREF-0021	Shared ledger-processing helper reviewed; dispatcher failure is absorbed and surfaced as success to cursor-managing callers.
+internal/pipeline/sink.go	internal	internal/pipeline/sink.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/ratelimit/bucket.go	internal	internal/ratelimit/bucket.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/ratelimit/bucket_edges_test.go	internal	internal/ratelimit/bucket_edges_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/ratelimit/bucket_test.go	internal	internal/ratelimit/bucket_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/ratelimit/doc.go	internal	internal/ratelimit/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/scval/must_encoders_test.go	internal	internal/scval/must_encoders_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/scval/scval.go	internal	internal/scval/scval.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/scval/scval_test.go	internal	internal/scval/scval_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/aquarius/README.md	internal	internal/sources/aquarius	done	EV-0033,EV-0039	XREF-0026	Aquarius decoder package covered by source pass; package docs drift logged separately.
+internal/sources/aquarius/adapter_test.go	internal	internal/sources/aquarius	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/aquarius/consumer.go	internal	internal/sources/aquarius	done	EV-0033,EV-0039	XREF-0026	Aquarius decoder package covered by source pass; package docs drift logged separately.
+internal/sources/aquarius/decode.go	internal	internal/sources/aquarius	done	EV-0033,EV-0039	XREF-0026	Aquarius decoder package covered by source pass; package docs drift logged separately.
+internal/sources/aquarius/decode_test.go	internal	internal/sources/aquarius	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/aquarius/dispatcher_adapter.go	internal	internal/sources/aquarius	done	EV-0033,EV-0039	XREF-0026	Aquarius decoder package covered by source pass; package docs drift logged separately.
+internal/sources/aquarius/events.go	internal	internal/sources/aquarius	done	EV-0033,EV-0039	XREF-0026	Aquarius decoder package covered by source pass; package docs drift logged separately.
+internal/sources/aquarius/real_fixture_test.go	internal	internal/sources/aquarius	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/aquarius/source_test.go	internal	internal/sources/aquarius	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/aquarius/topic_decoder_reject_test.go	internal	internal/sources/aquarius	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/band/README.md	internal	internal/sources/band	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/band/adapter_test.go	internal	internal/sources/band	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/band/consumer.go	internal	internal/sources/band	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/band/decode.go	internal	internal/sources/band	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/band/decode_relay_rejects_test.go	internal	internal/sources/band	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/band/decode_test.go	internal	internal/sources/band	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/band/dispatcher_adapter.go	internal	internal/sources/band	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/band/events.go	internal	internal/sources/band	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/band/helpers_test.go	internal	internal/sources/band	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/comet/README.md	internal	internal/sources/comet	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/comet/adapter_test.go	internal	internal/sources/comet	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/comet/consumer.go	internal	internal/sources/comet	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/comet/decode.go	internal	internal/sources/comet	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/comet/decode_body_reject_test.go	internal	internal/sources/comet	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/comet/decode_test.go	internal	internal/sources/comet	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/comet/dispatcher_adapter.go	internal	internal/sources/comet	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/comet/events.go	internal	internal/sources/comet	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/external/README.md	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/binance/adapter_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/binance/backfill.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/binance/backfill_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/binance/events.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/binance/jitter_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/binance/pairs.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/binance/parse.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/binance/parse_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/binance/restbase_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/binance/start_errors_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/binance/streamer.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/binance/streamer_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/adapter_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/backfill.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/bitstamp/backfill_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/candle_to_trade_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/decimal_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/events.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/bitstamp/helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/pairs.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/bitstamp/parse.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/bitstamp/parse_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/restbase_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/start_errors_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/bitstamp/streamer.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/bitstamp/streamer_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/adapter_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/backfill.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coinbase/backfill_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/candle_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/candle_to_trade_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/decimal_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/events.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coinbase/pairs.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coinbase/parse.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coinbase/parse_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/restbase_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/start_errors_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinbase/streamer.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coinbase/streamer_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coingecko/decimal_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coingecko/identity_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coingecko/poller.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coingecko/poller_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinmarketcap/decimal_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinmarketcap/identity_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/coinmarketcap/poller.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/coinmarketcap/poller_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/cryptocompare/decimal_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/cryptocompare/identity_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/cryptocompare/poller.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/cryptocompare/poller_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/ecb/decimal_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/ecb/identity_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/ecb/poller.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/ecb/poller_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/exchangeratesapi/decimal_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/exchangeratesapi/events.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/exchangeratesapi/identity_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/exchangeratesapi/poller.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/exchangeratesapi/poller_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/framework.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/framework_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/adapter_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/backfill.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/kraken/backfill_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/candle_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/events.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/kraken/intat_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/pairs.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/kraken/parse.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/kraken/parse_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/restbase_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/start_errors_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/kraken/streamer.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/kraken/streamer_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/polygonforex/decimal_helpers_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/polygonforex/events.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/polygonforex/identity_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/polygonforex/poller.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/polygonforex/poller_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/registry.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/runner.go	internal	internal/sources/external	done	EV-0040,EV-0039	XREF-0028	External source fleet covered at registry/runtime level; phantom-source drift logged separately.
+internal/sources/external/runner_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/external/runner_trade_test.go	internal	internal/sources/external	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/phoenix/README.md	internal	internal/sources/phoenix	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/phoenix/adapter_test.go	internal	internal/sources/phoenix	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/phoenix/consumer.go	internal	internal/sources/phoenix	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/phoenix/decode.go	internal	internal/sources/phoenix	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/phoenix/decode_test.go	internal	internal/sources/phoenix	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/phoenix/dispatcher_adapter.go	internal	internal/sources/phoenix	done	EV-0029	XREF-0022	Stateful Phoenix adapter reviewed; orphan-export comments still describe future wiring rather than live production emission.
+internal/sources/phoenix/events.go	internal	internal/sources/phoenix	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/phoenix/real_fixture_test.go	internal	internal/sources/phoenix	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/phoenix/sdk_parse_test.go	internal	internal/sources/phoenix	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/phoenix/source_test.go	internal	internal/sources/phoenix	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/redstone/README.md	internal	internal/sources/redstone	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/redstone/adapter_test.go	internal	internal/sources/redstone	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/redstone/consumer.go	internal	internal/sources/redstone	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/redstone/decode.go	internal	internal/sources/redstone	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/redstone/decode_test.go	internal	internal/sources/redstone	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/redstone/dispatcher_adapter.go	internal	internal/sources/redstone	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/redstone/dispatcher_adapter_test.go	internal	internal/sources/redstone	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/redstone/events.go	internal	internal/sources/redstone	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/redstone/helpers_test.go	internal	internal/sources/redstone	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/reflector/README.md	internal	internal/sources/reflector	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/reflector/adapter_test.go	internal	internal/sources/reflector	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/reflector/consumer.go	internal	internal/sources/reflector	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/reflector/decode.go	internal	internal/sources/reflector	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/reflector/decode_test.go	internal	internal/sources/reflector	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/reflector/decoder_edges_test.go	internal	internal/sources/reflector	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/reflector/dispatcher_adapter.go	internal	internal/sources/reflector	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/reflector/events.go	internal	internal/sources/reflector	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/reflector/real_fixture_test.go	internal	internal/sources/reflector	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/reflector/source_test.go	internal	internal/sources/reflector	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/sdex/README.md	internal	internal/sources/sdex	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/sdex/adapter_test.go	internal	internal/sources/sdex	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/sdex/decode.go	internal	internal/sources/sdex	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/sdex/decode_test.go	internal	internal/sources/sdex	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/sdex/dispatcher_adapter.go	internal	internal/sources/sdex	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/sdex/events.go	internal	internal/sources/sdex	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/sdex/extract_claims_test.go	internal	internal/sources/sdex	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/soroswap/README.md	internal	internal/sources/soroswap	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/soroswap/adapter_test.go	internal	internal/sources/soroswap	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/soroswap/consumer.go	internal	internal/sources/soroswap	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/soroswap/decode.go	internal	internal/sources/soroswap	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/soroswap/decode_test.go	internal	internal/sources/soroswap	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/soroswap/dispatcher_adapter.go	internal	internal/sources/soroswap	done	EV-0029	XREF-0022	Stateful Soroswap adapter reviewed; orphan/decode observability comments still diverge from live production wiring.
+internal/sources/soroswap/events.go	internal	internal/sources/soroswap	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/soroswap/factory_seed.go	internal	internal/sources/soroswap	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/sources/soroswap/factory_seed_test.go	internal	internal/sources/soroswap	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/soroswap/real_fixture_test.go	internal	internal/sources/soroswap	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/sources/soroswap/source_test.go	internal	internal/sources/soroswap	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/stellarrpc/client.go	internal	internal/stellarrpc/client.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/stellarrpc/client_test.go	internal	internal/stellarrpc/client_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/stellarrpc/doc.go	internal	internal/stellarrpc/doc.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/stellarrpc/extra_test.go	internal	internal/stellarrpc/extra_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/stellarrpc/invoke.go	internal	internal/stellarrpc/invoke.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/stellarrpc/invoke_test.go	internal	internal/stellarrpc/invoke_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/stellarrpc/options_test.go	internal	internal/stellarrpc/options_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/stellarrpc/types.go	internal	internal/stellarrpc/types.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/aggregates.go	internal	internal/storage/timescale	done	EV-0021	XREF-0015	CAGG read path reviewed; sources array passes through without deterministic reordering.
+internal/storage/timescale/aggregates_test.go	internal	internal/storage/timescale	done	EV-0021	XREF-0015	Array scan tests reviewed; no coverage for deterministic CAGG source ordering.
+internal/storage/timescale/assets.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/baseline.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/cursors.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/discovery.go	internal	internal/storage/timescale	done	EV-0030	XREF-0023	Discovery persistence path reviewed; storage retains recorded hits but does not provide a live signal for sink-side drops.
+internal/storage/timescale/doc.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/markets.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/oracle.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/store.go	internal	internal/storage/timescale	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/storage/timescale/supply.go	internal	internal/storage/timescale	done	EV-0026,EV-0027	XREF-0019,XREF-0020	Snapshot read/write helpers exist, but comments and operator docs overstate the live no-metadata and producer integration state.
+internal/storage/timescale/supply_test.go	internal	internal/storage/timescale	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/storage/timescale/trades.go	internal	internal/storage/timescale	done	EV-0013	XREF-0009	Insert conflict target reviewed against canonical trade identity.
+internal/supply/classic.go	internal	internal/supply/classic.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/classic_test.go	internal	internal/supply/classic_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/supply/crosscheck.go	internal	internal/supply/crosscheck.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/crosscheck_test.go	internal	internal/supply/crosscheck_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/supply/doc.go	internal	internal/supply/doc.go	done	EV-0006		Package doc reviewed; still described by orientation docs as planned despite live package/tests existing.
+internal/supply/key.go	internal	internal/supply/key.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/overlay.go	internal	internal/supply/overlay.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/overlay_test.go	internal	internal/supply/overlay_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/supply/policy.go	internal	internal/supply/policy.go	done	EV-0027	XREF-0020	Policy model only supports locked-set and max-supply overrides; no operator knob exists to force `no_metadata`.
+internal/supply/policy_test.go	internal	internal/supply/policy_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/supply/sep41.go	internal	internal/supply/sep41.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/sep41_test.go	internal	internal/supply/sep41_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/supply/supply.go	internal	internal/supply/supply.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/xlm.go	internal	internal/supply/xlm.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/supply/xlm_test.go	internal	internal/supply/xlm_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+internal/version/version.go	internal	internal/version/version.go	done	EV-0039		Internal package covered by package/runtime pass and full-suite verification.
+internal/version/version_test.go	internal	internal/version/version_test.go	done	EV-0039		Covered by completed repository test run for this snapshot.
+migrations/0001_create_trades_hypertable.down.sql	migrations	migrations/0001_create_trades_hypertable.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0001_create_trades_hypertable.up.sql	migrations	migrations/0001_create_trades_hypertable.up.sql	done	EV-0013	XREF-0009	Trades PK/identity definition reviewed.
+migrations/0002_create_price_aggregates.down.sql	migrations	migrations/0002_create_price_aggregates.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0002_create_price_aggregates.up.sql	migrations	migrations/0002_create_price_aggregates.up.sql	done	EV-0021	XREF-0015	CAGG definition reviewed; `array_agg(DISTINCT source)` has no `ORDER BY`.
+migrations/0003_create_oracle_updates_hypertable.down.sql	migrations	migrations/0003_create_oracle_updates_hypertable.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0003_create_oracle_updates_hypertable.up.sql	migrations	migrations/0003_create_oracle_updates_hypertable.up.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0004_relax_trades_ledger_for_offchain.down.sql	migrations	migrations/0004_relax_trades_ledger_for_offchain.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0004_relax_trades_ledger_for_offchain.up.sql	migrations	migrations/0004_relax_trades_ledger_for_offchain.up.sql	done	EV-0013	XREF-0009	Off-chain ledger relaxation reviewed for dedupe consequences.
+migrations/0005_create_asset_supply_history.down.sql	migrations	migrations/0005_create_asset_supply_history.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0005_create_asset_supply_history.up.sql	migrations	migrations/0005_create_asset_supply_history.up.sql	done	EV-0026	XREF-0019	Supply snapshot schema reviewed against live API/ops assumptions.
+migrations/0006_create_discovered_assets.down.sql	migrations	migrations/0006_create_discovered_assets.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0006_create_discovered_assets.up.sql	migrations	migrations/0006_create_discovered_assets.up.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0007_create_volatility_baseline.down.sql	migrations	migrations/0007_create_volatility_baseline.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0007_create_volatility_baseline.up.sql	migrations	migrations/0007_create_volatility_baseline.up.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0008_add_multi_window_baseline.down.sql	migrations	migrations/0008_add_multi_window_baseline.down.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/0008_add_multi_window_baseline.up.sql	migrations	migrations/0008_add_multi_window_baseline.up.sql	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+migrations/README.md	migrations	migrations/README.md	done	EV-0039		Schema/migration surface covered by storage pass and repository verification.
+openapi/rates-engine.v1.yaml	openapi	openapi/rates-engine.v1.yaml	done	EV-0015,EV-0016,EV-0023,EV-0027	XREF-0010,XREF-0011,XREF-0012,XREF-0017,XREF-0020	Account, SEP-10, historical-surface, and F2/no-metadata contract sections reviewed against handlers/tests.
+pkg/client/client.go	pkg	pkg/client	done	EV-0039		Public package surface covered by repository verification.
+pkg/client/client_test.go	pkg	pkg/client	done	EV-0039		Covered by completed repository test run for this snapshot.
+pkg/client/doc.go	pkg	pkg/client	done	EV-0039		Public package surface covered by repository verification.
+pkg/client/endpoints.go	pkg	pkg/client	done	EV-0039		Public package surface covered by repository verification.
+pkg/client/errors.go	pkg	pkg/client	done	EV-0039		Public package surface covered by repository verification.
+pkg/client/types.go	pkg	pkg/client	done	EV-0039		Public package surface covered by repository verification.
+scripts/ci/lint-docs.sh	scripts	scripts/ci	done	EV-0041		CI script surface covered by docs/CI reconciliation pass.
+scripts/ci/lint-imports.baseline	scripts	scripts/ci	done	EV-0041		CI script surface covered by docs/CI reconciliation pass.
+scripts/ci/lint-imports.sh	scripts	scripts/ci	done	EV-0041		CI script surface covered by docs/CI reconciliation pass.
+scripts/ci/lint-openapi-urls/main.go	scripts	scripts/ci	done	EV-0041		CI script surface covered by docs/CI reconciliation pass.
+scripts/ci/lint-openapi-urls/main_test.go	scripts	scripts/ci	done	EV-0039		Covered by completed repository test run for this snapshot.
+scripts/dev/capture-aquarius-fixtures.sh	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/capture-phoenix-fixtures.sh	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/capture-reflector-fixtures.sh	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/capture-soroswap-fixtures.sh	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/decode-scval/main.go	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/docs-api.sh	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/encode-topics/main.go	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+scripts/dev/verify.sh	scripts	scripts/dev	done	EV-0039		Script surface covered by repository verification.
+test/fixtures/aquarius/README.md	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/aquarius/v2-2026-04-23/trade_62150001_78d86d0651d6.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/aquarius/v2-2026-04-23/trade_62150002_c10926193bbf.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/aquarius/v2-2026-04-23/trade_62150008_011e6da020d0.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/aquarius/v2-2026-04-23/trade_62150009_f198ed9bbf20.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/aquarius/v2-2026-04-23/trade_62150015_bfcaf29a700e.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/aquarius/v2-2026-04-23/trade_62150016_867a58fc1074.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/phoenix/README.md	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/phoenix/v1-2026-04-23/swap_62152147_e02dd755d908_op0.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/phoenix/v1-2026-04-23/swap_62152151_3344df48208d_op0.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/phoenix/v1-2026-04-23/swap_62152161_a6ba62489188_op0.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/phoenix/v1-2026-04-23/swap_62152205_0380cf639c03_op0.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/phoenix/v1-2026-04-23/swap_62152230_f7f2d72d76ed_op0.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/README.md	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251160_9322ba2f5c95.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251211_f59b732d06a5.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251212_9cb88c0d16be.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251214_7b118512cb3c.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251264_05abe847b5e7.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251264_6ffecff3710f.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251266_eb374149026f.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251315_249d802c22ac.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251318_16fe2dc65f04.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/reflector/v6-2026-04-23/62251319_fe831d797869.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/README.md	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62150023_c14ce685522b.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62150119_10545d5bab5b.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62150120_b981c9dfcf4a.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62150123_8e026f1fc1fe.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62150250_1103f839cf9e.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62240138_27ed2ab56d42.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62240235_57fc5f567ba7.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/swap_62240240_47a924fb69c5.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62150023_c14ce685522b.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62150119_10545d5bab5b.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62150120_b981c9dfcf4a.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62150123_8e026f1fc1fe.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62150250_1103f839cf9e.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62240138_27ed2ab56d42.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62240235_57fc5f567ba7.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/fixtures/soroswap/v1-2026-04-23/sync_62240240_47a924fb69c5.json	test	test/fixtures	excluded	EV-0038		Captured regression corpus; covered through owning decoder tests per X-0005.
+test/integration/api_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/assets_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/baseline_storage_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/decoders_to_storage_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/discovery_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/doc.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/external_fleet_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/ledgerstream_to_storage_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/migrations_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/storage_test.go	test	test/integration	done	EV-0013	XREF-0009	Duplicate insert coverage reviewed; only exact same trade object path exercised.
+test/integration/supply_storage_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.
+test/integration/trades_range_test.go	test	test/integration	done	EV-0039		Covered by completed repository test run for this snapshot.

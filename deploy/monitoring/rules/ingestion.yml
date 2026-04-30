@@ -41,21 +41,6 @@ groups:
             or shared storage (Timescale) before restarting the indexer.
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
-      - alert: ratesengine_ingestion_lag_high
-        expr: ratesengine_source_lag_ledgers > 1000
-        for: 10m
-        labels:
-          severity: ticket
-          team: ratesengine
-          component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-lag.md
-        annotations:
-          summary: "Source {{ $labels.source }} lagging by {{ $value }} ledgers"
-          description: |
-            Source {{ $labels.source }} is more than 1000 ledgers behind the
-            network tip for 10+ minutes. At 5 s per ledger, that's ~1.4 hours
-            of freshness debt.
-
       - alert: ratesengine_ingestion_cursor_stuck
         expr: |
           increase(ratesengine_cursor_last_ledger[5m]) == 0
@@ -105,6 +90,22 @@ groups:
             Source {{ $labels.source }} failed to decode > 1 event/sec for 5+
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
+
+      - alert: ratesengine_ingestion_discovery_drops
+        expr: increase(ratesengine_discovery_dropped_hits_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/discovery-drops.md
+        annotations:
+          summary: "Discovery sink is dropping hits"
+          description: |
+            The SEP-41 discovery sink dropped at least one hit in the last
+            10 minutes and continued doing so for 10 minutes. This does not
+            stall the main ingest path, but discovery coverage is degrading
+            under recorder pressure or buffer saturation.
 
       - alert: ratesengine_ingestion_insert_errors
         expr: sum by (source, kind) (rate(ratesengine_source_insert_errors_total[5m])) > 0.1

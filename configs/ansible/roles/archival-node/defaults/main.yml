@@ -368,7 +368,6 @@ captive_peer_port_rpc:     11725
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
 galexie_version:         "galexie-v26.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version).
-galexie_backend_type:    "s3"          # s3 | filesystem
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"
 galexie_s3_region:       "{{ region_id }}"

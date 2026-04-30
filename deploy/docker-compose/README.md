@@ -37,7 +37,7 @@ make db-migrate-status
 Expected output after `db-migrate-up`:
 
 ```
-migrated to version 2 (dirty=false)
+migrated to version 8 (dirty=false)
 ```
 
 ## Services
@@ -123,8 +123,8 @@ docker compose -f deploy/docker-compose/dev.yaml logs -f minio
   store. Run `make dev-teardown` then `make dev`.
 - **`dirty=true` after a migration** — a migration started but
   didn't finish. Inspect the log, manually fix, and use
-  `ratesengine-migrate -dsn ... force $VERSION` (unimplemented
-  today; track against TODO(#0)) or clean slate with teardown.
+  `ratesengine-migrate -dsn ... force $VERSION`, or clean slate
+  with teardown if this is only a local dev stack.
 
 ## References
 

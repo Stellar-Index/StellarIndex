@@ -64,6 +64,16 @@ stellar-galexie   v26.0.0      (pinned per tag + SHA 6dec23e2)
 rs-stellar-archivist  (pre-tag; pin SHA a6a25033)
 ```
 
+Install-time tooling pinned by this repo snapshot:
+
+```
+mvdan.cc/gofumpt                  v0.8.0
+golang.org/x/tools/cmd/goimports  v0.42.0
+github.com/golangci/golangci-lint/v2/cmd/golangci-lint v2.11.4
+golang.org/x/vuln/cmd/govulncheck v1.1.4
+gitleaks                          v8.21.2
+```
+
 On-chain contracts we read (the WASM hashes are the strong pin;
 the repo SHA is how we audited the source that produced that hash):
 

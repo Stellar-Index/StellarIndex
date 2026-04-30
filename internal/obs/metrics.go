@@ -35,6 +35,7 @@ func init() {
 		SourceEnabled,
 		SourceDecodeErrorsTotal,
 		SourceOrphanEventsTotal,
+		DiscoveryDroppedHitsTotal,
 		SourceInsertErrorsTotal,
 		RateLimitFailOpenTotal,
 		Sep1CacheOpsTotal,
@@ -173,6 +174,17 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 		Help: "Events that arrived without their required correlation partner, per source.",
 	},
 	[]string{"source"},
+)
+
+// DiscoveryDroppedHitsTotal — count of SEP-41 discovery hits that
+// were dropped because the async sink buffer was full. Discovery is
+// intentionally best-effort, but operators still need a live signal
+// when the buffer starts shedding records under write pressure.
+var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "ratesengine_discovery_dropped_hits_total",
+		Help: "Discovery hits dropped because the async discovery sink buffer was full.",
+	},
 )
 
 // Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache

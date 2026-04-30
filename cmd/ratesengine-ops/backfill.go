@@ -45,11 +45,11 @@ import (
 //     upgrade in place"). Backfill refuses to run an unsafe source.
 //
 // Trade-row idempotency is the storage layer's responsibility — the
-// trades hypertable's unique index on (source, ledger, tx_hash,
-// op_index) makes re-running over the same range a no-op rather
-// than producing duplicates. Aggregator CAGGs recompute from the
-// underlying rows so duplicate suppression at insert time is
-// sufficient.
+// trades hypertable currently dedupes on (source, ledger, tx_hash,
+// op_index, ts), so re-running over the same range is a no-op only
+// when the replay reproduces the same timestamp too. Aggregator CAGGs
+// recompute from the underlying rows so duplicate suppression at
+// insert time is sufficient once that storage identity matches.
 
 // backfillOpts holds the parsed + validated CLI inputs. Pulled out
 // of the entry point so flag-parsing + validation are unit-testable

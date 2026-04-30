@@ -76,7 +76,7 @@ func TestSources_FilterByClass(t *testing.T) {
 		},
 		{
 			class: "authority_sanity",
-			want:  map[string]bool{"ecb": true, "fed-h10": true},
+			want:  map[string]bool{"ecb": true},
 		},
 	}
 	for _, tc := range cases {

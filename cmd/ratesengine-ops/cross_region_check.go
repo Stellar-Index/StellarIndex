@@ -19,7 +19,8 @@ import (
 //
 // Queries each configured region's /v1/vwap (or /v1/twap, /v1/ohlc)
 // for the same closed-bucket window and asserts the responses are
-// byte-equivalent on the price field.
+// equivalent on every stable user-visible field in the response
+// contract.
 //
 // Per ADR-0015, closed-bucket aggregations are deterministic given
 // the same trade inputs — once postgres replication has carried
@@ -56,23 +57,37 @@ const (
 )
 
 // crossRegionResponse is the shape we extract from each region's
-// rate endpoint. We don't unmarshal the full envelope; we just need
-// the fields that participate in the equality assertion.
+// rate endpoint. We don't unmarshal every possible envelope member
+// (for example `as_of` is intentionally excluded because handlers
+// stamp it at response time), but we do extract every stable
+// user-visible field that ADR-0015 expects to agree cross-region.
 type crossRegionResponse struct {
-	From  time.Time `json:"from"`
-	To    time.Time `json:"to"`
-	Price string    `json:"price"`
+	From    time.Time        `json:"from"`
+	To      time.Time        `json:"to"`
+	Price   string           `json:"price"`
+	Sources []string         `json:"sources,omitempty"`
+	Flags   crossRegionFlags `json:"flags"`
 	// The discriminator fields below differ by endpoint. We keep
 	// them in the same struct so a single comparison loop covers
 	// vwap / twap / ohlc.
-	Open  string `json:"open,omitempty"`  // OHLC only
-	High  string `json:"high,omitempty"`  // OHLC only
-	Low   string `json:"low,omitempty"`   // OHLC only
-	Close string `json:"close,omitempty"` // OHLC only
+	Open             string `json:"open,omitempty"`  // OHLC only
+	High             string `json:"high,omitempty"`  // OHLC only
+	Low              string `json:"low,omitempty"`   // OHLC only
+	Close            string `json:"close,omitempty"` // OHLC only
+	BaseVolume       string `json:"base_volume,omitempty"`
+	QuoteVolume      string `json:"quote_volume,omitempty"`
+	TradeCount       int    `json:"trade_count,omitempty"`
+	OutliersFiltered int    `json:"outliers_filtered,omitempty"` // VWAP only
+	Truncated        bool   `json:"truncated,omitempty"`
+}
 
-	BaseVolume  string `json:"base_volume,omitempty"`
-	QuoteVolume string `json:"quote_volume,omitempty"`
-	TradeCount  int    `json:"trade_count,omitempty"`
+type crossRegionFlags struct {
+	Stale             bool `json:"stale"`
+	ReducedRedundancy bool `json:"reduced_redundancy"`
+	Triangulated      bool `json:"triangulated"`
+	DivergenceWarning bool `json:"divergence_warning"`
+	Frozen            bool `json:"frozen,omitempty"`
+	SingleSource      bool `json:"single_source,omitempty"`
 }
 
 // regionResult pairs the region's name with what we got back from it.
@@ -276,9 +291,13 @@ func fetchOneRegion(
 	// We just need the data field; tolerate both wrapped and unwrapped
 	// shapes (test stubs may return unwrapped).
 	var envelope struct {
-		Data crossRegionResponse `json:"data"`
+		Data    crossRegionResponse `json:"data"`
+		Sources []string            `json:"sources"`
+		Flags   crossRegionFlags    `json:"flags"`
 	}
 	if err := json.Unmarshal(body, &envelope); err == nil && !envelope.Data.From.IsZero() {
+		envelope.Data.Sources = append([]string(nil), envelope.Sources...)
+		envelope.Data.Flags = envelope.Flags
 		return &envelope.Data, nil
 	}
 	var direct crossRegionResponse
@@ -340,9 +359,10 @@ func analyseRegionResults(
 		return false
 	}
 
-	// Compare comparable fields. Equality is exact byte-string match
-	// per ADR-0015 — the closed-bucket clamp guarantees byte-equal
-	// JSON from regions that agree on the trade corpus.
+	// Compare the stable contract fields. Equality is exact
+	// byte-string/value match per ADR-0015 once the trade corpus
+	// agrees; intentionally ephemeral fields such as `as_of` are not
+	// part of the comparison set.
 	keys := comparableKeys(metric)
 	disagreements := map[string]map[string]string{} // key → region → value
 	for _, k := range keys {
@@ -397,26 +417,38 @@ func analyseRegionResults(
 	return false
 }
 
-// comparableKeys returns the field names the divergence check should
-// compare for the given metric. We deliberately don't compare every
-// numeric field — outliers_filtered, base_volume, quote_volume can
-// differ legitimately if regions had different upstream data even
-// when the headline price agrees. The price field is the contractual
-// output; other fields are diagnostic.
+// comparableKeys returns the stable user-visible fields the
+// divergence check should compare for the given metric.
 func comparableKeys(m crossRegionMetric) []string {
+	common := []string{
+		"from", "to", "sources",
+		"flags.stale", "flags.reduced_redundancy", "flags.triangulated",
+		"flags.divergence_warning", "flags.frozen", "flags.single_source",
+	}
 	switch m {
 	case metricOHLC:
-		return []string{"price", "open", "high", "low", "close"}
+		return append(common,
+			"open", "high", "low", "close",
+			"base_volume", "quote_volume", "trade_count", "truncated",
+		)
 	case metricVWAP, metricTWAP:
-		return []string{"price"}
+		keys := append(common, "price", "trade_count", "truncated")
+		if m == metricVWAP {
+			keys = append(keys, "base_volume", "quote_volume", "outliers_filtered")
+		}
+		return keys
 	}
-	return []string{"price"}
+	return append(common, "price")
 }
 
 // extractField reads a named field's stringified value off the
 // response. Used for divergence diff output.
 func extractField(r *crossRegionResponse, name string) string {
 	switch name {
+	case "from":
+		return r.From.UTC().Format(time.RFC3339Nano)
+	case "to":
+		return r.To.UTC().Format(time.RFC3339Nano)
 	case "price":
 		return r.Price
 	case "open":
@@ -427,11 +459,41 @@ func extractField(r *crossRegionResponse, name string) string {
 		return r.Low
 	case "close":
 		return r.Close
+	case "base_volume":
+		return r.BaseVolume
+	case "quote_volume":
+		return r.QuoteVolume
 	case "trade_count":
 		return fmt.Sprintf("%d", r.TradeCount)
+	case "outliers_filtered":
+		return fmt.Sprintf("%d", r.OutliersFiltered)
+	case "truncated":
+		return fmt.Sprintf("%t", r.Truncated)
+	case "sources":
+		return mustJSONString(r.Sources)
+	case "flags.stale":
+		return fmt.Sprintf("%t", r.Flags.Stale)
+	case "flags.reduced_redundancy":
+		return fmt.Sprintf("%t", r.Flags.ReducedRedundancy)
+	case "flags.triangulated":
+		return fmt.Sprintf("%t", r.Flags.Triangulated)
+	case "flags.divergence_warning":
+		return fmt.Sprintf("%t", r.Flags.DivergenceWarning)
+	case "flags.frozen":
+		return fmt.Sprintf("%t", r.Flags.Frozen)
+	case "flags.single_source":
+		return fmt.Sprintf("%t", r.Flags.SingleSource)
 	default:
 		return ""
 	}
+}
+
+func mustJSONString(v any) string {
+	buf, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("<json-error:%v>", err)
+	}
+	return string(buf)
 }
 
 // truncate caps a string for error-message inclusion. Body dumps in

@@ -60,7 +60,6 @@ all:
 
     # ───── Galexie data store overrides ────────────────────────────
     # Live ingest writes here (local MinIO via the standard endpoint).
-    galexie_backend_type: "s3"
     galexie_s3_endpoint:  "http://127.0.0.1:9000"
     galexie_s3_bucket:    "galexie-live"
     galexie_s3_region:    "{{ region_id }}"
