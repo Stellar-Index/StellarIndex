@@ -272,16 +272,16 @@ func run(cfgPath string, dryRun bool) error {
 	// operator's mechanism. When true, the goroutine path takes
 	// over and the systemd timer should be disabled.
 	if cfg.Supply.AggregatorRefreshEnabled {
-		refreshers, err := buildSupplyRefreshers(cfg, store, logger.With("component", "supply-refresh"))
+		bindings, err := buildSupplyRefreshers(cfg, store, logger.With("component", "supply-refresh"))
 		if err != nil {
 			return fmt.Errorf("supply refresher init: %w", err)
 		}
-		for _, r := range refreshers {
+		for _, b := range bindings {
 			refresherWG.Add(1)
-			go func(refresher *supply.Refresher) {
+			go func(binding supplyRefresherBinding) {
 				defer refresherWG.Done()
-				runSupplyRefresh(rootCtx, refresher, cfg.Supply.AggregatorRefreshCadence)
-			}(r)
+				runSupplyRefresh(rootCtx, binding.refresher, cfg.Supply.AggregatorRefreshCadence, binding.assetKey)
+			}(b)
 		}
 	}
 
@@ -298,6 +298,16 @@ func run(cfgPath string, dryRun bool) error {
 	return nil
 }
 
+// supplyRefresherBinding pairs a [supply.Refresher] with the
+// asset_key that labels its outcome metrics. Per-asset binding
+// lets `ratesengine_aggregator_supply_refresh_total{asset_key,outcome}`
+// surface which watched asset is failing without operators
+// having to grep logs.
+type supplyRefresherBinding struct {
+	refresher *supply.Refresher
+	assetKey  string
+}
+
 // buildSupplyRefreshers composes one [supply.Refresher] per
 // watched asset across all three algorithms:
 //
@@ -312,31 +322,31 @@ func run(cfgPath string, dryRun bool) error {
 //
 // Returns an error on operator-config inconsistencies (per
 // [config.SupplyConfig.Validate] + per-asset parse errors).
-func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]*supply.Refresher, error) {
-	out := make([]*supply.Refresher, 0, 1+len(cfg.Supply.WatchedClassicAssets)+len(cfg.Supply.WatchedSEP41Contracts))
+func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
+	out := make([]supplyRefresherBinding, 0, 1+len(cfg.Supply.WatchedClassicAssets)+len(cfg.Supply.WatchedSEP41Contracts))
 
 	xlmRefresher, err := buildXLMRefresher(cfg, store, logger)
 	if err != nil {
 		return nil, fmt.Errorf("xlm refresher: %w", err)
 	}
-	out = append(out, xlmRefresher)
+	out = append(out, supplyRefresherBinding{refresher: xlmRefresher, assetKey: "XLM"})
 
-	classicRefreshers, err := buildClassicRefreshers(cfg, store, logger)
+	classicBindings, err := buildClassicRefreshers(cfg, store, logger)
 	if err != nil {
 		return nil, err
 	}
-	out = append(out, classicRefreshers...)
+	out = append(out, classicBindings...)
 
-	sep41Refreshers, err := buildSEP41Refreshers(cfg, store, logger)
+	sep41Bindings, err := buildSEP41Refreshers(cfg, store, logger)
 	if err != nil {
 		return nil, err
 	}
-	out = append(out, sep41Refreshers...)
+	out = append(out, sep41Bindings...)
 
 	return out, nil
 }
 
-func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]*supply.Refresher, error) {
+func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	if len(cfg.Supply.WatchedClassicAssets) == 0 {
 		return nil, nil
 	}
@@ -345,7 +355,7 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *s
 	if err != nil {
 		return nil, fmt.Errorf("classic computer: %w", err)
 	}
-	out := make([]*supply.Refresher, 0, len(cfg.Supply.WatchedClassicAssets))
+	out := make([]supplyRefresherBinding, 0, len(cfg.Supply.WatchedClassicAssets))
 	for _, raw := range cfg.Supply.WatchedClassicAssets {
 		asset, err := canonical.ParseAsset(raw)
 		if err != nil {
@@ -355,17 +365,24 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *s
 		if err != nil {
 			return nil, fmt.Errorf("bind classic computer to %q: %w", raw, err)
 		}
-		out = append(out, supply.NewRefresher(
-			supplyAggregatorLedgers{s: store},
-			bound,
-			supplyAggregatorInserter{s: store},
-			logger.With("asset", raw),
-		))
+		assetKey, err := supply.AssetKey(asset)
+		if err != nil {
+			return nil, fmt.Errorf("derive asset_key for %q: %w", raw, err)
+		}
+		out = append(out, supplyRefresherBinding{
+			refresher: supply.NewRefresher(
+				supplyAggregatorLedgers{s: store},
+				bound,
+				supplyAggregatorInserter{s: store},
+				logger.With("asset", raw),
+			),
+			assetKey: assetKey,
+		})
 	}
 	return out, nil
 }
 
-func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]*supply.Refresher, error) {
+func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	if len(cfg.Supply.WatchedSEP41Contracts) == 0 {
 		return nil, nil
 	}
@@ -374,7 +391,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slo
 	if err != nil {
 		return nil, fmt.Errorf("sep41 computer: %w", err)
 	}
-	out := make([]*supply.Refresher, 0, len(cfg.Supply.WatchedSEP41Contracts))
+	out := make([]supplyRefresherBinding, 0, len(cfg.Supply.WatchedSEP41Contracts))
 	for _, contractID := range cfg.Supply.WatchedSEP41Contracts {
 		asset, err := canonical.NewSorobanAsset(contractID)
 		if err != nil {
@@ -384,12 +401,15 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slo
 		if err != nil {
 			return nil, fmt.Errorf("bind sep41 computer to %q: %w", contractID, err)
 		}
-		out = append(out, supply.NewRefresher(
-			supplyAggregatorLedgers{s: store},
-			bound,
-			supplyAggregatorInserter{s: store},
-			logger.With("asset", contractID),
-		))
+		out = append(out, supplyRefresherBinding{
+			refresher: supply.NewRefresher(
+				supplyAggregatorLedgers{s: store},
+				bound,
+				supplyAggregatorInserter{s: store},
+				logger.With("asset", contractID),
+			),
+			assetKey: contractID, // supply.AssetKey form for SEP-41 is the bare contract id
+		})
 	}
 	return out, nil
 }
@@ -416,19 +436,21 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.L
 }
 
 // runSupplyRefresh ticks the supply refresher on `cadence`,
-// emitting per-outcome Prometheus counters for each cycle.
-// Returns on ctx cancellation.
+// emitting per-(asset_key, outcome) Prometheus counters for each
+// cycle. Returns on ctx cancellation.
 //
 // Initial cycle runs immediately on startup so a fresh deployment
 // gets at least one snapshot in `asset_supply_history` before the
 // first cadence interval elapses.
 //
 // Per-tick logging happens inside [supply.Refresher.Tick]; the
-// goroutine just drives the loop and emits the outcome metric.
-func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration) {
+// goroutine just drives the loop and emits the outcome metric
+// labeled with the bound asset_key so operators can chart
+// per-asset bootstrap progress + isolate failure modes per asset.
+func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration, assetKey string) {
 	tick := func() {
 		out := r.Tick(ctx)
-		obs.AggregatorSupplyRefreshTotal.WithLabelValues(string(out.Kind)).Inc()
+		obs.AggregatorSupplyRefreshTotal.WithLabelValues(assetKey, string(out.Kind)).Inc()
 	}
 
 	tick() // immediate first refresh
