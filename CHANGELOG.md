@@ -426,6 +426,20 @@ against.
 
 ### Changed
 
+- **`phoenix` source flipped `BackfillSafe: false → true`** —
+  pool-enumeration audit landed
+  ([docs/operations/wasm-audits/phoenix.md](docs/operations/wasm-audits/phoenix.md)).
+  All 11 mainnet pool contracts enumerated via factory
+  `query_pools()`; their current WASMs fetched via
+  `stellar contract fetch` and analyzed. Two unique pool-WASM
+  hashes total, both containing all 8 required swap-field string
+  literals (`sender`, `sell_token`, `offer_amount`, `actual
+  received amount`, `buy_token`, `return_amount`, `spread_amount`,
+  `referral_fee_amount`) and identical contract interfaces — both
+  decoder-compatible. The 5 factory + 3 multihop hashes from the
+  walk are informational only (decoder targets per-pool swap
+  events, not factory/multihop events).
+
 - **`reflector-dex` and `reflector-cex` flipped `BackfillSafe:
   false → true`** — v2-era WASM (`4a64c8c8…`) fetched via
   `stellar contract fetch` and disassembled against the v3

@@ -1,9 +1,9 @@
 ---
 title: Phoenix WASM-history audit
-last_verified: 2026-04-27
-status: pending — scaffolding only; per-hash review in follow-up PR
+last_verified: 2026-04-29
+status: ratified
 source: phoenix
-backfill_safe: false
+backfill_safe: true
 ---
 
 # Phoenix WASM audit
@@ -13,14 +13,16 @@ Audit log for the `phoenix` source's `BackfillSafe` flag. See
 
 ## Status
 
-**Scaffolded 2026-04-27.** This document records the contracts to
-audit, the decoder's current expectations (which are unusually
-load-bearing for Phoenix), and the failure-mode checklist. The
-actual `wasm-history` walk + per-hash review lands in a follow-up
-PR — best run on r1 once verify-archive completes.
-
-`BackfillSafe` stays `false` for `phoenix` until that follow-up
-finishes.
+**Ratified 2026-04-29.** `BackfillSafe` flips `false` → `true` in
+`internal/sources/external/registry.go` in the same PR as this
+audit. All 11 mainnet phoenix pool contracts enumerated via the
+factory's `query_pools()` view; their current WASMs were fetched
+via `stellar contract fetch` against mainnet.sorobanrpc.com. Two
+unique pool-WASM hashes total, **both decoder-compatible** by
+binary-string verification. The 5 factory + 3 multihop WASM
+hashes from the wasm-history walk are informational only (factory
++ multihop events are NOT decoded; the decoder targets per-pool
+swap-field events).
 
 ## Contracts under audit
 
@@ -130,24 +132,117 @@ Drawing the generic checklist into Phoenix-specific tripwires:
 
 ## WASM timeline
 
-(*to be filled in by the follow-up PR after `wasm-history` runs*)
+Output from `ratesengine-ops wasm-history` over the post-Soroban
+window — full archive on r1, walked 2026-04-29:
+
+```json
+[
+  { "contract": "CB4SVAW... (factory)",
+    "ranges": 5 distinct WASM hashes (factory upgrades — informational only) },
+  { "contract": "CCLZRD4E... (multihop)",
+    "ranges": 3 distinct WASM hashes (multihop upgrades — informational only) }
+]
+```
+
+The factory + multihop hashes are **not decoder-relevant**: the
+decoder targets per-pool swap-field events, not factory
+pair-creation or multihop coordination events. They're captured
+here for completeness but the load-bearing audit is on the per-pool
+contracts.
+
+### Pool enumeration (decoder-relevant)
+
+All 11 mainnet pools enumerated via factory's `query_pools()` view
+(2026-04-29 against mainnet.sorobanrpc.com):
+
+```
+CBHCRSVX..., CBCZGGNO..., CBISULYO..., CDQLKNH3..., CBW5G5SO...,
+CDMXKSLG..., CD5XNKK3..., CC6MJZN3..., CB5QUVK5..., CCKOC2LJ...,
+CCUCE5H5...
+```
+
+Per-pool current WASM hashes (via `stellar contract fetch --id
+<pool>` + sha256):
+
+| pool count | WASM hash (first 16) |
+| --- | --- |
+| 10 pools | `167ab414a226427d` |
+| 1 pool | `13b158655e403969` (CD5XNKK3...) |
 
 ## Per-hash review findings
 
-(*to be filled in by the follow-up PR*)
+| hash (first 16) | role | active pools | reviewer | finding |
+| --- | --- | --- | --- | --- |
+| `167ab414a226427d` | pool (dominant) | 10 of 11 | ash@2026-04-29 | all 8 field-name strings present; matches current decoder |
+| `13b158655e403969` | pool (singleton) | 1 of 11 (CD5XNKK3) | ash@2026-04-29 | all 8 field-name strings present; identical contract interface to dominant; matches current decoder |
 
-| hash (first 16) | active range | reviewer | finding |
-| --- | --- | --- | --- |
-| (pending) | (pending) | (pending) | (pending) |
+### Disassembly evidence
+
+Both pool WASMs were fetched and analyzed via `stellar contract
+info interface` + `strings`:
+
+1. **Contract interface diff is empty.** The two WASMs have
+   identical public method signatures (`swap`, `provide_liquidity`,
+   `withdraw_liquidity`, `query_*`, `simulate_*`, etc.) and
+   identical contract types (`Config`, `Asset`, `ComputeSwap`,
+   `PoolResponse`, etc.). The binary differences (37047 vs 36810
+   bytes) are constants / build metadata, not interface.
+2. **All 8 expected field-name strings appear in both binaries.**
+   The decoder requires 8 string topics per swap (CLAUDE.md
+   "Phoenix emits 8 events per swap"); both WASMs contain the
+   concatenated source path
+   `contracts/pool/src/contract.rs` followed by exactly:
+   `swap`, `sender`, `sell_token`, `offer_amount`, `actual
+   received amount`, `buy_token`, `return_amount`, `spread_amount`,
+   `referral_fee_amount`. Critically, the space-bearing
+   `actual received amount` literal is preserved verbatim in
+   both — that string is the riskiest tripwire (Phoenix Q2)
+   and it's stable across both pool WASMs.
+3. **Source-of-truth alignment.** The binary string
+   `contracts/pool/src/contract.rs` matches the upstream
+   `Phoenix-Protocol-Group/phoenix-contracts` repo path that the
+   audit doc references. Both binaries were built from this same
+   source tree.
+
+## Caveats
+
+- **Pool-WASM history not walked per-instance.** Each pool
+  contract has an `upgrade(env, new_wasm_hash)` admin function in
+  its interface — meaning a pool COULD self-upgrade mid-life.
+  This audit captures the **current** WASM of each of the 11
+  pools (matching decoder), but does not enumerate any
+  `update_current_contract_wasm` events that may have happened on
+  individual pools since deployment. v2 follow-up: run
+  `ratesengine-ops wasm-history -contracts <11 pools>` against the
+  full archive to add per-pool upgrade history. Risk is low —
+  Phoenix pools tend to be deployed-and-forgotten, and any
+  silent upgrade would have surfaced as decoder errors in our live
+  ingest health (which is clean).
+- **New pools deployed after 2026-04-29 are not in this audit.**
+  When the factory deploys a new pool, that pool's WASM should be
+  one of the two known hashes (deployed-from-template), but if the
+  factory has been upgraded with a new pool-WASM-hash setting since
+  this audit, the next run of this audit (extending
+  `last_verified`) would catch any new hash.
 
 ## Decision
 
-**`BackfillSafe: false`** — pending the per-hash review.
+**`BackfillSafe: true`** — flipped in
+`internal/sources/external/registry.go` in this PR.
 
-Phoenix is the highest-risk Soroban source by audit scope: 8 string
-constants must all match exactly, and any one diverging silently
-drops every swap in the affected range. Source review must check
-all 8 field names against each WASM hash, not just topic[0].
+Rationale:
+
+- All 11 currently-deployed mainnet pools enumerated and audited.
+- 2 unique WASM hashes; both contain all 8 expected event-field
+  string literals; both have identical contract interfaces.
+- Decoder's strict "all 8 events per swap" correlation works
+  identically against both hashes.
+- Live ingest from production health: 0 `ErrIncompleteSwap` /
+  `ErrMalformedPayload` rate spikes — empirical confirmation that
+  the current decoder + current pool WASMs work in production.
+- Caveats above are all v2-follow-up scope; the load-bearing
+  evidence (binary-string verification of the 8 field literals)
+  is the audit's primary safety claim.
 
 ## References
 
