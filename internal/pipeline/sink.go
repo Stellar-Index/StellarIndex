@@ -9,6 +9,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/sources/accounts"
 	"github.com/RatesEngine/rates-engine/internal/sources/aquarius"
 	"github.com/RatesEngine/rates-engine/internal/sources/band"
 	"github.com/RatesEngine/rates-engine/internal/sources/blend"
@@ -95,6 +96,8 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		persistBlendFillAuction(ctx, logger, store, e)
 	case blend.DeleteAuctionEvent:
 		persistBlendDeleteAuction(ctx, logger, store, e)
+	case accounts.Observation:
+		persistAccountObservation(ctx, logger, store, e)
 	default:
 		// A source emitted an event type the sink doesn't know how
 		// to persist. Usually means a new source was registered in
@@ -189,4 +192,18 @@ func persistBlendDeleteAuction(ctx context.Context, logger *slog.Logger, store *
 	logger.Info("blend delete_auction ingested",
 		"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 		"ledger", e.Ledger)
+}
+
+func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o accounts.Observation) {
+	if err := store.InsertAccountObservation(ctx, o); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(accounts.SourceName, "account_observation").Inc()
+		logger.Error("insert account observation failed",
+			"account_id", o.AccountID, "ledger", o.Ledger,
+			"is_removal", o.IsRemoval, "err", err)
+		return
+	}
+	logger.Debug("account observation ingested",
+		"account_id", o.AccountID, "ledger", o.Ledger,
+		"balance_stroops", o.Balance.String(),
+		"home_domain", o.HomeDomain, "is_removal", o.IsRemoval)
 }

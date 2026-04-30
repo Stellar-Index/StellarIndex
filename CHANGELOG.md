@@ -17,6 +17,23 @@ against.
 
 ### Added
 
+- **`account_observations` hypertable + storage writer + sink wiring
+  (#299 — ADR-0021 / Task #54 PR 3/3)**: closes the storage gap left
+  by #298. Migration 0010 creates the `account_observations`
+  hypertable (7-day chunks; PK `(account_id, ledger, observed_at)`;
+  GIN-friendly indexes on `(account_id, observed_at DESC)` and
+  `(ledger DESC)` for the two main reader query shapes).
+  `Store.InsertAccountObservation` is last-writer-wins on conflict
+  (the AccountEntry post-state is monotonic within a ledger so the
+  final write is the authoritative state).
+  `Store.LatestAccountObservationAtOrBefore` is the read-side
+  primitive the next PR's `LCMReserveBalanceReader` /
+  `LCMHomeDomainResolver` will consume. The pipeline sink now type-
+  switches on `accounts.Observation` and routes to the writer with
+  the same panic-recover + per-source-error-counter contract as the
+  other event types. Closes the producer half of Task #54; readers
+  follow in Task #61 to fully replace the operator-static config maps.
+
 - **AccountEntry observer + `ProcessLedger` integration (#298 —
   ADR-0021 / Task #54 PR 2/3)**: lands `internal/sources/accounts/`
   — the canonical observer implementing the
