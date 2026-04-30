@@ -109,9 +109,8 @@ type sep10TokenResponse struct {
 //
 // Accepts a signed challenge transaction in the body, validates it
 // via the Validator, and returns a JWT. Per SEP-10 §3.3 the body is
-// JSON `{"transaction": "<base64-XDR>"}`. We also accept
-// application/x-www-form-urlencoded with a `transaction=<base64-XDR>`
-// field per the spec's option B, but JSON is the modern default.
+// JSON `{"transaction": "<base64-XDR>"}`. The current handler only
+// implements the JSON form reflected in OpenAPI.
 //
 // Errors:
 //   - 400 — body missing or transaction field absent

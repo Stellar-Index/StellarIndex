@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +136,69 @@ func TestAnalyseRegionResults_OHLCAllFieldsCompared(t *testing.T) {
 	}
 }
 
+func TestAnalyseRegionResults_SourcesDisagreement(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	results := []regionResult{
+		{Region: "r1", Response: &crossRegionResponse{
+			From: from, To: to, Price: "1.00", Sources: []string{"aquarius", "soroswap"},
+		}},
+		{Region: "r2", Response: &crossRegionResponse{
+			From: from, To: to, Price: "1.00", Sources: []string{"soroswap", "aquarius"},
+		}},
+	}
+	var out bytes.Buffer
+	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	if !div {
+		t.Fatalf("sources divergence not flagged; out=%s", out.String())
+	}
+	if !strings.Contains(out.String(), "sources:") {
+		t.Fatalf("expected sources diff, got: %s", out.String())
+	}
+}
+
+func TestAnalyseRegionResults_FlagsDisagreement(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	results := []regionResult{
+		{Region: "r1", Response: &crossRegionResponse{
+			From: from, To: to, Price: "1.00", Flags: crossRegionFlags{SingleSource: true},
+		}},
+		{Region: "r2", Response: &crossRegionResponse{
+			From: from, To: to, Price: "1.00", Flags: crossRegionFlags{SingleSource: false},
+		}},
+	}
+	var out bytes.Buffer
+	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	if !div {
+		t.Fatalf("flags divergence not flagged; out=%s", out.String())
+	}
+	if !strings.Contains(out.String(), "flags.single_source:") {
+		t.Fatalf("expected single_source diff, got: %s", out.String())
+	}
+}
+
+func TestAnalyseRegionResults_VWAPMetadataDisagreement(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	results := []regionResult{
+		{Region: "r1", Response: &crossRegionResponse{
+			From: from, To: to, Price: "1.00", BaseVolume: "10", QuoteVolume: "20", TradeCount: 3, OutliersFiltered: 1, Truncated: false,
+		}},
+		{Region: "r2", Response: &crossRegionResponse{
+			From: from, To: to, Price: "1.00", BaseVolume: "10", QuoteVolume: "20", TradeCount: 4, OutliersFiltered: 1, Truncated: false,
+		}},
+	}
+	var out bytes.Buffer
+	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	if !div {
+		t.Fatalf("VWAP metadata divergence not flagged; out=%s", out.String())
+	}
+	if !strings.Contains(out.String(), "trade_count:") {
+		t.Fatalf("expected trade_count diff, got: %s", out.String())
+	}
+}
+
 // TestFetchOneRegion_RoundTrip confirms the HTTP path works against
 // an httptest server using a wrapped envelope (matching the real
 // API's {"data": ...} shape).
@@ -159,6 +223,39 @@ func TestFetchOneRegion_RoundTrip(t *testing.T) {
 	if !got.From.Equal(want.From) || !got.To.Equal(want.To) {
 		t.Errorf("from/to mismatch: got %v..%v want %v..%v",
 			got.From, got.To, want.From, want.To)
+	}
+}
+
+func TestFetchOneRegion_RoundTripEnvelopeFields(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": crossRegionResponse{
+				From: from, To: to, Price: "1.23", TradeCount: 2,
+			},
+			"sources": []string{"aquarius", "soroswap"},
+			"flags": map[string]any{
+				"stale":         false,
+				"single_source": true,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := fetchOneRegion(t.Context(),
+		&http.Client{Timeout: 5 * time.Second},
+		regionEndpoint{name: "r-test", base: srv.URL},
+		"native/fiat:USD", metricVWAP, from, to)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	if !reflect.DeepEqual(got.Sources, []string{"aquarius", "soroswap"}) {
+		t.Fatalf("sources = %v", got.Sources)
+	}
+	if !got.Flags.SingleSource {
+		t.Fatalf("single_source flag not decoded: %+v", got.Flags)
 	}
 }
 

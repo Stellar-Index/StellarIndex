@@ -111,8 +111,8 @@ the `env:` column.
 | `aggregate.pairs` | `[]string` | `[]` | — | Aggregator coverage set as canonical pair strings ("crypto:XLM/fiat:USD", "native/USDC-G…"). Empty leaves the binary's built-in default (XLM/BTC/ETH × USD/EUR/GBP). Each entry is parsed via canonical.ParseAsset on both sides; an unparseable entry fails Validate. |
 | `aggregate.windows` | `[]string` | `[]` | — | Per-window cadences as Go time.Duration strings ("5m", "1h", "24h"). Empty leaves the orchestrator's built-in default ([5m, 1h, 24h]). |
 | `aggregate.triangulations` | `[]struct` | `[]` | — | Operator-configured chain pricing entries — each row defines a target pair plus an ordered chain of leg pairs. After the per-pair refresh runs, the orchestrator multiplies each leg's freshly-cached VWAP via aggregate.TriangulateChain and writes the implied target VWAP to its own cache key. Empty (default) skips triangulation entirely. |
-| `aggregate.triangulations[].target` | `string` | — | — | Implied target pair (canonical wire form). |
-| `aggregate.triangulations[].legs` | `[]string` | — | — | Ordered chain of leg pairs; product yields the target price. Must have at least 2 entries and adjacent legs must share their pivot asset. |
+| `aggregate.triangulations[].target` | `string` | — | — | Implied target pair in canonical wire form. |
+| `aggregate.triangulations[].legs` | `[]string` | — | — | Ordered chain of leg pairs; must have at least 2 entries and adjacent legs must share their pivot asset. |
 
 ### `[anomaly]`
 
@@ -133,11 +133,12 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `api.listen_addr` | `string` | `0.0.0.0:3000` | — | Bind address for the HTTP server. |
 | `api.external_base_url` | `string` | `https://api.ratesengine.net/v1` | — | Public-facing base URL (e.g. https://api.ratesengine.net/v1). |
-| `api.auth_mode` | `string` | `none` | — | Authentication mode — none / apikey / sep10. The middleware (internal/api/v1/middleware/Auth) is scaffolded; validators (internal/auth/{APIKeyValidator,SEP10Validator}) ship as Noop stubs that return ErrNotImplemented. A deployment with auth_mode=apikey or sep10 BUT no validator implementation wired in cmd/ratesengine-api/main.go fails-loud at 503 on every request — never silently demotes to anonymous. Stay on 'none' until validators land. |
+| `api.auth_mode` | `string` | `none` | — | Authentication mode — none / apikey / sep10. The API binary wires real validators when the required backing dependencies and secrets are present; a deployment that opts into auth without satisfying those requirements fails loud rather than silently demoting to anonymous. |
 | `api.anon_rate_limit_per_min` | `int` | `60` | — | Per-IP rate limit for anonymous requests. |
 | `api.key_rate_limit_per_min` | `int` | `1000` | — | Per-API-key rate limit, default tier. |
 | `api.cdn_enabled` | `bool` | `true` | — | Emit CDN-friendly Cache-Control headers on long-immutable endpoints. |
 | `api.allowed_origins` | `[]string` | `["*"]` | — | CORS allow-list for browser clients. |
+| `api.trusted_proxy_cidrs` | `[]string` | `[]` | — | Immediate peer CIDR allow-list that is permitted to supply X-Forwarded-For. Empty means the API ignores that header and uses the socket peer address for logging, anonymous identity, and IP-based rate limiting. |
 | `api.sep10.seed_env` | `string` | `RATESENGINE_SEP10_SEED` | — | Environment variable holding the server signing keypair S-strkey. Operators rotate this on a schedule; ansible-vault stores the actual value. |
 | `api.sep10.jwt_secret_env` | `string` | `RATESENGINE_SEP10_JWT_SECRET` | — | Environment variable holding the HMAC-SHA256 JWT secret (≥ 32 bytes of entropy required). |
 | `api.sep10.web_auth_domain` | `string` | `api.ratesengine.net` | — | SEP-10 web_auth_domain — the host that serves /v1/auth/sep10/*. Carried inside the challenge tx so clients verify before signing. Typically the API's external host (e.g. api.ratesengine.net). |

@@ -23,7 +23,7 @@ minutes.
 curl -fsSL https://api.ratesengine.net/v1/price?asset=native&quote=fiat:USD
 
 # 24-hour OHLC for XLM:
-curl -fsSL "https://api.ratesengine.net/v1/ohlc?asset=native&quote=fiat:USD&timeframe=24h"
+curl -fsSL "https://api.ratesengine.net/v1/ohlc?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
 
 # Last-24h trade history for an asset:
 curl -fsSL "https://api.ratesengine.net/v1/history?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
@@ -51,7 +51,7 @@ The `flags` block is the operational quality signal:
 |---|---|
 | `stale` | Response degraded below the surface's documented contract (see [ADR-0018](adr/0018-api-consistency-surfaces.md) for the per-surface baseline) |
 | `reduced_redundancy` | Cross-region archive completeness is degraded ([ADR-0017](adr/0017-archive-completeness-invariants.md)) |
-| `triangulated` | Rate computed via chain-pricing through a pivot (typically USD), not a directly-traded pair |
+| `triangulated` | Reserved for a future triangulated public-serving path; the current Timescale-backed API leaves this false in normal operation |
 | `divergence_warning` | Anomaly detection or cross-reference observed a meaningful divergence; treat with caution |
 | `frozen` | Anomaly detection refused to publish the new bucket; this response carries the previous bucket's last-known-good value ([ADR-0019](adr/0019-anomaly-detection-and-freeze-policy.md)) |
 | `single_source` | Only one source contributed; combined with `frozen` this is the manipulation signature |
@@ -67,7 +67,7 @@ to private surfaces (`/v1/observations`, `/v1/account/*`).
 curl -fsSL -X POST https://api.ratesengine.net/v1/account/keys \
      -H "Authorization: Bearer $YOUR_SEP10_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"my laptop"}'
+     -d '{"label":"my laptop"}'
 
 # Use the key on subsequent requests:
 curl -fsSL https://api.ratesengine.net/v1/account/me \
@@ -76,22 +76,20 @@ curl -fsSL https://api.ratesengine.net/v1/account/me \
 
 API keys are scoped to a single Stellar account (G-strkey), proven
 via SEP-10 Web Auth at issuance time. The account's signature
-authorises the key; revoke at any time via `DELETE /v1/account/keys/{kid}`.
+authorises the key. Rotation is available via `POST /v1/account/keys`;
+revocation is not shipped yet in this snapshot.
 
 ## Rate limits
 
 | Tier | Anonymous | Authenticated |
 |---|---|---|
 | Requests / minute | 60 | 1 000 |
-| Requests / day | 5 000 | 250 000 |
-| Burst | 30 | 100 |
 
 Rate-limit headers on every response:
 
 ```
 X-RateLimit-Limit:     1000
 X-RateLimit-Remaining: 987
-X-RateLimit-Reset:     1714305600
 ```
 
 Exceeded limits return `429 Too Many Requests` with `Retry-After`.

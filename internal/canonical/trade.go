@@ -9,9 +9,10 @@ import (
 // Trade is one executed trade, observed on a specific venue in a
 // specific ledger.
 //
-// Identity of a trade is (Source, Ledger, TxHash, OpIndex). Across
-// restarts and reconciliation passes the same trade must produce
-// the same ID — it's the primary key into the `trades` hypertable.
+// Storage identity of a trade is (Source, Ledger, TxHash, OpIndex,
+// Timestamp). Across restarts and reconciliation passes the same
+// persisted row must produce the same ID — it mirrors the current
+// `trades` hypertable primary key exactly.
 //
 // Amounts are [Amount] (big.Int-backed). Price is NOT stored; it is
 // derived from QuoteAmount / BaseAmount at query time. Storing a
@@ -70,9 +71,10 @@ type Trade struct {
 // ID is the stable unique identifier used as the primary key in the
 // trades hypertable and as the dedup key across region replicas.
 //
-// Format: `<source>:<ledger>:<tx_hash>:<op_index>`.
+// Format: `<source>:<ledger>:<tx_hash>:<op_index>:<unix_nanos_utc>`.
 func (t Trade) ID() string {
-	return fmt.Sprintf("%s:%d:%s:%d", t.Source, t.Ledger, t.TxHash, t.OpIndex)
+	return fmt.Sprintf("%s:%d:%s:%d:%d",
+		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC().UnixNano())
 }
 
 // Validate returns nil iff every invariant holds. Intended to be
@@ -82,10 +84,11 @@ func (t Trade) ID() string {
 // Ledger is NOT required to be non-zero. On-chain sources stamp the
 // real pubnet sequence; off-chain sources (Binance/Kraken/Bitstamp/
 // Coinbase — any venue without a ledger concept) stamp 0 and rely on
-// Source + TxHash + OpIndex for uniqueness. The zero-ledger check
-// that used to live here caught stub decoders at the cost of
-// rejecting valid off-chain inserts; TxHash validation (64-char hex,
-// synthesised deterministically for off-chain) already catches stubs.
+// Source + TxHash + OpIndex + Timestamp for storage uniqueness. The
+// zero-ledger check that used to live here caught stub decoders at the
+// cost of rejecting valid off-chain inserts; TxHash validation
+// (64-char hex, synthesised deterministically for off-chain) already
+// catches stubs.
 func (t Trade) Validate() error {
 	if t.Source == "" {
 		return fmt.Errorf("%w: empty source", ErrInvalidTrade)
@@ -118,14 +121,15 @@ func (t Trade) PriceRatio() (num, den *big.Int) {
 	return t.QuoteAmount.BigInt(), t.BaseAmount.BigInt()
 }
 
-// Equal compares two trades by identity only. Fields like Maker/Taker
-// are observational — two records of the same trade from different
-// regions may differ on Maker if only one region's event included it.
+// Equal compares two trades by storage identity only. Fields like
+// Maker/Taker are observational — two records of the same persisted row
+// may differ on Maker if only one region's event included it.
 func (t Trade) Equal(o Trade) bool {
 	return t.Source == o.Source &&
 		t.Ledger == o.Ledger &&
 		t.TxHash == o.TxHash &&
-		t.OpIndex == o.OpIndex
+		t.OpIndex == o.OpIndex &&
+		t.Timestamp.UTC().Equal(o.Timestamp.UTC())
 }
 
 // ─── Internal helpers ──────────────────────────────────────────────

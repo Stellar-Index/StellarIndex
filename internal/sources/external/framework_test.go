@@ -3,7 +3,7 @@ package external
 import "testing"
 
 // TestRegistry_KnownSourcesClassified ensures every source we name
-// in the on-chain decoder packages + the planned off-chain connectors
+// in the on-chain decoder packages + the live off-chain connectors
 // has a Registry entry. If this ever fails it means a new source was
 // added without updating the aggregator's source-of-truth map — a
 // bug that would silently exclude the source from VWAP.
@@ -13,10 +13,10 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 		"soroswap", "aquarius", "phoenix", "comet", "sdex", "blend",
 		"reflector-dex", "reflector-cex", "reflector-fx",
 		"redstone", "band",
-		"binance", "kraken", "bitstamp", "coinbase", "bitfinex",
+		"binance", "kraken", "bitstamp", "coinbase",
 		"polygon-forex", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
-		"ecb", "fed-h10",
+		"ecb",
 	}
 	for _, name := range want {
 		if _, ok := Registry[name]; !ok {
@@ -101,10 +101,10 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		"phoenix",       // audited 2026-04-29 (11 pools enumerated, 2 unique WASMs verified) — see docs/operations/wasm-audits/phoenix.md
 		"aquarius",      // audited 2026-04-29 (313 pools enumerated, 3 unique WASMs verified) — see docs/operations/wasm-audits/aquarius.md
 		"comet",         // audited 2026-04-29 (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
-		"binance", "kraken", "bitstamp", "coinbase", "bitfinex",
+		"binance", "kraken", "bitstamp", "coinbase",
 		"polygon-forex", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
-		"ecb", "fed-h10",
+		"ecb",
 	}
 	for _, name := range wantSafe {
 		if !Registry[name].BackfillSafe {

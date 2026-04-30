@@ -32,8 +32,9 @@ type Report struct {
 	CrossAnchor *CrossAnchorReportSection `json:"cross_anchor,omitempty"`
 
 	// Primary holds the results of the primary (galexie-archive)
-	// scan. Nil when skipped or not yet implemented (PR A leaves
-	// this nil; PR B fills it in).
+	// scan. Nil in the current repo snapshot because the shipped
+	// archive-completeness flow only enforces the cross-anchor
+	// archive today.
 	Primary *PrimaryReportSection `json:"primary,omitempty"`
 }
 

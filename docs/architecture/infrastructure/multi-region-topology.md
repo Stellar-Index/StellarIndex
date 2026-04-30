@@ -126,7 +126,7 @@ Consequences:
 - **Galexie output:** three independent Galexie instances write the
   same ledger-meta to three MinIO buckets. The indexer ingests from
   *its own region's* Galexie (lowest-latency read) and reconciles
-  against trade-identity (`ledger, tx_hash, op_index`) across
+  against the persisted trade key (`ledger, tx_hash, op_index, ts`) across
   regions — duplicates from cross-region ingest are no-ops.
 - **stellar-rpc:** same story. Three independent captive-cores.
   Events are subscribed regionally; the application layer dedups by

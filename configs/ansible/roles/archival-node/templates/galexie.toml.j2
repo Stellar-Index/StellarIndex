@@ -8,18 +8,14 @@ admin_port = {{ galexie_admin_port }}
 
 # ──── Datastore — where exported ledger meta lands ─────────────────
 [datastore_config]
-type = "{{ 'S3' if galexie_backend_type == 's3' else 'Filesystem' }}"
+type = "S3"
 
 [datastore_config.params]
-{% if galexie_backend_type == 's3' %}
 # S3-compatible storage (MinIO in our layout). Access + secret keys
 # come from AWS_* env vars in /etc/default/galexie.
 destination_bucket_path = "{{ galexie_s3_bucket }}/"
 region                  = "{{ galexie_s3_region }}"
 endpoint_url            = "{{ galexie_s3_endpoint }}"
-{% else %}
-destination_path = "/var/lib/galexie/data"
-{% endif %}
 
 [datastore_config.schema]
 ledgers_per_file     = {{ galexie_ledgers_per_file }}

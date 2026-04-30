@@ -520,7 +520,13 @@ paths:
   /history/since-inception:
     get:
       tags: [history]
-      summary: Alias for `/history?timeframe=all`.
+      summary: Closed-bucket historical VWAP series for one asset/quote pair.
+      description: |
+        Returns every CLOSED bucket from the requested continuous
+        aggregate ladder (`1m`, `15m`, `1h`, `4h`, `1d`, `1w`,
+        `1mo`) for the requested asset/quote pair. This is the
+        bucketed history surface; `/history` remains the raw
+        per-trade endpoint.
       parameters:
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
@@ -812,7 +818,12 @@ paths:
   /account/usage:
     get:
       tags: [account]
-      summary: Daily usage summary.
+      summary: Usage-summary placeholder (currently empty).
+      description: |
+        Placeholder self-service surface. The handler currently
+        returns an empty list while the backing counter store is not
+        implemented yet; `from` / `to` are reserved for the future
+        implementation and are ignored today.
       security:
         - APIKeyAuth: []
       parameters:
@@ -829,6 +840,9 @@ paths:
     post:
       tags: [account]
       summary: Create a new API key.
+      description: |
+        Issues a new API key for the authenticated caller and returns
+        the plaintext exactly once.
       security:
         - APIKeyAuth: []
       requestBody:
@@ -1074,8 +1088,9 @@ components:
         - `reduced_redundancy` — cross-region redundancy is degraded
           (R2/R3 set this when R1's last completeness run is stale
           per ADR-0017).
-        - `triangulated` — rate computed via chain-pricing through a
-          pivot (typically USD), not a directly-traded pair.
+        - `triangulated` — reserved for a future triangulated public
+          serving path. The current Timescale-backed API leaves this
+          false in normal operation.
         - `divergence_warning` — anomaly check or cross-reference
           observed a meaningful divergence; treat with caution.
         - `frozen` — anomaly detection refused to publish the new
@@ -1185,6 +1200,10 @@ components:
         # market_cap_usd / fdv_usd are decimal strings in dollars
         # to two fractional digits.
         #
+        # Current repo snapshot note: the API reads these fields from
+        # asset_supply_history when snapshots exist, but the repo does
+        # not ship an in-tree writer for that table yet.
+        #
         # All F2 fields are nullable: any field whose data isn't
         # available (no supply snapshot yet, no USD price for the
         # pair, max_supply unknown for an uncapped issuer) emits null
@@ -1196,7 +1215,7 @@ components:
         fdv_usd:            { type: string, nullable: true, description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable." }
         supply_basis:
           type: string
-          enum: [xlm_sdf_reserve_exclusion, issuer_exclusion, admin_exclusion, override, no_metadata]
+          enum: [xlm_sdf_reserve_exclusion, issuer_exclusion, admin_exclusion, override]
           nullable: true
           description: |
             Which ADR-0011 policy produced the supply numbers.

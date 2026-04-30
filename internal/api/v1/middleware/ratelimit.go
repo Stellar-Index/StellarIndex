@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 )
@@ -100,6 +101,90 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RateLimitBySubject enforces separate anonymous and authenticated
+// buckets. When an auth middleware has attached a Subject, anonymous
+// callers use anonBucket and authenticated callers use authBucket.
+//
+// Keying semantics:
+//   - authenticated with KeyID: per-key bucket
+//   - authenticated without KeyID: per-subject Identifier bucket
+//   - anonymous with Subject: anonymous Identifier bucket
+//   - no Subject attached: fallback to RemoteIPFrom(r)
+//
+// Nil buckets disable rate limiting for that class.
+func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware { //nolint:gocognit // dispatch-heavy; splitting would reduce readability
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if skip != nil && skip(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			bucket, key := bucketAndKeyForRequest(r, anonBucket, authBucket)
+			if bucket == nil || key == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if len(key) > MaxRateLimitKeyLen {
+				key = key[:MaxRateLimitKeyLen]
+			}
+
+			res, err := bucket.Take(r.Context(), key)
+			if err != nil {
+				logger.Debug("ratelimit redis error — failing open",
+					"err", err, "key", key, "request_id", RequestIDFrom(r))
+				obs.RateLimitFailOpenTotal.Inc()
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(bucket.Max()))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
+
+			if !res.Allowed {
+				retryAfter := int(res.RetryAfter.Seconds())
+				if retryAfter < 1 {
+					retryAfter = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				writeRateLimitProblem(w, r, retryAfter)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func bucketAndKeyForRequest(r *http.Request, anonBucket, authBucket *ratelimit.Bucket) (*ratelimit.Bucket, string) {
+	if subject, ok := auth.SubjectFrom(r.Context()); ok && subject.Identifier != "" {
+		if subject.Tier != auth.TierAnonymous && subject.Tier != "" {
+			if authBucket == nil {
+				return nil, ""
+			}
+			return authBucket, authenticatedRateLimitKey(subject)
+		}
+		if anonBucket == nil {
+			return nil, ""
+		}
+		return anonBucket, "anon:" + subject.Identifier
+	}
+	if anonBucket == nil {
+		return nil, ""
+	}
+	return anonBucket, RemoteIPFrom(r)
+}
+
+func authenticatedRateLimitKey(subject auth.Subject) string {
+	if subject.KeyID != "" {
+		return "auth:" + subject.Tier.String() + ":key:" + subject.KeyID
+	}
+	return "auth:" + subject.Tier.String() + ":id:" + subject.Identifier
 }
 
 // SkipHealthAndMetrics is a convenience Skip predicate for operators

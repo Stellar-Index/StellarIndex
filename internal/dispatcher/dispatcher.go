@@ -255,15 +255,30 @@ func (d *Dispatcher) SetDiscoverySink(sink DiscoverySink) {
 // treat as immutable.
 type Stats struct {
 	DecodeErrors  map[string]int
+	OrphanEvents  map[string]int
 	UnmatchedHits int
 }
 
 func (d *Dispatcher) Stats() Stats {
-	copied := make(map[string]int, len(d.decodeErrors))
+	decodeCopied := make(map[string]int, len(d.decodeErrors))
 	for k, v := range d.decodeErrors {
-		copied[k] = v
+		decodeCopied[k] = v
 	}
-	return Stats{DecodeErrors: copied, UnmatchedHits: d.unmatchedHits}
+	orphanCopied := map[string]int{}
+	for _, dec := range d.decoders {
+		reporter, ok := dec.(interface{ EvictedOrphans() int })
+		if !ok {
+			continue
+		}
+		if n := reporter.EvictedOrphans(); n > 0 {
+			orphanCopied[dec.Name()] = n
+		}
+	}
+	return Stats{
+		DecodeErrors:  decodeCopied,
+		OrphanEvents:  orphanCopied,
+		UnmatchedHits: d.unmatchedHits,
+	}
 }
 
 // ProcessLedger walks lcm's transactions, extracts Soroban events,

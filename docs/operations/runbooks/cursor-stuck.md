@@ -21,7 +21,7 @@ severity: P2
 
 - `increase(ratesengine_cursor_last_ledger{source=...}[5m]) == 0` AND `ratesengine_source_enabled == 1`.
 - Dashboard: *Ingestion → Cursor progress* panel shows a flat line for the offending source.
-- `ratesengine_source_events_total` may still rise (events are being pulled) — it's the PERSIST path that's stuck, not the fetch path.
+- `ratesengine_source_events_total` may still rise (events are being persisted) — this now points more narrowly at cursor-update failure, not at a separate legacy persister goroutine.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -39,38 +39,38 @@ ratesengine-ops detect-gaps -config /etc/ratesengine/config.toml -threshold 100
 ```
 
 Key signals:
-- **Cursor flat + events > 0** → cursor-persister goroutine is wedged (see RCA). Restart the indexer pod as mitigation.
-- **Cursor flat + events == 0** → no events to advance on. Source may be legitimately quiet (rare on SDEX, normal on Phoenix). Check upstream — is the DEX contract itself active?
-- **Cursor flat + health.Connected false** → the source is failing to reach RPC. Jump to `rpc-lag.md`.
+- **Cursor flat + events > 0** → cursor upserts are failing or the live pipeline is rejecting ledgers before commit. Inspect indexer logs for `cursor upsert` warnings or dispatcher rejection/panic logs.
+- **Cursor flat + events == 0** → no events to advance on. Source may be legitimately quiet. Check `source-stopped` before treating this as a persistence-only issue.
+- **Cursor flat + repeated indexer errors** → treat as a live ingest fault, not a harmless replay delay.
 
 ## Mitigation (≤ 15 min)
 
 - [ ] Step 1 — if Connected=false: fix the upstream (stellar-rpc) first. Cursor will advance once events start flowing again.
-- [ ] Step 2 — if Connected=true and events are flowing but cursor is flat: restart the indexer pod. The orchestrator spawns a fresh cursor-persister goroutine on each `runOne` cycle; a full restart re-reads the cursor table and re-seeds cleanly.
+- [ ] Step 2 — if events are flowing but cursor is flat: restart the indexer pod after capturing recent logs. The current live path updates the cursor inline after successful ledger processing, so a flat cursor usually means repeated ledger failure or DB upsert trouble.
   ```sh
   kubectl rollout restart deploy/ratesengine-indexer
   ```
 - [ ] Step 3 — if the cursor has regressed (persisted value < events observed): this should not happen (advance-only guard) and indicates a real bug. Capture the cursor table before restart: `psql -c "SELECT * FROM ingestion_cursors"` and attach to the postmortem.
-- [ ] Verification: `ratesengine_cursor_last_ledger{source=...}` starts climbing within a poll-interval of the restart (default `cursor_persist_every=30s`).
+- [ ] Verification: `ratesengine_cursor_last_ledger{source=...}` starts climbing again after the indexer resumes successful ledger commits.
 
 ## Root cause analysis
 
 For the postmortem, gather:
-- Indexer logs around when the cursor stopped moving. Specifically search for `persist cursor failed` warnings — indicates UpsertCursor errored silently.
+- Indexer logs around when the cursor stopped moving. Search for `cursor upsert`, `dispatcher rejected ledger`, and `dispatcher panicked`.
 - The cursor table snapshot before + after restart.
-- `ratesengine_source_events_total` vs `ratesengine_cursor_last_ledger` over the incident window — divergence is the signature of a wedged persister.
-- If the issue happened post-deploy: diff `internal/consumer/orchestrator.go` between revisions, specifically `cursorPersister` logic.
+- `ratesengine_source_events_total` vs `ratesengine_cursor_last_ledger` over the incident window.
+- If the issue happened post-deploy: diff the live `ledgerstream -> dispatcher -> UpsertCursor` path rather than the retired orchestrator code.
 
 ## Known false-positive patterns
 
-- **Quiet sources during low-volume windows**. Phoenix can have multi-minute stretches with zero swaps; the cursor doesn't advance because there's nothing new to observe. The alert's `and on (source) ratesengine_source_enabled == 1` predicate can't distinguish "idle" from "stuck" without a ledger-tip cross-check. A future alert revision will `AND` against `(tip - cursor) > 100` for this.
-- **Container just started** — cursor persists every 30s by default, so the first 30s post-boot look stuck. Wait one full `cursor_persist_every` cycle before paging.
+- **Quiet sources during low-volume windows**. If a source emits no events, its cursor does not advance either. Cross-check `source-stopped` and the raw event rate before treating a flat cursor as a persistence failure.
+- **Container just started** — give the indexer time to process and commit at least one successful ledger before treating the flat line as actionable.
 
 ## Related
 
 - `source-stopped.md` — adjacent alert when events stop flowing entirely.
 - `rpc-lag.md` — root cause when the upstream is the problem.
-- ADR — consumer/orchestrator.go `cursorPersister` is where advancement happens.
+- Current live path: `cmd/ratesengine-indexer/main.go` `processAndPersistCursor`.
 
 ## Changelog
 

@@ -1,11 +1,16 @@
 ---
 title: Runbook — ingestion-lag
 last_verified: 2026-04-23
-status: draft
+status: archived
 severity: P2
 ---
 
 # Runbook — `ratesengine_ingestion_lag_high`
+
+This alert is currently retired. The pre-dispatcher orchestrator emitted
+`ratesengine_source_lag_ledgers`; the current `ledgerstream -> dispatcher`
+indexer does not. Keep this file only as historical operator context until a
+replacement per-source lag signal lands.
 
 ## At a glance
 

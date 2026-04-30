@@ -301,7 +301,7 @@ provisioned; cloud is pay-as-you-use for DR.
   saved cursor.
 - **Backfill:** triggered via `ratesengine-ops backfill` subcommand;
   writes into the same hypertable with idempotent upserts keyed on
-  `(source, ledger, tx_hash, op_index)`.
+  `(source, ledger, tx_hash, op_index, ts)`.
 - **Failure mode:** one source dies → others continue. The dead
   source's freshness timer in Prometheus breaches the 60 s alarm;
   `/v1/price` for pairs that rely on that source sets

@@ -61,7 +61,7 @@ Any row with **status ❌** is a blocker for launch. Any row with
 | S2.5 | "And others" — DIA (if mainnet ships in window) | (not in proposal; adding) | 4–post-launch | `internal/sources/dia` | — | [oracles/dia.md](../discovery/oracles/dia.md) | ⏳ deferred | 2 |
 | S2.6 | SEP-40-compat output (others consume *our* prices) | §API | 7 | `internal/api/sep40` | — | [oracles/reflector.md](../discovery/oracles/reflector.md) §SEP-40 interface | 🧪 designed | 3 |
 
-### S3. Price aggregation — Soroswap, Aquarius, SDEX, Blend + others
+### S3. Price aggregation — Soroswap, Aquarius, SDEX, Comet + others
 
 | # | Requirement | Proposal | Week | Owner | ADR | Verified by | Status | Conf |
 | - | ----------- | -------- | ---- | ----- | --- | ----------- | ------ | ---- |
@@ -70,8 +70,8 @@ Any row with **status ❌** is a blocker for launch. Any row with
 | S3.3 | Aquarius 3 pool types | §Soroban DEXs / Aquarius | 3 | `internal/sources/aquarius` | — | [dexes-amms/aquarius.md](../discovery/dexes-amms/aquarius.md) | ✅ verified | 5 |
 | S3.4 | Phoenix DEX (8-events-per-swap) | §Soroban DEXs (added post-discovery) | 3 | `internal/sources/phoenix` | — | [dexes-amms/phoenix.md](../discovery/dexes-amms/phoenix.md) | ✅ verified | 5 |
 | S3.5 | Comet (Balancer-weighted AMM) | §Soroban DEXs (added post-discovery) | 3 | `internal/sources/comet` | — | [dexes-amms/comet.md](../discovery/dexes-amms/comet.md) | ✅ verified | 4 |
-| S3.6 | Blend auctions as directional signal | §Soroban DEXs / Blend | 3 | `internal/sources/blend` | — | [dexes-amms/blend.md](../discovery/dexes-amms/blend.md) | ✅ verified | 4 |
-| S3.7 | CEX trade ingestion (Binance, Coinbase, Kraken, …) | §Centralized Exchanges | 4 | `internal/sources/cex/<venue>` | — | [external-refs/cex-feeds.md](../discovery/external-refs/cex-feeds.md) | 🧪 designed | 3 |
+| S3.6 | Blend auctions as directional signal | §Soroban DEXs / Blend | post-launch | — | — | [dexes-amms/blend.md](../discovery/dexes-amms/blend.md) | ⏳ not in repo snapshot | 2 |
+| S3.7 | CEX trade ingestion (Binance, Coinbase, Kraken, …) | §Centralized Exchanges | 4 | `internal/sources/external/*` | — | [external-refs/cex-feeds.md](../discovery/external-refs/cex-feeds.md) | ✅ verified | 4 |
 
 ### S4. VWAP + configurable USD volume threshold
 
@@ -86,7 +86,7 @@ Any row with **status ❌** is a blocker for launch. Any row with
 
 | # | Requirement | Proposal | Week | Owner | ADR | Verified by | Status | Conf |
 | - | ----------- | -------- | ---- | ----- | --- | ----------- | ------ | ---- |
-| S5.1 | Live event ingest (Soroban getEvents + ledger stream) | §Real-time — Hot path | 3 | `internal/consumer` + `internal/sources/*` StreamLive | — | [data-sources/archival-nodes.md](../discovery/data-sources/archival-nodes.md) | ✅ verified | 5 |
+| S5.1 | Live event ingest (Galexie/MinIO + ledgerstream + dispatcher) | §Real-time — Hot path | 3 | `cmd/ratesengine-indexer` + `internal/ledgerstream` + `internal/dispatcher` + `internal/sources/*` | — | [data-sources/archival-nodes.md](../discovery/data-sources/archival-nodes.md), [ingest-pipeline.md](ingest-pipeline.md) | ✅ verified | 5 |
 | S5.2 | ≤ 30s staleness (Freighter SLA) | §Latency Targets | 6 | cross-cutting | — | [data-sources/archival-nodes.md](../discovery/data-sources/archival-nodes.md) + HA plan | 🧪 designed | 3 |
 | S5.3 | SSE streaming for subscribers | §Streaming Support | 7 | `internal/api/stream` | ADR-0006 (planned) | [oracles/reflector.md](../discovery/oracles/reflector.md) | 🧪 designed | 2 |
 | S5.4 | Degradation signals (`stale_flag`, `reduced_redundancy`) | §Error Handling and Degradation | 5 | `internal/api/envelope` | — | `envelope.Flags` shipped (stale, reduced_redundancy, triangulated, divergence_warning) | ✅ verified | 3 |
@@ -309,12 +309,15 @@ For each claim below we state the **as-written promise**, what we
 
 - **As written** (proposal §Soroban DEXs): list of venues with event
   decoding.
-- **Verified**: 6 venues (SDEX, Soroswap, Aquarius, Phoenix, Comet,
-  Blend) have full event-schema audits with mainnet addresses where
-  available. Phoenix's 8-events-per-swap pattern and Soroswap's
+- **Verified**: current repo snapshot ships 5 venues (SDEX,
+  Soroswap, Aquarius, Phoenix, Comet). Blend is not present in the
+  live repo/runtime surface and remains outside the shipped set for
+  this snapshot. Phoenix's 8-events-per-swap pattern and Soroswap's
   swap+sync correlation were non-obvious and are both captured
   explicitly.
-- **Verdict**: ✅ promise exceeded (Phoenix + Comet added).
+- **Verdict**: ✅ promise partially exceeded in venue breadth
+  (Phoenix + Comet added), with Blend deferred out of the current
+  runtime snapshot.
 
 ### Claim 6 — "p95 ≤ 200 ms, p99 ≤ 500 ms, ≥ 99.99% uptime"
 

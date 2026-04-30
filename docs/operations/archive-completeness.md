@@ -12,7 +12,7 @@ Operational companion to [ADR-0017](../adr/0017-archive-completeness-invariants.
 - The two physical archives we maintain and what each one is for
 - Per-region behaviour (R1 enforces; R2/R3 delegate)
 - Bootstrap procedure (the one-shot historical fill)
-- Daily completeness cron (the steady-state guardrail)
+- Daily completeness cron (the current steady-state guardrail)
 - Multi-source fallback chain
 - Prometheus metrics + status-page integration
 - The `ratesengine-ops archive-completeness` tool
@@ -21,6 +21,12 @@ The implementation lives in `cmd/ratesengine-ops/` (the
 `archive-completeness` subcommand) plus the existing
 `galexie-archive-fill` and `refetch-history-archive` shell scripts
 in `/usr/local/bin/`.
+
+Important scope note for this repo snapshot: the shipped
+`archive-completeness` command enforces and repairs the
+**cross-anchor** archive only. The broader ADR-0017 four-contract
+model remains the target architecture, but the current green path is
+not proof that the primary `galexie-archive` checks have run.
 
 ## The two archives
 
@@ -78,19 +84,18 @@ enforcement reflects that.
 
 ### R1 Frankfurt — integrity leader
 
-R1 holds both archives locally and runs all four contracts daily.
-Its successful run is the trust anchor for the fleet.
+R1 holds both archives locally. In the current implementation it runs
+the cross-anchor portion of the daily control and serves as the fleet's
+trust anchor for that narrower check set.
 
 ```
 ratesengine-ops archive-completeness verify -range yesterday
   ↓
-  ├─ Contract 1: enumerate yesterday's primary partitions, check 64K files each
-  ├─ Contract 2: chain-link walk yesterday's range (Tier A)
-  ├─ Contract 3: stat each expected /srv/history-archive/ledger-*.xdr.gz
-  └─ Contract 4: hash-compare each cross-anchor entry against primary (Tier B)
+  ├─ implemented today: stat each expected /srv/history-archive/ledger-*.xdr.gz
+  └─ implemented today: fetch/repair missing cross-anchor checkpoint files
 ```
 
-On any contract failure: attempt repair via the multi-source
+On any cross-anchor failure: attempt repair via the multi-source
 fallback chain (below). If repair succeeds, exit clean. If repair
 fails, exit non-zero and emit a Prometheus alert.
 
@@ -107,7 +112,7 @@ ratesengine-ops archive-completeness verify -range yesterday \
   -trust-leader r1
 ```
 
-Two checks run locally:
+The ADR describes two checks that should run locally:
 
 - **Chain-link (contract 2 only):** walk yesterday's ledgers
   through galexie's S3 reader and confirm `prev.LedgerHash ==
@@ -118,7 +123,7 @@ Two checks run locally:
   hashes agree. Catches forks (chain internally consistent but
   doesn't match the network's signed reality).
 
-Contracts 1, 3, 4 are delegated to R1 via a single check: query
+In the current implementation, contract delegation is narrower: query
 R1's Prometheus `archive_completeness_last_success_timestamp`
 gauge over the metrics endpoint. If R1's last clean run is older
 than **26 hours**, R2 marks itself *reduced redundancy* and sets
@@ -135,10 +140,10 @@ ratesengine-ops archive-completeness verify -range yesterday \
   -trust-leader r1
 ```
 
-R3 runs contract 1 (structural) on its own local primary copy
-because Vultr Object Storage failures are local to R3 — R1's
-verification can't catch them. Contracts 3 + 4 still delegate to
-R1 (no local cross-anchor archive).
+R3's target design includes contract 1 (structural) on its own local
+primary copy because Vultr Object Storage failures are local to R3.
+The shipped `archive-completeness` implementation still only enforces
+the cross-anchor archive path.
 
 If Vultr Object Storage drops files, R3's local structural check
 catches it within 24 h. The repair path is `mc mirror` from R1's

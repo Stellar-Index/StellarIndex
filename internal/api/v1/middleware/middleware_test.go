@@ -13,6 +13,18 @@ import (
 	mw "github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 )
 
+func setTrustedProxyCIDRs(t *testing.T, cidrs ...string) {
+	t.Helper()
+	if err := mw.SetTrustedProxyCIDRs(cidrs); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs(%v): %v", cidrs, err)
+	}
+	t.Cleanup(func() {
+		if err := mw.SetTrustedProxyCIDRs(nil); err != nil {
+			t.Fatalf("reset trusted proxies: %v", err)
+		}
+	})
+}
+
 // ─── Chain ────────────────────────────────────────────────────────
 
 func TestChain_OrderIsOutermostFirst(t *testing.T) {
@@ -184,6 +196,8 @@ func TestLogger_EmitsStructuredLog(t *testing.T) {
 }
 
 func TestLogger_XForwardedForWins(t *testing.T) {
+	setTrustedProxyCIDRs(t, "10.0.0.0/8")
+
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
@@ -198,6 +212,24 @@ func TestLogger_XForwardedForWins(t *testing.T) {
 	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry)
 	if entry["remote_ip"] != "203.0.113.42" {
 		t.Errorf("remote_ip = %v, want 203.0.113.42 (first XFF hop)", entry["remote_ip"])
+	}
+}
+
+func TestLogger_UntrustedPeerIgnoresXForwardedFor(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	h := mw.Logger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "198.51.100.9:80"
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	var entry map[string]any
+	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry)
+	if entry["remote_ip"] != "198.51.100.9" {
+		t.Errorf("remote_ip = %v, want socket peer when proxy is untrusted", entry["remote_ip"])
 	}
 }
 

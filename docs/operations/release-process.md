@@ -32,8 +32,8 @@ mid-release wastes a tag and forces a `.N+1` cut.
    `pkg/client` version, that module's tag (`pkg/client/vX.Y.Z`)
    already exists on `main` from an earlier landed PR — **do not**
    bump `pkg/*` versions in the same commit as a CalVer release.
-5. **goreleaser dry-run is clean.** `make release-dryrun` produces
-   binaries for every target without errors.
+5. **Build dry-run is clean.** `make build` completes for every
+   checked-in binary without errors.
 6. **Stellar protocol is documented.** The protocol version the
    release was tested against is known (e.g. `23` for post-Whisk).
    Pulled from `stellar-core --version` on a test node, or from the
@@ -73,10 +73,11 @@ mid-release wastes a tag and forces a `.N+1` cut.
    CHANGELOG section for this version, expanded with the
    "Tested against" / "`pkg/*` versions" / "Migration notes" blocks
    from the template.
-6. **Wait for goreleaser.** The release workflow (`.github/workflows/release.yml`)
-   builds binaries for every target, signs them, and attaches them
-   to the GitHub Release. Confirm every expected artefact is present
-   before announcing.
+6. **Confirm the artefact set manually.** This repo snapshot does
+   not ship an in-tree `release.yml`, `.goreleaser.yaml`, or per-binary
+   Docker packaging flow. If you publish release artefacts for a tag,
+   do so via the currently approved external packaging process and
+   verify the uploaded binaries before announcing.
 
 ## Post-flight
 

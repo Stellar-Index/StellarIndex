@@ -33,14 +33,13 @@ Where the two diverge, the OpenAPI file wins and this doc gets updated.
 6. **Pagination is cursor-based.** No `offset`/`limit`; no deep-paging
    perf cliff.
 7. **Rate limits expressed in headers.** `X-RateLimit-Limit`,
-   `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+   `X-RateLimit-Remaining`, and `Retry-After` on 429s.
 8. **Server time is authoritative.** Every response includes
    `as_of` (RFC 3339, UTC, millisecond precision).
 9. **Errors follow RFC 9457 Problem Details.** Not our own
    error envelope.
-10. **Cacheability is explicit.** `Cache-Control`, `ETag`, and
-    `Last-Modified` set per endpoint; historical endpoints go
-    through CDN.
+10. **Cacheability is explicit.** `Cache-Control` is set per
+    endpoint; historical endpoints are the CDN-friendly surfaces.
 
 ---
 
@@ -191,11 +190,11 @@ Response `data` for `/v1/price`:
                                              // window end for vwap/twap
   "change_24h_pct": "-0.02",              // aggregator (not yet wired)
   "volume_24h_usd": "42185923.44",        // aggregator (not yet wired)
-  "market_cap_usd": "25394841030.00",     // supply derivation (null if unknown)
+  "market_cap_usd": "25394841030.00",     // supply derivation when a snapshot exists
   "fdv_usd": null,                        // supply derivation
   "circulating_supply": "25394841030.00", // supply derivation
   "total_supply": "25394841030.00",       // supply derivation
-  "max_supply": null                      // supply derivation (null if uncapped)
+  "max_supply": null                      // supply derivation (null if uncapped or no snapshot)
 }
 ```
 
@@ -203,28 +202,46 @@ Response `data` for `/v1/price`:
 
 | Method | Path | Purpose | RFP |
 | ------ | ---- | ------- | --- |
-| GET | `/v1/history?asset_id=&quote=&timeframe=1h&granularity=1m` | TWAP/VWAP series. | S6.*, S7.* |
-| GET | `/v1/ohlc?asset_id=&quote=&timeframe=24h&granularity=15m` | OHLC candles. | S6.1, F1 |
-| GET | `/v1/history/since-inception?asset_id=&quote=&granularity=1d` | Alias for all-time with 1d default. | S6.1, F6.4 |
+| GET | `/v1/history?base=&quote=&from=&to=&limit=` | Raw per-trade history for a pair in a time window. | S6.1 |
+| GET | `/v1/ohlc?base=&quote=&from=&to=` | Single OHLC bar for a pair over one window. | S6.1, F1 |
+| GET | `/v1/history/since-inception?asset=&quote=&granularity=1d` | Closed-bucket historical VWAP series from the CAGG ladder. | S6.*, S7.* |
 
 Query params:
 
-- `timeframe`: `1h | 24h | 1w | 1mo | 1y | all`.
-- `granularity`: `1m | 15m | 1h | 4h | 1d | 1w | 1mo`.
-- `from`, `to`: optional RFC 3339 timestamps (override `timeframe`).
-- `price_type`: `vwap | twap` (default `vwap`).
+- `/v1/history`: `base`, `quote`, `from`, `to`, optional `limit`, optional opaque `cursor`.
+- `/v1/history/since-inception`: `asset`, `quote`, optional `granularity` (`1m | 15m | 1h | 4h | 1d | 1w | 1mo`).
+- `/v1/ohlc`: `base`, `quote`, `from`, `to`. Defaults to the last hour when omitted.
 
 Response `data` for `/v1/history`:
 
 ```json
+[
+  {
+    "source": "sdex",
+    "ledger": 57211344,
+    "tx_hash": "abc123...",
+    "op_index": 0,
+    "ts": "2026-04-22T14:29:12Z",
+    "base_asset": "native",
+    "quote_asset": "fiat:USD",
+    "base_amount": "10000000",
+    "quote_amount": "1241800",
+    "price": "0.1241800000"
+  }
+]
+```
+
+Response `data` for `/v1/history/since-inception`:
+
+```json
 {
-  "asset_id": "XLM-native",
-  "quote": "USD",
+  "asset_id": "native",
+  "quote": "fiat:USD",
   "price_type": "vwap",
-  "granularity": "1m",
+  "granularity": "1d",
   "points": [
-    { "t": "2026-04-22T14:29:00Z", "p": "0.12418", "v_usd": "4281.22" },
-    { "t": "2026-04-22T14:30:00Z", "p": "0.12421", "v_usd": "5103.18" }
+    { "t": "2026-04-21T00:00:00Z", "p": "0.12390", "v_usd": "42185923.44" },
+    { "t": "2026-04-22T00:00:00Z", "p": "0.12421", "v_usd": "51031844.18" }
   ]
 }
 ```
@@ -233,21 +250,18 @@ OHLC `/v1/ohlc`:
 
 ```json
 {
-  "asset_id": "XLM-native",
-  "quote": "USD",
-  "granularity": "15m",
-  "candles": [
-    {
-      "t_open":  "2026-04-22T14:15:00Z",
-      "t_close": "2026-04-22T14:30:00Z",
-      "o": "0.12412", "h": "0.12438", "l": "0.12401", "c": "0.12421",
-      "v_base": "1840222.10", "v_usd": "228512.18"
-    }
-  ]
+  "from": "2026-04-22T14:00:00Z",
+  "to": "2026-04-22T15:00:00Z",
+  "open": "0.1241200000",
+  "high": "0.1243800000",
+  "low": "0.1240100000",
+  "close": "0.1242100000",
+  "base_volume": "184022210",
+  "quote_volume": "22851218",
+  "trade_count": 184,
+  "truncated": false
 }
 ```
-
-Timeframe × granularity validity is enforced server-side and matches
 the table in the Freighter RFP. Invalid combinations → 400 with
 `type=https://api.ratesengine.net/errors/invalid-granularity`.
 
@@ -293,7 +307,7 @@ Decimals and resolution exposed via `/v1/oracle/decimals` and
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET | `/v1/account/me` | API key holder info + quota status. |
-| GET | `/v1/account/usage?from=&to=` | Daily usage summary. |
+| GET | `/v1/account/usage?from=&to=` | Usage-summary placeholder; currently returns `[]` until the counter store lands. |
 | POST | `/v1/account/keys` | Create a new API key (rotate). |
 
 Self-service signup flow lives at `https://ratesengine.net/signup`;
@@ -303,27 +317,26 @@ the API returns the generated key once.
 
 ## 6. Authentication
 
-Three tiers:
+Two runtime-auth classes are shipped in this snapshot:
 
-| Tier | Auth | Limit | Who |
-| ---- | ---- | ----- | --- |
-| Anonymous | none | 60 rpm per IP | Public demo, curious browsers |
-| API-key | `Authorization: Bearer rek_<32-char-base58>` | 1000 rpm per key | Default wallet/SDK clients |
-| Partner | `Authorization: Bearer rek_<…>` + allowlisted | 10 000 rpm per key | Negotiated — Freighter, LOBSTR, … |
+| Class | Auth | Default limit | Who |
+| ---- | ---- | ------------- | --- |
+| Anonymous | none | 60 rpm per IP | Public/demo callers |
+| Authenticated | `Authorization: Bearer rek_<64-hex>` or SEP-10 JWT | 1000 rpm per subject/key | Wallet, SDK, and operator clients |
 
 API keys are:
 
 - Generated server-side via CSPRNG; the plaintext is shown **once**
   at creation.
-- Stored in Postgres as Argon2id hash.
+- Stored in Redis under a SHA-256-derived key; the plaintext itself is
+  not recoverable from the stored record.
 - Prefixed `rek_` (short for "Rates Engine key") for reverse-grep.
-- Scoped: read-only is default; write scopes only exist for
-  self-service endpoints (`/account/*`).
+- Scopes are reserved in the record model, but scope enforcement is not
+  wired on runtime endpoints in this snapshot.
 
-SEP-10 (Stellar keypair auth) is **deferred to v1.1**. Tempting but
-adds a full challenge-response round-trip to every request unless we
-mint a session token; easier to layer in once the basic system is
-live.
+SEP-10 (Stellar keypair auth) is shipped as the current wallet-facing
+auth bootstrap. Clients obtain a challenge, sign it, exchange it for a
+JWT, and then use that bearer token on authenticated routes.
 
 mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-plan.md#6-security-posture)).
 
@@ -332,11 +345,12 @@ mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-
 ## 7. Rate limiting
 
 - **Algorithm:** token bucket.
-- **Storage:** Redis (per-key + per-IP).
-- **Window:** per-minute; bucket refills at `limit/60` per second.
-- **Burst:** `limit × 1.5` burst capacity per bucket.
-- **Scope:** rate limits are per API key (if auth present) or per IP
-  (otherwise). X-Forwarded-For is honoured behind HAProxy.
+- **Storage:** Redis (per-key/per-subject + per-IP).
+- **Window:** per-minute.
+- **Scope:** authenticated callers use the authenticated subject/key
+  bucket; anonymous callers use the IP bucket. `X-Forwarded-For` only
+  influences the anonymous IP identity when the immediate peer is in
+  `api.trusted_proxy_cidrs`.
 - **Response when limit hit:** 429 with
   `Retry-After` header and an RFC 9457 problem payload.
 
@@ -345,16 +359,7 @@ Response headers on every successful request:
 ```
 X-RateLimit-Limit: 1000
 X-RateLimit-Remaining: 987
-X-RateLimit-Reset: 2026-04-22T14:31:00Z
 ```
-
-Abuse protection (above-and-beyond rate limits):
-
-- Circuit breaker per client: 5 consecutive 5xx responses → 30 s
-  cooldown.
-- Request-size limits: 10 KB for `GET` query string, 1 MB for POST
-  batches.
-- SSE subscription caps: max 50 active streams per key.
 
 ---
 
@@ -362,28 +367,17 @@ Abuse protection (above-and-beyond rate limits):
 
 ### 8.1 HTTP cache headers
 
-| Endpoint class | `Cache-Control` | Server-side cache TTL |
-| -------------- | --------------- | --------------------- |
-| `/v1/healthz`, `/v1/version` | `max-age=60, public` | — |
-| `/v1/assets`, `/v1/assets/{id}` | `max-age=300, public` | 5 min (Redis) |
-| `/v1/price`, `/v1/price/batch` | `no-cache, no-store` | 1-5 s (Redis) |
-| `/v1/history` (short timeframes) | `max-age=60, public` | 60 s (Redis) |
-| `/v1/history` (long timeframes / `all`) | `max-age=3600, public, immutable` | CDN (Cloudflare) + 1 h Redis |
-| `/v1/ohlc` (closed candles) | `max-age=604800, public, immutable` | CDN indefinite |
-| `/v1/ohlc` (open candle) | `max-age=5, public` | 5 s (Redis) |
+| Endpoint class | `Cache-Control` |
+| -------------- | --------------- |
+| `/v1/healthz`, `/v1/readyz`, `/v1/version`, `/metrics` | `no-store` |
+| `/v1/account/*`, `/v1/auth/sep10/*` | `private, no-store` |
+| `/v1/price/tip`, `/v1/observations*` | `private, no-cache, must-revalidate` |
+| `/v1/price`, `/v1/price/batch`, `/v1/assets*` | `public, max-age=30, s-maxage=60` |
+| `/v1/history*`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/pairs`, `/v1/sources`, `/v1/oracle/*` | `public, max-age=60, s-maxage=300` |
 
-### 8.2 ETag / conditional GET
-
-All cacheable responses emit `ETag: W/"<sha256 of body>"`. Clients
-revalidate with `If-None-Match`; server returns 304 without a body.
-
-### 8.3 Why "closed candles are immutable"
-
-A 15-minute candle for `14:15:00-14:30:00` cannot change after
-`14:30:05` (5-second settle for late ledgers). We mark the candle
-immutable and let CDN pin it for a week. This is the single biggest
-cache win and makes the p95 ≤ 200 ms SLA comfortable for historical
-endpoints.
+The current stack does **not** emit `ETag`, `Server-Timing`,
+`X-Correlation-ID`, or conditional-GET 304 responses in this
+snapshot.
 
 ---
 
@@ -447,17 +441,17 @@ Standard `status` codes:
 | 503 | Service degraded | All indexers down; prices too stale to serve |
 
 We **never** return 500 with a stack trace. Stack traces go to logs;
-clients get `instance` + a correlation ID to open a support ticket.
+clients get `instance` + `request_id` to open a support ticket.
 
 ---
 
 ## 12. Observability surface (exposed)
 
-- `Server-Timing` header on every response: `cache;dur=1, db;dur=12, compute;dur=2`.
-- `X-Request-ID` header (UUIDv7). Clients may set it; if absent we
-  generate. Returned as-is.
-- `X-Correlation-ID` for chained requests — same across a client's
-  request burst when they pass one.
+- `X-Request-ID` header on every response. Clients may set it; if the
+  value is absent or rejected as unsafe/oversize, the server mints a
+  fresh 32-character hex token.
+- The current stack does not expose `Server-Timing` or
+  `X-Correlation-ID` headers in this snapshot.
 
 ---
 

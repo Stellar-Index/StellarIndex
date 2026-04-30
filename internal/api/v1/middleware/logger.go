@@ -2,9 +2,7 @@ package middleware
 
 import (
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -61,31 +59,6 @@ func Logger(logger *slog.Logger) Middleware {
 			}
 		})
 	}
-}
-
-// resolveRemoteIP extracts the client IP from X-Forwarded-For (first
-// entry) or falls back to r.RemoteAddr with its port stripped.
-//
-// Trusts X-Forwarded-For unconditionally today because we always
-// run behind a trusted reverse-proxy (HAProxy or Istio) per the HA
-// plan. If we ever serve directly to the public internet, this
-// function needs a trust allow-list.
-func resolveRemoteIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// XFF is comma-separated; the first entry is the originator.
-		if i := strings.Index(xff, ","); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if r.RemoteAddr == "" {
-		return ""
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // statusRecorder wraps an http.ResponseWriter + captures status +

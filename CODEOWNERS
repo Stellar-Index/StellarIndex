@@ -22,7 +22,6 @@
 /Makefile                       @ash
 /.github/                       @ash
 /.golangci.yml                  @ash
-/.goreleaser.yaml               @ash
 /go.mod                         @ash
 /go.sum                         @ash
 /VERSIONS.md                    @ash

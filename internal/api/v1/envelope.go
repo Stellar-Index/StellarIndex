@@ -91,11 +91,18 @@ func writeJSON(w http.ResponseWriter, data any, flags Flags, sources ...string) 
 // that need to set Pagination or other fields writeJSON doesn't
 // accept as params.
 func writeEnvelope(w http.ResponseWriter, env Envelope) {
+	writeEnvelopeStatus(w, http.StatusOK, env)
+}
+
+// writeEnvelopeStatus writes a pre-constructed Envelope with an
+// explicit 2xx status code. Used by handlers whose public contract
+// is not plain 200 OK.
+func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	if env.AsOf.IsZero() {
 		env.AsOf = time.Now().UTC()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(env)
 }
 

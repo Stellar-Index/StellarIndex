@@ -84,12 +84,13 @@ Decision tree:
       tick; allow ≤ 60 s post-replay before considering the alert
       stale.
 
-- [ ] **Pause** publishing of the affected asset's `/v1/assets/{id}`
-      F2 fields if the divergence is large enough to materially
-      mislead consumers (>0.1% of total). Set the asset's
-      `supply_basis` to `no_metadata` via the supply-policy YAML
-      override; redeploy the API; the F2 fields then surface as
-      `null`.
+- [ ] **Pause** consumer reliance on the affected asset's
+      `/v1/assets/{id}` F2 fields if the divergence is large enough
+      to materially mislead (>0.1% of total). This repo snapshot
+      does not ship a `supply_basis=no_metadata` override or an
+      in-tree supply writer; the safe path is to treat the current
+      F2 output as advisory until the snapshot writer/reconciliation
+      path lands or to suppress the field downstream at the caller.
 
 ## Root cause analysis
 

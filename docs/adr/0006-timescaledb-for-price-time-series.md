@@ -55,7 +55,8 @@ Structure:
 
 - Raw `trades` hypertable, partitioned by `ts` daily, chunk interval
   1 day, columnar-compressed after 7 days. `ts`+`pair` primary-key
-  + source identity index (`source`, `ledger`, `tx_hash`, `op_index`).
+  + source identity index (`source`, `ledger`, `tx_hash`, `op_index`,
+  `ts`).
 - `oracle_updates` hypertable, same shape as `trades` with an
   `oracle_source` column.
 - `events_raw` hypertable for Soroban event blobs, compressed after

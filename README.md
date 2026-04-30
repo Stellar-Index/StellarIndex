@@ -9,7 +9,7 @@ A publicly-accessible, aggregated, real-time and historical price API
 for every Stellar asset — classic and SEP-41 Soroban token.
 
 Aggregates on-chain trades from **SDEX, Soroswap, Aquarius, Phoenix,
-Comet, Blend**, oracle feeds from **Reflector, Redstone, Band**, plus
+Comet**, oracle feeds from **Reflector, Redstone, Band**, plus
 CEX + FX + reference aggregators, into one VWAP-first pricing layer
 served at p95 ≤ 200 ms. Full since-inception OHLC. Self-hostable.
 
@@ -89,17 +89,18 @@ long-form rationale; each becomes a numbered ADR.
   [`docs/discovery/`](docs/discovery/).
 - ✅ Repo structure plan, engineering standards, 10-week delivery
   plan locked.
-- ✅ Phase 2 ingestion scaffold: Soroswap / Aquarius / Phoenix /
-  Reflector sources, TimescaleDB hypertables + continuous
-  aggregates, stellar-rpc client, indexer binary with
-  Prometheus scrape target.
+- ✅ Phase 2 ingestion scaffold: SDEX / Soroswap / Aquarius /
+  Phoenix / Comet / Reflector / Redstone / Band plus the external
+  CEX + FX fleet, TimescaleDB hypertables + continuous
+  aggregates, and the `ledgerstream -> dispatcher` indexer binary
+  with Prometheus scrape target.
 - ✅ REST API v1 serving `/healthz`, `/readyz`, `/version`,
   `/assets`, `/price`, `/history`, `/ohlc`, `/vwap`, `/twap`,
   `/markets`, `/oracle/latest` behind CORS + per-IP rate limit.
 - ⏳ Aggregation engine (VWAP/TWAP cache refresh, cross-source
   divergence detection).
-- ⏳ Historical backfill, remaining sources (SDEX / Comet / Blend /
-  Redstone / Band / CEX / FX), hardening, launch.
+- ⏳ Historical backfill hardening, supply/F2 completion,
+  archive-completeness expansion, and launch controls.
 
 **Production deadline:** 2026-06-30 per
 [docs/discovery/delivery-plan.md](docs/discovery/delivery-plan.md).

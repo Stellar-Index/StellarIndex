@@ -40,23 +40,28 @@ extra resolution at the 200ms / 500ms SLO boundaries.
 
 Counter, label `source`.
 
-Every event the orchestrator dispatched to the indexer's event-sink.
-Zero rate + `source_enabled=1` fires the `source-stopped` alert.
+Every event the live indexer sink attempts to persist for that
+source. Emitted from `internal/pipeline/sink.go`, not the retired
+legacy orchestrator path. Zero rate + `source_enabled=1` backs the
+`source-stopped` alert.
 
 ### `ratesengine_source_enabled`
 
 Gauge, label `source`.
 
-`1` while the source's goroutine is inside `runSource`; `0` on exit.
-Used to qualify the zero-rate source-stopped alert so legitimately
-disabled sources don't page.
+`1` for sources the current indexer enabled from config at startup;
+`0` during shutdown or when the source is not configured. Used to
+qualify source-level alerts so intentionally disabled sources do not
+page.
 
 ### `ratesengine_source_lag_ledgers`
 
 Gauge, label `source`.
 
-Ledgers-behind-tip: `resp.LatestLedger - source.Health().LastLedger`.
-Zero at tip or when the source hasn't observed any events yet.
+Legacy metric from the pre-dispatcher orchestrator topology. The
+current `ledgerstream -> dispatcher` indexer does not emit this gauge,
+so no live alert should depend on it until a replacement per-source
+lag signal exists.
 
 ### `ratesengine_source_last_event_unix`
 
@@ -70,7 +75,8 @@ Counter, label `source`.
 Per-event parse failures — SCVal shape mismatch, malformed XDR,
 canonical-invariant violations. Distinct from `orphan_events`
 (events were well-formed but partnerless) and `insert_errors`
-(decoded fine but persistence broke).
+(decoded fine but persistence broke). Emitted from dispatcher stats
+deltas after each processed ledger.
 
 ### `ratesengine_source_orphan_events_total`
 
@@ -80,7 +86,20 @@ Events that arrived but never correlated into a complete observation.
 Soroswap: swap without matching sync (or vice versa). Phoenix:
 incomplete N-of-8 field set aged past the buffer's 5-min ceiling.
 Aquarius / Reflector don't emit orphans — they're 1-event-per-
-observation.
+observation. Emitted from decoder-maintained orphan counters via the
+live dispatcher path.
+
+### `ratesengine_discovery_dropped_hits_total`
+
+Counter, no labels.
+
+Discovery hits dropped because the async SEP-41 discovery sink buffer
+was full. Emitted by the live indexer from periodic `DroppedCount`
+sampling, not only at shutdown, so operators can alert on sustained
+loss while the process is still running. Any non-zero increase means
+discovery coverage is degrading under recorder pressure; this is
+best-effort data loss, not a backpressure signal on the main ingest
+path.
 
 ### `ratesengine_source_insert_errors_total`
 
@@ -100,9 +119,10 @@ storage-layer distress; the `insert-errors` alert escalates.
 
 Gauge, label `source`.
 
-Mirror of the `ingestion_cursors` row's `last_ledger` value, updated
-every `CursorPersistEvery` tick (30 s default). `cursor-stuck` alert
-fires when `increase(...[5m]) == 0` with `source_enabled=1`.
+Mirror of the committed `ingestion_cursors.last_ledger` value for the
+live ledgerstream pipeline, updated after each successful cursor
+upsert. `cursor-stuck` alert fires when `increase(...[5m]) == 0` with
+`source_enabled=1`.
 
 ## Oracle layer (indexer binary, reflector + future sources)
 

@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
+	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 )
 
@@ -171,6 +172,67 @@ func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
 	// Rate-limit headers should be absent (we didn't compute them).
 	if got := w.Header().Get("X-RateLimit-Limit"); got != "" {
 		t.Errorf("X-RateLimit-Limit should be absent on failure, got %q", got)
+	}
+}
+
+func TestRateLimitBySubject_AuthenticatedUsesAuthBucket(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute)
+	authBucket := ratelimit.New(rdb, 2, time.Minute)
+
+	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
+	reqWithSubject := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		subject := auth.Subject{
+			Identifier: "GABC123",
+			Tier:       auth.TierSEP10,
+		}
+		return r.WithContext(auth.WithSubject(r.Context(), subject))
+	}
+
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, reqWithSubject())
+		if w.Code != http.StatusOK {
+			t.Fatalf("attempt %d: status = %d, want 200", i+1, w.Code)
+		}
+		if got := w.Header().Get("X-RateLimit-Limit"); got != "2" {
+			t.Fatalf("attempt %d: X-RateLimit-Limit = %q, want 2", i+1, got)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqWithSubject())
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-limit status = %d, want 429", w.Code)
+	}
+}
+
+func TestRateLimitBySubject_AnonymousUsesAnonBucket(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute)
+	authBucket := ratelimit.New(rdb, 3, time.Minute)
+
+	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
+	reqWithSubject := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		subject := auth.Anonymous("anon-hash-1")
+		return r.WithContext(auth.WithSubject(r.Context(), subject))
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqWithSubject())
+	if w.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-RateLimit-Limit"); got != "1" {
+		t.Fatalf("X-RateLimit-Limit = %q, want 1", got)
+	}
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqWithSubject())
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d, want 429", w.Code)
 	}
 }
 

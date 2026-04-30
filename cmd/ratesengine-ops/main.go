@@ -271,14 +271,16 @@ Subcommands:
                                        textfile_collector dir, e.g.
                                        /var/lib/node_exporter/textfile_collector/
                                        archive_completeness.prom).
-                          PR A/B/C cover cross-anchor; primary MinIO bucket
-                          scan lands in PR D.
+                          Current implementation scope: cross-anchor archive
+                          only. Primary MinIO-bucket structural/chain-link
+                          enforcement is not shipped in this snapshot.
                           Exit 0 = clean; 1 = at least one missing file remains.
   cross-region-check -regions name=URL,name=URL,... [-pairs PAIR,...] [-metric vwap|twap|ohlc] [-window DUR] [-samples N] [-to TS]
                           Hit each region's /v1/{vwap|twap|ohlc} endpoint
                           for the same closed-bucket window and assert
-                          byte-equality on the price field (and OHLC
-                          open/high/low/close where applicable). Per
+                          equality across the stable user-visible payload
+                          (data, sources, and flags, excluding
+                          per-response as_of). Per
                           ADR-0015 the response should be byte-identical
                           across regions once trades have replicated;
                           divergence here flags one of: replication lag,

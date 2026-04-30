@@ -14,9 +14,9 @@ import (
 // `deploy/monitoring/rules/archive-completeness.yml`; renaming any
 // field is a wire break against the alert rule file.
 type MetricsSnapshot struct {
-	// FilesMissing per archive (`cross-anchor` for now; PR D adds
-	// `galexie-archive`). Caller fills the map; absent archives
-	// produce no metric line.
+	// FilesMissing per archive. The shipped flow populates
+	// `cross-anchor` only; callers may add other archives once those
+	// checks are implemented.
 	FilesMissing map[string]int
 
 	// RunDurationSeconds is wall-clock for the whole verify run.
@@ -236,8 +236,8 @@ func (s *MetricsSnapshot) PopulateFromFillResult(res FillResult) {
 	// Each failure attempted every source in turn; we don't have
 	// per-source failure counts on FillResult currently. For PR C
 	// we just record the total failure count under a synthetic
-	// `multi-source-exhausted` label; PR D will track per-source
-	// failures explicitly when it adds the primary archive.
+	// `multi-source-exhausted` label; a future primary-archive pass
+	// can extend this to per-source failure labels.
 	if len(res.Failed) > 0 {
 		s.RepairFailures["multi-source-exhausted"] += len(res.Failed)
 	}

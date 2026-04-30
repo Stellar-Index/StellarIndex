@@ -76,3 +76,29 @@ func TestStringArray_Scan_NullElement(t *testing.T) {
 		t.Errorf("got %v, want %v (NULL element should be skipped)", []string(got), want)
 	}
 }
+
+func TestNormalizeVwapSources(t *testing.T) {
+	row := Vwap1mRow{Sources: []string{"soroswap", "aquarius", "band"}}
+
+	normalizeVwapSources(&row)
+
+	want := []string{"aquarius", "band", "soroswap"}
+	if !reflect.DeepEqual(row.Sources, want) {
+		t.Fatalf("sources = %v, want %v", row.Sources, want)
+	}
+}
+
+func TestNormalizeVwapSources_ShortSlicesUntouched(t *testing.T) {
+	cases := [][]string{
+		nil,
+		{},
+		{"sdex"},
+	}
+	for _, tc := range cases {
+		row := Vwap1mRow{Sources: tc}
+		normalizeVwapSources(&row)
+		if !reflect.DeepEqual(row.Sources, tc) {
+			t.Fatalf("sources = %v, want %v", row.Sources, tc)
+		}
+	}
+}
