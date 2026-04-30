@@ -75,18 +75,21 @@ func TestBackfill_RejectsMissingFlags(t *testing.T) {
 // source list contains an unsafe source — and that the error
 // message names the source so they know which audit to run.
 func TestBackfill_BackfillSafeGate(t *testing.T) {
-	cfg := writeMinimalConfig(t, []string{"soroswap", "aquarius", "sdex"})
+	cfg := writeMinimalConfig(t, []string{"phoenix", "aquarius", "sdex", "soroswap"})
 	args := []string{"-config", cfg, "-from", "21000000", "-to", "21001000", "-dry-run"}
 	_, _, err := parseBackfillFlags(args)
 	if err == nil {
-		t.Fatal("expected refusal — soroswap + aquarius are BackfillSafe=false; got nil")
+		t.Fatal("expected refusal — phoenix + aquarius are BackfillSafe=false; got nil")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "soroswap") || !strings.Contains(msg, "aquarius") {
+	if !strings.Contains(msg, "phoenix") || !strings.Contains(msg, "aquarius") {
 		t.Errorf("error message should name every unsafe source; got: %s", msg)
 	}
 	if strings.Contains(msg, "sdex") {
 		t.Errorf("sdex is BackfillSafe=true; should NOT be in the unsafe list. got: %s", msg)
+	}
+	if strings.Contains(msg, "soroswap") {
+		t.Errorf("soroswap is BackfillSafe=true (audited 2026-04-29); should NOT be in the unsafe list. got: %s", msg)
 	}
 	// Ops needs to know what to do next — error must point at the audit tool.
 	if !strings.Contains(msg, "wasm-history") {
@@ -121,7 +124,7 @@ func TestBackfill_AllSafeSourcesAccepted(t *testing.T) {
 // `[soroswap, aquarius, sdex]` in the config can still backfill a
 // subset (e.g. just sdex while the Soroban audits land).
 func TestBackfill_SourceFlagOverridesConfig(t *testing.T) {
-	cfg := writeMinimalConfig(t, []string{"soroswap", "aquarius", "sdex"})
+	cfg := writeMinimalConfig(t, []string{"phoenix", "aquarius", "sdex"})
 	args := []string{"-config", cfg, "-from", "100", "-to", "200", "-source", "sdex", "-dry-run"}
 	opts, _, err := parseBackfillFlags(args)
 	if err != nil {
@@ -195,8 +198,8 @@ func TestBackfillCursorSub_DistinctRangesAndSources(t *testing.T) {
 // unsafe list back, not just the first one.
 func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
 	// 5 inputs: 2 unsafe Soroban, 1 SDEX (safe), 2 off-chain (safe).
-	got := unsafeBackfillSources([]string{"soroswap", "binance", "phoenix", "sdex", "kraken"})
-	want := []string{"soroswap", "phoenix"}
+	got := unsafeBackfillSources([]string{"aquarius", "binance", "phoenix", "sdex", "kraken"})
+	want := []string{"aquarius", "phoenix"}
 	if len(got) != len(want) {
 		t.Fatalf("unsafeBackfillSources returned %d entries, want %d: %v", len(got), len(want), got)
 	}
