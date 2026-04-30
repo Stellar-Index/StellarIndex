@@ -17,6 +17,20 @@ against.
 
 ### Added
 
+- **`asset_key` label on the supply-refresh metric (#314)**:
+  extends `ratesengine_aggregator_supply_refresh_total` from
+  `(outcome)` to `(asset_key, outcome)` so operators with
+  multiple watched assets can chart per-asset bootstrap progress
+  + isolate failure modes per asset. Existing alerts in
+  `deploy/monitoring/rules/supply-refresh.yml` (#313) are
+  forward-compatible — `sum(rate(...))` and `max(timestamp(...))`
+  both sum/max over the new label naturally. New
+  `supplyRefresherBinding` struct in
+  `cmd/ratesengine-aggregator/main.go` pairs the `Refresher`
+  with its asset_key at goroutine-construction time;
+  `runSupplyRefresh` labels the metric per-tick. Metrics
+  reference doc updated.
+
 - **Aggregator supply-refresh alert rules + two runbooks
   (#313)**: closes the operator-visibility gap on the goroutine
   path of the supply refresher (#301 / #307 / #312). Pairs with

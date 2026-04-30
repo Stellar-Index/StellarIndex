@@ -272,29 +272,35 @@ or `write_error` rates indicate the storage layer needs investigation
 
 ### `ratesengine_aggregator_supply_refresh_total`
 
-Counter, label `outcome` (`ok` / `no_ledger` / `no_observation` /
-`compute_error` / `write_error`).
+Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
+`no_ledger` / `no_observation` / `compute_error` / `write_error`).
+`asset_key` is the `supply.AssetKey` form: `XLM`, `CODE:ISSUER`
+for classic credits, the bare contract C-strkey for SEP-41.
 
-Supply-snapshot refresh outcomes per asset × refresh cycle (ADR-0011
-+ ADR-0021 + Task #57). The aggregator's supply-refresh goroutine
-recomputes the watched assets' supply (XLM at v1; classic + SEP-41
-follow once their computers ship) on the operator-configured cadence
-(`[supply] aggregator_refresh_cadence`, default 5 min) and inserts
-the snapshot into `asset_supply_history` (idempotent on `(asset_key,
-ledger_sequence)`). One increment per asset per cycle.
+Supply-snapshot refresh outcomes per (asset_key, outcome) per
+refresh cycle (ADR-0011, ADR-0021, ADR-0022, ADR-0023). The
+aggregator's supply-refresh goroutine recomputes each watched
+asset's supply on the operator-configured cadence (`[supply]
+aggregator_refresh_cadence`, default 5 min) and inserts the
+snapshot into `asset_supply_history` (idempotent on
+`(asset_key, ledger_sequence)`). One increment per (asset, tick).
 
 Only fires when `[supply] aggregator_refresh_enabled = true` —
 operators that drive the writer via the systemd timer in
 `deploy/systemd/supply-snapshot.timer` instead see this counter
 stay at zero.
 
-Steady state is mostly `ok`. Sustained `no_observation` indicates
-the AccountEntry observer hasn't backfilled the watched accounts
-yet AND the static `reserve_balances_stroops` map is also empty
-or missing entries — expected briefly post-deploy, alarming
-sustained. `no_ledger` fires before the indexer produces its first
-ingestion cursor; clears as soon as ingest catches up. `write_error`
-indicates the storage layer needs investigation.
+Steady state is mostly `ok` per asset. Sustained `no_observation`
+on an asset indicates the AccountEntry observer hasn't backfilled
+the relevant accounts yet AND the static fallback config is also
+empty or missing entries — expected briefly post-deploy, alarming
+sustained. `no_ledger` fires before the indexer produces its
+first ingestion cursor; clears as soon as ingest catches up.
+`write_error` indicates the storage layer needs investigation.
+
+The `asset_key` label lets operators chart per-asset bootstrap
+progress + isolate failure modes per asset rather than chasing
+a single aggregate signal across the watched-set.
 
 ### `ratesengine_aggregator_confidence_compute_total`
 

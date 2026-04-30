@@ -438,19 +438,26 @@ var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 )
 
 // AggregatorSupplyRefreshTotal — counter of supply-snapshot refresh
-// outcomes per cycle (ADR-0011 / ADR-0021 / Task #57). One
-// increment per asset per cycle; outcome ∈ {ok, no_ledger,
-// no_observation, compute_error, write_error}. Steady-state is
-// mostly `ok`; sustained `no_observation` means the AccountEntry
-// observer hasn't backfilled the watched accounts yet (the chain-
-// reader fell through to static config and that also missed) —
-// expected briefly post-deploy, alarming sustained.
+// outcomes per cycle (ADR-0011 / ADR-0021 / ADR-0022 / ADR-0023).
+// One increment per (asset, tick); labels:
+//
+//   - asset_key: supply.AssetKey form ("XLM", "CODE:ISSUER" for
+//     classic credits, the bare contract C-strkey for SEP-41).
+//   - outcome ∈ {ok, no_ledger, no_observation, compute_error,
+//     write_error}.
+//
+// Steady-state is mostly `ok` per asset. Sustained `no_observation`
+// means the AccountEntry observer hasn't backfilled the watched
+// accounts yet (the chain-reader fell through to static config and
+// that also missed) — expected briefly post-deploy, alarming
+// sustained. Per-asset rates let operators chart bootstrap
+// progress per watched asset rather than as one aggregate.
 var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_aggregator_supply_refresh_total",
-		Help: "Supply-snapshot refresh outcomes per asset × refresh cycle. Outcome ∈ {ok, no_ledger, no_observation, compute_error, write_error}.",
+		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, no_ledger, no_observation, compute_error, write_error}.",
 	},
-	[]string{"outcome"},
+	[]string{"asset_key", "outcome"},
 )
 
 // AggregatorConfidenceComputeTotal — counter of confidence-score
