@@ -17,6 +17,22 @@ against.
 
 ### Added
 
+- **`internal/sources/{liquidity_pools,sac_balances}/` observers
+  (#306 — Task #55 PR 4/5)**: bundles the LP-reserve and
+  SAC-wrapped-balance observers per ADR-0022. The LP observer
+  emits up to two Observations per pool change (one per asset
+  side that's in the watched set); ConstantProduct only at v1
+  (the only LP variant Stellar runs today). The SAC observer is
+  watched-contract driven via a `map[contract_id]asset_key`
+  (PR 5/5 wires the operator TOML), matches the SEP-41
+  `Vec(Symbol("Balance"), Address)` key shape, and extracts the
+  amount from either i128 or the native SAC's BalanceValue map
+  (`amount` field). Unlike the prior two observers, SAC handles
+  Removed-variant changes — the operator's contract→asset map
+  carries the asset_key independently of the entry body, so
+  removed entries emit `IsRemoval=true` rows the reader treats
+  as zero balance.
+
 - **`internal/sources/claimable_balances/` observer (#305 — Task #55
   PR 3/5)**: ClaimableBalanceEntry observer following the
   trustlines pattern from #304. Same operator-watched-asset

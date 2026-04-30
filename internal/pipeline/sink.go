@@ -16,9 +16,11 @@ import (
 	claimable_balances "github.com/RatesEngine/rates-engine/internal/sources/claimable_balances"
 	"github.com/RatesEngine/rates-engine/internal/sources/comet"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
+	"github.com/RatesEngine/rates-engine/internal/sources/liquidity_pools"
 	"github.com/RatesEngine/rates-engine/internal/sources/phoenix"
 	"github.com/RatesEngine/rates-engine/internal/sources/redstone"
 	"github.com/RatesEngine/rates-engine/internal/sources/reflector"
+	sac_balances "github.com/RatesEngine/rates-engine/internal/sources/sac_balances"
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
 	"github.com/RatesEngine/rates-engine/internal/sources/trustlines"
@@ -52,7 +54,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 // Panic-recovers so a single malformed Amount can't take the whole
 // sink down — the source-level decoder error metric has already
 // counted the upstream event by the time we get here.
-func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) {
+func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) { //nolint:gocyclo // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("panic in event sink — recovered",
@@ -104,6 +106,10 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		persistTrustlineObservation(ctx, logger, store, e)
 	case claimable_balances.Observation:
 		persistClaimableObservation(ctx, logger, store, e)
+	case liquidity_pools.Observation:
+		persistLPReserveObservation(ctx, logger, store, e)
+	case sac_balances.Observation:
+		persistSACBalanceObservation(ctx, logger, store, e)
 	default:
 		// A source emitted an event type the sink doesn't know how
 		// to persist. Usually means a new source was registered in
@@ -252,4 +258,46 @@ func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store
 	logger.Debug("claimable observation ingested",
 		"claimable_id", o.ClaimableID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String())
+}
+
+func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o liquidity_pools.Observation) {
+	if err := store.InsertLPReserveObservation(ctx, timescale.LPReserveObservation{
+		PoolID:     o.PoolID,
+		AssetKey:   o.AssetKey,
+		Ledger:     o.Ledger,
+		ObservedAt: o.ObservedAt,
+		Balance:    o.Balance,
+		IsRemoval:  o.IsRemoval,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(liquidity_pools.SourceName, "lp_reserve_observation").Inc()
+		logger.Error("insert LP-reserve observation failed",
+			"pool_id", o.PoolID, "asset_key", o.AssetKey, "ledger", o.Ledger,
+			"err", err)
+		return
+	}
+	logger.Debug("LP-reserve observation ingested",
+		"pool_id", o.PoolID, "asset_key", o.AssetKey, "ledger", o.Ledger,
+		"balance_stroops", o.Balance.String())
+}
+
+func persistSACBalanceObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o sac_balances.Observation) {
+	if err := store.InsertSACBalanceObservation(ctx, timescale.SACBalanceObservation{
+		ContractID: o.ContractID,
+		AssetKey:   o.AssetKey,
+		Holder:     o.Holder,
+		Ledger:     o.Ledger,
+		ObservedAt: o.ObservedAt,
+		Balance:    o.Balance,
+		IsRemoval:  o.IsRemoval,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sac_balances.SourceName, "sac_balance_observation").Inc()
+		logger.Error("insert SAC balance observation failed",
+			"contract_id", o.ContractID, "holder", o.Holder, "asset_key", o.AssetKey,
+			"ledger", o.Ledger, "err", err)
+		return
+	}
+	logger.Debug("SAC balance observation ingested",
+		"contract_id", o.ContractID, "holder", o.Holder, "asset_key", o.AssetKey,
+		"ledger", o.Ledger, "balance_stroops", o.Balance.String(),
+		"is_removal", o.IsRemoval)
 }

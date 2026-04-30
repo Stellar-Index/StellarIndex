@@ -109,6 +109,8 @@ RULES = [
             "internal/sources/accounts/",       # AccountEntry observer reads ledger-meta deltas (ADR-0021)
             "internal/sources/trustlines/",     # TrustlineEntry observer reads ledger-meta deltas (ADR-0022)
             "internal/sources/claimable_balances/", # ClaimableBalance observer reads ledger-meta deltas (ADR-0022)
+            "internal/sources/liquidity_pools/", # LiquidityPool observer reads ledger-meta deltas (ADR-0022)
+            "internal/sources/sac_balances/",   # SAC ContractData observer reads ledger-meta deltas (ADR-0022)
             "cmd/ratesengine-indexer/",         # glue: wires ledgerstream → dispatcher (PR 165d)
             "cmd/ratesengine-ops/",             # verify-decoders mirrors the indexer's ledger plumbing
             "internal/stellarrpc/",             # builds TransactionEnvelope XDR for simulateTransaction (not SCVal)
