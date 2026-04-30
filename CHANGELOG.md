@@ -17,6 +17,21 @@ against.
 
 ### Added
 
+- **`sep41_supply_events` hypertable + storage methods (#309 —
+  Task #56 PR 1/4)**: migration 0015 creates the
+  `sep41_supply_events` hypertable bounded by ADR-0023
+  (PK `(contract_id, ledger, tx_hash, op_index, observed_at)`;
+  `event_kind` CHECK in `(mint, burn, clawback)`;
+  `amount NUMERIC` non-negative). `Store.InsertSEP41SupplyEvent`
+  is idempotent on PK conflict (re-running the indexer over the
+  same range is a no-op for the running sum).
+  `Store.SEP41NetMintAtOrBefore` returns `Σ mint − Σ(burn +
+  clawback)` for one contract — the running supply per ADR-0011
+  Algorithm 3. Defensive guards reject empty PK columns, invalid
+  event kinds, nil/negative amounts before touching the DB. New
+  `SEP41EventKind` typed-string enum mirrors the migration's
+  CHECK constraint and the discovery sniffer's symbol names.
+
 - **ADR-0023 — SEP-41 supply observer (#308)**: bounds the
   implementation work for Task #56 before code lands. Defines an
   event-stream observer (`internal/sources/sep41_supply/`)
