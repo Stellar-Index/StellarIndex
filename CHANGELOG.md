@@ -426,6 +426,19 @@ against.
 
 ### Changed
 
+- **`soroswap` source flipped `BackfillSafe: false → true`** —
+  WASM-history audit landed
+  ([docs/operations/wasm-audits/soroswap.md](docs/operations/wasm-audits/soroswap.md)).
+  Factory + router each show one stable WASM hash across the entire
+  post-Soroban window (L50,746,266 → L59,301,651, ~2024-03 → 2026-04);
+  no `update_contract` events observed. Per-hash review against the
+  live decoder confirms no schema divergence. Backfill against
+  historical ranges is now permitted for `soroswap` via
+  `ratesengine-ops backfill`. Per-instance pair-WASM enumeration is
+  documented as a v2 audit follow-up. The remaining 6 on-chain Soroban
+  sources (aquarius, phoenix, comet, reflector-{dex,cex,fx}, redstone,
+  band) stay `BackfillSafe: false` until each source's audit lands.
+
 - **`verify-archive -fail-on-missed` (#206)**: per
   [ADR-0017](docs/adr/0017-archive-completeness-invariants.md) X1.7.
   Off by default (preserves pre-bootstrap workflow that tolerated

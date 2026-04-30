@@ -72,7 +72,8 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 	wantUnsafe := []string{
 		// Soroban DeFi — `update_contract` can change event schemas
 		// without changing the contract address. See CLAUDE.md.
-		"soroswap", "aquarius", "phoenix", "comet",
+		// soroswap audited 2026-04-29 → moved to wantSafe.
+		"aquarius", "phoenix", "comet",
 		// Soroban oracles — same upgradeability concern.
 		"reflector-dex", "reflector-cex", "reflector-fx",
 		"redstone", "band",
@@ -87,7 +88,8 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 	}
 
 	wantSafe := []string{
-		"sdex", // classic Stellar, no WASM
+		"sdex",     // classic Stellar, no WASM
+		"soroswap", // audited 2026-04-29 — see docs/operations/wasm-audits/soroswap.md
 		"binance", "kraken", "bitstamp", "coinbase", "bitfinex",
 		"polygon-forex", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
