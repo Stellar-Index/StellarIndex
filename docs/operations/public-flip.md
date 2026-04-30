@@ -52,22 +52,25 @@ satisfies it.
 | ☑ | Postgres password from CTX legacy probe scrubbed from working tree | PR #169 |
 | ☑ | r1 public IP scrubbed from working tree | PR #169 |
 | ☑ | `configs/ansible/inventory/r1.yml` removed from tracked files (added to `.gitignore`) | PR #169 |
-| ☐ | `SECURITY.md` lists `security@ratesengine.net` as the public reporting address (not an internal alias) | `SECURITY.md` |
-| ☐ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` |
-| ☐ | `README.md` reads as a public landing page — what the project does, who it's for, getting-started link, badge for license + CI | `README.md` |
-| ☐ | `CONTRIBUTING.md` welcomes external contributors (issue triage SLA, PR review SLA, code-of-conduct link) | `CONTRIBUTING.md` |
-| ☐ | `CODE_OF_CONDUCT.md` is the standard Contributor Covenant (already is) | `CODE_OF_CONDUCT.md` |
-| ☐ | `LICENSE` is Apache-2.0 (already is) | `LICENSE` |
-| ☐ | `.github/dependabot.yml` has no internal-registry references | `.github/dependabot.yml` |
-| ☐ | Every CI workflow in `.github/workflows/` runs on the public repo without internal secrets (gating: required checks vs. optional checks) | `.github/workflows/` |
-| ☐ | `CLAUDE.md` reads cleanly without referencing the private discovery archive paths or internal-only operator names | `CLAUDE.md` |
-| ☐ | `docs/operations/r1-deployment-state.md` does not include credentials, API keys, or unredacted IPs | `docs/operations/r1-deployment-state.md` |
-| ☐ | Every ADR's "Status" reflects current state (no stale "Proposed" on accepted ADRs) | `docs/adr/` |
-| ☐ | `docs/discovery/` archive is OK to publish — no sensitive customer data in the RFPs or proposal correspondence | `docs/discovery/` |
-| ☐ | Final secret scan with `gitleaks detect --source .` returns clean | `gitleaks` output |
+| ☑ | `SECURITY.md` lists `security@ratesengine.net` as the public reporting address (not an internal alias) | `SECURITY.md:9` (verified 2026-04-30) |
+| ☑ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` (only `@ash`, verified 2026-04-30) |
+| ☑ | `README.md` reads as a public landing page — what the project does, who it's for, getting-started link, badge for license + CI | `README.md` (verified 2026-04-30) |
+| ☑ | `CONTRIBUTING.md` welcomes external contributors (issue triage SLA, PR review SLA, code-of-conduct link) | `CONTRIBUTING.md` (verified 2026-04-30) |
+| ☑ | `CODE_OF_CONDUCT.md` is the standard Contributor Covenant | `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1, verified 2026-04-30) |
+| ☑ | `LICENSE` is Apache-2.0 | `LICENSE` (Apache 2.0, verified 2026-04-30) |
+| ☑ | `.github/dependabot.yml` has no internal-registry references | `.github/dependabot.yml` (verified 2026-04-30 — only public registries) |
+| ☑ | Every CI workflow in `.github/workflows/` runs on the public repo without internal secrets | `.github/workflows/{ci,api-docs}.yml` (verified 2026-04-30 — no `secrets.` references) |
+| ☐ | `CLAUDE.md` reads cleanly without referencing the private discovery archive paths or internal-only operator names | `CLAUDE.md` (manual review pending) |
+| ☑ | `docs/operations/r1-deployment-state.md` does not include credentials, API keys, or unredacted IPs | `docs/operations/r1-deployment-state.md` (verified 2026-04-30 — credentials are pointers only, no IPs in file) |
+| ☑ | Every ADR's "Status" reflects current state (no stale "Proposed" on accepted ADRs) | `docs/adr/` (all 0001-0021 are `Accepted`, verified 2026-04-30; 0012 is reserved-future per multi-region-topology.md) |
+| ☐ | `docs/discovery/` archive is OK to publish — no sensitive customer data in the RFPs or proposal correspondence | `docs/discovery/` (manual review pending) |
+| ☑ | Final secret scan with `gitleaks detect --source .` returns clean | `gitleaks 8.30.1` — 0 leaks across 553 commits, scanned 2026-04-30 |
 
-The empty rows are L6.5 (documentation sweep) work — they get filled
-in as part of that pass, not as separate PRs.
+Two rows remain unchecked — both need human-in-the-loop review:
+- `CLAUDE.md` reading "cleanly" is editorial; an automated check
+  would only catch obvious paths and internal handles.
+- `docs/discovery/` content review is the L6.5 documentation
+  sweep's responsibility.
 
 ## Cut-over mechanics
 
