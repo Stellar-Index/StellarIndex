@@ -157,11 +157,34 @@ Any row with **status ❌** is a blocker for launch. Any row with
 
 Same as S7. No additional requirement.
 
+> **Scope note (chart `price_type=twap`).** `/v1/chart` accepts
+> `price_type=vwap` today and rejects `price_type=twap` with a
+> 400 Bad Request per ADR-0020. TWAP is reserved, not delivered:
+> the on-the-fly TWAP we'd compute from the 1m CAGG would
+> produce different values from a future TWAP CAGG (pre-/post-
+> shape difference) and create a one-time consumer-visible
+> shift, so we'd rather defer than ship-and-rotate. `/v1/twap`
+> single-bar TWAP is shipped (Go-side time-weighted compute from
+> raw trades) — only the multi-bucket chart variant is the
+> reserved item.
+
 ## Freighter RFP — V2: Market data extension
+
+> **Scope note.** F2.1 / F2.2 / F2.4 / F2.5 supply pipelines are
+> live for **operator-watched assets** (XLM is always-on; classic
+> credit assets and SEP-41 tokens via `[supply].watched_classic_assets`
+> and `[supply].watched_sep41_contracts` per ADR-0022 and ADR-0023).
+> Per-asset opt-in is by design: classic credit issuers and SEP-41
+> tokens carry decentralised mint authorities and the
+> "is this issuer's supply meaningful at this scale" judgment is
+> operator-curated, not blanket. The API returns nullable supply
+> fields cleanly when an asset is outside the watched set
+> (matches ADR-0011 "we don't fabricate"). Operator can widen
+> coverage via TOML config without code change.
 
 | # | Field | Proposal | Week | Owner | ADR | Verified by | Status | Conf |
 | - | ----- | -------- | ---- | ----- | --- | ----------- | ------ | ---- |
-| F2.1 | Market Cap = `circulating × price` | §V2 (addendum) | 6 | `internal/api/v1/assets_f2.go populateMarketCap` + supply pipeline | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0021](../adr/0021-account-entry-observer.md), [ADR-0022](../adr/0022-classic-supply-observers.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | [data-sources/supply-data.md](../discovery/data-sources/supply-data.md) | ✅ verified — read path (#277) + writer end-to-end across all three asset classes: XLM (#285), classic credits (#303-#307), SEP-41 (#309-#312). The aggregator-resident refresher (#301) populates `asset_supply_history` per watched asset on the configured cadence. `market_cap_usd` populates when both supply + USD price exist. | 4 |
+| F2.1 | Market Cap = `circulating × price` | §V2 (addendum) | 6 | `internal/api/v1/assets_f2.go populateMarketCap` + supply pipeline | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0021](../adr/0021-account-entry-observer.md), [ADR-0022](../adr/0022-classic-supply-observers.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | [data-sources/supply-data.md](../discovery/data-sources/supply-data.md) | ✅ verified — read path (#277) + writer end-to-end across all three asset classes: XLM (#285), classic credits (#303-#307), SEP-41 (#309-#312). The aggregator-resident refresher (#301) populates `asset_supply_history` per watched asset on the configured cadence. `market_cap_usd` populates when both supply + USD price exist. **Scope: XLM + watched classic + watched SEP-41 (operator config).** | 4 |
 | F2.2 | FDV = `max_supply × price` | §V2 | 6 | `internal/api/v1/assets_f2.go populateMarketCap` + supply pipeline | [ADR-0011](../adr/0011-supply-algorithm.md) | [data-sources/supply-data.md](../discovery/data-sources/supply-data.md) | ✅ verified — same pipeline as F2.1; `fdv_usd` populates when `max_supply` is non-null (uncapped issuers without SEP-1 declaration leave it null per ADR-0011 "we don't fabricate"). | 4 |
 | F2.3 | 24h Trading Volume (USD) | §V2 | 6 | `internal/storage/timescale.Volume24hUSDForAsset` + `internal/api/v1/assets.go` | ADR-0007 | `volume_24h_usd` field on `/v1/assets/{id}` (#278). Reads from `prices_1m` CAGG. | ✅ verified | 4 |
 | F2.4 | Circulating Supply (provider-supplied) | §V2 | 6 | `internal/supply/{xlm,classic,sep41}.go` + observers + `cmd/ratesengine-aggregator/main.go::buildSupplyRefreshers` | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0021](../adr/0021-account-entry-observer.md), [ADR-0022](../adr/0022-classic-supply-observers.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | [data-sources/supply-data.md](../discovery/data-sources/supply-data.md) | ✅ verified — XLM (Algorithm 1), classic credit (Algorithm 2), SEP-41 (Algorithm 3) all live. Operator-locked-set subtraction supported per asset via `supply.Policy.PerAsset`. | 4 |
@@ -319,15 +342,20 @@ For each claim below we state the **as-written promise**, what we
 
 - **As written** (proposal §Soroban DEXs): list of venues with event
   decoding.
-- **Verified**: current repo snapshot ships 5 venues (SDEX,
-  Soroswap, Aquarius, Phoenix, Comet). Blend is not present in the
-  live repo/runtime surface and remains outside the shipped set for
-  this snapshot. Phoenix's 8-events-per-swap pattern and Soroswap's
-  swap+sync correlation were non-obvious and are both captured
-  explicitly.
-- **Verdict**: ✅ promise partially exceeded in venue breadth
-  (Phoenix + Comet added), with Blend deferred out of the current
-  runtime snapshot.
+- **Verified**: current repo snapshot ships **6 venues** (SDEX,
+  Soroswap, Aquarius, Phoenix, Comet, **Blend**). Blend's auction
+  decoder + storage + dispatcher wiring is live (`internal/sources/blend/`,
+  registered in `internal/pipeline/dispatcher.go:114`,
+  `internal/pipeline/sink.go:98`). What's still
+  pending on Blend is the WASM audit's Phase 2 — per-pool
+  `wasm-history` walk on r1 — which keeps `BackfillSafe=false` in
+  `internal/sources/external/registry.go` until it lands. Live
+  ingest works fine; only retroactive backfill replay is gated.
+  Phoenix's 8-events-per-swap pattern and Soroswap's swap+sync
+  correlation were non-obvious and are both captured explicitly.
+- **Verdict**: ✅ promise exceeded in venue breadth (Phoenix +
+  Comet added beyond the proposal's list); Blend live with the
+  documented backfill caveat from the WASM audit.
 
 ### Claim 6 — "p95 ≤ 200 ms, p99 ≤ 500 ms, ≥ 99.99% uptime"
 
