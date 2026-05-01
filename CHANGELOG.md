@@ -17,6 +17,26 @@ against.
 
 ### Added
 
+- **`ratesengine-ops wasm-history-merge-jsonl` — recover from a
+  crashed walk**: the existing `wasm-history -checkpoint-dir` flag
+  has been writing per-worker JSONL transition logs since #185, but
+  the matching merge tool that reconstructs the canonical JSON from
+  those files was tracked in a comment as "(planned) or hand-stitch".
+  This subcommand fills that gap. After the wide-net walk on r1 died
+  at 5 h on 2026-05-01 (failed `-to` past the archive's frozen tip,
+  see PR #368), we lost the in-memory state — the JSON only writes
+  at end-of-run. Going forward, every multi-hour walk should pass
+  `-checkpoint-dir`; if it crashes, recover with
+  `ratesengine-ops wasm-history-merge-jsonl -checkpoint-dir <dir> -to N`.
+  The merge logic mirrors the walker's end-of-run merge: per-contract
+  sort by ledger, collapse adjacent same-hash transitions across
+  worker boundaries, close the last range at `-to`. Half-written
+  trailing lines (a crashed worker's last partial flush) are
+  tolerated. Smoke-tested against the in-flight wide-net checkpoint
+  dir on r1 — reconstructed 144 contracts from 273 transitions across
+  8 worker JSONL files. Documented in
+  `docs/operations/wasm-audits/README.md` §2.
+
 - **Chaos suite Wave 1 (Task #75)**: ships `test/chaos/` with three
   failure-mode scenarios against the docker-compose dev stack —
   Redis container stop, Timescale container stop, Redis network
