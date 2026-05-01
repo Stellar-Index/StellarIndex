@@ -1,0 +1,4 @@
+# Per-run chaos reports land here as `chaos-run-<UTC>.md`.
+# The directory must exist for run.sh to write into; this file
+# keeps it in git without committing actual run artefacts.
+# Reports themselves are gitignored (.gitignore at repo root).

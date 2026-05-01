@@ -110,7 +110,7 @@ Within each surface, ordered by dependency.
 | L5.2 | k6 `api_ramp_to_saturation.js` — find the cliff | Wk 9 | half-day | L5.1 | — | same | 🔴 |
 | L5.3 | k6 `api_spike.js` — 10× burst recovery < 60s | Wk 9 | half-day | L5.1 | — | same | 🔴 |
 | L5.4 | k6 `ingest_peak_ledger.js` — 5× normal event rate × 1 h | Wk 9 | half-day | L1.* | — | same | 🔴 |
-| L5.5 | Chaos suite — kill-each-component scenarios | Wk 9 | full day | L4.* | launch | `test/chaos` | 🔴 |
+| L5.5 | Chaos suite Wave 1 (dev-stack smoke; 3 scenarios). Wave 2 (HA-shaped scenarios on staging baremetal) deferred post-launch. | Wk 9 | full day | L4.* | launch | `test/chaos` | 🟢 |
 | L5.6 | Security review (external or community) on full stack | Wk 9 | (external) | L3.* | launch | external auditor | 🔴 |
 | L5.7 | SEV-1 / SEV-2 dry-run (kill something, time the response) | Wk 9 | half-day | L4.4, L4.11 | launch | runbooks | 🔴 |
 

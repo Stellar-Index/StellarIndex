@@ -175,6 +175,16 @@ test-load-check: ## Compile-check all k6 scenarios without running them (no targ
 	  echo "=== $$s ==="; k6 archive --quiet -O /dev/null $$s || exit $$?; \
 	done
 
+.PHONY: test-chaos
+test-chaos: ## Run the Wave 1 chaos suite against the dev stack (Task #75)
+	@./test/chaos/run.sh
+
+.PHONY: test-chaos-check
+test-chaos-check: ## Lint the chaos scenarios (shellcheck) without running them
+	@for s in test/chaos/run.sh test/chaos/scenarios/[0-9]*.sh test/chaos/scenarios/lib/*.sh; do \
+	  echo "=== $$s ==="; shellcheck -x "$$s" || exit $$?; \
+	done
+
 .PHONY: test-all
 test-all: lint vet test test-integration ## Everything short of load + chaos
 
