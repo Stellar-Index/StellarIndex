@@ -1,0 +1,21 @@
+---
+# Add a hardening drop-in to the existing haproxy.service. Keeps
+# the distro unit canonical so apt upgrades don't regress the unit
+# file.
+
+- name: ensure haproxy.service.d exists
+  file:
+    path: /etc/systemd/system/haproxy.service.d
+    state: directory
+    mode: "0755"
+
+- name: render haproxy hardening drop-in
+  template:
+    src: haproxy-systemd-override.conf.j2
+    dest: /etc/systemd/system/haproxy.service.d/override.conf
+    mode: "0644"
+  notify: "haproxy config changed"
+
+- name: daemon-reload systemd to pick up drop-in
+  systemd:
+    daemon_reload: yes

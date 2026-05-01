@@ -1,0 +1,20 @@
+---
+- name: reload haproxy
+  systemd:
+    name: haproxy
+    state: reloaded
+    daemon_reload: yes
+  listen: "haproxy config changed"
+
+- name: restart keepalived
+  systemd:
+    name: keepalived
+    state: restarted
+    daemon_reload: yes
+  listen: "keepalived config changed"
+
+- name: reload firewall
+  systemd:
+    name: nftables
+    state: reloaded
+  listen: "firewall rules changed"

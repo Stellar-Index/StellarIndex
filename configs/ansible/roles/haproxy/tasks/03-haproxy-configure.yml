@@ -1,0 +1,10 @@
+---
+- name: render /etc/haproxy/haproxy.cfg
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: haproxy
+    mode: "0640"
+    validate: "haproxy -c -f %s"
+  notify: "haproxy config changed"

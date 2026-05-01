@@ -1,0 +1,77 @@
+---
+# Sanity-check the host before any install. Cheap, fail-fast.
+
+- name: assert OS is Ubuntu 22.04 or 24.04
+  assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+      - ansible_distribution_version in ["22.04", "24.04"]
+    fail_msg: >-
+      haproxy role supports Ubuntu 22.04 / 24.04 only;
+      detected {{ ansible_distribution }} {{ ansible_distribution_version }}
+
+- name: assert host is in the haproxy_lb inventory group
+  assert:
+    that:
+      - inventory_hostname in groups['haproxy_lb']
+    fail_msg: >-
+      this role must be applied against hosts in the
+      haproxy_lb group (see role README inventory model)
+
+- name: assert haproxy_lb has exactly 2 hosts
+  assert:
+    that:
+      - groups['haproxy_lb'] | length == 2
+    fail_msg: >-
+      haproxy role assumes a 2-LB-host topology (per ha-plan §3.1);
+      detected {{ groups['haproxy_lb'] | length }} hosts
+
+- name: assert ratesengine_api inventory group is populated
+  assert:
+    that:
+      - "'ratesengine_api' in groups"
+      - groups['ratesengine_api'] | length >= 1
+    fail_msg: >-
+      ratesengine_api inventory group is required (HAProxy needs
+      a backend pool to route to)
+
+- name: assert vault contents present
+  assert:
+    that:
+      - haproxy_vip is defined and haproxy_vip | length > 0
+      - keepalived_vrrp_password is defined and keepalived_vrrp_password | length > 0
+    fail_msg: >-
+      haproxy_vip and keepalived_vrrp_password must be set
+      (typically from inventory/<region>.secrets.yml via
+      ansible-vault). See role README §Prerequisites.
+
+- name: warn on >8-char keepalived_vrrp_password
+  debug:
+    msg: >-
+      WARNING: keepalived truncates auth_pass beyond 8 bytes
+      silently. Current password length is
+      {{ keepalived_vrrp_password | length }} chars; only the
+      first 8 will be used. Shorten to <=8 chars to avoid
+      operator confusion.
+  when: keepalived_vrrp_password | length > 8
+
+# Required for HAProxy to bind to a VIP not yet assigned to this
+# host (keepalived may still consider the other host MASTER at
+# bind time). Without this, haproxy fails at startup with
+# "cannot bind socket: Cannot assign requested address."
+- name: tune kernel for VIP binding (net.ipv4.ip_nonlocal_bind=1)
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_set: yes
+    state: present
+    reload: yes
+
+- name: ensure haproxy + keepalived users exist
+  user:
+    name: "{{ item }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    state: present
+  loop:
+    - haproxy

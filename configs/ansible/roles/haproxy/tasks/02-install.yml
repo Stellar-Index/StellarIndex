@@ -1,0 +1,34 @@
+---
+- name: install haproxy + keepalived
+  apt:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+    update_cache: yes
+
+- name: ensure cert dir exists
+  file:
+    path: "{{ haproxy_tls_cert_dir }}"
+    state: directory
+    owner: root
+    group: haproxy
+    mode: "0750"
+
+- name: ensure haproxy log dir exists
+  file:
+    path: /var/log/haproxy
+    state: directory
+    owner: haproxy
+    group: haproxy
+    mode: "0750"
+
+# HAProxy ships its own systemd unit; the role's 05-systemd.yml
+# adds a hardening drop-in rather than replacing the unit.
+- name: ensure haproxy + keepalived are enabled
+  systemd:
+    name: "{{ item }}"
+    enabled: yes
+  loop:
+    - haproxy
+    - keepalived
