@@ -74,6 +74,8 @@ service-account*.json
 # Test artefacts
 /test/load/reports/*
 !/test/load/reports/README.md
+/test/chaos/reports/*
+!/test/chaos/reports/.gitkeep
 /test/integration/.testcache/
 
 # Discovery scratch — do NOT port to implementation repo

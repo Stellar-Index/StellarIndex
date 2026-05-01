@@ -496,11 +496,9 @@ now in *Closed since Phase 1* above.
 
 | Area | Item | Owner | Week | Effort |
 |---|---|---|---|---|
-| Aggregator | X2.5 Forex factor snap rule for chained-fiat | `internal/aggregate/triangulate` | 5 | half-day |
-| Operations | #11–#16 Ansible roles — Patroni shipped (#344); Redis Sentinel (design draft local) / HAProxy / Prometheus / Loki remaining | `configs/ansible/roles/` | 8 | ~3 days |
 | Operations | Public status page at `status.ratesengine.net` | infra | 9 | half-day |
 | Validation | S9.2 p95 ≤ 200 ms proof report — k6 suite shipped (#345/#346/#347/#348); operator-side first run + `sla-proof-2026-MM-DD.md` artefact remaining | `docs/operations/sla-proof-template.md` | 9 | ~half-day operator |
-| Validation | #19 Chaos suite — `test/chaos/` not yet created | `test/chaos` | 9 | full day |
+| Validation | #19 Chaos suite Wave 2 (HA-shaped scenarios on staging baremetal — Patroni replica promotion, Sentinel failover, HAProxy VIP flip). Wave 1 (dev-stack smoke) shipped #366 | `test/chaos` | 9 | ~1 day post-launch |
 | Validation | #20 SEV-1/SEV-2 dry-run — playbook exists, dry-run record doesn't | runbooks | 9 | half-day |
 | Finalization | #22 Public-flip prep — `public-flip.md` exists; checklist completion is operator-side | repo strategy | 10 | hour planning |
 | Connectors / Audit | Task #53 Blend Pool Factory walk on r1 (Phase 2 of audit) | `cmd/ratesengine-ops wasm-history` | — | ~5 h operator |

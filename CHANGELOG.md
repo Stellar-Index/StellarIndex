@@ -17,6 +17,25 @@ against.
 
 ### Added
 
+- **Chaos suite Wave 1 (Task #75)**: ships `test/chaos/` with three
+  failure-mode scenarios against the docker-compose dev stack —
+  Redis container stop, Timescale container stop, Redis network
+  partition. Pass criteria assert the API either degrades-with-flag
+  or fails loudly with a structured envelope; never silently serves
+  bad data. Bash-based to keep symmetry with the k6 load suite's
+  external-tool harness shape (separate `test/load/` already uses
+  k6 .js files); Go was considered but `exec.Command` boilerplate
+  around `docker stop` / `pumba pause` would be longer than the
+  bash equivalent. Production-safety guard duplicated at runner +
+  scenario-prologue level: every script refuses to run against a
+  target whose host matches `*production*` /
+  `*api.ratesengine.net*` / `*prod.*`. Wave 2 (HA-shaped scenarios
+  — Patroni replica promotion, Redis Sentinel failover, HAProxy +
+  keepalived VIP flip) is gated on staging baremetal deploys and
+  is deferred post-launch. Companion design note at
+  `docs/architecture/chaos-suite-design-note.md`. Closes
+  launch-readiness L5.5.
+
 - **X2.5 forex-factor snap rule (Task #71)**: implements
   ADR-0018 §"Forex factor handling" so chained-fiat triangulation
   (e.g. XLM/EUR via XLM/USD × USD/EUR) preserves across-region
