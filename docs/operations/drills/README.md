@@ -50,9 +50,10 @@ The simplest tier. Tests the playbook itself, not the systems.
    `timescale-primary-down.md`) before the meeting.
 
 2. **Setup** (2 min). Leader reads the *Initial conditions* +
-   *Trigger event* sections aloud. Scribe starts a writeup
-   (clone `_template.md` if it exists, otherwise blank-page) at
-   `docs/operations/drills/<YYYY-MM>-<short-name>.md`.
+   *Trigger event* sections aloud. Scribe clones
+   [`_template.md`](_template.md) to
+   `docs/operations/drills/<YYYY-MM>-<short-name>.md` and starts
+   filling in the trigger + response-narrative sections live.
 
 3. **Walk-through** (15–20 min). Leader narrates the
    *Injection timeline* one beat at a time. After each beat,
