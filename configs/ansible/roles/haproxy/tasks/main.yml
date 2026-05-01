@@ -1,0 +1,31 @@
+---
+- name: 01 — preflight
+  import_tasks: 01-preflight.yml
+  tags: [haproxy, preflight]
+
+- name: 02 — install haproxy + keepalived
+  import_tasks: 02-install.yml
+  tags: [haproxy, install]
+
+- name: 03 — configure haproxy
+  import_tasks: 03-haproxy-configure.yml
+  tags: [haproxy, config]
+  notify: "haproxy config changed"
+
+- name: 04 — configure keepalived
+  import_tasks: 04-keepalived-configure.yml
+  tags: [haproxy, keepalived, config]
+  notify: "keepalived config changed"
+
+- name: 05 — systemd hardening drop-ins
+  import_tasks: 05-systemd.yml
+  tags: [haproxy, systemd]
+
+- name: 06 — firewall (nftables drop-in)
+  import_tasks: 06-firewall.yml
+  tags: [haproxy, firewall]
+  notify: "firewall rules changed"
+
+- name: 07 — monitoring (haproxy prometheus + keepalived textfile)
+  import_tasks: 07-monitoring.yml
+  tags: [haproxy, monitoring]

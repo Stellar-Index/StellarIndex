@@ -1,0 +1,9 @@
+---
+- name: render /etc/keepalived/keepalived.conf
+  template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: "keepalived config changed"

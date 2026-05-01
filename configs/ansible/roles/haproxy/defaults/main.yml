@@ -1,0 +1,58 @@
+---
+# haproxy role defaults — override in inventory.
+
+# ── VIP + keepalived ───────────────────────────────────────────
+# The virtual IP that public DNS points at. Both LB hosts share
+# this address; keepalived ensures only one host owns it at a time
+# (the MASTER). Override in inventory.
+haproxy_vip: ""
+keepalived_iface: eth0
+keepalived_vip_prefix_length: 24
+# VRID must be unique across VRRP groups on the same network
+# segment. 51 is the operator default; pick something else if
+# another VRRP service is already running on the LAN.
+keepalived_vrid: 51
+keepalived_initial_state: BACKUP   # MASTER on lb-01, BACKUP on lb-02 (per-host override)
+keepalived_priority: 99            # 100 on lb-01, 99 on lb-02 (per-host override)
+# Vault-supplied. Note: keepalived truncates auth_pass beyond 8
+# bytes silently — keep this <=8 chars to avoid surprises.
+keepalived_vrrp_password: ""
+
+# ── HAProxy backend ────────────────────────────────────────────
+# Default health-check path. /v1/readyz is the deep ready probe
+# (Timescale + Redis reachable per internal/api/v1/server.go);
+# /v1/healthz would only confirm process-alive.
+haproxy_health_check_path: /v1/readyz
+
+# Default api backend port; override per-deployment if api binds
+# elsewhere. Must match cfg.API.ListenAddr's port in the
+# ratesengine-api TOML.
+ratesengine_api_port: 3000
+
+haproxy_max_conn: 8000
+
+# ── TLS ────────────────────────────────────────────────────────
+# Path the operator drops the combined cert+key file at. cert-bot
+# integration is a separate role; this role just expects the file
+# to exist when haproxy.cfg is rendered.
+haproxy_tls_cert_dir: /etc/haproxy/certs
+haproxy_tls_cert_filename: api.pem
+
+# ── Stats ──────────────────────────────────────────────────────
+# HAProxy stats endpoint, loopback-only.
+haproxy_stats_listen: 127.0.0.1:8404
+
+# ── Firewall ───────────────────────────────────────────────────
+# Public ingress on 80 + 443; loopback-only on 8404 (stats); VRRP
+# multicast on 224.0.0.18 between LB hosts (handled by nftables
+# accept on the keepalived peer CIDR).
+haproxy_internal_cidrs:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+
+# ── Monitoring ─────────────────────────────────────────────────
+haproxy_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
+# HAProxy 2.4+ has a built-in Prometheus exporter at /metrics on
+# the stats endpoint. We enable it; no external binary needed.
+haproxy_prometheus_endpoint: true

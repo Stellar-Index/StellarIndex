@@ -17,6 +17,37 @@ against.
 
 ### Added
 
+- **HAProxy ansible role + keepalived VRRP (Task #72 sub-role)**:
+  closes the third launch-critical sub-role of #72 after Patroni
+  (#344) and Redis Sentinel (#350). Two LB hosts share a
+  floating VIP via keepalived VRRP, fronting the
+  `ratesengine-api` pool with `/v1/readyz`-based health checks
+  per `docs/architecture/ha-plan.md §3.1`. TLS terminates at the
+  edge (HSTS on every response, Mozilla intermediate cipher
+  suite); HAProxy's built-in Prometheus exporter is enabled on
+  the loopback stats endpoint (`127.0.0.1:8404/metrics` — never
+  exposed publicly). Seven task files (preflight with
+  `net.ipv4.ip_nonlocal_bind=1` for VIP binding + a vrrp-
+  password-length warning, install, haproxy-configure with
+  `haproxy -c -f` validation, keepalived-configure, systemd
+  hardening drop-in, firewall allowing 80/443 + VRRP from peer
+  CIDRs, monitoring), three Jinja templates (haproxy.cfg,
+  keepalived.conf, systemd-override). Health-check semantics:
+  5s interval, 3 fails before drain, 2 successes before re-add
+  (15s detection latency), 10s slowstart prevents cold pods
+  from getting hammered after recovery. Failover RTOs:
+  ≤3s for HAProxy host failure (keepalived VRRP), 1-4s for
+  HAProxy process death (`chk_haproxy` track-script). Companion
+  design note at
+  `docs/architecture/haproxy-ansible-role-design-note.md` covers
+  cloud VRRP gotchas (Hetzner multicast OK; AWS needs unicast
+  peers), VIP-as-secondary-IP requirements, and the rolling
+  vrrp-password rotation procedure. After this PR, two of five
+  Task #72 sub-roles remain (Prometheus + Loki); the
+  launch-critical HA path is complete (Patroni-driven Postgres
+  failover + Sentinel-driven Redis failover + keepalived-driven
+  api-tier failover + HAProxy-driven api-pod redirection).
+
 - **`ratesengine-ops wasm-history` Tier 2 enhancements: storage-
   rotation + ContractCode-upload tracking**: opt-in observers
   that ride alongside the existing executable-hash transition

@@ -1,0 +1,80 @@
+---
+# HAProxy 2.4+ has a built-in Prometheus exporter at /metrics on
+# the stats endpoint — no external binary needed. We confirm the
+# stats config has prometheus enabled (already in the template)
+# and add a small textfile scraper for keepalived state since
+# keepalived doesn't expose prometheus metrics natively.
+
+- name: ensure node_exporter textfile dir
+  file:
+    path: "{{ haproxy_node_exporter_textfile_dir }}"
+    state: directory
+    owner: haproxy
+    group: haproxy
+    mode: "0755"
+
+- name: install keepalived-state textfile scraper
+  copy:
+    dest: /usr/local/bin/keepalived-textfile-scraper
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by ansible (haproxy role). Emits keepalived VRRP
+      # state as Prometheus textfile-collector format. Run via the
+      # systemd timer below.
+      set -euo pipefail
+      OUT="{{ haproxy_node_exporter_textfile_dir }}/keepalived.prom"
+      TMP="$(mktemp "${OUT}.XXXXXX")"
+      trap 'rm -f "$TMP"' EXIT
+
+      # systemctl status returns 0 only when the service is active.
+      ACTIVE=0
+      systemctl is-active --quiet keepalived && ACTIVE=1
+
+      # ip -4 a show <iface> | grep <vip> returns 0 only when this
+      # host currently owns the VIP (i.e. is MASTER).
+      MASTER=0
+      ip -4 a show {{ keepalived_iface }} 2>/dev/null \
+        | grep -q "{{ haproxy_vip | default('0.0.0.0') }}" && MASTER=1
+
+      cat > "$TMP" <<EOF
+      # HELP ratesengine_keepalived_active 1 if keepalived service is running.
+      # TYPE ratesengine_keepalived_active gauge
+      ratesengine_keepalived_active $ACTIVE
+      # HELP ratesengine_haproxy_vip_owner 1 if this host currently owns the VIP (keepalived MASTER).
+      # TYPE ratesengine_haproxy_vip_owner gauge
+      ratesengine_haproxy_vip_owner $MASTER
+      EOF
+      mv -f "$TMP" "$OUT"
+
+- name: install keepalived-textfile-scraper systemd unit
+  copy:
+    dest: /etc/systemd/system/keepalived-textfile-scraper.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Keepalived → Prometheus textfile scraper
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/keepalived-textfile-scraper
+
+- name: install keepalived-textfile-scraper timer
+  copy:
+    dest: /etc/systemd/system/keepalived-textfile-scraper.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run keepalived textfile scraper every 30 s
+      [Timer]
+      OnBootSec=30s
+      OnUnitActiveSec=30s
+      AccuracySec=5s
+      [Install]
+      WantedBy=timers.target
+
+- name: enable keepalived-textfile-scraper timer
+  systemd:
+    name: keepalived-textfile-scraper.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
