@@ -133,6 +133,11 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 			fmt.Fprintf(os.Stderr, "wasm-history: %v\n", err)
 			os.Exit(1)
 		}
+	case "wasm-history-merge-jsonl":
+		if err := wasmHistoryMergeJSONL(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: %v\n", err)
+			os.Exit(1)
+		}
 	case "extract-wasm-from-galexie":
 		if err := extractWasmFromGalexie(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "extract-wasm-from-galexie: %v\n", err)
@@ -369,7 +374,29 @@ Subcommands:
                               -config /etc/ratesengine.toml \
                               -from 21000000 -to 25000000 \
                               -contracts CDLZ...,CARFAC... \
+                              -checkpoint-dir /tmp/walk-checkpoint \
                               > soroswap-wasm-history.json
+                          When -checkpoint-dir is set, each parallel
+                          worker also writes its observed transitions
+                          to <dir>/wasm-history-w<i>.jsonl. Recover the
+                          canonical JSON from a crashed run with
+                          wasm-history-merge-jsonl below.
+  wasm-history-merge-jsonl -checkpoint-dir DIR -to N [-output PATH]
+                          Reconstruct the canonical wasm-history JSON
+                          from per-worker JSONL transition logs left
+                          behind by a crashed wasm-history run with
+                          -checkpoint-dir set. -to MUST match the
+                          original walk's upper bound (closes the last
+                          open range per contract). Output is the same
+                          JSON shape wasm-history writes at end-of-run.
+                          Empty-history contracts (the "ran but saw no
+                          transitions" signal) are NOT emitted — the
+                          JSONL only carries observed transitions.
+                          Example:
+                            ratesengine-ops wasm-history-merge-jsonl \
+                              -checkpoint-dir /tmp/walk-checkpoint \
+                              -to 62249727 \
+                              -output recovered.json
   extract-wasm-from-galexie -config PATH -hashes HEX,HEX,... -output-dir DIR [-from N] [-to N] [-parallel N] [-bucket NAME]
                           Extract raw WASM bytes for one or more contract-
                           code hashes by walking the local galexie LCM
@@ -2570,9 +2597,9 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 			"appended as one line: {contract, wasm_hash, at_ledger}. Useful for "+
 			"long-running walks where the final JSON output is at risk if any "+
 			"worker dies mid-flight (the JSON is only written at full completion). "+
-			"Files are named <dir>/wasm-history-w<worker>.jsonl. Use "+
-			"`ratesengine-ops wasm-history-merge-jsonl` (planned) or hand-stitch "+
-			"to recover ranges from a partial run.")
+			"Files are named <dir>/wasm-history-w<worker>.jsonl. Run "+
+			"`ratesengine-ops wasm-history-merge-jsonl -checkpoint-dir <dir> -to N` "+
+			"to recover the canonical wasm-history JSON from a partial run.")
 	storageOut := fs.String("storage-rotations-out", "",
 		"Optional path to write the per-watched-contract storage-rotation log "+
 			"as a JSON document. When set, every Created/Updated/Restored "+
@@ -2801,6 +2828,189 @@ func writeCodeUploadsOutput(path string, workers []workerResult) error {
 	}
 	fmt.Fprintf(os.Stderr, "wasm-history: wrote %d code upload(s) to %s\n", len(dedup), path)
 	return nil
+}
+
+// wasmHistoryMergeJSONL reconstructs the canonical wasm-history JSON
+// output from the per-worker JSONL transition logs that
+// `wasm-history -checkpoint-dir` produced. Used to recover from a
+// walk that died after writing transitions to JSONL but before
+// reaching its end-of-run JSON write.
+//
+// Required flags:
+//   - -checkpoint-dir: directory containing wasm-history-w*.jsonl files.
+//   - -to:             upper-bound ledger from the original walk's range.
+//     Used to close the last open range per contract.
+//
+// Optional:
+//   - -output: path to write the merged JSON to. Empty = stdout.
+//
+// The merge logic mirrors what `wasmHistory` does at end-of-run
+// (see [mergeWasmHistories]):
+//
+//  1. Read every wasm-history-w*.jsonl in lexical order (which is
+//     worker order — w0, w1, …).
+//  2. Per contract, collect all transitions across all workers.
+//  3. Sort each contract's transitions by at_ledger. Within a single
+//     worker the transitions are already in ledger-ascending order;
+//     across workers, sort merges them.
+//  4. Collapse adjacent same-hash transitions (a worker's first
+//     observation of a contract that already has the same hash from
+//     the previous worker is not a real transition).
+//  5. Build wasmRange[]: each transition starts a range that closes
+//     at the next transition's at_ledger - 1; the last range closes
+//     at -to.
+//  6. Emit the same JSON shape `wasmHistory` does.
+//
+// Empty-history contracts (the "ran but saw nothing" signal that
+// wasmHistory emits as `{"contract":"...","ranges":null}`) are NOT
+// emitted by this tool because the JSONL only carries observed
+// transitions. The original walk's JSON IS the canonical artefact;
+// this tool's purpose is purely "recover what we did see when the
+// walk crashed."
+func wasmHistoryMergeJSONL(args []string) error {
+	fs := flag.NewFlagSet("wasm-history-merge-jsonl", flag.ContinueOnError)
+	checkpointDir := fs.String("checkpoint-dir", "",
+		"Directory containing wasm-history-w*.jsonl files (required).")
+	to := fs.Uint("to", 0,
+		"Upper-bound ledger from the original walk's range (required). "+
+			"Closes the last open range per contract.")
+	output := fs.String("output", "",
+		"Output path. Empty = stdout.")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *checkpointDir == "" {
+		return fmt.Errorf("-checkpoint-dir is required")
+	}
+	if *to == 0 {
+		return fmt.Errorf("-to is required (the original walk's upper bound)")
+	}
+
+	pattern := filepath.Join(*checkpointDir, "wasm-history-w*.jsonl")
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("glob %s: %w", pattern, err)
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("no wasm-history-w*.jsonl files in %s", *checkpointDir)
+	}
+	sort.Strings(paths) // lexical = worker-index order
+	fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: reading %d JSONL file(s) from %s\n",
+		len(paths), *checkpointDir)
+
+	// contract → transitions in observation order across all workers.
+	transitions := make(map[string][]transitionRecord)
+	totalLines := 0
+	for _, path := range paths {
+		n, err := readTransitionJSONL(path, transitions)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		fmt.Fprintf(os.Stderr, "  %s: %d transition(s)\n", filepath.Base(path), n)
+		totalLines += n
+	}
+	fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: %d total transition lines across %d contract(s)\n",
+		totalLines, len(transitions))
+
+	// Per contract: sort by at_ledger, collapse adjacent same-hash,
+	// build ranges that close at the next transition's at_ledger - 1
+	// (or at -to for the last range).
+	out := make([]contractHistory, 0, len(transitions))
+	for contract, trs := range transitions {
+		sort.Slice(trs, func(i, j int) bool { return trs[i].AtLedger < trs[j].AtLedger })
+		ranges := buildRangesFromTransitions(trs, uint32(*to))
+		if len(ranges) == 0 {
+			continue
+		}
+		out = append(out, contractHistory{Contract: contract, Ranges: ranges})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Contract < out[j].Contract })
+
+	w := io.Writer(os.Stdout)
+	if *output != "" {
+		f, err := os.Create(*output) //nolint:gosec // operator-supplied output path
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		w = f
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encode: %w", err)
+	}
+	if *output != "" {
+		fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: wrote %d contract(s) to %s\n", len(out), *output)
+	}
+	return nil
+}
+
+// readTransitionJSONL appends every record in path's JSONL to the
+// per-contract slice in `transitions`. Returns the number of lines
+// successfully decoded (corrupted or partial trailing lines are
+// logged + skipped — a crashed walk may have left a half-written
+// last line, and "recover what we have" beats "fail outright").
+func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (int, error) {
+	// gosec G304: path comes from -checkpoint-dir glob expansion; the
+	// merge tool is itself a privileged ops command that operators run
+	// against operator-chosen paths.
+	f, err := os.Open(path) //nolint:gosec // intentional ops-tool file read
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+
+	dec := json.NewDecoder(f)
+	count := 0
+	for dec.More() {
+		var r transitionRecord
+		if err := dec.Decode(&r); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"wasm-history-merge-jsonl: %s: skipping malformed/truncated line near offset %d (%v)\n",
+				filepath.Base(path), dec.InputOffset(), err)
+			break
+		}
+		transitions[r.Contract] = append(transitions[r.Contract], r)
+		count++
+	}
+	return count, nil
+}
+
+// buildRangesFromTransitions converts a per-contract sorted
+// transition slice into the wasmRange shape `wasmHistory` emits.
+// Adjacent same-hash transitions are collapsed (the second one is
+// just a downstream worker's first re-observation of an unchanged
+// hash). The last open range closes at `to`.
+func buildRangesFromTransitions(trs []transitionRecord, to uint32) []wasmRange {
+	if len(trs) == 0 {
+		return nil
+	}
+	// Collapse adjacent same-hash entries. We keep the EARLIEST
+	// at_ledger for each run (matching the walker's first-observation
+	// semantic). Tracking the previous hash via a local string avoids
+	// the trs[i-1] index expression that gosec G602 flags as a
+	// slice-bound risk.
+	collapsed := trs[:0]
+	prevHash := ""
+	for _, r := range trs {
+		if len(collapsed) > 0 && r.WasmHash == prevHash {
+			continue
+		}
+		collapsed = append(collapsed, r)
+		prevHash = r.WasmHash
+	}
+	out := make([]wasmRange, 0, len(collapsed))
+	for i, r := range collapsed {
+		rng := wasmRange{WasmHash: r.WasmHash, FromLedger: r.AtLedger}
+		if i+1 < len(collapsed) {
+			rng.ToLedger = collapsed[i+1].AtLedger - 1
+		} else {
+			rng.ToLedger = to
+		}
+		out = append(out, rng)
+	}
+	return out
 }
 
 // workerResult is what each parallel worker produces: a state map

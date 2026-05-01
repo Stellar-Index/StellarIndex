@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -351,5 +352,129 @@ func TestStorageKeyHint(t *testing.T) {
 				t.Errorf("storageKeyHint(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestBuildRangesFromTransitions covers the merge tool's core
+// reconstruction logic — JSONL transitions back to the wasmRange
+// shape `wasmHistory` would have produced at end-of-run.
+func TestBuildRangesFromTransitions(t *testing.T) {
+	t.Run("single transition closes at -to", func(t *testing.T) {
+		trs := []transitionRecord{{Contract: "C...", WasmHash: "a", AtLedger: 100}}
+		got := buildRangesFromTransitions(trs, 1000)
+		want := []wasmRange{{WasmHash: "a", FromLedger: 100, ToLedger: 1000}}
+		if len(got) != 1 || got[0] != want[0] {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("two transitions chain through hash boundaries", func(t *testing.T) {
+		trs := []transitionRecord{
+			{Contract: "C...", WasmHash: "a", AtLedger: 100},
+			{Contract: "C...", WasmHash: "b", AtLedger: 500},
+		}
+		got := buildRangesFromTransitions(trs, 1000)
+		want := []wasmRange{
+			{WasmHash: "a", FromLedger: 100, ToLedger: 499},
+			{WasmHash: "b", FromLedger: 500, ToLedger: 1000},
+		}
+		if len(got) != 2 {
+			t.Fatalf("len=%d, want 2", len(got))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("range[%d] = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("collapses adjacent same-hash transitions across worker boundary", func(t *testing.T) {
+		// Worker 0 sees hash a at ledger 100; worker 1 starts fresh
+		// and re-observes hash a at its lower bound 600 (its first
+		// observation). The merge tool must collapse — no real
+		// transition happened between the workers.
+		trs := []transitionRecord{
+			{Contract: "C...", WasmHash: "a", AtLedger: 100},
+			{Contract: "C...", WasmHash: "a", AtLedger: 600}, // worker boundary
+			{Contract: "C...", WasmHash: "b", AtLedger: 800},
+		}
+		got := buildRangesFromTransitions(trs, 1000)
+		want := []wasmRange{
+			{WasmHash: "a", FromLedger: 100, ToLedger: 799},
+			{WasmHash: "b", FromLedger: 800, ToLedger: 1000},
+		}
+		if len(got) != 2 {
+			t.Fatalf("len=%d, want 2 (got %+v)", len(got), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("range[%d] = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("empty input yields empty output", func(t *testing.T) {
+		got := buildRangesFromTransitions(nil, 1000)
+		if got != nil {
+			t.Errorf("got %+v, want nil", got)
+		}
+	})
+}
+
+// TestReadTransitionJSONL_RoundTrip writes a synthetic JSONL file
+// (matching the shape `transitionLog.append` produces) and confirms
+// the merge tool's reader consumes it correctly.
+func TestReadTransitionJSONL_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/wasm-history-w0.jsonl"
+	contents := `{"contract":"C1","wasm_hash":"a","at_ledger":100}
+{"contract":"C1","wasm_hash":"b","at_ledger":500}
+{"contract":"C2","wasm_hash":"x","at_ledger":300}
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transitions := make(map[string][]transitionRecord)
+	n, err := readTransitionJSONL(path, transitions)
+	if err != nil {
+		t.Fatalf("readTransitionJSONL: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("count = %d, want 3", n)
+	}
+	if len(transitions["C1"]) != 2 {
+		t.Errorf("C1 transitions = %d, want 2", len(transitions["C1"]))
+	}
+	if len(transitions["C2"]) != 1 {
+		t.Errorf("C2 transitions = %d, want 1", len(transitions["C2"]))
+	}
+	if transitions["C1"][0].WasmHash != "a" || transitions["C1"][1].WasmHash != "b" {
+		t.Errorf("C1 hashes = %v, want [a b]", transitions["C1"])
+	}
+}
+
+// TestReadTransitionJSONL_TruncatedTail proves the merge tool
+// recovers from a half-written trailing line — exactly the failure
+// shape a crashed walker would produce. The good lines must still
+// land in the transitions map.
+func TestReadTransitionJSONL_TruncatedTail(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/wasm-history-w0.jsonl"
+	contents := `{"contract":"C1","wasm_hash":"a","at_ledger":100}
+{"contract":"C1","wasm_hash":"b","at_ledger":500}
+{"contract":"C1","wasm_hash":"c","at_le` // truncated mid-line
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transitions := make(map[string][]transitionRecord)
+	n, err := readTransitionJSONL(path, transitions)
+	if err != nil {
+		t.Fatalf("readTransitionJSONL: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count = %d, want 2 (good lines before truncation)", n)
+	}
+	if len(transitions["C1"]) != 2 {
+		t.Errorf("C1 transitions = %d, want 2", len(transitions["C1"]))
 	}
 }

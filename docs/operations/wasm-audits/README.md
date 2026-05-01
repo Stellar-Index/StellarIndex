@@ -94,6 +94,41 @@ volume are sufficient; full coverage is the v2 upgrade.
   bandwidth (Hetzner-out → AWS-in is free, AWS-out → home is the
   paid leg) but doesn't compete with r1's other workloads.
 
+**Crash-resilience for long walks.** Pass `-checkpoint-dir DIR`
+on every multi-hour walk:
+
+    ratesengine-ops wasm-history \
+      -config /etc/ratesengine.toml \
+      -from 50457424 -to 62249727 \
+      -parallel 8 \
+      -checkpoint-dir /tmp/walk-checkpoint \
+      -contracts ... > /tmp/wasm-history.json
+
+Each parallel worker writes its observed transitions to
+`<DIR>/wasm-history-w<i>.jsonl` as it sees them. If the walk dies
+before reaching its end-of-run JSON write (process crash, machine
+reboot, missing ledger in the archive — see
+[r1-deployment-state.md §3a](../r1-deployment-state.md)), recover the
+canonical JSON from the partial transitions:
+
+    ratesengine-ops wasm-history-merge-jsonl \
+      -checkpoint-dir /tmp/walk-checkpoint \
+      -to 62249727 \
+      -output /tmp/wasm-history-recovered.json
+
+`-to` MUST match the original walk's `-to` so the last open range
+per contract closes correctly. The merge tool tolerates a half-
+written trailing line (a crashed worker may not have flushed its
+last transition cleanly) and skips it without failing.
+
+The recovered JSON shape is identical to what `wasm-history` writes
+at end-of-run for the contracts that had at least one observed
+transition. Contracts that the walker scanned but saw no transitions
+for ARE NOT emitted by the merge tool — the JSONL only records
+transitions, not "saw nothing" outcomes. If the audit needs that
+"ran but saw nothing" signal, restart the walk from the gap region
+rather than relying on the merge.
+
 ### 3. Per-WASM-hash decoder review
 
 For each unique WASM hash in the timeline, fetch the WASM and
