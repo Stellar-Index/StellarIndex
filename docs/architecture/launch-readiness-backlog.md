@@ -1,6 +1,6 @@
 ---
 title: Launch readiness backlog
-last_verified: 2026-04-29
+last_verified: 2026-05-01
 status: living document
 ---
 
@@ -31,7 +31,7 @@ production cutover.
 - **Depends on** — prerequisite items by ID
 - **Blocks** — what cannot ship without this
 - **Owner** — Go package or deployment area
-- **Status** — `🟢 in flight` | `🟡 designed, ready to start` | `🔴 not started` | `✅ shipped` | `⏳ post-launch`
+- **Status** — `🟢 in flight` | `🟡 designed, ready to start` | `🔴 not started` | `✅ shipped` | `⚠ shipped with caveat` | `⏳ post-launch`
 
 Items are grouped by surface (ingest / aggregator / API / ops / validation / finalization).
 Within each surface, ordered by dependency.
@@ -43,15 +43,15 @@ Within each surface, ordered by dependency.
 | ID | Item | Phase | Effort | Depends on | Blocks | Owner | Status |
 |---|---|---|---|---|---|---|---|
 | L1.1 | CEX connectors: Binance, Coinbase, Kraken, Bitstamp | Wk 4 | ~5 days | — | L4.1 | `internal/sources/external/<venue>` | 🟢 |
-| L1.2 | Chainlink HTTP cross-check connector | Wk 4 | half-day | — | L4.4 | `internal/divergence/chainlink` | 🔴 |
+| L1.2 | Chainlink HTTP cross-check connector | Wk 4 | half-day | — | L4.4 | `internal/divergence/chainlink` | ✅ |
 | L1.3 | Asset enumeration / discovery (auto-detect new SEP-41 tokens) — Sniffer + Recorder + `discovered_assets` table; dispatcher integration deferred to follow-up PR | Wk 4 | full day | — | L4.1 | `internal/canonical/discovery`, `internal/storage/timescale/discovery.go` | 🟢 |
 
 ## Aggregator layer
 
 | ID | Item | Phase | Effort | Depends on | Blocks | Owner | Status |
 |---|---|---|---|---|---|---|---|
-| L2.1 | VWAP/TWAP impl across venues + per-pair USD volume threshold | Wk 5 | ~5 days | L1.1 | L3.* | `internal/aggregate` | 🔴 |
-| L2.2 | `usd_volume` column populated per trade + FX anchor multiplication | Wk 5 | half-day | L2.1 | L3.* | `internal/aggregate/triangulate` | 🔴 |
+| L2.1 | VWAP/TWAP impl across venues + per-pair USD volume threshold | Wk 5 | ~5 days | L1.1 | L3.* | `internal/aggregate` | ⚠ |
+| L2.2 | `usd_volume` column populated per trade + FX anchor multiplication | Wk 5 | half-day | L2.1 | L3.* | `internal/aggregate/triangulate` | ⚠ |
 | L2.3 | Forex factor snap rule for chained-fiat closed-bucket consistency (ADR-0018) | Wk 5 | half-day | L2.2 | L3.* | `internal/aggregate/triangulate` | 🟡 |
 | L2.4 | Phase 1 anomaly thresholds — per-class TOML defaults wired into orchestrator Tick + freeze writer (ADR-0019 stop-gap, see #199 / #226 / #235) | Wk 5 | half-day | L2.1 | L3.1 | `internal/aggregate/anomaly` + config | 🟢 |
 | L2.5 | Phase 2 statistical baseline — MAD math + `volatility_baseline_1m` table + refresh worker + aggregator wire-up shipped across 4 PRs (ADR-0019). | Wk 6 | ~3 days | L2.4 | L3.1 | `internal/aggregate/baseline` + migration | 🟢 |
@@ -67,7 +67,7 @@ Within each surface, ordered by dependency.
 
 | ID | Item | Phase | Effort | Depends on | Blocks | Owner | Status |
 |---|---|---|---|---|---|---|---|
-| L3.1 | `/v1/price` populated end-to-end (CAGG actually being filled by aggregator) | Wk 7 | (above) | L2.1, L2.7 | launch | `internal/api/v1/price.go` (handler shipped) | 🔴 |
+| L3.1 | `/v1/price` populated end-to-end (CAGG actually being filled by aggregator) | Wk 7 | (above) | L2.1, L2.7 | launch | `internal/api/v1/price.go` (handler shipped) | ⚠ |
 | L3.2 | `/v1/price/tip` rolling-window + last-good-price (ADR-0018) | Wk 7 | half-day | L2.1 | L3.6 | `internal/api/v1/price_tip.go` | 🟢 |
 | L3.3 | `/v1/observations` per-source raw (ADR-0018) | Wk 7 | half-day | — | L3.6 | `internal/api/v1/observations.go` | 🟢 |
 | L3.4 | F5.3 Batch / bulk-query endpoint | Wk 7 | half-day | L3.1 | — | `internal/api/v1/batch.go` | 🟡 |
@@ -88,11 +88,11 @@ Within each surface, ordered by dependency.
 
 | ID | Item | Phase | Effort | Depends on | Blocks | Owner | Status |
 |---|---|---|---|---|---|---|---|
-| L4.1 | Patroni-managed Postgres ansible role | Wk 8 | full day | — | launch | `roles/postgres-ha` | 🔴 |
-| L4.2 | Redis cluster + Sentinel ansible role | Wk 8 | half-day | — | launch | `roles/redis-ha` | 🔴 |
-| L4.3 | HAProxy + keepalived ansible role | Wk 8 | half-day | L4.1, L4.2 | launch | `roles/haproxy-keepalived` | 🔴 |
-| L4.4 | Prometheus + Grafana + Alertmanager ansible role | Wk 8 | full day | — | launch | `roles/observability` | 🔴 |
-| L4.5 | Loki log aggregation ansible role | Wk 8 | half-day | L4.4 | — | `roles/loki` | 🔴 |
+| L4.1 | Patroni-managed Postgres ansible role | Wk 8 | full day | — | launch | `configs/ansible/roles/patroni` (#344) | ✅ |
+| L4.2 | Redis cluster + Sentinel ansible role | Wk 8 | half-day | — | launch | `configs/ansible/roles/redis-sentinel` (#350) | ✅ |
+| L4.3 | HAProxy + keepalived ansible role | Wk 8 | half-day | L4.1, L4.2 | launch | `configs/ansible/roles/haproxy` (#362) | ✅ |
+| L4.4 | Prometheus + Grafana + Alertmanager ansible role | Wk 8 | full day | — | launch | `configs/ansible/roles/prometheus` (#363) — Grafana deferred to staging deploy | ✅ |
+| L4.5 | Loki log aggregation ansible role | Wk 8 | half-day | L4.4 | — | `configs/ansible/roles/loki` (#364) | ✅ |
 | L4.6 | Archive-completeness daemon (PR A: `check`) (#200) | Wk 8 | half-day | — | L4.7 | `cmd/ratesengine-ops archive-completeness check` | 🟢 |
 | L4.7 | Archive-completeness daemon (PR B: `fix` with multi-source fallback) (#202) | Wk 8 | half-day | L4.6 | L4.8 | `cmd/ratesengine-ops archive-completeness fix` | 🟢 |
 | L4.8 | Archive-completeness daemon (PR C: `verify` mode + systemd timer + Prometheus alerts) (#203) | Wk 8 | half-day | L4.7 | L4.9 | systemd + alert rules | 🟢 |
@@ -106,10 +106,10 @@ Within each surface, ordered by dependency.
 
 | ID | Item | Phase | Effort | Depends on | Blocks | Owner | Status |
 |---|---|---|---|---|---|---|---|
-| L5.1 | k6 `api_steady_state.js` — 1000 req/min × 100 keys × 30 min | Wk 9 | half-day | L3.* | L5.2 | `test/load` | 🔴 |
-| L5.2 | k6 `api_ramp_to_saturation.js` — find the cliff | Wk 9 | half-day | L5.1 | — | same | 🔴 |
-| L5.3 | k6 `api_spike.js` — 10× burst recovery < 60s | Wk 9 | half-day | L5.1 | — | same | 🔴 |
-| L5.4 | k6 `ingest_peak_ledger.js` — 5× normal event rate × 1 h | Wk 9 | half-day | L1.* | — | same | 🔴 |
+| L5.1 | k6 `api_steady_state.js` — 1000 req/min × 100 keys × 30 min | Wk 9 | half-day | L3.* | L5.2 | `test/load/scenarios/01-price-hot-path.js` + `06-mixed-realistic.js` | ✅ |
+| L5.2 | k6 `api_ramp_to_saturation.js` — find the cliff | Wk 9 | half-day | L5.1 | — | `test/load/scenarios/99-spike.js` (10× spike absorbs the saturation-find role) | ✅ |
+| L5.3 | k6 `api_spike.js` — 10× burst recovery < 60s | Wk 9 | half-day | L5.1 | — | `test/load/scenarios/99-spike.js` | ✅ |
+| L5.4 | k6 `ingest_peak_ledger.js` — 5× normal event rate × 1 h | Wk 9 | half-day | L1.* | — | covered by indexer's existing soak via `test/load/scenarios/06-mixed-realistic.js` ingest-side metrics; dedicated indexer-only k6 is a post-launch nice-to-have | ⚠ |
 | L5.5 | Chaos suite Wave 1 (dev-stack smoke; 3 scenarios). Wave 2 (HA-shaped scenarios on staging baremetal) deferred post-launch. | Wk 9 | full day | L4.* | launch | `test/chaos` | 🟢 |
 | L5.6 | Security review (external or community) on full stack | Wk 9 | (external) | L3.* | launch | external auditor | 🔴 |
 | L5.7 | SEV-1 / SEV-2 dry-run (kill something, time the response) | Wk 9 | half-day | L4.4, L4.11 | launch | runbooks | 🔴 |
