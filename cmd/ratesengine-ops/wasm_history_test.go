@@ -152,3 +152,204 @@ func makeUpdateChange(t *testing.T, contract sdkxdr.Hash, wasmHash [32]byte) sdk
 		Updated: entry,
 	}
 }
+
+// makeStorageChange builds a synthetic LedgerEntryChange for a
+// non-Instance ContractData entry (typical "custom storage"
+// shape) that recordStorageChange should pick up when the
+// contract is in the watch list.
+func makeStorageChange(t *testing.T, contract sdkxdr.Hash, keySymbol string) sdkxdr.LedgerEntryChange {
+	t.Helper()
+	contractID := sdkxdr.ContractId(contract)
+	scAddr := sdkxdr.ScAddress{
+		Type:       sdkxdr.ScAddressTypeScAddressTypeContract,
+		ContractId: &contractID,
+	}
+	sym := sdkxdr.ScSymbol(keySymbol)
+	key := sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
+	val := sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvU32, U32: func() *sdkxdr.Uint32 { v := sdkxdr.Uint32(42); return &v }()}
+	cd := sdkxdr.ContractDataEntry{
+		Contract:   scAddr,
+		Key:        key,
+		Durability: sdkxdr.ContractDataDurabilityPersistent,
+		Val:        val,
+	}
+	entry := &sdkxdr.LedgerEntry{Data: sdkxdr.LedgerEntryData{
+		Type:         sdkxdr.LedgerEntryTypeContractData,
+		ContractData: &cd,
+	}}
+	return sdkxdr.LedgerEntryChange{
+		Type:    sdkxdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+		Updated: entry,
+	}
+}
+
+// TestRecordStorageChange_CapturesNonInstanceKeys is the storage-
+// rotation scanner's positive path: a watched contract has a
+// non-Instance ContractData change → one storageChange recorded.
+func TestRecordStorageChange_CapturesNonInstanceKeys(t *testing.T) {
+	var watched sdkxdr.Hash
+	watched[0] = 0xa1
+	watch := map[sdkxdr.Hash]string{watched: "C..."}
+	out := map[sdkxdr.Hash][]storageChange{}
+
+	change := makeStorageChange(t, watched, "ADMIN")
+	recordStorageChange(&change, watch, out, 12345)
+
+	got := out[watched]
+	if len(got) != 1 {
+		t.Fatalf("storage changes len = %d, want 1", len(got))
+	}
+	if got[0].Ledger != 12345 {
+		t.Errorf("ledger = %d, want 12345", got[0].Ledger)
+	}
+	if got[0].ChangeType != "updated" {
+		t.Errorf("change_type = %q, want updated", got[0].ChangeType)
+	}
+	if got[0].Durability != "persistent" {
+		t.Errorf("durability = %q, want persistent", got[0].Durability)
+	}
+	if got[0].KeyHint != `symbol("ADMIN")` {
+		t.Errorf("key_hint = %q, want symbol(\"ADMIN\")", got[0].KeyHint)
+	}
+}
+
+// TestRecordStorageChange_SkipsInstanceKey ensures the storage-
+// rotation scanner ignores the LedgerKeyContractInstance row
+// (already covered by the wasm-history tracker; including it would
+// double-count and pollute the storage log).
+func TestRecordStorageChange_SkipsInstanceKey(t *testing.T) {
+	var watched sdkxdr.Hash
+	watched[0] = 0xa2
+	var w [32]byte
+	w[0] = 0xde
+	w[1] = 0xad
+	change := makeUpdateChange(t, watched, w)
+	watch := map[sdkxdr.Hash]string{watched: "C..."}
+	out := map[sdkxdr.Hash][]storageChange{}
+
+	recordStorageChange(&change, watch, out, 12345)
+
+	if len(out) != 0 {
+		t.Fatalf("expected 0 entries (Instance key should be skipped), got %d", len(out))
+	}
+}
+
+// TestRecordStorageChange_SkipsUnwatchedContract ensures the
+// scanner short-circuits on contracts not in the watch list.
+func TestRecordStorageChange_SkipsUnwatchedContract(t *testing.T) {
+	var unrelated sdkxdr.Hash
+	unrelated[0] = 0xff
+	change := makeStorageChange(t, unrelated, "ADMIN")
+
+	var watched sdkxdr.Hash
+	watched[0] = 0xa3
+	watch := map[sdkxdr.Hash]string{watched: "C..."}
+	out := map[sdkxdr.Hash][]storageChange{}
+
+	recordStorageChange(&change, watch, out, 12345)
+
+	if len(out) != 0 {
+		t.Fatalf("expected 0 entries (unrelated contract), got %d", len(out))
+	}
+}
+
+// makeCodeUploadChange builds a synthetic ContractCode Created
+// LedgerEntryChange — the entry type the code-upload scanner is
+// watching for.
+func makeCodeUploadChange(t *testing.T, hash [32]byte, code []byte) sdkxdr.LedgerEntryChange {
+	t.Helper()
+	cc := sdkxdr.ContractCodeEntry{
+		Hash: sdkxdr.Hash(hash),
+		Code: code,
+	}
+	entry := &sdkxdr.LedgerEntry{Data: sdkxdr.LedgerEntryData{
+		Type:         sdkxdr.LedgerEntryTypeContractCode,
+		ContractCode: &cc,
+	}}
+	return sdkxdr.LedgerEntryChange{
+		Type:    sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated,
+		Created: entry,
+	}
+}
+
+// TestMaybeAppendCodeUpload_CapturesCreatedAndRestored covers the
+// two change types the code-upload scanner accepts.
+func TestMaybeAppendCodeUpload_CapturesCreatedAndRestored(t *testing.T) {
+	var hash [32]byte
+	hash[0] = 0xca
+	hash[1] = 0xfe
+	body := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0xde, 0xad}
+
+	// Created
+	created := makeCodeUploadChange(t, hash, body)
+	got := maybeAppendCodeUpload(&created, nil, 100)
+	if len(got) != 1 || got[0].ChangeType != "created" || got[0].Ledger != 100 || got[0].SizeBytes != len(body) {
+		t.Fatalf("Created not captured cleanly: %+v", got)
+	}
+
+	// Restored
+	restored := sdkxdr.LedgerEntryChange{
+		Type: sdkxdr.LedgerEntryChangeTypeLedgerEntryRestored,
+		Restored: &sdkxdr.LedgerEntry{Data: sdkxdr.LedgerEntryData{
+			Type: sdkxdr.LedgerEntryTypeContractCode,
+			ContractCode: &sdkxdr.ContractCodeEntry{
+				Hash: sdkxdr.Hash(hash),
+				Code: body,
+			},
+		}},
+	}
+	got = maybeAppendCodeUpload(&restored, got, 200)
+	if len(got) != 2 || got[1].ChangeType != "restored" || got[1].Ledger != 200 {
+		t.Fatalf("Restored not captured cleanly: %+v", got)
+	}
+
+	// Updated should be ignored — ContractCode bytes are immutable
+	// in Soroban; Updated only adjusts TTL.
+	updated := sdkxdr.LedgerEntryChange{
+		Type:    sdkxdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+		Updated: created.Created,
+	}
+	got2 := maybeAppendCodeUpload(&updated, got, 300)
+	if len(got2) != len(got) {
+		t.Errorf("Updated should be ignored, but uploads grew from %d to %d", len(got), len(got2))
+	}
+}
+
+// TestMaybeAppendCodeUpload_IgnoresOtherEntryTypes ensures
+// non-ContractCode entries (Account, Trustline, ContractData) are
+// not picked up by the code-upload scanner.
+func TestMaybeAppendCodeUpload_IgnoresOtherEntryTypes(t *testing.T) {
+	var contract sdkxdr.Hash
+	var w [32]byte
+	change := makeUpdateChange(t, contract, w) // ContractData entry
+	got := maybeAppendCodeUpload(&change, nil, 100)
+	if len(got) != 0 {
+		t.Errorf("ContractData entry should not be captured by code-upload scanner; got %d uploads", len(got))
+	}
+}
+
+// TestStorageKeyHint covers the common SCVal key shapes the hint
+// helper recognises. Best-effort summaries; doesn't need to cover
+// every SCVal variant.
+func TestStorageKeyHint(t *testing.T) {
+	mkSym := func(s string) sdkxdr.ScVal {
+		sym := sdkxdr.ScSymbol(s)
+		return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
+	}
+	cases := []struct {
+		name string
+		key  sdkxdr.ScVal
+		want string
+	}{
+		{"symbol", mkSym("ADMIN"), `symbol("ADMIN")`},
+		{"u32", sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvU32, U32: func() *sdkxdr.Uint32 { v := sdkxdr.Uint32(7); return &v }()}, "u32(7)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := storageKeyHint(tc.key)
+			if got != tc.want {
+				t.Errorf("storageKeyHint(%s) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}

@@ -2217,6 +2217,50 @@ type wasmContractState struct {
 	current string // current open WASM hash hex; empty = no open range
 }
 
+// storageChange is one observation of a watched contract's
+// non-Instance ContractData entry being Created/Updated/Restored.
+// Captures *what changed* (key + change type) at *when* (ledger),
+// without trying to interpret the value (raw key XDR is enough for
+// downstream replay / classification).
+//
+// Used by the optional `-track-storage-rotations` mode to catch
+// admin storage flips like Soroswap factory's `set_pair_wasm`
+// rotation, factory parameter changes (fee_to_setter, etc.) — all
+// the things wasm-history's instance-only filter ignores.
+type storageChange struct {
+	Ledger     uint32 `json:"ledger"`
+	ChangeType string `json:"change_type"` // created | updated | restored
+	KeyXDRB64  string `json:"key_xdr_b64"`
+	KeyHint    string `json:"key_hint,omitempty"`   // best-effort human-readable summary
+	Durability string `json:"durability,omitempty"` // persistent | temporary
+}
+
+// contractStorageHistory is the per-contract output shape for the
+// storage-rotation tracker. One entry per watched contract that
+// had ANY observed non-Instance ContractData change.
+type contractStorageHistory struct {
+	Contract string          `json:"contract"`
+	Changes  []storageChange `json:"changes"`
+}
+
+// codeUpload is one observation of a `ContractCode` LedgerEntry
+// being Created or Restored — i.e. someone's UploadContractWasm
+// host-fn invocation deposited a new WASM blob into ledger state.
+//
+// Captured globally (not per-watched-contract) because the WASM
+// upload is a one-shot event that any contract may later reference
+// via its ExecutableHash. Tracking it lets us preserve a complete
+// archive of "every WASM ever uploaded over the walked window" for
+// retroactive cross-reference — companion to the on-chain
+// Soroban-RPC fetch path (which only works for live, non-evicted
+// hashes).
+type codeUpload struct {
+	Ledger     uint32 `json:"ledger"`
+	WasmHash   string `json:"wasm_hash"`
+	SizeBytes  int    `json:"size_bytes"`
+	ChangeType string `json:"change_type"` // created | restored
+}
+
 // archiveCompleteness dispatches the `archive-completeness <mode>`
 // subcommand per ADR-0017. Modes: check (PR A), fix (PR B),
 // verify (PR C — this PR).
@@ -2529,6 +2573,19 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 			"Files are named <dir>/wasm-history-w<worker>.jsonl. Use "+
 			"`ratesengine-ops wasm-history-merge-jsonl` (planned) or hand-stitch "+
 			"to recover ranges from a partial run.")
+	storageOut := fs.String("storage-rotations-out", "",
+		"Optional path to write the per-watched-contract storage-rotation log "+
+			"as a JSON document. When set, every Created/Updated/Restored "+
+			"ContractData entry whose key is NOT LedgerKeyContractInstance is "+
+			"recorded. Used to catch admin storage flips like Soroswap factory's "+
+			"set_pair_wasm rotation that the wasm-hash-only walker doesn't see. "+
+			"Empty = feature off (default).")
+	codeOut := fs.String("code-uploads-out", "",
+		"Optional path to write a JSON log of every ContractCode entry "+
+			"(Created/Restored) observed in the walked range. Captures the "+
+			"WASM-upload events themselves, independent of which contract "+
+			"references the resulting hash. Output: [{ledger, wasm_hash, "+
+			"size_bytes, change_type}]. Empty = feature off (default).")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2613,8 +2670,11 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	// Split the range into N contiguous chunks. Worker i gets
 	// [from + i*size, from + (i+1)*size - 1] except the last
 	// worker absorbs the remainder.
+	trackStorage := *storageOut != ""
+	trackCode := *codeOut != ""
 	workerStates, totalScanned, err := runWasmHistoryWorkers(
-		ctx, lsCfg, watch, uint32(*from), uint32(*to), int(*parallel), uint64(*progressEvery), *checkpointDir)
+		ctx, lsCfg, watch, uint32(*from), uint32(*to), int(*parallel), trackStorage, trackCode,
+		uint64(*progressEvery), *checkpointDir)
 	if err != nil {
 		return err
 	}
@@ -2645,18 +2705,119 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Contract < out[j].Contract })
 
+	// Tier-2 outputs (storage rotations + code uploads) are written
+	// to separate JSON files so the main wasm-history JSON shape on
+	// stdout stays backward-compatible. Each tier-2 feature is opt-in
+	// via its `-out` flag; when unset, no extra output is produced.
+	if trackStorage {
+		if err := writeStorageRotationsOutput(*storageOut, watch, workerStates); err != nil {
+			return fmt.Errorf("write storage rotations: %w", err)
+		}
+	}
+	if trackCode {
+		if err := writeCodeUploadsOutput(*codeOut, workerStates); err != nil {
+			return fmt.Errorf("write code uploads: %w", err)
+		}
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
+}
+
+// writeStorageRotationsOutput merges per-worker storage-change
+// slices in worker order (which is ledger order across the
+// chunk-partitioned range) and writes them to path as a JSON array.
+func writeStorageRotationsOutput(
+	path string,
+	watch map[sdkxdr.Hash]string,
+	workers []workerResult,
+) error {
+	merged := make(map[sdkxdr.Hash][]storageChange)
+	for _, w := range workers {
+		for h, changes := range w.storageChanges {
+			merged[h] = append(merged[h], changes...)
+		}
+	}
+	out := make([]contractStorageHistory, 0, len(merged))
+	for h, changes := range merged {
+		out = append(out, contractStorageHistory{
+			Contract: watch[h],
+			Changes:  changes,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Contract < out[j].Contract })
+
+	f, err := os.Create(path) //nolint:gosec // operator-supplied output path
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "wasm-history: wrote %d contract(s)' storage rotations to %s\n", len(out), path)
+	return nil
+}
+
+// writeCodeUploadsOutput merges per-worker code-upload slices in
+// worker order (= ledger order) and writes to path as a JSON array.
+// Deduplicates by (ledger, hash) since the same upload can land in
+// adjacent worker chunks.
+func writeCodeUploadsOutput(path string, workers []workerResult) error {
+	var all []codeUpload
+	for _, w := range workers {
+		all = append(all, w.codeUploads...)
+	}
+	// Sort by ledger then hash for stable output.
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Ledger != all[j].Ledger {
+			return all[i].Ledger < all[j].Ledger
+		}
+		return all[i].WasmHash < all[j].WasmHash
+	})
+	// Dedupe (rare across worker boundaries; cheap O(n) pass).
+	dedup := all[:0]
+	var prev codeUpload
+	for _, u := range all {
+		if u.Ledger == prev.Ledger && u.WasmHash == prev.WasmHash && u.ChangeType == prev.ChangeType {
+			continue
+		}
+		dedup = append(dedup, u)
+		prev = u
+	}
+
+	f, err := os.Create(path) //nolint:gosec // operator-supplied output path
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(dedup); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "wasm-history: wrote %d code upload(s) to %s\n", len(dedup), path)
+	return nil
 }
 
 // workerResult is what each parallel worker produces: a state map
 // covering its bounded range, plus the actual upper bound it reached
 // (used by merge to know where this worker's open ranges should close).
 type workerResult struct {
-	state    map[sdkxdr.Hash]*wasmContractState
-	scanned  uint64
-	upperEnd uint32 // last ledger the worker actually saw (inclusive)
+	state map[sdkxdr.Hash]*wasmContractState
+	// storageChanges is populated only when -track-storage-rotations
+	// is set. Keyed by watched contract hash; per-contract slice is
+	// in ledger order within the worker's chunk.
+	storageChanges map[sdkxdr.Hash][]storageChange
+	// codeUploads is populated only when -track-code-uploads is set.
+	// Global per-worker (not per-contract); merged across workers in
+	// ledger order.
+	codeUploads []codeUpload
+	scanned     uint64
+	upperEnd    uint32 // last ledger the worker actually saw (inclusive)
 }
 
 // runWasmHistoryWorkers splits [from,to] into `parallel` contiguous
@@ -2669,12 +2830,14 @@ type workerResult struct {
 // resilience for long-running walks: if a worker dies mid-flight,
 // the per-worker JSONL contains every transition it saw before the
 // crash. The final stdout JSON is unchanged.
-func runWasmHistoryWorkers(
+func runWasmHistoryWorkers( //nolint:funlen // worker scaffolding; long function is the cleanest expression of the tier-2 fan-out
 	ctx context.Context,
 	lsCfg ledgerstream.Config,
 	watch map[sdkxdr.Hash]string,
 	from, to uint32,
 	parallel int,
+	trackStorage bool,
+	trackCode bool,
 	progressEvery uint64,
 	checkpointDir string,
 ) ([]workerResult, uint64, error) {
@@ -2684,6 +2847,9 @@ func runWasmHistoryWorkers(
 	results := make([]workerResult, parallel)
 	for i := range results {
 		results[i].state = make(map[sdkxdr.Hash]*wasmContractState)
+		if trackStorage {
+			results[i].storageChanges = make(map[sdkxdr.Hash][]storageChange)
+		}
 	}
 
 	// Range partition. Use the unbounded form (to == 0) only when
@@ -2702,7 +2868,8 @@ func runWasmHistoryWorkers(
 		go func() {
 			defer wg.Done()
 			runOneWasmHistoryWorker(ctx, lsCfg, watch, &results[i], i, b,
-				progressEvery, checkpointDir, &totalScanned, startedAt, errCh)
+				progressEvery, checkpointDir, trackStorage, trackCode,
+				&totalScanned, startedAt, errCh)
 		}()
 	}
 	wg.Wait()
@@ -2717,7 +2884,7 @@ func runWasmHistoryWorkers(
 // runWasmHistoryWorkers. Extracted so the parent function's
 // cognitive complexity stays manageable. Owns one worker chunk's
 // scan + optional checkpoint-log lifecycle.
-func runOneWasmHistoryWorker(
+func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refactor would obscure ledger-stream lifecycle
 	ctx context.Context,
 	lsCfg ledgerstream.Config,
 	watch map[sdkxdr.Hash]string,
@@ -2726,6 +2893,8 @@ func runOneWasmHistoryWorker(
 	b rangeChunk,
 	progressEvery uint64,
 	checkpointDir string,
+	trackStorage bool,
+	trackCode bool,
 	totalScanned *atomicUint64,
 	startedAt time.Time,
 	errCh chan<- error,
@@ -2754,6 +2923,12 @@ func runOneWasmHistoryWorker(
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			seq := lcm.LedgerSequence()
 			scanLCMForWasmChanges(lcm, watch, result.state, seq, tlog)
+			if trackStorage {
+				scanLCMForStorageRotations(lcm, watch, result.storageChanges, seq)
+			}
+			if trackCode {
+				result.codeUploads = scanLCMForCodeUploads(lcm, result.codeUploads, seq)
+			}
 			workerScanned++
 			if progressEvery > 0 && workerScanned%progressEvery == 0 {
 				total := totalScanned.add(progressEvery)
@@ -2906,6 +3081,224 @@ func scanLCMForWasmChanges(
 			continue
 		}
 	}
+}
+
+// scanLCMForStorageRotations walks every operation's
+// LedgerEntryChanges in lcm and records non-Instance ContractData
+// changes for any watched contract. Mirrors scanLCMForWasmChanges
+// but with the inverse Key.Type filter.
+//
+// "Storage rotation" here means any modification to a contract's
+// custom storage entries (per-instance balance, factory parameter,
+// admin pointer, etc.) that the wasm-history walker's
+// instance-only filter ignores. Useful for catching admin storage
+// flips like Soroswap factory's `set_pair_wasm` rotation.
+func scanLCMForStorageRotations(
+	lcm sdkxdr.LedgerCloseMeta,
+	watch map[sdkxdr.Hash]string,
+	out map[sdkxdr.Hash][]storageChange,
+	seq uint32,
+) {
+	if lcm.V != 1 || lcm.V1 == nil {
+		return
+	}
+	v1 := lcm.V1
+	for i := range v1.TxProcessing {
+		txMeta := &v1.TxProcessing[i].TxApplyProcessing
+		switch {
+		case txMeta.V3 != nil:
+			for j := range txMeta.V3.Operations {
+				changes := txMeta.V3.Operations[j].Changes
+				for k := range changes {
+					recordStorageChange(&changes[k], watch, out, seq)
+				}
+			}
+		case txMeta.V4 != nil:
+			for j := range txMeta.V4.Operations {
+				changes := txMeta.V4.Operations[j].Changes
+				for k := range changes {
+					recordStorageChange(&changes[k], watch, out, seq)
+				}
+			}
+		}
+	}
+}
+
+// recordStorageChange appends one entry per non-Instance
+// ContractData change for a watched contract. Captures the raw key
+// XDR (base64) + a best-effort `key_hint` summary for human
+// readability. Doesn't decode the value (kept raw to keep the
+// scanner's hot path tight).
+func recordStorageChange(
+	change *sdkxdr.LedgerEntryChange,
+	watch map[sdkxdr.Hash]string,
+	out map[sdkxdr.Hash][]storageChange,
+	seq uint32,
+) {
+	var entry *sdkxdr.LedgerEntry
+	var changeType string
+	switch change.Type {
+	case sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated:
+		entry, changeType = change.Created, "created"
+	case sdkxdr.LedgerEntryChangeTypeLedgerEntryUpdated:
+		entry, changeType = change.Updated, "updated"
+	case sdkxdr.LedgerEntryChangeTypeLedgerEntryRestored:
+		entry, changeType = change.Restored, "restored"
+	default:
+		return
+	}
+	if entry == nil || entry.Data.Type != sdkxdr.LedgerEntryTypeContractData {
+		return
+	}
+	cd := entry.Data.ContractData
+	if cd == nil {
+		return
+	}
+	// Inverse filter to scanLedgerEntryChange's: skip the Instance
+	// row (already covered by wasm-history); we only want the
+	// non-Instance custom-storage rows.
+	if cd.Key.Type == sdkxdr.ScValTypeScvLedgerKeyContractInstance {
+		return
+	}
+	if cd.Contract.Type != sdkxdr.ScAddressTypeScAddressTypeContract || cd.Contract.ContractId == nil {
+		return
+	}
+	contractHash := sdkxdr.Hash(*cd.Contract.ContractId)
+	if _, watched := watch[contractHash]; !watched {
+		return
+	}
+
+	keyB64, err := sdkxdr.MarshalBase64(cd.Key)
+	if err != nil {
+		// Don't drop the row; emit a placeholder hint and zero-byte
+		// key. Operator can still see *that* a change happened.
+		keyB64 = ""
+	}
+	durability := "persistent"
+	if cd.Durability == sdkxdr.ContractDataDurabilityTemporary {
+		durability = "temporary"
+	}
+	out[contractHash] = append(out[contractHash], storageChange{
+		Ledger:     seq,
+		ChangeType: changeType,
+		KeyXDRB64:  keyB64,
+		KeyHint:    storageKeyHint(cd.Key),
+		Durability: durability,
+	})
+}
+
+// storageKeyHint returns a best-effort one-line human summary of
+// an SCVal key so an operator skimming output can recognise common
+// storage patterns (Symbol("ADMIN"), Vec[Symbol("PAIR"), Address],
+// etc.) without round-tripping the base64-encoded XDR through a
+// decoder. Returns "" when the key shape doesn't fit a simple
+// pattern.
+func storageKeyHint(k sdkxdr.ScVal) string {
+	switch k.Type {
+	case sdkxdr.ScValTypeScvSymbol:
+		if k.Sym != nil {
+			return fmt.Sprintf("symbol(%q)", string(*k.Sym))
+		}
+	case sdkxdr.ScValTypeScvVec:
+		if k.Vec == nil || *k.Vec == nil {
+			return "vec[]"
+		}
+		v := **k.Vec // ScVec is []ScVal under a double pointer
+		if len(v) == 0 {
+			return "vec[]"
+		}
+		// Common case: Vec starts with a Symbol that names the slot.
+		if v[0].Type == sdkxdr.ScValTypeScvSymbol && v[0].Sym != nil {
+			return fmt.Sprintf("vec[symbol(%q), ...×%d]", string(*v[0].Sym), len(v)-1)
+		}
+		return fmt.Sprintf("vec[×%d]", len(v))
+	case sdkxdr.ScValTypeScvBytes:
+		if k.Bytes != nil {
+			return fmt.Sprintf("bytes[%d]", len(*k.Bytes))
+		}
+	case sdkxdr.ScValTypeScvU32:
+		if k.U32 != nil {
+			return fmt.Sprintf("u32(%d)", *k.U32)
+		}
+	}
+	return ""
+}
+
+// scanLCMForCodeUploads walks LedgerEntryChanges in lcm looking
+// for ContractCode entry Created/Restored events — i.e. raw WASM
+// upload events emitted when someone calls UploadContractWasm.
+//
+// Captured globally (not per-watched-contract) because the upload
+// is independent of which contract may later reference the
+// resulting hash. Returns the (possibly extended) slice; caller
+// reassigns to keep the per-worker accumulator in sync.
+//
+// We capture both Created (a fresh upload) and Restored (a TTL-
+// extended upload restored from cold storage) for completeness.
+// `Updated` is excluded — Soroban doesn't update ContractCode
+// bytes (the bytes are immutable; only the entry's TTL changes).
+func scanLCMForCodeUploads(
+	lcm sdkxdr.LedgerCloseMeta,
+	uploads []codeUpload,
+	seq uint32,
+) []codeUpload {
+	if lcm.V != 1 || lcm.V1 == nil {
+		return uploads
+	}
+	v1 := lcm.V1
+	for i := range v1.TxProcessing {
+		txMeta := &v1.TxProcessing[i].TxApplyProcessing
+		switch {
+		case txMeta.V3 != nil:
+			for j := range txMeta.V3.Operations {
+				changes := txMeta.V3.Operations[j].Changes
+				for k := range changes {
+					uploads = maybeAppendCodeUpload(&changes[k], uploads, seq)
+				}
+			}
+		case txMeta.V4 != nil:
+			for j := range txMeta.V4.Operations {
+				changes := txMeta.V4.Operations[j].Changes
+				for k := range changes {
+					uploads = maybeAppendCodeUpload(&changes[k], uploads, seq)
+				}
+			}
+		}
+	}
+	return uploads
+}
+
+// maybeAppendCodeUpload checks one LedgerEntryChange for a
+// ContractCode Created/Restored event and appends to uploads if
+// it's a match. Skips other change types and other entry types.
+func maybeAppendCodeUpload(
+	change *sdkxdr.LedgerEntryChange,
+	uploads []codeUpload,
+	seq uint32,
+) []codeUpload {
+	var entry *sdkxdr.LedgerEntry
+	var changeType string
+	switch change.Type {
+	case sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated:
+		entry, changeType = change.Created, "created"
+	case sdkxdr.LedgerEntryChangeTypeLedgerEntryRestored:
+		entry, changeType = change.Restored, "restored"
+	default:
+		return uploads
+	}
+	if entry == nil || entry.Data.Type != sdkxdr.LedgerEntryTypeContractCode {
+		return uploads
+	}
+	cc := entry.Data.ContractCode
+	if cc == nil {
+		return uploads
+	}
+	return append(uploads, codeUpload{
+		Ledger:     seq,
+		WasmHash:   hex.EncodeToString(cc.Hash[:]),
+		SizeBytes:  len(cc.Code),
+		ChangeType: changeType,
+	})
 }
 
 // scanLedgerEntryChange checks one LedgerEntryChange for a

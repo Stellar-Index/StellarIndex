@@ -17,6 +17,42 @@ against.
 
 ### Added
 
+- **`ratesengine-ops wasm-history` Tier 2 enhancements: storage-
+  rotation + ContractCode-upload tracking**: opt-in observers
+  that ride alongside the existing executable-hash transition
+  walker. Closes the "wide-net" goal called out in
+  `walker-investigation-2026-05-01.md`. Two new flags:
+  - `-storage-rotations-out=PATH` — when set, every
+    Created/Updated/Restored `ContractData` entry whose key is
+    NOT `LedgerKeyContractInstance` (i.e. custom storage rows)
+    is recorded for any watched contract. Catches admin
+    storage flips like Soroswap factory's `set_pair_wasm`
+    rotation that the wasm-history-only walker doesn't see.
+    Output: `[{contract, changes: [{ledger, change_type,
+    key_xdr_b64, key_hint, durability}]}]`. The `key_hint`
+    field renders common SCVal key shapes (Symbol, Vec\[Symbol,
+    ...\], U32, Bytes) as one-line summaries so an operator
+    skimming the JSON can recognise patterns without round-
+    tripping the base64-encoded XDR through a decoder.
+  - `-code-uploads-out=PATH` — when set, every `ContractCode`
+    Created/Restored event observed in the walked range is
+    captured globally (not per-watched-contract; the upload is
+    independent of which contract may later reference the
+    hash). Output: `[{ledger, wasm_hash, size_bytes, change_type}]`.
+    Updated changes are deliberately excluded — Soroban's
+    ContractCode bytes are immutable, only TTL changes via
+    Updated, so they're not real upload events.
+
+  Both features are off by default; the existing wasm-history
+  stdout shape is unchanged. Tests cover the positive paths +
+  the inverse-filter on Instance keys + the entry-type
+  short-circuit.
+
+  Operational use: re-run `wasm-history` against the curated
+  `configs/audit/wasm-walk-contracts.yaml` list with both flags
+  set to capture the full picture in one pass — the wide-net
+  walk plan from PR #359.
+
 - **Redis Sentinel ansible role + go-redis FailoverClient
   migration (Task #72 sub-role)**: closes the second
   launch-critical sub-role of #72 (after Patroni #344).
