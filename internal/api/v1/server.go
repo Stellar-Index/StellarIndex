@@ -398,9 +398,6 @@ func (s *Server) mountRoutes() {
 	// the server-signing seed + JWT secret configured.
 	s.mux.HandleFunc("GET /v1/auth/sep10/challenge", s.handleSEP10Challenge)
 	s.mux.HandleFunc("POST /v1/auth/sep10/token", s.handleSEP10Token)
-
-	// TODO(#0): SSE streams — follow-up PRs per
-	// docs/reference/api-design.md §5.
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────

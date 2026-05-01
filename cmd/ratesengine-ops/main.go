@@ -173,7 +173,9 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 	case "help", "--help", "-h":
 		printUsage()
 	default:
-		// TODO(#0): backfill, cache-prime, verify-invariants.
+		// Subcommands the usageBody flags as still-planned (cache-prime,
+		// verify-invariants) land via their feature PRs and add their
+		// own case here. Anything else prints help + exits 2.
 		fmt.Fprintf(os.Stderr, "ratesengine-ops: unknown subcommand %q\n", args[0])
 		printUsage()
 		os.Exit(2)
