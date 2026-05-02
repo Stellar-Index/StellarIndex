@@ -2,6 +2,7 @@ package middleware_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -316,6 +317,83 @@ func TestAuth_ModeSEP10_RejectsXAPIKey(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 (X-API-Key not honoured under sep10)", w.Code)
+	}
+}
+
+// TestAuth_ErrorBodyIsProblemJSON pins the wire shape every auth
+// failure path now emits — application/problem+json per
+// docs/reference/api-design.md §11. Pre-2026-05-02 these paths
+// emitted text/plain bodies, which broke the "every 4xx/5xx is
+// problem+json" client contract.
+func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
+	cases := []struct {
+		name       string
+		opts       middleware.AuthOptions
+		setHeader  func(*http.Request)
+		wantStatus int
+		wantType   string
+	}{
+		{
+			name: "missing credential — 401 unauthorized",
+			opts: middleware.AuthOptions{
+				Mode:   middleware.AuthModeAPIKey,
+				APIKey: stubAPIKeyValidator{knownKey: "k1"},
+			},
+			setHeader:  func(*http.Request) {},
+			wantStatus: http.StatusUnauthorized,
+			wantType:   "https://api.ratesengine.net/errors/unauthorized",
+		},
+		{
+			name: "no validator wired — 503 not configured",
+			opts: middleware.AuthOptions{
+				Mode:   middleware.AuthModeAPIKey,
+				APIKey: nil,
+			},
+			setHeader: func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer x")
+			},
+			wantStatus: http.StatusServiceUnavailable,
+			wantType:   "https://api.ratesengine.net/errors/auth-not-configured",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mw := middleware.Auth(tc.opts)
+			h := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+
+			r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+			tc.setHeader(r)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+			if got := w.Header().Get("Content-Type"); got != "application/problem+json" {
+				t.Errorf("Content-Type = %q, want application/problem+json", got)
+			}
+			var body struct {
+				Type   string `json:"type"`
+				Title  string `json:"title"`
+				Status int    `json:"status"`
+				Detail string `json:"detail"`
+			}
+			if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body.Type != tc.wantType {
+				t.Errorf("type = %q, want %q", body.Type, tc.wantType)
+			}
+			if body.Status != tc.wantStatus {
+				t.Errorf("body.status = %d, want %d", body.Status, tc.wantStatus)
+			}
+			if body.Title == "" {
+				t.Error("title is empty; should be human-readable")
+			}
+			if body.Detail == "" {
+				t.Error("detail is empty; should explain the failure")
+			}
+		})
 	}
 }
 

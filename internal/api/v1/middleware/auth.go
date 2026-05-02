@@ -3,6 +3,7 @@ package middleware
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -125,34 +126,71 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 	return auth.Subject{}, auth.ErrNotImplemented
 }
 
-// writeAuthError translates a sentinel auth error to an HTTP
-// response. Plain text + status code; problem+json formatting is
-// handler-specific and out of scope here.
+// writeAuthError translates a sentinel auth error to an RFC 9457
+// problem+json response. Matches docs/reference/api-design.md §11
+// "every 4xx/5xx returns application/problem+json" — the auth
+// middleware emits the same wire shape as handlers + the rate-limit
+// middleware, so clients have a single error-decoding path.
+//
+// WWW-Authenticate is still set on 401 paths per RFC 6750 §3 so
+// browser-side clients get the standard challenge.
 func writeAuthError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	switch {
 	case errors.Is(err, auth.ErrTokenExpired):
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="token expired"`)
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte("token expired"))
+		writeAuthProblem(w, http.StatusUnauthorized,
+			"https://api.ratesengine.net/errors/token-expired",
+			"Token expired",
+			"Your authentication token has expired; refresh and retry.")
 	case errors.Is(err, auth.ErrTokenMalformed):
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("malformed credential"))
+		writeAuthProblem(w, http.StatusBadRequest,
+			"https://api.ratesengine.net/errors/malformed-credential",
+			"Malformed credential",
+			"The supplied credential could not be parsed.")
 	case errors.Is(err, auth.ErrForbidden):
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte("forbidden"))
+		writeAuthProblem(w, http.StatusForbidden,
+			"https://api.ratesengine.net/errors/forbidden",
+			"Forbidden",
+			"The authenticated subject is not permitted to access this resource.")
 	case errors.Is(err, auth.ErrNotImplemented):
 		// Fail-loud on a deployment that enabled an auth mode but
 		// didn't wire the validator. 503 + a body that names the
 		// problem so an operator sees it on the first failed request.
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("auth validator not configured for this build"))
+		writeAuthProblem(w, http.StatusServiceUnavailable,
+			"https://api.ratesengine.net/errors/auth-not-configured",
+			"Auth validator not configured",
+			"This deployment enabled an auth mode but no validator was wired into the binary.")
 	default:
 		// ErrUnauthorized + everything else fall here.
 		w.Header().Set("WWW-Authenticate", `Bearer realm="ratesengine"`)
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte("unauthorised"))
+		writeAuthProblem(w, http.StatusUnauthorized,
+			"https://api.ratesengine.net/errors/unauthorized",
+			"Unauthorized",
+			"Authentication is required to access this resource.")
 	}
+}
+
+// authProblem is a minimised RFC 9457 body. Duplicated from the
+// envelope's Problem type so the middleware package doesn't import
+// internal/api/v1 (which would create a cycle — v1 imports
+// middleware). Matches the same pattern used by rlProblem in
+// ratelimit.go.
+type authProblem struct {
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+func writeAuthProblem(w http.ResponseWriter, status int, typeURL, title, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(authProblem{
+		Type:   typeURL,
+		Title:  title,
+		Status: status,
+		Detail: detail,
+	})
 }
 
 // bearerOrXKey extracts the API key from either of:

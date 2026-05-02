@@ -442,6 +442,30 @@ against.
 
 ### Fixed
 
+- **Auth middleware now emits `application/problem+json` on
+  4xx/5xx** — closes a wire-shape inconsistency caught by an
+  audit pass. Per `docs/reference/api-design.md §11` every 4xx/5xx
+  must return RFC 9457 `application/problem+json`; the auth
+  middleware emitted `text/plain` bodies (`"token expired"`,
+  `"malformed credential"`, `"forbidden"`, `"unauthorised"`,
+  `"auth validator not configured for this build"`). Clients
+  decoding errors had to special-case auth-middleware bodies.
+  `writeAuthError` now routes every sentinel
+  (`ErrTokenExpired` / `ErrTokenMalformed` / `ErrForbidden` /
+  `ErrNotImplemented` / `ErrUnauthorized` default) through a new
+  `writeAuthProblem` that emits the same Problem shape as
+  handler-side `writeProblem` and rate-limit's
+  `writeRateLimitProblem`, with a per-error stable `type` URL
+  under `https://api.ratesengine.net/errors/`. The
+  `WWW-Authenticate` header is still set on 401 paths per RFC
+  6750 §3 so browser-side clients get the standard challenge.
+  Local `authProblem` type duplicated from envelope's `Problem`
+  to avoid the cycle (middleware can't import internal/api/v1)
+  — same pattern as the existing `rlProblem` in ratelimit.go.
+  New `TestAuth_ErrorBodyIsProblemJSON` asserts Content-Type +
+  type/title/status/detail for the missing-credential and
+  not-configured paths.
+
 - **Aggregator binary now exposes `/metrics`** — closes a known
   gap surfaced by the half-shipped-config audit. The aggregator's
   Prometheus counters (`ratesengine_aggregator_ticks_total`,
