@@ -60,6 +60,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -245,6 +246,18 @@ func run(cfgPath string, dryRun bool) error {
 		return nil
 	}
 
+	// ─── Metrics HTTP endpoint ──────────────────────────────────
+	// Mirrors the indexer's pattern (cmd/ratesengine-indexer/
+	// main.go::startMetricsServer). Aggregator counters
+	// (ratesengine_aggregator_ticks_total, _vwap_writes_total,
+	// _empty_windows_total, _dropped_trades_total,
+	// _triangulations_total) register into internal/obs at package
+	// init; without a listener they were unreachable. Now Prometheus
+	// can scrape them and the aggregator-silent / outlier-storm /
+	// class-drop-spike alerts in deploy/monitoring/rules/aggregator.yml
+	// can actually fire.
+	metricsSrv := startMetricsServer(cfg.Obs, logger)
+
 	// ─── Baseline refresh worker (ADR-0019 Phase 2) ─────────────
 	// Slow-cadence loop alongside the orchestrator: hourly pulls
 	// each pair's 30-day VWAP window from prices_1m, computes
@@ -292,6 +305,14 @@ func run(cfgPath string, dryRun bool) error {
 		return fmt.Errorf("orchestrator: %w", err)
 	}
 	logger.Info("orchestrator stopped", "stats", orch.Stats())
+
+	if metricsSrv != nil {
+		shutdownCtx, stopShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("metrics server shutdown", "err", err)
+		}
+		stopShutdown()
+	}
 
 	// Wait for the baseline + supply goroutines to honour rootCtx
 	// cancellation.
@@ -679,6 +700,38 @@ func defaultPairs() []canonical.Pair {
 
 // mkLogger builds the structured logger with the configured format /
 // level. Parallel to cmd/ratesengine-indexer.
+// startMetricsServer mounts a /metrics + /healthz listener at
+// cfg.MetricsListen and returns the *http.Server so the caller can
+// orchestrate graceful shutdown. Empty MetricsListen disables the
+// listener and logs a warning — aggregator alert rules in
+// deploy/monitoring/rules/aggregator.yml expect these counters to
+// be scrapable, so a quiet aggregator with no listener is a
+// configuration mistake worth flagging.
+func startMetricsServer(cfg config.ObsConfig, logger *slog.Logger) *http.Server {
+	if cfg.MetricsListen == "" {
+		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; aggregator-silent / outlier-storm / class-drop-spike alerts will not fire")
+		return nil
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", obs.Handler())
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	srv := &http.Server{
+		Addr:              cfg.MetricsListen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		logger.Info("metrics endpoint listening", "addr", cfg.MetricsListen)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server exited", "err", err)
+		}
+	}()
+	return srv
+}
+
 func mkLogger(cfg config.ObsConfig) *slog.Logger {
 	lvl := slog.LevelInfo
 	switch cfg.LogLevel {

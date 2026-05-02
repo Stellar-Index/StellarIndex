@@ -442,29 +442,23 @@ against.
 
 ### Fixed
 
-- **`aggregate.triangulation_enabled` now actually gates the
-  triangulation pass** — fifth half-shipped config field caught
-  by the audit-finding wire-up pattern (after F-0008, F-0009,
-  `api.cdn_enabled` (#389), and `obs.trace_exporter` (#390)).
-  The bool defaulted to `true`, was advertised in the doc tag
-  (`Enable cross-pair triangulation through USD/BTC when direct
-  pair below threshold.`) and in `configs/example.toml`, but no
-  production code path consulted it: the orchestrator's
-  `triangulateAll` only checked `len(o.cfg.Triangulations) == 0`,
-  so an operator setting `triangulation_enabled = false` while
-  having entries in `aggregate.triangulations` got triangulation
-  regardless. `cmd/ratesengine-aggregator/buildTriangulations` now
-  short-circuits to `nil` when `TriangulationEnabled` is false —
-  validation still runs first so a malformed row is caught even
-  when the switch is off (an operator who fixes the typo and
-  flips the switch on shouldn't get a delayed surprise).
-  The doc tag now describes the actual behaviour: master switch
-  for the post-refresh triangulation pass; an operator-side
-  kill-switch without having to clear the chain table. The
-  aggregation-plan row is updated to reflect that triangulation
-  has shipped on the serving path (per F-0014). New
-  `cmd/ratesengine-aggregator/main_test.go::TestBuildTriangulations_RespectsTriangulationEnabled`
-  pins the three transitions (enabled/disabled/disabled-but-still-validates).
+- **Aggregator binary now exposes `/metrics`** — closes a known
+  gap surfaced by the half-shipped-config audit. The aggregator's
+  Prometheus counters (`ratesengine_aggregator_ticks_total`,
+  `_vwap_writes_total`, `_empty_windows_total`,
+  `_dropped_trades_total{reason}`, `_triangulations_total{outcome}`)
+  registered into `internal/obs` at package init but no HTTP
+  listener was mounted, so Prometheus scrapes returned 404 and
+  the alert rules in `deploy/monitoring/rules/aggregator.yml`
+  (`aggregator_silent`, `aggregator_outlier_storm`,
+  `aggregator_class_drop_spike`) could never fire.
+  `cmd/ratesengine-aggregator/main.go` now mirrors the indexer's
+  `startMetricsServer` pattern: bind `cfg.Obs.MetricsListen`,
+  expose `GET /metrics` (Prometheus) + `GET /healthz`, and run
+  graceful shutdown after `orch.Run` returns. Empty
+  `MetricsListen` logs a warning calling out which alerts won't
+  fire — same shape as the indexer warning. The `ObsConfig`
+  package doc is updated to drop the "known gap" caveat.
 
 - **`obs.trace_exporter = "otlp"` now fails-loud instead of
   silently no-op'ing** — the fourth half-shipped config field

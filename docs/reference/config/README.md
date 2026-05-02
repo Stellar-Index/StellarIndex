@@ -187,7 +187,7 @@ the `env:` column.
 
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
-| `obs.metrics_listen` | `string` | `127.0.0.1:9464` | — | Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer + the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field. The aggregator binary does NOT currently expose /metrics — aggregator metrics register into the obs registry but no listener is mounted (known gap; aggregator scrapes go through node_exporter / kube probes instead until a listener is wired). |
+| `obs.metrics_listen` | `string` | `127.0.0.1:9464` | — | Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field. |
 | `obs.log_level` | `string` | `info` | — | Minimum log level — debug / info / warn / error. |
 | `obs.log_format` | `string` | `json` | — | Log format — json / console. |
 | `obs.trace_exporter` | `string` | `none` | — | OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't). |
