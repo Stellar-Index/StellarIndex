@@ -18,12 +18,28 @@ import (
 // `authority_sanity`. See internal/sources/external/framework.go
 // for the policy semantics behind each class.
 type Source struct {
-	Name              string `json:"name"`
-	Class             string `json:"class"`
+	Name string `json:"name"`
+	// Class is the top-level taxonomy: exchange / aggregator /
+	// oracle / authority_sanity. Drives the aggregator's class
+	// filter (only `exchange` contributes to VWAP by default).
+	Class string `json:"class"`
+	// Subclass refines `class=exchange` into `dex` / `cex` / `fx`
+	// so consumers can group venues (e.g. a UI rendering "DEX
+	// liquidity" alongside "CEX prices"). Empty for non-exchange
+	// classes (aggregator / oracle / authority_sanity have no
+	// subclass dimension).
+	Subclass          string `json:"subclass,omitempty"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
 	BackfillAvailable bool   `json:"backfill_available"`
-	DefaultWeight     int    `json:"default_weight"`
+	// BackfillSafe gates the `ratesengine-ops backfill` subcommand
+	// per CLAUDE.md "Soroban DeFi contracts upgrade in place".
+	// On-chain Soroban sources start `false` and only flip `true`
+	// after a per-WASM-hash audit
+	// (`docs/operations/wasm-audits/`). Off-chain CEX/FX sources
+	// are always `true` — no on-chain WASM dependency.
+	BackfillSafe  bool `json:"backfill_safe"`
+	DefaultWeight int  `json:"default_weight"`
 }
 
 // validSourceClasses is the allow-list of values accepted for the
@@ -74,9 +90,11 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 		out = append(out, Source{
 			Name:              name,
 			Class:             string(md.Class),
+			Subclass:          string(md.Subclass),
 			IncludeInVWAP:     md.IncludeInVWAP,
 			Paid:              md.Paid,
 			BackfillAvailable: md.BackfillAvailable,
+			BackfillSafe:      md.BackfillSafe,
 			DefaultWeight:     md.DefaultWeight,
 		})
 	}

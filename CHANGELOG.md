@@ -17,6 +17,18 @@ against.
 
 ### Added
 
+- **`/v1/sources` exposes `subclass` and `backfill_safe`** — the
+  endpoint already projected `external.Registry` to the wire, but
+  two operationally-useful fields stayed internal-only. `subclass`
+  (`dex` / `cex` / `fx`, omitted for non-exchange classes) lets UI
+  consumers group exchange venues without reverse-engineering the
+  name prefix. `backfill_safe` surfaces the per-WASM-hash audit
+  state that gates `ratesengine-ops backfill` (CLAUDE.md "Soroban
+  DeFi contracts upgrade in place"): operators can now read it
+  off the API instead of grepping
+  `internal/sources/external/registry.go`. Additive — no existing
+  field changed shape.
+
 - **`pkg/client` godoc examples** — three `Example*` functions
   (`ExampleNew`, `ExampleClient_Price`, `ExampleClient_Asset`,
   `ExampleAPIError`) that show up in pkg.go.dev and verify
