@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ratesengine-aggregator` log-level + log-format now match the
+  other binaries**: the aggregator's bespoke logger factory was
+  case-sensitive on the `[obs] log_level` value (so `LogLevel =
+  "DEBUG"` silently fell back to info), missed the `"warning"`
+  alias the indexer + api accept, and the LogFormat switch only
+  recognised `"console"` (not `"text"`). Extracted the shared
+  factory to `internal/obs.NewLogger(cfg, binaryName)` and pointed
+  all three binaries at it. Side-effect: aggregator logs now also
+  carry the `binary=ratesengine-aggregator` slog attribute, so
+  Loki dashboards can filter per-binary without grepping path
+  prefixes (the indexer + api already had this stamp).
+
 ### Added
 
 - **Supply cross-check gauge wired into the aggregator's

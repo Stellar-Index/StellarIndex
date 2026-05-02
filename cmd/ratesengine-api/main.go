@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -44,6 +43,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 	"github.com/RatesEngine/rates-engine/internal/storage/redisclient"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
@@ -940,26 +940,6 @@ func (r storeSupplyLooker) LatestSupply(ctx context.Context, assetKey string) (s
 	return snap, nil
 }
 
-// mkLogger mirrors the indexer's logger factory. Could extract to
-// a shared internal/obs/slog.go in a future PR when we have three
-// binaries doing the same thing.
-func mkLogger(obs config.ObsConfig) *slog.Logger {
-	level := slog.LevelInfo
-	switch strings.ToLower(obs.LogLevel) {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	opts := &slog.HandlerOptions{Level: level}
-	var handler slog.Handler
-	switch strings.ToLower(obs.LogFormat) {
-	case "console", "text":
-		handler = slog.NewTextHandler(os.Stderr, opts)
-	default:
-		handler = slog.NewJSONHandler(os.Stderr, opts)
-	}
-	return slog.New(handler).With("binary", "ratesengine-api")
+func mkLogger(cfg config.ObsConfig) *slog.Logger {
+	return obs.NewLogger(cfg, "ratesengine-api")
 }
