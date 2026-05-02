@@ -34,14 +34,20 @@ func supplyCmd(args []string) error {
 }
 
 // supplySnapshot computes a fresh supply snapshot and writes it to
-// asset_supply_history. Today this only handles native XLM
-// (Algorithm 1); classic + SEP-41 will follow once their respective
-// computers ship.
+// asset_supply_history. The CLI is intentionally native-XLM-only —
+// Algorithm 2 (classic) and Algorithm 3 (SEP-41) computers shipped
+// in Tasks #55 and #56 but their CLI surface is the aggregator-
+// resident goroutine path (`[supply] aggregator_refresh_enabled`),
+// not this subcommand. Per `docs/operations/supply-snapshot.md`
+// §"Asset-class scope": the two refresh paths are mutually
+// exclusive at the operator level, and the goroutine path is the
+// canonical surface for non-XLM assets.
 //
-// Reserve balances come from operator config
-// (`[supply] reserve_balances_stroops`); see SupplyConfig docs for
-// why this is operator-managed today and what the live-LCM-observer
-// follow-up looks like.
+// Reserve balances come from the chained-fallback reader
+// (live LCM AccountEntry observer wins when populated; operator-
+// static `[supply] reserve_balances_stroops` is the bring-up
+// fallback). The live observer was wired into the indexer
+// dispatcher by L2.12a (PRs #411-#413).
 //
 // Flags:
 //
