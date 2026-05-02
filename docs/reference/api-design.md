@@ -1,6 +1,6 @@
 ---
 title: API Design — Rates Engine v1
-last_verified: 2026-04-22
+last_verified: 2026-05-02
 status: draft — ratified at Week 4 design review
 ---
 
@@ -133,7 +133,7 @@ Grouped by RFP requirement. Numbered IDs (A.1, B.2) map back to the
 
 | Method | Path | Purpose | RFP |
 | ------ | ---- | ------- | --- |
-| GET | `/v1/assets` | List every indexed asset (paginated). `?type=classic,soroban` `?code=USDC` `?issuer=G…` | F1.*, S1.1-3 |
+| GET | `/v1/assets` | List every indexed asset (paginated). The `?type=classic,soroban`, `?code=USDC`, `?issuer=G…` filter params are reserved in the OpenAPI spec but the handler currently ignores them and returns the unfiltered page. | F1.*, S1.1-3 |
 | GET | `/v1/assets/{asset_id}` | Asset detail with metadata: code, type, issuer, contract_id, home_domain, decimals, image (optional). | F1.*, S1.1-3 |
 | GET | `/v1/assets/{asset_id}/metadata` | Same as above + SEP-1 `[CURRENCIES]` fields (description, image, orgName). | F1.6 |
 
@@ -189,7 +189,7 @@ Response `data` for `/v1/price`:
                                              // last_trade, or aggregation-
                                              // window end for vwap/twap
   "change_24h_pct": "-0.02",              // aggregator (not yet wired)
-  "volume_24h_usd": "42185923.44",        // aggregator (not yet wired)
+  "volume_24h_usd": "42185923.44",        // aggregator (shipped — null until snapshot exists)
   "market_cap_usd": "25394841030.00",     // supply derivation when a snapshot exists
   "fdv_usd": null,                        // supply derivation
   "circulating_supply": "25394841030.00", // supply derivation
@@ -511,8 +511,9 @@ All SDKs have:
 ## 16. OpenAPI spec
 
 Lives at [openapi/rates-engine.v1.yaml](../../openapi/rates-engine.v1.yaml).
-Source-of-truth for the wire contract; every implemented handler
-has an entry. Remaining paths (price/batch, price/stream,
-history/since-inception, account/*, SEP-40 passthrough) are on
-the lint's planned_regex allow-list per
-[delivery-plan.md](../discovery/delivery-plan.md).
+Source-of-truth for the wire contract — every documented path
+is implemented in `internal/api/v1/` (the price/batch,
+price/stream, history/since-inception, account/*, and SEP-40
+passthrough paths that were on the lint's `planned_regex`
+allow-list have all shipped). The 1:1 invariant is enforced by
+`scripts/ci/lint-docs.sh` §11.
