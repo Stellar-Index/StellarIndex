@@ -1703,12 +1703,14 @@ components:
       type: object
       properties:
         name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
-        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity] }
+        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity], description: "Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default." }
+        subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes." }
         include_in_vwap:    { type: boolean, description: "Whether this source's trades contribute to VWAP." }
         paid:               { type: boolean, description: "Whether this connector requires a paid licence / API key." }
         backfill_available: { type: boolean, description: "Whether the source supports historical backfill via its native API." }
+        backfill_safe:      { type: boolean, description: "Whether `ratesengine-ops backfill` will run on this source. On-chain Soroban sources start `false` and only flip `true` after a per-WASM-hash audit (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always `true`." }
         default_weight:     { type: integer, description: "Default per-source weight for weighted-aggregation paths (when those land)." }
-      required: [name, class, include_in_vwap, paid, backfill_available, default_weight]
+      required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight]
 
     SourcesEnvelope:
       allOf:

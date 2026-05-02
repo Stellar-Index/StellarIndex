@@ -28,16 +28,22 @@ func TestSources_ReturnsRegistry(t *testing.T) {
 	}
 
 	// Spot-check the canonical entries: binance is exchange-class
-	// and contributes; coingecko is aggregator-class and doesn't.
+	// CEX, soroswap is exchange-class DEX, coingecko is
+	// aggregator-class with no subclass, etc.
 	want := map[string]struct {
-		class  string
-		inVWAP bool
+		class    string
+		subclass string
+		inVWAP   bool
+		// backfillSafe pinned for the 5 spot-checked entries —
+		// flips on these are deliberate (per-WASM audit landings)
+		// and shouldn't go silent.
+		backfillSafe bool
 	}{
-		"binance":       {class: "exchange", inVWAP: true},
-		"soroswap":      {class: "exchange", inVWAP: true},
-		"coingecko":     {class: "aggregator", inVWAP: false},
-		"reflector-dex": {class: "oracle", inVWAP: false},
-		"ecb":           {class: "authority_sanity", inVWAP: false},
+		"binance":       {class: "exchange", subclass: "cex", inVWAP: true, backfillSafe: true},
+		"soroswap":      {class: "exchange", subclass: "dex", inVWAP: true, backfillSafe: true},
+		"coingecko":     {class: "aggregator", subclass: "", inVWAP: false, backfillSafe: true},
+		"reflector-dex": {class: "oracle", subclass: "", inVWAP: false, backfillSafe: true},
+		"ecb":           {class: "authority_sanity", subclass: "", inVWAP: false, backfillSafe: true},
 	}
 	got := map[string]v1.Source{}
 	for _, s := range env.Data {
@@ -52,8 +58,14 @@ func TestSources_ReturnsRegistry(t *testing.T) {
 		if s.Class != exp.class {
 			t.Errorf("%s.class = %q want %q", name, s.Class, exp.class)
 		}
+		if s.Subclass != exp.subclass {
+			t.Errorf("%s.subclass = %q want %q", name, s.Subclass, exp.subclass)
+		}
 		if s.IncludeInVWAP != exp.inVWAP {
 			t.Errorf("%s.include_in_vwap = %v want %v", name, s.IncludeInVWAP, exp.inVWAP)
+		}
+		if s.BackfillSafe != exp.backfillSafe {
+			t.Errorf("%s.backfill_safe = %v want %v", name, s.BackfillSafe, exp.backfillSafe)
 		}
 	}
 }
