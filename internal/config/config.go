@@ -644,17 +644,15 @@ func (sc SupplyConfig) Validate() error {
 }
 
 // ObsConfig wires metrics, logs, and (eventually) traces. Metrics
-// exposure varies per-binary: the indexer + the long-lived ops
-// commands (e.g. `cross-region-monitor`, `verify-archive --metrics`)
-// bind a dedicated `/metrics` listener at [ObsConfig.MetricsListen];
-// the API binary serves `/metrics` on its public listener (so a
-// CDN-fronted deployment doesn't need a sidecar port). The
-// aggregator binary does NOT currently expose `/metrics` —
-// aggregator counters register into `internal/obs` but no listener
-// is mounted; this is a known gap. Trace fields are reserved for
-// the future tracing rollout — see [ObsConfig.TraceExporter].
+// exposure varies per-binary: the indexer, the aggregator, and the
+// long-lived ops commands (e.g. `cross-region-monitor`,
+// `verify-archive --metrics`) each bind a dedicated `/metrics`
+// listener at [ObsConfig.MetricsListen]; the API binary serves
+// `/metrics` on its public listener (so a CDN-fronted deployment
+// doesn't need a sidecar port). Trace fields are reserved for the
+// future tracing rollout — see [ObsConfig.TraceExporter].
 type ObsConfig struct {
-	MetricsListen string  `toml:"metrics_listen" doc:"Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer + the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field. The aggregator binary does NOT currently expose /metrics — aggregator metrics register into the obs registry but no listener is mounted (known gap; aggregator scrapes go through node_exporter / kube probes instead until a listener is wired)." default:"127.0.0.1:9464"`
+	MetricsListen string  `toml:"metrics_listen" doc:"Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field." default:"127.0.0.1:9464"`
 	LogLevel      string  `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
 	LogFormat     string  `toml:"log_format" doc:"Log format — json / console." default:"json"`
 	TraceExporter string  `toml:"trace_exporter" doc:"OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't)." default:"none"`
