@@ -29,6 +29,7 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
+	"github.com/RatesEngine/rates-engine/internal/sources/accounts"
 	"github.com/RatesEngine/rates-engine/internal/sources/aquarius"
 	"github.com/RatesEngine/rates-engine/internal/sources/band"
 	"github.com/RatesEngine/rates-engine/internal/sources/blend"
@@ -129,4 +130,48 @@ func BuildDispatcher(names []string, oracle config.OracleConfig) (*dispatcher.Di
 		disp.AddContractCallDecoder(ccd)
 	}
 	return disp, nil
+}
+
+// RegisterSupplyEntryDecoders attaches the LCM-based supply observers
+// to disp based on the supply config. Each observer is opt-in: an
+// empty watched-set leaves the corresponding observer unregistered
+// (no decoder, no work per ledger). Returns the slice of registered
+// observer names so the caller can log which observers are live —
+// operators reading boot logs see the wired set without consulting
+// config.
+//
+// Currently wired:
+//
+//   - accounts.Observer — backed by [supply.SDFReserveAccounts].
+//     Powers Algorithm 1 (XLM circulating supply) by recording
+//     AccountEntry balance changes for the operator-curated reserve
+//     account set into `account_observations`.
+//
+// Tracked-but-not-yet-wired (per launch-readiness L2.12a; this PR is
+// the first of the six-observer wiring sweep):
+//
+//   - trustlines / claimable_balances / liquidity_pools / sac_balances —
+//     watched-set is [supply.WatchedClassicAssets] / [supply.SACWrappers];
+//     follow-up PRs.
+//   - sep41_supply — watched-set is [supply.WatchedSEP41Contracts];
+//     follow-up PR.
+//
+// The persistence side (internal/pipeline/sink.go) already type-
+// switches on every observer's Observation type and calls the right
+// store.Insert*; this function only fills the registration gap.
+//
+// Design rule: the watched-set itself is the on/off switch. Empty
+// list → observer skipped. This avoids a separate `[supply] enabled`
+// boolean an operator could forget to flip.
+func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig) ([]string, error) {
+	var registered []string
+	if len(sup.SDFReserveAccounts) > 0 {
+		obs, err := accounts.NewObserver(sup.SDFReserveAccounts)
+		if err != nil {
+			return nil, fmt.Errorf("accounts observer: %w", err)
+		}
+		disp.AddEntryDecoder(obs)
+		registered = append(registered, accounts.SourceName)
+	}
+	return registered, nil
 }

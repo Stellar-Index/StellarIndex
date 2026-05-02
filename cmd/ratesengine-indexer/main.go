@@ -123,6 +123,22 @@ func run(cfgPath string, dryRun bool) error {
 		return fmt.Errorf("build dispatcher: %w", err)
 	}
 
+	// ─── Supply LCM observers (opt-in via [supply] watched-sets) ──
+	// First slice of L2.12a wire-up: accounts observer for
+	// Algorithm 1 (XLM circulating). Empty SDFReserveAccounts leaves
+	// the observer unregistered → no behaviour change for deployments
+	// that haven't opted in. Trustlines / claimable / LP / SAC /
+	// SEP-41 follow in subsequent PRs.
+	supplyObservers, err := pipeline.RegisterSupplyEntryDecoders(disp, cfg.Supply)
+	if err != nil {
+		return fmt.Errorf("supply observers: %w", err)
+	}
+	if len(supplyObservers) > 0 {
+		logger.Info("supply observers wired",
+			"observers", supplyObservers,
+			"sdf_reserve_accounts", len(cfg.Supply.SDFReserveAccounts))
+	}
+
 	// ─── SEP-41 auto-discovery sink ──────────────────────────────
 	// Buffers Hits to a channel; a worker goroutine drains them to
 	// timescale.Store.RecordDiscovered. The dispatcher's Push call

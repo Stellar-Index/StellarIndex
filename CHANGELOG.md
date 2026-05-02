@@ -440,6 +440,36 @@ against.
   remaining work is half-a-day of vendor wiring once a vendor
   is picked.
 
+### Added
+
+- **`internal/sources/accounts` (LCM AccountEntry observer) is now
+  registered with the indexer dispatcher.** First slice of the
+  L2.12a six-observer wiring sweep (the supply observers compiled
+  and had unit tests but no production code path called
+  `disp.AddEntryDecoder` for any of them; the supply pipeline
+  consequently read empty hypertables in production despite the
+  algorithms being correct). New
+  `pipeline.RegisterSupplyEntryDecoders(disp, cfg.Supply)`
+  attaches each opt-in observer based on the corresponding
+  watched-set:
+    - `accounts` ← `[supply] sdf_reserve_accounts` (this PR);
+    - trustlines / claimable_balances / liquidity_pools / sac_balances
+      / sep41_supply — follow-up PRs.
+  The watched-set itself is the on/off switch — empty list leaves
+  the observer unregistered, no behaviour change for deployments
+  that haven't opted in. Empty G-strkey inside a non-empty list
+  fails-loud at startup so an operator sees the misconfiguration
+  before processing begins. Boot log emits the registered set so
+  operators see which observers are live without consulting
+  config. New
+  `internal/pipeline/dispatcher_test.go::TestRegisterSupplyEntryDecoders_*`
+  pins the no-op-when-empty / registers-when-watched / rejects-
+  empty-strkey transitions. The persistence side
+  (`internal/pipeline/sink.go`) was already wired for this
+  observer's Observation type, so once it registers,
+  `account_observations` rows start landing on every matching
+  ledger close.
+
 ### Fixed
 
 - **CORS default AllowedMethods includes POST** — the default
