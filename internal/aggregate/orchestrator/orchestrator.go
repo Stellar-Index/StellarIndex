@@ -285,9 +285,36 @@ type Config struct {
 	// substitutes a mock implementing only [FXStore].
 	FXStore FXStore
 
+	// DivergenceRefresher, when non-nil, is called once per pair
+	// per [Tick] to refresh the `div:<asset>` Redis cache so the
+	// API's `flags.divergence_warning` flag has a producer (per
+	// ADR-0019 / launch-readiness L2.10 + L2.11). Wired to
+	// `internal/divergence.Service` at the aggregator binary
+	// boundary; nil preserves the pre-Phase behaviour where the
+	// cache stays empty and the flag is always false.
+	//
+	// Drives off the SHORTEST configured window's VWAP per pair —
+	// gives operators ~Interval-fresh divergence detection without
+	// hammering the external references on every (pair, window)
+	// combination per tick.
+	DivergenceRefresher DivergenceRefresher
+
 	// Logger is the structured logger. If nil, slog.Default() is
 	// used.
 	Logger *slog.Logger
+}
+
+// DivergenceRefresher is the seam the orchestrator uses to keep the
+// `div:<asset>` Redis cache populated. Production impl is
+// [internal/divergence.Service]; tests substitute a fake that records
+// invocations without making network calls.
+//
+// `ourPrice` is the per-pair shortest-window VWAP the orchestrator
+// just computed; `observedAt` is the Tick's wall-clock time. The
+// implementation is responsible for fetching external references,
+// computing divergence percent, and writing the cache entry.
+type DivergenceRefresher interface {
+	RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error
 }
 
 // DefaultWindows is the built-in window set — three buckets
@@ -426,6 +453,13 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	// chain's legs read from the freshly-cached VWAPs. Per-chain
 	// failures are logged + counted but never abort the tick.
 	o.triangulateAll(ctx)
+
+	// Divergence refresh — runs AFTER the per-pair VWAPs are in
+	// cache so RefreshPair has a fresh price to compare against
+	// external references. Best-effort per-pair (errors logged +
+	// counted, never abort the tick); the API's
+	// `flags.divergence_warning` reads from the cache this populates.
+	o.refreshDivergenceAll(ctx, now)
 
 	outcome := "ok"
 	if tickHadError {

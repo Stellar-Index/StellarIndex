@@ -73,6 +73,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/aggregate/orchestrator"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/storage/redisclient"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
@@ -219,6 +220,38 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Info("triangulation chains: configured", "count", len(triangulations))
 	}
 
+	// ─── Divergence service ────────────────────────────────────
+	// Builds CoinGecko + Chainlink reference clients from
+	// `[divergence]` config; the orchestrator's Tick refreshes
+	// the `div:<asset>` cache once per pair per tick. Empty
+	// reference list (CoinGecko disabled + Chainlink not
+	// configured) leaves the producer nil so the cache stays
+	// empty and the API's `flags.divergence_warning` stays
+	// false — pre-Phase behaviour preserved.
+	var divRefresher orchestrator.DivergenceRefresher
+	divRefs := buildDivergenceReferences(cfg.Divergence, logger)
+	if len(divRefs) > 0 {
+		divSvc, err := divergence.NewService(divergence.ServiceOptions{
+			Cache:                rdb,
+			References:           divRefs,
+			Threshold:            cfg.Divergence.Threshold,
+			MinSourcesForWarning: cfg.Divergence.MinSourcesForWarning,
+			PerReferenceTimeout: time.Duration(
+				cfg.Divergence.PerReferenceTimeoutSeconds) * time.Second,
+		})
+		if err != nil {
+			return fmt.Errorf("divergence service: %w", err)
+		}
+		divRefresher = divSvc
+		names := make([]string, len(divRefs))
+		for i, r := range divRefs {
+			names[i] = r.Name()
+		}
+		logger.Info("divergence refresher wired",
+			"reference_count", len(divRefs),
+			"references", names)
+	}
+
 	orch := orchestrator.New(store, rdb, orchestrator.Config{
 		Pairs:              pairs,
 		Windows:            windows, // nil → orchestrator.DefaultWindows
@@ -238,6 +271,7 @@ func run(cfgPath string, dryRun bool) error {
 		EnableStablecoinFiatProxy: cfg.Aggregate.EnableStablecoinFiatProxy,
 		OutlierSigmaThreshold:     cfg.Aggregate.OutlierSigmaThreshold,
 		MinUSDVolume:              cfg.Aggregate.MinUSDVolume,
+		DivergenceRefresher:       divRefresher,
 		Logger:                    logger,
 	})
 
@@ -924,4 +958,42 @@ func (obsCrossCheckEmitter) Divergence(classicKey string, stroops float64) {
 
 func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind) {
 	obs.SupplyCrossCheckTotal.WithLabelValues(string(kind)).Inc()
+}
+
+// buildDivergenceReferences mirrors the API binary's helper of the
+// same name. Builds the CoinGecko + Chainlink reference clients the
+// `divergence.Service` runs on each tick. Kept in lockstep with
+// `cmd/ratesengine-api/main.go::buildDivergenceReferences` —
+// drift here would mean the aggregator and API see different
+// divergence semantics for the same pair.
+func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger) []divergence.Reference {
+	var refs []divergence.Reference
+
+	if cfg.CoinGecko.Enabled {
+		refs = append(refs, divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+			BaseURL: cfg.CoinGecko.BaseURL,
+			IDMap:   cfg.CoinGecko.IDMap,
+		}))
+	}
+
+	if cfg.Chainlink.Enabled {
+		if len(cfg.Chainlink.FeedMap) == 0 {
+			logger.Warn("divergence: chainlink enabled but FeedMap is empty — skipping")
+		} else {
+			feedMap := make(map[string]divergence.ChainlinkFeed, len(cfg.Chainlink.FeedMap))
+			for pair, f := range cfg.Chainlink.FeedMap {
+				feedMap[pair] = divergence.ChainlinkFeed{
+					Address:  f.Address,
+					Decimals: f.Decimals,
+					Invert:   f.Invert,
+				}
+			}
+			refs = append(refs, divergence.NewChainlinkReference(divergence.ChainlinkOptions{
+				RPCURL:  cfg.Chainlink.RPCURL,
+				FeedMap: feedMap,
+			}))
+		}
+	}
+
+	return refs
 }

@@ -17,6 +17,23 @@ against.
 
 ### Added
 
+- **Aggregator now drives the divergence-cache refresh (closes
+  another half-shipped audit finding)**:
+  `divergence.Service.RefreshPair` was exposed but had zero
+  production callers — the API's `flags.divergence_warning` reads
+  from `div:<asset>` Redis cache, but nothing populated the cache,
+  so the flag was permanently `false` across the public surface.
+  Wired the orchestrator's Tick to call `RefreshPair` once per
+  configured pair after VWAPs are written, using the
+  shortest-window VWAP as "our price". Best-effort per-pair: errors
+  log + count via the new `ratesengine_divergence_refresh_total{outcome}`
+  counter (ok / no_vwap / parse_error / refresh_error) but never
+  abort the Tick. New `orchestrator.DivergenceRefresher` interface
+  is the seam (nil = pre-Phase no-op preserved); aggregator's
+  `main.go` builds the same `divergence.Service` shape the API
+  binary already builds, mirroring the helper for now (a shared
+  builder is one CHANGELOG fixme away when a third caller appears).
+
 - **SEP-1 issuance declarations now surfaced on `/v1/assets/{id}` +
   `/v1/assets/{id}/metadata`**: `conditions`, `fixed_number`,
   `max_number`, and `is_unlimited` from the issuer's

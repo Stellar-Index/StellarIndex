@@ -286,6 +286,26 @@ typically a single-digit number of FX legs across all chains. Sustained
 in `deploy/monitoring/rules/aggregator.yml` fires at 30m sustained
 fallback dominance.
 
+### `ratesengine_divergence_refresh_total`
+
+Counter, label `outcome` (`ok` / `no_vwap` / `parse_error` /
+`refresh_error`).
+
+Per-Tick outcomes for the orchestrator's divergence-cache refresh
+loop (ADR-0019 / launch-readiness L2.10 + L2.11). The aggregator
+calls `divergence.Service.RefreshPair` once per configured pair
+per Tick, using the pair's shortest-window VWAP as "our price"
+input; the Service queries CoinGecko + Chainlink (when configured),
+computes the divergence percent vs the median external reference,
+and writes the result to `div:<asset>` in Redis. The API's
+`flags.divergence_warning` reads from that cache.
+
+`no_vwap` is benign on cold start and after Phase-1/Phase-2 freezes
+(no fresh VWAP to compare against). Sustained `refresh_error` means
+external references are unreachable — `flags.divergence_warning`
+goes stale across the API surface; alert on a sustained rate via
+`ratesengine_divergence_refresh_error_dominant` (deploy/monitoring/rules/aggregator.yml).
+
 ### `ratesengine_aggregator_baseline_refresh_total`
 
 Counter, label `outcome` (`ok` / `not_enough_samples` / `read_error` /

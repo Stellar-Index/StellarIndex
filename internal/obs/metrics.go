@@ -40,6 +40,7 @@ func init() {
 		RateLimitFailOpenTotal,
 		Sep1CacheOpsTotal,
 		CursorLastLedger,
+		DivergenceRefreshTotal,
 
 		PriceStalenessSeconds,
 		OracleLastUpdateUnix,
@@ -248,6 +249,32 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 		Help: "Last ledger committed to the per-source cursor.",
 	},
 	[]string{"source"},
+)
+
+// DivergenceRefreshTotal — per-outcome counter for the orchestrator's
+// divergence cache-refresh loop. Labels:
+//
+//   - `ok`            — refresh succeeded; div:<asset> cache entry
+//     written.
+//   - `no_vwap`       — VWAP cache miss for this pair (frozen, empty
+//     window, transient cache error). Skip.
+//   - `parse_error`   — cached VWAP couldn't be parsed as float.
+//     Indicates a writer regression.
+//   - `refresh_error` — RefreshPair returned a network/marshal/cache
+//     error. The previous entry's TTL keeps
+//     counting down; flag stays at last-known good.
+//
+// Operators alert on a sustained `refresh_error` rate (CoinGecko
+// down, Chainlink RPC unreachable) — that means
+// `flags.divergence_warning` is going stale across the API surface.
+// `no_vwap` is benign during cold-start and after freezes; not
+// alert-worthy on its own.
+var DivergenceRefreshTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_divergence_refresh_total",
+		Help: "Aggregator divergence-cache refresh outcomes per Tick (ok|no_vwap|parse_error|refresh_error).",
+	},
+	[]string{"outcome"},
 )
 
 // ─── Pricing / oracle metrics ────────────────────────────────────
