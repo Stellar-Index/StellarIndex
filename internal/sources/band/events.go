@@ -50,6 +50,9 @@ const DefaultDecimals uint8 = 9
 // DefaultResolutionSeconds reflects Band's variable relayer
 // cadence — secondary validation source, not real-time. 60s aligns
 // with the poll-cadence recommendation in the discovery doc.
+// Emitted as the `ratesengine_oracle_resolution_seconds` gauge by
+// [pipeline.BuildDispatcher] at registration time, so the
+// oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 60
 
 // Relay function names on the StandardReference contract. Both
