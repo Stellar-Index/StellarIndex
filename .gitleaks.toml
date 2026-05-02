@@ -41,6 +41,12 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only Stellar G-strkey + C-strkey fixtures (Circle USDC issuer + USDC SAC contract id, both public ledger entries) used by trades.usd_volume tests for L2.2 phase 1. Same pattern as the dispatcher_test.go allowlist — bare addresses trip the entropy heuristic, but they're not credentials."
+paths = [
+  '''internal/storage/timescale/trades_usd_volume_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Generated Redocly HTML — embeds OpenAPI example values (canonical asset_ids: G-strkeys, C-strkeys, transaction hashes) that look like high-entropy secrets to gitleaks. The file is a build artefact regenerated from openapi/rates-engine.v1.yaml; the spec itself is scanned and any real secret would be caught there."
 paths = [
   '''docs/reference/api/index\.html''',
