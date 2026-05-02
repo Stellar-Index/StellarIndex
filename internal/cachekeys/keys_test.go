@@ -167,6 +167,104 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+// TestVWAPProvenance covers the cache key + the constant marker
+// the triangulation worker stamps. The API reads the value via
+// byte equality so the two must stay in lock-step — flipping
+// either side without the other breaks `flags.triangulated`.
+func TestVWAPProvenance(t *testing.T) {
+	xlm := canonical.NativeAsset()
+	usdc, err := canonical.NewClassicAsset("USDC", usdcIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+
+	got := cachekeys.VWAPProvenance(xlm, usdc, 5*time.Minute)
+	want := "vwap:native:USDC-" + usdcIssuer + ":300:provenance"
+	if got != want {
+		t.Errorf("VWAPProvenance = %q, want %q", got, want)
+	}
+	// Sibling-key check: the provenance key MUST be the VWAP key
+	// with `:provenance` suffixed. The aggregator writes both
+	// atomically; a mismatched suffix would orphan the marker.
+	vwap := cachekeys.VWAP(xlm, usdc, 5*time.Minute)
+	if got != vwap+":provenance" {
+		t.Errorf("VWAPProvenance %q is not VWAP %q + :provenance", got, vwap)
+	}
+	if cachekeys.VWAPProvenanceTriangulated != "triangulated" {
+		t.Errorf("marker = %q, want 'triangulated' (API matches by byte-equality)",
+			cachekeys.VWAPProvenanceTriangulated)
+	}
+}
+
+// TestConfidence pins the wire shape + ConfidenceTTL parity with
+// VWAPTTL. The score is meaningless once the underlying VWAP
+// expires, so the two TTLs must move together.
+func TestConfidence(t *testing.T) {
+	xlm := canonical.NativeAsset()
+	usdc, err := canonical.NewClassicAsset("USDC", usdcIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+
+	got := cachekeys.Confidence(xlm, usdc, time.Hour)
+	want := "confidence:native:USDC-" + usdcIssuer + ":3600"
+	if got != want {
+		t.Errorf("Confidence = %q, want %q", got, want)
+	}
+	if cachekeys.ConfidenceTTL(time.Hour) != cachekeys.VWAPTTL(time.Hour) {
+		t.Errorf("ConfidenceTTL must equal VWAPTTL — score is tied to its underlying VWAP")
+	}
+}
+
+// TestFreeze pins the marker key shape and the documented FreezeTTL
+// of 5 minutes (long enough to span the next bucket-close, short
+// enough to clear within a few buckets of recovery).
+func TestFreeze(t *testing.T) {
+	xlm := canonical.NativeAsset()
+	usdc, err := canonical.NewClassicAsset("USDC", usdcIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+
+	got := cachekeys.Freeze(xlm, usdc)
+	want := "freeze:native:USDC-" + usdcIssuer
+	if got != want {
+		t.Errorf("Freeze = %q, want %q", got, want)
+	}
+	if cachekeys.FreezeTTL != 5*time.Minute {
+		t.Errorf("FreezeTTL = %v, want 5m (per cachekeys §Freeze design note)",
+			cachekeys.FreezeTTL)
+	}
+}
+
+// TestAPIKey pins the auth package's lookup contract: the key is
+// `apikey:<sha256-hex>`, no TTL (revocation is encoded in the JSON
+// payload, not at Redis).
+func TestAPIKey(t *testing.T) {
+	// Realistic-shape SHA-256 hex (64 chars).
+	hash := "fc1908d72d0c4cdf3eaa45e8b3f2c2c4f6a3b7d29c4ad4e63b81a7e9be2c1cea"
+	got := cachekeys.APIKey(hash)
+	want := "apikey:" + hash
+	if got != want {
+		t.Errorf("APIKey = %q, want %q", got, want)
+	}
+	if cachekeys.APIKeyTTL != 0 {
+		t.Errorf("APIKeyTTL = %v, want 0 (revocation in payload, not Redis TTL)",
+			cachekeys.APIKeyTTL)
+	}
+}
+
+// TestRateLimitTTL pins the 2× window relationship documented in
+// ADR-0007. Anything less and the counter could still be live when
+// the next window starts; anything more is wasted Redis memory.
+func TestRateLimitTTL(t *testing.T) {
+	for _, w := range []time.Duration{time.Second, 30 * time.Second, time.Minute, time.Hour} {
+		if got := cachekeys.RateLimitTTL(w); got != 2*w {
+			t.Errorf("RateLimitTTL(%v) = %v, want 2× = %v", w, got, 2*w)
+		}
+	}
+}
+
 func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 	// Regression guard: every key class must have a unique first
 	// segment so cluster-slot distribution is natural + grep-able.
