@@ -1,7 +1,10 @@
 # Rates Engine
 
-**Status:** Pre-v1. Ingestion + storage + REST API shipped;
-aggregator + hardening in progress.
+**Status:** Pre-v1. Ingestion + storage + REST API + aggregator
+shipped (VWAP/TWAP, triangulation, anomaly response,
+multi-factor confidence, freeze policy, supply pipeline);
+production hardening in progress (status page, SEV-1/2 dry-run,
+operational SLA proof).
 **License:** Apache-2.0.
 **Tested against:** Stellar protocol 25.x.
 
@@ -94,13 +97,36 @@ long-form rationale; each becomes a numbered ADR.
   CEX + FX fleet, TimescaleDB hypertables + continuous
   aggregates, and the `ledgerstream -> dispatcher` indexer binary
   with Prometheus scrape target.
-- ✅ REST API v1 serving `/healthz`, `/readyz`, `/version`,
-  `/assets`, `/price`, `/history`, `/ohlc`, `/vwap`, `/twap`,
-  `/markets`, `/oracle/latest` behind CORS + per-IP rate limit.
-- ⏳ Aggregation engine (VWAP/TWAP cache refresh, cross-source
-  divergence detection).
-- ⏳ Historical backfill hardening, supply/F2 completion,
-  archive-completeness expansion, and launch controls.
+- ✅ REST + SSE API v1 surface (full list at
+  [`docs/reference/api/index.html`](docs/reference/api/index.html)):
+  pricing (`/price`, `/price/batch`, `/price/tip`, `/vwap`, `/twap`,
+  `/observations`), historical (`/history`, `/history/since-inception`,
+  `/ohlc`, `/chart`), catalogue (`/assets`, `/assets/{id}`, `/markets`,
+  `/pairs`, `/sources`), oracle passthrough (`/oracle/latest`,
+  `/oracle/prices`, `/oracle/lastprice`, `/oracle/x_last_price`),
+  account self-service (`/account/me`, `/account/usage`,
+  `/account/keys`), SEP-10 web auth (`/auth/sep10/challenge`,
+  `/auth/sep10/token`), SSE streams (`/price/stream`,
+  `/price/tip/stream`, `/observations/stream`), plus operator
+  endpoints (`/healthz`, `/readyz`, `/version`, `/metrics`).
+  Behind CORS, subject-aware rate limit (anon-IP + key-tier),
+  trusted-proxy CIDR allow-list, and per-route Cache-Control with
+  CDN-tier `s-maxage` gated on `api.cdn_enabled`.
+- ✅ Aggregation engine: VWAP/TWAP orchestrator with closed-bucket
+  Redis cache, cross-pair triangulation (X2.5 forex-snap), Phase 1+2
+  anomaly response, multi-factor confidence score, freeze policy.
+- ✅ Cross-source divergence detection (CoinGecko on by default,
+  Chainlink HTTP cross-check opt-in via FeedMap).
+- ✅ Three-algorithm supply pipeline (XLM via LCM AccountEntry
+  observer; classic via trustlines + claimable + LP + SAC observers;
+  SEP-41 via Soroban event observer) populating F2 fields on
+  `/v1/assets/{id}`.
+- ✅ Archive-completeness daemon (check / fix / verify modes) +
+  multi-tier archive verification (Tier A chain-link / Tier B
+  checkpoint / Tier D peer cross-compare / Tier E archivist).
+- ⏳ Production hardening: public status page (L4.11), SEV-1/2
+  dry-run record (L5.7), operational p95 ≤ 200ms proof
+  (L5.* + Wk 9–10 launch tasks).
 
 **Production deadline:** 2026-06-30 per
 [docs/discovery/delivery-plan.md](docs/discovery/delivery-plan.md).
