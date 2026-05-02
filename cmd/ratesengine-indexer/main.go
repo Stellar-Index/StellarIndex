@@ -683,25 +683,8 @@ func startMetricsServer(obsCfg config.ObsConfig, logger *slog.Logger) *http.Serv
 	return srv
 }
 
-func mkLogger(obs config.ObsConfig) *slog.Logger {
-	level := slog.LevelInfo
-	switch strings.ToLower(obs.LogLevel) {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	var handler slog.Handler
-	opts := &slog.HandlerOptions{Level: level}
-	switch strings.ToLower(obs.LogFormat) {
-	case "console", "text":
-		handler = slog.NewTextHandler(os.Stderr, opts)
-	default:
-		handler = slog.NewJSONHandler(os.Stderr, opts)
-	}
-	return slog.New(handler).With("binary", "ratesengine-indexer")
+func mkLogger(cfg config.ObsConfig) *slog.Logger {
+	return obs.NewLogger(cfg, "ratesengine-indexer")
 }
 
 // discoveryRecorderAdapter wraps *timescale.Store to satisfy

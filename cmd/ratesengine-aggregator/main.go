@@ -752,23 +752,7 @@ func startMetricsServer(cfg config.ObsConfig, logger *slog.Logger) *http.Server 
 }
 
 func mkLogger(cfg config.ObsConfig) *slog.Logger {
-	lvl := slog.LevelInfo
-	switch cfg.LogLevel {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	}
-	opts := &slog.HandlerOptions{Level: lvl}
-	var h slog.Handler
-	if cfg.LogFormat == "console" {
-		h = slog.NewTextHandler(os.Stderr, opts)
-	} else {
-		h = slog.NewJSONHandler(os.Stderr, opts)
-	}
-	return slog.New(h)
+	return obs.NewLogger(cfg, "ratesengine-aggregator")
 }
 
 // buildAnomalyChecker constructs an anomaly.Checker from
