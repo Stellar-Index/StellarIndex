@@ -50,11 +50,13 @@ const DefaultDecimals uint8 = 8
 
 // DefaultResolutionSeconds reflects the on-chain update cadence:
 // `0.2% deviation OR 24h heartbeat`. Emitted as the
-// `ratesengine_oracle_resolution_seconds` gauge so the oracle-stale
-// alert has a threshold. Set to 24h (the lower bound on assumed
-// freshness — per docs/discovery/oracles/redstone.md a feed may go
-// quiet for up to 24h if no price movement exceeds the 0.2%
-// deviation threshold).
+// `ratesengine_oracle_resolution_seconds` gauge by
+// [pipeline.BuildDispatcher] at registration time, so the
+// oracle-stale alert has a per-source threshold. Set to 24h (the
+// lower bound on assumed freshness — per
+// docs/discovery/oracles/redstone.md a feed may go quiet for up
+// to 24h if no price movement exceeds the 0.2% deviation
+// threshold).
 const DefaultResolutionSeconds = 24 * 60 * 60
 
 // WriteFnName is the adapter contract's update entry point. The
