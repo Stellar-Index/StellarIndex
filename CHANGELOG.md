@@ -291,6 +291,16 @@ against.
 
 ### Fixed
 
+- **`aggregation-plan.md` API-surface table is internally
+  consistent** — the `GET /v1/twap` row claimed `Backed by:
+  Redis cache` while the same row's parenthetical said
+  `TWAP-via-orchestrator path is TBD`. Both can't be true; the
+  handler at `internal/api/v1/twap.go` runs `aggregate.TWAP`
+  against the trades hypertable on every request — there is no
+  TWAP cache. Row updated to `Trades hypertable (on-query)` and
+  the Deferred section grew an explicit `TWAP-via-orchestrator
+  pre-compute` entry so the parenthetical "see Deferred" cites
+  something real. Continuation of the L6.5 doc-sweep.
 - **ADR-0019 Phase 2 godocs no longer claim the phase is
   unbuilt** — `internal/aggregate/anomaly/doc.go` framed Phase 2
   as "planned per ADR-0019 §Phase 2" and Phase 1 as "the
