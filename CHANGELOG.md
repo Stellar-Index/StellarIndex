@@ -291,6 +291,21 @@ against.
 
 ### Fixed
 
+- **`internal/api/v1/middleware/doc.go` matches the actual
+  middleware stack** — the package godoc said the order was
+  `RequestID → HTTPMetrics → Logger → Recoverer → CORS →
+  RateLimit` and explicitly stated `This package does NOT
+  implement auth.` Both stale: (a) the actual stack per
+  `internal/api/v1/server.go`'s `Server.Handler` is
+  `RequestID → HTTPMetrics → Logger → Recoverer →
+  SecurityHeaders → CacheControl → CORS → Auth → RateLimit`
+  (SecurityHeaders + CacheControl + Auth all missing from the
+  doc); (b) the unified `Auth` middleware ships at
+  `internal/api/v1/middleware/auth.go` (handles `apikey` and
+  `sep10` modes via the `auth` package's validator interfaces).
+  Doc rewritten with the correct stack and a new `# Auth`
+  section. Same drift family as #489 (api/v1 doc.go). L6.5
+  doc-sweep continuation.
 - **`contract-schema-evolution.md` "What's NOT yet done"
   reflects the wasm-history shipping** — the doc's checklist
   said `Per-source audit: enumerate every historical WASM hash
