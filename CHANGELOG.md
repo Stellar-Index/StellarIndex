@@ -291,6 +291,15 @@ against.
 
 ### Fixed
 
+- **`internal/sources/trustlines/doc.go` describes the shipped
+  reader, not a future one** — said the "future
+  StorageClassicSupplyReader (Task #66)" consumes
+  `Store.SumTrustlineBalancesAtOrBefore`, but Task #66 closed
+  in PR #66's branch and `StorageClassicSupplyReader` ships
+  in `internal/supply/storage_classic_reader.go` today. Also
+  replaced the "migration in #303" handle with the migration
+  number (`0011_create_trustline_observations`) so the pointer
+  doesn't depend on PR-link archaeology.
 - **`oracle-manipulation-defense.md` gap-analysis reflects shipped
   ADR-0019 implementation** — the table marked Phase 1
   ("Not yet shipped"), Phase 2 ("Not yet shipped"), and the
