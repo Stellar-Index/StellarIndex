@@ -17,6 +17,24 @@ against.
 
 ### Added
 
+- **Two new SEV drill scenarios** — `sev2-redis-sentinel-failover`
+  exercises ADR-0024's Sentinel HA path end-to-end across every
+  Redis-dependent surface (`/v1/price` cache + freeze markers +
+  confidence + triangulation + API-key validator + SEP-1 cache);
+  pinned validation criteria include "did oncall correctly
+  classify SEV-2 (degraded) not SEV-1 (down)" and "did anyone
+  fail back contrary to ADR-0024's fail-forward rule" — both
+  common simulation mis-steps. `sev1-anomaly-freeze-stuck`
+  exercises the ADR-0019 anomaly chain (Phase 1 thresholds →
+  Phase 2 baseline → freeze.Writer → /v1/price's flags.frozen);
+  drills the operator-driven-clear contract that ADR-0019
+  Phase 1 explicitly chose over auto-clear, plus the verify-
+  before-clearing discipline that prevents re-freeze loops.
+  Drills README updated to list all four scenarios with their
+  category coverage (storage / cache / ingest / aggregator).
+  Closes G5 in `docs/launch-task-list.md` for the script-
+  authoring half; actual drill execution + writeups remain
+  operator work against staging.
 - **Status-page scaffold + `sev-status-page-update` runbook** —
   `status.ratesengine.net` was committed to in the proposal §IDR
   and required by Freighter F3.5 / F3.6, but nothing in `deploy/`
