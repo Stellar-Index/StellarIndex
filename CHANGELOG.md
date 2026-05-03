@@ -291,6 +291,20 @@ against.
 
 ### Fixed
 
+- **`sep1-resolution.md` operator-override section described a
+  fictional schema** — the §"Adding a curated home-domain
+  override" subsection showed a `config/asset_metadata_overrides.yaml`
+  file with per-asset `name` / `desc` / `image` / `max_supply`
+  overrides plus a `sep1_status: operator_override` wire status.
+  None of that exists. The actual override is much narrower:
+  `[metadata.issuer_home_domains]` in `/etc/ratesengine.toml`
+  maps issuer G-strkey → home-domain so the SEP-1 resolver can
+  fetch the issuer's stellar.toml; per-field metadata comes from
+  that toml, not an override. The `operator_override` status
+  string is also fictional (no such status code in the codebase).
+  Section rewritten to describe the real `MetadataConfig` shape
+  + the real reload story (config is parsed at boot, not hot-
+  reloaded). Continuation of the L6.5 doc-sweep.
 - **`sep1-resolution.md` no longer hand-waves a `sep1-trace`
   subcommand as "Phase 5 deliverable"** — same drift as #481
   (UsageRow). The doc said `ratesengine-ops sep1-trace -domain
