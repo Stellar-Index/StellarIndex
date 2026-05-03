@@ -291,6 +291,15 @@ against.
 
 ### Fixed
 
+- **`internal/sources/external/registry.go` points readers at the
+  shipped config surface** — the godoc said operators override
+  `DefaultWeight` and `IncludeInVWAP` via "internal/config/external.go
+  once it lands", but no such file exists; the external config
+  shipped as `ExternalConfig` inside `internal/config/config.go`,
+  with a per-venue `enabled` toggle (no per-venue weight/VWAP
+  override is wired). Updated the comment to point at the real
+  surface and to be honest that per-venue weight overrides are a
+  potential follow-up, not a missing surface.
 - **`oracle-stale` runbook lists the correct `source` label
   values** — the runbook said the alert label is one of
   `reflector-dex / reflector-cex / reflector-fx / future
