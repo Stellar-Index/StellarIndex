@@ -36,6 +36,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/aggregate/confidence"
 	"github.com/RatesEngine/rates-engine/internal/aggregate/freeze"
 	"github.com/RatesEngine/rates-engine/internal/api/streaming"
+	"github.com/RatesEngine/rates-engine/internal/api/streaming/redispub"
 	"github.com/RatesEngine/rates-engine/internal/api/streampublish"
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
@@ -318,7 +319,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// surface. Constructed unconditionally so the handler stops
 	// returning 503; producer wiring (the per-pair publisher)
 	// activates only when [api.streaming].pairs is non-empty.
-	streamingHub := streaming.NewHub(0)
+	// L3.9 PR 2/2 wires the Redis pub/sub subscriber against this
+	// Hub further down (gated on rdb != nil).
+	hub := streaming.NewHub(0)
 
 	priceReader := storePriceReader{s: store}
 
@@ -340,11 +343,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Volume:       storeVolumeReader{s: store},
 		Change24h:    storeChange24hReader{s: store},
 		SEP10:        sep10Validator,
+		Hub:          hub,
 		CORS:         cors,
 		Auth:         authMW,
 		RateLimit:    rateLimit,
 		CDNEnabled:   cfg.API.CDNEnabled,
-		Hub:          streamingHub,
 	})
 
 	// Closed-bucket producer — only spawn when the operator
@@ -357,7 +360,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		return fmt.Errorf("api.streaming.pairs: %w", err)
 	}
 	if len(streamPairs) > 0 {
-		pub := streampublish.New(streamingHub, priceReader, cfg.API.Streaming.PollInterval, logger.With("component", "stream-publisher"))
+		pub := streampublish.New(hub, priceReader, cfg.API.Streaming.PollInterval, logger.With("component", "stream-publisher"))
 		go func() {
 			if err := pub.Run(rootCtx, streamPairs); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("stream publisher exited", "err", err)
@@ -380,6 +383,25 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
+	}
+
+	// Run the closed-bucket subscriber alongside the HTTP server.
+	// Bound to rootCtx — SIGINT/SIGTERM cancels both the server and
+	// the subscriber together. Run errors don't take the API down
+	// (the rest of the surface keeps serving); they log + leave the
+	// stream endpoint serving 503 implicitly via the Hub falling
+	// silent.
+	if hub != nil {
+		sub, err := redispub.NewSubscriber(rdb, redispub.DefaultChannel, hub, logger.With("component", "stream-sub"))
+		if err != nil {
+			return fmt.Errorf("redispub subscriber: %w", err)
+		}
+		go func() {
+			if err := sub.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("stream subscriber exited",
+					"channel", sub.Channel(), "err", err)
+			}
+		}()
 	}
 
 	serveErr := make(chan error, 1)
