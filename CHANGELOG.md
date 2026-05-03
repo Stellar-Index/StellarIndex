@@ -17,6 +17,19 @@ against.
 
 ### Added
 
+- **`make verify-launch-ready` — single-pane status check on the
+  launch-readiness backlog**. New
+  `scripts/ci/verify-launch-ready/main.go` parses
+  `docs/architecture/launch-readiness-backlog.md` and reports
+  three readiness tiers: **engineering** (L1-L3, must be
+  ✅/⚠), **ops + validation** (L4-L5, must be ✅/⚠/🟡 —
+  operator-runbook-ready acceptable), and **cutover** (L6,
+  operator-action-only on launch day, reported but not gating).
+  L7 post-launch is reported but ignored. Exit 0 if all
+  engineering tiers ready; exit 1 with per-blocker detail if
+  not. `make verify-launch-ready-all` adds a full per-row
+  listing. Tested against the real backlog file + synthetic
+  inputs covering tier-specific readiness rules.
 - **L3.9 PR 2 of 2: API-side closed-bucket stream subscriber.**
   Closes the L3.9 fan-out end-to-end. New
   `redispub.Subscriber` listens on the same Redis channel the
