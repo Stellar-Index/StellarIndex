@@ -1,7 +1,7 @@
 ---
 title: Full Archival Node — Hardware & Software Spec
-last_verified: 2026-04-22
-status: draft — ratified at Week 2 procurement review
+last_verified: 2026-05-02
+status: ratified — embodied in `configs/ansible/roles/archival-node/`; r1 (Hetzner FSN1) deployed against this spec, see [r1-deployment-state.md](../../operations/r1-deployment-state.md)
 ---
 
 # Full Archival Node — Hardware & Software Spec

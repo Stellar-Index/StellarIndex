@@ -291,6 +291,22 @@ against.
 
 ### Fixed
 
+- **Architecture-doc frontmatter no longer pretends the launch
+  plan is mid-flight** — `ha-plan.md`, `multi-region-topology.md`,
+  `archival-node-spec.md`, `hosting-options.md`, and
+  `validator-rollout.md` each declared themselves `draft —
+  ratified at Week 2 …` or `decision at Week 1 procurement
+  call`. We are well past those weeks; the plan executed (ADR-0008
+  ratifies HA, ADR-0016 ratifies per-region storage, the
+  `archival-node` ansible role embodies the per-host spec, r1 is
+  live on Hetzner FSN1). Frontmatter on each now reflects current
+  state with a pointer to the ratifying ADR or role. The
+  `ha-plan.md §11` and `multi-region-topology.md §15` "Open
+  questions to close before Week 2 design review" sections are
+  now "closed" lists, citing where each answer landed (ADR / role
+  path / runbook). Removes a recurring source of confusion when
+  agents and operators read these docs cold and assume the plan
+  is still in flight. Continuation of the L6.5 doc-sweep.
 - **Eight more runbooks plus the runbook template are
   bare-metal-native** — final batch of single-mention kubectl /
   k8s drift in the L6.5 doc-sweep. `redis-replication.md`,
