@@ -291,6 +291,23 @@ against.
 
 ### Fixed
 
+- **`coverage-matrix.md` and `repo-hygiene-plan.md` no longer
+  point at Week-N plan items that have either landed elsewhere
+  or were never built** — the coverage matrix's "deferred to
+  Week 9" / "planned (Weeks 8–9)" lines now cite the actual k6
+  suite at `test/load/`, the operator-driven backfill via
+  `ratesengine-ops backfill`, and the bare-metal+systemd+ansible
+  deployment kit (the matrix had been promising `deploy/k8s`
+  which doesn't exist and isn't our deployment shape). The
+  hygiene plan's `scripts/ci/check-adr-numbering.sh` and
+  `scripts/ci/lint-layout.sh` references are now accurate:
+  ADR status integrity is enforced by `lint-docs.sh §8`,
+  numbering-gap is reviewer-policed (no dedicated script yet);
+  the architectural import-boundary check is in
+  `lint-imports.sh`. The protocol-boundary fixtures section now
+  describes the actual `test/fixtures/<source>/` layout instead
+  of the original `test/fixtures/protocol-boundary/{pre,post}-pNN/`
+  tree that never landed. Continuation of the L6.5 doc-sweep.
 - **Architecture-doc frontmatter no longer pretends the launch
   plan is mid-flight** — `ha-plan.md`, `multi-region-topology.md`,
   `archival-node-spec.md`, `hosting-options.md`, and
