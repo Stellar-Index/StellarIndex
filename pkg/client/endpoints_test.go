@@ -713,6 +713,162 @@ func TestHistory_BaseQuoteRequired(t *testing.T) {
 		})
 	}
 }
+// TestSources_HappyPath — happy-path round-trip pinning the
+// optional class filter + decode of the registry shape.
+func TestSources_HappyPath(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sources" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("class") != "exchange" {
+			t.Errorf("class = %q, want exchange", r.URL.Query().Get("class"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"name":"binance","class":"exchange","subclass":"cex","include_in_vwap":true,"paid":false,"backfill_available":true,"backfill_safe":true,"default_weight":100},
+				{"name":"soroswap","class":"exchange","subclass":"dex","include_in_vwap":true,"paid":false,"backfill_available":true,"backfill_safe":true,"default_weight":100}
+			],
+			"as_of":"2026-04-28T10:00:00Z","flags":{}
+		}`))
+	})
+	got, err := c.Sources(context.Background(), client.SourcesOptions{Class: "exchange"})
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	if len(got.Data) != 2 {
+		t.Fatalf("len(Data) = %d, want 2", len(got.Data))
+	}
+	if got.Data[0].Subclass != "cex" {
+		t.Errorf("Data[0].Subclass = %q", got.Data[0].Subclass)
+	}
+	if !got.Data[1].BackfillSafe {
+		t.Error("Data[1].BackfillSafe = false, want true")
+	}
+}
+
+// TestSources_EmptyClassOmitsParam — empty Class doesn't render
+// `class=` on the URL (server would reject empty). Pinned because
+// a leaky zero would 400 every "list everything" call.
+func TestSources_EmptyClassOmitsParam(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("class") {
+			t.Errorf("class sent on empty filter: %q", r.URL.Query().Get("class"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"as_of":"2026-04-28T10:00:00Z","flags":{}}`))
+	})
+	if _, err := c.Sources(context.Background(), client.SourcesOptions{}); err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+}
+
+// TestMarkets_PaginationCarriesCursor — same paginating shape as
+// Assets. Pinned because catalogue-walking is the SDK's main
+// value-add over rolling cursor handling by hand.
+func TestMarkets_PaginationCarriesCursor(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/markets" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("cursor") != "page-2" {
+			t.Errorf("cursor = %q", q.Get("cursor"))
+		}
+		if q.Get("limit") != "200" {
+			t.Errorf("limit = %q", q.Get("limit"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"base":"native","quote":"fiat:USD","last_trade_at":"2026-04-28T09:55:00Z","trade_count_24h":12345}
+			],
+			"as_of":"2026-04-28T10:00:00Z","flags":{},
+			"pagination":{"next":"page-3"}
+		}`))
+	})
+	got, err := c.Markets(context.Background(), client.MarketsOptions{Cursor: "page-2", Limit: 200})
+	if err != nil {
+		t.Fatalf("Markets: %v", err)
+	}
+	if got.Data[0].TradeCount24h != 12345 {
+		t.Errorf("TradeCount24h = %d", got.Data[0].TradeCount24h)
+	}
+	if got.Pagination.Next != "page-3" {
+		t.Errorf("Pagination.Next = %q", got.Pagination.Next)
+	}
+}
+
+// TestPair_HappyPath — single-pair lookup returns 0-or-1 array.
+func TestPair_HappyPath(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/pairs" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("base") != "native" || q.Get("quote") != "fiat:USD" {
+			t.Errorf("base=%q quote=%q", q.Get("base"), q.Get("quote"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [{"base":"native","quote":"fiat:USD","last_trade_at":"2026-04-28T09:55:00Z","trade_count_24h":4123}],
+			"as_of":"2026-04-28T10:00:00Z","flags":{}
+		}`))
+	})
+	got, err := c.Pair(context.Background(), "native", "fiat:USD")
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if len(got.Data) != 1 {
+		t.Fatalf("len(Data) = %d, want 1", len(got.Data))
+	}
+	if got.Data[0].Base != "native" {
+		t.Errorf("Base = %q", got.Data[0].Base)
+	}
+}
+
+// TestPair_EmptyArrayOnUnknownPair — server's 0-or-1 array shape
+// returns an empty array for unknown pairs, not a 404. Pinned
+// because the SDK's behaviour MUST mirror that — branching on
+// status code would defeat the design.
+func TestPair_EmptyArrayOnUnknownPair(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"as_of":"2026-04-28T10:00:00Z","flags":{}}`))
+	})
+	got, err := c.Pair(context.Background(), "credit:UNKNOWN", "fiat:USD")
+	if err != nil {
+		t.Fatalf("Pair: %v (unknown pair must NOT error)", err)
+	}
+	if len(got.Data) != 0 {
+		t.Errorf("len(Data) = %d, want 0", len(got.Data))
+	}
+}
+
+// TestPair_BaseQuoteRequired — both arguments are required.
+func TestPair_BaseQuoteRequired(t *testing.T) {
+	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
+	for _, tc := range []struct {
+		name        string
+		base, quote string
+	}{
+		{"empty base", "", "fiat:USD"},
+		{"empty quote", "native", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.Pair(context.Background(), tc.base, tc.quote)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			var apiErr *client.APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+				t.Errorf("err = %v, want *APIError 400", err)
+			}
+		})
+	}
+}
+
+
 
 
 func TestUsage_EmptyArrayDecodes(t *testing.T) {

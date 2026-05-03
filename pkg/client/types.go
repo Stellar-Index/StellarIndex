@@ -209,6 +209,45 @@ type OHLCBar struct {
 	Truncated   bool      `json:"truncated"`
 }
 
+// Source is the data shape returned by [Client.Sources] — one
+// row from the operator's source registry (the catalogue of
+// venues + oracles + aggregators the deployment can ingest from).
+//
+// Class is one of: `exchange` / `aggregator` / `oracle` /
+// `authority_sanity`. Per the v1 aggregator policy, only
+// `exchange` contributes to VWAP — the others are reported
+// alongside but excluded (mixing them double-counts upstream
+// markets or imposes their methodology on our output).
+//
+// Subclass refines `class=exchange` into `dex` / `cex` / `fx`.
+// Empty for non-exchange classes.
+//
+// BackfillSafe gates `ratesengine-ops backfill` per CLAUDE.md
+// "Soroban DeFi contracts upgrade in place". On-chain Soroban
+// sources start `false` and only flip `true` after a per-WASM-
+// hash audit (`docs/operations/wasm-audits/`). Off-chain CEX/FX
+// sources are always `true`.
+type Source struct {
+	Name              string `json:"name"`
+	Class             string `json:"class"`
+	Subclass          string `json:"subclass,omitempty"`
+	IncludeInVWAP     bool   `json:"include_in_vwap"`
+	Paid              bool   `json:"paid"`
+	BackfillAvailable bool   `json:"backfill_available"`
+	BackfillSafe      bool   `json:"backfill_safe"`
+	DefaultWeight     int    `json:"default_weight"`
+}
+
+// Market is the data shape returned by [Client.Markets] and
+// [Client.Pair] — one (base, quote) pair the deployment has
+// observed at least one trade for, with a 24h activity summary.
+type Market struct {
+	Base          string    `json:"base"`
+	Quote         string    `json:"quote"`
+	LastTradeAt   time.Time `json:"last_trade_at"`
+	TradeCount24h int64     `json:"trade_count_24h"`
+}
+
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]
 // (the SEP-1 overlay endpoint, /v1/assets/{id}/metadata). Mirrors
 // the AssetMetadata schema in openapi/rates-engine.v1.yaml.

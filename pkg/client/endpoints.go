@@ -370,6 +370,83 @@ func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[A
 	return &env, nil
 }
 
+// SourcesOptions filters [Client.Sources]. Class is one of the
+// canonical class strings ("exchange" / "aggregator" / "oracle"
+// / "authority_sanity"); empty returns the full registry.
+type SourcesOptions struct {
+	Class string // optional; empty = all classes
+}
+
+// Sources lists the source registry — venues + oracles +
+// aggregators the deployment can ingest from. Read-only and
+// catalogue-shaped (no pagination needed; ~25 entries today).
+//
+// Operators use the registry to drive admin tooling
+// (`ratesengine-ops verify-decoders`, the source-class lint in
+// CI). Customers use it to render "where do these prices come
+// from?" UIs.
+func (c *Client) Sources(ctx context.Context, opts SourcesOptions) (*Envelope[[]Source], error) {
+	v := url.Values{}
+	if opts.Class != "" {
+		v.Set("class", opts.Class)
+	}
+	var env Envelope[[]Source]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/sources", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// MarketsOptions paginates through the active-pair catalogue.
+// Same Cursor + Limit semantics as [AssetsOptions].
+type MarketsOptions struct {
+	Cursor string
+	Limit  int // 0 → server default (typically 100); max 500
+}
+
+// Markets lists the (base, quote) pairs the deployment has
+// observed at least one trade for, paginated. Each Market entry
+// includes a 24h activity summary (last-trade timestamp + 24h
+// trade count).
+func (c *Client) Markets(ctx context.Context, opts MarketsOptions) (*Envelope[[]Market], error) {
+	v := url.Values{}
+	if opts.Cursor != "" {
+		v.Set("cursor", opts.Cursor)
+	}
+	if opts.Limit > 0 {
+		v.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	var env Envelope[[]Market]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/markets", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// Pair returns the activity summary for one specific pair. Both
+// `base` and `quote` are required. The response shape is a
+// 0-or-1-element `[]Market` array — empty when the pair has no
+// observed trades, single-element when it does. Pinning a 0-or-1
+// shape (rather than 404 on empty) lets callers distinguish "no
+// such pair" from "malformed request" without branching on
+// status code.
+func (c *Client) Pair(ctx context.Context, base, quote string) (*Envelope[[]Market], error) {
+	if base == "" {
+		return nil, &APIError{Status: 400, Title: "base required"}
+	}
+	if quote == "" {
+		return nil, &APIError{Status: 400, Title: "quote required"}
+	}
+	v := url.Values{}
+	v.Set("base", base)
+	v.Set("quote", quote)
+	var env Envelope[[]Market]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/pairs", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // Me returns the authenticated caller's account info. Requires an
 // API key on the client (anonymous calls receive 401).
 func (c *Client) Me(ctx context.Context) (*Envelope[Account], error) {
