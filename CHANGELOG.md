@@ -291,6 +291,17 @@ against.
 
 ### Fixed
 
+- **`oracle-stale` runbook lists the correct `source` label
+  values** — the runbook said the alert label is one of
+  `reflector-dex / reflector-cex / reflector-fx / future
+  redstone / band / chainlink-http`, but redstone (`SourceName
+  = "redstone"`) and band (`SourceName = "band"`) are both
+  shipped sources that already register
+  `OracleResolutionSeconds` in `internal/pipeline/dispatcher.go`,
+  and chainlink-http lives in `internal/divergence/` —
+  it's a divergence reference, not an oracle source, and
+  doesn't emit `ratesengine_oracle_*` metrics at all. Replaced
+  the speculative list with the five actual label values.
 - **`docs/operations/sla-probe.md` aligned with shipped alerts** —
   the doc framed alert rules as a "planned follow-up" with
   "likely shapes", but
