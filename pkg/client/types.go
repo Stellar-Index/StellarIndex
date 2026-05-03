@@ -167,6 +167,25 @@ type AssetDetail struct {
 	IsUnlimited *bool `json:"is_unlimited,omitempty"`
 }
 
+// TradeRow is the data shape returned by [Client.History] — one
+// raw trade row from the trades hypertable. All numeric amounts
+// are decimal strings (ADR-0003); `Price` is the pre-computed
+// quote/base ratio at 10 fractional digits for consumer
+// convenience (the storage layer never persists a derived price,
+// so the server computes it at response time).
+type TradeRow struct {
+	Source      string    `json:"source"`
+	Ledger      uint32    `json:"ledger"`
+	TxHash      string    `json:"tx_hash"`
+	OpIndex     uint32    `json:"op_index"`
+	Timestamp   time.Time `json:"ts"`
+	BaseAsset   string    `json:"base_asset"`
+	QuoteAsset  string    `json:"quote_asset"`
+	BaseAmount  string    `json:"base_amount"`
+	QuoteAmount string    `json:"quote_amount"`
+	Price       string    `json:"price"`
+}
+
 // OHLCBar is the data shape returned by [Client.OHLC] — a single
 // open/high/low/close bar over the requested window. All price
 // fields are decimal strings (ADR-0003); volumes are smallest-unit

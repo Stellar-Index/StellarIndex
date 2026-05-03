@@ -17,6 +17,16 @@ against.
 
 ### Added
 
+- **`pkg/client.Client.History`** — bounded-range raw-trade lookup
+  via the SDK. Distinct from the existing
+  `Client.HistorySinceInception` (which returns bucketed VWAP/TWAP
+  points); this surface returns the underlying `TradeRow`
+  records — useful for trade-level audits, regulatory exports,
+  custom aggregations the server doesn't pre-compute. New
+  `HistoryRangeQuery` with optional `From`/`To`/`Limit`/`Cursor`;
+  `Cursor` walks forward by re-issuing with the previous
+  response's `Pagination.Next`. New `TradeRow` type in
+  `pkg/client/types.go` mirrors the server's wire shape exactly.
 - **`pkg/client.Client.OHLC`** — single-bar OHLC over a window via
   the SDK. Closes another gap from the code-vs-RFP audit:
   Freighter RFP §V1 historical chart requirements explicitly list
