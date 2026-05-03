@@ -291,6 +291,14 @@ against.
 
 ### Fixed
 
+- **`/v1/vwap` Truncated-flag godoc points at the right
+  alternative** — the `VWAPResult.Truncated` doc said clients
+  could "request the pre-computed rollup from the aggregator
+  once it ships", but the aggregator already ships and there's
+  no `/v1/vwap`-equivalent that takes arbitrary time windows
+  from a pre-computed rollup. The closed-bucket-consistent
+  surface for that need is `/v1/price` (ADR-0015). Doc rewritten
+  to point at it.
 - **Phoenix decoder's `evictedOrphans` godoc reflects the shipped
   metric path** — comment said "Production wiring in
   cmd/ratesengine-indexer will export this as
