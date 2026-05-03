@@ -455,12 +455,26 @@ lint (`.golangci.yml` `exclusions.rules`).
 
 ## 15. Infra-as-code discipline
 
-- All Kubernetes manifests in `deploy/k8s/`; reviewed line-by-line.
-- No inline shell heredocs in manifests — move scripts to
-  `scripts/ops/`.
-- Helm charts (if introduced) pin every dependency chart version.
+Production deployment is bare-metal + systemd + Ansible per
+[ADR-0008](../adr/0008-ha-topology.md) — there is no Kubernetes
+cluster. Inventory + roles live in `configs/ansible/` and unit
+files in `deploy/systemd/`.
+
+- All ansible roles in `configs/ansible/roles/<name>/`; reviewed
+  line-by-line. Each role has a `README.md` plus its
+  `tasks/`, `templates/`, `defaults/`, `handlers/` subtree.
+- All systemd units in `deploy/systemd/<binary>.service`
+  (`ratesengine-{api,indexer,aggregator}.service` plus the
+  timer/oneshot units for `archive-completeness`, `sla-probe`,
+  `supply-snapshot`, and `verify-archive-tier-a`).
+- The dev / reference docker-compose stack lives in
+  `deploy/docker-compose/`; production never reads from it.
+- No inline shell heredocs in templates — move multi-line shell
+  to `scripts/ops/` and call from a one-line `command:` task.
 - Terraform (if introduced) has remote state with locking.
-- Secrets never in Git, ever. Vault references only.
+- Secrets never in Git, ever. Ansible Vault references only;
+  `configs/ansible/inventory/<region>.secrets.yml` is the
+  source of truth.
 
 ---
 
