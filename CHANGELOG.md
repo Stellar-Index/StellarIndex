@@ -17,6 +17,32 @@ against.
 
 ### Added
 
+- **Multi-region cutover scaffolding** — three operator-friction
+  reducers for the L4.14 / L4.15 / L4.16 / L4.17 / L5.8 work
+  added in PR #531:
+  - [`docs/operations/multi-region-cutover.md`](docs/operations/multi-region-cutover.md)
+    — sequenced runbook that orchestrates all five rows in
+    order with pass conditions per stage (R2 spinup → R3
+    spinup → cross-region pg replication verify → Cloudflare
+    Anycast/GeoIP → region-failover chaos test). Fail at any
+    stage routes to `rollback.md`'s matching shape.
+  - [`scripts/dev/verify-cross-region.sh`](scripts/dev/verify-cross-region.sh)
+    — automated cross-region consistency check. Hits
+    `/v1/price` from each region, asserts byte-identical
+    `data.price` per ADR-0015 closed-bucket consistency.
+    Exit 0 = consistent; exit 1 = divergence (ADR-0015
+    contract broken); exit 2 = at least one region
+    unreachable (incomplete check). Pure bash 3.2+
+    compatible (works on macOS).
+  - [`docs/operations/r2-deployment-state.md`](docs/operations/r2-deployment-state.md)
+    + [`docs/operations/r3-deployment-state.md`](docs/operations/r3-deployment-state.md)
+    — skeleton deployment-state docs that mirror
+    `r1-deployment-state.md`'s shape with `{{TBD}}`
+    placeholders for the operator to fill in post-provision.
+    Lets a future reader compare per-region differences at
+    a glance and gives the operator a structured place to
+    record what they actually deployed (vs what ADR-0016
+    + multi-region-topology.md prescribed).
 - **Three pre-launch helpers — operator + customer-facing
   scaffolds for "the questions that get googled during launch
   week"**:
