@@ -144,6 +144,17 @@ against.
 
 ### Fixed
 
+- **`launch-readiness-backlog.md` — six 🟢 / 🟡 items flipped to ✅
+  to match shipped reality** (L6.5 doc-sweep): L3.11 (API
+  reference workflow), L3.14 (CDN cache-control middleware),
+  L3.15 (getting-started doc), L3.16 (URL-discipline OpenAPI
+  lint), L5.5 (chaos suite Wave 1), L6.1 (CHANGELOG hygiene +
+  SemVer policy), L6.2 (release notes template +
+  release-process), L6.3 (public-flip prep). Each row now points
+  at the file path that exists on main today and notes any
+  per-item operator follow-up that's deliberately deferred (e.g.
+  L3.14's CloudFront-side config, L6.3's actual cutover at
+  L6.4). Status emoji legend at line 34 unchanged.
 - **`docs/getting-started.md` SDK example now compiles** — the
   customer-facing onboarding doc showed
   `c.GetPrice(ctx, "native", "fiat:USD")` for the SDK quickstart,
