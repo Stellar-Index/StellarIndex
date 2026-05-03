@@ -1,6 +1,6 @@
 ---
 title: Multi-Region Topology — 3-region active/active with primary/replica degradation
-last_verified: 2026-05-02
+last_verified: 2026-05-03
 status: ratified — per-region storage shapes captured in [ADR-0016](../../adr/0016-per-region-storage-strategy.md); cross-region serving invariant in [ADR-0015](../../adr/0015-last-closed-bucket-rate-serving.md)
 ---
 
@@ -48,11 +48,11 @@ Target regions, chosen for:
 - independent network providers (no shared backbone SPOF),
 - colo availability that matches archival-node-spec.md §3.
 
-| Region | Location (primary candidate) | Role | Notes |
-| ------ | ---------------------------- | ---- | ----- |
-| **R1** | London / Equinix LD6 | Primary at launch | Closest to @ash + EU users. |
-| **R2** | Ashburn / Equinix DC11 | Secondary (sync replica) | Dense peering, SDF-adjacent. |
-| **R3** | Singapore / Equinix SG3 | Tertiary (async replica) | APAC coverage; WAN latency ≥ 150 ms from R1 forces async. |
+| Region | Location | Provider | Role | Notes |
+| ------ | -------- | -------- | ---- | ----- |
+| **R1** | Falkenstein, DE (FSN1) | Hetzner bare metal | Primary at launch | EU coverage; full local archive mirror per [ADR-0016](../../adr/0016-per-region-storage-strategy.md) §"R1". |
+| **R2** | us-east-1 | AWS (EC2 r7i.4xlarge) | Secondary (sync replica) | Reads galexie data direct from `s3://aws-public-blockchain` (free egress, sub-15 ms RTT) per ADR-0016 §"R2 — AWS-hybrid". |
+| **R3** | Singapore | Vultr Bare Metal + Object Storage | Tertiary (async replica) | APAC coverage; galexie-archive on Vultr Object Storage, postgres + galexie-live on local NVMe per ADR-0016 §"R3 — Vultr-hybrid". |
 
 Cross-region RTT expectations:
 
@@ -77,7 +77,8 @@ async R1→R3**. If R1 dies and R2 promotes, R2→R3 stays async.
        │                      │                      │
   ┌────┴────┐            ┌────┴────┐            ┌────┴────┐
   │   R1    │            │   R2    │            │   R3    │
-  │ London  │            │ Ashburn │            │Singapore│
+  │  FSN1   │            │us-east-1│            │Singapore│
+  │ Hetzner │            │   AWS   │            │  Vultr  │
   │ PRIMARY │            │SYNC REPL│            │ASYNC RPL│
   └────┬────┘            └────┬────┘            └────┬────┘
        │                      │                      │
@@ -460,18 +461,21 @@ per phase) lives in
 [validator-rollout.md](validator-rollout.md); this section is the
 topology-layer summary.
 
-1. **R1 (London) first — Week 2–3.** Archival node + full
+1. **R1 (Hetzner FSN1) first.** Archival node + full
    application stack; runs **solo** for shake-out. Patroni is a
    single-node "cluster"; etcd is a single-node DCS. The code path
    is the multi-region path — there just happens to be only one
    member. This is deliberate: no "single-region-mode" flag, no
    special case to remove later.
-2. **R2 (Ashburn) — Week 6–7.** Sync replica joins; Patroni grows
+2. **R2 (AWS us-east-1) joins.** Sync replica joins; Patroni grows
    from 1 → 2 nodes; etcd grows from 1 → 3 nodes. Application-layer
-   replication kicks in. Validator 2 promotes at the same time
-   (per validator-rollout Phase C).
-3. **R3 (Singapore) — Week 8.** Async replica joins; etcd grows to
-   5 nodes. Validator 3 promotes (Phase D). We are now a
+   replication kicks in. Tracked as **L4.14** in
+   [`launch-readiness-backlog.md`](../launch-readiness-backlog.md).
+   Validator 2 promotes at the same time (per validator-rollout
+   Phase C).
+3. **R3 (Vultr Singapore) joins.** Async replica joins; etcd grows
+   to 5 nodes. Validator 3 promotes (Phase D). Tracked as
+   **L4.15**. We are now a
    T1-eligible org.
 4. **Cross-region drills:** once all three are up, we run a
    scheduled primary-failover drill every Wednesday at 03:00 UTC

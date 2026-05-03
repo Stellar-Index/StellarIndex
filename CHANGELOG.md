@@ -17,6 +17,36 @@ against.
 
 ### Added
 
+- **R2 + R3 spinup tracked as launch-blocking** — five new
+  rows added to `docs/architecture/launch-readiness-backlog.md`
+  to close the gap where the multi-region topology was
+  designed (ADR-0016 ratified) and tooled (`r2.example.yml`,
+  `r3.example.yml`, all ansible roles) but the actual
+  per-region deployment + DNS + replication wiring was
+  invisible to the launch-readiness accounting:
+  - **L4.14** R2 (AWS us-east-1) provisioning + bringup —
+    EC2 + EBS + galexie reads `aws-public-blockchain` direct.
+  - **L4.15** R3 (Vultr Singapore) provisioning + bringup —
+    Vultr Bare Metal + Vultr Object Storage hybrid.
+  - **L4.16** Cloudflare Anycast + GeoIP routing for
+    `api.ratesengine.net`.
+  - **L4.17** Cross-region Postgres replication wired
+    (sync R1→R2, async R1→R3).
+  - **L5.8** Region-failover chaos test — kill R1, verify
+    R2/R3 keep serving with `flags.stale=true` honesty during
+    the failover gap.
+
+### Fixed
+
+- **`docs/architecture/infrastructure/multi-region-topology.md`
+  region naming aligned with ADR-0016**. The doc was drafted
+  pre-ADR-0016 with placeholder regions (`London / Equinix
+  LD6`, `Ashburn / Equinix DC11`, `Singapore / Equinix SG3`);
+  ADR-0016 settled on `Hetzner FSN1 / AWS us-east-1 / Vultr
+  Singapore` with three different storage shapes per region.
+  Updated the regional-choice table, ASCII topology diagram,
+  and rollout sequence narrative to match. Frontmatter
+  flipped from `draft` to `ratified`; `last_verified` bumped.
 - **Launch-day operator helpers** — two pre-baked artefacts that
   remove decision-load on the day:
   - [`deploy/status-page/upptimerc.example.yml`](deploy/status-page/upptimerc.example.yml)
