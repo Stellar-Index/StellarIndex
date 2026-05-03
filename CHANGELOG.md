@@ -291,6 +291,16 @@ against.
 
 ### Fixed
 
+- **`sep1-resolution.md` no longer hand-waves a `sep1-trace`
+  subcommand as "Phase 5 deliverable"** — same drift as #481
+  (UsageRow). The doc said `ratesengine-ops sep1-trace -domain
+  <home_domain> (Phase 5 deliverable; not yet implemented)
+  would dump the full resolution path…`. We don't track
+  follow-up work as "Phase 5" anymore; the comment now
+  describes the gap concretely (`not in
+  cmd/ratesengine-ops/main.go's switch today`) and points the
+  operator at the manual playbook. Continuation of the L6.5
+  doc-sweep.
 - **`oracle-manipulation-defense.md` red-team-tests no longer
   hand-waves divergence as `(when shipped)`** — §"Validation
   exercises" red-team-test 1 said `Divergence monitoring (when
