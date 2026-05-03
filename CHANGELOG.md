@@ -17,6 +17,34 @@ against.
 
 ### Added
 
+- **Three operator runbooks for the launch-readiness rows that
+  need infra-side action, not code:**
+  - [`docs/operations/cdn-setup.md`](docs/operations/cdn-setup.md)
+    — closes **L3.14**'s infra side. Covers per-surface
+    `Cache-Control` policy from the origin middleware, provider
+    triage (Cloudflare vs CloudFront vs Bunny), step-by-step
+    Cloudflare provisioning, SSE-passthrough config, verification
+    `curl` commands, and a one-line rollback path.
+  - [`docs/operations/status-page-setup.md`](docs/operations/status-page-setup.md)
+    — closes **L4.11**'s decision + provisioning. Decision:
+    **Upptime** on GitHub Pages (host-independent of our origin
+    AND auto-monitored — GitHub Actions probes every 5 min,
+    auto-creates incident issues on probe failure, auto-resolves
+    on recovery). Removes the on-call "must remember to post"
+    failure mode that a static page like cstate has. Full setup
+    walkthrough plus manual incident-posting via labelled GitHub
+    issues for incidents Upptime can't see (correctness bugs,
+    regional outages from non-GitHub viewpoints, maintenance
+    windows). We can graduate to a custom solution post-launch
+    if customer feedback wants tighter brand integration — the
+    URL stays `status.ratesengine.net`, only the backend swaps.
+  - [`docs/operations/chaos-wave1-runbook.md`](docs/operations/chaos-wave1-runbook.md)
+    — closes **L5.5**'s execution gap. The suite code is already
+    shipped under `test/chaos/`; the runbook covers the pre-flight,
+    pass criteria per scenario, what to capture per run (the
+    reports directory + RETRO), and what to do when something
+    breaks. The launch-blocking artefact is "a clean run + a
+    committed reports directory", not more code.
 - **Multi-region cutover scaffolding** — three operator-friction
   reducers for the L4.14 / L4.15 / L4.16 / L4.17 / L5.8 work
   added in PR #531:
