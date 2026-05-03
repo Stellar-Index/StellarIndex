@@ -291,6 +291,17 @@ against.
 
 ### Fixed
 
+- **Five indexer-side runbooks are bare-metal-native** —
+  `source-stopped`, `cursor-stuck`, `orphan-events`,
+  `discovery-drops`, and `decode-errors` each had a single stale
+  `kubectl rollout restart deploy/ratesengine-indexer` /
+  `kubectl logs deploy/ratesengine-indexer` invocation that
+  doesn't run on r1. The indexer ships as
+  `ratesengine-indexer.service` per the `archival-node` ansible
+  role (ADR-0008). Restart commands now use `ssh root@indexer-01
+  "systemctl restart ratesengine-indexer"`; log commands use
+  `journalctl -u ratesengine-indexer`. Continuation of the L6.5
+  doc-sweep started in #460/#461/#462.
 - **Four more runbooks are bare-metal-native** — same drift as
   api-down and api-5xx: kubectl-flavoured diagnosis steps that
   wouldn't run on production. `redis-master-down.md` now talks
