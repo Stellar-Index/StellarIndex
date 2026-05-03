@@ -291,6 +291,15 @@ against.
 
 ### Fixed
 
+- **`docs/operations/sla-probe.md` aligned with shipped alerts** —
+  the doc framed alert rules as a "planned follow-up" with
+  "likely shapes", but
+  `deploy/monitoring/rules/sla-probe.yml` ships all four alerts
+  (`p95_breach`, `freshness_breach`, `unit_failed_alert`,
+  `stale`) and each has a runbook under
+  `docs/operations/runbooks/sla-probe-*.md`. Replaced the
+  follow-up framing with a shipped-alerts table matching the
+  conventions used in `supply-snapshot.md`'s alerts section.
 - **`supply-snapshot.md` no longer says classic + SEP-41 wait on
   their computers shipping** — the lead-in said
   `Each run computes the current Supply per ADR-0011 Algorithm 1
