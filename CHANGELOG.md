@@ -291,6 +291,20 @@ against.
 
 ### Fixed
 
+- **`oracle-manipulation-defense.md` gap-analysis reflects shipped
+  ADR-0019 implementation** — the table marked Phase 1
+  ("Not yet shipped"), Phase 2 ("Not yet shipped"), and the
+  `internal/divergence/` cross-reference ("Planned package per
+  CLAUDE.md"). All three are live: Phase 1 in
+  `internal/aggregate/anomaly/`, Phase 2 in
+  `internal/aggregate/baseline/` + `internal/aggregate/confidence/`,
+  and the divergence package writes
+  `cachekeys.Divergence(asset)` while the orchestrator reads
+  it via `lookupDivergencePct` and feeds
+  `confidence.CrossOracleFactor`. Updated each row to point at
+  the live code; the divergence row notes that L7.3 (the
+  post-launch deferred item) is about operational coverage,
+  not the wiring itself.
 - **`ConfigReserveBalanceReader` godoc reflects fallback role,
   not interim** — said it was "the interim implementation used
   by the supply-snapshot writer until the LCM-based
