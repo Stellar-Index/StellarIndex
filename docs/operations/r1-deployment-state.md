@@ -1,6 +1,6 @@
 ---
 title: r1 archival node — current state and next-steps
-last_verified: 2026-05-01
+last_verified: 2026-05-03
 status: living doc
 ---
 
@@ -48,16 +48,48 @@ Phase-3 validator work.
 
 ## Services (systemd)
 
-| Service | State 2026-04-23 | Notes |
+| Service | State 2026-05-03 | Notes |
 |---------|------------------|-------|
-| postgresql@15-main | active | |
+| postgresql@15-main | active | TimescaleDB extension installed 2026-05-03; all 15 migrations applied. `ratesengine` role + DB created. |
+| redis-server | active | Single-node, installed 2026-05-03 alongside the application bringup. |
 | ~~stellar-core~~ | **REMOVED 2026-04-23** | Primary daemon dropped — archive pipeline doesn't need it; see [archival-nodes.md](../discovery/data-sources/archival-nodes.md) for revival path in Phase 3. |
-| ~~stellar-rpc~~ | **REMOVED 2026-04-23** | Redundant for our data path — our own indexer will consume galexie's MinIO output directly via `ingest.ApplyLedgerMetadata`. Public API is `/v1/price` + `/v1/vwap` + `/v1/twap` + `/v1/ohlc` + …, not `/rpc`. See §Architecture below. |
+| ~~stellar-rpc~~ | **REMOVED 2026-04-23** | Redundant for our data path — our own indexer consumes galexie's MinIO output directly via `ingest.ApplyLedgerMetadata`. Public API is `/v1/price` + `/v1/vwap` + `/v1/twap` + `/v1/ohlc` + …, not `/rpc`. See §Architecture below. |
 | galexie | active, exporting | Own captive-core; uploading `FC4A....xdr.zst` objects to MinIO galexie-live at ~1/ledger. ~100 objects/5min at steady state. **The single stellar-core on the box.** |
-| minio | active | Buckets: `galexie-live`, `galexie-archive`, `backups` |
+| minio | active | Buckets: `galexie-live`, `galexie-archive`, `backups`. `ratesengine-reader` MinIO user (read-only on both galexie buckets) created 2026-04-26; password rotated + persisted to `/etc/default/ratesengine` 2026-05-03. |
+| **ratesengine-indexer** | **active (NEW 2026-05-03)** | Reads galexie-live tail via S3 GetObject; cursor-resumable. Live tail of pubnet from L62,403,000+. Dispatches to 11 source decoders + writes to `trades` + `oracle_updates` hypertables. Listens for /metrics on `127.0.0.1:9464`. |
+| **ratesengine-aggregator** | **active (NEW 2026-05-03)** | Tick-driven VWAP/TWAP/divergence/freeze/supply orchestration. Writes per-pair closed-bucket VWAPs to Redis cache (`vwap:<pair>:<window>`) + the `prices_1m` CAGG. Listens for /metrics on `127.0.0.1:9465` (auto-shifted off the indexer's :9464 default per #540). |
+| **ratesengine-api** | **active (NEW 2026-05-03)** | Public REST + SSE. `auth_mode=none` for the bringup phase. Listens on `0.0.0.0:3000`. /v1/healthz + /v1/readyz green; /v1/price serves real closed-bucket VWAPs. |
 | node_exporter | active | :9100 |
 | ~~stellar-core-prometheus-exporter~~ | **REMOVED 2026-04-23** | Scraped primary /info endpoint; captives don't expose one. |
 | node-healthcheck.timer | active | 5-min push to Healthchecks.io UUID 4cb3daba |
+
+### 2026-05-03 first application bringup
+
+The ratesengine application stack (indexer + aggregator + api)
+ran against r1 for the first time on 2026-05-03. Sequence
+captured here so R2 / R3 bringup follows the same path:
+
+1. `apt install redis-server`. Redis-server enabled + started.
+2. `apt install timescaledb-2-postgresql-15` (via PackageCloud
+   apt repo); enabled `timescaledb` in `shared_preload_libraries`;
+   restarted postgres; `CREATE EXTENSION timescaledb`.
+3. Generated `ratesengine` postgres password to
+   `/etc/ratesengine/postgres-password.txt` (mode 600).
+4. Rotated `ratesengine-reader` MinIO user's secret; stored in
+   `/etc/default/ratesengine`.
+5. scp'd 4 binaries + migrations dir to r1.
+6. Ran `ratesengine-migrate up` — 15/15 migrations applied
+   after fixing migration 0005's TimescaleDB unique-index bug
+   (PR #540 — the partition column `time` must be in the index).
+7. Wrote `/etc/systemd/system/ratesengine-{indexer,aggregator,api}.service`
+   units pointing at `/etc/default/ratesengine` for env.
+8. `systemctl enable --now` for each service in dependency order:
+   indexer (live tail) → aggregator (VWAP tick) → api.
+9. End-to-end smoke: `/v1/price?asset=native&quote=USDC:GA5Z…` returned a real closed-bucket VWAP.
+10. Kicked off historical backfill `L50,457,424 → L62,400,000`
+    via `nohup /usr/local/bin/run-historical-backfill.sh`. Logs
+    at `/var/log/ratesengine/backfill.log`. Idempotent on
+    re-runs (trades hypertable's unique index is the dedupe).
 
 ### Architecture after 2026-04-23 trim
 
