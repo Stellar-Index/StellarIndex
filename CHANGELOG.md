@@ -17,6 +17,26 @@ against.
 
 ### Operations
 
+- **r1 first application bringup — indexer + aggregator + api
+  running end-to-end** — 2026-05-03 brought up the ratesengine
+  application stack against r1 for the first time. Procedure
+  captured in `docs/operations/r1-deployment-state.md
+  §"2026-05-03 first application bringup"` so R2 + R3 follow
+  the same path. Pieces:
+  - Redis + TimescaleDB extension installed.
+  - `ratesengine` postgres role + DB created; 15/15 migrations
+    applied.
+  - 3 systemd units (indexer + aggregator + api) writing
+    against `/etc/default/ratesengine` for the secret env.
+  - Live ingest from L62,403,000+; closed-bucket VWAP serving
+    against `/v1/price?asset=native&quote=USDC:GA5Z…` end-to-end.
+  - Historical backfill `L50,457,424 → L62,400,000` running in
+    nohup'd background; idempotent on re-runs (trades unique
+    index handles dedupe).
+  - Decoder ↔ WASM verification flipped from "static-only" to
+    "dynamic on real production data" — empirical evidence in
+    the trades + oracle_updates hypertables.
+
 - **Chaos Wave 1 executed against the dev stack — 3/3 passing
   (closes L5.5)** — runner walked all three documented
   scenarios (Redis-down, Timescale-down, Redis network
