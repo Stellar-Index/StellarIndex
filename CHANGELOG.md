@@ -291,6 +291,16 @@ against.
 
 ### Fixed
 
+- **`public-flip.md` ADR-status verification covers all ADRs
+  through 0024** — the row read `all 0001-0021 are \`Accepted\`,
+  verified 2026-04-30`. Three ADRs landed after that date:
+  ADR-0022 (classic supply observers, #302), ADR-0023 (SEP-41
+  supply, #308), ADR-0024 (Redis HA via Sentinel, #343). All
+  three are `status: Accepted`. Row updated to `0001-0024
+  Accepted` with a parenthetical noting which three landed in
+  the gap, so the public-flip checklist correctly reflects the
+  current ADR set the public repo will inherit. Continuation of
+  the L6.5 doc-sweep.
 - **`deploy/monitoring/README.md` no longer says the
   AlertManager config is TBD** — `AlertManager routes by label
   (see its config, TBD)` was the line. The config template
