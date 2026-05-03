@@ -291,6 +291,17 @@ against.
 
 ### Fixed
 
+- **`lint-docs.sh` no longer exempts `/v1/price/stream` from the
+  "spec ↔ handler" check** — the planned_regex allow-list was
+  scoped to "documented but not yet shipped" routes; the only
+  entry was `/price/stream`, but the handler has been registered
+  in `internal/api/v1/server.go:354` since before launch
+  readiness began. Cross-checked: every OpenAPI path has a
+  handler and every handler is in OpenAPI today, so the
+  allow-list is empty. Tightened to `'^$'` (matches nothing)
+  with a comment on what to do if a future doc-but-stub endpoint
+  lands. Closes a small drift in CI strictness. L6.5 doc-sweep
+  continuation.
 - **`AGENTS.md` and `CLAUDE.md` quick-reference make-targets are
   accurate** — `AGENTS.md` claimed `make lint` runs "gofumpt +
   golangci-lint + archlint"; the actual `lint` target only runs
