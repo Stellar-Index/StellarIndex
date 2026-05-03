@@ -291,6 +291,18 @@ against.
 
 ### Fixed
 
+- **`internal/aggregate/doc.go` no longer claims triangulation
+  is deferred** — the package's "What this package deliberately
+  doesn't do" section listed `No multi-venue weighting /
+  triangulation. Those are deferred items captured in
+  docs/architecture/aggregation-plan.md.` But triangulation
+  ships in this package — `triangulate.go` defines `Triangulate`
+  and `TriangulateChain` (X2.5 forex-snap rule for chained-fiat,
+  per F-0014), and the aggregator orchestrator wires it via the
+  `Triangulations` field. New `# Triangulation` heading
+  documents what's there; the "deliberately doesn't do" list
+  retains the still-deferred multi-venue weighting (per-source
+  weight overrides). Continuation of the L6.5 doc-sweep.
 - **`auth.ErrNotImplemented` doc comment no longer claims the
   sentinel goes away once the validator body lands** — said
   `Removed once the body implementation lands`, but the SEP-10
