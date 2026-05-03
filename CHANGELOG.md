@@ -291,6 +291,22 @@ against.
 
 ### Fixed
 
+- **`contract-schema-evolution.md` "What's NOT yet done"
+  reflects the wasm-history shipping** — the doc's checklist
+  said `Per-source audit: enumerate every historical WASM hash
+  for each of the four Soroban sources. Blocked on live mainnet
+  RPC access (r1 stack is up; query hasn't been written).` and
+  `ratesengine-ops schema-audit CLI. Not scoped in Phase 1`. Both
+  shipped: per-source audits live at
+  `docs/operations/wasm-audits/` for Aquarius, Band, Blend,
+  Comet, Phoenix; the CLI is `ratesengine-ops wasm-history`,
+  `wasm-history-merge-jsonl`, `extract-wasm-from-galexie` —
+  walking from Galexie's MinIO output instead of stellar-rpc
+  (which was removed from r1 on 2026-04-23). Section renamed to
+  "Status" with [x] for what shipped and [ ] for the genuinely
+  remaining items (`contract_wasm_hash` column, per-connector
+  schema-evolution prose). `last_verified: 2026-05-02` bumped.
+  Continuation of the L6.5 doc-sweep.
 - **`internal/canonical/discovery/doc.go` "Future work" list has
   shipped** — the package's `# Future work (separate PRs):` block
   named three items, all of which have landed:
