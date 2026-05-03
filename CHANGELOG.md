@@ -17,6 +17,37 @@ against.
 
 ### Added
 
+- **Three pre-launch helpers — operator + customer-facing
+  scaffolds for "the questions that get googled during launch
+  week"**:
+  - [`docs/operations/post-launch-queries.md`](docs/operations/post-launch-queries.md)
+    — 12-query PromQL bundle the on-call types into Grafana
+    during the L6.7 first-24h watch (request rate per surface,
+    error rate, p95/p99 latency, oracle freshness, source
+    events rate, aggregator tick health, decode errors, rate-
+    limit fail-open, closed-bucket stream subscriber health,
+    trade-insert USD-volume populate ratio). Each query has an
+    expected-shape annotation so anomalies are spottable
+    without re-deriving the metric semantics.
+  - [`docs/operations/backfill-procedure.md`](docs/operations/backfill-procedure.md)
+    — operator runbook for `ratesengine-ops backfill`.
+    Covers when to use it (newly-enabled source, discovered
+    gap, region catch-up, post-WASM-audit replay), step-by-
+    step (range pick → dry-run → run → resume → narrow-source
+    → verify), and four named failure modes (`BackfillSafe=
+    false`, cursor collision, archive-missing, when-not-to-
+    use). CAGGs auto-materialise on inserted rows; the doc
+    flags the `refresh_continuous_aggregate` rescue if
+    needed.
+  - [`pkg/client/example_test.go`](pkg/client/example_test.go)
+    — extended with three more runnable examples
+    (`ExampleClient_HistorySinceInception`,
+    `ExampleClient_Assets`, `ExampleClient_Me`) so the SDK's
+    `go doc -all` output now covers all four core
+    customer-facing methods in addition to the existing
+    `ExampleNew` / `ExampleClient_Price` /
+    `ExampleClient_Asset` / `ExampleAPIError`. Doubles as a
+    build-time smoke test for the SDK type shapes.
 - **Customer-comms templates + demo script for the launch
   sprint.** Pre-baked artefacts so drafting under stress is
   never the path:
