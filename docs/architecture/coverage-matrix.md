@@ -376,16 +376,20 @@ For each claim below we state the **as-written promise**, what we
   Soroswap, Aquarius, Phoenix, Comet, **Blend**). Blend's auction
   decoder + storage + dispatcher wiring is live (`internal/sources/blend/`,
   registered in `internal/pipeline/dispatcher.go:114`,
-  `internal/pipeline/sink.go:98`). What's still
-  pending on Blend is the WASM audit's Phase 2 — per-pool
-  `wasm-history` walk on r1 — which keeps `BackfillSafe=false` in
-  `internal/sources/external/registry.go` until it lands. Live
-  ingest works fine; only retroactive backfill replay is gated.
-  Phoenix's 8-events-per-swap pattern and Soroswap's swap+sync
-  correlation were non-obvious and are both captured explicitly.
+  `internal/pipeline/sink.go:98`). The Blend WASM audit's
+  Phase 2 per-pool `wasm-history` walk on r1 completed
+  2026-05-02 (11 contracts, 3 unique WASMs, no mid-life
+  upgrades over the [50457424, 62249727] range), and
+  `BackfillSafe=true` is set in
+  `internal/sources/external/registry.go` — see
+  `docs/operations/wasm-audits/blend.md §"Phase 2 results"`.
+  Both live ingest and retroactive backfill replay are now
+  enabled. Phoenix's 8-events-per-swap pattern and Soroswap's
+  swap+sync correlation were non-obvious and are both captured
+  explicitly.
 - **Verdict**: ✅ promise exceeded in venue breadth (Phoenix +
   Comet added beyond the proposal's list); Blend live with the
-  documented backfill caveat from the WASM audit.
+  WASM audit closed.
 
 ### Claim 6 — "p95 ≤ 200 ms, p99 ≤ 500 ms, ≥ 99.99% uptime"
 
