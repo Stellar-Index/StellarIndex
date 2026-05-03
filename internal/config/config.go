@@ -157,24 +157,24 @@ func defaultDivergenceConfig() DivergenceConfig {
 
 // MetadataConfig configures the asset-metadata overlay path. Today
 // it carries one knob — the curated issuer-account → home-domain
-// map — which the API uses to populate AssetDetail.HomeDomain
-// before the SEP-1 overlay handler runs.
-//
-// Why an operator-curated map instead of on-chain derivation:
-// AccountEntry.HomeDomain isn't currently indexed in our trades
-// hypertable; deriving it would require either a separate
-// account-entry observer in the indexer (deferred) or a per-request
-// stellar-rpc lookup (latency hit on the hot path). The static map
-// is the pragmatic middle ground until that plumbing lands —
-// curated entries get the overlay; everything else returns
-// sep1_status="not_fetched" cleanly.
+// fallback map — which the API binary chains BEHIND the live
+// LCM-derived resolver in [internal/metadata.ChainedHomeDomainLookup]:
+// the live resolver
+// ([internal/metadata.LCMHomeDomainResolver], reading from the
+// `account_observations` hypertable populated by the
+// `internal/sources/accounts` observer, Task #54) returns the
+// AccountEntry.HomeDomain for any issuer it has seen on-chain;
+// uncovered issuers fall through to the static map. The map's job
+// today is bootstrapping issuers we want overlay coverage for
+// before their AccountEntry has flowed through the indexer (or
+// when the on-chain home_domain field is empty).
 type MetadataConfig struct {
 	// IssuerHomeDomains maps issuer-account G-strkey → home-domain.
 	// E.g. `"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"`.
 	// Empty entries (`""`) are equivalent to the key being absent.
 	// TOML representation: `[metadata.issuer_home_domains]` table with
 	// one entry per issuer.
-	IssuerHomeDomains map[string]string `toml:"issuer_home_domains" doc:"Static curated map of issuer-account G-strkey → home-domain. Populates AssetDetail.HomeDomain so the SEP-1 overlay handler can resolve stellar.toml. Until the on-chain AccountEntry observer ships, this is the only way to enable the overlay for a given issuer." default:"{}"`
+	IssuerHomeDomains map[string]string `toml:"issuer_home_domains" doc:"Static curated map of issuer-account G-strkey → home-domain. Layered behind the live LCM-derived resolver as a fallback for issuers whose AccountEntry hasn't been observed yet (or whose on-chain home_domain field is empty)." default:"{}"`
 }
 
 // HomeDomainFor returns the home-domain registered for the issuer,

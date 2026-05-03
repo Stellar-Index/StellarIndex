@@ -154,7 +154,7 @@ the `env:` column.
 
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
-| `metadata.issuer_home_domains` | `map` | `{}` | — | Static curated map of issuer-account G-strkey → home-domain. Populates AssetDetail.HomeDomain so the SEP-1 overlay handler can resolve stellar.toml. Until the on-chain AccountEntry observer ships, this is the only way to enable the overlay for a given issuer. |
+| `metadata.issuer_home_domains` | `map` | `{}` | — | Static curated map of issuer-account G-strkey → home-domain. Layered behind the live LCM-derived resolver as a fallback for issuers whose AccountEntry hasn't been observed yet (or whose on-chain home_domain field is empty). |
 
 ### `[supply]`
 
