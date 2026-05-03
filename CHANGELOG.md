@@ -322,6 +322,20 @@ against.
 
 ### Fixed
 
+- **2026-05-02 audit finding F-0501 closed**:
+  `deploy/monitoring/README.md` claimed *"CI does NOT
+  currently run `promtool check rules` or `promtool test
+  rules`"*, but `.github/workflows/ci.yml` line 108 has
+  a `monitoring-rules` job that installs `promtool` from the
+  official Prometheus release and runs
+  `make monitoring-check` on every PR (rule-syntax errors
+  fail the PR). Rewrote the README to describe the actual
+  CI control and to keep the rule-firing-unit-test gap
+  acknowledged precisely (no `test/monitoring/` tree yet;
+  `promtool test rules` is a future follow-up if rule logic
+  ever grows complex enough to need behavioural tests).
+  Audit register + remediation plan updated to reflect
+  closure.
 - **`VERSIONS.md` "Runtime binaries" list reflects the
   2026-04-23 r1 trim.** The list still claimed `stellar-core`
   and `stellar-rpc` were runtime binaries on the production
