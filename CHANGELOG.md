@@ -144,6 +144,19 @@ against.
 
 ### Fixed
 
+- **`docs/getting-started.md` SDK example now compiles** — the
+  customer-facing onboarding doc showed
+  `c.GetPrice(ctx, "native", "fiat:USD")` for the SDK quickstart,
+  but no such method exists on `*client.Client`. Customers
+  copy-pasting the example would hit a Go build error on the
+  first line. Replaced with the actual `c.Price(ctx,
+  client.PriceQuery{Asset, Quote})` shape returning
+  `*Envelope[PriceSnapshot]`. Also fixed the API-key example
+  prefix (`rate_` → `rek_`, matching the actual issuance path
+  at `internal/auth/store.go:142`'s
+  `generateID(s.randRead, "rek_", 32)`) and added a "what methods
+  exist today" note so the doc doesn't imply a method that
+  lives on an unmerged PR.
 - **Three runbooks no longer reference fictional commands /
   paths** (L6.5 doc-sweep continued):
   `runbooks/all-ingestion-down.md` §D referenced `make rollback
