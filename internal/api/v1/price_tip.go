@@ -116,10 +116,12 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // computeTip is the shared core of [Server.handlePriceTip] and
 // [Server.handlePriceTipStream]. Tries the rolling-window VWAP first
 // (when HistoryReader is wired and the window has trades), falling
-// back to PriceReader.LatestPrice when the window is empty.
+// back to PriceReader.LatestPrice when the window is empty, then to
+// the aggregator's Redis VWAP cache for stablecoin-fiat-proxy
+// rewritten pairs whose literal form is absent from prices_1m.
 //
-// Returns ErrPriceNotFound when neither branch can produce a snapshot
-// — caller turns that into 404 on the request endpoint and into
+// Returns ErrPriceNotFound when no branch can produce a snapshot —
+// caller turns that into 404 on the request endpoint and into
 // "stream cannot start" on the stream endpoint. Any other error is
 // surfaced as-is for caller-side logging + 500 mapping.
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
@@ -132,10 +134,25 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// for the tip fallback per ADR-0018 (the customer reads price_type
 	// + observed_at to know what they got).
 	snap, sources, _, err := s.prices.LatestPrice(ctx, asset, quote)
-	if err != nil {
+	if err == nil {
+		return snap, sources, nil
+	}
+	if !errors.Is(err, ErrPriceNotFound) {
 		return PriceSnapshot{}, nil, err
 	}
-	return snap, sources, nil
+	// Final fallback: Redis VWAP cache. For aggregator-rewritten pairs
+	// (XLM/fiat:USD synthesised from XLM/USDC-GA5Z…) the literal pair
+	// is absent from prices_1m so the storePriceReader miss above is
+	// expected. The Redis vwap: key IS the source of truth for these
+	// values. Mirrors the /v1/price handler's tryRedisVWAPFallback so
+	// both surfaces serve the same data; provenance marker (when
+	// present) is dropped since the tip envelope has no triangulated
+	// flag — operators reading the marker for forensics use /v1/price
+	// instead.
+	if cacheSnap, cacheSources, _, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+		return cacheSnap, cacheSources, nil
+	}
+	return PriceSnapshot{}, nil, ErrPriceNotFound
 }
 
 // parseTipAssetQuote pulls asset (required) + quote (defaulted to

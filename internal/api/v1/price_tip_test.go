@@ -202,6 +202,43 @@ func TestPriceTip_FallbackWhenNoHistoryWired(t *testing.T) {
 	}
 }
 
+// TestPriceTip_RedisFallbackForRewrittenPair — when both the
+// rolling-window VWAP path AND PriceReader.LatestPrice come up empty
+// (typical for an aggregator-rewritten pair like XLM/fiat:USD whose
+// literal form isn't in prices_1m), the handler falls through to the
+// Redis VWAP cache. Same shape as /v1/price's tryRedisVWAPFallback —
+// the two surfaces serve the same underlying data so a customer
+// switching between them sees consistent prices.
+func TestPriceTip_RedisFallbackForRewrittenPair(t *testing.T) {
+	hist := &stubHistoryReader{trades: nil}
+	prices := &stubPriceReader{err: v1.ErrPriceNotFound} // CAGG miss
+	looker := &stubTriangulatedPriceLooker{
+		value:          "0.157384502084",
+		isTriangulated: false, // direct rewrite — no marker
+		found:          true,
+	}
+	srv := v1.New(v1.Options{
+		Prices:       prices,
+		History:      hist,
+		Triangulated: looker,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD&window_seconds=5")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — Redis fallback should serve direct rewrites", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.157384502084"`) {
+		t.Errorf("Redis-fallback price missing: %s", body)
+	}
+	// stale stays false on /v1/price/tip per ADR-0018, regardless of
+	// which fallback path produced the snapshot.
+	if !strings.Contains(body, `"stale":false`) {
+		t.Errorf("stale flag wrong: %s", body)
+	}
+}
+
 // TestPriceTip_HistoryErrorFallsThroughToFallback — a hypertable
 // hiccup must NOT take down the tip surface when LatestPrice can
 // still serve. The handler logs the error and quietly drops to the

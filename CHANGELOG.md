@@ -17,6 +17,16 @@ against.
 
 ### Changed
 
+- **`/v1/price/tip` falls through to the Redis VWAP cache** for
+  aggregator-rewritten pairs whose literal form isn't in
+  `prices_1m`. Mirrors the same fallback that landed on `/v1/price`
+  in #631 — the two surfaces serve the same underlying data so a
+  customer switching between them sees consistent prices on the
+  headline `?asset=native&quote=fiat:USD` lookup. Provenance marker
+  is dropped on this surface (the tip envelope has no
+  `triangulated` flag); operators reading the marker for forensics
+  use `/v1/price` instead.
+
 - **`/v1/price` Redis-VWAP fallback now queries 5m, not 1m.** The
   aggregator orchestrator's default windows are `[5m, 1h, 24h]` —
   both per-pair direct refresh and the triangulator write
