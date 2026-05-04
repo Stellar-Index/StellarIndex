@@ -17,6 +17,22 @@ against.
 
 ### Documentation
 
+- **`customer-demo-script.md` opens with the showcase URL.**
+  Pre-flight now lists `https://ratesengine.net` as one of the
+  required browser tabs; Stage 1 hands the customer the
+  interactive explorer up front so the rest of the curl-based
+  walk-through has a "click the panel, see the curl" parallel
+  they can follow along with. Without this, customers leave the
+  demo not knowing the explorer exists.
+
+- **`api-latency.md` runbook flags `/v1/markets`'s natural
+  baseline.** New false-positive entry: the route does GROUP BY
+  across the 14-day chunk window, so its p95 baseline is ~300 ms
+  cold / 50 ms warm — well inside the per-route p95 ≤ 300 ms / p99
+  ≤ 1 s carve-out, but high enough that a `route="/v1/markets"`
+  breakdown in Grafana looks alarming. Saves the on-call from
+  triaging a non-issue.
+
 - **`post-launch-queries.md` lists the showcase routes.** The
   on-call's "what healthy looks like" enumeration in §1
   (request rate per surface) was missing `/v1/coins`,

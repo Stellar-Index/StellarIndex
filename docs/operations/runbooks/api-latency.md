@@ -1,6 +1,6 @@
 ---
 title: Runbook — api-latency
-last_verified: 2026-04-30
+last_verified: 2026-05-04
 status: draft
 severity: P2 (direct-threshold) / P1 (SLO burn-rate fast)
 ---
@@ -133,6 +133,15 @@ psql -c "SELECT state, count(*), max(now()-query_start) AS oldest
   window usually absorbs this.
 - **Large `limit=500` `/v1/markets` scan** after a fresh deploy
   with cold Timescale buffers. Warms up within a minute.
+- **`/v1/markets` baseline above 200 ms.** This route does
+  `GROUP BY base_asset, quote_asset` across the 14-day chunk
+  window of the trades hypertable; ~540 ms cold / ~50 ms warm
+  is normal (per benchmarks recorded in PR #583). Its
+  per-route SLA carve-out is p95 ≤ 300 ms / p99 ≤ 1 s — the
+  alert's global p95 ≤ 500 ms threshold absorbs this, but a
+  `route="/v1/markets"` breakdown in Grafana will show steady
+  300-ish ms numbers that look like an alert about to fire. Not
+  a regression; just the route's natural baseline.
 
 ## Related
 

@@ -1,6 +1,6 @@
 ---
 title: Customer sign-off demo script (L6.6)
-last_verified: 2026-05-03
+last_verified: 2026-05-04
 status: operator runbook
 ---
 
@@ -20,7 +20,8 @@ first real request without further intervention.
 - [ ] **Demo API key minted.** Use a tier-`apikey` key with
       reasonable rpm; record it in the demo notes for cleanup
       after.
-- [ ] **Browser tabs open** — API reference, getting-started,
+- [ ] **Browser tabs open** — interactive explorer
+      (`https://ratesengine.net`), API reference, getting-started,
       status page.
 - [ ] **Terminal pre-loaded** with `BASE`, `KEY` env vars:
       ```sh
@@ -46,6 +47,11 @@ Talking points:
   suitable for monitoring.
 - `version` exposes the CalVer tag — operators can tell at a
   glance which build is responding.
+- **Hand the customer `https://ratesengine.net`** — the
+  interactive explorer. Every panel reveals the API call that
+  produced it via the `<>` button, so the rest of the walk-through
+  has a "click the panel, see the curl" parallel they can follow
+  along with. They should leave the demo with that tab pinned.
 
 ### Stage 2 — Closed-bucket pricing (5 min)
 
