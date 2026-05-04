@@ -213,3 +213,91 @@ func TestLooker_DistinctPairsIsolated(t *testing.T) {
 		t.Error("XLM/EUR should NOT be frozen (distinct pair)")
 	}
 }
+
+// recordingSink captures every RecordFreeze call so tests can
+// assert the Writer wired the sink correctly.
+type recordingSink struct {
+	calls []recordedFreeze
+	err   error
+}
+
+type recordedFreeze struct {
+	Asset    canonical.Asset
+	Quote    canonical.Asset
+	Decision anomaly.Decision
+}
+
+func (r *recordingSink) RecordFreeze(_ context.Context, asset, quote canonical.Asset, decision anomaly.Decision) error {
+	r.calls = append(r.calls, recordedFreeze{Asset: asset, Quote: quote, Decision: decision})
+	return r.err
+}
+
+// TestWriter_Mark_FiresEventSink — Mark must call the wired sink
+// in addition to the Redis write. Production wires the timescale-
+// backed sink so the freeze_events hypertable mirrors the Redis
+// state; this test pins that the Writer respects the WithEventSink
+// option.
+func TestWriter_Mark_FiresEventSink(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recordingSink{}
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	decision := anomaly.Decision{
+		Action:       anomaly.ActionFreeze,
+		Class:        anomaly.ClassStablecoin,
+		DeviationPct: 8.5,
+		Reason:       "test",
+	}
+	if err := w.Mark(context.Background(), asset, quote, decision); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("sink fired %d times, want 1", len(sink.calls))
+	}
+	got := sink.calls[0]
+	if got.Asset.String() != asset.String() {
+		t.Errorf("asset = %s, want %s", got.Asset.String(), asset.String())
+	}
+	if got.Quote.String() != quote.String() {
+		t.Errorf("quote = %s, want %s", got.Quote.String(), quote.String())
+	}
+	if got.Decision.DeviationPct != decision.DeviationPct {
+		t.Errorf("deviation = %v, want %v", got.Decision.DeviationPct, decision.DeviationPct)
+	}
+}
+
+// TestWriter_Mark_SinkErrorIsSwallowed — a sink failure must not
+// fail the Mark call. The Redis write is the load-bearing operation
+// for flags.frozen on the API; the durable mirror is best-effort.
+func TestWriter_Mark_SinkErrorIsSwallowed(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recordingSink{err: errExploded}
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	if err := w.Mark(context.Background(), asset, quote,
+		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
+		t.Fatalf("Mark: sink error must not propagate, got: %v", err)
+	}
+}
+
+// errExploded is a sentinel for the sink-error test.
+var errExploded = errSinkExploded("simulated sink failure")
+
+type errSinkExploded string
+
+func (e errSinkExploded) Error() string { return string(e) }
+
+// silence unused-import warnings on platforms where this file
+// is only partially read.
+var (
+	_ = json.Marshal
+	_ = time.Now
+	_ = miniredis.RunT
+	_ = cachekeys.Freeze
+)

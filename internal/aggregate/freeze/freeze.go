@@ -54,30 +54,81 @@ type RedisCache interface {
 	Get(ctx context.Context, key string) *redis.StringCmd
 }
 
+// EventSink is the optional durable-mirror seam for freeze events.
+// The Writer calls RecordFreeze on every Mark; the implementation
+// is responsible for de-duplicating against the still-firing row
+// (so refreshing a Redis TTL doesn't create N rows in postgres).
+//
+// Nil sinks are valid — pre-existing deployments without a sink
+// keep their Redis-only behaviour. Production wires
+// `internal/storage/timescale.FreezeEventSink` here; tests pass
+// either nil or a fake.
+//
+// Per docs/architecture/showcase-site-implementation-plan.md
+// Phase 2: this is what migrates the Redis-only freeze state into
+// a queryable postgres timeline that powers /v1/anomalies.
+type EventSink interface {
+	// RecordFreeze persists a freeze event. Idempotent against the
+	// "currently firing" row for (asset, quote): if a row with
+	// recovered_at IS NULL already exists for this pair, the call
+	// is a no-op. Otherwise INSERT a new row with frozen_at=now.
+	//
+	// Implementations must NOT block the Writer's hot path on
+	// network failures — log + continue. The Redis marker write
+	// is the load-bearing operation; the durable mirror is best-
+	// effort.
+	RecordFreeze(ctx context.Context, asset, quote canonical.Asset, decision anomaly.Decision) error
+}
+
 // Writer marks a (asset, quote) pair as frozen by writing a
 // [Marker] to Redis at the `freeze:<asset>:<quote>` key with the
 // configured TTL. Constructed by the aggregator orchestrator at
 // startup.
 //
+// When an EventSink is wired, the Writer also records the freeze
+// to the durable mirror — postgres-backed in production, used by
+// the showcase's /anomalies timeline.
+//
 // Safe for concurrent Mark calls — fields are read-only after
 // construction; the underlying RedisCache is concurrent-safe by
-// contract.
+// contract; the EventSink contract requires concurrent-safety.
 type Writer struct {
 	cache RedisCache
 	ttl   time.Duration
+	sink  EventSink
 }
 
 // NewWriter constructs a Writer. ttl=0 falls back to
 // cachekeys.FreezeTTL; operators tune up only when a custom
 // deployment needs longer freeze persistence (rare).
-func NewWriter(cache RedisCache, ttl time.Duration) (*Writer, error) {
+//
+// sink is optional (nil = legacy Redis-only behaviour); production
+// passes the timescale-backed implementation.
+func NewWriter(cache RedisCache, ttl time.Duration, opts ...WriterOption) (*Writer, error) {
 	if cache == nil {
 		return nil, errors.New("freeze: RedisCache is required")
 	}
 	if ttl <= 0 {
 		ttl = cachekeys.FreezeTTL
 	}
-	return &Writer{cache: cache, ttl: ttl}, nil
+	w := &Writer{cache: cache, ttl: ttl}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w, nil
+}
+
+// WriterOption tunes a Writer at construction time.
+type WriterOption func(*Writer)
+
+// WithEventSink wires the durable freeze-event mirror. Pass
+// `internal/storage/timescale.FreezeEventSink` in production; tests
+// can inject a fake or omit the option entirely (nil sink = no
+// mirror, same as the pre-Phase-2 behaviour).
+func WithEventSink(sink EventSink) WriterOption {
+	return func(w *Writer) {
+		w.sink = sink
+	}
 }
 
 // Mark records a freeze for (asset, quote) backed by the supplied
@@ -106,6 +157,20 @@ func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, decisio
 	key := cachekeys.Freeze(asset, quote)
 	if err := w.cache.Set(ctx, key, body, w.ttl).Err(); err != nil {
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
+	}
+
+	// Durable mirror. Best-effort: a sink failure must not surface
+	// to the caller because the Redis write — the load-bearing
+	// operation that drives flags.frozen on the API response — has
+	// already succeeded. The sink is for the showcase /anomalies
+	// timeline, not for liveness.
+	if w.sink != nil {
+		if sinkErr := w.sink.RecordFreeze(ctx, asset, quote, decision); sinkErr != nil {
+			// Caller logs at DEBUG; we don't want to spam WARN on
+			// every transient postgres blip. The sink is expected
+			// to log its own failures with full context.
+			_ = sinkErr
+		}
 	}
 	return nil
 }
