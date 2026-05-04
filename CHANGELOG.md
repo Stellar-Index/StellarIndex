@@ -34,6 +34,16 @@ against.
   beyond). Decoder-coverage / archive-completeness / SLO panels
   follow as their underlying endpoints ship.
 
+- **Issuer tab on `/coins/[slug]` goes live.** Replaces the
+  disabled placeholder with a live issuer panel backed by
+  `/v1/issuers/{g_strkey}`. New `useIssuer()` TanStack hook;
+  `IssuerPanel` shows G-strkey, home_domain, creation ledger,
+  SEP-1 resolution timestamp, the four asset auth flags
+  (auth_required / auth_revocable / auth_immutable /
+  auth_clawback) as colour-coded pills, and the full table of
+  issued assets with cross-links to each. USDC's issuer card now
+  shows the ~20-asset directory in one shot.
+
 - **Showcase home page Network + System-health panels go live.**
   Network panel now shows the live classic-asset count from
   `/v1/coins` and the highest non-backfill cursor as the current

@@ -117,6 +117,49 @@ export function useCoins(limit = 100) {
   });
 }
 
+export type IssuedAsset = {
+  asset_id: string;
+  code: string;
+  slug: string;
+  first_seen_ledger: number;
+  last_seen_ledger: number;
+  observation_count: number;
+};
+
+export type Issuer = {
+  g_strkey: string;
+  home_domain?: string;
+  auth_required?: boolean;
+  auth_revocable?: boolean;
+  auth_immutable?: boolean;
+  auth_clawback?: boolean;
+  sep1_resolved_at?: string;
+  sep1_payload?: unknown;
+  creation_ledger?: number;
+  assets?: IssuedAsset[];
+};
+
+type IssuerEnvelope = { data: Issuer };
+
+/**
+ * useIssuer — fetches /v1/issuers/{g_strkey}. Returns the issuer
+ * row + embedded assets list. 404 errors propagate as TanStack
+ * errors; consumers should treat that as "no issuer record yet"
+ * rather than a hard failure.
+ */
+export function useIssuer(gStrkey: string | undefined) {
+  return useQuery<Issuer>({
+    queryKey: ['/v1/issuers', gStrkey],
+    queryFn: async () => {
+      const env = await apiGet<IssuerEnvelope | Issuer>(
+        `/v1/issuers/${gStrkey}`,
+      );
+      return 'data' in env ? env.data : env;
+    },
+    enabled: !!gStrkey,
+  });
+}
+
 export type Cursor = {
   source: string;
   sub_source?: string;

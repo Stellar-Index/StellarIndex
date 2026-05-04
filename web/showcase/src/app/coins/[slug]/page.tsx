@@ -15,6 +15,7 @@ import { formatCompact, formatPrice } from '@/lib/format';
 import { SEED_COINS, findCoin } from '@/lib/coins-seed';
 import { CoinTabs, ActiveTabSlot } from './CoinTabs';
 import { ChartPanel } from './ChartPanel';
+import { IssuerPanel } from './IssuerPanel';
 
 /**
  * /coins/[slug] — single coin detail page.
@@ -75,6 +76,9 @@ export default async function CoinDetailPage({ params }: { params: Params }) {
         <ActiveTabSlot
           overview={<OverviewBody coin={coin} />}
           chart={<ChartPanel slug={coin.slug} startPrice={coin.price} />}
+          issuer={
+            coin.issuer ? <IssuerPanel gStrkey={coin.issuer} /> : undefined
+          }
         />
       </Suspense>
 
