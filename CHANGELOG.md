@@ -51,6 +51,15 @@ against.
   beyond). Decoder-coverage / archive-completeness / SLO panels
   follow as their underlying endpoints ship.
 
+- **Showcase `/markets` page goes live.** Replaces the v0
+  placeholder with a live markets directory backed by `/v1/markets`,
+  client-sorted by 24h trade count desc. New `useMarkets()` hook
+  unwraps the standard `{data:[…]}` envelope plus the cursor for
+  future virtual-scroll pagination. AssetLabel splits canonical
+  asset strings (`<code>-<G-issuer>`) into prominent code +
+  truncated issuer beneath. Heatmap and per-venue sub-tables
+  follow.
+
 - **Issuer tab on `/coins/[slug]` goes live.** Replaces the
   disabled placeholder with a live issuer panel backed by
   `/v1/issuers/{g_strkey}`. New `useIssuer()` TanStack hook;

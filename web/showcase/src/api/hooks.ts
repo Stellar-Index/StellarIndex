@@ -160,6 +160,36 @@ export function useIssuer(gStrkey: string | undefined) {
   });
 }
 
+export type Market = {
+  base: string;
+  quote: string;
+  last_trade_at: string;
+  trade_count_24h: number;
+};
+
+type MarketsEnvelope = {
+  data: Market[];
+  pagination?: { next?: string };
+};
+
+/**
+ * useMarkets — fetches the recently-active markets directory from
+ * `/v1/markets`. Cursor pagination is intentionally NOT exposed
+ * here — the v0 showcase page just renders the first page. When
+ * we add a "Load more" button or virtual scrolling, switch to
+ * useInfiniteQuery and surface the cursor from the envelope.
+ */
+export function useMarkets(limit = 100) {
+  return useQuery<{ markets: Market[]; nextCursor?: string }>({
+    queryKey: ['/v1/markets', limit],
+    queryFn: async () => {
+      const env = await apiGet<MarketsEnvelope | Market[]>('/v1/markets', { limit });
+      if (Array.isArray(env)) return { markets: env };
+      return { markets: env.data, nextCursor: env.pagination?.next };
+    },
+  });
+}
+
 export type Cursor = {
   source: string;
   sub_source?: string;
