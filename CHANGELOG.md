@@ -51,6 +51,16 @@ against.
   Wired into `cmd/ratesengine-indexer` as a goroutine bound to
   the root context. Powers /v1/diagnostics/decoders + the
   showcase /diagnostics decoder-coverage table.
+- **Per-source contribution persister.** `aggregate.SourceContributions`
+  computes per-source weight + base/quote volume + trade count from
+  a trade slice. `orchestrator.ContributionSink` is the optional sink
+  the orchestrator invokes after every successful VWAP compute.
+  Production wires a timescale-backed adapter (in
+  cmd/ratesengine-aggregator to avoid an import cycle) so the
+  showcase source-contribution donut on every price card reads
+  from the `price_source_contributions` hypertable (migration 0026)
+  rather than recomputing at request time. Best-effort: sink failures
+  log + continue, the VWAP cache write stays load-bearing.
 
 ### Fixed
 

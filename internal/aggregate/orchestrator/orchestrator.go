@@ -320,9 +320,37 @@ type Config struct {
 	// matching the pre-launch state where `s.hub == nil` returns 503.
 	StreamPublisher StreamPublisher
 
+	// ContributionSink, when non-nil, receives the per-source
+	// breakdown of every successful VWAP compute. Production wires
+	// `internal/storage/timescale.PriceSourceContributionSink` so
+	// the showcase source-contribution donut on every price card
+	// reads from a postgres-resident history rather than recomputing
+	// at request time. Best-effort — sink failures log + continue.
+	//
+	// See migrations/0026 + Phase 2 of
+	// docs/architecture/showcase-site-implementation-plan.md.
+	ContributionSink ContributionSink
+
 	// Logger is the structured logger. If nil, slog.Default() is
 	// used.
 	Logger *slog.Logger
+}
+
+// ContributionSink is the optional durable-mirror seam for
+// per-source contributions to a windowed VWAP. Called once per
+// (pair, window) at every successful VWAP compute.
+type ContributionSink interface {
+	RecordContributions(ctx context.Context, rec ContributionRecord) error
+}
+
+// ContributionRecord is the per-(pair, window, tick) shape passed
+// to ContributionSink. Decoupled from the storage row shape so the
+// sink can evolve without the orchestrator changing.
+type ContributionRecord struct {
+	Pair          canonical.Pair
+	Window        time.Duration
+	ComputedAt    time.Time
+	Contributions []aggregate.SourceContribution
 }
 
 // DivergenceRefresher is the seam the orchestrator uses to keep the
@@ -562,6 +590,8 @@ func (o *Orchestrator) refreshPairWindow(
 		}
 		return fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
 	}
+
+	o.flushContributions(ctx, pair, window, trades)
 
 	// Phase 1 anomaly evaluation BEFORE cache write — class-deviation
 	// + source-count threshold (the L2.4 stop-gap). On freeze we
@@ -932,5 +962,36 @@ func (o *Orchestrator) Stats() Stats {
 		VWAPWrites:   o.vwapWrites,
 		EmptyWindows: o.emptyWindows,
 		Errors:       o.errors,
+	}
+}
+
+// flushContributions emits one ContributionRecord per call to the
+// configured sink (if any). Pulled out of refreshPairWindow so the
+// hot-path function stays under the gocognit ceiling.
+//
+// Best-effort: sink failures log at DEBUG and don't propagate. The
+// load-bearing operation is the VWAP cache write that happens
+// after this returns.
+func (o *Orchestrator) flushContributions(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	trades []canonical.Trade,
+) {
+	if o.cfg.ContributionSink == nil {
+		return
+	}
+	contributions := aggregate.SourceContributions(trades)
+	if len(contributions) == 0 {
+		return
+	}
+	if err := o.cfg.ContributionSink.RecordContributions(ctx, ContributionRecord{
+		Pair:          pair,
+		Window:        window,
+		ComputedAt:    time.Now().UTC(),
+		Contributions: contributions,
+	}); err != nil {
+		o.logger.Debug("contribution sink",
+			"pair", pair.String(), "window", window, "err", err)
 	}
 }

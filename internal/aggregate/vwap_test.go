@@ -10,6 +10,15 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 )
 
+// mkTradeWithSource builds a Trade with a specific Source. Used by
+// the source-contributions tests; the older mkTrade keeps a fixed
+// "test" source for VWAP tests that don't care about attribution.
+func mkTradeWithSource(source string, base, quote int64) canonical.Trade {
+	t := mkTrade(base, quote)
+	t.Source = source
+	return t
+}
+
 // mkTrade builds a Trade for testing. base/quote are expressed in
 // the asset's smallest unit (stroops/stroops-analogue).
 func mkTrade(base, quote int64) canonical.Trade {
@@ -182,5 +191,47 @@ func TestTotalVolumes(t *testing.T) {
 	}
 	if got := aggregate.TotalQuoteVolume(trades).BigInt(); got.Cmp(wantQuote) != 0 {
 		t.Errorf("TotalQuoteVolume = %v, want %v", got, wantQuote)
+	}
+}
+
+func TestSourceContributions_PerSourceWeights(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTradeWithSource("binance", 100, 200), // quote=200
+		mkTradeWithSource("binance", 100, 200), // quote=200 (same source)
+		mkTradeWithSource("kraken", 100, 100),  // quote=100
+		mkTradeWithSource("sdex", 100, 100),    // quote=100
+	}
+	got := aggregate.SourceContributions(trades)
+	if len(got) != 3 {
+		t.Fatalf("got %d sources, want 3", len(got))
+	}
+	bySource := make(map[string]aggregate.SourceContribution, len(got))
+	for _, c := range got {
+		bySource[c.Source] = c
+	}
+	// Total quote = 200+200+100+100 = 600
+	// binance: 400/600 ≈ 0.6667; kraken: 100/600 ≈ 0.1667; sdex: 100/600 ≈ 0.1667
+	if w := bySource["binance"].Weight; w < 0.66 || w > 0.67 {
+		t.Errorf("binance weight = %v, want ~0.6667", w)
+	}
+	if c := bySource["binance"].TradeCount; c != 2 {
+		t.Errorf("binance count = %d, want 2", c)
+	}
+	if w := bySource["kraken"].Weight; w < 0.165 || w > 0.169 {
+		t.Errorf("kraken weight = %v, want ~0.1667", w)
+	}
+	// Weights sum to 1
+	var sum float64
+	for _, c := range got {
+		sum += c.Weight
+	}
+	if sum < 0.999 || sum > 1.001 {
+		t.Errorf("weights sum = %v, want 1.0", sum)
+	}
+}
+
+func TestSourceContributions_EmptyInput(t *testing.T) {
+	if got := aggregate.SourceContributions(nil); got != nil {
+		t.Errorf("got %v, want nil for empty input", got)
 	}
 }
