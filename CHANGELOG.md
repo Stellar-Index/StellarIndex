@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`docs/operations/showcase-deployment.md`.** New runbook for
+  shipping `web/showcase` to production. Covers the
+  Cloudflare Pages path (build command, env vars, custom-domain
+  bind, preview-deploy flow), Vercel/Netlify alternatives, the
+  rsync-to-r1 fallback, and post-deploy verification checks.
+  Closes the documentation gap between "the showcase code
+  exists in `web/showcase/`" and "ratesengine.net is live."
+
 ### Added
 
 - **CI: status-page Hugo build verification.** New
