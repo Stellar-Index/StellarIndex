@@ -313,7 +313,11 @@ func run(cfgPath string, dryRun bool) error {
 		MinUSDVolume:              cfg.Aggregate.MinUSDVolume,
 		DivergenceRefresher:       divRefresher,
 		StreamPublisher:           streamPub,
-		Logger:                    logger,
+		// Per-source contribution mirror — feeds the showcase
+		// source-donut on every price card. See migrations/0026 +
+		// Phase 2 of the showcase implementation plan.
+		ContributionSink: newContributionSink(store),
+		Logger:           logger,
 	})
 
 	if dryRun {

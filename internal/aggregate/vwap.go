@@ -69,3 +69,74 @@ func TotalQuoteVolume(trades []canonical.Trade) canonical.Amount {
 	}
 	return canonical.NewAmount(sum)
 }
+
+// SourceContribution captures one source's share of a windowed VWAP
+// — the building block the showcase source-contribution donut renders.
+//
+// Weight is a fraction in [0, 1]; sums to 1.0 across all
+// contributions for the same trade slice (modulo float rounding).
+type SourceContribution struct {
+	Source      string
+	Weight      float64
+	BaseVolume  *big.Int
+	QuoteVolume *big.Int
+	TradeCount  int
+}
+
+// SourceContributions returns one [SourceContribution] per distinct
+// trade.Source in `trades`. Each entry's Weight is its
+// quote-volume share (i.e. how much that source contributed to the
+// VWAP's numerator).
+//
+// Skips the same edge cases as [VWAP] — trades with non-positive
+// base or quote volumes don't contribute. Returns nil for an empty
+// or all-skipped input.
+func SourceContributions(trades []canonical.Trade) []SourceContribution {
+	if len(trades) == 0 {
+		return nil
+	}
+	type accum struct {
+		base  *big.Int
+		quote *big.Int
+		count int
+	}
+	bySource := make(map[string]*accum)
+	totalQuote := new(big.Int)
+	for i := range trades {
+		t := &trades[i]
+		b := t.BaseAmount.BigInt()
+		if b.Sign() <= 0 {
+			continue
+		}
+		q := t.QuoteAmount.BigInt()
+		if q.Sign() <= 0 {
+			continue
+		}
+		a, ok := bySource[t.Source]
+		if !ok {
+			a = &accum{base: new(big.Int), quote: new(big.Int)}
+			bySource[t.Source] = a
+		}
+		a.base.Add(a.base, b)
+		a.quote.Add(a.quote, q)
+		a.count++
+		totalQuote.Add(totalQuote, q)
+	}
+	if totalQuote.Sign() == 0 {
+		return nil
+	}
+	totalQuoteF, _ := new(big.Float).SetInt(totalQuote).Float64()
+	out := make([]SourceContribution, 0, len(bySource))
+	for source, a := range bySource {
+		quoteF, _ := new(big.Float).SetInt(a.quote).Float64()
+		weight := quoteF / totalQuoteF
+		out = append(out, SourceContribution{
+			Source:      source,
+			Weight:      weight,
+			BaseVolume:  a.base,
+			QuoteVolume: a.quote,
+			TradeCount:  a.count,
+		})
+	}
+	return out
+}
