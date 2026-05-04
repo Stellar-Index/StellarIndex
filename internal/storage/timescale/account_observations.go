@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -99,7 +100,24 @@ type AccountObservation struct {
 //
 // Used by the LCMReserveBalanceReader + LCMHomeDomainResolver
 // shipping in the next PR.
+//
+// Schema constraint: `account_observations.ledger` is `integer`
+// (postgres int4 = signed 32-bit, max 2,147,483,647). The Go
+// signature accepts uint32 for symmetry with Stellar's ledger
+// type, but values > MaxInt32 must be capped before reaching
+// `pq` — otherwise the driver returns
+// `pq: value "..." is out of range for type integer (22003)`
+// and the lookup fails. Callers passing "no upper bound" should
+// use `math.MaxInt32`, NOT `^uint32(0)`. This function defensively
+// caps high values so a regression in any caller doesn't surface
+// as a flood of resolver errors. (At Stellar's current ~62M
+// ledger and ~5 ledgers/sec there's ~13 years of headroom before
+// MaxInt32 is reached; switching to bigint is a future migration.)
 func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (AccountObservation, error) {
+	const maxInt32 = uint32(math.MaxInt32)
+	if asOfLedger > maxInt32 {
+		asOfLedger = maxInt32
+	}
 	const q = `
         SELECT account_id, ledger, observed_at,
                balance_stroops::text, home_domain, flags, seq_num, is_removal
