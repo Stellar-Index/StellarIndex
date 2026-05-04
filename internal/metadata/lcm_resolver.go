@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // AccountObservationLookup is the storage-side primitive the
@@ -50,7 +51,16 @@ func NewLCMHomeDomainResolver(store AccountObservationLookup) *LCMHomeDomainReso
 // adapter logs them but presents ("", false) to the legacy
 // signature so the asset-detail handler still serves the response.
 func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string) (string, bool, error) {
-	const observerLatestLedger = ^uint32(0)
+	// Sentinel for "no upper bound, give me the latest observation."
+	// MUST fit in postgres int4 (the `account_observations.ledger`
+	// column type) — the previous `^uint32(0)` (MaxUint32) overflowed
+	// every call with `pq: value "4294967295" is out of range for
+	// type integer (22003)`, defeating the LCM path on r1 and
+	// silently routing every issuer through the static-map fallback.
+	// math.MaxInt32 (2,147,483,647) is far past Stellar's current
+	// ledger (~62M @ 5 ledgers/sec → ~13y of headroom) so the
+	// "ledger <= sentinel" semantics are preserved without overflow.
+	const observerLatestLedger = uint32(math.MaxInt32)
 	domain, ok, err := r.store.HomeDomainAtOrBefore(ctx, issuer, observerLatestLedger)
 	if err != nil {
 		// Wrap so the caller can errors.Is for fall-back behaviour.

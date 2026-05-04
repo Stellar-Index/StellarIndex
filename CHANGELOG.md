@@ -17,6 +17,22 @@ against.
 
 ### Fixed
 
+- **LCM home-domain resolver overflowed postgres int4 on every
+  call.** `HomeDomainFor` used `^uint32(0)` (= 4,294,967,295 =
+  MaxUint32) as the "no upper bound" sentinel for the
+  `account_observations.ledger <= $2` filter, but the column is
+  declared `integer` (signed 32-bit, max 2,147,483,647). Every
+  resolve hit lib/pq with `pq: value "4294967295" is out of range
+  for type integer (22003)`, so r1's API logged
+  `LCM home-domain resolver failed; falling back to static map`
+  for every issuer on every `/v1/assets` request — defeating the
+  LCM path entirely. Switched to `math.MaxInt32` (~13y of headroom
+  vs Stellar's current ~62M ledger) and added a defensive cap in
+  the storage method so a future caller passing a too-high value
+  doesn't repeat the failure mode. New
+  `TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32` pins the
+  contract.
+
 - **`/v1/assets/{id}` `volume_24h_usd` always returned "0" for native
   XLM.** The call site passed `supply.AssetKey(asset)` to
   `Volume24hUSDForAsset`, which returns `"XLM"` for native (the

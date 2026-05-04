@@ -7,16 +7,39 @@ import (
 )
 
 type fakeLookup struct {
-	rows map[string]string
-	err  error
+	rows          map[string]string
+	err           error
+	gotAsOfLedger uint32 // captures the asOf the resolver passed
 }
 
-func (f *fakeLookup) HomeDomainAtOrBefore(_ context.Context, issuer string, _ uint32) (string, bool, error) {
+func (f *fakeLookup) HomeDomainAtOrBefore(_ context.Context, issuer string, asOfLedger uint32) (string, bool, error) {
+	f.gotAsOfLedger = asOfLedger
 	if f.err != nil {
 		return "", false, f.err
 	}
 	d, ok := f.rows[issuer]
 	return d, ok, nil
+}
+
+// TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32 pins the
+// "no upper bound" sentinel below MaxInt32 — the previous
+// `^uint32(0)` overflowed the postgres int4 column on every call,
+// resurfacing as a flood of `pq: value "4294967295" is out of range
+// for type integer (22003)` errors that defeated the LCM path
+// entirely on r1 and silently routed every issuer through the
+// static-map fallback.
+func TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32(t *testing.T) {
+	const maxInt32 = uint32(1<<31 - 1) // 2,147,483,647
+	lookup := &fakeLookup{rows: map[string]string{}}
+	r := NewLCMHomeDomainResolver(lookup)
+	_, _, _ = r.HomeDomainFor(context.Background(), "GA1")
+	if lookup.gotAsOfLedger > maxInt32 {
+		t.Errorf("resolver passed asOfLedger=%d which overflows postgres int4 (max %d). Use math.MaxInt32 not ^uint32(0).",
+			lookup.gotAsOfLedger, maxInt32)
+	}
+	if lookup.gotAsOfLedger == 0 {
+		t.Errorf("resolver passed asOfLedger=0 — that means 'only observations up to genesis', not 'latest'")
+	}
 }
 
 func TestLCMHomeDomainResolver_HappyPath(t *testing.T) {
