@@ -31,9 +31,7 @@ export function CoinTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolean
     { key: 'markets', label: 'Markets', disabled: true },
     { key: 'history', label: 'History', disabled: true },
     { key: 'supply', label: 'Supply', disabled: true },
-    ...(hasIssuer
-      ? ([{ key: 'issuer', label: 'Issuer', disabled: true }] as const)
-      : []),
+    ...(hasIssuer ? ([{ key: 'issuer', label: 'Issuer' }] as const) : []),
     { key: 'liquidity', label: 'Liquidity', disabled: true },
   ];
 
@@ -71,34 +69,27 @@ export function CoinTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolean
 export function ActiveTabSlot({
   overview,
   chart,
+  issuer,
 }: {
   overview: React.ReactNode;
   chart: React.ReactNode;
+  issuer?: React.ReactNode;
 }) {
-  return <ActiveTabClient overview={overview} chart={chart} />;
-}
-
-function ActiveTabClient({
-  overview,
-  chart,
-}: {
-  overview: React.ReactNode;
-  chart: React.ReactNode;
-}) {
-  // Tiny inline component — single-purpose, exists to read
-  // useSearchParams without adding more files. Returns the right
-  // ReactNode given the active tab.
-  return <ActiveBody overview={overview} chart={chart} />;
+  return <ActiveBody overview={overview} chart={chart} issuer={issuer} />;
 }
 
 function ActiveBody({
   overview,
   chart,
+  issuer,
 }: {
   overview: React.ReactNode;
   chart: React.ReactNode;
+  issuer?: React.ReactNode;
 }) {
   const params = useSearchParams();
   const tab = (params.get('tab') as CoinTab) || 'overview';
-  return tab === 'chart' ? <>{chart}</> : <>{overview}</>;
+  if (tab === 'chart') return <>{chart}</>;
+  if (tab === 'issuer' && issuer) return <>{issuer}</>;
+  return <>{overview}</>;
 }
