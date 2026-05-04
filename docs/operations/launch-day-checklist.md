@@ -41,6 +41,12 @@ The week before the cut. Done while everything is still calm.
       scenarios passed; `test/chaos/reports/<launch-cut>/RETRO.md`
       committed; any code-side fixes the chaos run motivated have
       landed.
+- [ ] **Showcase site staged.** Cloudflare Pages project for
+      `web/showcase/` is connected per
+      [`showcase-deployment.md`](showcase-deployment.md), a
+      preview deploy succeeded, `ratesengine.net` custom domain
+      is bound but DNS still points at staging. Final cutover is
+      step 5 of T-0.
 
 ## T-3 days — final freeze
 
@@ -129,14 +135,33 @@ Order matters. Don't skip.
    Pass condition: `verdict: pass`. Any `failed_reasons` halts
    the cut → trigger rollback.
 
-5. **Status page goes live.** Post the launch-cut maintenance
+5. **Showcase site goes live (`ratesengine.net`).** Per
+   [`showcase-deployment.md`](showcase-deployment.md), the
+   site is built statically from `web/showcase/` and served
+   from Cloudflare Pages. Trigger a fresh build now that the
+   API is in production auth-mode so the build-time
+   `generateStaticParams` fetch picks up the live coin
+   directory:
+   ```sh
+   # CF Pages: dashboard → Workers & Pages → ratesengine-showcase
+   #          → Deployments → Retry deployment
+   #
+   # Or push an empty commit:
+   git commit --allow-empty -m "chore(showcase): rebuild for launch"
+   git push origin main
+   ```
+   Pass condition: `curl -I https://ratesengine.net | head -3`
+   returns 200, and `curl -I https://ratesengine.net/coins/USDC/`
+   is 200 (not 404).
+
+6. **Status page goes live.** Post the launch-cut maintenance
    window resolved. (Or, if Upptime has been running pre-cut,
    confirm components are still "operational".)
 
-6. **Send customer comms.** Email + Slack templates from T-1 day.
+7. **Send customer comms.** Email + Slack templates from T-1 day.
    Public announcement on the project handle if applicable.
 
-7. **Open the L6.7 24-h watch.**
+8. **Open the L6.7 24-h watch.**
    - On-call clock starts.
    - SLO dashboards open in a window the on-call keeps
      tabbed for the next 24 h.
@@ -152,6 +177,8 @@ Order matters. Don't skip.
   GitHub Release.
 - `https://api.ratesengine.net/v1/healthz` returns 200 from
   any external network.
+- `https://ratesengine.net` returns 200 and renders live
+  data in the home Network panel.
 - `https://status.ratesengine.net` shows "all systems
   operational".
 - The customer-comms message has been delivered.
@@ -172,6 +199,7 @@ rollback also includes a follow-up "we're rolling back" message.
   procedure this runbook orchestrates.
 - [`public-flip.md`](public-flip.md) — repo cut-over mechanics.
 - [`cdn-setup.md`](cdn-setup.md) — CDN provisioning.
+- [`showcase-deployment.md`](showcase-deployment.md) — `ratesengine.net` (showcase site) hosting.
 - [`status-page-setup.md`](status-page-setup.md) — status page setup.
 - [`chaos-wave1-runbook.md`](chaos-wave1-runbook.md) — chaos
   Wave 1 execution.

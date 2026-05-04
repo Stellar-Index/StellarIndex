@@ -17,6 +17,15 @@ against.
 
 ### Documentation
 
+- **`launch-day-checklist.md` includes the showcase site.** Adds
+  T-7 prep step (CF Pages project staged, custom domain bound,
+  preview deploy succeeded), T-0 step 5 (force a fresh build
+  after API auth-mode flip so build-time `generateStaticParams`
+  picks up production data), pass-condition entry for
+  `https://ratesengine.net`, and a Cross-references link to
+  `showcase-deployment.md`. Closes the gap where the runbook
+  knew about API + status page but not the showcase.
+
 - **`docs/operations/showcase-deployment.md`.** New runbook for
   shipping `web/showcase` to production. Covers the
   Cloudflare Pages path (build command, env vars, custom-domain
