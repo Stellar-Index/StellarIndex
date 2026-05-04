@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Dependencies
+
+- **`redis/go-redis/v9` v9.18.0 → v9.19.0.** Patch-minor bump
+  with relevant production-stability fixes upstream:
+  `wrappedOnClose` resource leak, `Pool.Close()` suppressing
+  TLS `closeNotify` timeouts on stale connections, FIFO waiter
+  ordering race in `ConnStateMachine.notifyWaiters`, and
+  `READONLY` detection inside Lua script error messages so
+  read-only-replica retries fire correctly. No API surface
+  changes affecting our code paths (ratelimit + freeze marker +
+  SEP-1 cache). Verified `go test ./internal/ratelimit/…
+  ./internal/aggregate/freeze/…` green plus full
+  `bash scripts/dev/verify.sh`. Supersedes dependabot PR #548.
+
 ### CI
 
 - **Bump actions in `status-page.yml` to match `ci.yml`.**
