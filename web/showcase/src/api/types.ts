@@ -1216,10 +1216,17 @@ export interface paths {
         };
         /**
          * Distinct trading pairs with activity summary.
-         * @description One entry per (base, quote) pair present in the trades
-         *     store. Cursor-paginated (opaque cursor keyed on
-         *     `<base>|<quote>`). Each entry reports the pair's most
-         *     recent trade timestamp + a 24h trade count.
+         * @description One entry per (base, quote) pair that has traded in the
+         *     recency window (default 14 days). Cursor-paginated (opaque
+         *     cursor keyed on `<base>|<quote>`). Each entry reports the
+         *     pair's most recent trade timestamp + a 24h trade count.
+         *
+         *     The recency window keeps the listing scoped to "active
+         *     markets" — pairs that haven't traded in 14 days don't
+         *     appear. This also bounds the underlying scan against the
+         *     trades hypertable so chunk pruning keeps response times
+         *     sub-second on a hypertable with hundreds of millions of
+         *     rows.
          */
         get: {
             parameters: {
@@ -1254,6 +1261,294 @@ export interface paths {
                     };
                 };
                 400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issuers/{g_strkey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Issuer detail — auth flags, SEP-1 metadata, issued assets.
+         * @description Returns the row from the `issuers` table joined with the
+         *     list of every classic asset this G-account has ever issued.
+         *     Auth flags + SEP-1 payload land per-issuer as the SEP-1
+         *     fetcher worker resolves them (Phase 4); fields stay null
+         *     until then.
+         *
+         *     Powers the showcase `/coins/{slug}` issuer card and
+         *     `/issuers/{G-strkey}` detail page.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    g_strkey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description One issuer row plus issued-asset list. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            g_strkey: string;
+                            home_domain?: string;
+                            auth_required?: boolean | null;
+                            auth_revocable?: boolean | null;
+                            auth_immutable?: boolean | null;
+                            auth_clawback?: boolean | null;
+                            /** Format: date-time */
+                            sep1_resolved_at?: string | null;
+                            sep1_payload?: {
+                                [key: string]: unknown;
+                            } | null;
+                            creation_ledger?: number | null;
+                            assets?: {
+                                asset_id?: string;
+                                code?: string;
+                                slug?: string;
+                                first_seen_ledger?: number;
+                                last_seen_ledger?: number;
+                                /** Format: int64 */
+                                observation_count?: number;
+                            }[];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Coin directory — every classic asset observed on Stellar.
+         * @description Auto-populated registry of every classic asset observed in
+         *     any trade or ChangeTrust op. v0 of this endpoint returns the
+         *     bare-minimum identity tuple plus activity counters, ordered
+         *     by observation count desc. Future passes (per
+         *     data-inventory §10.1) will join `change_summary_5m` +
+         *     `classic_asset_stats_5m` so each row carries pre-computed
+         *     price + delta + volume.
+         *
+         *     Powers the showcase /coins directory.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Max rows to return; 1-500, default 100. */
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Array of coin entries. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            slug: string;
+                            asset_id: string;
+                            code: string;
+                            issuer: string;
+                            first_seen_ledger: number;
+                            last_seen_ledger: number;
+                            /** Format: int64 */
+                            observation_count: number;
+                        }[];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/changes/{entity_type}/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Multi-window delta strip for one entity.
+         * @description Returns the pre-computed multi-window delta strip + ATH/ATL +
+         *     streak + acceleration for one (entity_type, id) tuple. Powers
+         *     every list view + price card on the showcase site
+         *     (data-inventory §6.1). Refreshed every 5 minutes by the
+         *     change-summary worker; stale rows (>10 min) indicate the
+         *     worker is lagging.
+         *
+         *     Returns 404 when the worker hasn't computed a row yet (fresh
+         *     deployment, newly-added entity, or bounded history). Returns
+         *     503 when this deployment hasn't wired the change-summary
+         *     reader.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    entity_type: "coin" | "protocol" | "pair" | "source";
+                    /**
+                     * @description Canonical id for the entity. For `coin`, the asset slug
+                     *     (e.g. `stellar`). For `pair`, `base/quote` form. For
+                     *     `protocol`, the protocol slug. For `source`, the source
+                     *     name.
+                     */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description One row from change_summary_5m. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            entity_type?: string;
+                            entity_id?: string;
+                            /** Format: date-time */
+                            refreshed_at?: string;
+                            current_value?: number;
+                            h1_value?: number | null;
+                            h1_delta_pct?: number | null;
+                            h24_value?: number | null;
+                            h24_delta_pct?: number | null;
+                            d7_value?: number | null;
+                            d7_delta_pct?: number | null;
+                            d30_value?: number | null;
+                            d30_delta_pct?: number | null;
+                            ath_value?: number | null;
+                            /** Format: date-time */
+                            ath_at?: string | null;
+                            atl_value?: number | null;
+                            /** Format: date-time */
+                            atl_at?: string | null;
+                            /** @enum {string|null} */
+                            streak_direction?: "up" | "down" | "flat" | null;
+                            streak_days?: number | null;
+                            /** @enum {string|null} */
+                            acceleration?: "increasing" | "flat" | "decreasing" | null;
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagnostics/cursors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-source ingest cursor positions.
+         * @description Returns every row of the `ingestion_cursors` table — the
+         *     per-source markers the dispatcher persists after each ledger
+         *     is processed. Used for operator-facing diagnostics and the
+         *     showcase /diagnostics page (so you can see at a glance which
+         *     sources are caught up, which are lagging, and how stale the
+         *     last update is).
+         *
+         *     Sources that track multiple positions independently (e.g.
+         *     Soroswap tracks the factory cursor + one cursor per pair)
+         *     return one row per (source, sub_source) tuple.
+         *
+         *     Returns 503 when the deployment hasn't wired the cursors
+         *     reader.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Array of cursor entries, one per (source, sub_source). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            source: string;
+                            sub_source?: string;
+                            last_ledger: number;
+                            /** Format: date-time */
+                            last_updated: string;
+                            /** Format: int64 */
+                            lag_seconds: number;
+                        }[];
+                    };
+                };
                 429: components["responses"]["RateLimited"];
                 500: components["responses"]["InternalError"];
                 503: components["responses"]["ServiceUnavailable"];
