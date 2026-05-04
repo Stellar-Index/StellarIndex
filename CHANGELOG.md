@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Developer experience
+
+- **`scripts/dev/verify.sh` runs the showcase gate.** The local
+  pre-push verify script previously stopped at the Go integration
+  build. Adds Showcase typecheck + lint + build as a final stage,
+  graceful-skipped when pnpm isn't installed (mirroring the
+  promtool skip pattern). Closes the gap where a Next.js
+  `output: 'export'` failure would slip past local verify and
+  only fail in CI.
+
 ### Documentation
 
 - **`getting-started.md` lists the interactive explorer.** The

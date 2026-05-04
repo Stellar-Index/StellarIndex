@@ -31,5 +31,19 @@ echo "=== Test ==="          && make test
 # Real `make test-integration` lives outside verify because Docker
 # isn't always available locally.
 echo "=== Integration build ===" && make test-integration-build
+# Showcase typecheck + lint + build. Graceful-skip when pnpm
+# isn't installed locally — CI runs the same gate via the
+# `web/showcase` job, so a local skip just defers the check.
+# The build catches Next.js output: 'export' constraints
+# (e.g. dynamic = 'force-static' on sitemap/robots) that
+# typecheck alone misses.
+if command -v pnpm >/dev/null 2>&1 && [ -f web/showcase/pnpm-lock.yaml ]; then
+    echo "=== Showcase typecheck ===" && make web-typecheck
+    echo "=== Showcase lint ==="      && make web-lint
+    echo "=== Showcase build ==="     && \
+        NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build >/dev/null
+else
+    echo "=== Showcase (skipped — pnpm not installed; install via 'brew install pnpm' or 'corepack enable') ==="
+fi
 echo ""
 echo "✅ ALL CHECKS PASSED"
