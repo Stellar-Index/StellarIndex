@@ -78,3 +78,34 @@ export function useSources(classFilter?: Source['class']) {
       apiGet<Source[]>('/v1/sources', classFilter ? { class: classFilter } : undefined),
   });
 }
+
+export type Coin = {
+  slug: string;
+  asset_id: string;
+  code: string;
+  issuer: string;
+  first_seen_ledger: number;
+  last_seen_ledger: number;
+  observation_count: number;
+};
+
+/**
+ * useCoins — fetches the registry-aware coin directory. v0 returns
+ * bare classic-asset rows; future passes will join change_summary_5m
+ * + classic_asset_stats_5m so each row carries pre-computed price +
+ * delta + volume.
+ *
+ * The API wraps the array in `{ data: [...] }` per the standard
+ * envelope; the hook unwraps it so consumers get a plain array.
+ */
+type CoinsEnvelope = { data: Coin[] };
+
+export function useCoins(limit = 100) {
+  return useQuery<Coin[]>({
+    queryKey: ['/v1/coins', limit],
+    queryFn: async () => {
+      const env = await apiGet<CoinsEnvelope | Coin[]>('/v1/coins', { limit });
+      return Array.isArray(env) ? env : env.data;
+    },
+  });
+}
