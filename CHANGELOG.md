@@ -40,6 +40,17 @@ against.
   disagreements against ground truth. Sink failures are swallowed
   — the Redis cache write is the load-bearing operation and must
   not be blocked by a postgres blip.
+- **Decoder-stats periodic flush.** New
+  `internal/dispatcher/statsflush` worker snapshots
+  `dispatcher.Stats()` every 5 min, computes per-source deltas
+  against its previous snapshot, and writes one row per (bucket,
+  source) to the `decoder_stats_5m` hypertable (migration 0020).
+  Snapshot-and-delta semantics (not snapshot-and-clear) — resetting
+  dispatcher counters from outside would race with concurrent
+  decoder writes; the worker keeps its own "last seen" reference.
+  Wired into `cmd/ratesengine-indexer` as a goroutine bound to
+  the root context. Powers /v1/diagnostics/decoders + the
+  showcase /diagnostics decoder-coverage table.
 
 ### Fixed
 

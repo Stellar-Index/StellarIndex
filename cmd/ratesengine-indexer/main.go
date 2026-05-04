@@ -42,6 +42,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
+	"github.com/RatesEngine/rates-engine/internal/dispatcher/statsflush"
 	"github.com/RatesEngine/rates-engine/internal/ledgerstream"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
@@ -177,6 +178,26 @@ func run(cfgPath string, dryRun bool) error {
 			"sac_wrappers", len(cfg.Supply.SACWrappers),
 			"watched_sep41_contracts", len(cfg.Supply.WatchedSEP41Contracts))
 	}
+
+	// ─── Decoder-stats periodic flush ────────────────────────────
+	// Snapshots dispatcher.Stats() every 5 min and writes per-source
+	// deltas to the decoder_stats_5m hypertable. Powers
+	// /v1/diagnostics/decoders + the showcase /diagnostics page.
+	// See migrations/0020 + Phase 2 of the showcase implementation
+	// plan.
+	decoderStatsFlusher := statsflush.New(disp, store,
+		logger.With("component", "decoder-stats-flush"),
+		statsflush.Options{Interval: 5 * time.Minute})
+	decoderStatsCtx, decoderStatsCancel := context.WithCancel(rootCtx)
+	decoderStatsDone := make(chan struct{})
+	go func() {
+		defer close(decoderStatsDone)
+		_ = decoderStatsFlusher.Run(decoderStatsCtx)
+	}()
+	defer func() {
+		decoderStatsCancel()
+		<-decoderStatsDone
+	}()
 
 	// ─── SEP-41 auto-discovery sink ──────────────────────────────
 	// Buffers Hits to a channel; a worker goroutine drains them to
