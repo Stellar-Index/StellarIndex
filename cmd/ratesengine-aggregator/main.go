@@ -209,12 +209,23 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	var freezeWriter orchestrator.FreezeMarker
 	if checker != nil && rdb != nil {
-		w, err := freeze.NewWriter(rdb, 0) // 0 → cachekeys.FreezeTTL default
+		// Optional durable mirror: every freeze decision lands in the
+		// freeze_events hypertable so the showcase /anomalies timeline
+		// has queryable history. Idempotent on the currently-firing
+		// row, so refreshing the Redis TTL doesn't create duplicates.
+		// See migrations/0018_create_freeze_events.up.sql + Phase 2
+		// of docs/architecture/showcase-site-implementation-plan.md.
+		opts := []freeze.WriterOption{
+			freeze.WithEventSink(timescale.NewFreezeEventSink(store)),
+		}
+		w, err := freeze.NewWriter(rdb, 0, opts...) // 0 → cachekeys.FreezeTTL default
 		if err != nil {
 			return fmt.Errorf("freeze writer: %w", err)
 		}
 		freezeWriter = w
-		logger.Info("anomaly + freeze: wired", "thresholds", len(cfg.Anomaly.Thresholds))
+		logger.Info("anomaly + freeze: wired",
+			"thresholds", len(cfg.Anomaly.Thresholds),
+			"event_sink", "timescale")
 	} else if checker != nil {
 		logger.Warn("anomaly enabled but no Redis — freeze markers won't be written; anomaly metric still emits")
 	}

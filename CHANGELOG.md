@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Freeze-event durable mirror.** `internal/aggregate/freeze` now
+  takes an optional `EventSink` via the new `WithEventSink` option;
+  production wires `internal/storage/timescale.FreezeEventSink`
+  which writes every clear→firing transition to the `freeze_events`
+  hypertable (migration 0018). Idempotent against the
+  currently-firing row, so refreshing the Redis TTL doesn't
+  duplicate. The Redis marker remains source-of-truth for the API's
+  `flags.frozen` field; the durable mirror powers the showcase
+  `/anomalies` timeline (Phase 2 of the showcase implementation
+  plan). Sink failures are swallowed — the load-bearing Redis write
+  must not be blocked by a postgres blip.
+
 ### Fixed
 
 - **Soroswap zero-trades bug — postgres-persisted pair registry.**
