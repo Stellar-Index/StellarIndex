@@ -16,6 +16,29 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Dashboard key-management endpoints + UI (Phase 1, Week 4
+  part 2).** New `internal/api/v1/dashboardkeys` package wires
+  three session-gated routes:
+  `GET /v1/dashboard/keys` (list), `POST /v1/dashboard/keys`
+  (mint, returns plaintext exactly once), and
+  `DELETE /v1/dashboard/keys/{id}` (revoke). Cross-account
+  revoke attempts return 404 (same shape as not-found, so
+  attackers can't enumerate other accounts' key IDs). Quota
+  capped at 25 active keys per account. Companion
+  `web/dashboard/src/app/keys` UI: list table with revoke
+  button + "save this key now" banner that displays the
+  plaintext exactly once + create-key form with name /
+  description / rate-limit / IP-allowlist fields. Bare IPs are
+  auto-promoted to /32 (v4) or /128 (v6). Server-side wired
+  via the new `v1.Options.SessionAuth` middleware that
+  resolves the dashboard cookie on every request — anonymous
+  + bearer-token traffic passes through untouched.
+
+  **Note:** keys minted from the dashboard land in Postgres
+  only and DO NOT authenticate against the runtime API until
+  the cutover (next slice). The dashboard surfaces this in a
+  footer notice. The `/v1/signup` flow (Redis-canonical) keeps
+  working unchanged.
 - **APIKey Postgres store (Phase 1, Week 4 part 1).** New
   `postgresstore.APIKeyStore` against migration 0027's
   `api_keys` table — concrete impl of `platform.APIKeyStore` with

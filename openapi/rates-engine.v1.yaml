@@ -1492,6 +1492,102 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /dashboard/keys:
+    get:
+      tags: [dashboard]
+      summary: Customer dashboard — list this account's API keys.
+      description: |
+        Session-gated. Returns every key (active + revoked) for
+        the authenticated user's account, ordered oldest-first.
+        Plaintext is never returned by this endpoint — only
+        the prefix (`rek_4f9c1d8b…`).
+      responses:
+        "200":
+          description: Key list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items: { $ref: "#/components/schemas/DashboardKey" }
+                required: [keys]
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
+      tags: [dashboard]
+      summary: Customer dashboard — mint a new API key.
+      description: |
+        Session-gated. Mints a new key, returns the plaintext
+        ONCE. The dashboard surfaces it in a "save this now"
+        banner; subsequent reads only see the prefix. Owner /
+        admin / member roles can mint; viewer + billing 403.
+        Rate-limited to MaxKeysPerAccount=25 active keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateKeyRequest" }
+      responses:
+        "201":
+          description: Key minted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateKeyResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: Role can't mint keys.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: Account already at the active-key quota.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/keys/{id}:
+    delete:
+      tags: [dashboard]
+      summary: Customer dashboard — revoke a key.
+      description: |
+        Session-gated. Soft-delete by setting revoked_at;
+        idempotent. 404 when the key doesn't exist OR belongs
+        to a different account (same shape so attackers can't
+        enumerate cross-account key_ids).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: Role can't revoke keys.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Key not found.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /auth/login:
     post:
       tags: [auth]
@@ -1848,6 +1944,87 @@ components:
             request_id: "70c8017d79651070fd16c2c9f065d846"
 
   schemas:
+    DashboardKey:
+      type: object
+      description: |
+        Dashboard view of an API key. Plaintext is NEVER on this
+        shape — that's only on `CreateKeyResponse.plaintext`,
+        returned exactly once at creation time.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        key_prefix:
+          type: string
+          description: First 12 chars of the plaintext (`rek_<8hex>`).
+        tier:
+          type: string
+          enum: [apikey, partner, operator]
+        rate_limit_per_min: { type: integer }
+        monthly_quota: { type: integer, format: int64 }
+        usage_alert_threshold_pct: { type: integer }
+        ip_allowlist:
+          type: array
+          items: { type: string }
+        referer_allowlist:
+          type: array
+          items: { type: string }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        revoked_reason: { type: string }
+        last_used_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+      required: [id, name, key_prefix, tier, rate_limit_per_min, created_at]
+
+    CreateKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          description: Customer-facing label.
+        description:
+          type: string
+          maxLength: 2000
+        rate_limit_per_min:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: Default 1000.
+        monthly_quota:
+          type: integer
+          format: int64
+        ip_allowlist:
+          type: array
+          items: { type: string }
+          description: |
+            CIDR (`203.0.113.0/24`) or bare IP (auto-promoted to
+            /32 v4 or /128 v6).
+        referer_allowlist:
+          type: array
+          items: { type: string }
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC 3339; must be in the future.
+        usage_alert_threshold_pct:
+          type: integer
+          minimum: 1
+          maximum: 100
+      required: [name]
+
+    CreateKeyResponse:
+      type: object
+      properties:
+        plaintext:
+          type: string
+          description: |
+            The full plaintext key. Returned exactly once; never
+            re-displayed. Customers store this in their secret
+            manager.
+        key: { $ref: "#/components/schemas/DashboardKey" }
+      required: [plaintext, key]
+
     # Base envelope pieces
     Flags:
       type: object
