@@ -1186,6 +1186,68 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/KeyCreatedEnvelope" }
 
+  /webhooks/stripe:
+    post:
+      tags: [account]
+      summary: Stripe webhook — paid-tier upgrade.
+      description: |
+        Receives Stripe webhook events. On `checkout.session.completed`
+        with `payment_status=paid`, looks up every API key whose
+        identifier matches `client_reference_id` and lifts their
+        `rate_limit_per_min` to the value implied by `metadata.tier`
+        (pro / business) or the explicit `metadata.rate_limit_per_min`
+        override.
+
+        Idempotent — Stripe at-least-once delivery means the same
+        event may arrive multiple times; the handler always sets the
+        same target rate-limit. Customer keeps their existing
+        plaintext key; effective on the next request (validator reads
+        the per-key budget on every Lookup).
+
+        Stripe-Signature header verified via HMAC-SHA256 with
+        timestamp drift bounded to 5 minutes. Endpoint returns 503
+        when the signing secret is unset (deployments without
+        Stripe).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Event acknowledged (regardless of whether keys were upgraded — non-2xx triggers Stripe retries).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:                { type: boolean }
+                  upgraded:          { type: integer, description: "Keys upgraded to the new rate limit." }
+                  keys_total:        { type: integer, description: "Total keys belonging to the identifier." }
+                  rate_limit_per_min: { type: integer }
+                  ignored:           { type: string, description: "Set when an event was acknowledged but not acted on (wrong type, unpaid)." }
+        "400":
+          description: Missing signature header / bad body / bad metadata.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "401":
+          description: Stripe-Signature verification failed.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: Webhook signing secret not configured.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /signup:
     post:
       tags: [account]
