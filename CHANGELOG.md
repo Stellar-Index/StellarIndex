@@ -16,6 +16,12 @@ against.
 ## [Unreleased]
 
 ### Added
+- `examples/` — first-class API usage examples for customers.
+  Ten `curl` scripts cover the launch endpoints (healthz, signup,
+  account/me, coins, price, price/stream, ohlc, history,
+  oracle/latest, markets) plus a Postman v2.1 collection
+  auto-generated from the OpenAPI spec. Each script is
+  smoke-tested against R1.
 - `configs/prometheus/rules.r1/` — single-host adaptation of the
   multi-host alert rules in `deploy/monitoring/rules/`. Six files
   apply on R1: api, aggregator, ingestion, infra, meta, slo
