@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Added
+- `configs/prometheus/rules.r1/` — single-host adaptation of the
+  multi-host alert rules in `deploy/monitoring/rules/`. Six files
+  apply on R1: api, aggregator, ingestion, infra, meta, slo
+  (42 rules total). Files that depend on services we don't run
+  on R1 (Redis/Postgres exporter, archive verifier, sla-probe) are
+  intentionally not adapted; see the directory's README for the
+  exclusion list and the migration path back to `deploy/monitoring`
+  once R2/R3 land.
+
 ## [v0.0.0-rc.1] — 2026-05-05 — Pre-release smoke test
 
 **Operator action required: no.**
