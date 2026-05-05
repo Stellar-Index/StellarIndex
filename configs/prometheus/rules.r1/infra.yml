@@ -1,0 +1,100 @@
+---
+# Host + disk + NVMe + ZFS alerts. Complements the per-service
+# rules — these catch the substrate failing out from under us.
+
+groups:
+  - name: ratesengine.infra
+    interval: 30s
+    rules:
+
+      - alert: ratesengine_host_down
+        expr: up{job="node_exporter"} == 0
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: infra
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/host-down.md
+        annotations:
+          summary: "Host {{ $labels.instance }} unreachable"
+          description: |
+            node_exporter on {{ $labels.instance }} hasn't scraped in 2+ min.
+            Either the host is down or the scrape path is broken. Service-
+            level alerts (timescale/redis/api) on this host will also fire.
+
+      - alert: ratesengine_host_cpu_high
+        expr: |
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: infra
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/host-cpu-high.md
+        annotations:
+          summary: "Host {{ $labels.instance }} CPU at {{ $value | humanize }}%"
+          description: |
+            CPU > 90 % for 10+ minutes. Either a runaway process or undersized
+            host. Dashboards show which service is the top consumer.
+
+      - alert: ratesengine_host_memory_high
+        expr: |
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)
+            / node_memory_MemTotal_bytes * 100 > 90
+        for: 10m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: infra
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/host-memory-high.md
+        annotations:
+          summary: "Host {{ $labels.instance }} memory at {{ $value | humanize }}%"
+          description: |
+            > 90 % memory for 10+ min. OOMKill risk. Check per-service
+            allocations; Postgres shared_buffers is the usual culprit if
+            the box also runs other workloads.
+
+      - alert: ratesengine_zfs_pool_degraded
+        expr: node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"} > 0
+        for: 60s
+        labels:
+          severity: page
+          team: ratesengine
+          component: infra
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/zfs-degraded.md
+        annotations:
+          summary: "ZFS pool {{ $labels.pool }} is {{ $labels.state }} (SEV-1)"
+          description: |
+            The data ZFS pool reports {{ $labels.state }} — one or more drives
+            have failed. raidz2 tolerates 2 failures, but every failure
+            reduces the redundancy margin. Replace + resilver ASAP.
+
+      - alert: ratesengine_nvme_smart_warn
+        expr: increase(node_disk_io_errors_total[1h]) > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: infra
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/nvme-smart.md
+        annotations:
+          summary: "NVMe {{ $labels.device }} reporting IO errors"
+          description: |
+            Any IO error on an NVMe is a warning sign — schedule a
+            replacement during next maintenance window even if ZFS isn't
+            complaining yet.
+
+      - alert: ratesengine_nvme_thermal_throttle
+        expr: node_nvme_temperature_celsius > 70
+        for: 5m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: infra
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/nvme-thermal.md
+        annotations:
+          summary: "NVMe {{ $labels.device }} at {{ $value }}°C"
+          description: |
+            Enterprise NVMe spec'd to 70 °C. Above this it throttles IO →
+            catchup slows, Postgres WAL flush stalls. Check chassis airflow
+            + ambient temperature.

@@ -1,0 +1,60 @@
+---
+# Meta / self-health alerts — catches Prometheus + AlertManager
+# itself failing. The deadmansswitch is the "everything is
+# silent" canary.
+
+groups:
+  - name: ratesengine.meta
+    interval: 30s
+    rules:
+
+      - alert: ratesengine_prometheus_scrape_failing
+        expr: up{job=~"ratesengine-api|ratesengine-indexer|ratesengine-aggregator|node_exporter|prometheus|caddy|galexie"} == 0
+        for: 2m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: meta
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/scrape-failing.md
+        annotations:
+          summary: "Prometheus scrape of {{ $labels.job }}@{{ $labels.instance }} failing"
+          description: |
+            A scrape target has been down for 2+ min. We lose visibility
+            into that subsystem's health until it returns. Doesn't mean the
+            subsystem is down — often the exporter is the problem.
+
+      - alert: ratesengine_alertmanager_config_bad
+        expr: alertmanager_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: meta
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/alertmanager-bad-config.md
+        annotations:
+          summary: "AlertManager config reload failed"
+          description: |
+            AlertManager reload failed. Any rule changes since the last
+            good reload are NOT live. Investigate with
+            `amtool check-config`.
+
+      # Deadmansswitch is inverse-logic: it fires constantly; AlertManager
+      # routes it to an external receiver that watches for its heartbeat.
+      # When the heartbeat stops, that receiver pages — which catches
+      # BOTH Prometheus-down and AlertManager-down (our primary alerting
+      # channels being broken).
+      - alert: ratesengine_deadmansswitch
+        expr: vector(1)
+        for: 0s
+        labels:
+          severity: informational
+          team: ratesengine
+          component: meta
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/deadmansswitch.md
+        annotations:
+          summary: "This alert fires constantly — alarm is when it STOPS"
+          description: |
+            Routing target (e.g., an external watchdog.healthchecks.io URL)
+            expects to receive this every minute. If it doesn't, IT pages
+            us via a separate channel — which catches Prometheus or
+            AlertManager being down.

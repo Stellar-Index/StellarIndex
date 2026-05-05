@@ -1,0 +1,106 @@
+---
+# API serving-plane alerts — SLA enforcement per Freighter RFP.
+
+groups:
+  - name: ratesengine.api
+    interval: 30s
+    rules:
+
+      - alert: ratesengine_api_down
+        expr: sum(up{job="ratesengine-api"}) == 0
+        for: 60s
+        labels:
+          severity: page
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-down.md
+        annotations:
+          summary: "Every API pod is down (SEV-1)"
+          description: |
+            No API instance is scrape-reachable across the fleet. This is a
+            full public outage — customers see connection errors. Follow the
+            api-down runbook immediately.
+
+      - alert: ratesengine_api_latency_p95_high
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine-api"}[5m]))
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-latency.md
+        annotations:
+          summary: "API p95 {{ $value | humanizeDuration }} > 500ms"
+          description: |
+            Freighter SLA is p95 ≤ 200 ms; we alarm at > 500 ms (≥ 2.5×
+            target). Typical root cause: Redis cache miss storm → Timescale
+            saturation. Check Redis eviction rate + Postgres connection pool.
+
+      - alert: ratesengine_api_latency_p99_high
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine-api"}[5m]))
+          ) > 2
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-latency.md
+        annotations:
+          summary: "API p99 {{ $value | humanizeDuration }} > 2s"
+          description: |
+            Freighter SLA is p99 ≤ 500 ms; we alarm at > 2 s (≥ 4× target).
+            Tail latency is usually a specific slow endpoint — check the
+            per-endpoint breakdown.
+
+      - alert: ratesengine_api_error_rate_high
+        expr: |
+          sum(rate(http_requests_total{job="ratesengine-api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="ratesengine-api"}[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-5xx.md
+        annotations:
+          summary: "API 5xx rate {{ $value | humanizePercentage }}"
+          description: |
+            Sustained > 1 % 5xx responses. At 5 % we escalate to SEV-1 via
+            the critical variant.
+
+      - alert: ratesengine_api_error_rate_critical
+        expr: |
+          sum(rate(http_requests_total{job="ratesengine-api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="ratesengine-api"}[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-5xx.md
+        annotations:
+          summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
+          description: |
+            > 5 % of requests returning 5xx. Customers are broken; declare
+            SEV-1 and follow the api-5xx runbook.
+
+      - alert: ratesengine_api_price_stale
+        expr: ratesengine_price_staleness_seconds > 120
+        for: 5m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-stale.md
+        annotations:
+          summary: "Price for {{ $labels.asset }} is {{ $value }}s stale"
+          description: |
+            The most recent aggregated price observation is older than 2 min
+            (Freighter SLA is 30 s freshness; we alarm at 4× SLA). Usually
+            means the source for this asset has stopped or the aggregator
+            isn't writing.
