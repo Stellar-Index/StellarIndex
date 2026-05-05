@@ -96,6 +96,7 @@ type StatusEnvelope = {
       page_count: number;
       ticket_count: number;
       informational_count: number;
+      active?: { name: string; severity: 'page' | 'ticket' | 'informational' }[];
     };
   };
   flags: { stale: boolean };
@@ -594,12 +595,35 @@ function SLAMetricsPanel({ env }: { env: StatusEnvelope }) {
 
       {incidents.active_count > 0 && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
-          <strong>{incidents.active_count} active incident{incidents.active_count > 1 ? 's' : ''}</strong>
-          {' — '}
-          {incidents.page_count > 0 && `${incidents.page_count} page-severity, `}
-          {incidents.ticket_count > 0 && `${incidents.ticket_count} ticket-severity, `}
-          {incidents.informational_count > 0 && `${incidents.informational_count} informational, `}
-          {' from local Alertmanager.'}
+          <div>
+            <strong>{incidents.active_count} active incident{incidents.active_count > 1 ? 's' : ''}</strong>
+            {' — '}
+            {[
+              incidents.page_count > 0 && `${incidents.page_count} page`,
+              incidents.ticket_count > 0 && `${incidents.ticket_count} ticket`,
+              incidents.informational_count > 0 && `${incidents.informational_count} informational`,
+            ]
+              .filter(Boolean)
+              .join(', ')}
+            .
+          </div>
+          {incidents.active && incidents.active.length > 0 && (
+            <ul className="mt-2 space-y-1 font-mono text-xs">
+              {incidents.active.map((a) => (
+                <li key={a.name} className="flex items-center gap-2">
+                  <span className={`inline-block h-2 w-2 rounded-full ${
+                    a.severity === 'page'
+                      ? 'bg-rose-500'
+                      : a.severity === 'ticket'
+                        ? 'bg-amber-500'
+                        : 'bg-slate-400'
+                  }`} />
+                  <span>{a.name}</span>
+                  <span className="text-amber-700 dark:text-amber-300">[{a.severity}]</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </section>

@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- `/v1/status` now surfaces the *names* of currently-firing alerts
+  (`incidents.active`), not just counts. Deduplicated by alertname,
+  page-severity first, capped at 16 entries — internal labels
+  (component / runbook_url / instance) are intentionally excluded
+  so the surface stays anonymous-friendly. The showcase /status
+  page renders the list under the active-incident banner with
+  per-severity dots. The Go SDK gains an `ActiveIncident` type on
+  `StatusIncidents.Active`. Verified live on R1.
 - `pkg/client`: new SDK methods covering the recently-shipped
   endpoints — `Client.Status` (system-health rollup),
   `Client.Keys` (list account keys), plus `Client.Healthz` /

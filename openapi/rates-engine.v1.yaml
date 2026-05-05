@@ -1774,7 +1774,24 @@ components:
             page_count:          { type: integer }
             ticket_count:        { type: integer }
             informational_count: { type: integer }
+            active:
+              type: array
+              description: |
+                Currently-firing alerts (deduplicated by alertname,
+                page-severity first, capped at 16 entries). Empty when
+                no alerts are firing OR no Prometheus backend is wired.
+              items: { $ref: "#/components/schemas/ActiveIncident" }
       required: [overall, region, services]
+
+    ActiveIncident:
+      type: object
+      properties:
+        name:     { type: string, description: "Alertmanager `alertname` label." }
+        severity:
+          type: string
+          enum: [page, ticket, informational]
+          description: Severity bucket per the Rates Engine alerting taxonomy.
+      required: [name, severity]
 
     StatusService:
       type: object

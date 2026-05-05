@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +82,23 @@ type StatusIncidents struct {
 	PageCount          int `json:"page_count"`
 	TicketCount        int `json:"ticket_count"`
 	InformationalCount int `json:"informational_count"`
+
+	// Active is the (deduplicated, severity-page-first) list of
+	// currently-firing alerts. Capped server-side at 16 — operators
+	// in a real incident reach for /metrics or alertmanager UI
+	// directly; this surface is a customer-facing "what's broken".
+	// Empty when no alerts are firing OR no Prometheus backend is
+	// wired.
+	Active []ActiveIncident `json:"active,omitempty"`
+}
+
+// ActiveIncident is one entry in [StatusIncidents.Active] — the
+// fields a public status page wants to render. Internal labels
+// (component, team, runbook_url) are deliberately excluded so this
+// surface stays anonymous-friendly.
+type ActiveIncident struct {
+	Name     string `json:"name"`
+	Severity string `json:"severity"`
 }
 
 // StatusBackend pulls signals from a metrics + alerting stack.
@@ -207,26 +225,66 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 
 func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncidents, error) {
 	var out StatusIncidents
-	for _, q := range []struct {
-		expr   string
-		target *int
-	}{
-		{`count(ALERTS{alertstate="firing",severity="page"})`, &out.PageCount},
-		{`count(ALERTS{alertstate="firing",severity="ticket"})`, &out.TicketCount},
-		{`count(ALERTS{alertstate="firing",severity="informational",alertname!="ratesengine_deadmansswitch"})`, &out.InformationalCount},
-	} {
-		res, err := p.queryVector(ctx, q.expr)
-		if err != nil {
-			return out, err
+
+	// Single query over ALERTS gives us names AND lets us count by
+	// severity client-side — saves three round-trips. Excludes the
+	// deadmansswitch (it fires constantly by design) and the
+	// recording-rule artefacts that show up in ALERTS as
+	// alertname="" when severity isn't set.
+	res, err := p.queryVector(ctx,
+		`ALERTS{alertstate="firing",alertname!="ratesengine_deadmansswitch",alertname!=""}`)
+	if err != nil {
+		return out, err
+	}
+
+	const maxActive = 16
+	seen := make(map[string]bool, len(res))
+	for _, sample := range res {
+		name, _ := sample.Labels["alertname"].(string)
+		severity, _ := sample.Labels["severity"].(string)
+		if name == "" || seen[name] {
+			continue
 		}
-		for _, s := range res {
-			if v, ok := s.Float(); ok {
-				*q.target = int(v)
-			}
+		seen[name] = true
+
+		switch severity {
+		case "page":
+			out.PageCount++
+		case "ticket":
+			out.TicketCount++
+		case "informational":
+			out.InformationalCount++
+		}
+
+		if len(out.Active) < maxActive {
+			out.Active = append(out.Active, ActiveIncident{
+				Name:     name,
+				Severity: severity,
+			})
 		}
 	}
+
+	// Sort by severity (page > ticket > informational) so the most
+	// urgent surfaces first when truncation matters.
+	sort.SliceStable(out.Active, func(i, j int) bool {
+		return severityRank(out.Active[i].Severity) < severityRank(out.Active[j].Severity)
+	})
+
 	out.ActiveCount = out.PageCount + out.TicketCount + out.InformationalCount
 	return out, nil
+}
+
+func severityRank(s string) int {
+	switch s {
+	case "page":
+		return 0
+	case "ticket":
+		return 1
+	case "informational":
+		return 2
+	default:
+		return 3
+	}
 }
 
 // promSample is one (metric, value) pair from the Prometheus

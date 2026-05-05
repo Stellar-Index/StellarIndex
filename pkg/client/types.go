@@ -434,10 +434,20 @@ type StatusFreshness struct {
 // severity. Zero values indicate no Alertmanager backend wired or
 // no alerts firing.
 type StatusIncidents struct {
-	ActiveCount        int `json:"active_count"`
-	PageCount          int `json:"page_count"`
-	TicketCount        int `json:"ticket_count"`
-	InformationalCount int `json:"informational_count"`
+	ActiveCount        int              `json:"active_count"`
+	PageCount          int              `json:"page_count"`
+	TicketCount        int              `json:"ticket_count"`
+	InformationalCount int              `json:"informational_count"`
+	Active             []ActiveIncident `json:"active,omitempty"`
+}
+
+// ActiveIncident is one entry in [StatusIncidents.Active] — the
+// customer-facing summary of a currently-firing alert. Internal
+// labels (component, runbook_url, instance) are intentionally
+// excluded so the surface stays anonymous-friendly.
+type ActiveIncident struct {
+	Name     string `json:"name"`
+	Severity string `json:"severity"`
 }
 
 // Health is the data shape returned by [Client.Healthz] and

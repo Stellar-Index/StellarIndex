@@ -183,6 +183,10 @@ func TestStatus_WithBackend_PageAlertDegrades(t *testing.T) {
 				ActiveCount: 2,
 				PageCount:   1,
 				TicketCount: 1,
+				Active: []ActiveIncident{
+					{Name: "ratesengine_api_down", Severity: "page"},
+					{Name: "ratesengine_aggregator_silent", Severity: "ticket"},
+				},
 			},
 		},
 	})
@@ -196,6 +200,13 @@ func TestStatus_WithBackend_PageAlertDegrades(t *testing.T) {
 	body, _ := json.Marshal(env.Data)
 	var st StatusResponse
 	json.Unmarshal(body, &st)
+
+	if len(st.Incidents.Active) != 2 {
+		t.Fatalf("Active len = %d, want 2", len(st.Incidents.Active))
+	}
+	if st.Incidents.Active[0].Name != "ratesengine_api_down" {
+		t.Errorf("Active[0] = %q, want ratesengine_api_down", st.Incidents.Active[0].Name)
+	}
 
 	if st.Overall != "degraded" {
 		t.Errorf("Overall = %q, want degraded (page alert firing)", st.Overall)
@@ -241,5 +252,85 @@ func TestPrometheusStatusBackend_QueryShape(t *testing.T) {
 	}
 	if _, ok := hb["aggregator"]; !ok {
 		t.Errorf("hb[\"aggregator\"] missing")
+	}
+}
+
+func TestPrometheusStatusBackend_IncidentsParsesAlertsAndCounts(t *testing.T) {
+	// Three firing alerts: 1 page, 1 ticket, 1 informational, plus
+	// the deadmansswitch which the query excludes server-side. The
+	// client tally should match the labels.
+	const body = `{
+		"status":"success",
+		"data":{
+			"resultType":"vector",
+			"result":[
+				{"metric":{"alertname":"ratesengine_api_down","alertstate":"firing","severity":"page"},"value":[1730000000,"1"]},
+				{"metric":{"alertname":"ratesengine_aggregator_silent","alertstate":"firing","severity":"ticket"},"value":[1730000000,"1"]},
+				{"metric":{"alertname":"ratesengine_host_cpu_high","alertstate":"firing","severity":"informational"},"value":[1730000000,"1"]}
+			]
+		}
+	}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	p := &PrometheusStatusBackend{URL: ts.URL}
+	got, err := p.Incidents(context.Background())
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	if got.PageCount != 1 || got.TicketCount != 1 || got.InformationalCount != 1 {
+		t.Errorf("counts = %+v, want page=1 ticket=1 info=1", got)
+	}
+	if got.ActiveCount != 3 {
+		t.Errorf("ActiveCount = %d, want 3", got.ActiveCount)
+	}
+	if len(got.Active) != 3 {
+		t.Fatalf("Active len = %d, want 3", len(got.Active))
+	}
+	// page first, then ticket, then informational.
+	wantOrder := []string{
+		"ratesengine_api_down",
+		"ratesengine_aggregator_silent",
+		"ratesengine_host_cpu_high",
+	}
+	for i, want := range wantOrder {
+		if got.Active[i].Name != want {
+			t.Errorf("Active[%d] = %q, want %q", i, got.Active[i].Name, want)
+		}
+	}
+}
+
+func TestPrometheusStatusBackend_IncidentsDedupesByAlertname(t *testing.T) {
+	// Two label-sets for the same alertname (per-instance fan-out)
+	// — the public surface dedupes by name.
+	const body = `{
+		"status":"success",
+		"data":{
+			"resultType":"vector",
+			"result":[
+				{"metric":{"alertname":"ratesengine_host_down","alertstate":"firing","severity":"ticket","instance":"r1"},"value":[1730000000,"1"]},
+				{"metric":{"alertname":"ratesengine_host_down","alertstate":"firing","severity":"ticket","instance":"r2"},"value":[1730000000,"1"]}
+			]
+		}
+	}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	p := &PrometheusStatusBackend{URL: ts.URL}
+	got, err := p.Incidents(context.Background())
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	if got.ActiveCount != 1 {
+		t.Errorf("ActiveCount = %d, want 1 (deduped)", got.ActiveCount)
+	}
+	if len(got.Active) != 1 {
+		t.Errorf("Active len = %d, want 1", len(got.Active))
 	}
 }
