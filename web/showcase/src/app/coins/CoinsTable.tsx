@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { useMemo } from 'react';
-import { X } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { Sparkline } from '@/components/primitives';
@@ -28,13 +28,24 @@ export function CoinsTable() {
   const params = useSearchParams();
   const sortParam = params.get('sort') ?? 'observation_count:desc';
   const issuerFilter = params.get('issuer') ?? undefined;
+  const queryParam = params.get('q') ?? '';
 
   const { data, isLoading, isError, error } = useCoins(100, issuerFilter);
 
-  const rows = useMemo(() => {
+  const sorted = useMemo(() => {
     if (!data) return [];
     return sortRows(data, sortParam);
   }, [data, sortParam]);
+
+  const rows = useMemo(() => {
+    const q = queryParam.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter((c) =>
+      c.code.toLowerCase().includes(q) ||
+      c.slug.toLowerCase().includes(q) ||
+      (c.issuer ?? '').toLowerCase().includes(q),
+    );
+  }, [sorted, queryParam]);
 
   // The example URL in the `<>` reveal tracks the actual call —
   // including the issuer param when one is in the URL — so what the
@@ -66,10 +77,19 @@ export function CoinsTable() {
     );
   }
 
+  const totalCount = sorted.length;
+  const filteredCount = rows.length;
+
   return (
     <Panel
       title={issuerFilter ? `Coins by ${shortIssuer(issuerFilter)}` : undefined}
-      hint={issuerFilter ? `${rows.length} match` : undefined}
+      hint={
+        issuerFilter
+          ? `${rows.length} match`
+          : queryParam
+            ? `${filteredCount} of ${totalCount}`
+            : undefined
+      }
       source={exampleUrl}
       bodyClassName="-mx-4"
     >
@@ -87,6 +107,16 @@ export function CoinsTable() {
             clear
           </Link>
         </div>
+      )}
+      <SearchBar initialValue={queryParam} />
+      {queryParam && filteredCount === 0 && (
+        <p className="mb-2 px-4 text-sm text-slate-500">
+          No coins match{' '}
+          <code className="rounded bg-slate-100 px-1 font-mono text-xs dark:bg-slate-800">
+            {queryParam}
+          </code>
+          . Search runs against code, slug, and issuer.
+        </p>
       )}
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
@@ -217,4 +247,56 @@ function fakeActivity(seed: number): number[] {
     v = Math.max(0.1, v + ((seed % (i + 7)) - 3) / 5);
   }
   return out;
+}
+
+// SearchBar — controlled input that mirrors `?q=` in the URL.
+// Pure client-side filter (the /v1/coins endpoint doesn't take a
+// search param yet); typing is responsive because the input owns
+// local state and only commits to the URL on debounce.
+function SearchBar({ initialValue }: { initialValue: string }) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const [value, setValue] = useState(initialValue);
+
+  function commit(next: string) {
+    const u = new URLSearchParams(params.toString());
+    if (next) u.set('q', next);
+    else u.delete('q');
+    const qs = u.toString();
+    router.replace(qs ? `/coins?${qs}` : '/coins', { scroll: false });
+  }
+
+  return (
+    <div className="mb-3 flex items-center gap-2 px-4">
+      <div className="relative flex-1 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        <input
+          type="search"
+          inputMode="search"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Search by code, slug, issuer…"
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            commit(e.target.value);
+          }}
+          className="w-full rounded-md border border-slate-200 bg-white py-1.5 pl-8 pr-8 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500"
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => {
+              setValue('');
+              commit('');
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+            aria-label="Clear search"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }

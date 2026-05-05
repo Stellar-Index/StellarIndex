@@ -27,12 +27,13 @@ export default function CoinsPage() {
         <CoinsTable />
       </Suspense>
       <p className="text-xs text-slate-500">
-        Static seed today. Real data lands when{' '}
-        <code className="font-mono">/v1/coins</code> ships
-        (data-inventory §10.1) — backed by the registry-aware super-
-        table joining{' '}
+        Live data from <code className="font-mono">/v1/coins</code>.
+        Search runs client-side against code, slug, and issuer. Per-row
+        price + 24h delta + volume land when the registry-aware
+        super-table response (data-inventory §10.1) joins{' '}
         <code className="font-mono">classic_assets</code> +{' '}
-        <code className="font-mono">change_summary_5m</code>.
+        <code className="font-mono">change_summary_5m</code> on the
+        backend side.
       </p>
     </div>
   );

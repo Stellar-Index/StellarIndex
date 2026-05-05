@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Added
+- Showcase /coins page gets a search input. Typing filters the
+  100 directory rows by code, slug, or issuer (case-insensitive
+  substring match) and mirrors the term to `?q=` so the URL is
+  shareable. Pure client-side until `/v1/coins` grows a server-
+  side `q=` parameter; the existing `?issuer=` filter still works
+  alongside it. Replaces the stale "static seed today" copy on
+  the page footer with the live-data status.
 - `ratesengine-smoke.timer` — wraps `r1-smoke.sh` in a 5 min
   systemd timer that pings a Healthchecks.io URL with the full
   smoke output as the ping body. Catches schema regressions the
