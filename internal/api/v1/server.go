@@ -70,8 +70,19 @@ type Server struct {
 	statusBackend    StatusBackend
 	regionName       string
 	regionDeployment string
+	dashboardAuth    DashboardAuthMounter
 	mux              *http.ServeMux
 	started          time.Time
+}
+
+// DashboardAuthMounter is the interface main.go's
+// dashboardauth.Handlers satisfies — defined here so this package
+// doesn't import dashboardauth (the dependency goes the other
+// way: dashboardauth uses internal/notify + internal/platform,
+// both of which are leaf packages, and main.go wires the result
+// into v1.Options).
+type DashboardAuthMounter interface {
+	Mount(mux *http.ServeMux)
 }
 
 // Options configures a [Server] at construction.
@@ -286,6 +297,14 @@ type Options struct {
 	// Default to "unknown" / "production" when unset.
 	RegionName       string
 	RegionDeployment string
+
+	// DashboardAuth, when non-nil, mounts the customer-dashboard
+	// magic-link auth flow (POST /v1/auth/login + GET /v1/auth/callback
+	// + POST /v1/auth/logout). Production wiring is a
+	// dashboardauth.Handlers built from the Postgres platform stores
+	// + a Resend (or Noop) sender; main.go gates construction on
+	// cfg.API.Dashboard.BaseURL being non-empty.
+	DashboardAuth DashboardAuthMounter
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -326,6 +345,7 @@ func New(opts Options) *Server {
 		statusBackend:    opts.StatusBackend,
 		regionName:       valueOr(opts.RegionName, "unknown"),
 		regionDeployment: valueOr(opts.RegionDeployment, "production"),
+		dashboardAuth:    opts.DashboardAuth,
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
 	}
@@ -519,6 +539,15 @@ func (s *Server) mountRoutes() {
 	s.mux.HandleFunc("POST /v1/account/keys", s.handleAccountKeysCreate)
 	s.mux.HandleFunc("POST /v1/signup", s.handleSignup)
 	s.mux.HandleFunc("POST /v1/webhooks/stripe", s.handleStripeWebhook)
+
+	// Customer-dashboard magic-link auth — POST /v1/auth/login +
+	// GET /v1/auth/callback + POST /v1/auth/logout. Mounted only
+	// when main.go wired a non-nil DashboardAuth (gated on Postgres
+	// reachable + cfg.API.Dashboard.BaseURL non-empty); otherwise
+	// the routes don't exist and ServeMux returns the standard 404.
+	if s.dashboardAuth != nil {
+		s.dashboardAuth.Mount(s.mux)
+	}
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
 	// — challenge bootstraps auth from a public Stellar G-strkey;

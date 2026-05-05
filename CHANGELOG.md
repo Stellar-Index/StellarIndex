@@ -16,6 +16,29 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Magic-link auth flow (Phase 1, Week 2 part 2).** Customers can
+  sign in to the dashboard at `app.ratesengine.net` via a
+  6-digit-code-or-link email — the same flow handles first-time
+  signup (creates a free-tier account + owner user) and returning
+  login. Three new endpoints under `/v1/auth/`: `POST /login`,
+  `GET /callback`, `POST /logout`. Login responses are constant —
+  same `{status:"sent"}` whether or not the email matches an
+  account, so attackers can't enumerate users. Callback validates
+  + atomically consumes the token and sets an HttpOnly + Secure
+  + SameSite=Lax `ratesengine_session` cookie (default 30-day
+  rolling lifetime). Logout is idempotent. Implementation in
+  `internal/api/v1/dashboardauth/`; transactional email shipped
+  via the new pluggable `internal/notify` package (concrete
+  `ResendSender` for production, `NoopSender` for dev / tests
+  that drops the email but still mints the token so the callback
+  flow can be exercised end-to-end). Companion `Middleware` plants
+  a `SessionContext` on the request context for downstream
+  dashboard handlers; `RequireSession` is the 401 gate. Wiring
+  in `cmd/ratesengine-api/main.go` is gated on
+  `[api.dashboard].base_url` being non-empty — empty leaves
+  `/v1/auth/*` unmounted (404), Resend API key empty falls back
+  to NoopSender with a startup warn (production sets
+  `RATESENGINE_RESEND_API_KEY`).
 - **Platform v1 Postgres stores (Phase 1, Week 2 part 1).** New
   `internal/platform/postgresstore` package with concrete
   implementations of `AccountStore`, `UserStore` (incl. session

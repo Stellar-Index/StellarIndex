@@ -151,6 +151,13 @@ the `env:` column.
 | `api.streaming.poll_interval` | `int64` | `5s` | — | Per-pair poll cadence for the closed-bucket producer. Default 5s; clamped to 1s minimum. |
 | `api.stripe.signing_secret` | `string` | _(required)_ | `RATESENGINE_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (whsec_…). Empty disables the endpoint. |
 | `api.prometheus_url` | `string` | _(required)_ | — | Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only). |
+| `api.dashboard.base_url` | `string` | _(required)_ | — | Absolute URL of the customer dashboard SPA (e.g. https://app.ratesengine.net). The magic-link callback URL embedded in emails is {base_url}/auth/callback?token=<plaintext>. |
+| `api.dashboard.email_from` | `string` | `Rates Engine <hello@ratesengine.net>` | — | From: address for transactional emails (e.g. 'Rates Engine <hello@ratesengine.net>'). Must match a domain Resend has verified for the configured API key. |
+| `api.dashboard.resend_api_key_env` | `string` | `RATESENGINE_RESEND_API_KEY` | — | Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this. |
+| `api.dashboard.magic_link_ttl_minutes` | `int` | `15` | — | Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended. |
+| `api.dashboard.session_ttl_days` | `int` | `30` | — | Session-cookie lifetime in days. Default 30 — matches typical SaaS dashboards; users sign in monthly without re-authing. |
+| `api.dashboard.cookie_secure` | `bool` | `true` | — | Set the Secure flag on the session cookie. Production = true; dev (http://localhost) = false. |
+| `api.dashboard.cookie_domain` | `string` | _(required)_ | — | Cookie Domain attribute. Empty (default) means a host-only cookie scoped to the API host. Set to '.ratesengine.net' if a future surface needs the cookie shared across subdomains. |
 
 ### `[metadata]`
 

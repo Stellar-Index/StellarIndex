@@ -61,6 +61,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/api/streaming/redispub"
 	"github.com/RatesEngine/rates-engine/internal/api/streampublish"
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
+	"github.com/RatesEngine/rates-engine/internal/api/v1/dashboardauth"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/auth/sep10"
@@ -69,7 +70,9 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
+	"github.com/RatesEngine/rates-engine/internal/notify"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/platform/postgresstore"
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 	"github.com/RatesEngine/rates-engine/internal/storage/redisclient"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
@@ -438,6 +441,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("status backend wired", "prometheus_url", cfg.API.PrometheusURL)
 	}
 
+	// Customer-dashboard magic-link auth. Empty BaseURL leaves the
+	// flow off — the routes simply aren't mounted. This is the
+	// expected pre-launch shape: dashboard SPA ships standalone-
+	// preview with mocked auth until operator configures Resend +
+	// app.ratesengine.net.
+	dashboardAuth, err := buildDashboardAuth(cfg.API.Dashboard, store.DB(), logger)
+	if err != nil {
+		return fmt.Errorf("dashboard auth: %w", err)
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:           logger.With("component", "api"),
 		ReadyChecks:      checks,
@@ -470,6 +483,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		StatusBackend:    statusBackend,
 		RegionName:       cfg.Region.ID,
 		RegionDeployment: "production",
+		DashboardAuth:    dashboardAuth,
 	})
 
 	// Closed-bucket producer — only spawn when the operator
@@ -627,6 +641,69 @@ func buildAuthMiddleware(mode string, rdb redis.UniversalClient, sep10Validator 
 // and falls back to the Noop. The behaviour is symmetric across
 // "env name unset" and "env value empty": both mean the operator
 // hasn't supplied a credential.
+// buildDashboardAuth wires the customer-dashboard magic-link
+// auth flow. Returns nil (with a logged warn) when the operator
+// hasn't configured BaseURL — the API still serves; /v1/auth/*
+// routes simply aren't mounted, so callers see 404 rather than
+// 503 (the routes don't exist at all).
+//
+// When BaseURL is configured but the Resend env var is unset or
+// empty, the sender falls back to a NoopSender. The flow still
+// works end-to-end: a CreateMagicLinkToken row lands in Postgres,
+// the rendered email is silently dropped, and the operator can
+// look up the plaintext from the API's structured logs to test
+// the callback path. This is the expected dev/local default;
+// production sets the env var.
+func buildDashboardAuth(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (*dashboardauth.Handlers, error) {
+	if cfg.BaseURL == "" {
+		logger.Warn("dashboard auth not wired (api.dashboard.base_url is empty); /v1/auth/* will 404")
+		return nil, nil
+	}
+	if db == nil {
+		return nil, errors.New("dashboard auth requires a Postgres connection")
+	}
+
+	pg := postgresstore.New(db)
+
+	var sender notify.Sender
+	apiKey := os.Getenv(cfg.ResendAPIKeyEnv)
+	if apiKey == "" {
+		logger.Warn("dashboard auth using NoopSender — magic-link emails will be dropped",
+			"reason", fmt.Sprintf("env %s is unset/empty", cfg.ResendAPIKeyEnv))
+		sender = &notify.NoopSender{}
+	} else {
+		s, err := notify.NewResendSender(apiKey)
+		if err != nil {
+			return nil, fmt.Errorf("resend sender: %w", err)
+		}
+		sender = s
+		logger.Info("dashboard auth using Resend sender", "from", cfg.EmailFrom)
+	}
+
+	h, err := dashboardauth.NewHandlers(dashboardauth.Config{
+		Accounts:         postgresstore.NewAccountStore(pg),
+		Users:            postgresstore.NewUserStore(pg),
+		Tokens:           postgresstore.NewTokenStore(pg),
+		Sender:           sender,
+		Logger:           logger.With("component", "dashboard-auth"),
+		DashboardBaseURL: cfg.BaseURL,
+		EmailFrom:        cfg.EmailFrom,
+		MagicLinkTTL:     time.Duration(cfg.MagicLinkTTLMinutes) * time.Minute,
+		SessionTTL:       time.Duration(cfg.SessionTTLDays) * 24 * time.Hour,
+		CookieSecure:     cfg.CookieSecure,
+		CookieDomain:     cfg.CookieDomain,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dashboard handlers: %w", err)
+	}
+	logger.Info("dashboard auth wired",
+		"base_url", cfg.BaseURL,
+		"magic_link_ttl_minutes", cfg.MagicLinkTTLMinutes,
+		"session_ttl_days", cfg.SessionTTLDays,
+		"cookie_secure", cfg.CookieSecure)
+	return h, nil
+}
+
 func buildSEP10Validator(cfg config.SEP10Config) (auth.SEP10Validator, error) {
 	if cfg.SeedEnv == "" || cfg.JWTSecretEnv == "" {
 		return nil, errors.New("sep10: seed_env / jwt_secret_env not configured")
