@@ -494,8 +494,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		StatusBackend:    statusBackend,
 		RegionName:       cfg.Region.ID,
 		RegionDeployment: "production",
-		DashboardAuth:    dashboardBundle.auth,
-		DashboardKeys:    dashboardBundle.keys,
+		DashboardAuth:    nilOrMounter(dashboardBundle.auth),
+		DashboardKeys:    nilOrMounter(dashboardBundle.keys),
 		SessionAuth:      dashboardBundle.middleware,
 	})
 
@@ -671,6 +671,25 @@ func buildAPIKeyValidator(opts authValidatorOptions, logger *slog.Logger, modeNa
 // and falls back to the Noop. The behaviour is symmetric across
 // "env name unset" and "env value empty": both mean the operator
 // hasn't supplied a credential.
+// nilOrMounter returns nil-typed nil when the supplied
+// concrete *Handlers pointer is nil, otherwise returns it as
+// the v1.DashboardAuthMounter interface.
+//
+// Naked assignment (`opts.DashboardKeys = bundle.keys`) wraps a
+// typed-nil pointer in a non-nil interface, so server.go's
+// `if s.dashboardKeys != nil` would mount routes whose handlers
+// then panic on first request when they dereference cfg. This
+// helper sidesteps the Go interface-nil-vs-pointer-nil gotcha.
+func nilOrMounter[T v1.DashboardAuthMounter](h T) v1.DashboardAuthMounter {
+	// Generic constraint catches both *dashboardauth.Handlers and
+	// *dashboardkeys.Handlers without runtime reflection.
+	var zero T
+	if any(h) == any(zero) {
+		return nil
+	}
+	return h
+}
+
 // dashboardBundle bundles the dashboard wirings main.go threads
 // into v1.Options — the auth handlers, the keys handlers, and
 // the session-resolving middleware that runs in the global
