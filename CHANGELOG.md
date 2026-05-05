@@ -196,6 +196,11 @@ against.
   return multi-source VWAPs (3 sources each, no stale flag);
   binance / coinbase / kraken / bitstamp trades land at ~400 / 290
   / 30 / 16 per 2-minute window.
+- **`crypto:DASH` added to ADR-0014 allow-list.** One-line extension
+  per the in-file amendment policy ("Extension is a one-line
+  amendment to ADR-0014, never a superseding ADR"). Unblocks
+  recording DASH-denominated quotes from any future source — no
+  connector or aggregator change in this PR.
 
 - **`ratesengine-sla-probe -api-key` flag + `RATESENGINE_PROBE_API_KEY`
   env-var.** Without authentication the probe hits the anonymous-tier
