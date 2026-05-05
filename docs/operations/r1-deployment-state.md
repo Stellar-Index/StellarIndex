@@ -287,10 +287,10 @@ fetched 2026-04-23:
      a different reader path that doesn't share the Redis fallback.
      Fix is parallel to #631 + #632 but lives in a different
      handler; track separately if launch needs it.
-   - `/v1/price?asset=crypto:XLM&quote=fiat:USD` (abstract form)
+   - ~~`/v1/price?asset=crypto:XLM&quote=fiat:USD` (abstract form)
      still 404s — would require enabled CEX connectors emitting
-     `crypto:XLM/<quote>` trades. Until then the `native` form is
-     the only XLM serving key on r1.
+     `crypto:XLM/<quote>` trades.~~ **RESOLVED 2026-05-05 — see 5d
+     below.**
    - `change_summary_5m`, peg-health, source-diversity, baseline
      refresh outputs all begin populating now that VWAPs land —
      give them ~1 baseline cycle to catch up.
@@ -318,6 +318,56 @@ fetched 2026-04-23:
    instead of 404. The accounts decoder will overwrite these
    rows with auth flags + home_domain as it observes account
    state on-chain.
+
+5d. **CEX/aggregator/sanity connectors enabled on r1.**
+   (Done 2026-05-05 12:31 CEST.) Until today r1 ran on-chain-only —
+   `[external]` section was absent from `/etc/ratesengine.toml`
+   and every venue defaulted to `enabled=false`. Closed both the
+   `crypto:XLM/fiat:USD` 404 (gap noted in 5a above) and the
+   RFP §4.7 CEX-coverage commitment.
+
+   Operator change: appended `[external]` block enabling six free
+   venues (no API keys provisioned for the paid tier today):
+
+   ```toml
+   [external]
+     [external.binance]   enabled = true   # 4 pairs
+     [external.kraken]    enabled = true   # 8 pairs
+     [external.bitstamp]  enabled = true   # 7 pairs
+     [external.coinbase]  enabled = true   # 3 pairs
+     [external.coingecko] enabled = true   # 9 pairs (poller, divergence)
+     [external.ecb]       enabled = true   # 9 pairs (poller, daily anchor)
+   ```
+
+   Backup at `/etc/ratesengine.toml.bak.pre-cex-20260505-123044`.
+
+   Post-restart verification (T+~90s):
+   - All 4 CEX streamers connected; trade rate at T+2min: binance
+     460, coinbase 289, kraken 29, bitstamp 16 (binance dominates,
+     as expected for XLMUSDT depth).
+   - `/v1/price?asset=crypto:XLM&quote=fiat:USD` → VWAP $0.15871,
+     3 sources (bitstamp/coinbase/kraken), 60s window, no flags.
+   - `/v1/price?asset=crypto:BTC&quote=fiat:USD` → VWAP $80,761,
+     3 sources (NEW endpoint).
+   - `/v1/price?asset=crypto:ETH&quote=fiat:USD` → VWAP $2,374,
+     3 sources (NEW endpoint).
+   - `/v1/price?asset=native&quote=fiat:USD` continues to serve
+     5m on-chain VWAP unchanged ($0.15897).
+   - Zero errors in 60s of journalctl post-restart.
+
+   **Follow-up gaps** (not blocking):
+   - Binance's XLMUSDT trades not yet appearing in the
+     `crypto:XLM/fiat:USD` source list. The aggregator's
+     stablecoin-fiat-proxy (USDT→USD) is enabled but the proxy
+     path may only collapse on-chain trades. Worth a 5-min trace.
+   - `/v1/price?asset=USDC:GA5Z…&quote=fiat:USD` still 404s.
+     Separate aggregator pair-synthesis gap: operator-declared
+     `usd_pegged_classic_assets` are consumed when valuing
+     XLM/USDC trades for `usd_volume`, but the aggregator does
+     not synthesize a USDC/USD ≈ 1.0 published price.
+   - `[aggregate].min_usd_volume = 0` stop-gap can revert to
+     the default `10000` once CEX volume is confirmed sustained;
+     defer to a separate one-line PR.
 
 6. **stellar-archivist mirror → MinIO sync.** Our mirror lands on
    ZFS (`/srv/history-archive/`), not in MinIO. Phase-1 plan

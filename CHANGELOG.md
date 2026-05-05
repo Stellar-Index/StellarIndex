@@ -176,6 +176,27 @@ against.
 
 ### Added
 
+- **`[external]` configuration block + r1 enablement of free-tier
+  CEX/aggregator/sanity venues.** Until today r1 ran on-chain-only
+  because every off-chain venue defaulted to `enabled=false` and
+  `/etc/ratesengine.toml` had no `[external]` section. Closed
+  RFP §4.7 (CEX coverage) and the `crypto:XLM/fiat:USD` 404
+  tracked in `docs/operations/r1-deployment-state.md` §5a.
+  Enabled six venues that need no API keys: binance / kraken /
+  bitstamp / coinbase (CEX trade streamers, ClassExchange →
+  contribute to VWAP), coingecko (aggregator poller, divergence
+  signal only), and ECB (daily TARGET-business-day fix, sanity
+  anchor only). Paid-tier venues (exchangeratesapi, polygon_forex,
+  coinmarketcap, cryptocompare) remain `enabled=false` pending
+  credential provisioning. Added the `[external]` block to
+  `configs/example.toml` as the canonical operator template;
+  clarified `[ingestion].enabled_sources` doc-comment to flag
+  that it gates on-chain sources only. Post-deploy verification:
+  `crypto:XLM`, `crypto:BTC`, `crypto:ETH` against `fiat:USD` all
+  return multi-source VWAPs (3 sources each, no stale flag);
+  binance / coinbase / kraken / bitstamp trades land at ~400 / 290
+  / 30 / 16 per 2-minute window.
+
 - **`ratesengine-sla-probe -api-key` flag + `RATESENGINE_PROBE_API_KEY`
   env-var.** Without authentication the probe hits the anonymous-tier
   rate limit (60 req/min) and reads availability < 0.1 % on every

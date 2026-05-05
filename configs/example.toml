@@ -71,8 +71,13 @@ s3_access_key_env  = "RATESENGINE_S3_ACCESS_KEY"
 s3_secret_key_env  = "RATESENGINE_S3_SECRET_KEY"
 
 # ──────────────────────────────────────────────────────────────────
-# Ingestion — which source connectors to run on this indexer replica.
-# Each name must exist in internal/sources/<name>/.
+# Ingestion — which on-chain source connectors to run on this
+# indexer replica. Each name must exist in internal/sources/<name>/
+# and appear in internal/config/validate.go's KnownSources whitelist.
+#
+# Off-chain venues (CEX / FX / aggregator pollers) are gated
+# independently via per-venue [external.<venue>].enabled flags
+# below, NOT through this list.
 # ──────────────────────────────────────────────────────────────────
 [ingestion]
 enabled_sources       = ["soroswap"]    # expand as connectors land
@@ -97,6 +102,66 @@ cursor_store_scheme   = "postgres"
 # dex_contract = "C…"   # set when enabling reflector-dex
 # cex_contract = "C…"   # set when enabling reflector-cex
 # fx_contract  = "C…"   # set when enabling reflector-fx
+
+# ──────────────────────────────────────────────────────────────────
+# External — off-chain connectors (CEX / FX / aggregator pollers).
+# Each venue runs on its own goroutine and emits canonical.Trade /
+# canonical.OracleUpdate parallel to the on-chain dispatcher path.
+# Every venue defaults to enabled=false; opt in per venue here.
+#
+# Class semantics drive whether a venue's output folds into VWAP:
+#   ClassExchange (CEX + interbank-grade FX)  → contributes to VWAP
+#   ClassAggregator (CoinGecko/CMC/CryptoCmp) → divergence signal only
+#   ClassAuthoritySanity (ECB)                → daily anchor only
+# Class is registry-controlled (internal/sources/external/registry.go),
+# not a per-deployment toggle.
+#
+# Connector docs: internal/sources/external/README.md.
+# ──────────────────────────────────────────────────────────────────
+[external]
+
+  # ClassExchange — CEX trade streams. No auth, no API keys.
+  # Default pair sets cover the highest-liquidity XLM + BTC + ETH
+  # markets; per-venue pair overrides are a future config surface.
+  [external.binance]
+  enabled = false   # WS aggTrade — XLMUSDT / BTCUSDT / ETHUSDT / XLMBTC
+
+  [external.kraken]
+  enabled = false   # WS v2 trade — XLM in 6 fiats + BTC/USD + ETH/USD
+
+  [external.bitstamp]
+  enabled = false   # WS live_trades — XLM/{USD,EUR,GBP,BTC} + BTC/{USD,EUR} + ETH/USD
+
+  [external.coinbase]
+  enabled = false   # WS matches (Exchange API) — XLM-USD, BTC-USD, ETH-USD
+
+  # ClassExchange — interbank FX feeds. Both require paid API keys
+  # (see env-var override path in internal/config/load.go).
+  [external.exchangeratesapi]
+  enabled = false
+  # api_key = ""    # prefer env: EXCHANGERATESAPI_KEY
+  # base    = "USD"
+
+  [external.polygon_forex]
+  enabled = false
+  # api_key = ""    # prefer env: POLYGON_API_KEY
+  # base    = "USD"
+
+  # ClassAggregator — divergence signal only, excluded from VWAP.
+  [external.coingecko]
+  enabled = false   # /simple/price — free, no auth, ~10–30 req/min
+
+  [external.coinmarketcap]
+  enabled = false
+  # api_key = ""    # prefer env: COINMARKETCAP_API_KEY ($79/mo Standard tier)
+
+  [external.cryptocompare]
+  enabled = false
+  # api_key = ""    # prefer env: CRYPTOCOMPARE_API_KEY (free tier works without)
+
+  # ClassAuthoritySanity — daily anchor (alert-on-drift, not VWAP).
+  [external.ecb]
+  enabled = false   # daily TARGET-business-day fix — free, no auth
 
 # ──────────────────────────────────────────────────────────────────
 # Aggregate — VWAP/TWAP windows + filters (aggregator binary only).
