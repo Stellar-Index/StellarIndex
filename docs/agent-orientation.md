@@ -32,6 +32,18 @@ make docs-all          # regenerate docs/reference/ from OpenAPI + struct tags +
 make verify            # canonical pre-push gate (fmt, vet, lint, docs, test) — run this before every push
 ```
 
+For verifying a live deployment (R1 or local), use:
+
+```sh
+bash scripts/dev/r1-smoke.sh                       # localhost:3000 by default
+API_BASE_URL=http://r1:3000 bash scripts/dev/r1-smoke.sh
+```
+
+13 GETs across health / catalogue / pricing / diagnostics with jq
+shape assertions; exit code = number of failures so cron and
+Healthchecks.io can consume it. R1 runs the same script every 5
+min via `ratesengine-smoke.timer` (see `configs/healthchecks/`).
+
 No command should ever require manual network access during
 development. If one does, it's a bug.
 
@@ -97,11 +109,18 @@ development. If one does, it's a bug.
 │
 
 ├── migrations/                TimescaleDB migrations (golang-migrate)
-├── configs/                   example.toml + Ansible roles (configs/ansible/{roles,inventory,playbooks}/)
+├── configs/                   example.toml + Ansible roles (configs/ansible/{roles,inventory,playbooks}/) + R1 single-host overlays
+│   ├── ansible/                  multi-host roles + playbooks for R1/R2/R3
+│   ├── prometheus/               R1 single-host: prometheus.r1.yml + rules.r1/ (job names rewritten for the R1 scrape config)
+│   ├── alertmanager/             R1 single-host: alertmanager.r1.yml + apply.sh (severity-routing for page/ticket/informational + deadmansswitch heartbeat)
+│   ├── caddy/                    R1 reverse proxy — TLS termination via Let's Encrypt
+│   ├── loki/                     R1 single-host log aggregation
+│   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
 ├── openapi/                   rates-engine.v1.yaml — source of truth for API
-├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules), status-page (cstate scaffold)
+├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
+├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), status-page (cstate scaffold)
 ├── web/showcase/              Next.js 15 static-export explorer rendered at ratesengine.net (Cloudflare Pages)
-├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh)
+├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
 │
 └── docs/
