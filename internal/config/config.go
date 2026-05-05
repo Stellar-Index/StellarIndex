@@ -525,6 +525,23 @@ type APIConfig struct {
 	TrustedProxyCIDRs   []string        `toml:"trusted_proxy_cidrs" doc:"Immediate peer CIDR allow-list that is permitted to supply X-Forwarded-For. Empty means the API ignores that header and uses the socket peer address for logging, anonymous identity, and IP-based rate limiting." default:"[]"`
 	SEP10               SEP10Config     `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
 	Streaming           StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
+	Stripe              StripeConfig    `toml:"stripe" doc:"Stripe webhook handler — paid-tier upgrades wired to POST /v1/webhooks/stripe. Empty signing_secret leaves the endpoint 503."`
+}
+
+// StripeConfig wires the /v1/webhooks/stripe handler. Stripe
+// signs every webhook delivery with HMAC-SHA256 over (timestamp +
+// '.' + body); the API verifies that signature against
+// SigningSecret before consuming the event. Without it, anyone
+// can POST a fake "customer paid" event and lift their own keys
+// to Business tier — so an empty secret rejects every request 503
+// (fail-closed).
+//
+// Operator gets the secret from the Stripe dashboard (Webhooks →
+// signing secret, format `whsec_…`). Stored in the env-overridden
+// secret (RATESENGINE_STRIPE_WEBHOOK_SECRET) so it doesn't sit in
+// /etc/ratesengine.toml in cleartext on operator workstations.
+type StripeConfig struct {
+	SigningSecret string `toml:"signing_secret" doc:"Stripe webhook signing secret (whsec_…). Empty disables the endpoint." env:"RATESENGINE_STRIPE_WEBHOOK_SECRET" default:""`
 }
 
 // StreamingConfig configures the closed-bucket SSE producer

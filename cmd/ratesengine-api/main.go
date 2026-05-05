@@ -290,6 +290,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		signupTracker = auth.NewRedisSignupTracker(rdb)
 	}
 
+	// Stripe webhook handler — gated on (Redis up + signing secret
+	// configured). Without the secret the handler 503s every request
+	// (fail-closed; otherwise a forged event could lift any
+	// identifier's keys). The Manager is the same RedisAPIKeyStore
+	// used for mint-key + upgrade-key paths — Stripe-driven upgrades
+	// are wire-equivalent to operator-driven ones.
+	var stripeCfg *v1.StripeWebhookConfig
+	if rdb != nil && cfg.API.Stripe.SigningSecret != "" {
+		stripeCfg = &v1.StripeWebhookConfig{
+			SigningSecret: cfg.API.Stripe.SigningSecret,
+			Manager:       auth.NewRedisAPIKeyStore(rdb),
+		}
+		logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe")
+	} else if cfg.API.Stripe.SigningSecret != "" {
+		logger.Warn("stripe webhook signing_secret set but Redis is not configured — endpoint will 503")
+	}
+
 	// Divergence lookup adapter. Only wired when Redis is reachable
 	// (the worker's cached results live there). References are
 	// constructed from cfg.Divergence; CoinGecko is on by default
@@ -373,6 +390,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Meta:          sep1Cache,
 		Accounts:      accountStore,
 		Signups:       signupTracker,
+		Stripe:        stripeCfg,
 		Divergence:    divergenceLooker,
 		Confidence:    redisConfidenceLooker{rdb: rdb},
 		Triangulated:  redisTriangulatedLooker{rdb: rdb},

@@ -90,6 +90,9 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("CRYPTOCOMPARE_API_KEY"); v != "" {
 		c.External.CryptoCompare.APIKey = v
 	}
+	if v := os.Getenv("RATESENGINE_STRIPE_WEBHOOK_SECRET"); v != "" {
+		c.API.Stripe.SigningSecret = v
+	}
 }
 
 // LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate].

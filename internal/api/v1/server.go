@@ -49,6 +49,7 @@ type Server struct {
 	meta         MetadataResolver
 	accounts     AccountStore
 	signups      SignupTracker
+	stripe       *StripeWebhookConfig
 	divergence   DivergenceLooker
 	freeze       FrozenLooker
 	supply       SupplyLooker
@@ -124,6 +125,13 @@ type Options struct {
 	// implementation that persists email-hash → key-id; nil makes
 	// the duplicate check a no-op (key always mints).
 	Signups SignupTracker
+
+	// Stripe, when non-nil, backs POST /v1/webhooks/stripe (paid-
+	// tier upgrade webhook). Nil makes the endpoint return 503 so
+	// deployments without Stripe don't accept arbitrary upgrade
+	// requests. The signing secret inside is the `whsec_…` value
+	// from the Stripe dashboard.
+	Stripe *StripeWebhookConfig
 
 	// Divergence, when non-nil, is consulted by /v1/price after a
 	// successful LatestPrice lookup. When the lookup says
@@ -281,6 +289,7 @@ func New(opts Options) *Server {
 		meta:         opts.Meta,
 		accounts:     opts.Accounts,
 		signups:      opts.Signups,
+		stripe:       opts.Stripe,
 		divergence:   opts.Divergence,
 		freeze:       opts.Freeze,
 		supply:       opts.Supply,
@@ -473,6 +482,7 @@ func (s *Server) mountRoutes() {
 	s.mux.HandleFunc("GET /v1/account/usage", s.handleAccountUsage)
 	s.mux.HandleFunc("POST /v1/account/keys", s.handleAccountKeysCreate)
 	s.mux.HandleFunc("POST /v1/signup", s.handleSignup)
+	s.mux.HandleFunc("POST /v1/webhooks/stripe", s.handleStripeWebhook)
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
 	// — challenge bootstraps auth from a public Stellar G-strkey;

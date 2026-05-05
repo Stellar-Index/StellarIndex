@@ -135,7 +135,7 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `api.listen_addr` | `string` | `0.0.0.0:3000` | — | Bind address for the HTTP server. |
 | `api.external_base_url` | `string` | `https://api.ratesengine.net/v1` | — | Public-facing base URL (e.g. https://api.ratesengine.net/v1). |
-| `api.auth_mode` | `string` | `none` | — | Authentication mode — none / apikey / sep10. The API binary wires real validators when the required backing dependencies and secrets are present; a deployment that opts into auth without satisfying those requirements fails loud rather than silently demoting to anonymous. |
+| `api.auth_mode` | `string` | `none` | — | Authentication mode — none / apikey / apikey_optional / sep10. 'none' attaches anonymous Subject to every request. 'apikey' requires Authorization: Bearer <key> on every request; missing → 401. 'apikey_optional' is the freemium shape — anonymous floor (60/min) without a key, per-key tier (1000/min default) with a valid key, invalid key → 401. 'sep10' requires a SEP-10 JWT. The API binary wires real validators when the required dependencies are present; deployments that opt into auth without satisfying those fail loud rather than silently demoting to anonymous. |
 | `api.anon_rate_limit_per_min` | `int` | `60` | — | Per-IP rate limit for anonymous requests. |
 | `api.key_rate_limit_per_min` | `int` | `1000` | — | Per-API-key rate limit, default tier. |
 | `api.cdn_enabled` | `bool` | `true` | — | Emit CDN-friendly Cache-Control headers on long-immutable endpoints. |
@@ -149,6 +149,7 @@ the `env:` column.
 | `api.sep10.jwt_ttl` | `int64` | `1h` | — | Lifetime of an issued JWT. Clients refresh by repeating the challenge → verify flow. |
 | `api.streaming.pairs` | `[][]string` | `[]` | — | Operator-declared closed-bucket fanout pair list. Each entry is a two-element [base, quote] array of canonical asset strings (e.g. [["native", "fiat:USD"], ["credit:USDC:GA5Z…", "fiat:USD"]]). Empty disables the producer; clients that connect see SSE open + heartbeats but no price_update events. |
 | `api.streaming.poll_interval` | `int64` | `5s` | — | Per-pair poll cadence for the closed-bucket producer. Default 5s; clamped to 1s minimum. |
+| `api.stripe.signing_secret` | `string` | _(required)_ | `RATESENGINE_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (whsec_…). Empty disables the endpoint. |
 
 ### `[metadata]`
 
