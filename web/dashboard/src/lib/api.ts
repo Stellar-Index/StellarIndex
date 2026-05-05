@@ -92,3 +92,63 @@ export async function requestMagicLink(email: string): Promise<void> {
 export async function logout(): Promise<void> {
   await apiFetch<void>('/auth/logout', { method: 'POST' });
 }
+
+// ─── Keys ─────────────────────────────────────────────────────────
+
+export interface APIKey {
+  id: string;
+  name: string;
+  description?: string;
+  key_prefix: string;
+  tier: string;
+  rate_limit_per_min: number;
+  monthly_quota?: number;
+  usage_alert_threshold_pct?: number;
+  ip_allowlist?: string[];
+  referer_allowlist?: string[];
+  expires_at?: string;
+  revoked_at?: string;
+  revoked_reason?: string;
+  last_used_at?: string;
+  created_at: string;
+}
+
+export interface KeyListResponse {
+  keys: APIKey[];
+}
+
+export interface CreateKeyRequest {
+  name: string;
+  description?: string;
+  rate_limit_per_min?: number;
+  monthly_quota?: number;
+  ip_allowlist?: string[];
+  referer_allowlist?: string[];
+  expires_at?: string;
+  usage_alert_threshold_pct?: number;
+}
+
+export interface CreateKeyResponse {
+  plaintext: string;
+  key: APIKey;
+}
+
+export async function listKeys(): Promise<APIKey[]> {
+  const r = await apiFetch<KeyListResponse>('/dashboard/keys');
+  return r.keys ?? [];
+}
+
+export async function createKey(
+  body: CreateKeyRequest,
+): Promise<CreateKeyResponse> {
+  return apiFetch<CreateKeyResponse>('/dashboard/keys', {
+    method: 'POST',
+    body,
+  });
+}
+
+export async function revokeKey(id: string): Promise<void> {
+  await apiFetch<void>(`/dashboard/keys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}

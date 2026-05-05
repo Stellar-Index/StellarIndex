@@ -62,6 +62,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/api/streampublish"
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/dashboardauth"
+	"github.com/RatesEngine/rates-engine/internal/api/v1/dashboardkeys"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/auth/sep10"
@@ -441,14 +442,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("status backend wired", "prometheus_url", cfg.API.PrometheusURL)
 	}
 
-	// Customer-dashboard magic-link auth. Empty BaseURL leaves the
-	// flow off — the routes simply aren't mounted. This is the
-	// expected pre-launch shape: dashboard SPA ships standalone-
-	// preview with mocked auth until operator configures Resend +
-	// app.ratesengine.net.
-	dashboardAuth, err := buildDashboardAuth(cfg.API.Dashboard, store.DB(), logger)
+	// Customer-dashboard magic-link auth + key-management surface.
+	// Empty BaseURL leaves the dashboard auth flow off — the
+	// routes simply aren't mounted. This is the expected pre-launch
+	// shape: dashboard SPA ships standalone-preview with mocked
+	// auth until operator configures Resend + app.ratesengine.net.
+	dashboardBundle, err := buildDashboardBundle(cfg.API.Dashboard, store.DB(), logger)
 	if err != nil {
-		return fmt.Errorf("dashboard auth: %w", err)
+		return fmt.Errorf("dashboard: %w", err)
 	}
 
 	apiSrv := v1.New(v1.Options{
@@ -483,7 +484,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		StatusBackend:    statusBackend,
 		RegionName:       cfg.Region.ID,
 		RegionDeployment: "production",
-		DashboardAuth:    dashboardAuth,
+		DashboardAuth:    dashboardBundle.auth,
+		DashboardKeys:    dashboardBundle.keys,
+		SessionAuth:      dashboardBundle.middleware,
 	})
 
 	// Closed-bucket producer — only spawn when the operator
@@ -641,11 +644,22 @@ func buildAuthMiddleware(mode string, rdb redis.UniversalClient, sep10Validator 
 // and falls back to the Noop. The behaviour is symmetric across
 // "env name unset" and "env value empty": both mean the operator
 // hasn't supplied a credential.
-// buildDashboardAuth wires the customer-dashboard magic-link
-// auth flow. Returns nil (with a logged warn) when the operator
-// hasn't configured BaseURL — the API still serves; /v1/auth/*
-// routes simply aren't mounted, so callers see 404 rather than
-// 503 (the routes don't exist at all).
+// dashboardBundle bundles the dashboard wirings main.go threads
+// into v1.Options — the auth handlers, the keys handlers, and
+// the session-resolving middleware that runs in the global
+// request stack so dashboardkeys.HandleList et al can read the
+// session context.
+type dashboardBundle struct {
+	auth       *dashboardauth.Handlers
+	keys       *dashboardkeys.Handlers
+	middleware middleware.Middleware
+}
+
+// buildDashboardBundle wires the customer-dashboard magic-link
+// auth flow + the key-management surface. Returns a bundle with
+// all-nil fields (and a logged warn) when the operator hasn't
+// configured BaseURL — the API still serves; /v1/auth/* and
+// /v1/dashboard/* routes simply aren't mounted.
 //
 // When BaseURL is configured but the Resend env var is unset or
 // empty, the sender falls back to a NoopSender. The flow still
@@ -654,16 +668,20 @@ func buildAuthMiddleware(mode string, rdb redis.UniversalClient, sep10Validator 
 // look up the plaintext from the API's structured logs to test
 // the callback path. This is the expected dev/local default;
 // production sets the env var.
-func buildDashboardAuth(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (*dashboardauth.Handlers, error) {
+func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
-		logger.Warn("dashboard auth not wired (api.dashboard.base_url is empty); /v1/auth/* will 404")
-		return nil, nil
+		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
+		return dashboardBundle{}, nil
 	}
 	if db == nil {
-		return nil, errors.New("dashboard auth requires a Postgres connection")
+		return dashboardBundle{}, errors.New("dashboard requires a Postgres connection")
 	}
 
 	pg := postgresstore.New(db)
+	accounts := postgresstore.NewAccountStore(pg)
+	users := postgresstore.NewUserStore(pg)
+	tokens := postgresstore.NewTokenStore(pg)
+	keysStore := postgresstore.NewAPIKeyStore(pg)
 
 	var sender notify.Sender
 	apiKey := os.Getenv(cfg.ResendAPIKeyEnv)
@@ -674,16 +692,16 @@ func buildDashboardAuth(cfg config.DashboardConfig, db *sql.DB, logger *slog.Log
 	} else {
 		s, err := notify.NewResendSender(apiKey)
 		if err != nil {
-			return nil, fmt.Errorf("resend sender: %w", err)
+			return dashboardBundle{}, fmt.Errorf("resend sender: %w", err)
 		}
 		sender = s
 		logger.Info("dashboard auth using Resend sender", "from", cfg.EmailFrom)
 	}
 
-	h, err := dashboardauth.NewHandlers(dashboardauth.Config{
-		Accounts:         postgresstore.NewAccountStore(pg),
-		Users:            postgresstore.NewUserStore(pg),
-		Tokens:           postgresstore.NewTokenStore(pg),
+	authCfg := dashboardauth.Config{
+		Accounts:         accounts,
+		Users:            users,
+		Tokens:           tokens,
 		Sender:           sender,
 		Logger:           logger.With("component", "dashboard-auth"),
 		DashboardBaseURL: cfg.BaseURL,
@@ -692,16 +710,32 @@ func buildDashboardAuth(cfg config.DashboardConfig, db *sql.DB, logger *slog.Log
 		SessionTTL:       time.Duration(cfg.SessionTTLDays) * 24 * time.Hour,
 		CookieSecure:     cfg.CookieSecure,
 		CookieDomain:     cfg.CookieDomain,
+	}
+	authH, err := dashboardauth.NewHandlers(authCfg)
+	if err != nil {
+		return dashboardBundle{}, fmt.Errorf("dashboard auth handlers: %w", err)
+	}
+	keysH, err := dashboardkeys.NewHandlers(dashboardkeys.Config{
+		Keys:   keysStore,
+		Logger: logger.With("component", "dashboard-keys"),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("dashboard handlers: %w", err)
+		return dashboardBundle{}, fmt.Errorf("dashboard keys handlers: %w", err)
 	}
-	logger.Info("dashboard auth wired",
+	logger.Info("dashboard wired",
 		"base_url", cfg.BaseURL,
 		"magic_link_ttl_minutes", cfg.MagicLinkTTLMinutes,
 		"session_ttl_days", cfg.SessionTTLDays,
 		"cookie_secure", cfg.CookieSecure)
-	return h, nil
+
+	// authCfg drives both the handlers AND the resolver
+	// middleware — the latter needs the same Accounts / Users /
+	// Tokens stores to resolve the cookie on every request.
+	return dashboardBundle{
+		auth:       authH,
+		keys:       keysH,
+		middleware: middleware.Middleware(dashboardauth.Middleware(&authCfg)),
+	}, nil
 }
 
 func buildSEP10Validator(cfg config.SEP10Config) (auth.SEP10Validator, error) {

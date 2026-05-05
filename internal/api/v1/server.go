@@ -71,6 +71,8 @@ type Server struct {
 	regionName       string
 	regionDeployment string
 	dashboardAuth    DashboardAuthMounter
+	dashboardKeys    DashboardAuthMounter
+	sessionAuth      middleware.Middleware
 	mux              *http.ServeMux
 	started          time.Time
 }
@@ -305,6 +307,23 @@ type Options struct {
 	// + a Resend (or Noop) sender; main.go gates construction on
 	// cfg.API.Dashboard.BaseURL being non-empty.
 	DashboardAuth DashboardAuthMounter
+
+	// DashboardKeys, when non-nil, mounts the dashboard's
+	// key-management surface (GET / POST / DELETE /v1/dashboard/keys
+	// — the dashboard SPA's source of truth for listing + minting
+	// + revoking customer keys, gated on the session cookie that
+	// DashboardAuth sets). Same DashboardAuthMounter shape; main.go
+	// gates construction on the Postgres platform stores being
+	// reachable.
+	DashboardKeys DashboardAuthMounter
+
+	// SessionAuth, when non-nil, wraps every handler so a present
+	// dashboard session cookie populates a SessionContext on the
+	// request context. Anonymous + bearer-token requests pass
+	// through untouched. Required for the /v1/dashboard/* routes
+	// to read the session — DashboardKeys handlers 401 on missing
+	// session context.
+	SessionAuth middleware.Middleware
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -346,6 +365,8 @@ func New(opts Options) *Server {
 		regionName:       valueOr(opts.RegionName, "unknown"),
 		regionDeployment: valueOr(opts.RegionDeployment, "production"),
 		dashboardAuth:    opts.DashboardAuth,
+		dashboardKeys:    opts.DashboardKeys,
+		sessionAuth:      opts.SessionAuth,
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
 	}
@@ -414,6 +435,15 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.rateLimit != nil {
 		stack = append(stack, s.rateLimit)
+	}
+	// Session resolver runs INSIDE rate-limit so the per-account
+	// rate limit could observe the dashboard subject in the future
+	// (today only key-tier limits look at Subject; once the cutover
+	// makes Postgres canonical, dashboard sessions can carry tier
+	// info too). Either way the cookie is parsed once per request
+	// and the result stays attached for the rest of the chain.
+	if s.sessionAuth != nil {
+		stack = append(stack, s.sessionAuth)
 	}
 	// CaptureRoute MUST be innermost — directly above the mux — so
 	// r.Pattern is populated before it reads. It writes the matched
@@ -547,6 +577,13 @@ func (s *Server) mountRoutes() {
 	// the routes don't exist and ServeMux returns the standard 404.
 	if s.dashboardAuth != nil {
 		s.dashboardAuth.Mount(s.mux)
+	}
+
+	// Dashboard key-management routes — gated internally on the
+	// session cookie planted by DashboardAuth's middleware. Mount
+	// only when main.go wired Postgres for the platform stores.
+	if s.dashboardKeys != nil {
+		s.dashboardKeys.Mount(s.mux)
 	}
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
