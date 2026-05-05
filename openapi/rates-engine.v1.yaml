@@ -1492,6 +1492,112 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Customer dashboard — request a magic-link sign-in email.
+      description: |
+        Mints a single-use magic-link token (valid 15 minutes) and
+        emails it to the address. Always returns `{status: "sent"}`
+        regardless of whether the email matches an existing account
+        — leaking that information would let attackers enumerate
+        valid users. First-time users have their account + owner-
+        user provisioned on the callback (not here), so the same
+        flow handles login + signup.
+
+        Distinct from `/auth/sep10/*` (programmatic API auth via a
+        signed Stellar challenge). This endpoint is the entry point
+        for the cookie-based dashboard SPA at app.ratesengine.net.
+
+        Returns 503 when the deployment hasn't configured the
+        dashboard auth flow (api.dashboard.base_url empty).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The address to email the magic link to.
+              required: [email]
+      responses:
+        "200":
+          description: Email accepted for delivery (or silently dropped if address doesn't match an account).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [sent]
+                required: [status]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/callback:
+    get:
+      tags: [auth]
+      summary: Customer dashboard — consume a magic-link token + mint a session cookie.
+      description: |
+        Reads the `token` query parameter, atomically marks it
+        consumed in `magic_link_tokens`, and on success sets an
+        HttpOnly + Secure session cookie (`ratesengine_session`)
+        and redirects (303) into the dashboard.
+
+        First-time emails get a free-tier account + owner-role
+        user provisioned at this step. Returning users skip
+        provisioning and just get a fresh session.
+
+        Returns 410 on expired tokens so the dashboard can render
+        a "request a fresh link" prompt distinct from the generic
+        "invalid token" 400.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+          description: Hex-encoded magic-link plaintext from the email.
+        - name: next
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Path-only redirect target after sign-in (e.g. `/keys`).
+            Absolute URLs and protocol-relative paths (`//evil.com`)
+            are rejected; the user lands at `/` instead.
+      responses:
+        "303":
+          description: Authenticated; session cookie set; redirect to dashboard.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly + Secure session cookie.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "410":
+          description: Magic-link token expired; request a fresh one.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Customer dashboard — revoke the current session + clear the cookie.
+      description: |
+        Idempotent. Calling without a session cookie is still a 200
+        — the goal is just to leave the browser in a known
+        signed-out state. Sets a Max-Age=-1 cookie so the browser
+        drops it on the next response.
+      responses:
+        "200":
+          description: Session revoked (if any) and cookie cleared.
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /auth/sep10/challenge:
     get:
       tags: [auth]

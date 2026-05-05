@@ -527,6 +527,35 @@ type APIConfig struct {
 	Streaming           StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
 	Stripe              StripeConfig    `toml:"stripe" doc:"Stripe webhook handler — paid-tier upgrades wired to POST /v1/webhooks/stripe. Empty signing_secret leaves the endpoint 503."`
 	PrometheusURL       string          `toml:"prometheus_url" doc:"Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only)." default:""`
+	Dashboard           DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — magic-link email login + cookie sessions backing the dashboard SPA at app.ratesengine.net. Empty leaves /v1/auth/{login,callback,logout} returning 503."`
+}
+
+// DashboardConfig wires the magic-link email login flow + cookie
+// sessions for the customer dashboard at app.ratesengine.net.
+//
+// Empty (no BaseURL or no Resend API key) leaves the auth
+// endpoints unwired; main.go logs a warn at startup and the
+// dashboard SPA deployment is responsible for showing a "coming
+// soon" surface until the operator has configured these.
+//
+// The Resend API key lives in an env var (default
+// RATESENGINE_RESEND_API_KEY) so it doesn't sit in the TOML
+// alongside non-secret config — same pattern as
+// StripeConfig.SigningSecret.
+type DashboardConfig struct {
+	BaseURL string `toml:"base_url" doc:"Absolute URL of the customer dashboard SPA (e.g. https://app.ratesengine.net). The magic-link callback URL embedded in emails is {base_url}/auth/callback?token=<plaintext>." default:""`
+
+	EmailFrom string `toml:"email_from" doc:"From: address for transactional emails (e.g. 'Rates Engine <hello@ratesengine.net>'). Must match a domain Resend has verified for the configured API key." default:"Rates Engine <hello@ratesengine.net>"`
+
+	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"RATESENGINE_RESEND_API_KEY"`
+
+	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
+
+	SessionTTLDays int `toml:"session_ttl_days" doc:"Session-cookie lifetime in days. Default 30 — matches typical SaaS dashboards; users sign in monthly without re-authing." default:"30"`
+
+	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the session cookie. Production = true; dev (http://localhost) = false." default:"true"`
+
+	CookieDomain string `toml:"cookie_domain" doc:"Cookie Domain attribute. Empty (default) means a host-only cookie scoped to the API host. Set to '.ratesengine.net' if a future surface needs the cookie shared across subdomains." default:""`
 }
 
 // StripeConfig wires the /v1/webhooks/stripe handler. Stripe
