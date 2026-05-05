@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- `http_request_duration_seconds` and `http_requests_total` now
+  carry the actual route pattern instead of a constant
+  `route="unmatched"` label. Logger middleware between HTTPMetrics
+  and the mux called `r = r.WithContext(...)`, creating a fresh
+  request struct — ServeMux set Pattern on that copy, leaving
+  HTTPMetrics holding a request whose Pattern stayed empty. New
+  `obs.CaptureRoute` middleware (wired innermost) writes the
+  matched pattern into a `*routeCapture` planted in the context
+  by HTTPMetrics. Side effect: the SLO burn-rate alerts that fired
+  constantly on R1 (because the slow-request-ratio recording rule
+  filtered on `route!~/(healthz|readyz|version)/` against
+  `route="unmatched"` and got an empty numerator) now produce a
+  meaningful 1.0 ratio when every request is fast. Verified live.
+
 ### Changed
 - `/v1/status` now serves `Cache-Control: public, max-age=10,
   s-maxage=15` (previously fell through to the default

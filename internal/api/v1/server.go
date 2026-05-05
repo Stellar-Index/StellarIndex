@@ -395,6 +395,14 @@ func (s *Server) Handler() http.Handler {
 	if s.rateLimit != nil {
 		stack = append(stack, s.rateLimit)
 	}
+	// CaptureRoute MUST be innermost — directly above the mux — so
+	// r.Pattern is populated before it reads. It writes the matched
+	// route into the *routeCapture HTTPMetrics planted in the
+	// context, so the outermost metrics middleware can label by
+	// route even though Logger's r.WithContext between them shadows
+	// the original request struct. See obs.HTTPMetrics docstring
+	// for the why.
+	stack = append(stack, obs.CaptureRoute)
 	return middleware.Chain(s.mux, stack...)
 }
 

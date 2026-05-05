@@ -223,3 +223,48 @@ func TestHTTPMetrics_UnmatchedRouteLabelled(t *testing.T) {
 		t.Errorf("expected route=\"unmatched\" label, got:\n%s", string(body))
 	}
 }
+
+// TestHTTPMetrics_RouteSurvivesWithContextChain pins the regression
+// behind /v1/status's broken SLO burn-rate alerts: an inner
+// middleware that calls r.WithContext(...) creates a new
+// http.Request struct, and ServeMux sets Pattern on that struct —
+// not the one HTTPMetrics holds. Without obs.CaptureRoute wired
+// innermost, every request labels as "unmatched" in production.
+func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Inner middleware that mimics Logger's r.WithContext shadowing.
+	withContextMW := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), struct{ k string }{"req_id"}, "abc")
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+
+	// Production-equivalent stack: HTTPMetrics → withContextMW →
+	// CaptureRoute → mux. CaptureRoute is innermost.
+	h := obs.HTTPMetrics(withContextMW(obs.CaptureRoute(mux)))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/probe", nil))
+
+	ts := httptest.NewServer(obs.Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	text := string(body)
+
+	// Positive assertion is sufficient: if the route was lost, this
+	// counter would be route="unmatched" instead.
+	want := `http_requests_total{method="GET",route="/v1/probe",status="200"} 1`
+	if !strings.Contains(text, want) {
+		t.Errorf("expected %q, body:\n%s", want, text)
+	}
+}

@@ -1,11 +1,21 @@
 package obs
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// routeCapture is a single-field pointer holder we plant in the
+// request context so HTTPMetrics can read the matched route after
+// the inner mux has dispatched. See [CaptureRoute] for the writer
+// side and [HTTPMetrics] for why we need this indirection rather
+// than reading r.Pattern directly.
+type routeCapture struct{ route string }
+
+type routeCaptureKey struct{}
 
 // HTTPMetrics returns middleware that emits `http_requests_total`
 // + `http_request_duration_seconds` for every served request.
@@ -22,8 +32,18 @@ import (
 // # Route pattern discovery
 //
 // Go 1.22+ ServeMux exposes the matched pattern via
-// http.Request.Pattern (populated as a side-effect of
-// http.ServeMux.Handler). Middleware inspects it post-dispatch.
+// http.Request.Pattern, but only on the request struct the mux was
+// dispatched with — and any middleware between HTTPMetrics and the
+// mux that calls `r = r.WithContext(...)` (Logger does, to attach
+// request_id / remote_ip) creates a fresh struct, leaving
+// HTTPMetrics holding a Request whose Pattern stays "".
+//
+// To survive the WithContext shadow-copy chain we plant a
+// *routeCapture pointer in the request context. The innermost
+// [CaptureRoute] middleware writes r.Pattern into it after
+// dispatch; HTTPMetrics reads from the same pointer. The pointer
+// itself is in the context, and contexts pass through WithContext
+// chains unchanged, so all middlewares see the same routeCapture.
 //
 // For unmatched routes (404) the pattern is empty; we label those
 // as `"unmatched"` to keep cardinality bounded.
@@ -32,9 +52,20 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		start := time.Now()
 
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
+		rc := &routeCapture{}
+		ctx := context.WithValue(r.Context(), routeCaptureKey{}, rc)
+		// Keep a reference to the ctx-wrapped request so we can
+		// read the mux-set Pattern off it as a fallback when no
+		// CaptureRoute is wired innermost. Reading from the
+		// original `r` here would always be empty — our own
+		// WithContext above shadowed it.
+		r2 := r.WithContext(ctx)
+		next.ServeHTTP(rec, r2)
 
-		route := routeFromPattern(r.Pattern)
+		route := rc.route
+		if route == "" {
+			route = routeFromPattern(r2.Pattern)
+		}
 		method := normalizeMethod(r.Method)
 		elapsed := time.Since(start).Seconds()
 
@@ -50,6 +81,25 @@ func HTTPMetrics(next http.Handler) http.Handler {
 
 		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
 		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+	})
+}
+
+// CaptureRoute writes the mux-matched route pattern into the
+// *routeCapture installed by [HTTPMetrics]. Wire this as the
+// INNERMOST middleware in the stack — directly above the mux —
+// so r.Pattern is populated before this middleware reads it.
+//
+// No-op when the request context doesn't carry a routeCapture —
+// the route still ends up in r.Pattern; HTTPMetrics's fallback
+// path picks it up.
+func CaptureRoute(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		rc, ok := r.Context().Value(routeCaptureKey{}).(*routeCapture)
+		if !ok {
+			return
+		}
+		rc.route = routeFromPattern(r.Pattern)
 	})
 }
 
