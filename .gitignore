@@ -89,3 +89,4 @@ service-account*.json
 
 # Agent session state — local only
 /.claude/
+/docs/reference/api/postman-collection.json

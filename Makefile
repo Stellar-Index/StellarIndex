@@ -275,6 +275,10 @@ docs-all: docs-api docs-config docs-metrics ## Regenerate all reference docs
 docs-api: ## Regenerate API reference from openapi/rates-engine.v1.yaml (Redocly via npx — no global install required)
 	@./scripts/dev/docs-api.sh
 
+.PHONY: docs-postman
+docs-postman: ## Regenerate Postman collection from openapi/rates-engine.v1.yaml (gitignored — operators run on demand)
+	@./scripts/dev/docs-postman.sh
+
 .PHONY: docs-config
 docs-config: ## Regenerate config reference from struct tags
 	@$(GO) run ./cmd/ratesengine-ops docs-config > docs/reference/config/README.md
