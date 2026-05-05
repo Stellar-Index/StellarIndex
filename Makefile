@@ -30,7 +30,8 @@ BINARIES := \
   ratesengine-aggregator \
   ratesengine-api \
   ratesengine-ops \
-  ratesengine-migrate
+  ratesengine-migrate \
+  ratesengine-sla-probe
 
 # Packages that hold integration tests (gated by build tag)
 INT_TEST_PKGS := ./test/integration/...
@@ -235,14 +236,17 @@ build: ## Build all binaries into bin/
 	done
 
 .PHONY: build-docker
-build-docker: ## Build all component Docker images locally (requires per-binary Dockerfiles in docker/)
-	@if [ ! -d docker ]; then \
-	  echo "build-docker: docker/ directory not present yet — per-binary Dockerfiles land with the packaging PR." >&2; \
-	  echo "build-docker: local dev uses deploy/docker-compose/dev.yaml; production deploys via configs/ansible/." >&2; \
-	  exit 2; \
-	fi
+build-docker: ## Build all per-binary Docker images locally (Dockerfiles in docker/)
 	@for b in $(BINARIES); do \
-	  docker build -t ratesengine/$$b:local -f docker/$$b.Dockerfile . || exit 1; \
+	  echo "Building docker image ratesengine/$$b:local"; \
+	  docker build --build-arg VERSION=$(VERSION) -t ratesengine/$$b:local -f docker/$$b.Dockerfile . || exit 1; \
+	done
+
+.PHONY: smoke-docker
+smoke-docker: ## Smoke-test all per-binary Docker images (requires `make build-docker` first)
+	@for b in $(BINARIES); do \
+	  echo "Smoke ratesengine/$$b:local --help"; \
+	  docker run --rm ratesengine/$$b:local --help 2>&1 | head -5 || exit 1; \
 	done
 
 ##@ Database migrations

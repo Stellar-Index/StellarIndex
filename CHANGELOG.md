@@ -57,6 +57,33 @@ against.
   version it was built from. Resolves the deploy-workflow follow-up
   that previously required parsing journal output or sidecar files
   to know what was running on a host.
+### Added
+
+- **`scripts/dev/cut-release.sh` guard-rail script + `make
+  smoke-docker` target.** `cut-release.sh vX.Y.Z` checks branch +
+  clean tree + sync-with-origin + non-empty CHANGELOG section + a
+  green `verify.sh` before tagging and pushing — catches the
+  "oops, dirty tree" / "oops, empty CHANGELOG section" footguns at
+  the operator instead of after the release workflow runs.
+  `--dry-run` shows what would happen without committing. Pairs
+  with the `make smoke-docker` target that runs `docker run --rm
+  ratesengine/<binary>:local --help` against every locally-built
+  image — fast post-`make build-docker` sanity check that all six
+  Dockerfiles produce a runnable artefact.
+
+### Changed
+
+- **`Makefile`: `ratesengine-sla-probe` added to `BINARIES`.** The
+  SLA-probe binary was implemented and shipped as a systemd unit
+  but was never in the Makefile's BINARIES list, so `make build`
+  silently skipped it. Adding it means `make build`, `make
+  build-docker`, and `make smoke-docker` all cover the full set
+  of six binaries.
+
+- **`Makefile`: `build-docker` simplified.** Dropped the "if no
+  docker/" guard now that the directory exists, and added a
+  `--build-arg VERSION=$(VERSION)` so locally-built images carry
+  the same version-stamping as CI-released ones.
 
 ### Fixed
 
