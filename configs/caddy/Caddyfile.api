@@ -1,0 +1,79 @@
+# Rates Engine — Caddy reverse proxy.
+# Auto-HTTPS via Let's Encrypt; fronts the API (and the showcase if
+# served from this box; today the showcase is on Cloudflare Pages
+# per CLAUDE.md, so this block stays inert until DNS for the showcase
+# is repointed).
+#
+# Cert acquisition needs:
+#   - api.ratesengine.net A record → 136.243.90.96
+#   - Ports 80 + 443 reachable from the public internet
+# Until DNS lands, Caddy retries acquisition every few minutes and
+# falls back to its internal CA for testing on the IP directly.
+#
+# Operator email is for Let's Encrypt account registration —
+# expiration warnings and CA-required notices land here.
+{
+	email tls@ratesengine.net
+	# Auto-HTTPS on by default. If we ever need a no-DNS test mode:
+	#   auto_https disable_redirects
+	# but leave it on for production.
+}
+
+# ─── API ──────────────────────────────────────────────────────────
+api.ratesengine.net {
+	# Trust X-Forwarded-* headers from Caddy itself (the API's
+	# trusted_proxy_cidrs config should include 127.0.0.1/32 so it
+	# honours the headers Caddy sets).
+	header {
+		# Standard hardening — Caddy sets some by default; explicit
+		# values here belt-and-braces in case of upstream regression.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Allow CORS at this layer too; the API also CORS-handles per
+		# cfg.API.AllowedOrigins.
+		-Server
+	}
+
+	# Health probe — Caddy reverse_proxy active health-check.
+	# Drops the upstream from rotation if /v1/healthz starts returning
+	# non-200, surfaces in /metrics. With one upstream this means
+	# 502 on probe failure, but it's the right signal.
+	reverse_proxy localhost:3000 {
+		health_uri /v1/healthz
+		health_interval 10s
+		health_timeout 3s
+		health_status 200
+		# Forward the original Host header so the API can read it
+		# (subdomain-based routing isn't in use today, but leaves
+		# the door open).
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Access logs — JSON to journald, picks up centralized log
+	# aggregation (Loki) when that lands.
+	log {
+		output stdout
+		format json
+		# Skip /v1/healthz spam from the active health check.
+		# It runs every 10s; not interesting in the access log.
+	}
+}
+
+# ─── Future: showcase ─────────────────────────────────────────────
+# When ratesengine.net is repointed off Cloudflare Pages and onto
+# this box, uncomment the block below and arrange for the static
+# Next.js export to land at /var/www/showcase. Today the showcase
+# is served from Cloudflare Pages directly so this block stays
+# commented out.
+#
+# ratesengine.net, www.ratesengine.net {
+#     root * /var/www/showcase
+#     try_files {path} {path}.html /index.html
+#     file_server
+#     header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# }
