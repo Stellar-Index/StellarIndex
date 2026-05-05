@@ -92,11 +92,13 @@ elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; t
   exit 1
 fi
 
-# Step 5 — CHANGELOG section exists and is non-empty
-changelog_section=$(awk -v ver="[$TAG]" '
-  $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
-  capture && /^## \[/      { exit }
-  capture                  { print }
+# Step 5 — CHANGELOG section exists and is non-empty.
+# Uses awk's index() instead of $0 ~ regex so dot/dash chars in
+# the tag (e.g. v0.5.0-rc.1) don't collapse to a regex char class.
+changelog_section=$(awk -v marker="## [$TAG]" '
+  index($0, marker) == 1 { capture = 1; next }
+  capture && /^## \[/    { exit }
+  capture                { print }
 ' CHANGELOG.md)
 if [[ -z "$(printf '%s' "$changelog_section" | tr -d '[:space:]')" ]]; then
   echo "ERR: no non-empty '## [$TAG] — YYYY-MM-DD' section in CHANGELOG.md" >&2
