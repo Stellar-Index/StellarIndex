@@ -1,11 +1,11 @@
 baseURL = "https://status.ratesengine.net/"
 languageCode = "en-gb"
 title = "Rates Engine status"
-theme = "cstate"
 
-# Pull cstate from GitHub via Hugo modules so we don't have to
-# vendor it. CF Pages' Hugo build resolves modules at build
-# time. Re-run `hugo mod get -u` locally to bump.
+# Pull cstate from GitHub via Hugo modules. The module import
+# IS the theme — no separate `theme = "cstate"` directive
+# needed (and including one tells Hugo to look in themes/cstate
+# on disk, which fails when the theme is module-sourced).
 [module]
   [[module.imports]]
     path = "github.com/cstate/cstate"
