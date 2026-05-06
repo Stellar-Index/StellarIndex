@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.5] — 2026-05-06
+
+### Added
+- **`GET /v1/coins/{slug}`** — single-asset lookup by URL-safe
+  slug. Same row shape as one element of `/v1/coins`. Used by
+  the explorer asset detail page (`/assets/[slug]`) so deep
+  links work for every classic asset, not just the top 500
+  by observation count. Returns 404 on no-match.
+- **`pkg/client.Coin(ctx, slug)`** wraps the new endpoint.
+
+### Changed
+- **Explorer asset detail page** fetches `/v1/coins/{slug}`
+  directly instead of scanning the top-500 listing. Tab
+  panels (Markets / History / Supply) take `assetID` as a
+  prop instead of doing their own slug lookup — one network
+  round-trip per page render instead of four, and pages no
+  longer 404 for assets ranked below 500.
+
 ## [v0.5.0-rc.4] — 2026-05-06
 
 ### Added
