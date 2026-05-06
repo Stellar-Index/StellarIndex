@@ -2,16 +2,19 @@ package v1
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
 
-// CoinsReader is the seam the /v1/coins handler reads through.
-// timescale.Store satisfies it via ListCoins.
+// CoinsReader is the seam the /v1/coins handlers read through.
+// timescale.Store satisfies it via ListCoins + GetCoinBySlug.
 type CoinsReader interface {
 	ListCoins(ctx context.Context, limit int, issuer, cursor string) ([]timescale.CoinRow, error)
+	GetCoinBySlug(ctx context.Context, slug string) (timescale.CoinRow, error)
 }
 
 // Coin is the wire shape of one entry in the /v1/coins response.
@@ -129,5 +132,64 @@ func (s *Server) handleCoins(w http.ResponseWriter, r *http.Request) {
 		Coins:      out,
 		NextCursor: nextCursor,
 		Limit:      limit,
+	}, Flags{})
+}
+
+// handleCoin serves GET /v1/coins/{slug}.
+//
+// Returns one coin row by slug. The slug is the URL-safe
+// identifier from `classic_assets.slug` (or `classic_assets.code`
+// when slug is null). Used by the explorer asset-detail page
+// (/assets/{slug}) so a deep link doesn't require scanning the
+// top-N listing first.
+//
+// Returns 404 when the slug doesn't match any classic asset.
+func (s *Server) handleCoin(w http.ResponseWriter, r *http.Request) {
+	if s.coins == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/coins-unavailable",
+			"Coins lookup unavailable", http.StatusServiceUnavailable,
+			"This deployment hasn't wired the coins reader yet.")
+		return
+	}
+
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-slug",
+			"Invalid slug", http.StatusBadRequest,
+			"slug path parameter is required")
+		return
+	}
+
+	row, err := s.coins.GetCoinBySlug(r.Context(), slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/coin-not-found",
+			"Coin not found", http.StatusNotFound,
+			"No classic asset matches that slug.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("coin by slug", "slug", slug, "err", err)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/coins-error",
+			"Coin lookup failed", http.StatusInternalServerError,
+			"Storage layer returned an error.")
+		return
+	}
+
+	writeJSON(w, Coin{
+		Slug:              row.Slug,
+		AssetID:           row.AssetID,
+		Code:              row.Code,
+		Issuer:            row.IssuerGStrkey,
+		FirstSeenLedger:   row.FirstSeenLedger,
+		LastSeenLedger:    row.LastSeenLedger,
+		ObservationCount:  row.ObservationCount,
+		PriceUSD:          row.PriceUSD,
+		Volume24hUSD:      row.Volume24hUSD,
+		MarketCapUSD:      row.MarketCapUSD,
+		CirculatingSupply: row.CirculatingSupply,
 	}, Flags{})
 }

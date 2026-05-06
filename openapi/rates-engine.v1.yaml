@@ -1068,6 +1068,64 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /coins/{slug}:
+    get:
+      tags: [meta]
+      summary: Single asset by slug.
+      description: |
+        Returns one row of `/coins` shape, looked up by URL-safe
+        `slug` (the slug column from `classic_assets`, falling
+        back to `code` when slug is null). Used by the explorer
+        asset-detail page so a deep link doesn't need to scan
+        the top-N listing first.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: URL-safe asset slug (e.g. `USDC`, `native`).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One asset row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - slug
+                  - asset_id
+                  - code
+                  - issuer
+                  - first_seen_ledger
+                  - last_seen_ledger
+                  - observation_count
+                properties:
+                  slug: { type: string }
+                  asset_id: { type: string }
+                  code: { type: string }
+                  issuer: { type: string }
+                  first_seen_ledger: { type: integer }
+                  last_seen_ledger: { type: integer }
+                  observation_count: { type: integer, format: int64 }
+                  price_usd:
+                    type: string
+                    nullable: true
+                  volume_24h_usd:
+                    type: string
+                    nullable: true
+                  market_cap_usd:
+                    type: string
+                    nullable: true
+                  circulating_supply:
+                    type: string
+                    nullable: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /changes/{entity_type}/{id}:
     get:
       tags: [meta]

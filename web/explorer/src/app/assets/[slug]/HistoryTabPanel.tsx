@@ -1,10 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
-
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { useCoins, useHistory, type TradeRow } from '@/api/hooks';
+import { useHistory, type TradeRow } from '@/api/hooks';
 
 const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
@@ -12,31 +10,24 @@ const HISTORY_LIMIT = 100;
 /**
  * HistoryTabPanel — backs the "History" tab on /assets/[slug].
  *
- * Resolves slug → asset_id via /v1/coins (cache-shared with the
- * coin directory) then fetches recent trades from /v1/history with
+ * Fetches recent trades from /v1/history with
  * `base=<asset_id>&quote=native` (XLM) — the most active on-chain
- * pair for any classic asset on Stellar.
+ * pair for any classic asset on Stellar. The asset_id comes from
+ * the parent server component's /v1/coins/{slug} lookup.
  *
  * Fiat-quoted trades (e.g. against `fiat:USD`) don't surface here:
  * /v1/history serves raw on-chain trades only; aggregator-derived
  * pairs ship via /v1/vwap and /v1/twap.
  */
-export function HistoryTabPanel({ slug }: { slug: string }) {
-  const coins = useCoins(100);
-
-  const assetID = useMemo(
-    () => coins.data?.coins?.find((c: { slug: string; asset_id: string }) => c.slug === slug)?.asset_id,
-    [coins.data, slug],
-  );
-
+export function HistoryTabPanel({ assetID }: { assetID: string }) {
   const history = useHistory(assetID, DEFAULT_QUOTE, HISTORY_LIMIT);
 
-  if (coins.isError || history.isError) {
+  if (history.isError) {
     return (
       <Panel
         title="Recent trades"
         source={asExample('/v1/history', {
-          base: assetID ?? '<asset_id>',
+          base: assetID,
           quote: DEFAULT_QUOTE,
           limit: HISTORY_LIMIT,
         })}
@@ -47,30 +38,18 @@ export function HistoryTabPanel({ slug }: { slug: string }) {
     );
   }
 
-  if (coins.isLoading || history.isLoading) {
+  if (history.isLoading) {
     return (
       <Panel
         title="Recent trades"
         source={asExample('/v1/history', {
-          base: '<asset_id>',
+          base: assetID,
           quote: DEFAULT_QUOTE,
           limit: HISTORY_LIMIT,
         })}
         bodyClassName="text-sm text-slate-500"
       >
         Loading…
-      </Panel>
-    );
-  }
-
-  if (!assetID) {
-    return (
-      <Panel
-        title="Recent trades"
-        source={asExample('/v1/coins', { limit: 100 })}
-        bodyClassName="text-sm text-slate-500"
-      >
-        Slug not found in the live coin directory.
       </Panel>
     );
   }

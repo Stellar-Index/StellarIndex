@@ -533,6 +533,18 @@ func (c *Client) Coins(ctx context.Context, opts CoinsOptions) (*Envelope[CoinsP
 	return &env, nil
 }
 
+// Coin returns a single asset row by slug. Same row shape as
+// one element of [CoinsPage.Coins]. 404 when the slug doesn't
+// match a known classic asset.
+func (c *Client) Coin(ctx context.Context, slug string) (*Envelope[Coin], error) {
+	var env Envelope[Coin]
+	path := "/v1/coins/" + url.PathEscape(slug)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // IssuersOptions paginates the issuer directory. Same `Limit`
 // semantics as [CoinsOptions].
 type IssuersOptions struct {

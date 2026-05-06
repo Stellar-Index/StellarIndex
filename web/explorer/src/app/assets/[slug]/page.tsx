@@ -84,12 +84,13 @@ const isCIStub =
 async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   if (isCIStub) return null;
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/coins?limit=500`, {
-      signal: AbortSignal.timeout(2_000),
-    });
+    const res = await fetch(
+      `${API_BASE_URL}/v1/coins/${encodeURIComponent(slug)}`,
+      { signal: AbortSignal.timeout(2_000) },
+    );
     if (!res.ok) return null;
-    const env = (await res.json()) as { data: { coins: CoinSummary[] } };
-    return env.data?.coins?.find((c) => c.slug === slug) ?? null;
+    const env = (await res.json()) as { data: CoinSummary };
+    return env.data ?? null;
   } catch {
     return null;
   }
@@ -228,9 +229,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             <OverviewBody coin={coin} detail={detail} price={price} />
           }
           chart={<ChartPanel slug={coin.slug} startPrice={parsePrice(price?.price) ?? 0.01} />}
-          markets={<MarketsTabPanel slug={coin.slug} />}
-          history={<HistoryTabPanel slug={coin.slug} />}
-          supply={<SupplyTabPanel slug={coin.slug} />}
+          markets={<MarketsTabPanel assetID={coin.asset_id} />}
+          history={<HistoryTabPanel assetID={coin.asset_id} />}
+          supply={<SupplyTabPanel assetID={coin.asset_id} />}
           issuer={
             coin.issuer ? <IssuerPanel gStrkey={coin.issuer} /> : undefined
           }

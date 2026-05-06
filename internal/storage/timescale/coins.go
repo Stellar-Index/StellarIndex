@@ -186,6 +186,83 @@ func buildCoinsQuery(limit int, issuer, cursor string) (string, []any) {
 	}
 }
 
+// GetCoinBySlug returns one row matching the given slug. Returns
+// sql.ErrNoRows when the slug doesn't match a known classic asset.
+//
+// Mirrors ListCoins's per-row metric shape (price/volume/market cap/
+// supply) so the explorer can render an asset detail page from a
+// single endpoint without scanning the top-N listing first.
+func (s *Store) GetCoinBySlug(ctx context.Context, slug string) (CoinRow, error) {
+	const q = `
+		WITH per_asset_24h_vol AS (
+		  SELECT asset_id, SUM(volume_usd) AS vol_usd
+		    FROM (
+		      SELECT base_asset  AS asset_id, volume_usd
+		        FROM prices_1m
+		       WHERE bucket >= now() - INTERVAL '24 hours'
+		         AND bucket  <  now()
+		         AND volume_usd IS NOT NULL
+		         AND base_asset = (
+		           SELECT asset_id FROM classic_assets
+		            WHERE COALESCE(slug, code) = $1 LIMIT 1
+		         )
+		      UNION ALL
+		      SELECT quote_asset AS asset_id, volume_usd
+		        FROM prices_1m
+		       WHERE bucket >= now() - INTERVAL '24 hours'
+		         AND bucket  <  now()
+		         AND volume_usd IS NOT NULL
+		         AND quote_asset = (
+		           SELECT asset_id FROM classic_assets
+		            WHERE COALESCE(slug, code) = $1 LIMIT 1
+		         )
+		    ) t
+		   GROUP BY asset_id
+		)
+		SELECT
+		    COALESCE(ca.slug, ca.code)            AS slug,
+		    ca.asset_id, ca.code, ca.issuer_g_strkey,
+		    ca.first_seen_ledger, ca.last_seen_ledger, ca.observation_count,
+		    NULL::numeric                         AS price_usd,
+		    vol.vol_usd                           AS volume_24h_usd,
+		    NULL::numeric                         AS market_cap_usd,
+		    NULL::numeric                         AS circulating_supply
+		  FROM classic_assets ca
+		  LEFT JOIN per_asset_24h_vol vol ON vol.asset_id = ca.asset_id
+		 WHERE COALESCE(ca.slug, ca.code) = $1
+		 LIMIT 1
+	`
+	var (
+		r                        CoinRow
+		firstLedger, lastLedger  int64
+		priceUSD, volume24hUSD   sql.NullString
+		marketCapUSD, circSupply sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, q, slug).Scan(
+		&r.Slug, &r.AssetID, &r.Code, &r.IssuerGStrkey,
+		&firstLedger, &lastLedger, &r.ObservationCount,
+		&priceUSD, &volume24hUSD, &marketCapUSD, &circSupply,
+	)
+	if err != nil {
+		return CoinRow{}, err
+	}
+	r.FirstSeenLedger = uint32(firstLedger) //nolint:gosec
+	r.LastSeenLedger = uint32(lastLedger)   //nolint:gosec
+	if priceUSD.Valid {
+		r.PriceUSD = &priceUSD.String
+	}
+	if volume24hUSD.Valid {
+		r.Volume24hUSD = &volume24hUSD.String
+	}
+	if marketCapUSD.Valid {
+		r.MarketCapUSD = &marketCapUSD.String
+	}
+	if circSupply.Valid {
+		r.CirculatingSupply = &circSupply.String
+	}
+	return r, nil
+}
+
 // LatestAssetStats returns per-asset 24h volume + supply stats
 // for /v1/assets/{id}. Volume sums prices_1m.volume_usd across
 // pairs where the asset is base or quote (mirrors
