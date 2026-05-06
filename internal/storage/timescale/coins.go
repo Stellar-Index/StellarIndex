@@ -396,6 +396,80 @@ func parseVolumeCursor(cursor string) (vol, assetID string) {
 	return "0", ""
 }
 
+// CoinTopMarket is one entry in the top-markets preview returned
+// alongside a single coin lookup. Compact summary suitable for an
+// asset detail page header — the full markets list lives on
+// /v1/markets.
+type CoinTopMarket struct {
+	Counterparty  string  // the OTHER side of the pair (the side that's NOT this asset)
+	Side          string  // "base" if this asset was base, else "quote"
+	Volume24hUSD  *string // trailing-24h USD volume for this pair; nil if no USD-equivalent trades
+	TradeCount24h int64
+}
+
+// GetCoinTopMarkets returns up to `limit` markets the given asset
+// participates in (as base OR quote), ordered by trailing-24h USD
+// volume desc. Used by the explorer asset-detail page to show a
+// "Top markets" preview without a separate /v1/markets call.
+//
+// limit clamps to [1, 20]; default 5.
+func (s *Store) GetCoinTopMarkets(ctx context.Context, assetID string, limit int) ([]CoinTopMarket, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	const q = `
+		WITH per_pair_24h AS (
+		  SELECT base_asset, quote_asset,
+		         SUM(volume_usd)::text AS vol_usd
+		    FROM prices_1m
+		   WHERE bucket >= now() - INTERVAL '24 hours'
+		     AND volume_usd IS NOT NULL
+		     AND (base_asset = $1 OR quote_asset = $1)
+		   GROUP BY base_asset, quote_asset
+		),
+		per_pair_count AS (
+		  SELECT base_asset, quote_asset,
+		         COUNT(*) FILTER (WHERE ts > now() - INTERVAL '24 hours') AS n
+		    FROM trades
+		   WHERE ts >= now() - INTERVAL '24 hours'
+		     AND (base_asset = $1 OR quote_asset = $1)
+		   GROUP BY base_asset, quote_asset
+		)
+		SELECT
+		    CASE WHEN p.base_asset = $1 THEN p.quote_asset ELSE p.base_asset END AS counterparty,
+		    CASE WHEN p.base_asset = $1 THEN 'base' ELSE 'quote' END             AS side,
+		    p.vol_usd                                                            AS vol_24h_usd,
+		    COALESCE(c.n, 0)                                                     AS n_24h
+		  FROM per_pair_24h p
+		  LEFT JOIN per_pair_count c
+		    ON c.base_asset = p.base_asset AND c.quote_asset = p.quote_asset
+		 ORDER BY p.vol_usd::numeric DESC NULLS LAST
+		 LIMIT $2
+	`
+	rows, err := s.db.QueryContext(ctx, q, assetID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetCoinTopMarkets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]CoinTopMarket, 0, limit)
+	for rows.Next() {
+		var m CoinTopMarket
+		var vol sql.NullString
+		if err := rows.Scan(&m.Counterparty, &m.Side, &vol, &m.TradeCount24h); err != nil {
+			return nil, fmt.Errorf("timescale: GetCoinTopMarkets scan: %w", err)
+		}
+		if vol.Valid && vol.String != "" && vol.String != "0" {
+			v := vol.String
+			m.Volume24hUSD = &v
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: GetCoinTopMarkets rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetCoinBySlug returns one row matching the given slug. Returns
 // sql.ErrNoRows when the slug doesn't match a known classic asset.
 //
