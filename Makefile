@@ -371,6 +371,30 @@ dashboard-typecheck: ## Typecheck the dashboard
 dashboard-lint: ## Lint the dashboard
 	cd $(WEB_DASHBOARD_DIR) && pnpm lint
 
+##@ Status page (web/status/) — public-facing status.ratesengine.net
+
+WEB_STATUS_DIR := web/status
+
+.PHONY: status-install
+status-install: ## Install status-page dependencies (pnpm)
+	cd $(WEB_STATUS_DIR) && pnpm install --frozen-lockfile
+
+.PHONY: status-dev
+status-dev: ## Run the status page locally with HMR (http://localhost:3002)
+	cd $(WEB_STATUS_DIR) && pnpm dev
+
+.PHONY: status-build
+status-build: ## Build the status page for production
+	cd $(WEB_STATUS_DIR) && pnpm build
+
+.PHONY: status-typecheck
+status-typecheck: ## Typecheck the status page
+	cd $(WEB_STATUS_DIR) && pnpm typecheck
+
+.PHONY: status-lint
+status-lint: ## Lint the status page
+	cd $(WEB_STATUS_DIR) && pnpm lint
+
 ##@ Housekeeping
 
 .PHONY: clean

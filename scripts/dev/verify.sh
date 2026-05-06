@@ -53,5 +53,12 @@ if command -v pnpm >/dev/null 2>&1 && [ -f web/dashboard/pnpm-lock.yaml ]; then
     echo "=== Dashboard build ==="     && \
         NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make dashboard-build >/dev/null
 fi
+# Status page — same pnpm gate.
+if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
+    echo "=== Status typecheck ===" && make status-typecheck
+    echo "=== Status lint ==="      && make status-lint
+    echo "=== Status build ==="     && \
+        NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make status-build >/dev/null
+fi
 echo ""
 echo "✅ ALL CHECKS PASSED"

@@ -282,3 +282,30 @@ jobs:
       - run: pnpm build
         env:
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
+
+  # ────────────────────────────────────────────────────────────────
+  # Status page — public-facing status.ratesengine.net. Replaces
+  # the cstate Hugo build with a custom Next.js static-export.
+  # ────────────────────────────────────────────────────────────────
+  web-status:
+    name: web/status
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/status
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: web/status/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
