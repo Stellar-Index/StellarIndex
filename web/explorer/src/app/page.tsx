@@ -3,6 +3,7 @@ import { ArrowRight } from 'lucide-react';
 
 import { NetworkLivePanel, SystemHealthLivePanel } from './HomeLivePanels';
 import { HomeNetworkStrip } from './HomeNetworkStrip';
+import { HomeRecentTrades } from './HomeRecentTrades';
 import { HomeTopAssets } from './HomeTopAssets';
 import { HomeTopMarkets } from './HomeTopMarkets';
 import { HomeTopMovers } from './HomeTopMovers';
@@ -79,6 +80,8 @@ export default function HomePage() {
       <HomeTopMarkets />
 
       <HomeTopMovers />
+
+      <HomeRecentTrades />
 
       <section className="space-y-3">
         <div className="space-y-1">

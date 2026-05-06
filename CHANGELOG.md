@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Home page: Recent trades live feed.** Bottom of the home
+  page — rolling 30-row table merging the latest trades across
+  the top 3 pairs by 24h USD volume. Refreshes every 30s.
+  Each row deep-links to `/markets/{base~quote}` for full pair
+  detail. No backend changes; consumes existing `/v1/markets`
+  + `/v1/history` per pair.
+
 ## [v0.5.0-rc.18] — 2026-05-07
 
 ### Fixed
