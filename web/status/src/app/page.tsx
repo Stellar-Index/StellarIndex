@@ -231,27 +231,33 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_SLOW_MS = 800;
 
-// Incident history is hand-maintained until the /v1/incidents API
-// (reading from docs/operations/incidents/*.md) ships. Each entry
-// here mirrors a markdown file under that directory; keep the two
-// in sync.
-const INCIDENT_HISTORY: {
+// IncidentHistoryEntry is the shape the IncidentHistory section
+// consumes. It's a deliberately UI-flat shape — the API returns
+// a richer shape (severity codes, structured timestamps, etc.)
+// which IncidentHistory normalises before render.
+interface IncidentHistoryEntry {
   date: string;
   title: string;
   resolved: string;
   summary: string;
   severity: 'major' | 'minor' | 'maintenance';
-}[] = [
-  {
-    date: '2026-05-06',
-    title:
-      'Indexer dropping ~1% of trades — Postgres lock-table-full',
-    resolved: '2026-05-06 22:39 UTC',
-    severity: 'minor',
-    summary:
-      'TimescaleDB chunk-lock pressure exhausted Postgres lock table (default max_locks_per_transaction = 64) under concurrent ingest from 11 exchange-class sources. Bumped to 256 (4× headroom) + Postgres restart. ~5 s downtime; ~1% of incoming trades dropped during the multi-hour window. No customer-visible API errors.',
-  },
-];
+}
+
+interface IncidentsAPIShape {
+  data: {
+    incidents: Array<{
+      slug: string;
+      title: string;
+      severity: 'SEV-1' | 'SEV-2' | 'SEV-3';
+      status: 'investigating' | 'identified' | 'monitoring' | 'resolved';
+      started_at: string;
+      resolved_at?: string | null;
+      affected_components?: string[];
+      body_markdown: string;
+    }>;
+    count: number;
+  };
+}
 
 export default function StatusPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -261,6 +267,9 @@ export default function StatusPage() {
   const [endpointHealth, setEndpointHealth] = useState<
     Record<string, EndpointProbeResult>
   >({});
+  const [incidentHistory, setIncidentHistory] = useState<
+    IncidentHistoryEntry[]
+  >([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,6 +336,26 @@ export default function StatusPage() {
     };
   }, []);
 
+  // Incident history is fetched once at mount from /v1/incidents.
+  // The corpus is small (a handful of posts per year of operation)
+  // and changes only on redeploy, so polling would be wasted work.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/v1/incidents`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((env: IncidentsAPIShape) => {
+        if (cancelled) return;
+        const mapped = (env.data?.incidents ?? []).map(normaliseIncident);
+        setIncidentHistory(mapped);
+      })
+      .catch(() => {
+        // Silent failure — the panel renders the empty state.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const overallTone = useMemo(() => toneFor(status?.overall), [status]);
 
   return (
@@ -353,7 +382,7 @@ export default function StatusPage() {
             endpoints={PUBLIC_ENDPOINTS}
             health={endpointHealth}
           />
-          <IncidentHistory entries={INCIDENT_HISTORY} />
+          <IncidentHistory entries={incidentHistory} />
           <Footer asOf={asOf} region={status.region} />
         </>
       )}
@@ -761,10 +790,43 @@ function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
   );
 }
 
+// normaliseIncident projects the API's structured shape onto the
+// flat one IncidentHistory renders. Severity codes (SEV-1..3) map
+// onto the UI's tone names (major / minor / maintenance);
+// `summary` is the first paragraph of the markdown body so the
+// panel doesn't render the entire post.
+function normaliseIncident(
+  raw: IncidentsAPIShape['data']['incidents'][number],
+): IncidentHistoryEntry {
+  const severity =
+    raw.severity === 'SEV-1'
+      ? 'major'
+      : raw.severity === 'SEV-2'
+        ? 'minor'
+        : 'maintenance';
+  const summary = (raw.body_markdown || '')
+    .split(/\n## /m)[0]
+    ?.replace(/^[#\s]+[^\n]*\n+/, '')
+    .replace(/^<!--[\s\S]*?-->\s*/m, '')
+    .trim()
+    .slice(0, 400);
+  const date = raw.started_at ? raw.started_at.slice(0, 10) : '';
+  const resolved = raw.resolved_at
+    ? `${raw.resolved_at.slice(0, 10)} ${raw.resolved_at.slice(11, 16)} UTC`
+    : raw.status;
+  return {
+    date,
+    title: raw.title || raw.slug,
+    resolved,
+    severity,
+    summary: summary || raw.title || raw.slug,
+  };
+}
+
 function IncidentHistory({
   entries,
 }: {
-  entries: typeof INCIDENT_HISTORY;
+  entries: IncidentHistoryEntry[];
 }) {
   return (
     <section>

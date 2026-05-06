@@ -16,6 +16,15 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`/v1/incidents` API + status-page consumer.** Customer-facing
+  incident posts moved from `docs/operations/incidents/` to
+  `internal/incidents/data/` so the API binary can `go:embed`
+  them and serve a parsed JSON corpus at `GET /v1/incidents`.
+  YAML-frontmatter + markdown body; sorted `started_at` desc.
+  status.ratesengine.net's "Incident history" panel now fetches
+  this endpoint instead of reading a hardcoded array bundled
+  with the page. New incident posts ship with the next API
+  redeploy — no status-page rebuild required.
 - **Home page: Recent trades live feed.** Bottom of the home
   page — rolling 30-row table merging the latest trades across
   the top 3 pairs by 24h USD volume. Refreshes every 30s.

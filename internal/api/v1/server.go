@@ -11,6 +11,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/api/streaming"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
+	"github.com/RatesEngine/rates-engine/internal/incidents"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
@@ -59,6 +60,7 @@ type Server struct {
 	coins            CoinsReader
 	issuers          IssuersReader
 	cursors          CursorsReader
+	incidents        []incidents.Incident
 	sep10            auth.SEP10Validator
 	cors             middleware.Middleware
 	auth             middleware.Middleware
@@ -370,6 +372,16 @@ func New(opts Options) *Server {
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
 	}
+	// Load + cache the embedded incident corpus once at startup;
+	// the data is small (a few markdown files) and ships with the
+	// binary, so re-parsing per-request is wasted work. New
+	// incident posts ship with a redeploy.
+	if loaded, err := incidents.Load(logger); err != nil {
+		logger.Warn("incidents: load failed; /v1/incidents returns empty",
+			"err", err)
+	} else {
+		s.incidents = loaded
+	}
 	s.mountRoutes()
 	return s
 }
@@ -469,6 +481,7 @@ func (s *Server) mountRoutes() {
 	s.mux.HandleFunc("GET /v1/issuers/{g_strkey}", s.handleIssuer)
 	s.mux.HandleFunc("GET /v1/changes/{entity_type}/{id}", s.handleChangeSummary)
 	s.mux.HandleFunc("GET /v1/diagnostics/cursors", s.handleCursors)
+	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /v1/readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/version", s.handleVersion)

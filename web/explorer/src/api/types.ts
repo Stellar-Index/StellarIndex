@@ -2010,6 +2010,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/incidents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer-facing incident posts.
+         * @description Returns every customer-facing incident post the binary has
+         *     embedded (`internal/incidents/data/*.md`), parsed at startup
+         *     from YAML frontmatter + markdown body. Sorted by
+         *     `started_at` descending (most recent first).
+         *
+         *     Posts are added to the binary at build time — there is no
+         *     runtime write path. Files starting with `_` (templates) are
+         *     skipped at parse time. New incidents ship with a redeploy.
+         *
+         *     Powers the "Incident history" section on
+         *     status.ratesengine.net. Distinct from `/v1/status` which
+         *     reports the *currently active* incidents from Alertmanager.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description List of past incidents, newest first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            incidents: {
+                                /** @example 2026-05-06-postgres-lock-table-full */
+                                slug: string;
+                                title: string;
+                                /** @enum {string} */
+                                severity: "SEV-1" | "SEV-2" | "SEV-3";
+                                /** @enum {string} */
+                                status: "investigating" | "identified" | "monitoring" | "resolved";
+                                /** Format: date-time */
+                                started_at: string;
+                                /** Format: date-time */
+                                resolved_at?: string | null;
+                                affected_components?: string[];
+                                /** @description Optional reference to the internal post-mortem. */
+                                postmortem?: string;
+                                /** @description Markdown body — render with the renderer of your choice. */
+                                body_markdown: string;
+                            }[];
+                            count: number;
+                        };
+                    };
+                };
+                500: components["responses"]["InternalError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sources": {
         parameters: {
             query?: never;
