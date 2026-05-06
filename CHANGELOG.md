@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Coinbase / Binance dust trades no longer ERROR-log.** Tiny
+  off-chain lots (e.g. 1e-8 XLM at $0.16) compute `base × price /
+  10^8 = 0` under our integer precision floor, and the canonical
+  validator was rejecting them with `quote_amount must be
+  positive, got 0`. The trades are real but below our display
+  precision; introduce a typed `ErrDustTrade` sentinel and the
+  caller drops the frame silently. ~9 such drops/hour on
+  `coinbase` (XLMUSD + ADAUSD) before the fix.
+
 ### Added
 - **Status page: incident history populated.** First entry on
   status.ratesengine.net under "Incident history" — the SEV-3
