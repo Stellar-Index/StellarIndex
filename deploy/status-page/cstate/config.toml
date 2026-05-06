@@ -54,6 +54,32 @@ theme = "cstate"
   dateFormat            = "January 2, 2006 at 3:04 PM UTC"
   shortDateFormat       = "15:04 UTC — Jan 2"
   incidentHistoryFormat = "yearly"
+
+  # cstate v5 reads category + system definitions from
+  # .Site.Params.{categories,systems} — the standalone
+  # data/systems.yml file is unused (legacy v4 path). Each
+  # entry is a top-level service surface a customer would
+  # notice degrading; prefer narrow scopes ("Off-chain CEX
+  # ingest") over sweeping ones ("Backend").
+  categories = [
+    { name = "API",     description = "Customer-facing HTTP/SSE surfaces." },
+    { name = "Ingest",  description = "Data sources feeding the aggregator." },
+    { name = "Backend", description = "Storage + compute behind the API." },
+  ]
+  systems = [
+    { name = "Pricing API",          description = "/v1/price, /v1/price/batch, /v1/price/tip, /v1/history, /v1/ohlc, /v1/chart, /v1/oracle/*", category = "API",     ping = "https://api.ratesengine.net/v1/healthz" },
+    { name = "Streaming API",        description = "Server-Sent Events surfaces — /v1/price/stream, /v1/price/tip/stream, /v1/observations/stream", category = "API" },
+    { name = "Asset metadata",       description = "/v1/assets, /v1/assets/{id}, /v1/coins, /v1/issuers, /v1/markets — directories with SEP-1 overlay + F2 fields (supply, market cap, FDV, 24h volume).", category = "API" },
+    { name = "Diagnostics",          description = "/v1/diagnostics/cursors — operator-facing per-source ingest cursor positions.", category = "API" },
+    { name = "Account self-service", description = "/v1/account/me, /v1/account/usage, /v1/account/keys — API-key issuance + per-key metadata.", category = "API" },
+    { name = "SEP-10 Web Auth",      description = "/v1/auth/sep10/{challenge,token} — SEP-10 challenge / verify flow.", category = "API" },
+    { name = "On-chain DEX ingest",  description = "SDEX, Soroswap, Aquarius, Phoenix, Comet, Blend — Stellar mainnet ledger ingestion via Galexie.", category = "Ingest" },
+    { name = "Off-chain CEX/FX ingest", description = "Binance, Coinbase, Kraken, Bitstamp, ECB, Polygon-Forex, ExchangeRatesAPI — REST polling + WebSocket streaming.", category = "Ingest" },
+    { name = "Oracle ingest",        description = "Reflector (DEX/CEX/FX), Redstone, Band — on-chain SEP-40-style oracle observations.", category = "Ingest" },
+    { name = "Aggregator",           description = "VWAP / TWAP / OHLC computation, anomaly detection, divergence cross-check, supply snapshot writer.", category = "Backend" },
+    { name = "Storage",              description = "TimescaleDB (price + supply hypertables), Redis (hot-path cache + freeze markers), MinIO (Galexie archive).", category = "Backend" },
+    { name = "Public history archive", description = "Galexie archive — required for since-inception backfill + cross-region verification.", category = "Backend" },
+  ]
   # systemStatus controls the top-of-page banner. Possible values:
   #   "ok"           → All systems operational (green)
   #   "disrupted"    → Partial outage (yellow)
