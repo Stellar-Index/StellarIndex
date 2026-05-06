@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 
 import { useCoins, type Coin } from '@/api/hooks';
@@ -34,23 +34,27 @@ export function AssetsTable() {
     limit,
     issuerFilter,
     cursor,
+    queryParam || undefined,
   );
 
+  // Local input state, debounced into the URL so the server-side
+  // ?q= filter doesn't refire on every keystroke. 250ms is the
+  // standard "feels live, doesn't thrash" window — see Algolia's
+  // search-as-you-type guidance.
   const [q, setQ] = useState(queryParam);
+  useEffect(() => {
+    const trimmed = q.trim();
+    if (trimmed === queryParam) return;
+    const t = setTimeout(() => {
+      setQuery({ q: trimmed, cursor: '' });
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
-  const filteredCoins = useMemo(() => {
-    if (!data) return [];
-    const trimmed = q.trim().toLowerCase();
-    if (!trimmed) return data.coins;
-    return data.coins.filter(
-      (c) =>
-        c.code.toLowerCase().includes(trimmed) ||
-        c.slug.toLowerCase().includes(trimmed) ||
-        (c.issuer ?? '').toLowerCase().includes(trimmed),
-    );
-  }, [data, q]);
+  const coins = data?.coins ?? [];
 
-  function setQuery(updates: Partial<{ cursor: string; limit: string; issuer: string }>) {
+  function setQuery(updates: Partial<{ cursor: string; limit: string; issuer: string; q: string }>) {
     const next = new URLSearchParams(params.toString());
     for (const [k, v] of Object.entries(updates)) {
       if (v === '' || v === undefined) next.delete(k);
@@ -104,7 +108,7 @@ export function AssetsTable() {
                 </td>
               </tr>
             )}
-            {!isLoading && filteredCoins.length === 0 && (
+            {!isLoading && coins.length === 0 && (
               <tr>
                 <td
                   colSpan={9}
@@ -115,11 +119,11 @@ export function AssetsTable() {
               </tr>
             )}
             {!isLoading &&
-              filteredCoins.map((coin, idx) => (
+              coins.map((coin, idx) => (
                 <AssetRow
                   key={coin.asset_id}
                   coin={coin}
-                  rank={(coin.observation_count > 0 ? idx : 0) + 1}
+                  rank={idx + 1}
                 />
               ))}
           </tbody>

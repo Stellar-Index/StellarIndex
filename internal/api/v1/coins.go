@@ -11,9 +11,9 @@ import (
 )
 
 // CoinsReader is the seam the /v1/coins handlers read through.
-// timescale.Store satisfies it via ListCoins + GetCoinBySlug.
+// timescale.Store satisfies it via ListCoinsExt + GetCoinBySlug.
 type CoinsReader interface {
-	ListCoins(ctx context.Context, limit int, issuer, cursor string) ([]timescale.CoinRow, error)
+	ListCoinsExt(ctx context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error)
 	GetCoinBySlug(ctx context.Context, slug string) (timescale.CoinRow, error)
 }
 
@@ -91,8 +91,18 @@ func (s *Server) handleCoins(w http.ResponseWriter, r *http.Request) {
 
 	issuer := r.URL.Query().Get("issuer")
 	cursor := r.URL.Query().Get("cursor")
+	q := r.URL.Query().Get("q")
+	if len(q) > 64 {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-query",
+			"Invalid q", http.StatusBadRequest,
+			"q must be 64 chars or fewer")
+		return
+	}
 
-	rows, err := s.coins.ListCoins(r.Context(), limit, issuer, cursor)
+	rows, err := s.coins.ListCoinsExt(r.Context(), timescale.ListCoinsOptions{
+		Limit: limit, Issuer: issuer, Cursor: cursor, Q: q,
+	})
 	if err != nil {
 		s.logger.Warn("coins list", "err", err)
 		writeProblem(w, r,
