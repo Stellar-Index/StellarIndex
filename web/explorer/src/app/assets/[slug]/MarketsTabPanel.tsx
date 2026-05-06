@@ -4,37 +4,28 @@ import { useMemo } from 'react';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { useCoins, useMarkets, type Market } from '@/api/hooks';
+import { useMarkets, type Market } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
  * MarketsTabPanel — backs the "Markets" tab on /assets/[slug].
  *
- * Joins `/v1/coins` (to map slug → canonical asset_id) and
- * `/v1/markets` (recently-active pairs in the last 14d), then
+ * Pulls `/v1/markets` (recently-active pairs in the last 14d) and
  * filters to markets where `base == asset_id` or `quote == asset_id`.
- *
- * The two queries share TanStack Query cache keys with `/coins` and
- * `/markets` so navigating between those pages and a coin detail
- * costs zero extra network.
+ * The asset_id comes from the parent server component's
+ * `/v1/coins/{slug}` lookup.
  */
-export function MarketsTabPanel({ slug }: { slug: string }) {
-  const coins = useCoins(100);
+export function MarketsTabPanel({ assetID }: { assetID: string }) {
   const markets = useMarkets(100);
 
-  const assetID = useMemo(
-    () => coins.data?.coins?.find((c: { slug: string; asset_id: string }) => c.slug === slug)?.asset_id,
-    [coins.data, slug],
-  );
-
   const matched = useMemo(() => {
-    if (!markets.data || !assetID) return [];
+    if (!markets.data) return [];
     return markets.data.markets
       .filter((m) => m.base === assetID || m.quote === assetID)
       .sort((a, b) => b.trade_count_24h - a.trade_count_24h);
   }, [markets.data, assetID]);
 
-  if (coins.isError || markets.isError) {
+  if (markets.isError) {
     return (
       <Panel
         title="Markets"
@@ -45,7 +36,7 @@ export function MarketsTabPanel({ slug }: { slug: string }) {
       </Panel>
     );
   }
-  if (coins.isLoading || markets.isLoading) {
+  if (markets.isLoading) {
     return (
       <Panel
         title="Markets"
@@ -56,23 +47,11 @@ export function MarketsTabPanel({ slug }: { slug: string }) {
       </Panel>
     );
   }
-  if (!assetID) {
-    return (
-      <Panel
-        title="Markets"
-        source={asExample('/v1/markets', { limit: 100 })}
-        bodyClassName="text-sm text-slate-500"
-      >
-        Couldn&apos;t resolve this slug to a canonical asset id. The
-        coin directory page may not list it in the top 500.
-      </Panel>
-    );
-  }
   if (matched.length === 0) {
     return (
       <Panel
         title="Markets"
-        hint={`No active markets for ${slug} in the last 14 days`}
+        hint="No active markets in the last 14 days"
         source={asExample('/v1/markets', { limit: 100 })}
         bodyClassName="text-sm text-slate-500"
       >

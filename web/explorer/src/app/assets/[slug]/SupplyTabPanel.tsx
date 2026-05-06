@@ -1,10 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
-
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { useAsset, useCoins } from '@/api/hooks';
+import { useAsset } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
@@ -18,21 +16,14 @@ import { formatCompact } from '@/lib/format';
  * (fixed_number / max_number / is_unlimited) appear when the
  * issuer published them.
  */
-export function SupplyTabPanel({ slug }: { slug: string }) {
-  const coins = useCoins(100);
-
-  const assetID = useMemo(
-    () => coins.data?.coins?.find((c: { slug: string; asset_id: string }) => c.slug === slug)?.asset_id,
-    [coins.data, slug],
-  );
-
+export function SupplyTabPanel({ assetID }: { assetID: string }) {
   const asset = useAsset(assetID);
 
-  if (coins.isError || asset.isError) {
+  if (asset.isError) {
     return (
       <Panel
         title="Supply"
-        source={asExample('/v1/assets/{asset_id}', { asset_id: assetID ?? '<asset_id>' })}
+        source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
         bodyClassName="text-sm text-down-strong"
       >
         Failed to load supply data.
@@ -40,11 +31,11 @@ export function SupplyTabPanel({ slug }: { slug: string }) {
     );
   }
 
-  if (coins.isLoading || asset.isLoading || !assetID) {
+  if (asset.isLoading) {
     return (
       <Panel
         title="Supply"
-        source={asExample('/v1/assets/{asset_id}', { asset_id: '<asset_id>' })}
+        source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
         bodyClassName="text-sm text-slate-500"
       >
         Loading…
