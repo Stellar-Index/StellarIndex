@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact, formatPrice } from '@/lib/format';
-import { CoinTabs, ActiveTabSlot } from './CoinTabs';
+import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { ChartPanel } from './ChartPanel';
 import { IssuerPanel } from './IssuerPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
@@ -13,7 +13,7 @@ import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
 
 /**
- * /coins/[slug] — single asset detail page.
+ * /assets/[slug] — single asset detail page.
  *
  * Server component fetches every panel's data from the live API
  * at request time. There is no seed / synthesised content;
@@ -139,13 +139,13 @@ export async function generateMetadata({
     openGraph: {
       title: `${code} — Stellar asset`,
       description: `Live price, markets, and issuer detail for ${code} on Stellar.`,
-      url: `/coins/${slug}`,
+      url: `/assets/${slug}`,
       type: 'website',
     },
   };
 }
 
-export default async function CoinDetailPage({ params }: { params: Params }) {
+export default async function AssetDetailPage({ params }: { params: Params }) {
   const { slug } = await params;
   const coin = await fetchCoin(slug);
 
@@ -219,7 +219,7 @@ export default async function CoinDetailPage({ params }: { params: Params }) {
       </header>
 
       <Suspense fallback={null}>
-        <CoinTabs slug={coin.slug} hasIssuer={!!coin.issuer} />
+        <AssetTabs slug={coin.slug} hasIssuer={!!coin.issuer} />
       </Suspense>
 
       <Suspense fallback={null}>

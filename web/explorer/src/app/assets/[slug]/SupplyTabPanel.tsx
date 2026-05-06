@@ -8,7 +8,7 @@ import { useAsset, useCoins } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
- * SupplyTabPanel — backs the "Supply" tab on /coins/[slug].
+ * SupplyTabPanel — backs the "Supply" tab on /assets/[slug].
  *
  * Renders the F2 supply-derivation fields per ADR-0011:
  * circulating, total, max supply (smallest-integer-unit decimal

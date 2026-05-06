@@ -186,7 +186,7 @@ function coinResult(c: Coin): Result {
     type: 'coin',
     label: c.code,
     hint: c.slug,
-    href: `/coins/${c.slug}`,
+    href: `/assets/${c.slug}`,
   };
 }
 

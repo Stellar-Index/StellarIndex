@@ -34,7 +34,7 @@ interface ChartPoint {
 }
 
 /**
- * Chart tab content for /coins/[slug]?tab=chart.
+ * Chart tab content for /assets/[slug]?tab=chart.
  *
  * Pulls live data from /v1/chart at request time. The endpoint
  * today returns VWAP points (single-value series); we render

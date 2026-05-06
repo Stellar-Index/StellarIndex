@@ -220,7 +220,7 @@ function AssetRow({ coin, rank }: { coin: Coin; rank: number }) {
       </Td>
       <Td>
         <Link
-          href={`/coins/${coin.slug}`}
+          href={`/assets/${coin.slug}`}
           className="group flex items-baseline gap-2"
         >
           <span className="font-medium text-ink group-hover:text-brand-600 dark:text-slate-100">

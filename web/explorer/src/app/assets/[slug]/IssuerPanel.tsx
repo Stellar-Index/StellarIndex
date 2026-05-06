@@ -8,7 +8,7 @@ import { useIssuer, type Issuer } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
- * IssuerPanel — backs the "Issuer" tab on /coins/[slug]. Fetches
+ * IssuerPanel — backs the "Issuer" tab on /assets/[slug]. Fetches
  * the live issuer row + embedded assets from /v1/issuers/{g_strkey}
  * so users see the full directory of assets a single issuer has
  * minted (USDC issuer alone covers ~20 distinct codes).
@@ -122,7 +122,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
               >
                 <Td>
                   <Link
-                    href={`/coins/${a.slug}`}
+                    href={`/assets/${a.slug}`}
                     className="font-medium hover:text-brand-600"
                   >
                     {a.code}

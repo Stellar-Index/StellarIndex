@@ -3,9 +3,10 @@
 # static export, so server-level 301s land before any HTML loads
 # (which is what we want for SEO + back-button correctness).
 
-# /coins/ → /assets/ (and trailing-slash variants).
-# Asset detail pages are still under /coins/<slug>/ for now;
-# only the listing index moves. A follow-up PR migrates the
-# detail route too.
-/coins/         /assets/         301
-/coins          /assets          301
+# /coins → /assets directory listing.
+/coins/  /assets/  301
+/coins   /assets   301
+
+# /coins/<slug> → /assets/<slug> detail pages. Splat-capture
+# preserves the slug, query string, and any tab=... fragment.
+/coins/*  /assets/:splat  301
