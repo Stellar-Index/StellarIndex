@@ -43,6 +43,19 @@ interface ChartResp {
   points: ChartPoint[];
 }
 
+interface OhlcResp {
+  from: string;
+  to: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  base_volume: string;
+  quote_volume: string;
+  trade_count: number;
+  truncated: boolean;
+}
+
 interface HistoryTrade {
   source: string;
   ledger?: number;
@@ -154,6 +167,21 @@ async function fetchChart(base: string, quote: string): Promise<ChartResp | null
   }
 }
 
+async function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
+  if (isCIStub) return null;
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=1h`,
+      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+    );
+    if (!res.ok) return null;
+    const env = (await res.json()) as { data: OhlcResp };
+    return env.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchHistory(
   base: string,
   quote: string,
@@ -180,9 +208,10 @@ export default async function PairPage({ params }: { params: Params }) {
   }
   const { base, quote } = decoded;
 
-  const [price, chart, history] = await Promise.all([
+  const [price, chart, ohlc, history] = await Promise.all([
     fetchPrice(base, quote),
     fetchChart(base, quote),
+    fetchOhlc(base, quote),
     fetchHistory(base, quote),
   ]);
 
@@ -274,6 +303,28 @@ export default async function PairPage({ params }: { params: Params }) {
           </dl>
         </Panel>
       </section>
+
+      {ohlc && (
+        <Panel
+          title="OHLC — last 1h"
+          subtitle={`${ohlc.from.slice(0, 16).replace('T', ' ')}Z → ${ohlc.to.slice(0, 16).replace('T', ' ')}Z`}
+        >
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-6">
+            <Stat label="Open" value={ohlc.open} />
+            <Stat label="High" value={ohlc.high} />
+            <Stat label="Low" value={ohlc.low} />
+            <Stat label="Close" value={ohlc.close} />
+            <Stat
+              label="Quote vol"
+              value={formatUsd(Number(ohlc.quote_volume) / 1e8)}
+            />
+            <Stat
+              label="Trades"
+              value={ohlc.trade_count.toLocaleString()}
+            />
+          </dl>
+        </Panel>
+      )}
 
       {sourcesSorted.length > 0 && (
         <Panel
