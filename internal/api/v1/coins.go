@@ -11,10 +11,12 @@ import (
 )
 
 // CoinsReader is the seam the /v1/coins handlers read through.
-// timescale.Store satisfies it via ListCoinsExt + GetCoinBySlug.
+// timescale.Store satisfies it via ListCoinsExt + GetCoinBySlug
+// + GetCoinTopMarkets.
 type CoinsReader interface {
 	ListCoinsExt(ctx context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error)
 	GetCoinBySlug(ctx context.Context, slug string) (timescale.CoinRow, error)
+	GetCoinTopMarkets(ctx context.Context, assetID string, limit int) ([]timescale.CoinTopMarket, error)
 }
 
 // Coin is the wire shape of one entry in the /v1/coins response.
@@ -41,6 +43,21 @@ type Coin struct {
 	// "-0.05", "0.00"). Null when no current price exists or
 	// when the 24h-ago bucket is missing in prices_1m.
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
+	// TopMarkets is a preview of the asset's top markets by 24h
+	// USD volume. Populated only on /v1/coins/{slug} (the
+	// listing endpoint omits it to keep payload sizes manageable).
+	TopMarkets []CoinTopMarket `json:"top_markets,omitempty"`
+}
+
+// CoinTopMarket is one entry in the per-asset top-markets preview.
+// `Counterparty` is the OTHER side of the pair (the asset that's
+// not the one being queried). `Side` is "base" or "quote"
+// depending on which side the queried asset took.
+type CoinTopMarket struct {
+	Counterparty  string  `json:"counterparty"`
+	Side          string  `json:"side"`
+	Volume24hUSD  *string `json:"volume_24h_usd,omitempty"`
+	TradeCount24h int64   `json:"trade_count_24h"`
 }
 
 // CoinsPage wraps the rows + cursor pagination metadata. The
@@ -204,7 +221,28 @@ func (s *Server) handleCoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, coinFromRow(row), Flags{})
+	out := coinFromRow(row)
+
+	// Populate top_markets — soft-fail; the asset detail card
+	// still renders without the markets preview if the lookup
+	// errors. A failure here usually means the prices_1m chunk
+	// the query needs is being column-store-compressed.
+	topMarkets, mErr := s.coins.GetCoinTopMarkets(r.Context(), row.AssetID, 5)
+	if mErr != nil {
+		s.logger.Warn("coin top markets", "asset_id", row.AssetID, "err", mErr)
+	} else {
+		out.TopMarkets = make([]CoinTopMarket, len(topMarkets))
+		for i, m := range topMarkets {
+			out.TopMarkets[i] = CoinTopMarket{
+				Counterparty:  m.Counterparty,
+				Side:          m.Side,
+				Volume24hUSD:  m.Volume24hUSD,
+				TradeCount24h: m.TradeCount24h,
+			}
+		}
+	}
+
+	writeJSON(w, out, Flags{})
 }
 
 // coinFromRow projects a timescale.CoinRow onto the wire Coin
