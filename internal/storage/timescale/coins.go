@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // CoinRow is the read-side projection of one row from the
@@ -41,6 +42,23 @@ type CoinRow struct {
 	CirculatingSupply *string
 }
 
+// ListCoinsOptions bundles the optional filters / paging
+// parameters for ListCoins. Zero values are the API defaults.
+type ListCoinsOptions struct {
+	// Limit clamps to [1, 500]; 0 → 100.
+	Limit int
+	// Issuer, when non-empty, restricts to that G-strkey.
+	Issuer string
+	// Cursor is the keyset cursor returned by the previous
+	// response's NextCursor field. Empty for the first page.
+	Cursor string
+	// Q, when non-empty, filters rows where code, slug, or
+	// issuer_g_strkey contains the substring (case-insensitive).
+	// Useful for the explorer's `/assets?q=…` search box —
+	// otherwise a 440K-asset directory is unsearchable.
+	Q string
+}
+
 // ListCoins returns coin-directory rows ordered by observation
 // count desc (a cheap proxy for activity).
 //
@@ -48,15 +66,20 @@ type CoinRow struct {
 // (observation_count, asset_id) tuple of the last row from the
 // previous page. Empty cursor means "first page". Cursor format:
 // `<observation_count>:<asset_id>`.
-//
-// issuer, when non-empty, filters to assets minted by that
-// G-strkey — used by the explorer to deep-link from /issuers
-// into "assets by this issuer."
 func (s *Store) ListCoins(ctx context.Context, limit int, issuer, cursor string) ([]CoinRow, error) {
+	return s.ListCoinsExt(ctx, ListCoinsOptions{Limit: limit, Issuer: issuer, Cursor: cursor})
+}
+
+// ListCoinsExt is ListCoins with the full options bag. ListCoins
+// is preserved as the legacy 3-arg call so existing callers
+// (handler, integration tests) compile unchanged; new callers
+// pass ListCoinsOptions to opt into Q.
+func (s *Store) ListCoinsExt(ctx context.Context, opts ListCoinsOptions) ([]CoinRow, error) {
+	limit := opts.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query, args := buildCoinsQuery(limit, issuer, cursor)
+	query, args := buildCoinsQuery(limit, opts.Issuer, opts.Cursor, opts.Q)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListCoins: %w", err)
@@ -104,10 +127,10 @@ func (s *Store) ListCoins(ctx context.Context, limit int, issuer, cursor string)
 
 // buildCoinsQuery composes the SELECT + WHERE + ORDER + LIMIT
 // for ListCoins, given the limit / issuer-filter / keyset
-// cursor. Pulled out of ListCoins so the latter stays under the
-// gocognit threshold; same SQL surface area, just cleanly
-// separated from the row-scanning logic.
-func buildCoinsQuery(limit int, issuer, cursor string) (string, []any) {
+// cursor / search query. Pulled out of ListCoins so the latter
+// stays under the gocognit threshold; same SQL surface area,
+// just cleanly separated from the row-scanning logic.
+func buildCoinsQuery(limit int, issuer, cursor, q string) (string, []any) {
 	cursorObsCount, cursorAssetID := parseCoinCursor(cursor)
 
 	// Volume aggregation comes from prices_1m by summing
@@ -159,31 +182,38 @@ func buildCoinsQuery(limit int, issuer, cursor string) (string, []any) {
 		  FROM classic_assets ca
 		  LEFT JOIN per_asset_24h_vol vol ON vol.asset_id = ca.asset_id
 	`
-	hasCursor := cursor != ""
-	switch {
-	case issuer == "" && !hasCursor:
-		return baseSelect + `
-		 ORDER BY ca.observation_count DESC, ca.asset_id ASC
-		 LIMIT $1`, []any{limit}
-	case issuer == "" && hasCursor:
-		// Keyset: rows AFTER (cursorObsCount, cursorAssetID) under
-		// the (obs_count DESC, asset_id ASC) sort.
-		return baseSelect + `
-		 WHERE (ca.observation_count, ca.asset_id) < ($1, $2)
-		 ORDER BY ca.observation_count DESC, ca.asset_id ASC
-		 LIMIT $3`, []any{cursorObsCount, cursorAssetID, limit}
-	case issuer != "" && !hasCursor:
-		return baseSelect + `
-		 WHERE ca.issuer_g_strkey = $1
-		 ORDER BY ca.observation_count DESC, ca.asset_id ASC
-		 LIMIT $2`, []any{issuer, limit}
-	default: // issuer != "" && hasCursor
-		return baseSelect + `
-		 WHERE ca.issuer_g_strkey = $1
-		   AND (ca.observation_count, ca.asset_id) < ($2, $3)
-		 ORDER BY ca.observation_count DESC, ca.asset_id ASC
-		 LIMIT $4`, []any{issuer, cursorObsCount, cursorAssetID, limit}
+	// Compose WHERE clauses dynamically. The combinatorial
+	// explosion of (issuer × cursor × q) is too painful as a
+	// switch; use a slice + numbered placeholders.
+	var (
+		conds []string
+		args  []any
+	)
+	if issuer != "" {
+		args = append(args, issuer)
+		conds = append(conds, fmt.Sprintf("ca.issuer_g_strkey = $%d", len(args)))
 	}
+	if q != "" {
+		args = append(args, "%"+q+"%")
+		conds = append(conds, fmt.Sprintf(
+			"(LOWER(ca.code) LIKE LOWER($%d) OR LOWER(COALESCE(ca.slug, ca.code)) LIKE LOWER($%d) OR LOWER(ca.issuer_g_strkey) LIKE LOWER($%d))",
+			len(args), len(args), len(args)))
+	}
+	if cursor != "" {
+		args = append(args, cursorObsCount, cursorAssetID)
+		conds = append(conds, fmt.Sprintf(
+			"(ca.observation_count, ca.asset_id) < ($%d, $%d)",
+			len(args)-1, len(args)))
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
+
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	return baseSelect + where +
+		" ORDER BY ca.observation_count DESC, ca.asset_id ASC LIMIT " + limitPlaceholder, args
 }
 
 // GetCoinBySlug returns one row matching the given slug. Returns

@@ -120,14 +120,20 @@ export type CoinsPage = {
  */
 type CoinsEnvelope = { data: CoinsPage };
 
-export function useCoins(limit = 100, issuer?: string, cursor?: string) {
+export function useCoins(
+  limit = 100,
+  issuer?: string,
+  cursor?: string,
+  q?: string,
+) {
   return useQuery<CoinsPage>({
-    queryKey: ['/v1/coins', limit, issuer ?? null, cursor ?? ''],
+    queryKey: ['/v1/coins', limit, issuer ?? null, cursor ?? '', q ?? ''],
     queryFn: async () => {
       const env = await apiGet<CoinsEnvelope>('/v1/coins', {
         limit,
         ...(issuer ? { issuer } : {}),
         ...(cursor ? { cursor } : {}),
+        ...(q ? { q } : {}),
       });
       return env.data;
     },

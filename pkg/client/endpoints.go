@@ -498,6 +498,10 @@ type CoinsOptions struct {
 	Limit  int
 	Issuer string
 	Cursor string
+	// Q is a case-insensitive substring filter against `code`,
+	// `slug`, and `issuer_g_strkey`. Server-side limited to 64
+	// chars. Empty means "no search filter."
+	Q string
 }
 
 // Coins lists the registry-aware coin directory ranked by
@@ -525,6 +529,9 @@ func (c *Client) Coins(ctx context.Context, opts CoinsOptions) (*Envelope[CoinsP
 	}
 	if opts.Cursor != "" {
 		v.Set("cursor", opts.Cursor)
+	}
+	if opts.Q != "" {
+		v.Set("q", opts.Q)
 	}
 	var env Envelope[CoinsPage]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/coins", v, nil, &env); err != nil {

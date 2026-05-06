@@ -996,6 +996,18 @@ paths:
             "assets by this issuer."
           schema:
             type: string
+        - name: q
+          in: query
+          required: false
+          description: |
+            Case-insensitive substring filter against `code`, `slug`,
+            and `issuer_g_strkey`. Used by the explorer's `/assets`
+            search box so a 440K-asset directory is searchable
+            without paging through every cursor. Limited to 64
+            characters.
+          schema:
+            type: string
+            maxLength: 64
       responses:
         "200":
           description: Page of asset entries + next-cursor.
