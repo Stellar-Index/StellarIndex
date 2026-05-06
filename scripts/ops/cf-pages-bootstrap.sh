@@ -247,10 +247,12 @@ project_create_or_update \
 
 project_create_or_update \
   "ratesengine-status" \
-  "deploy/status-page/cstate" \
-  "hugo --minify" \
-  "public" \
-  "HUGO_VERSION=0.121.0"
+  "web/status" \
+  "pnpm install --frozen-lockfile && pnpm build" \
+  "out" \
+  "NEXT_PUBLIC_API_BASE_URL=https://api.$APEX_DOMAIN" \
+  "NODE_VERSION=20" \
+  "PNPM_VERSION=10"
 
 # Static OpenAPI reference (Redocly-generated, committed to the
 # repo). No build step — CF Pages just serves the directory.
