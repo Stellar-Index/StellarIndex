@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Status page: incident history populated.** First entry on
+  status.ratesengine.net under "Incident history" — the SEV-3
+  Postgres lock-table-full event from 2026-05-06 (resolved
+  22:39 UTC). Hand-maintained in `web/status/src/app/page.tsx`
+  until the `/v1/incidents` API (reading from
+  `docs/operations/incidents/*.md`) ships.
+
 ## [v0.5.0-rc.17] — 2026-05-06
 
 ### Fixed

@@ -231,13 +231,27 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_SLOW_MS = 800;
 
+// Incident history is hand-maintained until the /v1/incidents API
+// (reading from docs/operations/incidents/*.md) ships. Each entry
+// here mirrors a markdown file under that directory; keep the two
+// in sync.
 const INCIDENT_HISTORY: {
   date: string;
   title: string;
   resolved: string;
   summary: string;
   severity: 'major' | 'minor' | 'maintenance';
-}[] = [];
+}[] = [
+  {
+    date: '2026-05-06',
+    title:
+      'Indexer dropping ~1% of trades — Postgres lock-table-full',
+    resolved: '2026-05-06 22:39 UTC',
+    severity: 'minor',
+    summary:
+      'TimescaleDB chunk-lock pressure exhausted Postgres lock table (default max_locks_per_transaction = 64) under concurrent ingest from 11 exchange-class sources. Bumped to 256 (4× headroom) + Postgres restart. ~5 s downtime; ~1% of incoming trades dropped during the multi-hour window. No customer-visible API errors.',
+  },
+];
 
 export default function StatusPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
