@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.15] — 2026-05-06
+
+### Added
+- **`/v1/coins/{slug}.price_history_24h`** — 24 hourly USD-price
+  samples (oldest first) covering the trailing 24h. Same
+  direct-then-XLM-triangulated chain as `price_usd`. Each entry
+  `{t: RFC3339, p: rounded-to-10dp USD price or null}`. Powers a
+  sparkline next to the headline price on the explorer asset
+  detail page.
+
 ## [v0.5.0-rc.14] — 2026-05-06
 
 ### Added
