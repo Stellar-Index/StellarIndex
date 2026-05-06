@@ -1,0 +1,2979 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/schemas/v3.1/schema.json
+#
+# Source of truth for the Rates Engine public API.
+#
+# Every breaking change requires a PR that:
+#   1. Updates this file.
+#   2. Adds a new /vN path alongside the old one (never edit in place).
+#   3. Regenerates docs via `make docs-api`.
+#   4. Updates docs/reference/api-design.md if the design intent
+#      changed (as opposed to an additive clarification).
+#
+# Every documented path is implemented in internal/api/v1/ — the
+# spec and the live handler set are 1:1 (CI's openapi-handler drift
+# check at scripts/ci/lint-docs.sh §11 enforces this). See
+# docs/reference/api-design.md for the design rationale + headers
+# / rate-limit / observability behaviour the middleware emits.
+
+openapi: 3.1.0
+info:
+  title: Rates Engine API
+  version: "1.0.0-draft"
+  summary: Aggregated Stellar asset pricing — real-time and historical.
+  description: |
+    The Rates Engine API exposes normalised, VWAP-aggregated pricing
+    for every classic and SEP-41 Soroban asset on Stellar.
+
+    Design intent: see
+    https://github.com/RatesEngine/rates-engine/blob/main/docs/reference/api-design.md
+
+    **Amounts are always strings.** JSON numbers lose precision above
+    2^53 and break i128 Soroban token amounts.
+  contact:
+    name: Rates Engine
+    url: https://ratesengine.net
+    email: hello@ratesengine.net
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://api.ratesengine.net/v1
+    description: Production
+  - url: https://api.staging.ratesengine.net/v1
+    description: Staging
+  - url: http://localhost:3000/v1
+    description: Self-hosted / dev
+
+tags:
+  - name: health
+    description: Liveness + readiness.
+  - name: assets
+    description: Asset catalogue + metadata.
+  - name: price
+    description: Current prices, batch, SSE stream.
+  - name: history
+    description: Historical TWAP / VWAP series.
+  - name: ohlc
+    description: OHLC candles.
+  - name: markets
+    description: Liquidity + venue breakdown per asset.
+  - name: oracle
+    description: |
+      Per-source oracle observations (reflector-dex / -cex / -fx,
+      redstone, band) plus SEP-40-shaped passthroughs
+      (/oracle/lastprice, /oracle/prices, /oracle/x_last_price)
+      that mirror Reflector's contract surface for client SDKs that
+      already speak SEP-40.
+  - name: account
+    description: Self-service for API-key holders.
+  - name: meta
+    description: |
+      Metadata about the deployment itself — source catalogue,
+      build info — not the trade / oracle / price data.
+
+security:
+  - {}                          # anonymous allowed on most endpoints
+  - APIKeyAuth: []              # API-key authenticated
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness — process is up.
+      security: []
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness — all dependencies reachable.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "503":
+          description: Dependencies unreachable.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /version:
+    get:
+      tags: [health]
+      summary: Build metadata.
+      security: []
+      responses:
+        "200":
+          description: Version string, build date, git SHA.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionResponse" }
+
+  /status:
+    get:
+      tags: [health]
+      summary: Comprehensive system health rollup for the public status page.
+      description: |
+        Customer-facing surface — what the showcase status page renders.
+        Returns per-service heartbeats (api / indexer / aggregator),
+        API histogram-derived p50/p95/p99 latency over the last 5
+        minutes, ingest freshness signals, and a count of currently-
+        firing Alertmanager incidents grouped by severity.
+
+        Always returns 200; the body's `overall` field reports
+        degraded state rather than an HTTP error so monitoring
+        dashboards can poll a single endpoint without alerting on
+        503s. When the API isn't wired against a Prometheus backend,
+        only the in-process surface (region label + uptime) is
+        populated and `flags.stale=true`.
+      security: []
+      responses:
+        "200":
+          description: Status rollup envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusEnvelope" }
+              example:
+                data:
+                  overall: ok
+                  region: { name: r1, deployment: production }
+                  services:
+                    - { name: api,        status: ok, last_seen: "2026-05-05T15:09:00.116Z" }
+                    - { name: indexer,    status: ok, last_seen: "2026-05-05T15:08:46Z" }
+                    - { name: aggregator, status: ok, last_seen: "2026-05-05T15:08:47Z" }
+                  latency:
+                    p50_ms: 0.6
+                    p95_ms: 3.85
+                    p99_ms: 4.77
+                    window_secs: 300
+                  freshness:
+                    last_aggregator_tick: "2026-05-05T15:08:57Z"
+                    active_sources: 13
+                    total_sources: 17
+                  incidents:
+                    active_count: 0
+                    page_count: 0
+                    ticket_count: 0
+                    informational_count: 0
+                as_of: "2026-05-05T15:09:00.119Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+
+  /assets:
+    get:
+      tags: [assets]
+      summary: List indexed assets.
+      description: |
+        Paginated list of every asset that has appeared (as base or
+        quote) in the trades hypertable. Cursor is opaque; limit
+        clamped server-side to [1, 500].
+
+        The `type` / `code` / `issuer` filter params are planned but
+        not yet implemented — the current handler ignores any filter
+        params and returns the unfiltered page. See the TypeFilter,
+        CodeFilter, IssuerFilter schemas below for the planned
+        shape; they are not wired to any request until the filter
+        path ships.
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of assets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetListEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /assets/{asset_id}:
+    get:
+      tags: [assets]
+      summary: Asset detail.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: Asset + metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /assets/{asset_id}/metadata:
+    get:
+      tags: [assets]
+      summary: Extended metadata (SEP-1 CURRENCIES block).
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: Extended metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetMetadataEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /price:
+    get:
+      tags: [price]
+      summary: Current aggregated price for one asset.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+      responses:
+        "200":
+          description: Current price with freshness flags.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceEnvelope" }
+              example:
+                data:
+                  asset_id: native
+                  quote: fiat:USD
+                  price: "0.159608357106"
+                  price_type: vwap
+                  observed_at: "2026-05-05T14:35:00Z"
+                  window_seconds: 300
+                as_of: "2026-05-05T14:35:42.881Z"
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "404":        { $ref: "#/components/responses/NotFound" }
+        "429":        { $ref: "#/components/responses/RateLimited" }
+        "500":        { $ref: "#/components/responses/InternalError" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /price/tip:
+    get:
+      tags: [price]
+      summary: Rolling-window tip price (ADR-0018 tip surface).
+      description: |
+        Realtime "what's the price right now" surface per ADR-0018.
+        Returns a VWAP over a short rolling window (default 5 s, clamp
+        1–60 s); when the window has no trades, falls back to the
+        most-recent observed price for the pair.
+
+        Both branches are **in-contract** — `flags.stale` is always
+        `false` on this surface. Customers read `price_type` and
+        `observed_at` to know what they got. Cross-region consistency
+        is **not** provable here; use `/v1/price` for the closed-bucket
+        guarantee.
+
+        URL discipline: `?granularity=` is rejected with 400 — that's
+        a closed-bucket concept and accepting it would silently change
+        the consistency contract.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - name: window_seconds
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 5
+          description: Rolling-window size in seconds for the VWAP.
+      responses:
+        "200":
+          description: Tip price (VWAP or last-good fallback).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceEnvelope" }
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "404":        { $ref: "#/components/responses/NotFound" }
+        "429":        { $ref: "#/components/responses/RateLimited" }
+        "500":        { $ref: "#/components/responses/InternalError" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /price/tip/stream:
+    get:
+      tags: [price]
+      summary: SSE stream of tip-price updates (ADR-0018).
+      description: |
+        Server-Sent Events counterpart of `/v1/price/tip`. Same
+        compute logic; pushed on a per-connection tick (default
+        every `window_seconds` seconds, clamp 1–60 s).
+
+        - First event fires synchronously on connect (no waiting a
+          full window).
+        - Pre-flight 404 when the pair has no observations: SSE
+          can't change status mid-stream, so emptiness is detected
+          before the response body switches to `text/event-stream`.
+        - Heartbeats every 15 s as comment lines (`:keepalive`) so
+          intermediate proxies don't idle out the connection.
+        - Resume after disconnect by setting `Last-Event-ID` on the
+          reconnect (header preferred, `?last_event_id=` fallback).
+        - Same URL-discipline rule as `/v1/price/tip`:
+          `?granularity=` returns 400.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - name: window_seconds
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 5
+          description: Tick cadence (and rolling-VWAP window) in seconds.
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string }
+          description: Opaque ID for resuming a previously-broken stream.
+      responses:
+        "200":
+          description: SSE stream of tip_update events.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "404":        { $ref: "#/components/responses/NotFound" }
+        "429":        { $ref: "#/components/responses/RateLimited" }
+        "500":        { $ref: "#/components/responses/InternalError" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /price/batch:
+    get:
+      tags: [price]
+      summary: Current prices for up to 100 assets.
+      parameters:
+        - name: asset_ids
+          in: query
+          required: true
+          schema: { type: string }
+          description: Comma-separated, max 100.
+        - { $ref: "#/components/parameters/Quote" }
+      responses:
+        "200":
+          description: Batch prices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceBatchEnvelope" }
+    post:
+      tags: [price]
+      summary: Current prices for up to 1000 assets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                  maxItems: 1000
+                quote:
+                  type: string
+                  default: USD
+              required: [asset_ids]
+      responses:
+        "200":
+          description: Batch prices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceBatchEnvelope" }
+
+  /observations:
+    get:
+      tags: [price]
+      summary: Raw per-source observations (ADR-0018 Surface 3).
+      description: |
+        Lowest-level surface per ADR-0018: returns the most-recent
+        trade from each source that has ever traded the (asset, quote)
+        pair. No aggregation, no chaining, no smoothing — purely
+        "what each venue last published".
+
+        - `?source=X` narrows to a single source (0- or 1-element array).
+        - `?aggregate=latest` collapses to the single newest trade across
+          sources (preserves the array wire shape; length 1).
+        - `flags.stale` is **always** `false` here — there is no
+          aggregation contract to fall short of.
+        - Cross-region consistency is **NOT** provable on this surface;
+          use `/v1/price` for the closed-bucket guarantee.
+        - Empty pair returns 200 with `data: []`, not 404.
+
+        URL discipline: `?granularity=` and `?window_seconds=` return 400
+        — those are closed-bucket and tip concepts respectively.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - name: source
+          in: query
+          required: false
+          schema: { type: string }
+          description: Restrict to one source's most-recent trade (0/1 row).
+        - name: aggregate
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [latest]
+          description: |
+            `latest` collapses to the single most-recent trade across
+            all sources. Omit for one row per source.
+      responses:
+        "200":
+          description: Per-source observations array.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/TradeRow" }
+                    required: [data]
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "500":        { $ref: "#/components/responses/InternalError" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /observations/stream:
+    get:
+      tags: [price]
+      summary: SSE stream of raw per-source observations (ADR-0018).
+      description: |
+        Streaming counterpart of `/v1/observations`. Same compute
+        logic; pushed on a per-connection tick (default every 5 s,
+        clamp 1–60 s — independent of tip's `window_seconds` because
+        observations does not aggregate).
+
+        - First event fires synchronously on connect; data may be
+          an empty array (the pair has no observations yet — same
+          200/empty contract as the request endpoint, NOT 404).
+        - Recurring events fire unconditionally on each tick (no
+          server-side dedupe) — clients diff against the previous
+          payload if they want change-detection.
+        - Heartbeats every 15 s as comment lines.
+        - URL discipline: `?granularity=` and `?window_seconds=`
+          return 400.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - name: source
+          in: query
+          required: false
+          schema: { type: string }
+          description: Restrict to one source's most-recent trade.
+        - name: aggregate
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [latest]
+          description: |
+            `latest` collapses to the single most-recent trade across
+            all sources.
+        - name: interval_seconds
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 5
+          description: Tick cadence in seconds.
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string }
+          description: Opaque ID for resuming a previously-broken stream.
+      responses:
+        "200":
+          description: SSE stream of observations_update events.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "500":        { $ref: "#/components/responses/InternalError" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /price/stream:
+    get:
+      tags: [price]
+      summary: SSE stream of closed-bucket price updates (ADR-0015).
+      description: |
+        SSE counterpart of `/v1/price` — carries the strict ADR-0015
+        closed-bucket consistency contract. Unlike `/v1/price/tip/stream`
+        and `/v1/observations/stream` (per-connection tick), this
+        surface is **Hub-driven**: the aggregator publishes one event
+        per closed bucket, and every subscriber on the same
+        (asset, quote) pair receives byte-identical payloads — the
+        same cross-region consistency guarantee `/v1/price` exposes.
+
+        - Heartbeats every 15 s as comment lines.
+        - Resume after disconnect via `Last-Event-ID` (header preferred,
+          `?last_event_id=` fallback).
+        - URL discipline: `?granularity=` returns 400 — the closed-
+          bucket stream is fixed at 1m; use
+          `/v1/history/since-inception` for other granularities.
+        - 503 when the deployment hasn't wired the streaming Hub
+          (typical pre-aggregator state).
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string }
+          description: Opaque ID for resuming a previously-broken stream.
+      responses:
+        "200":
+          description: SSE stream of price_update events.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400":        { $ref: "#/components/responses/BadRequest" }
+        "429":        { $ref: "#/components/responses/RateLimited" }
+        "503":        { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /history:
+    get:
+      tags: [history]
+      summary: Raw trade history for a pair in a time window.
+      description: |
+        Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
+        ascending. Cursor paginates across the full-PK tuple; truncating
+        the cursor at (ts, ledger) would drop rows sharing those
+        values (high-volume ledgers).
+
+        Bucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)
+        will ship via the aggregator binary (see
+        cmd/ratesengine-aggregator) on a different response shape —
+        not this endpoint.
+      parameters:
+        - { $ref: "#/components/parameters/Base" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10000, default: 1000 }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: Per-trade records.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeHistoryEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /history/since-inception:
+    get:
+      tags: [history]
+      summary: Closed-bucket historical VWAP series for one asset/quote pair.
+      description: |
+        Returns every CLOSED bucket from the requested continuous
+        aggregate ladder (`1m`, `15m`, `1h`, `4h`, `1d`, `1w`,
+        `1mo`) for the requested asset/quote pair. This is the
+        bucketed history surface; `/history` remains the raw
+        per-trade endpoint.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/Granularity" }
+      responses:
+        "200":
+          description: Since-inception series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistoryEnvelope" }
+
+  /chart:
+    get:
+      tags: [history]
+      summary: Rolling-window chart series matching the Freighter RFP shape.
+      description: |
+        Returns CLOSED CAGG buckets within a rolling time window for
+        one asset/quote pair, shaped as `(timeframe, granularity,
+        price_type) → points[]` per the Freighter RFP V1 chart
+        contract.
+
+        Defaults: `quote=fiat:USD`, `timeframe=24h`,
+        `granularity` per the timeframe table below, `price_type=vwap`.
+
+        Default-granularity table (per ADR-0020):
+
+        | Timeframe | Default granularity |
+        | --------- | ------------------- |
+        | `1h`      | `1m`                |
+        | `24h`     | `15m`               |
+        | `1w`      | `1h`                |
+        | `1mo`     | `4h`                |
+        | `1y`      | `1d`                |
+        | `all`     | `1d`                |
+
+        `price_type=twap` returns 400 — multi-bar TWAP charts are
+        deferred to L7.8 (post-launch), see ADR-0020. Single-bar
+        TWAP is available now via `/v1/twap` (true time-weighted
+        compute from raw trades); only the multi-bar chart variant
+        is the deferred surface.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/Timeframe" }
+        - { $ref: "#/components/parameters/Granularity" }
+        - { $ref: "#/components/parameters/PriceType" }
+      responses:
+        "200":
+          description: Chart series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChartEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /ohlc:
+    get:
+      tags: [ohlc]
+      summary: Single OHLC bar for a pair over a window.
+      description: |
+        Single-bar response for the window [from, to). Interval-series
+        (N bars, each interval-seconds wide) is a follow-up —
+        delivered via the aggregator's continuous-aggregate path.
+
+        Defaults: `from = to - 1h`, `to = now`. `truncated=true` on
+        the response means the window had more trades than the
+        server's per-request cap (10000) and the bar reflects only
+        the chronologically-first N; narrow the window or wait for
+        CAGG-backed endpoints.
+      parameters:
+        - { $ref: "#/components/parameters/Base" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+      responses:
+        "200":
+          description: Single OHLC bar.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OHLCEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /vwap:
+    get:
+      tags: [prices]
+      summary: Volume-weighted average price over a window.
+      description: |
+        Returns VWAP = Σ(quote) / Σ(base) for every trade in
+        [from, to) for the given pair. Optional outlier filter
+        drops prices > N σ from the window mean. When the window
+        has more than the server's per-request cap (10000 trades)
+        the response carries `truncated: true` — the price
+        reflects only the chronologically-first N trades, not the
+        full window.
+      parameters:
+        - { $ref: "#/components/parameters/Base" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - name: outlier_sigma
+          in: query
+          schema: { type: number, minimum: 0 }
+          description: "Drop trades > N σ from window mean. 0 disables (default)."
+      responses:
+        "200":
+          description: Volume-weighted price + volumes + trade count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VWAPEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: No trades in window.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422":
+          description: All trades filtered as outliers.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /twap:
+    get:
+      tags: [prices]
+      summary: Time-weighted average price over a window.
+      description: |
+        Each trade's price is active from its timestamp to the
+        next trade's (or windowEnd for the last). TWAP is the
+        duration-weighted mean. No outlier filter: time-weighting
+        is itself outlier-resistant (spurious prints get only
+        their slot duration, not a full window's worth).
+      parameters:
+        - { $ref: "#/components/parameters/Base" }
+        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+      responses:
+        "200":
+          description: Time-weighted price + trade count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TWAPEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: No trades in window.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /oracle/latest:
+    get:
+      tags: [oracle]
+      summary: Latest oracle reading per source for an asset.
+      description: |
+        Returns one OracleReading per source (reflector-dex /
+        reflector-cex / reflector-fx / redstone / band /
+        coingecko) that has observed the asset. Optional source
+        filter restricts to a single source.
+
+        Asset translation: classic Stellar identifiers map to the
+        global crypto ticker the oracles publish under — so
+        `asset=native` returns XLM observations (Reflector keys
+        them as `crypto:XLM`), `asset=USDC-GA5Z…` returns the
+        USDC global-ticker observations, etc. Already-canonical
+        forms (`crypto:XLM`, `fiat:USD`, contract addresses) pass
+        through unchanged.
+      parameters:
+        - { $ref: "#/components/parameters/AssetQuery" }
+        - name: source
+          in: query
+          schema: { type: string }
+          description: "Optional. Restrict to a single source name."
+      responses:
+        "200":
+          description: Array of OracleReading (empty when no observations).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OracleLatestEnvelope" }
+              example:
+                data:
+                  - source: reflector-cex
+                    contract_id: CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN
+                    asset: crypto:XLM
+                    quote: fiat:USD
+                    ts: "2026-05-05T16:25:00Z"
+                    price: "0.15912"
+                    price_raw: "15912000000000"
+                    decimals: 14
+                    confidence: 0.96
+                    observer: GRELAYER0000000000000000000000000000000000000000000000000000
+                  - source: band
+                    asset: crypto:XLM
+                    quote: fiat:USD
+                    ts: "2026-05-05T16:25:30Z"
+                    price: "0.15908"
+                    price_raw: "159080000000000000"
+                    decimals: 18
+                  - source: redstone
+                    asset: crypto:XLM
+                    quote: fiat:USD
+                    ts: "2026-05-05T16:24:00Z"
+                    price: "0.15920"
+                    price_raw: "159200000"
+                    decimals: 9
+                  - source: coingecko
+                    asset: crypto:XLM
+                    quote: fiat:USD
+                    ts: "2026-05-05T16:25:00Z"
+                    price: "0.15915"
+                    price_raw: "15915"
+                    decimals: 5
+                as_of: "2026-05-05T16:25:42.881Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /markets:
+    get:
+      tags: [markets]
+      summary: Distinct trading pairs with activity summary.
+      description: |
+        One entry per (base, quote) pair that has traded in the
+        recency window (default 14 days). Cursor-paginated (opaque
+        cursor keyed on `<base>|<quote>`). Each entry reports the
+        pair's most recent trade timestamp + a 24h trade count.
+
+        The recency window keeps the listing scoped to "active
+        markets" — pairs that haven't traded in 14 days don't
+        appear. This also bounds the underlying scan against the
+        trades hypertable so chunk pruning keeps response times
+        sub-second on a hypertable with hundreds of millions of
+        rows.
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Array of markets + optional next cursor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarketsEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /issuers:
+    get:
+      tags: [meta]
+      summary: Issuer directory ranked by total observation count.
+      description: |
+        Lists every issuer (G-account that has minted at least one
+        classic asset) ordered by total observation count across
+        their issued assets. The home_domain column is empty until
+        the SEP-1 fetcher worker resolves it (Phase 4).
+
+        Powers the showcase `/issuers` directory page.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max rows to return; 1-500, default 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Array of issuer summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - g_strkey
+                    - asset_count
+                    - total_observation_count
+                  properties:
+                    g_strkey: { type: string }
+                    home_domain: { type: string }
+                    asset_count: { type: integer, format: int64 }
+                    total_observation_count: { type: integer, format: int64 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /issuers/{g_strkey}:
+    get:
+      tags: [meta]
+      summary: Issuer detail — auth flags, SEP-1 metadata, issued assets.
+      description: |
+        Returns the row from the `issuers` table joined with the
+        list of every classic asset this G-account has ever issued.
+        Auth flags + SEP-1 payload land per-issuer as the SEP-1
+        fetcher worker resolves them (Phase 4); fields stay null
+        until then.
+
+        Powers the showcase `/coins/{slug}` issuer card and
+        `/issuers/{G-strkey}` detail page.
+      parameters:
+        - name: g_strkey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One issuer row plus issued-asset list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [g_strkey]
+                properties:
+                  g_strkey: { type: string }
+                  home_domain: { type: string }
+                  auth_required: { type: boolean, nullable: true }
+                  auth_revocable: { type: boolean, nullable: true }
+                  auth_immutable: { type: boolean, nullable: true }
+                  auth_clawback: { type: boolean, nullable: true }
+                  sep1_resolved_at: { type: string, format: date-time, nullable: true }
+                  sep1_payload: { type: object, additionalProperties: true, nullable: true }
+                  creation_ledger: { type: integer, nullable: true }
+                  assets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        asset_id: { type: string }
+                        code: { type: string }
+                        slug: { type: string }
+                        first_seen_ledger: { type: integer }
+                        last_seen_ledger: { type: integer }
+                        observation_count: { type: integer, format: int64 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /coins:
+    get:
+      tags: [meta]
+      summary: Asset directory — every classic asset observed on Stellar.
+      description: |
+        Auto-populated registry of every classic asset observed in
+        any trade or ChangeTrust op. Each row joins the latest
+        5-minute stats (`classic_asset_stats_5m`) for volume +
+        outstanding supply and the latest 1-minute price
+        (`prices_1m` against `fiat:USD`) for VWAP — `price_usd`,
+        `volume_24h_usd`, `market_cap_usd`, and
+        `circulating_supply` are emitted as JSON nulls when the
+        aggregator hasn't yet produced a value (newly-observed
+        asset, no off-chain peg, etc.).
+
+        The response is paginated via keyset cursor: the previous
+        response's `next_cursor` is passed back as `?cursor=…` to
+        fetch the next page. Empty `next_cursor` means no more
+        pages.
+
+        Powers the explorer's `/assets` directory.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max rows to return; 1-500, default 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: cursor
+          in: query
+          required: false
+          description: |
+            Keyset cursor returned by a previous response's
+            `next_cursor`. Empty for the first page; iterate while
+            non-empty.
+          schema:
+            type: string
+        - name: issuer
+          in: query
+          required: false
+          description: |
+            Restrict the listing to assets minted by this G-strkey.
+            Used by the explorer to deep-link from `/issuers` into
+            "assets by this issuer."
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          description: |
+            Case-insensitive substring filter against `code`, `slug`,
+            and `issuer_g_strkey`. Used by the explorer's `/assets`
+            search box so a 440K-asset directory is searchable
+            without paging through every cursor. Limited to 64
+            characters.
+          schema:
+            type: string
+            maxLength: 64
+      responses:
+        "200":
+          description: Page of asset entries + next-cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [coins, limit]
+                properties:
+                  coins:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - slug
+                        - asset_id
+                        - code
+                        - issuer
+                        - first_seen_ledger
+                        - last_seen_ledger
+                        - observation_count
+                      properties:
+                        slug: { type: string }
+                        asset_id: { type: string }
+                        code: { type: string }
+                        issuer: { type: string }
+                        first_seen_ledger: { type: integer }
+                        last_seen_ledger: { type: integer }
+                        observation_count: { type: integer, format: int64 }
+                        price_usd:
+                          type: string
+                          nullable: true
+                          description: Decimal string; null when no peg.
+                        volume_24h_usd:
+                          type: string
+                          nullable: true
+                        market_cap_usd:
+                          type: string
+                          nullable: true
+                          description: price_usd × circulating_supply when both present.
+                        circulating_supply:
+                          type: string
+                          nullable: true
+                          description: Outstanding supply (canonical units).
+                  next_cursor:
+                    type: string
+                    description: Empty when no more pages.
+                  limit:
+                    type: integer
+              example:
+                data:
+                  coins:
+                    - slug: USDC
+                      asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                      code: USDC
+                      issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                      first_seen_ledger: 50457424
+                      last_seen_ledger: 62413938
+                      observation_count: 41610618
+                      price_usd: "1.00012"
+                      volume_24h_usd: "573830.99"
+                      market_cap_usd: "812345678.45"
+                      circulating_supply: "812245567.21"
+                  next_cursor: "32406192:yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+                  limit: 100
+                as_of: "2026-05-05T16:03:05.111Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /coins/{slug}:
+    get:
+      tags: [meta]
+      summary: Single asset by slug.
+      description: |
+        Returns one row of `/coins` shape, looked up by URL-safe
+        `slug` (the slug column from `classic_assets`, falling
+        back to `code` when slug is null). Used by the explorer
+        asset-detail page so a deep link doesn't need to scan
+        the top-N listing first.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: URL-safe asset slug (e.g. `USDC`, `native`).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One asset row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - slug
+                  - asset_id
+                  - code
+                  - issuer
+                  - first_seen_ledger
+                  - last_seen_ledger
+                  - observation_count
+                properties:
+                  slug: { type: string }
+                  asset_id: { type: string }
+                  code: { type: string }
+                  issuer: { type: string }
+                  first_seen_ledger: { type: integer }
+                  last_seen_ledger: { type: integer }
+                  observation_count: { type: integer, format: int64 }
+                  price_usd:
+                    type: string
+                    nullable: true
+                  volume_24h_usd:
+                    type: string
+                    nullable: true
+                  market_cap_usd:
+                    type: string
+                    nullable: true
+                  circulating_supply:
+                    type: string
+                    nullable: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /changes/{entity_type}/{id}:
+    get:
+      tags: [meta]
+      summary: Multi-window delta strip for one entity.
+      description: |
+        Returns the pre-computed multi-window delta strip + ATH/ATL +
+        streak + acceleration for one (entity_type, id) tuple. Powers
+        every list view + price card on the showcase site
+        (data-inventory §6.1). Refreshed every 5 minutes by the
+        change-summary worker; stale rows (>10 min) indicate the
+        worker is lagging.
+
+        Returns 404 when the worker hasn't computed a row yet (fresh
+        deployment, newly-added entity, or bounded history). Returns
+        503 when this deployment hasn't wired the change-summary
+        reader.
+      parameters:
+        - name: entity_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [coin, protocol, pair, source]
+        - name: id
+          in: path
+          required: true
+          description: |
+            Canonical id for the entity. For `coin`, the asset slug
+            (e.g. `stellar`). For `pair`, `base/quote` form. For
+            `protocol`, the protocol slug. For `source`, the source
+            name.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One row from change_summary_5m.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entity_type: { type: string }
+                  entity_id: { type: string }
+                  refreshed_at: { type: string, format: date-time }
+                  current_value: { type: number }
+                  h1_value: { type: number, nullable: true }
+                  h1_delta_pct: { type: number, nullable: true }
+                  h24_value: { type: number, nullable: true }
+                  h24_delta_pct: { type: number, nullable: true }
+                  d7_value: { type: number, nullable: true }
+                  d7_delta_pct: { type: number, nullable: true }
+                  d30_value: { type: number, nullable: true }
+                  d30_delta_pct: { type: number, nullable: true }
+                  ath_value: { type: number, nullable: true }
+                  ath_at: { type: string, format: date-time, nullable: true }
+                  atl_value: { type: number, nullable: true }
+                  atl_at: { type: string, format: date-time, nullable: true }
+                  streak_direction:
+                    type: string
+                    enum: [up, down, flat]
+                    nullable: true
+                  streak_days: { type: integer, nullable: true }
+                  acceleration:
+                    type: string
+                    enum: [increasing, flat, decreasing]
+                    nullable: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /diagnostics/cursors:
+    get:
+      tags: [meta]
+      summary: Per-source ingest cursor positions.
+      description: |
+        Returns every row of the `ingestion_cursors` table — the
+        per-source markers the dispatcher persists after each ledger
+        is processed. Used for operator-facing diagnostics and the
+        showcase /diagnostics page (so you can see at a glance which
+        sources are caught up, which are lagging, and how stale the
+        last update is).
+
+        Sources that track multiple positions independently (e.g.
+        Soroswap tracks the factory cursor + one cursor per pair)
+        return one row per (source, sub_source) tuple.
+
+        Returns 503 when the deployment hasn't wired the cursors
+        reader.
+      responses:
+        "200":
+          description: Array of cursor entries, one per (source, sub_source).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - source
+                    - last_ledger
+                    - last_updated
+                    - lag_seconds
+                  properties:
+                    source: { type: string }
+                    sub_source: { type: string }
+                    last_ledger: { type: integer }
+                    last_updated: { type: string, format: date-time }
+                    lag_seconds: { type: integer, format: int64 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /sources:
+    get:
+      tags: [meta]
+      summary: Source catalogue with class + IncludeInVWAP metadata.
+      description: |
+        Static projection of the aggregator's source registry — every
+        venue we know about, labelled with the class semantic that
+        decides whether it contributes to VWAP. Sources with
+        `include_in_vwap=false` are intentional policy
+        (aggregator/oracle/authority_sanity classes), not missing
+        connectors. Operators consult this endpoint to confirm a
+        venue is recognised before debugging an absence in /v1/markets
+        or /v1/vwap.
+      parameters:
+        - name: class
+          in: query
+          required: false
+          description: |
+            Optional class filter. When set, only sources of the
+            given class are returned. Useful for dashboards that
+            split the catalogue by role.
+          schema:
+            type: string
+            enum: [exchange, aggregator, oracle, authority_sanity]
+      responses:
+        "200":
+          description: Array of sources, sorted by name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourcesEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /pairs:
+    get:
+      tags: [markets]
+      summary: Direct markets for a pair.
+      parameters:
+        - name: base
+          in: query
+          required: true
+          schema: { type: string }
+        - name: quote
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pairs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PairsEnvelope" }
+
+  /oracle/lastprice:
+    get:
+      tags: [oracle]
+      summary: SEP-40 lastprice-equivalent passthrough.
+      parameters:
+        - name: asset
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Price record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OraclePriceEnvelope" }
+
+  /oracle/prices:
+    get:
+      tags: [oracle]
+      summary: SEP-40 prices-equivalent passthrough (N historical).
+      parameters:
+        - name: asset
+          in: query
+          required: true
+          schema: { type: string }
+        - name: records
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 60 }
+      responses:
+        "200":
+          description: Historical records.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OraclePricesEnvelope" }
+
+  /oracle/x_last_price:
+    get:
+      tags: [oracle]
+      summary: SEP-40 x_last_price-equivalent (cross-pair).
+      parameters:
+        - name: base
+          in: query
+          required: true
+          schema: { type: string }
+        - name: quote
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cross-pair last price.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OraclePriceEnvelope" }
+
+  /account/me:
+    get:
+      tags: [account]
+      summary: API-key holder info + quota status.
+      security:
+        - APIKeyAuth: []
+      responses:
+        "200":
+          description: Account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountEnvelope" }
+              example:
+                data:
+                  key_id: kid_8f3a2c1b9e7d4f6a
+                  label: production-api-1
+                  tier: apikey
+                  rate_limit_per_min: 1000
+                  created_at: "2026-04-12T09:32:18Z"
+                as_of: "2026-05-05T16:25:42.881Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+
+  /account/usage:
+    get:
+      tags: [account]
+      summary: Usage-summary placeholder (currently empty).
+      description: |
+        Placeholder self-service surface. The handler currently
+        returns an empty list while the backing counter store is not
+        implemented yet; `from` / `to` are reserved for the future
+        implementation and are ignored today.
+      security:
+        - APIKeyAuth: []
+      parameters:
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+      responses:
+        "200":
+          description: Usage records.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageEnvelope" }
+
+  /account/keys:
+    get:
+      tags: [account]
+      summary: List all API keys for the authenticated caller.
+      description: |
+        Returns every key whose Identifier matches the caller's
+        authenticated Subject, sorted oldest-first. Each entry is
+        the public-safe projection — `key_id`, `label`, `tier`,
+        `rate_limit_per_min`, `created_at`. **Plaintext is never
+        returned**; it's only retrievable at POST-time.
+
+        Use this to render an account dashboard ("here are your
+        keys"), verify rotation worked, or confirm a Stripe-paid
+        upgrade lifted the right keys.
+      security:
+        - APIKeyAuth: []
+      responses:
+        "200":
+          description: Account keys (possibly empty list).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Account" }
+        "401":
+          description: Unauthenticated.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: AccountStore not configured.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
+      tags: [account]
+      summary: Create a new API key.
+      description: |
+        Issues a new API key for the authenticated caller and returns
+        the plaintext exactly once.
+      security:
+        - APIKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string, maxLength: 128 }
+              required: [label]
+      responses:
+        "201":
+          description: New key — plaintext shown **once**.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyCreatedEnvelope" }
+
+  /webhooks/stripe:
+    post:
+      tags: [account]
+      summary: Stripe webhook — paid-tier upgrade.
+      description: |
+        Receives Stripe webhook events. On `checkout.session.completed`
+        with `payment_status=paid`, looks up every API key whose
+        identifier matches `client_reference_id` and lifts their
+        `rate_limit_per_min` to the value implied by `metadata.tier`
+        (pro / business) or the explicit `metadata.rate_limit_per_min`
+        override.
+
+        Idempotent — Stripe at-least-once delivery means the same
+        event may arrive multiple times; the handler always sets the
+        same target rate-limit. Customer keeps their existing
+        plaintext key; effective on the next request (validator reads
+        the per-key budget on every Lookup).
+
+        Stripe-Signature header verified via HMAC-SHA256 with
+        timestamp drift bounded to 5 minutes. Endpoint returns 503
+        when the signing secret is unset (deployments without
+        Stripe).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Event acknowledged (regardless of whether keys were upgraded — non-2xx triggers Stripe retries).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:                { type: boolean }
+                  upgraded:          { type: integer, description: "Keys upgraded to the new rate limit." }
+                  keys_total:        { type: integer, description: "Total keys belonging to the identifier." }
+                  rate_limit_per_min: { type: integer }
+                  ignored:           { type: string, description: "Set when an event was acknowledged but not acted on (wrong type, unpaid)." }
+        "400":
+          description: Missing signature header / bad body / bad metadata.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "401":
+          description: Stripe-Signature verification failed.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: Webhook signing secret not configured.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /signup:
+    post:
+      tags: [account]
+      summary: Self-service signup — mint a first API key by email.
+      description: |
+        Public, anonymous-tier endpoint. Hit it once with an email
+        + optional label and get back a freshly-minted API key for
+        the Starter tier (1000 req/min). Idempotent on the email:
+        a second call for the same email returns 409 with a pointer
+        to the existing key (recover access via support; future
+        Stripe-paid upgrade flow will support self-service rotation
+        via /v1/account/keys).
+
+        Already-authenticated callers receive 400 — they should
+        rotate keys via POST /v1/account/keys instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email }
+                label: { type: string, maxLength: 128 }
+              required: [email]
+            example:
+              email: "alice@example.com"
+              label: "production-api-1"
+      responses:
+        "200":
+          description: Account created — plaintext key shown **once**.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          plaintext:         { type: string, description: "Bearer token. Show ONCE; unrecoverable." }
+                          key_id:            { type: string }
+                          identifier:        { type: string }
+                          label:             { type: string }
+                          tier:              { type: string, enum: [apikey] }
+                          rate_limit_per_min: { type: integer }
+                        required: [plaintext, key_id, identifier, tier, rate_limit_per_min]
+              example:
+                data:
+                  plaintext: "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f"
+                  key_id: "k_8f3a2c1b9e7d4f6a"
+                  identifier: "signup-3d4f9a2c1e8b7f6d"
+                  label: "production-api-1"
+                  tier: "apikey"
+                  rate_limit_per_min: 1000
+                as_of: "2026-05-05T14:35:42.881Z"
+        "400":
+          description: Missing or invalid email, body too large, or already authenticated.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: Email already has an account.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: AccountStore not configured (Redis unavailable).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/keys:
+    get:
+      tags: [dashboard]
+      summary: Customer dashboard — list this account's API keys.
+      description: |
+        Session-gated. Returns every key (active + revoked) for
+        the authenticated user's account, ordered oldest-first.
+        Plaintext is never returned by this endpoint — only
+        the prefix (`rek_4f9c1d8b…`).
+      responses:
+        "200":
+          description: Key list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items: { $ref: "#/components/schemas/DashboardKey" }
+                required: [keys]
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
+      tags: [dashboard]
+      summary: Customer dashboard — mint a new API key.
+      description: |
+        Session-gated. Mints a new key, returns the plaintext
+        ONCE. The dashboard surfaces it in a "save this now"
+        banner; subsequent reads only see the prefix. Owner /
+        admin / member roles can mint; viewer + billing 403.
+        Rate-limited to MaxKeysPerAccount=25 active keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateKeyRequest" }
+      responses:
+        "201":
+          description: Key minted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateKeyResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: Role can't mint keys.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: Account already at the active-key quota.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/keys/{id}:
+    delete:
+      tags: [dashboard]
+      summary: Customer dashboard — revoke a key.
+      description: |
+        Session-gated. Soft-delete by setting revoked_at;
+        idempotent. 404 when the key doesn't exist OR belongs
+        to a different account (same shape so attackers can't
+        enumerate cross-account key_ids).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: Role can't revoke keys.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Key not found.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Customer dashboard — request a magic-link sign-in email.
+      description: |
+        Mints a single-use magic-link token (valid 15 minutes) and
+        emails it to the address. Always returns `{status: "sent"}`
+        regardless of whether the email matches an existing account
+        — leaking that information would let attackers enumerate
+        valid users. First-time users have their account + owner-
+        user provisioned on the callback (not here), so the same
+        flow handles login + signup.
+
+        Distinct from `/auth/sep10/*` (programmatic API auth via a
+        signed Stellar challenge). This endpoint is the entry point
+        for the cookie-based dashboard SPA at app.ratesengine.net.
+
+        Returns 503 when the deployment hasn't configured the
+        dashboard auth flow (api.dashboard.base_url empty).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The address to email the magic link to.
+              required: [email]
+      responses:
+        "200":
+          description: Email accepted for delivery (or silently dropped if address doesn't match an account).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [sent]
+                required: [status]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/callback:
+    get:
+      tags: [auth]
+      summary: Customer dashboard — consume a magic-link token + mint a session cookie.
+      description: |
+        Reads the `token` query parameter, atomically marks it
+        consumed in `magic_link_tokens`, and on success sets an
+        HttpOnly + Secure session cookie (`ratesengine_session`)
+        and redirects (303) into the dashboard.
+
+        First-time emails get a free-tier account + owner-role
+        user provisioned at this step. Returning users skip
+        provisioning and just get a fresh session.
+
+        Returns 410 on expired tokens so the dashboard can render
+        a "request a fresh link" prompt distinct from the generic
+        "invalid token" 400.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+          description: Hex-encoded magic-link plaintext from the email.
+        - name: next
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Path-only redirect target after sign-in (e.g. `/keys`).
+            Absolute URLs and protocol-relative paths (`//evil.com`)
+            are rejected; the user lands at `/` instead.
+      responses:
+        "303":
+          description: Authenticated; session cookie set; redirect to dashboard.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly + Secure session cookie.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "410":
+          description: Magic-link token expired; request a fresh one.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Customer dashboard — revoke the current session + clear the cookie.
+      description: |
+        Idempotent. Calling without a session cookie is still a 200
+        — the goal is just to leave the browser in a known
+        signed-out state. Sets a Max-Age=-1 cookie so the browser
+        drops it on the next response.
+      responses:
+        "200":
+          description: Session revoked (if any) and cookie cleared.
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/sep10/challenge:
+    get:
+      tags: [auth]
+      summary: SEP-10 Web Auth — issue a challenge transaction.
+      description: |
+        Returns a Stellar challenge transaction the client must sign
+        with its account secret key. Per SEP-10 §3.2 the response
+        carries the unsigned XDR + the network passphrase the
+        challenge was crafted for. Unauthenticated by design.
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema: { type: string }
+          description: Stellar G-strkey of the account being authenticated.
+      responses:
+        "200":
+          description: Unsigned challenge transaction.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/SEP10Challenge" }
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/sep10/token:
+    post:
+      tags: [auth]
+      summary: SEP-10 Web Auth — exchange a signed challenge for a JWT.
+      description: |
+        Accepts a signed challenge transaction and returns a JWT
+        bearing the authenticated G-strkey. Per SEP-10 §3.3 the body
+        carries `{transaction: <base64-XDR>}`. Unauthenticated by
+        design — the SEP-10 protocol IS the authentication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transaction:
+                  type: string
+                  description: Base64-encoded signed XDR of the challenge.
+              required: [transaction]
+      responses:
+        "200":
+          description: Authenticated; JWT issued.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/SEP10Token" }
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Signature verification failed.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "410":
+          description: Challenge time-bounds expired; request a fresh challenge.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+components:
+  securitySchemes:
+    APIKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "rek_* (Rates Engine key)"
+
+  parameters:
+    AssetIdPath:
+      name: asset_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: |
+        Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+        `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+        validated per SEP-23.
+    AssetQuery:
+      name: asset
+      in: query
+      required: true
+      schema: { type: string }
+      description: |
+        Canonical asset identifier — matches the `asset_id` on
+        response bodies. Query-parameter form is the shorter `asset`
+        per the handler implementations (/v1/price, /v1/oracle/latest).
+    Quote:
+      name: quote
+      in: query
+      schema: { type: string, default: USD }
+      description: ISO-4217 fiat or crypto asset_id. Default `USD`.
+    Timeframe:
+      name: timeframe
+      in: query
+      schema:
+        type: string
+        enum: [1h, 24h, 1w, 1mo, 1y, all]
+        default: 24h
+    Granularity:
+      name: granularity
+      in: query
+      schema:
+        type: string
+        enum: [1m, 15m, 1h, 4h, 1d, 1w, 1mo]
+    Base:
+      name: base
+      in: query
+      required: true
+      schema: { type: string }
+      description: Canonical asset identifier for the base side of a pair.
+    From:
+      name: from
+      in: query
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
+    PriceType:
+      name: price_type
+      in: query
+      schema:
+        type: string
+        enum: [vwap, twap]
+        default: vwap
+    TypeFilter:
+      name: type
+      in: query
+      schema:
+        type: string
+        enum: [native, classic, soroban, fiat, any]
+        default: any
+    CodeFilter:
+      name: code
+      in: query
+      schema: { type: string }
+    IssuerFilter:
+      name: issuer
+      in: query
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      description: |
+        Opaque pagination token echoed from a prior response's
+        `pagination.next`. Pass it verbatim — it is a base64url-encoded
+        blob whose internal shape is an implementation detail and
+        changes without notice. Clients MUST NOT parse, decode, or
+        construct cursors by hand.
+
+        A cursor is stable across retries but not across schema
+        changes; treat it as short-lived (minutes, not days). Empty
+        means "start from the beginning".
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+
+  responses:
+    # Shared non-2xx shapes — every error path the server produces
+    # uses the RFC 9457 Problem payload. New endpoint entries SHOULD
+    # reference these (via `default:` or explicit status codes)
+    # rather than declaring inline schemas, so the wire contract
+    # stays consistent.
+    NotFound:
+      description: Not found.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://api.ratesengine.net/errors/asset-not-found"
+            title: "Asset not found"
+            status: 404
+            detail: "No trades observed for asset_id=XYZ-G..."
+            instance: "/v1/assets/XYZ-GA5Z"
+            request_id: "9be8c8cc17163dc7e40b07a55beee744"
+    BadRequest:
+      description: Client-supplied parameters didn't validate.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://api.ratesengine.net/errors/missing-asset"
+            title: "Missing asset parameter"
+            status: 400
+            detail: "asset query parameter is required"
+            instance: "/v1/price"
+            request_id: "499673a2b4d5f84bdbfa18bcfdc65bbe"
+    RateLimited:
+      description: Rate-limit quota exhausted. See `Retry-After` header.
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+          description: Seconds until the caller can retry.
+        X-RateLimit-Limit:
+          schema: { type: integer }
+        X-RateLimit-Remaining:
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://api.ratesengine.net/errors/rate-limited"
+            title: "Rate limit exceeded"
+            status: 429
+            detail: "anonymous tier limited to 60 requests per minute; retry in 23 seconds"
+            instance: "/v1/coins"
+            request_id: "feb6615b1a38211b4835c0fefcd94ede"
+    InternalError:
+      description: Internal error. Body includes the request_id for correlation.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://api.ratesengine.net/errors/internal"
+            title: "Internal error"
+            status: 500
+            detail: "see X-Request-ID in server logs"
+            instance: "/v1/oracle/latest"
+            request_id: "e0fca799b0b6d066ed6c928b5cb0d5e6"
+    ServiceUnavailable:
+      description: Server is degraded (dependency outage, startup, shutdown).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://api.ratesengine.net/errors/account-store-unavailable"
+            title: "Account store not configured"
+            status: 503
+            detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
+            instance: "/v1/account/keys"
+            request_id: "70c8017d79651070fd16c2c9f065d846"
+
+  schemas:
+    DashboardKey:
+      type: object
+      description: |
+        Dashboard view of an API key. Plaintext is NEVER on this
+        shape — that's only on `CreateKeyResponse.plaintext`,
+        returned exactly once at creation time.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        key_prefix:
+          type: string
+          description: First 12 chars of the plaintext (`rek_<8hex>`).
+        tier:
+          type: string
+          enum: [apikey, partner, operator]
+        rate_limit_per_min: { type: integer }
+        monthly_quota: { type: integer, format: int64 }
+        usage_alert_threshold_pct: { type: integer }
+        ip_allowlist:
+          type: array
+          items: { type: string }
+        referer_allowlist:
+          type: array
+          items: { type: string }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        revoked_reason: { type: string }
+        last_used_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+      required: [id, name, key_prefix, tier, rate_limit_per_min, created_at]
+
+    CreateKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          description: Customer-facing label.
+        description:
+          type: string
+          maxLength: 2000
+        rate_limit_per_min:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: Default 1000.
+        monthly_quota:
+          type: integer
+          format: int64
+        ip_allowlist:
+          type: array
+          items: { type: string }
+          description: |
+            CIDR (`203.0.113.0/24`) or bare IP (auto-promoted to
+            /32 v4 or /128 v6).
+        referer_allowlist:
+          type: array
+          items: { type: string }
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC 3339; must be in the future.
+        usage_alert_threshold_pct:
+          type: integer
+          minimum: 1
+          maximum: 100
+      required: [name]
+
+    CreateKeyResponse:
+      type: object
+      properties:
+        plaintext:
+          type: string
+          description: |
+            The full plaintext key. Returned exactly once; never
+            re-displayed. Customers store this in their secret
+            manager.
+        key: { $ref: "#/components/schemas/DashboardKey" }
+      required: [plaintext, key]
+
+    # Base envelope pieces
+    Flags:
+      type: object
+      description: |
+        Advisory quality markers. See docs/architecture/ha-plan.md §9
+        and ADR-0019 (anomaly detection / freeze policy).
+
+        - `stale` — response is below this surface's documented
+          baseline contract.
+        - `reduced_redundancy` — cross-region redundancy is degraded
+          (R2/R3 set this when R1's last completeness run is stale
+          per ADR-0017).
+        - `triangulated` — set when the served price was derived
+          via cross-pair multiplication (e.g. XLM/EUR computed from
+          XLM/USD × USD/EUR) rather than direct trade observation.
+          The aggregator's triangulation pass writes the implied
+          VWAP into the same Redis key with a `:provenance` marker;
+          `/v1/price` reads that marker and forwards the flag.
+        - `divergence_warning` — anomaly check or cross-reference
+          observed a meaningful divergence; treat with caution.
+        - `frozen` — anomaly detection refused to publish the new
+          bucket; this response carries the previous bucket's
+          last-known-good value (ADR-0019). Only fires on `/v1/price`;
+          tip + observations surfaces ignore freeze.
+        - `single_source` — the bucket had only one contributing
+          source. When `frozen=true` this is forced true (an LKG
+          fallback is by definition single-sourced). Informational;
+          combined with `frozen` this is the manipulation signature.
+      properties:
+        stale:              { type: boolean, default: false }
+        reduced_redundancy: { type: boolean, default: false }
+        triangulated:       { type: boolean, default: false }
+        divergence_warning: { type: boolean, default: false }
+        frozen:             { type: boolean, default: false }
+        single_source:      { type: boolean, default: false }
+      required: [stale, reduced_redundancy, triangulated, divergence_warning]
+
+    Pagination:
+      type: object
+      description: |
+        Present on list endpoints when more rows exist beyond the
+        current page. Absent on the final page — clients must detect
+        "no more data" by checking for the absence of this object,
+        not by parsing `next`.
+      properties:
+        next:
+          type: string
+          nullable: true
+          description: |
+            Opaque token to pass as the `cursor` query parameter on
+            the next request. Base64url-encoded; contents are an
+            implementation detail and change without notice. Clients
+            MUST pass this value verbatim — do not decode or
+            manipulate.
+
+    EnvelopeMeta:
+      type: object
+      description: Every 2xx response carries these.
+      properties:
+        as_of: { type: string, format: date-time }
+        sources:
+          type: array
+          items: { type: string }
+        flags: { $ref: "#/components/schemas/Flags" }
+      required: [as_of, flags]
+
+    # Health
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+      required: [status]
+
+    VersionResponse:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                version:    { type: string, description: "Human-readable git-describe (or `dev`)." }
+                build_date: { type: string, description: "ISO-8601 UTC build timestamp (or `unknown`)." }
+                commit:     { type: string, description: "Full VCS revision SHA from runtime/debug.BuildInfo (or `unknown`)." }
+                dirty:      { type: string, description: "`true` if the build tree had uncommitted changes; `false` otherwise. Production builds should always be `false`." }
+                go_version: { type: string, description: "Runtime Go version (e.g. `go1.22.3`)." }
+              required: [version, build_date, commit, dirty, go_version]
+          required: [data]
+
+    StatusEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/StatusResponse" }
+          required: [data]
+
+    StatusResponse:
+      type: object
+      properties:
+        overall:
+          type: string
+          enum: [ok, degraded, down]
+          description: |
+            "ok" when every signal is healthy; "degraded" when at
+            least one heartbeat is stale or a page-severity alert
+            is firing; "down" when no live signal is available.
+        region:
+          type: object
+          properties:
+            name:       { type: string, description: "Region identifier (e.g. r1, r2, r3)." }
+            deployment: { type: string, description: "Deployment label (e.g. production, staging)." }
+          required: [name, deployment]
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/StatusService" }
+        latency:
+          type: object
+          description: API histogram-derived percentiles over the last 5 minutes. Zero when no Prometheus backend is wired.
+          properties:
+            p50_ms:      { type: number }
+            p95_ms:      { type: number }
+            p99_ms:      { type: number }
+            window_secs: { type: integer }
+        freshness:
+          type: object
+          properties:
+            last_aggregator_tick: { type: string, format: date-time }
+            active_sources:       { type: integer }
+            total_sources:        { type: integer }
+        incidents:
+          type: object
+          properties:
+            active_count:        { type: integer }
+            page_count:          { type: integer }
+            ticket_count:        { type: integer }
+            informational_count: { type: integer }
+            active:
+              type: array
+              description: |
+                Currently-firing alerts (deduplicated by alertname,
+                page-severity first, capped at 16 entries). Empty when
+                no alerts are firing OR no Prometheus backend is wired.
+              items: { $ref: "#/components/schemas/ActiveIncident" }
+      required: [overall, region, services]
+
+    ActiveIncident:
+      type: object
+      properties:
+        name:     { type: string, description: "Alertmanager `alertname` label." }
+        severity:
+          type: string
+          enum: [page, ticket, informational]
+          description: Severity bucket per the Rates Engine alerting taxonomy.
+        runbook_url:
+          type: string
+          format: uri
+          description: |
+            Public GitHub URL for the alert's runbook (when the alert
+            rule has the `runbook_url` label set). Empty when no
+            runbook is registered.
+      required: [name, severity]
+
+    StatusService:
+      type: object
+      properties:
+        name:      { type: string, description: "Service identifier (api / indexer / aggregator)." }
+        status:
+          type: string
+          enum: [ok, down, unknown]
+          description: |
+            "ok" when the last scrape was within 60 s. "down" when
+            the heartbeat is stale. "unknown" when no Prometheus
+            backend is wired or no scrape has succeeded yet.
+        last_seen: { type: string, format: date-time, description: "Optional. Timestamp of the most recent successful scrape." }
+      required: [name, status]
+
+    # Asset catalogue
+    Asset:
+      type: object
+      properties:
+        asset_id:     { type: string }
+        type:         { type: string, enum: [native, classic, soroban, fiat] }
+        code:         { type: string }
+        issuer:       { type: string, nullable: true }
+        contract_id:  { type: string, nullable: true }
+        home_domain:  { type: string, nullable: true }
+        decimals:     { type: integer }
+        sep1_status:
+          type: string
+          enum: [not_applicable, not_fetched, verified, no_match, unreachable]
+          description: |
+            State of the SEP-1 overlay for this asset.
+            - not_applicable: no home-domain (native, fiat, SAC-only).
+            - not_fetched:    has a home-domain but resolver wasn't wired.
+            - verified:       SEP-1 fetched + matching [[CURRENCIES]] entry found.
+            - no_match:       SEP-1 fetched but no matching issuer+code entry.
+            - unreachable:    fetch / parse failed (see server logs).
+        # Overlay fields, populated only when sep1_status == "verified"
+        # (some also present for "no_match" — org_name).
+        name:              { type: string, nullable: true }
+        description:       { type: string, nullable: true }
+        image:             { type: string, nullable: true }
+        org_name:          { type: string, nullable: true }
+        anchor_asset:      { type: string, nullable: true }
+        anchor_asset_type: { type: string, nullable: true }
+        # SEP-1 issuance declarations (issuer's stated commitments,
+        # distinct from the live-ledger F2 fields below).
+        conditions:        { type: string, nullable: true, description: "Issuer's declared terms / conditions text." }
+        fixed_number:      { type: string, nullable: true, description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum." }
+        max_number:        { type: string, nullable: true, description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived." }
+        is_unlimited:      { type: boolean, nullable: true, description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply." }
+        # F2 fields — Market Cap / FDV / Circulating / Total / Max
+        # Supply per Freighter RFP V2 (ADR-0011).
+        #
+        # Supply values are decimal strings in the asset's smallest
+        # integer unit (stroops for XLM/classic; contract-defined for
+        # SEP-41). Consumers divide by 10^decimals for display.
+        # market_cap_usd / fdv_usd are decimal strings in dollars
+        # to two fractional digits.
+        #
+        # Current repo snapshot note: the API reads these fields from
+        # asset_supply_history when snapshots exist, but the repo does
+        # not ship an in-tree writer for that table yet.
+        #
+        # All F2 fields are nullable: any field whose data isn't
+        # available (no supply snapshot yet, no USD price for the
+        # pair, max_supply unknown for an uncapped issuer) emits null
+        # rather than fabricating per ADR-0011 "we don't fabricate".
+        circulating_supply: { type: string, nullable: true, description: "Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Null when no snapshot exists." }
+        total_supply:       { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null when no snapshot exists." }
+        max_supply:         { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
+        market_cap_usd:     { type: string, nullable: true, description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable." }
+        fdv_usd:            { type: string, nullable: true, description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable." }
+        supply_basis:
+          type: string
+          enum: [xlm_sdf_reserve_exclusion, issuer_exclusion, admin_exclusion, override]
+          nullable: true
+          description: |
+            Which ADR-0011 policy produced the supply numbers.
+            Surfaced so consumers can decide how much to trust the
+            absolute value (e.g. `override` indicates an operator
+            curated the locked-set or SEP-1 declared a max_supply;
+            `issuer_exclusion`/`admin_exclusion` are algorithm
+            defaults). Null when no supply snapshot is available.
+        volume_24h_usd:
+          type: string
+          nullable: true
+          description: |
+            Trailing-24h USD-denominated trade volume across every
+            pair this asset participates in (as base OR quote).
+            Decimal string. "0" is a valid value (asset tracked, no
+            trades in the window); null means the volume reader
+            isn't wired or the lookup failed. Per Freighter V2
+            scope ("24h Trading Volume aggregate across indexed
+            markets").
+
+            **Scope caveat (launch-readiness L2.2):** off-chain
+            CEX/FX trades populate `usd_volume` automatically when
+            the quote is `fiat:USD` or a USD-pegged stablecoin
+            (USDC / USDT / DAI / PYUSD / USDP).
+
+            On-chain DEX trades (Stellar SDEX, Soroswap, Aquarius,
+            Phoenix, Comet) populate `usd_volume` when their quote
+            asset is in the operator's
+            `[trades].usd_pegged_classic_assets` allow-list, or its
+            SAC contract is wired transitively via
+            `[supply.sac_wrappers]` (L2.2 phase 1). Deployments
+            that haven't configured the allow-list see on-chain
+            trades contribute 0 — comparisons with external
+            aggregators (CoinGecko, CMC) will read systematically
+            lower until the operator opts in.
+
+            On-chain trades quoted in non-USD assets (XLM/AQUA,
+            XLM/BTC, etc.) still contribute 0; the FX-anchor
+            multiplication for non-USD on-chain quotes is L2.2
+            phase 2, post-launch. The schema is forward-compatible:
+            phase 2 lands additively without a wire-shape change.
+      required: [asset_id, type, code, decimals, sep1_status]
+
+    AssetEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Asset" }
+          required: [data]
+
+    AssetListEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Asset" }
+            pagination: { $ref: "#/components/schemas/Pagination" }
+          # pagination is OMITTED on the final page (no more rows).
+          # Matches the handler behaviour: env.Pagination is set only
+          # when the storage layer returned a non-empty next-cursor.
+          required: [data]
+
+    AssetMetadata:
+      type: object
+      description: |
+        SEP-1 overlay re-projection of /v1/assets/{id}'s metadata
+        slice. Same shape the asset-detail surface returns under
+        the `name`/`description`/etc. keys, here without the
+        ledger-derived F2 fields. Populated when the issuer
+        publishes a stellar.toml whose [[CURRENCIES]] entry
+        matches the asset's `(code, issuer)` — `sep1_status`
+        then reads "verified". `not_applicable` (native, fiat,
+        SAC-only), `not_fetched` (operator hasn't configured the
+        home-domain map for this issuer), `unreachable` (fetch
+        or parse failed), and `no_match` (TOML loaded but no
+        matching currency block) leave the overlay fields null.
+      properties:
+        asset_id:        { type: string }
+        home_domain:     { type: string, nullable: true }
+        sep1_status:     { type: string, enum: [not_applicable, not_fetched, verified, no_match, unreachable] }
+        # SEP-1 overlay fields (populated when sep1_status=verified).
+        name:            { type: string, nullable: true }
+        description:     { type: string, nullable: true }
+        image:           { type: string, nullable: true, description: "Issuer-supplied logo URL. http(s) only — non-http schemes are stripped at overlay time." }
+        org_name:        { type: string, nullable: true }
+        anchor_asset:    { type: string, nullable: true }
+        anchor_asset_type: { type: string, nullable: true, description: "fiat / crypto / stock / etc., per SEP-1 §Currencies." }
+        # SEP-1 issuance declarations — the issuer's own commitments,
+        # distinct from F2 supply numbers on /v1/assets/{id} which
+        # observe live ledger state.
+        conditions:      { type: string, nullable: true, description: "Issuer's declared terms / conditions text." }
+        fixed_number:    { type: string, nullable: true, description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum." }
+        max_number:      { type: string, nullable: true, description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived." }
+        is_unlimited:    { type: boolean, nullable: true, description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply." }
+      required: [asset_id, sep1_status]
+
+    AssetMetadataEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AssetMetadata" }
+          required: [data]
+
+    # Price
+    #
+    # Fields marked "aggregator" are populated once the aggregator
+    # binary lands (see cmd/ratesengine-aggregator/main.go). Until
+    # then, handlers may omit them — clients must treat absence as
+    # "unknown", not an error. Nullable on the wire; required-by-name
+    # in the OpenAPI sense means "the key will appear", not "it will
+    # have a value".
+    Price:
+      type: object
+      properties:
+        asset_id:          { type: string }
+        quote:             { type: string }
+        price:             { type: string, description: "Decimal string. Never JSON number." }
+        price_type:        { type: string, enum: [vwap, twap, last_trade] }
+        # observed_at = close-time of the underlying last_trade (for
+        # last_trade price_type) or end of the aggregation window
+        # (for vwap/twap). RFC 3339, UTC.
+        observed_at:       { type: string, format: date-time }
+        window_seconds:    { type: integer, nullable: true, description: "Window size for vwap/twap; omitted for last_trade." }
+        # F2 fields per ADR-0011 / Freighter V2 — populated when
+        # the aggregator's supply-snapshot writer + volume worker
+        # have run. Null when no snapshot or volume row is available
+        # yet (e.g. fresh deploy before the first cycle, or asset
+        # below the operator's coverage set).
+        change_24h_pct:    { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Computed as (now - then) / then * 100 against the latest closed prices_1m bucket whose end is at-or-before now-24h. Null when the asset has no current USD price OR no comparison bucket in the 24h-ago window." }
+        volume_24h_usd:    { type: string, nullable: true, description: "aggregator" }
+        market_cap_usd:    { type: string, nullable: true, description: "aggregator + supply derivation" }
+        fdv_usd:           { type: string, nullable: true, description: "aggregator + supply derivation" }
+        circulating_supply: { type: string, nullable: true, description: "supply derivation" }
+        total_supply:      { type: string, nullable: true, description: "supply derivation" }
+        max_supply:        { type: string, nullable: true, description: "supply derivation" }
+        # Confidence score per ADR-0019. Populated only on /v1/price
+        # (the closed-bucket surface) when the aggregator's
+        # confidence-compute path has cached a fresh score for the
+        # pair. Omitted when no cached score is available — clients
+        # that gate on confidence MUST treat the absence as "unknown",
+        # not "low".
+        confidence:        { type: number, format: float, nullable: true, minimum: 0, maximum: 1, description: "Multi-factor confidence score in [0, 1] (ADR-0019)." }
+        confidence_factors:
+          nullable: true
+          type: object
+          description: "Per-factor decomposition of confidence (ADR-0019)."
+          properties:
+            z_score:          { type: number, format: float }
+            source_count:     { type: number, format: float }
+            diversity:        { type: number, format: float }
+            liquidity:        { type: number, format: float }
+            cross_oracle:     { type: number, format: float }
+            baseline_quality: { type: number, format: float }
+      required: [asset_id, quote, price, price_type, observed_at]
+
+    PriceEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Price" }
+          required: [data]
+
+    PriceBatchEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Price" }
+          required: [data]
+
+    # History
+    #
+    # Today /history returns raw per-trade rows (TradeRow). The
+    # aggregator-backed bucketed history (OHLC/VWAP time series at
+    # granularity 1m/15m/...) will ship on a different endpoint or
+    # a `bucketed=true` flag — this schema reflects what the handler
+    # actually serves.
+    #
+    # HistoryPoint + HistoryEnvelope are the wire shape for
+    # /history/since-inception (a CAGG-served per-day VWAP series
+    # back to ledger 1 — see PR #195). They are NOT what /history
+    # returns today; /history uses the bucketed CandleEnvelope.
+    HistoryPoint:
+      type: object
+      properties:
+        t:     { type: string, format: date-time }
+        p:     { type: string }
+        v_usd: { type: string, nullable: true }
+      required: [t, p]
+
+    HistoryEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                asset_id:    { type: string }
+                quote:       { type: string }
+                price_type:  { type: string, enum: [vwap, twap] }
+                granularity: { type: string }
+                points:
+                  type: array
+                  items: { $ref: "#/components/schemas/HistoryPoint" }
+              required: [asset_id, quote, price_type, granularity, points]
+          required: [data]
+
+    ChartEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                asset_id:    { type: string }
+                quote:       { type: string }
+                timeframe:   { type: string, enum: [1h, 24h, 1w, 1mo, 1y, all] }
+                granularity: { type: string, enum: [1m, 15m, 1h, 4h, 1d, 1w, 1mo] }
+                price_type:  { type: string, enum: [vwap, twap] }
+                points:
+                  type: array
+                  items: { $ref: "#/components/schemas/HistoryPoint" }
+              required: [asset_id, quote, timeframe, granularity, price_type, points]
+          required: [data]
+
+    TradeRow:
+      type: object
+      properties:
+        source:       { type: string }
+        ledger:       { type: integer }
+        tx_hash:      { type: string, description: "64 lowercase hex chars." }
+        op_index:     { type: integer }
+        ts:           { type: string, format: date-time }
+        base_asset:   { type: string }
+        quote_asset:  { type: string }
+        base_amount:  { type: string, description: "Integer stroops, decimal string." }
+        quote_amount: { type: string, description: "Integer stroops, decimal string." }
+        price:        { type: string, description: "quote/base, 10-digit decimal." }
+      required: [source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount, price]
+
+    TradeHistoryEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/TradeRow" }
+            pagination: { $ref: "#/components/schemas/Pagination" }
+          required: [data]
+
+    # OHLC
+    OHLCBar:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: |
+            Inclusive lower bound of the bar window. Like VWAPResult.from,
+            see ADR-0015 for the closed-bucket clamp semantics that
+            preserve cross-region rate equality.
+        to:
+          type: string
+          format: date-time
+          description: |
+            Exclusive upper bound of the bar window. Clamped to a 30 s
+            boundary when the request omitted `to`.
+        open:         { type: string, description: "Decimal string, 10 digits." }
+        high:         { type: string }
+        low:          { type: string }
+        close:        { type: string }
+        base_volume:  { type: string, description: "Σ base_amount integer stroops." }
+        quote_volume: { type: string, description: "Σ quote_amount integer stroops." }
+        trade_count:  { type: integer }
+        truncated:    { type: boolean, description: "True when window exceeded the per-request trade cap; bar reflects only the first N." }
+      required: [from, to, open, high, low, close, base_volume, quote_volume, trade_count, truncated]
+
+    OHLCEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/OHLCBar" }
+          required: [data]
+
+    # VWAP / TWAP
+    #
+    # IMPORTANT — closed-bucket serving (ADR-0015)
+    #
+    # The `from` and `to` fields collectively act as the response's
+    # `as_of` range — they tell the client EXACTLY which window the
+    # rate covers. When the client did not supply a `to` query
+    # parameter, the server clamps the implicit "now" DOWN to the
+    # nearest 30-second boundary. This is what makes "all 3 regions
+    # serve the same rate" a real property: two requests landing in
+    # the same 30 s window resolve to identical [from, to) ranges
+    # and (once underlying trades have replicated to all regions)
+    # byte-equivalent JSON.
+    #
+    # When the client DID supply `to` explicitly, that value is
+    # preserved verbatim — the clamp only applies to the default-now
+    # path.
+    #
+    # Implication: rates served by these endpoints are 0–30 s old
+    # (default window). This is within the Freighter ≤30 s freshness
+    # SLA. Clients needing tick-by-tick live data should subscribe
+    # to /v1/price/stream (closed-bucket SSE) rather than polling
+    # these.
+    VWAPResult:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: |
+            Inclusive lower bound of the window the rate covers.
+            Used as part of the as_of identity for cross-region rate
+            equality (ADR-0015).
+        to:
+          type: string
+          format: date-time
+          description: |
+            Exclusive upper bound of the window. When the request
+            omitted `to`, this is clamped down to a 30-second
+            boundary so two parallel requests in the same window
+            return identical responses across regions. When the
+            request supplied `to` explicitly, this echoes the
+            request value.
+        price:             { type: string, description: "VWAP decimal, 10 digits." }
+        base_volume:       { type: string }
+        quote_volume:      { type: string }
+        trade_count:       { type: integer }
+        outliers_filtered: { type: integer }
+        truncated:         { type: boolean }
+      required: [from, to, price, base_volume, quote_volume, trade_count, outliers_filtered, truncated]
+
+    VWAPEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/VWAPResult" }
+          required: [data]
+
+    TWAPResult:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: |
+            Inclusive lower bound of the window. See VWAPResult.from
+            and ADR-0015 for the closed-bucket clamp semantics.
+        to:
+          type: string
+          format: date-time
+          description: |
+            Exclusive upper bound of the window. Clamped to a 30 s
+            boundary when the request omitted `to`. See VWAPResult.to.
+        price:       { type: string, description: "TWAP decimal, 10 digits." }
+        trade_count: { type: integer }
+        truncated:   { type: boolean }
+      required: [from, to, price, trade_count, truncated]
+
+    TWAPEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/TWAPResult" }
+          required: [data]
+
+    # Oracle latest
+    OracleReading:
+      type: object
+      properties:
+        source:      { type: string, description: "e.g. reflector-dex, reflector-cex, reflector-fx." }
+        contract_id: { type: string, description: "C-strkey, omitted for off-chain sources." }
+        asset:       { type: string }
+        quote:       { type: string }
+        ts:          { type: string, format: date-time }
+        price:       { type: string, description: "Decimal string at declared decimals scale." }
+        price_raw:   { type: string, description: "Raw integer value preserved for cross-check (ADR-0003)." }
+        decimals:    { type: integer, minimum: 0, maximum: 38 }
+        confidence:  { type: number, minimum: 0, maximum: 1, description: "0 means unreported, not zero-confidence." }
+        observer:    { type: string, description: "G-strkey of the publishing account; empty when unknown." }
+      required: [source, asset, quote, ts, price, price_raw, decimals]
+
+    OracleLatestEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/OracleReading" }
+          required: [data]
+
+    # Markets / Pairs
+    #
+    # MarketRow is one (base, quote) pair present in the trades
+    # store. `last_price` / `volume_24h_usd` land with the aggregator;
+    # the current handler returns the (base, quote, recency, 24h-count)
+    # shape below.
+    MarketRow:
+      type: object
+      properties:
+        base:            { type: string }
+        quote:           { type: string }
+        last_trade_at:   { type: string, format: date-time }
+        trade_count_24h: { type: integer, description: "Activity count in the trailing 24h window." }
+      required: [base, quote, last_trade_at, trade_count_24h]
+
+    MarketsEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/MarketRow" }
+            pagination: { $ref: "#/components/schemas/Pagination" }
+          required: [data]
+
+    Source:
+      type: object
+      properties:
+        name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
+        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity], description: "Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default." }
+        subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes." }
+        include_in_vwap:    { type: boolean, description: "Whether this source's trades contribute to VWAP." }
+        paid:               { type: boolean, description: "Whether this connector requires a paid licence / API key." }
+        backfill_available: { type: boolean, description: "Whether the source supports historical backfill via its native API." }
+        backfill_safe:      { type: boolean, description: "Whether `ratesengine-ops backfill` will run on this source. On-chain Soroban sources start `false` and only flip `true` after a per-WASM-hash audit (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always `true`." }
+        default_weight:     { type: integer, description: "Default per-source weight for weighted-aggregation paths (when those land)." }
+      required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight]
+
+    SourcesEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Source" }
+          required: [data]
+
+    PairsEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/MarketRow" }
+          required: [data]
+
+    # Oracle passthrough
+    OraclePriceEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                asset:     { type: string }
+                price:     { type: string }
+                timestamp: { type: string, format: date-time }
+              required: [asset, price, timestamp]
+          required: [data]
+
+    OraclePricesEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  price:     { type: string }
+                  timestamp: { type: string, format: date-time }
+                required: [price, timestamp]
+          required: [data]
+
+    # Account
+    Account:
+      type: object
+      properties:
+        key_id:           { type: string }
+        label:            { type: string }
+        key_prefix:
+          type: string
+          description: |
+            First 12 characters of the plaintext key (e.g.
+            `rek_4f9c1d8b`). Safe to log; customers use it to
+            match dashboard rows to entries in their secret
+            manager. Empty on legacy keys minted before the
+            prefix feature shipped.
+        tier:             { type: string, enum: [anonymous, apikey, partner] }
+        rate_limit_per_min: { type: integer }
+        created_at:       { type: string, format: date-time }
+
+    AccountEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Account" }
+          required: [data]
+
+    UsageRow:
+      type: object
+      properties:
+        date:      { type: string, format: date }
+        requests:  { type: integer }
+        errors:    { type: integer }
+        throttled: { type: integer }
+
+    UsageEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/UsageRow" }
+          required: [data]
+
+    KeyCreatedEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                key_id:     { type: string }
+                plaintext:  { type: string, description: "Shown once. Store it now." }
+                key_prefix:
+                  type: string
+                  description: |
+                    First 12 characters of the plaintext (e.g.
+                    `rek_4f9c1d8b`). Safe to display in logs and
+                    dashboards; customers use it to identify
+                    which key matches a row in their secret
+                    manager. Same value also returned by GET
+                    `/v1/account/keys`.
+                label:      { type: string }
+              required: [key_id, plaintext, label]
+          required: [data]
+
+    SEP10Challenge:
+      type: object
+      properties:
+        transaction:
+          type: string
+          description: Base64-encoded XDR of the unsigned challenge transaction. Field name per SEP-10 §3.2.
+        network_passphrase:
+          type: string
+          description: Stellar network the challenge was crafted for (echoed so clients verify before signing). Per SEP-10 §3.2.
+        issued_at:  { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+      required: [transaction, network_passphrase, issued_at, valid_until]
+
+    SEP10Token:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT bearer the client sends as `Authorization` on subsequent requests.
+        expires_at: { type: string, format: date-time }
+        account:
+          type: string
+          description: G-strkey of the authenticated account; convenience for clients that don't decode the JWT.
+      required: [token, expires_at, account]
+
+    # Error (RFC 9457)
+    Problem:
+      type: object
+      description: |
+        RFC 9457 problem details. Custom extension fields are snake_case.
+        `request_id` echoes the X-Request-ID response header so a
+        client bug report containing only the body is enough for
+        support to correlate against server logs.
+      properties:
+        type:       { type: string, format: uri }
+        title:      { type: string }
+        status:     { type: integer }
+        detail:     { type: string }
+        instance:   { type: string }
+        request_id: { type: string, description: "Mirror of the X-Request-ID response header." }
+      required: [type, title, status]

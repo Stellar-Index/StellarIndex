@@ -201,7 +201,7 @@ jobs:
       - name: Generated API reference is in sync
         run: |
           ./scripts/dev/docs-api.sh
-          if ! git diff --exit-code -- docs/reference/api/index.html docs/reference/api/README.md; then
+          if ! git diff --exit-code -- docs/reference/api/index.html docs/reference/api/README.md docs/reference/api/rates-engine.v1.yaml; then
             echo "::error::Generated API reference is stale. Run 'make docs-api' locally and commit the result."
             exit 1
           fi
