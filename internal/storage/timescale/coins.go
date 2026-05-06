@@ -212,19 +212,38 @@ const listCoinsBaseSelect = `
 		   ORDER BY base_asset, bucket DESC
 		),
 		xlm_usd AS (
+		  -- prices_1m doesn't carry (native, fiat:USD) rows — XLM's
+		  -- USD price is computed by the aggregator's triangulation
+		  -- worker and lives in Redis, not the materialised view.
+		  -- Mirror the aggregator's stablecoin-proxy policy in SQL
+		  -- (CLAUDE.md: "stablecoin fiat-proxy is aggregator policy"
+		  -- — USDC ≈ USD): use the latest on-chain XLM/USDC vwap as
+		  -- the XLM/USD price. Circle's USDC issuer G-strkey is
+		  -- hardcoded; a future revision pulls the list from
+		  -- [trades].usd_pegged_classic_assets.
 		  SELECT vwap
 		    FROM prices_1m
-		   WHERE base_asset  = 'native'
-		     AND quote_asset = 'fiat:USD'
+		   WHERE base_asset = 'native'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
+		       'fiat:USD'
+		     )
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC
 		   LIMIT 1
 		),
 		xlm_usd_24h AS (
+		  -- 24h-ago XLM/USD via the same stablecoin-proxy policy
+		  -- as xlm_usd above.
 		  SELECT vwap
 		    FROM prices_1m
-		   WHERE base_asset  = 'native'
-		     AND quote_asset = 'fiat:USD'
+		   WHERE base_asset = 'native'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
+		       'fiat:USD'
+		     )
 		     AND bucket BETWEEN now() - INTERVAL '24 hours 30 minutes'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL
