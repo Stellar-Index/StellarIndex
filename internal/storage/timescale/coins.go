@@ -1059,16 +1059,24 @@ const getNativeCoinSQL = `
 		   ORDER BY bucket DESC LIMIT 1
 		),
 		ledger_bounds AS (
-		  -- min/max ledger across trades that touch native. Capped
-		  -- to a 7-day window so this stays cheap; native trades
-		  -- happen every ledger so 7 days is plenty for the bounds.
+		  -- Always return one row with placeholder zeros — the
+		  -- previous version scanned the trades hypertable for
+		  -- 7 days OF native-touching rows, which is millions of
+		  -- rows on a busy ledger and timed out under lock-table
+		  -- pressure (53200). Native XLM is well-known; the
+		  -- explorer doesn't need an accurate first_seen_ledger
+		  -- for it. observation_count uses prices_1m row count
+		  -- as a cheap proxy.
 		  SELECT
-		    COALESCE(MIN(ledger_seq), 0)::bigint AS first_ledger,
-		    COALESCE(MAX(ledger_seq), 0)::bigint AS last_ledger,
-		    COUNT(*)::bigint                     AS obs_count
-		  FROM trades
-		  WHERE ts >= now() - INTERVAL '7 days'
-		    AND (base_asset = 'native' OR quote_asset = 'native')
+		    0::bigint AS first_ledger,
+		    0::bigint AS last_ledger,
+		    COALESCE(
+		      (SELECT COUNT(*)::bigint
+		         FROM prices_1m
+		        WHERE bucket >= now() - INTERVAL '24 hours'
+		          AND (base_asset = 'native' OR quote_asset = 'native')),
+		      0
+		    ) AS obs_count
 		)
 		SELECT
 		    'XLM'                                  AS slug,

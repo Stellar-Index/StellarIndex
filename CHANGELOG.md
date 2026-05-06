@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`/v1/coins/XLM` 500 regression on rc.16.** The synthetic
+  native-row builder (`GetNativeCoinRow`, PR #798) scanned
+  the trades hypertable for `WHERE ts >= now() - INTERVAL '7 days'
+  AND (base_asset = 'native' OR quote_asset = 'native')` to
+  derive `first_seen_ledger` / `last_seen_ledger` /
+  `observation_count`. On r1 that's millions of rows and was
+  timing out under the existing Postgres lock-table pressure
+  (SQLSTATE 53200). Replace with placeholder zeros for the
+  ledger bounds and a cheap `prices_1m` row count for
+  observation_count. XLM endpoint returns instantly again.
+
 ### Added
 - **Issuer detail page: external explorer links.** Adds a
   cross-reference panel under the auth flags pointing at
