@@ -244,9 +244,10 @@ project_create_or_update \
 project_create_or_update \
   "ratesengine-status" \
   "deploy/status-page/cstate" \
-  "hugo --minify" \
+  "hugo mod get -u && hugo --minify" \
   "public" \
-  "HUGO_VERSION=0.121.0"
+  "HUGO_VERSION=0.121.0" \
+  "GO_VERSION=1.21"
 
 # ─── custom domains ──────────────────────────────────────────────
 

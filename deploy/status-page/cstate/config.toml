@@ -3,6 +3,13 @@ languageCode = "en-gb"
 title = "Rates Engine status"
 theme = "cstate"
 
+# Pull cstate from GitHub via Hugo modules so we don't have to
+# vendor it. CF Pages' Hugo build resolves modules at build
+# time. Re-run `hugo mod get -u` locally to bump.
+[module]
+  [[module.imports]]
+    path = "github.com/cstate/cstate"
+
 # cstate is a static-site generator built on Hugo. Operators
 # update component status + post incident markdown files in
 # `content/`; CI rebuilds the site on every commit and the
