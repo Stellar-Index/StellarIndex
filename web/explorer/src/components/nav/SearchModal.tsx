@@ -105,14 +105,13 @@ export function SearchModal() {
     return () => clearTimeout(t);
   }, [q]);
 
-  const isServerSearched = debouncedQ.length >= 2;
-  const sourceCoins = isServerSearched
-    ? (searchedCoins.data?.coins ?? [])
-    : (topCoins.data?.coins ?? []);
-  const results = useMemo(
-    () => search(q, sourceCoins, isServerSearched),
-    [q, sourceCoins, isServerSearched],
-  );
+  const results = useMemo(() => {
+    const isServerSearched = debouncedQ.length >= 2;
+    const sourceCoins = isServerSearched
+      ? (searchedCoins.data?.coins ?? [])
+      : (topCoins.data?.coins ?? []);
+    return search(q, sourceCoins, isServerSearched);
+  }, [q, debouncedQ, searchedCoins.data, topCoins.data]);
 
   return (
     <>
