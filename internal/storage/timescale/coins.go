@@ -149,6 +149,22 @@ func buildCoinsQuery(limit int, issuer, cursor, q string) (string, []any) {
 	// Surfacing fabricated values would defeat the whole
 	// "stop lying" rule. They render as null until the
 	// pipelines are wired.
+	// Per-asset USD price comes from one of two sources:
+	//   1. direct: latest prices_1m row where (base, quote) =
+	//      (asset, fiat:USD). Most off-chain crypto:* sources hit
+	//      this directly.
+	//   2. triangulated: (latest asset/native VWAP) × (latest
+	//      native/fiat:USD VWAP). Most active classic Stellar
+	//      assets only trade against XLM on SDEX so the direct
+	//      VWAP doesn't exist; triangulation gives them a real
+	//      USD price (matches what the explorer asset detail
+	//      page already does client-side).
+	//
+	// COALESCE picks direct over triangulated when both exist.
+	// Both subqueries use DISTINCT ON for "latest per asset"
+	// without a window-function or correlated subquery — the
+	// (base_asset, quote_asset, bucket DESC) order makes the
+	// implicit prices_1m index efficient.
 	const baseSelect = `
 		WITH per_asset_24h_vol AS (
 		  SELECT asset_id, SUM(volume_usd) AS vol_usd
@@ -166,6 +182,31 @@ func buildCoinsQuery(limit int, issuer, cursor, q string) (string, []any) {
 		         AND volume_usd IS NOT NULL
 		    ) t
 		   GROUP BY asset_id
+		),
+		direct_usd AS (
+		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
+		    FROM prices_1m
+		   WHERE quote_asset = 'fiat:USD'
+		     AND bucket >= now() - INTERVAL '7 days'
+		     AND vwap IS NOT NULL
+		   ORDER BY base_asset, bucket DESC
+		),
+		asset_vs_xlm AS (
+		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
+		    FROM prices_1m
+		   WHERE quote_asset = 'native'
+		     AND bucket >= now() - INTERVAL '7 days'
+		     AND vwap IS NOT NULL
+		   ORDER BY base_asset, bucket DESC
+		),
+		xlm_usd AS (
+		  SELECT vwap
+		    FROM prices_1m
+		   WHERE base_asset  = 'native'
+		     AND quote_asset = 'fiat:USD'
+		     AND vwap IS NOT NULL
+		   ORDER BY bucket DESC
+		   LIMIT 1
 		)
 		SELECT
 		    COALESCE(ca.slug, ca.code)            AS slug,
@@ -175,12 +216,17 @@ func buildCoinsQuery(limit int, issuer, cursor, q string) (string, []any) {
 		    ca.first_seen_ledger,
 		    ca.last_seen_ledger,
 		    ca.observation_count,
-		    NULL::numeric                         AS price_usd,
+		    COALESCE(
+		      direct.vwap,
+		      vs_xlm.vwap * (SELECT vwap FROM xlm_usd)
+		    )::text                               AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply
 		  FROM classic_assets ca
-		  LEFT JOIN per_asset_24h_vol vol ON vol.asset_id = ca.asset_id
+		  LEFT JOIN per_asset_24h_vol vol    ON vol.asset_id    = ca.asset_id
+		  LEFT JOIN direct_usd       direct  ON direct.asset_id = ca.asset_id
+		  LEFT JOIN asset_vs_xlm     vs_xlm  ON vs_xlm.asset_id = ca.asset_id
 	`
 	// Compose WHERE clauses dynamically. The combinatorial
 	// explosion of (issuer × cursor × q) is too painful as a
@@ -257,12 +303,38 @@ func (s *Store) GetCoinBySlug(ctx context.Context, slug string) (CoinRow, error)
 		         AND bucket  <  now()
 		         AND volume_usd IS NOT NULL
 		    ) t
+		),
+		direct_usd AS (
+		  SELECT vwap FROM prices_1m
+		   WHERE base_asset  = (SELECT asset_id FROM chosen)
+		     AND quote_asset = 'fiat:USD'
+		     AND bucket >= now() - INTERVAL '7 days'
+		     AND vwap IS NOT NULL
+		   ORDER BY bucket DESC LIMIT 1
+		),
+		asset_vs_xlm AS (
+		  SELECT vwap FROM prices_1m
+		   WHERE base_asset  = (SELECT asset_id FROM chosen)
+		     AND quote_asset = 'native'
+		     AND bucket >= now() - INTERVAL '7 days'
+		     AND vwap IS NOT NULL
+		   ORDER BY bucket DESC LIMIT 1
+		),
+		xlm_usd AS (
+		  SELECT vwap FROM prices_1m
+		   WHERE base_asset  = 'native'
+		     AND quote_asset = 'fiat:USD'
+		     AND vwap IS NOT NULL
+		   ORDER BY bucket DESC LIMIT 1
 		)
 		SELECT
 		    COALESCE(ca.slug, ca.code)            AS slug,
 		    ca.asset_id, ca.code, ca.issuer_g_strkey,
 		    ca.first_seen_ledger, ca.last_seen_ledger, ca.observation_count,
-		    NULL::numeric                         AS price_usd,
+		    COALESCE(
+		      (SELECT vwap FROM direct_usd),
+		      (SELECT vwap FROM asset_vs_xlm) * (SELECT vwap FROM xlm_usd)
+		    )::text                               AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply
