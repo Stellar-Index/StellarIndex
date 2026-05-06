@@ -8,7 +8,7 @@ import { useCoins, useMarkets, type Market } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
- * MarketsTabPanel — backs the "Markets" tab on /coins/[slug].
+ * MarketsTabPanel — backs the "Markets" tab on /assets/[slug].
  *
  * Joins `/v1/coins` (to map slug → canonical asset_id) and
  * `/v1/markets` (recently-active pairs in the last 14d), then

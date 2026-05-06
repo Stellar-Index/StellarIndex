@@ -12,11 +12,10 @@ import { formatCompact } from '@/lib/format';
  * observation count across the issuer's classic assets — the
  * proxy-for-activity ordering the API serves.
  *
- * The G-strkey column links to the existing `/coins/[slug]` issuer
- * tab via the issuer's first asset, since we don't yet have a
- * standalone `/issuers/[g_strkey]` page. (That route can land later
- * as a dedicated detail view; the data is already at
- * /v1/issuers/{g_strkey}.)
+ * G-strkey column deep-links into /assets?issuer=... — the
+ * filtered listing is the issuer view today. A standalone
+ * /issuers/[g_strkey] page can land later; the data is already
+ * at /v1/issuers/{g_strkey}.
  */
 export function IssuersTable() {
   const { data, isLoading, isError, error } = useIssuers(100);

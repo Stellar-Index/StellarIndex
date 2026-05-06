@@ -10,7 +10,7 @@ const SITE_URL = 'https://ratesengine.net';
 
 /**
  * sitemap.xml — generated at build time. Static pages are
- * enumerated explicitly; dynamic /coins/[slug] entries mirror
+ * enumerated explicitly; dynamic /assets/[slug] entries mirror
  * generateStaticParams: live API only, no seed fallback (the
  * /docs and /status routes have moved to the dedicated
  * docs.ratesengine.net and status.ratesengine.net subdomains
@@ -44,15 +44,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: path === '' ? 1 : 0.7,
   }));
 
-  const coinSlugs = await fetchCoinSlugs();
-  const coinPages: MetadataRoute.Sitemap = coinSlugs.map((slug) => ({
-    url: `${SITE_URL}/coins/${slug}`,
+  const assetSlugs = await fetchCoinSlugs();
+  const assetPages: MetadataRoute.Sitemap = assetSlugs.map((slug) => ({
+    url: `${SITE_URL}/assets/${slug}`,
     lastModified: now,
     changeFrequency: 'daily',
     priority: 0.6,
   }));
 
-  return [...staticPages, ...coinPages];
+  return [...staticPages, ...assetPages];
 }
 
 async function fetchCoinSlugs(): Promise<string[]> {

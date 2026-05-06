@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-export type CoinTab =
+export type AssetTab =
   | 'overview'
   | 'chart'
   | 'markets'
@@ -13,18 +13,18 @@ export type CoinTab =
   | 'liquidity';
 
 /**
- * Client tab strip for /coins/[slug]. Reads `?tab=` from URL state;
+ * Client tab strip for /assets/[slug]. Reads `?tab=` from URL state;
  * the parent server component renders both overview + chart bodies
  * and toggles visibility based on the active tab.
  *
  * Disabled tabs render as cursor-not-allowed labels until their
  * content lands in subsequent PRs.
  */
-export function CoinTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolean }) {
+export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolean }) {
   const params = useSearchParams();
-  const active = (params.get('tab') as CoinTab) || 'overview';
+  const active = (params.get('tab') as AssetTab) || 'overview';
 
-  type T = { key: CoinTab; label: string; disabled?: boolean };
+  type T = { key: AssetTab; label: string; disabled?: boolean };
   const tabs: T[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'chart', label: 'Chart' },
@@ -50,7 +50,7 @@ export function CoinTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolean
           <Link
             key={t.key}
             href={
-              t.key === 'overview' ? `/coins/${slug}` : `/coins/${slug}?tab=${t.key}`
+              t.key === 'overview' ? `/assets/${slug}` : `/assets/${slug}?tab=${t.key}`
             }
             className={`border-b-2 px-3 py-2 ${
               t.key === active
@@ -109,7 +109,7 @@ function ActiveBody({
   issuer?: React.ReactNode;
 }) {
   const params = useSearchParams();
-  const tab = (params.get('tab') as CoinTab) || 'overview';
+  const tab = (params.get('tab') as AssetTab) || 'overview';
   if (tab === 'chart') return <>{chart}</>;
   if (tab === 'markets' && markets) return <>{markets}</>;
   if (tab === 'history' && history) return <>{history}</>;

@@ -10,7 +10,7 @@ const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
 
 /**
- * HistoryTabPanel — backs the "History" tab on /coins/[slug].
+ * HistoryTabPanel — backs the "History" tab on /assets/[slug].
  *
  * Resolves slug → asset_id via /v1/coins (cache-shared with the
  * coin directory) then fetches recent trades from /v1/history with
