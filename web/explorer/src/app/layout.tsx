@@ -66,6 +66,14 @@ export const metadata: Metadata = {
       'max-snippet': -1,
     },
   },
+  alternates: {
+    types: {
+      'application/atom+xml': [
+        { url: '/blog.atom', title: 'Rates Engine — engineering notes' },
+        { url: '/changelog.atom', title: 'Rates Engine — changelog' },
+      ],
+    },
+  },
 };
 
 export default function RootLayout({
