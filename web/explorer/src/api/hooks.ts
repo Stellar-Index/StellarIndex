@@ -367,6 +367,12 @@ export function useCoins(
       });
       return env.data;
     },
+    // Keep showing the previous page data while a new query (e.g.
+    // sparkline-augmented or paginated) is in flight. Avoids a
+    // full-table flash to the loading skeleton on every nav — the
+    // user sees prior rows while sparklines fade in. TanStack v5's
+    // `placeholderData: (prev) => prev` is the recommended idiom.
+    placeholderData: (prev) => prev,
   });
 }
 
