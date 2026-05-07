@@ -1,17 +1,21 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { apiGet } from '@/api/client';
 import { useCoins, type Coin } from '@/api/hooks';
 
 type Result = {
-  type: 'coin' | 'pair' | 'protocol' | 'oracle' | 'page';
+  type: 'coin' | 'pair' | 'protocol' | 'oracle' | 'page' | 'currency';
   label: string;
   hint?: string;
   href: string;
 };
+
+type CurrencyEntry = { ticker: string; name: string };
 
 const STATIC_PAGES: Result[] = [
   { type: 'page', label: 'Home', href: '/' },
@@ -90,6 +94,22 @@ export function SearchModal() {
     debouncedQ.length >= 2 ? debouncedQ : undefined,
   );
 
+  // Currency catalogue — fetched once on first modal open, cached
+  // for the session. Used so typing "EUR" / "JPY" / "BRL" jumps
+  // straight to /currencies/<ticker> instead of falling through
+  // to the seeded protocol list.
+  const currencies = useQuery<CurrencyEntry[]>({
+    queryKey: ['/v1/currencies', 'searchindex'],
+    enabled: open,
+    staleTime: 60 * 60 * 1000,
+    queryFn: async () => {
+      const env = await apiGet<{ data: { currencies?: CurrencyEntry[] } }>(
+        '/v1/currencies',
+      );
+      return env.data?.currencies ?? [];
+    },
+  });
+
   // Cmd-K / Ctrl-K toggles.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -125,8 +145,8 @@ export function SearchModal() {
     const sourceCoins = isServerSearched
       ? (searchedCoins.data?.coins ?? [])
       : (topCoins.data?.coins ?? []);
-    return search(q, sourceCoins, isServerSearched);
-  }, [q, debouncedQ, searchedCoins.data, topCoins.data]);
+    return search(q, sourceCoins, currencies.data ?? [], isServerSearched);
+  }, [q, debouncedQ, searchedCoins.data, topCoins.data, currencies.data]);
 
   return (
     <>
@@ -214,6 +234,7 @@ export function SearchModal() {
 function search(
   q: string,
   coins: Coin[],
+  currencies: CurrencyEntry[],
   isServerSearched: boolean,
 ): Result[] {
   const norm = q.trim().toLowerCase();
@@ -238,6 +259,23 @@ function search(
       hint: 'open issuer detail',
       href: `/issuers/${gMatch[0]}`,
     });
+  }
+
+  // ISO-4217 ticker exact match → direct-jump to /currencies/<ticker>.
+  // Catalogue is loaded once on modal open; we only direct-jump on
+  // an exact 3-letter-ticker match so partial codes (e.g. "U" while
+  // the user is mid-typing "USDC") fall through to coin results.
+  const upper = q.trim().toUpperCase();
+  if (/^[A-Z]{3}$/.test(upper)) {
+    const match = currencies.find((c) => c.ticker === upper);
+    if (match) {
+      direct.push({
+        type: 'currency',
+        label: `${match.ticker} — ${match.name}`,
+        hint: 'open currency detail',
+        href: `/currencies/${match.ticker}`,
+      });
+    }
   }
 
   // Pair shortcut: "XLM/USDC", "XLM USDC", "xlm-usdc" → enumerate
@@ -265,10 +303,27 @@ function search(
   const matchedCoins = isServerSearched
     ? coinResults
     : coinResults.filter((r) => match(norm, r));
+  const matchedCurrencies = currencies
+    .filter(
+      (c) =>
+        c.ticker.toLowerCase().includes(norm) ||
+        c.name.toLowerCase().includes(norm),
+    )
+    .slice(0, 5)
+    .map(currencyResult);
   const matchedOther = [...PROTOCOLS, ...STATIC_PAGES].filter((r) =>
     match(norm, r),
   );
-  return [...direct, ...matchedCoins, ...matchedOther].slice(0, 12);
+  return [...direct, ...matchedCoins, ...matchedCurrencies, ...matchedOther].slice(0, 12);
+}
+
+function currencyResult(c: CurrencyEntry): Result {
+  return {
+    type: 'currency',
+    label: c.ticker,
+    hint: c.name,
+    href: `/currencies/${c.ticker}`,
+  };
 }
 
 // lookupAssetID resolves a code (e.g. "USDC") to its canonical
