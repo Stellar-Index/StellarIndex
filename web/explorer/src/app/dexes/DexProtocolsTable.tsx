@@ -33,8 +33,8 @@ export function DexProtocolsTable() {
   const q = useQuery<SourceRow[]>({
     queryKey: ['/v1/sources', 'stats', 'dex'],
     queryFn: async () => {
-      const env = await apiGet<SourceRow[]>('/v1/sources', { include: 'stats' });
-      const arr = Array.isArray(env) ? env : [];
+      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', { include: 'stats' });
+      const arr = env.data ?? [];
       return arr
         .filter((s) => s.class === 'exchange' && s.subclass === 'dex')
         .sort((a, b) => {

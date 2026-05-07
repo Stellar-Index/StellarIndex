@@ -15,7 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **/v1/sources response unwrapping in DexProtocolsTable + OraclesView.**
+  Both client components used `Array.isArray(env) ? env : []` against
+  `apiGet<SourceRow[]>` — but /v1/sources returns the standard
+  `{ data, as_of, flags }` envelope, so the array branch never fired
+  and the table rendered empty. Now correctly typed
+  `apiGet<{ data: SourceRow[] }>` and unwraps `env.data`. Same fix
+  applied to OraclesView's /v1/oracle/streams call.
+
 ### Added
+- **/exchanges page** (real, replacing the placeholder shell): per-CEX
+  table sorted by 24h USD volume desc, with trade count, pair count,
+  and a share-of-CEX-volume bar. Backed by /v1/sources?include=stats
+  filtered to Subclass=CEX. Per-exchange detail pages at
+  /exchanges/{binance,coinbase,kraken,bitstamp} with 24h activity
+  card + paginated pair table backed by /v1/markets?source=<name>.
+  Statically pre-rendered for the 4 connected CEXes.
 - **`GET /v1/oracle/streams`** — returns one row per
   `(source, asset, quote)` triple, the latest observation in the
   trailing 7d window. New `Store.LatestOracleStreams` underneath

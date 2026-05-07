@@ -40,8 +40,8 @@ export function OraclesView() {
   const sources = useQuery<SourceRow[]>({
     queryKey: ['/v1/sources', 'stats', 'oracle'],
     queryFn: async () => {
-      const env = await apiGet<SourceRow[]>('/v1/sources', { include: 'stats' });
-      const arr = Array.isArray(env) ? env : [];
+      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', { include: 'stats' });
+      const arr = env.data ?? [];
       return arr.filter((s) => s.class === 'oracle').sort((a, b) => a.name.localeCompare(b.name));
     },
   });
@@ -49,8 +49,8 @@ export function OraclesView() {
   const streams = useQuery<OracleStream[]>({
     queryKey: ['/v1/oracle/streams'],
     queryFn: async () => {
-      const env = await apiGet<OracleStream[]>('/v1/oracle/streams', {});
-      return Array.isArray(env) ? env : [];
+      const env = await apiGet<{ data: OracleStream[] }>('/v1/oracle/streams', {});
+      return env.data ?? [];
     },
   });
 
