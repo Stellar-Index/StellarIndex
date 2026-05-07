@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **NetworkLivePanel: assets-indexed count capped at 500.** The
+  side panel on home was reading `useCoins(500).coins.length`
+  for the asset count — silently capped at the page limit. Same
+  bug as #854 fixed for the network strip; this is the same fix
+  for the side panel. Switches to `/v1/network/stats.assets_indexed`
+  (real count, ~85,750). Latest-ledger field also reads from
+  `network/stats` with cursor-table fallback.
+
 ### Added
 - **`/contact` page.** Single destination for the previously-orphaned
   "Contact sales" callouts on `/signup`. Five channel cards covering
