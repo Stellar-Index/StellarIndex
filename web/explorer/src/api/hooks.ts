@@ -128,15 +128,24 @@ export function useCoins(
   issuer?: string,
   cursor?: string,
   q?: string,
+  orderBy?: 'observation_count_desc' | 'volume_24h_usd_desc',
 ) {
   return useQuery<CoinsPage>({
-    queryKey: ['/v1/coins', limit, issuer ?? null, cursor ?? '', q ?? ''],
+    queryKey: [
+      '/v1/coins',
+      limit,
+      issuer ?? null,
+      cursor ?? '',
+      q ?? '',
+      orderBy ?? 'observation_count_desc',
+    ],
     queryFn: async () => {
       const env = await apiGet<CoinsEnvelope>('/v1/coins', {
         limit,
         ...(issuer ? { issuer } : {}),
         ...(cursor ? { cursor } : {}),
         ...(q ? { q } : {}),
+        ...(orderBy ? { order_by: orderBy } : {}),
       });
       return env.data;
     },

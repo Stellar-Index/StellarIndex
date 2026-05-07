@@ -27,6 +27,9 @@ export function AssetsTable() {
   const limitParam = params.get('limit');
   const issuerFilter = params.get('issuer') ?? undefined;
   const queryParam = params.get('q') ?? '';
+  const orderParam = params.get('order') === 'volume_24h_usd_desc'
+    ? 'volume_24h_usd_desc'
+    : 'observation_count_desc';
 
   const limit = parseLimit(limitParam);
 
@@ -35,6 +38,7 @@ export function AssetsTable() {
     issuerFilter,
     cursor,
     queryParam || undefined,
+    orderParam,
   );
 
   // Local input state, debounced into the URL so the server-side
@@ -54,7 +58,7 @@ export function AssetsTable() {
 
   const coins = data?.coins ?? [];
 
-  function setQuery(updates: Partial<{ cursor: string; limit: string; issuer: string; q: string }>) {
+  function setQuery(updates: Partial<{ cursor: string; limit: string; issuer: string; q: string; order: string }>) {
     const next = new URLSearchParams(params.toString());
     for (const [k, v] of Object.entries(updates)) {
       if (v === '' || v === undefined) next.delete(k);
@@ -92,7 +96,21 @@ export function AssetsTable() {
               <Th align="right">Price</Th>
               <Th align="right">24h %</Th>
               <Th align="right">Market cap</Th>
-              <Th align="right">Volume 24h</Th>
+              <Th align="right">
+                <SortHeader
+                  active={orderParam === 'volume_24h_usd_desc'}
+                  label="Volume 24h"
+                  onClick={() =>
+                    setQuery({
+                      order:
+                        orderParam === 'volume_24h_usd_desc'
+                          ? ''
+                          : 'volume_24h_usd_desc',
+                      cursor: '',
+                    })
+                  }
+                />
+              </Th>
               <Th align="right">Circulating</Th>
               <Th align="right">First seen</Th>
             </tr>
@@ -330,6 +348,42 @@ function Pagination({
         <ChevronRight className="h-3.5 w-3.5" />
       </button>
     </div>
+  );
+}
+
+// SortHeader is a clickable Th-content that renders a small
+// ↓ marker when its column is the active sort. There's only one
+// sortable column today (Volume 24h) — when more land, this can
+// stay as the same shape, just toggling the matching `order` URL
+// param. The default sort (observation_count_desc) is rendered
+// without a marker because it's not a "user picked this" choice.
+function SortHeader({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 hover:text-brand-600 ${
+        active ? 'text-brand-600' : ''
+      }`}
+      title={
+        active
+          ? 'Sorted by 24h USD volume (desc). Click to reset.'
+          : 'Sort by 24h USD volume (desc).'
+      }
+    >
+      {label}
+      <span aria-hidden className="text-[10px]">
+        {active ? '↓' : '↕'}
+      </span>
+    </button>
   );
 }
 
