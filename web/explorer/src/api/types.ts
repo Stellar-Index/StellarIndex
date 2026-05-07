@@ -1388,6 +1388,284 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * DEX/AMM liquidity pools (one row per (source, base, quote)).
+         * @description Like /v1/markets but DEX-only and with a `source` dimension —
+         *     the same pair traded on two DEXes appears as two rows. Backed
+         *     by the dispatch path through Soroswap / Phoenix / Aquarius /
+         *     SDEX / Comet (Class=Exchange + Subclass=DEX in the source
+         *     registry). CEX trading pairs go through /v1/markets;
+         *     "pool" is AMM/DEX terminology and applying it to centralised
+         *     venues misnames the data.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /**
+                     * @description Opaque pagination token echoed from a prior response's
+                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                     *     blob whose internal shape is an implementation detail and
+                     *     changes without notice. Clients MUST NOT parse, decode, or
+                     *     construct cursors by hand.
+                     *
+                     *     A cursor is stable across retries but not across schema
+                     *     changes; treat it as short-lived (minutes, not days). Empty
+                     *     means "start from the beginning".
+                     */
+                    cursor?: components["parameters"]["Cursor"];
+                    limit?: number;
+                    order_by?: "volume_24h_usd_desc" | "pair";
+                    /**
+                     * @description Optional. Restrict to a single DEX name (soroswap /
+                     *     phoenix / aquarius / sdex / comet). Non-DEX names return
+                     *     an empty list rather than 400.
+                     */
+                    source?: string;
+                    /**
+                     * @description Optional. Canonical base asset_id (`native`, `USDC-G…`,
+                     *     etc.). Combined with `quote` gives the per-source
+                     *     breakdown for one pair — used by the pair detail page
+                     *     to render "which venues moved this pair in the last 24h".
+                     */
+                    base?: string;
+                    /** @description Optional. Canonical quote asset_id. See `base`. */
+                    quote?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Array of pool rows. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: Record<string, never>[];
+                            pagination?: Record<string, never>;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pools (Blend) observed in the auction stream.
+         * @description One row per distinct Blend pool contract observed in the
+         *     auction stream, with 24h / all-time auction counts + 30d
+         *     unique users + last-seen timestamp. Per-pool TVL /
+         *     utilisation / supply-borrow APYs land via additional
+         *     fields once the pool-storage reader worker ships.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Array of LendingPool rows. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: Record<string, never>[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oracle/streams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest observation per (oracle, asset, quote) — 7d window.
+         * @description Returns one row per distinct (source, asset, quote) triple
+         *     in the trailing 7 days. Backs the explorer's /oracles
+         *     price-streams table. Sources with no observation in the
+         *     window are absent from the result.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Array of OracleReading. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OracleLatestEnvelope"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/currencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * World fiat currencies — USD-base rates.
+         * @description Returns the latest USD-base rates for every supported
+         *     ISO-4217 currency. Backed by an in-memory cache the
+         *     forex worker refreshes hourly from the upstream
+         *     currency-api feed. Each row carries
+         *     `change_7d_pct` computed server-side; `?include=sparkline`
+         *     attaches the per-day inverse-USD series to every row for
+         *     listing-side mini charts.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Optional. Cap the returned currencies. */
+                    limit?: number;
+                    /** @description Comma-separated. `sparkline` attaches `history_7d_rates`. */
+                    include?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description CurrenciesPayload — currencies + published_at + fetched_at + source. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: Record<string, never>;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/currencies/{ticker}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-currency detail with cross-rates + 7d history.
+         * @description Returns the requested currency's USD-base rate, inverse,
+         *     full cross-rates map (1 unit of ticker → every other
+         *     supported currency, derived from the cached USD-base
+         *     snapshot), and the 7d daily history series.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description ISO-4217 ticker (case-insensitive); e.g. EUR, JPY. */
+                    ticker: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description CurrencyDetail. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: Record<string, never>;
+                        };
+                    };
+                };
+                /** @description Ticker not in the current snapshot. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Cache warming up (no snapshot yet). */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/markets": {
         parameters: {
             query?: never;
@@ -1671,6 +1949,14 @@ export interface paths {
                      *     format adapts to the active ordering.
                      */
                     order_by?: "observation_count_desc" | "volume_24h_usd_desc";
+                    /**
+                     * @description Comma-separated opt-ins.
+                     *     `sparkline` attaches `price_history_24h` (24 hourly
+                     *     samples) per row. `ath` attaches `ath: { usd, at }`
+                     *     per row, batched in a single round trip. Default
+                     *     (no `include`) keeps the listing payload compact.
+                     */
+                    include?: string;
                 };
                 header?: never;
                 path?: never;
@@ -1842,6 +2128,34 @@ export interface paths {
                              *     in that window. Null only on lookup error.
                              */
                             markets_count?: number | null;
+                            /**
+                             * @description Count of trades the asset participated in
+                             *     (as base OR quote) over the trailing 24h.
+                             *     Read from the `trades` hypertable directly —
+                             *     complements the all-time `observation_count`
+                             *     with a "right now" activity figure. Null
+                             *     only on lookup error.
+                             */
+                            trade_count_24h?: number | null;
+                            /**
+                             * @description All-time-high USD price + day it was set.
+                             *     Sourced from `prices_1d` filtered to
+                             *     USD-denominated quotes (USDC, USDT,
+                             *     `fiat:USD`). Triangulated paths are excluded —
+                             *     a single bad XLM/USD reading on a thin day
+                             *     could fabricate an ATH. Null when the asset
+                             *     has no USD-quoted history.
+                             */
+                            ath?: {
+                                /** @description ATH price as a fixed-point string. */
+                                usd: string;
+                                /**
+                                 * Format: date-time
+                                 * @description RFC-3339 day-bucket the high was set
+                                 *     (00:00:00Z snapped — daily granularity).
+                                 */
+                                at: string;
+                            } | null;
                         };
                     };
                 };
@@ -2302,6 +2616,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sac-wrappers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stellar-Asset-Contract wrapper resolution map.
+         * @description Returns the operator-configured map of Stellar-Asset-Contract
+         *     (SAC) C-strkey contract IDs to their underlying classic asset
+         *     keys ("CODE-ISSUER", or `"native"` for XLM). Soroban DEX
+         *     sources (Soroswap, Phoenix, Aquarius, Comet) emit base/quote
+         *     as the SAC contract address in their swap events, not the
+         *     underlying classic asset key — clients use this map to
+         *     resolve raw `C…` contract addresses to readable asset
+         *     symbols. The map only changes on API restart with new
+         *     config; cache aggressively client-side.
+         *
+         *     Empty object when the operator hasn't configured any
+         *     wrappers (deployment without the `[supply.sac_wrappers]`
+         *     block) — clients then degrade to showing the raw C-strkey.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Map of SAC C-strkey to canonical asset key. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
+                            data?: {
+                                [key: string]: string;
+                            };
+                        };
+                    };
+                };
+                500: components["responses"]["InternalError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pairs": {
         parameters: {
             query?: never;
@@ -2648,6 +3019,81 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/account/keys/{keyID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an API key by KeyID.
+         * @description Revokes the API key whose KeyID matches the path parameter,
+         *     scoped to the authenticated caller's Identifier so accounts
+         *     can only revoke their own keys. "Not found" and "not yours"
+         *     collapse to 204 to prevent cross-account enumeration probes.
+         *
+         *     The caller cannot revoke the key they're authenticated with —
+         *     that would orphan the connection mid-request. 409 in that
+         *     case so the UI can prompt for an alternate credential.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Public-safe `kid_<hex>` identifier from /v1/account/keys. */
+                    keyID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Revoked (or no-op when the key didn't belong to the caller). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing keyID. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller tried to revoke the key they're using. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Account store not configured. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -3906,6 +4352,8 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
+            /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
+            last_price?: string | null;
         };
         MarketsEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["MarketRow"][];
