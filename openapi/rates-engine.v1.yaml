@@ -3286,6 +3286,10 @@ components:
           type: string
           nullable: true
           description: "Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades."
+        last_price:
+          type: string
+          nullable: true
+          description: "Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price."
       required: [base, quote, last_trade_at, trade_count_24h]
 
     MarketsEnvelope:

@@ -1032,6 +1032,7 @@ func (r storeMarketsReader) DistinctPairsExt(ctx context.Context, cursor string,
 			LastTradeAt:   m.LastTradeAt,
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
+			LastPrice:     m.LastPrice,
 		}
 	}
 	return out, next, nil
@@ -1050,6 +1051,7 @@ func (r storeMarketsReader) SourceMarkets(ctx context.Context, source, cursor st
 			LastTradeAt:   m.LastTradeAt,
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
+			LastPrice:     m.LastPrice,
 		}
 	}
 	return out, next, nil
@@ -1069,6 +1071,7 @@ func (r storeMarketsReader) AllPools(ctx context.Context, sources []string, curs
 			LastTradeAt:   p.LastTradeAt,
 			TradeCount24h: p.TradeCount24h,
 			Volume24hUSD:  p.Volume24hUSD,
+			LastPrice:     p.LastPrice,
 		}
 	}
 	return out, next, nil
@@ -1085,6 +1088,7 @@ func (r storeMarketsReader) PairMarket(ctx context.Context, base, quote canonica
 		LastTradeAt:   m.LastTradeAt,
 		TradeCount24h: m.TradeCount24h,
 		Volume24hUSD:  m.Volume24hUSD,
+		LastPrice:     m.LastPrice,
 	}, true, nil
 }
 

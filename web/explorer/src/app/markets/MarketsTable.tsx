@@ -107,6 +107,7 @@ export function MarketsTable() {
                 />
               </Th>
               <Th>Quote</Th>
+              <Th align="right">Last price</Th>
               <Th align="right">
                 <SortHeader
                   active={orderBy === 'volume_24h_usd_desc'}
@@ -155,6 +156,9 @@ export function MarketsTable() {
                   >
                     <AssetLabel canonical={m.quote} />
                   </Link>
+                </Td>
+                <Td align="right">
+                  <LastPriceCell raw={m.last_price} />
                 </Td>
                 <Td align="right">
                   {m.volume_24h_usd ? (
@@ -280,6 +284,22 @@ function Td({
     >
       {children}
     </td>
+  );
+}
+
+function LastPriceCell({ raw }: { raw?: string | null }) {
+  if (!raw) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  // Pair prices are quote-per-base — they span >9 orders of
+  // magnitude across the 5K active pairs (sub-satoshi memecoins
+  // through XLM-USD), so digits adapt to keep precision visible.
+  const fixed =
+    n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
+  return (
+    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+      {fixed}
+    </span>
   );
 }
 

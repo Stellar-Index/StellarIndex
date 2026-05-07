@@ -73,6 +73,11 @@ type Pool struct {
 	LastTradeAt   time.Time `json:"last_trade_at"`
 	TradeCount24h int64     `json:"trade_count_24h"`
 	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
+	// LastPrice is the most recent quote-per-base price observed
+	// for THIS pool — same wire shape as Market.LastPrice but
+	// per-source, so two venues trading the same pair surface
+	// independent prices.
+	LastPrice *string `json:"last_price,omitempty"`
 }
 
 // handlePools serves GET /v1/pools — DEX/AMM liquidity pools only.
@@ -187,6 +192,10 @@ type Market struct {
 	LastTradeAt   time.Time `json:"last_trade_at"`
 	TradeCount24h int64     `json:"trade_count_24h"`
 	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
+	// LastPrice is the most recent quote-per-base price observed
+	// for this pair (cross-source) within the trailing 24h. Null
+	// when no recent prices_1m bucket has a non-null last_price.
+	LastPrice *string `json:"last_price,omitempty"`
 	// VolumeHistory24h — per-hour USD-volume buckets for the
 	// trailing 24h. Populated only when the request sets
 	// `?include=sparkline`. 24 entries oldest → newest, zero-

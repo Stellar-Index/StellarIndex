@@ -385,6 +385,11 @@ export type Market = {
   last_trade_at: string;
   trade_count_24h: number;
   volume_24h_usd?: string | null;
+  // Most recent quote-per-base price observed for this pair
+  // (cross-source) within the trailing 24h. Numeric-stringified
+  // for precision; null when no recent prices_1m bucket has a
+  // non-null last_price.
+  last_price?: string | null;
   volume_history_24h?: { hour: string; volume_usd: string }[];
 };
 

@@ -24,6 +24,11 @@ type Market struct {
 	LastTradeAt   time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
+	// LastPrice is the last quote-per-base price observed in
+	// prices_1m for this pair. nil when no recent bucket has a
+	// non-null `last_price` (cold pair, freshly-ingested fixture,
+	// etc.). Numeric-stringified for precision parity.
+	LastPrice *string
 }
 
 // Pool is one (source, base, quote) tuple — same shape as Market
@@ -36,6 +41,10 @@ type Pool struct {
 	LastTradeAt   time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
+	// LastPrice is the last quote-per-base price for this
+	// (source, base, quote) tuple — same wire shape as
+	// Market.LastPrice but per-pool.
+	LastPrice *string
 }
 
 // MarketsRecencyWindow bounds the trades scanned by DistinctPairs.
@@ -159,8 +168,9 @@ func (s *Store) AllPools(ctx context.Context, sources []string, cursor string, l
 			lastAt            time.Time
 			count24h          int64
 			vol24hUSD         sql.NullString
+			lastPrice         sql.NullString
 		)
-		if err := rows.Scan(&source, &baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD); err != nil {
+		if err := rows.Scan(&source, &baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD, &lastPrice); err != nil {
 			return nil, "", fmt.Errorf("timescale: AllPools scan: %w", err)
 		}
 		n++
@@ -190,6 +200,10 @@ func (s *Store) AllPools(ctx context.Context, sources []string, cursor string, l
 			v := vol24hUSD.String
 			p.Volume24hUSD = &v
 		}
+		if lastPrice.Valid && lastPrice.String != "" {
+			v := lastPrice.String
+			p.LastPrice = &v
+		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -212,7 +226,7 @@ func (s *Store) AllPools(ctx context.Context, sources []string, cursor string, l
 	return out, nextCursor, nil
 }
 
-func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int, order MarketsOrder) (string, []any) {
+func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
 	// vol_24h derives per-(source, base, quote) USD volume directly
 	// from the trades hypertable rather than reading prices_1m's
 	// per-(base, quote) totals. Two reasons:
@@ -276,15 +290,36 @@ func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int
            WHERE t.ts >= NOW() - INTERVAL '24 hours'
            GROUP BY t.source, t.base_asset, t.quote_asset
         )
+        ,
+        last_px AS (
+          -- Most recent non-null per-(source, base, quote) price
+          -- from the trades hypertable. Pools-side (per-source)
+          -- analogue of the cross-source last_px CTE used by
+          -- buildDistinctPairsQuery — note we read directly from
+          -- trades because prices_1m collapses across sources.
+          SELECT DISTINCT ON (source, base_asset, quote_asset)
+                 source, base_asset, quote_asset,
+                 (quote_amount::numeric / NULLIF(base_amount::numeric, 0))::text AS last_px
+            FROM trades
+           WHERE ts >= NOW() - INTERVAL '24 hours'
+             AND base_amount IS NOT NULL AND base_amount <> 0
+             AND quote_amount IS NOT NULL
+           ORDER BY source, base_asset, quote_asset, ts DESC
+        )
         SELECT t.source, t.base_asset, t.quote_asset,
                MAX(t.ts) AS last_trade_at,
                count(*) FILTER (WHERE t.ts > NOW() - INTERVAL '24 hours') AS count_24h,
-               v.vol_usd AS vol_24h_usd
+               v.vol_usd AS vol_24h_usd,
+               lp.last_px AS last_price
           FROM trades t
           LEFT JOIN vol_24h v
             ON v.source = t.source
            AND v.base_asset = t.base_asset
            AND v.quote_asset = t.quote_asset
+          LEFT JOIN last_px lp
+            ON lp.source = t.source
+           AND lp.base_asset = t.base_asset
+           AND lp.quote_asset = t.quote_asset
          WHERE t.ts >= $1
     `
 	if len(sources) > 0 {
@@ -295,7 +330,7 @@ func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int
 	}
 	if order == MarketsOrderVolume24hDesc {
 		const tail = `
-		 GROUP BY t.source, t.base_asset, t.quote_asset, v.vol_usd
+		 GROUP BY t.source, t.base_asset, t.quote_asset, v.vol_usd, lp.last_px
 		HAVING $2 = ''
 		    OR COALESCE(v.vol_usd::numeric, 0)
 		         <  CAST(NULLIF(split_part($2, ':', 1), '') AS numeric)
@@ -377,8 +412,9 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 			lastAt            time.Time
 			count24h          int64
 			vol24hUSD         sql.NullString
+			lastPrice         sql.NullString
 		)
-		if err := rows.Scan(&baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD); err != nil {
+		if err := rows.Scan(&baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD, &lastPrice); err != nil {
 			return nil, false, fmt.Errorf("timescale: DistinctPairs scan: %w", err)
 		}
 		n++
@@ -389,6 +425,10 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 		m, err := buildMarketRow(baseRaw, quoteRaw, lastAt, count24h, vol24hUSD)
 		if err != nil {
 			return nil, false, err
+		}
+		if lastPrice.Valid && lastPrice.String != "" {
+			v := lastPrice.String
+			m.LastPrice = &v
 		}
 		out = append(out, m)
 	}
@@ -476,15 +516,31 @@ func buildDistinctPairsQuery(since time.Time, source, cursor string, limit int, 
            WHERE bucket >= NOW() - INTERVAL '24 hours'
              AND volume_usd IS NOT NULL
            GROUP BY base_asset, quote_asset
+        ),
+        last_px AS (
+          -- Most recent non-null last_price per (base, quote).
+          -- DISTINCT ON + ORDER BY base, quote, bucket DESC picks
+          -- one row per pair without an aggregate. Joins back as
+          -- a 1-row-per-pair table so it can be GROUP BY'd directly.
+          SELECT DISTINCT ON (base_asset, quote_asset)
+                 base_asset, quote_asset, last_price::text AS last_px
+            FROM prices_1m
+           WHERE bucket >= NOW() - INTERVAL '24 hours'
+             AND last_price IS NOT NULL
+           ORDER BY base_asset, quote_asset, bucket DESC
         )
         SELECT t.base_asset, t.quote_asset,
                MAX(t.ts) AS last_trade_at,
                count(*) FILTER (WHERE t.ts > NOW() - INTERVAL '24 hours') AS count_24h,
-               v.vol_usd AS vol_24h_usd
+               v.vol_usd AS vol_24h_usd,
+               lp.last_px AS last_price
           FROM trades t
           LEFT JOIN vol_24h v
             ON v.base_asset = t.base_asset
            AND v.quote_asset = t.quote_asset
+          LEFT JOIN last_px lp
+            ON lp.base_asset = t.base_asset
+           AND lp.quote_asset = t.quote_asset
          WHERE t.ts >= $1
     `
 	if source != "" {
@@ -508,7 +564,7 @@ func buildDistinctPairsQuery(since time.Time, source, cursor string, limit int, 
 		// `(v < cv) OR (v = cv AND pair > cpair)` — DESC on the
 		// first key flips the comparator. Encoded explicitly.
 		const tail = `
-		 GROUP BY t.base_asset, t.quote_asset, v.vol_usd
+		 GROUP BY t.base_asset, t.quote_asset, v.vol_usd, lp.last_px
 		HAVING $2 = ''
 		    OR COALESCE(v.vol_usd::numeric, 0)
 		         <  CAST(NULLIF(split_part($2, ':', 1), '') AS numeric)
@@ -530,7 +586,7 @@ func buildDistinctPairsQuery(since time.Time, source, cursor string, limit int, 
 	default: // MarketsOrderPair
 		const tail = `
 		   AND ($2 = '' OR (t.base_asset || '|' || t.quote_asset) > $2)
-		 GROUP BY t.base_asset, t.quote_asset, v.vol_usd
+		 GROUP BY t.base_asset, t.quote_asset, v.vol_usd, lp.last_px
 		 ORDER BY (t.base_asset || '|' || t.quote_asset) ASC
 		 LIMIT $3
 		`
@@ -560,7 +616,12 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
                (SELECT SUM(volume_usd)::text FROM prices_1m
                  WHERE base_asset = $2 AND quote_asset = $3
                    AND bucket >= NOW() - INTERVAL '24 hours'
-                   AND volume_usd IS NOT NULL) AS vol_24h_usd
+                   AND volume_usd IS NOT NULL) AS vol_24h_usd,
+               (SELECT last_price::text FROM prices_1m
+                 WHERE base_asset = $2 AND quote_asset = $3
+                   AND bucket >= NOW() - INTERVAL '24 hours'
+                   AND last_price IS NOT NULL
+                 ORDER BY bucket DESC LIMIT 1) AS last_price
           FROM trades t
          WHERE t.ts >= $1
            AND t.base_asset = $2 AND t.quote_asset = $3
@@ -569,8 +630,9 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 		lastAt    *time.Time
 		count24h  *int64
 		vol24hUSD sql.NullString
+		lastPx    sql.NullString
 	)
-	if err := s.db.QueryRowContext(ctx, q, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD, &lastPx); err != nil {
 		return Market{}, false, fmt.Errorf("timescale: PairMarket: %w", err)
 	}
 	if lastAt == nil {
@@ -592,6 +654,10 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 	if vol24hUSD.Valid && vol24hUSD.String != "" && vol24hUSD.String != "0" {
 		v := vol24hUSD.String
 		m.Volume24hUSD = &v
+	}
+	if lastPx.Valid && lastPx.String != "" {
+		v := lastPx.String
+		m.LastPrice = &v
 	}
 	return m, true, nil
 }
