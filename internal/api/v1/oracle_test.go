@@ -44,6 +44,13 @@ func (r *stubOracleReader) LatestOracleUpdatesForAssets(_ context.Context, asset
 	return r.updates, nil
 }
 
+func (r *stubOracleReader) LatestOracleStreams(_ context.Context) ([]canonical.OracleUpdate, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.updates, nil
+}
+
 func mkReflectorUpdate(source string, priceRaw string, decimals uint8) canonical.OracleUpdate {
 	usdc, _ := canonical.ParseAsset("fiat:USD")
 	price, _ := new(big.Int).SetString(priceRaw, 10)

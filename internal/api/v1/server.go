@@ -583,6 +583,11 @@ func (s *Server) mountRoutes() {
 	// Latest oracle readings per source for an asset.
 	s.mux.HandleFunc("GET /v1/oracle/latest", s.handleOracleLatest)
 
+	// Every active oracle stream — one row per (source, asset, quote)
+	// triple, latest observation in the trailing 7d window. Backs
+	// the explorer's /oracles "price streams" table.
+	s.mux.HandleFunc("GET /v1/oracle/streams", s.handleOracleStreams)
+
 	// SEP-40 passthrough surface — same data as /v1/price, reshaped
 	// to the single-quote SEP-40 contract that on-chain oracle
 	// readers expect. Quote fixed at fiat:USD on /lastprice;
