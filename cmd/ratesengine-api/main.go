@@ -1073,6 +1073,10 @@ func (r storeOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, ass
 	return r.s.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
 }
 
+func (r storeOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
+	return r.s.LatestOracleStreams(ctx)
+}
+
 // cachedOracleReader wraps an inner OracleReader with a Redis
 // read-through cache. The inner DISTINCT ON (source) sort is
 // expensive (~580 ms p95 on R1's oracle_updates volume); the
@@ -1133,6 +1137,14 @@ func (r cachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, as
 		}
 	}
 	return updates, nil
+}
+
+// LatestOracleStreams pass-through — the underlying scan is one
+// query against oracle_updates with DISTINCT ON. Cheap enough to
+// skip the cache layer at this volume; revisit if the page becomes
+// a hot endpoint.
+func (r cachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
+	return r.inner.LatestOracleStreams(ctx)
 }
 
 // cachedAssetReader / cachedMarketsReader — Redis read-through

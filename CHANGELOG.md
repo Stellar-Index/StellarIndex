@@ -15,7 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`GET /v1/oracle/streams`** — returns one row per
+  `(source, asset, quote)` triple, the latest observation in the
+  trailing 7d window. New `Store.LatestOracleStreams` underneath
+  uses `DISTINCT ON (source, asset, quote) … ORDER BY ts DESC` for
+  the per-stream latest. Backs the new "price streams" table on
+  the explorer's /oracles page (the second table per the user IA
+  spec — "1 at the bottom showing all price streams from all
+  oracles").
+
 ### Changed
+- **/oracles rebuilt as two live tables.** Replaces the curated
+  Oracle-card grid with: (1) per-oracle activity table backed by
+  `/v1/sources?class=oracle&include=stats` (24h updates + active
+  stream count + last update + VWAP-inclusion policy) and (2) the
+  full price-streams table backed by /v1/oracle/streams. Keeps the
+  SEP-40 compatibility panel as a footer note. Curated narrative
+  notes per oracle moved to /sources/<name> and the integration
+  audits under /research/discovery.
 - **/dexes adds the DEX-protocols overview table** above the
   all-pools table — per the user spec ("2 tables, at the top
   lists all our connected dexes with basic overview info about

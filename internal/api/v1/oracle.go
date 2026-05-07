@@ -26,6 +26,12 @@ type OracleReader interface {
 	// expand user-facing asset identifiers (e.g. `native`) into
 	// the per-oracle internal forms (e.g. `crypto:XLM`).
 	LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error)
+
+	// LatestOracleStreams returns one row per (source, asset, quote)
+	// triple — the most-recent observation in the trailing 7d
+	// window. Backs /v1/oracles/streams (the "every active price
+	// stream from every oracle" listing for the explorer).
+	LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error)
 }
 
 // oracleAssetCandidates expands the user-facing asset identifier
@@ -150,6 +156,40 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rows := make([]OracleReading, len(updates))
+	for i, u := range updates {
+		rows[i] = oracleReadingFrom(u)
+	}
+	writeJSON(w, rows, Flags{})
+}
+
+// handleOracleStreams serves GET /v1/oracle/streams.
+//
+// Returns one row per (source, asset, quote) triple — the latest
+// observation each oracle has published in the trailing 7d. No
+// query parameters; the catalogue is small enough (~100s of rows
+// at peak) that a full dump is the simplest contract.
+//
+// Empty array + 200 when no oracles have published recently or no
+// OracleReader is wired — consistent with /v1/oracle/latest's
+// "nothing to report" handling.
+func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
+	reader := s.oracle
+	if reader == nil {
+		writeJSON(w, []OracleReading{}, Flags{})
+		return
+	}
+	updates, err := reader.LatestOracleStreams(r.Context())
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("LatestOracleStreams failed", "err", err)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
 	rows := make([]OracleReading, len(updates))
 	for i, u := range updates {
 		rows[i] = oracleReadingFrom(u)
