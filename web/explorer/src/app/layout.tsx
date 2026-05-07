@@ -40,11 +40,21 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     url: SITE_URL,
     locale: 'en_US',
+    images: [
+      {
+        url: '/og.svg',
+        width: 1200,
+        height: 630,
+        alt: `${SITE_NAME} — Stellar pricing explorer`,
+        type: 'image/svg+xml',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: `${SITE_NAME} — Stellar pricing explorer`,
     description: SITE_DESCRIPTION,
+    images: ['/og.svg'],
   },
   robots: {
     index: true,

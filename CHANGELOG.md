@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Open Graph + Twitter cards for explorer + status sites.**
+  Both subsites now ship a 1200×630 SVG OG image plus full
+  `openGraph.images` + `twitter.images` metadata so links
+  shared in Slack / Twitter / LinkedIn render as proper preview
+  cards instead of bare URL chips. Explorer card has the
+  network-line motif + "Pricing for every asset on Stellar";
+  status card has the live-pulse dot + "System status".
 - **Home Try-the-API panel: Run-it live + 7 examples.** The
   panel now ships with 7 canonical curls (price, coin detail,
   coins listing, top markets, history, cursors, incidents) and
