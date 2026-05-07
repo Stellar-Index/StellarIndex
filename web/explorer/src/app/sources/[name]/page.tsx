@@ -20,6 +20,7 @@ interface Source {
   backfill_available: boolean;
   backfill_safe: boolean;
   default_weight?: number;
+  trade_count_24h?: number;
 }
 
 interface CursorRow {
@@ -65,7 +66,11 @@ export async function generateMetadata({
 async function fetchSource(name: string): Promise<Source | null> {
   if (isCIStub) return null;
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/sources`, {
+    // include=stats joins the 24h trade count so the registry
+    // panel below can show "X trades observed in last 24h" — it's
+    // a single GROUP BY on the trades hypertable, served from the
+    // same call. See PR #845.
+    const res = await fetch(`${API_BASE_URL}/v1/sources?include=stats`, {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -167,6 +172,15 @@ export default async function SourceDetailPage({
             value={
               source.default_weight != null
                 ? source.default_weight.toString()
+                : '—'
+            }
+            mono
+          />
+          <Stat
+            label="24h trades"
+            value={
+              source.trade_count_24h != null && source.trade_count_24h > 0
+                ? source.trade_count_24h.toLocaleString()
                 : '—'
             }
             mono

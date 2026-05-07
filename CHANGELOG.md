@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Source detail page: 24h trade count.** `/sources/<name>`
+  now shows that venue's 24h trade contribution baked at build
+  time alongside the rest of the registry profile (e.g. binance
+  → 3.56M, coinbase → 1.81M, sdex → 1.56M). Same `?include=stats`
+  opt-in the listing already uses (#852).
+- **Home hero: "Read methodology" CTA.** Adds a fourth pill
+  alongside Browse assets / Browse markets / API docs that links
+  to `/methodology`. Footer System column gains the same link.
+
 ### Fixed
 - **Home network strip: undercounted 24h volume + market + asset
   totals.** Previously the strip summed `useMarkets(500, ...)` and
