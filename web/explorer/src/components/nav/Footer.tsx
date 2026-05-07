@@ -56,6 +56,7 @@ export function Footer() {
               { label: 'Diagnostics', href: '/diagnostics' },
               { label: 'API docs', href: 'https://docs.ratesengine.net', external: true },
               { label: 'Changelog', href: '/changelog' },
+              { label: 'Methodology', href: '/methodology' },
               { label: 'Research', href: '/research' },
             ]}
           />
