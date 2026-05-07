@@ -18,7 +18,6 @@ const STATIC_PAGES: Result[] = [
   { type: 'page', label: 'Assets', href: '/assets' },
   { type: 'page', label: 'Markets', href: '/markets' },
   { type: 'page', label: 'Issuers', href: '/issuers' },
-  { type: 'page', label: 'Compare', href: '/compare' },
   { type: 'page', label: 'DEXes', href: '/dexes' },
   { type: 'page', label: 'Lending', href: '/lending' },
   { type: 'page', label: 'Aggregators', href: '/aggregators' },

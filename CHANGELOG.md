@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **/dexes shows real per-DEX volume + trades + pool count.**
+  Was: 5 cards of static prose. Now: each card has live 24h
+  USD volume, trade count, and pool count (unique base/quote
+  pairs the source observed in 24h) from
+  `/v1/sources?include=stats`. Backend extension: GetSourceStats
+  now returns SUM(usd_volume) + COUNT(DISTINCT (base, quote))
+  alongside the existing trade-count column. Page header shows
+  rolled-up totals across all five venues.
+
+### Removed
+- **/compare page** dropped from explorer. Redundant with
+  /assets + per-asset detail, and rarely worked cleanly. Removed
+  from navbar, footer search, and sitemap. The route directory
+  is gone.
+
 ### Performance
 - **`/v1/markets` cold-cache p99: 30s → 3.7s.** Reported by user
   ("markets doesn't load in any reasonable time"). Root cause was

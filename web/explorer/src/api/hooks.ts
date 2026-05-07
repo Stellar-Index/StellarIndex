@@ -131,6 +131,8 @@ export type Source = {
   // from "stats not requested" because both end up zero on the
   // wire (omitempty on a numeric field).
   trade_count_24h?: number;
+  volume_24h_usd?: string;
+  markets_count_24h?: number;
 };
 
 type SourcesEnvelope = { data: Source[] };

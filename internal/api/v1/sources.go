@@ -48,11 +48,11 @@ type Source struct {
 	// are always `true` — no on-chain WASM dependency.
 	BackfillSafe  bool `json:"backfill_safe"`
 	DefaultWeight int  `json:"default_weight"`
-	// TradeCount24h is populated only when `?include=stats` is set.
-	// 0 (rather than null) when the source had no trades in 24h —
-	// distinguishing "no data fetched" from "no trades observed"
-	// would require a third state and isn't worth the wire bloat.
-	TradeCount24h int64 `json:"trade_count_24h,omitempty"`
+	// Stats columns — populated only when `?include=stats` is set.
+	// 0 / "" when the source had no trades in 24h.
+	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
+	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
+	MarketsCount24h int64  `json:"markets_count_24h,omitempty"`
 }
 
 // validSourceClasses is the allow-list of values accepted for the
@@ -101,7 +101,12 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	// extra column pay the (cheap) DB hit, while everyone else
 	// keeps the all-static fast path.
 	includeStats := r.URL.Query().Get("include") == "stats"
-	statsBySource := map[string]int64{}
+	type stats struct {
+		trades  int64
+		volume  string
+		markets int64
+	}
+	statsBySource := map[string]stats{}
 	if includeStats && s.sourcesStats != nil {
 		got, err := s.sourcesStats.GetSourceStats(r.Context())
 		if err != nil {
@@ -109,7 +114,15 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 			// Soft-fail: serve the registry without stats.
 		} else {
 			for _, ss := range got {
-				statsBySource[ss.Source] = ss.TradeCount24h
+				vol := ""
+				if ss.VolumeUSD24h.Valid {
+					vol = ss.VolumeUSD24h.String
+				}
+				statsBySource[ss.Source] = stats{
+					trades:  ss.TradeCount24h,
+					volume:  vol,
+					markets: ss.MarketsCount24h,
+				}
 			}
 		}
 	}
@@ -119,6 +132,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 		if classFilter != "" && string(md.Class) != classFilter {
 			continue
 		}
+		st := statsBySource[name]
 		out = append(out, Source{
 			Name:              name,
 			Class:             string(md.Class),
@@ -128,7 +142,9 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 			BackfillAvailable: md.BackfillAvailable,
 			BackfillSafe:      md.BackfillSafe,
 			DefaultWeight:     md.DefaultWeight,
-			TradeCount24h:     statsBySource[name],
+			TradeCount24h:     st.trades,
+			VolumeUSD24h:      st.volume,
+			MarketsCount24h:   st.markets,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
