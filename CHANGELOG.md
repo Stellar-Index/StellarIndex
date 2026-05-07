@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`/assets` table: sortable Volume 24h column.** Click the
+  Volume 24h header to flip the listing's `order_by` between
+  `observation_count_desc` (default) and `volume_24h_usd_desc`.
+  The active sort is mirrored in the URL as `?order=...` so
+  bookmarks + back-button navigation work as expected; cursor
+  resets on sort change so pagination stays consistent. Backend
+  parameter has been live since rc.14; this just wires it into
+  the table header.
 - **`/v1/sources?include=stats` per-source 24h trade count.**
   Opt-in flag joins each Source row with a `trade_count_24h`
   column derived from a single GROUP BY on the trades hypertable.
