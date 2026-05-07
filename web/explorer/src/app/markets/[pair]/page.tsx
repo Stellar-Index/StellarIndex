@@ -131,9 +131,35 @@ export async function generateMetadata({
   if (!decoded) return { title: 'Pair — Rates Engine' };
   const baseLabel = shortAsset(decoded.base);
   const quoteLabel = shortAsset(decoded.quote);
+  // Best-effort price fetch so the social-share preview reads as
+  // a real ticker rather than boilerplate.
+  const price = await fetchPrice(decoded.base, decoded.quote);
+  const priceNum = price?.price ? Number(price.price) : null;
+  let suffix = '';
+  if (priceNum != null && Number.isFinite(priceNum)) {
+    suffix =
+      priceNum >= 1
+        ? ` ${priceNum.toFixed(priceNum >= 100 ? 2 : 4)}`
+        : priceNum >= 0.001
+          ? ` ${priceNum.toFixed(6)}`
+          : ` ${priceNum.toExponential(3)}`;
+  }
+  const title = `${baseLabel} / ${quoteLabel}${suffix} — pair detail`;
+  const description = `Live VWAP${suffix ? ` (${suffix.trim()})` : ''}, recent trades, and per-source breakdown for ${baseLabel} / ${quoteLabel} on Stellar.`;
   return {
-    title: `${baseLabel} / ${quoteLabel} — pair detail · Rates Engine`,
-    description: `Live VWAP, recent trades, and per-source breakdown for ${baseLabel} / ${quoteLabel} on Stellar.`,
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url: `/markets/${pair}`,
+      type: 'website',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+    },
   };
 }
 

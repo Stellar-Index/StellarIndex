@@ -230,14 +230,46 @@ export async function generateMetadata({
   const { slug } = await params;
   const coin = await fetchCoin(slug);
   const code = coin?.code ?? slug;
+  const priceNum = coin?.price_usd ? Number(coin.price_usd) : null;
+  const change24h = coin?.change_24h_pct ? Number(coin.change_24h_pct) : null;
+
+  // Build a price + change suffix so the social-share preview is
+  // dynamic — "USDC $1.0005 +0.05% 24h" reads as a real ticker
+  // rather than boilerplate.
+  let suffix = '';
+  if (priceNum != null && Number.isFinite(priceNum)) {
+    const priceStr =
+      priceNum >= 1
+        ? `$${priceNum.toFixed(priceNum >= 100 ? 2 : 4)}`
+        : priceNum >= 0.001
+          ? `$${priceNum.toFixed(6)}`
+          : `$${priceNum.toExponential(3)}`;
+    suffix = ` ${priceStr}`;
+    if (change24h != null && Number.isFinite(change24h)) {
+      const sign = change24h > 0 ? '+' : '';
+      suffix += ` (${sign}${change24h.toFixed(2)}% 24h)`;
+    }
+  }
+
+  const title = `${code}${suffix} — Stellar asset`;
+  const description =
+    priceNum != null
+      ? `${code} on Stellar:${suffix} · live VWAP across on-chain DEXes, classic SDEX, and major exchanges.`
+      : `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`;
+
   return {
-    title: `${code} — Stellar asset`,
-    description: `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`,
+    title,
+    description,
     openGraph: {
-      title: `${code} — Stellar asset`,
-      description: `Live price, markets, and issuer detail for ${code} on Stellar.`,
+      title,
+      description,
       url: `/assets/${slug}`,
       type: 'website',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
     },
   };
 }
