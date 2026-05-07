@@ -5,6 +5,7 @@ import { ArrowLeft, ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
+import { SourceSparkline } from '@/components/SourceSparkline';
 import { PairsTable } from './PairsTable';
 
 const API_BASE_URL =
@@ -73,16 +74,22 @@ export async function generateMetadata({
   };
 }
 
+interface VolumeBucket {
+  hour: string;
+  volume_usd: string;
+}
+
 interface SourceStats {
   trade_count_24h?: number;
   volume_24h_usd?: string;
   markets_count_24h?: number;
+  volume_history_24h?: VolumeBucket[];
 }
 
 async function fetchSourceStats(name: string): Promise<SourceStats | null> {
   if (isCIStub) return null;
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/sources?include=stats`, {
+    const res = await fetch(`${API_BASE_URL}/v1/sources?include=stats,sparkline`, {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -129,14 +136,24 @@ export default async function ExchangeDetailPage({
 
       <Panel
         title="24h activity"
-        hint={`Live from /v1/sources?include=stats (source=${name})`}
-        source={asExample('/v1/sources', { include: 'stats' })}
+        hint={`Live from /v1/sources?include=stats,sparkline (source=${name})`}
+        source={asExample('/v1/sources', { include: 'stats,sparkline' })}
       >
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat label="24h volume" value={volume > 0 ? `$${formatCompact(volume)}` : '—'} />
           <Stat label="24h trades" value={trades > 0 ? formatCompact(trades) : '—'} />
           <Stat label="24h pairs" value={markets > 0 ? markets.toLocaleString() : '—'} />
         </div>
+        {stats?.volume_history_24h && stats.volume_history_24h.length > 0 && (
+          <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">
+              Volume by hour
+            </div>
+            <div className="mt-2">
+              <SourceSparkline buckets={stats.volume_history_24h} width={400} height={48} />
+            </div>
+          </div>
+        )}
       </Panel>
 
       <PairsTable source={name} exchangeName={info.name} />
