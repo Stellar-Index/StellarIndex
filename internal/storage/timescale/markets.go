@@ -213,18 +213,68 @@ func (s *Store) AllPools(ctx context.Context, sources []string, cursor string, l
 }
 
 func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int, order MarketsOrder) (string, []any) {
-	// Same vol_24h CTE as DistinctPairsExt (per (base, quote) USD
-	// volume from prices_1m); LEFT JOINed once. Outer GROUP BY
-	// adds source so the same (base, quote) pair on two venues
-	// emits two rows.
+	// vol_24h derives per-(source, base, quote) USD volume directly
+	// from the trades hypertable rather than reading prices_1m's
+	// per-(base, quote) totals. Two reasons:
+	//
+	//   1. Per-source attribution. Two DEXes trading the same (base,
+	//      quote) pair (rare in practice — sdex uses classic credit
+	//      assets, Soroban DEXes use SAC contract addresses — but
+	//      possible) get their own slice rather than the cross-source
+	//      sum.
+	//   2. XLM-side fallback for Soroban trades. Phoenix / Aquarius /
+	//      Comet trades against the XLM SAC wrapper
+	//      (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA)
+	//      have NULL `usd_volume` because the operator's USD-pegged
+	//      allow-list (Phase 1 of the L2.2 path) doesn't include XLM
+	//      itself. We derive USD volume from base_amount × XLM/USD
+	//      when XLM is on the base side, or quote_amount × XLM/USD
+	//      when XLM is on the quote side. The XLM/USD price comes
+	//      from the same on-chain XLM/USDC vwap that powers
+	//      coins.go's xlm_usd CTE — single source of truth for the
+	//      stablecoin-proxy policy.
+	//
+	// Trades that are neither already-priced (Phase 1) nor have an
+	// XLM leg stay NULL in vol_usd — pure SEP-41/SEP-41 token
+	// swaps need real per-token USD oracles, which is a separate
+	// piece of work (see CHANGELOG #72).
 	cte := `
-        WITH vol_24h AS (
-          SELECT base_asset, quote_asset,
-                 SUM(volume_usd)::text AS vol_usd
+        WITH xlm_usd AS (
+          SELECT vwap
             FROM prices_1m
-           WHERE bucket >= NOW() - INTERVAL '24 hours'
-             AND volume_usd IS NOT NULL
-           GROUP BY base_asset, quote_asset
+           WHERE base_asset = 'native'
+             AND quote_asset IN (
+               'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+               'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
+               'fiat:USD'
+             )
+             AND vwap IS NOT NULL
+             AND bucket >= NOW() - INTERVAL '24 hours'
+           ORDER BY bucket DESC
+           LIMIT 1
+        ),
+        vol_24h AS (
+          SELECT t.source, t.base_asset, t.quote_asset,
+                 SUM(
+                   CASE
+                     WHEN t.usd_volume IS NOT NULL
+                       THEN t.usd_volume::numeric
+                     -- XLM SAC or native on the base side: use
+                     -- base_amount × XLM/USD (classic 7-decimal
+                     -- scale; SEP-41 token decimals only matter
+                     -- for the OTHER side, which we're not pricing).
+                     WHEN t.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                       THEN (t.base_amount / 1e7) * (SELECT vwap FROM xlm_usd)
+                     -- XLM SAC or native on the quote side: use
+                     -- quote_amount × XLM/USD.
+                     WHEN t.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                       THEN (t.quote_amount / 1e7) * (SELECT vwap FROM xlm_usd)
+                     ELSE NULL
+                   END
+                 )::text AS vol_usd
+            FROM trades t
+           WHERE t.ts >= NOW() - INTERVAL '24 hours'
+           GROUP BY t.source, t.base_asset, t.quote_asset
         )
         SELECT t.source, t.base_asset, t.quote_asset,
                MAX(t.ts) AS last_trade_at,
@@ -232,7 +282,8 @@ func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int
                v.vol_usd AS vol_24h_usd
           FROM trades t
           LEFT JOIN vol_24h v
-            ON v.base_asset = t.base_asset
+            ON v.source = t.source
+           AND v.base_asset = t.base_asset
            AND v.quote_asset = t.quote_asset
          WHERE t.ts >= $1
     `
@@ -272,7 +323,7 @@ func buildPoolsQuery(since time.Time, sources []string, cursor string, limit int
 	`
 	args := []any{since, cursor, limit + 1}
 	if len(sources) > 0 {
-		args = append(args, sources)
+		args = append(args, pq.Array(sources))
 	}
 	return cte + tail, args
 }

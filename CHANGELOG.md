@@ -26,6 +26,19 @@ against.
   pools, since page 1 by USD-volume-desc is dominated by SDEX).
 
 ### Fixed
+- **/v1/pools surfaces 24h USD volume on Soroban DEX pools** —
+  Phoenix / Aquarius / Comet trades against the XLM SAC wrapper
+  (CAS3J7GY…) had NULL `usd_volume` because the operator's USD-pegged
+  Phase 1 allow-list doesn't include XLM itself. The vol_24h CTE
+  now derives USD volume per (source, base, quote) directly from
+  trades: trades with non-null `usd_volume` use it as-is; trades
+  with native or XLM SAC on either side use base_amount/quote_amount
+  × XLM/USD (read from the same on-chain XLM/USDC vwap that powers
+  /v1/coins). Pure SEP-41/SEP-41 token swaps still emit null until a
+  per-token oracle wires in. Side benefit: per-source attribution —
+  two DEXes trading the same canonical pair now get separate vol
+  numbers rather than the cross-source sum. Same `Pool.Volume24hUSD`
+  wire field; previously-empty values now populate.
 - **/v1/pools is DEX-only, never CEX rows.** "Pool" is AMM/DEX
   terminology — applying it to CEX trading pairs (binance,
   coinbase, kraken, bitstamp) misnames the data. Handler now
