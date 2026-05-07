@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
+import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
@@ -219,36 +220,6 @@ export function MarketsTable() {
         </table>
       </div>
     </Panel>
-  );
-}
-
-/**
- * AssetLabel renders a canonical asset string compactly. The v1 API
- * returns assets as `<code>-<G-issuer>` for classic, `<num>` for
- * native (XLM is `0`), and `fiat:USD` style for off-chain. We split
- * on the first dash to get code + issuer, and render code prominent
- * with a truncated issuer beneath.
- */
-function AssetLabel({ canonical }: { canonical: string | undefined | null }) {
-  if (!canonical) return <span className="text-xs text-slate-400">—</span>;
-  if (canonical.startsWith('fiat:')) {
-    return <span className="font-medium">{canonical.replace('fiat:', '')}</span>;
-  }
-  // Native: numeric strings ("0", "1", …) — for now show as raw
-  if (/^\d+$/.test(canonical)) {
-    return <span className="font-medium">XLM-native</span>;
-  }
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return <span className="font-mono text-xs">{canonical}</span>;
-  const code = canonical.slice(0, dashIx);
-  const issuer = canonical.slice(dashIx + 1);
-  return (
-    <div>
-      <div className="font-medium">{code}</div>
-      <div className="font-mono text-[10px] text-slate-500">
-        {issuer.length > 12 ? `${issuer.slice(0, 8)}…${issuer.slice(-4)}` : issuer}
-      </div>
-    </div>
   );
 }
 

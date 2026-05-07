@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Changed
+- **AssetLabel extracted to shared component** at
+  `web/explorer/src/components/AssetLabel.tsx`. Was previously
+  copy-pasted into 5 view files (markets, dexes, dexes-by-source,
+  exchanges, oracles) — diverged subtly across copies (numeric
+  XLM, missing crypto: handler, missing SAC). Now everywhere
+  resolves SAC contracts via `/v1/sac-wrappers` consistently and
+  any future canonical-form addition (`lp:…`) needs one edit not
+  five.
 - **Currency converter dropdown is now a searchable combobox**
   on `/currencies/[ticker]`. The plain `<select>` over 100+
   currencies was unusable; the new picker filters by typed

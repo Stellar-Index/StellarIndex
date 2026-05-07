@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
+import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 
@@ -296,39 +297,6 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
     <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
       {fixed}
     </span>
-  );
-}
-
-function AssetLabel({ canonical }: { canonical: string | undefined | null }) {
-  if (!canonical) return <span className="text-xs text-slate-400">—</span>;
-  if (canonical === 'native') return <span className="font-medium">XLM</span>;
-  if (canonical.startsWith('fiat:')) {
-    return <span className="font-medium">{canonical.replace('fiat:', '')}</span>;
-  }
-  if (canonical.startsWith('crypto:')) {
-    return <span className="font-medium">{canonical.replace('crypto:', '')}</span>;
-  }
-  // Soroban contract addresses (start with C, 56 chars) — truncate.
-  if (/^C[A-Z0-9]{55}$/.test(canonical)) {
-    return (
-      <span className="font-mono text-[11px]" title={canonical}>
-        {canonical.slice(0, 6)}…{canonical.slice(-4)}
-      </span>
-    );
-  }
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) {
-    return <span className="font-mono text-xs">{canonical}</span>;
-  }
-  const code = canonical.slice(0, dashIx);
-  const issuer = canonical.slice(dashIx + 1);
-  return (
-    <div>
-      <div className="font-medium">{code}</div>
-      <div className="font-mono text-[10px] text-slate-500" title={issuer}>
-        {issuer.length > 12 ? `${issuer.slice(0, 6)}…${issuer.slice(-4)}` : issuer}
-      </div>
-    </div>
   );
 }
 
