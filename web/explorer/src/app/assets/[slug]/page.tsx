@@ -569,33 +569,45 @@ function OverviewBody({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {coin.top_markets.map((m) => (
-                  <tr
-                    key={`${m.side}|${m.counterparty}`}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
-                  >
-                    <td className="px-4 py-3">
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                        {m.side}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs">
-                      {shortCounterparty(m.counterparty)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {m.volume_24h_usd ? (
-                        <span className="font-mono tabular-nums">
-                          ${fmtCompact(Number(m.volume_24h_usd))}
+                {coin.top_markets.map((m) => {
+                  const pairURL = topMarketHref(coin.asset_id, m);
+                  return (
+                    <tr
+                      key={`${m.side}|${m.counterparty}`}
+                      className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                    >
+                      <td className="px-4 py-3">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {m.side}
                         </span>
-                      ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-500">
-                      {fmtCompact(m.trade_count_24h)}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs">
+                        {pairURL ? (
+                          <Link
+                            href={pairURL}
+                            className="text-slate-700 hover:text-brand-600 hover:underline dark:text-slate-300"
+                          >
+                            {shortCounterparty(m.counterparty)}
+                          </Link>
+                        ) : (
+                          shortCounterparty(m.counterparty)
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {m.volume_24h_usd ? (
+                          <span className="font-mono tabular-nums">
+                            ${fmtCompact(Number(m.volume_24h_usd))}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 dark:text-slate-700">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-500">
+                        {fmtCompact(m.trade_count_24h)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -784,6 +796,23 @@ function ChangePctLabel({
 // count column.
 function fmtCompact(n: number): string {
   return formatCompact(n);
+}
+
+// topMarketHref builds the /markets/{base}~{quote} URL for one of
+// the asset's top markets. The asset on /assets/[slug] is the
+// "us" side; `m.side` says whether we were base or quote, and
+// the counterparty is the OTHER asset_id. Counterparty strings
+// like `fiat:USD` aren't routable on /markets/[pair] (no asset_id),
+// so we return null in that case and fall back to plain text.
+function topMarketHref(
+  ourAssetID: string,
+  m: TopMarket,
+): string | null {
+  const cp = m.counterparty;
+  if (!cp || cp.startsWith('fiat:') || cp.startsWith('crypto:')) return null;
+  const base = m.side === 'base' ? ourAssetID : cp;
+  const quote = m.side === 'base' ? cp : ourAssetID;
+  return `/markets/${encodeURIComponent(`${base}~${quote}`)}`;
 }
 
 // shortCounterparty renders a counterparty asset_id compactly:
