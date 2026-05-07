@@ -62,6 +62,7 @@ type Server struct {
 	cursors          CursorsReader
 	networkStats     NetworkStatsReader
 	sourcesStats     SourcesStatsReader
+	lending          LendingReader
 	incidents        []incidents.Incident
 	sep10            auth.SEP10Validator
 	cors             middleware.Middleware
@@ -234,6 +235,11 @@ type Options struct {
 	// stays the all-static-registry projection.
 	SourcesStats SourcesStatsReader
 
+	// Lending, when non-nil, backs /v1/lending/pools (the per-Blend-
+	// pool summary listing). Leave nil and the handler serves an
+	// empty array — same degradation pattern as Markets.
+	Lending LendingReader
+
 	// SEP10, when non-nil, backs GET /v1/auth/sep10/challenge and
 	// POST /v1/auth/sep10/token. Production wiring: an
 	// auth/sep10.Validator constructed from the binary's signing
@@ -371,6 +377,7 @@ func New(opts Options) *Server {
 		cursors:          opts.Cursors,
 		networkStats:     opts.NetworkStats,
 		sourcesStats:     opts.SourcesStats,
+		lending:          opts.Lending,
 		sep10:            opts.SEP10,
 		cors:             opts.CORS,
 		auth:             opts.Auth,
@@ -595,6 +602,9 @@ func (s *Server) mountRoutes() {
 	s.mux.HandleFunc("GET /v1/oracle/lastprice", s.handleOracleLastPrice)
 	s.mux.HandleFunc("GET /v1/oracle/prices", s.handleOraclePrices)
 	s.mux.HandleFunc("GET /v1/oracle/x_last_price", s.handleOracleXLastPrice)
+
+	// Lending — Blend pools observed in the auction stream.
+	s.mux.HandleFunc("GET /v1/lending/pools", s.handleLendingPools)
 
 	// Source catalogue — every venue the aggregator knows about,
 	// with class + IncludeInVWAP metadata.

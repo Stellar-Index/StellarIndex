@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
+import { LendingPoolsTable } from './LendingPoolsTable';
 
 export const metadata: Metadata = {
   title: 'Lending — collateralised lending on Stellar',
@@ -114,18 +115,22 @@ export default function LendingPage() {
         </div>
       </div>
 
+      <LendingPoolsTable />
+
       <Panel
         title="Coming next"
         bodyClassName="text-sm text-slate-600 dark:text-slate-400 space-y-2"
       >
         <p>
           Per-pool TVL + utilisation + supply/borrow APY plumb in once
-          the TVL writer worker ships (Phase 3 — pending the
-          protocol→pool registry on r1). The auctions panel and
-          backstop coverage % follow alongside.
+          the pool-storage reader worker ships. For now the table
+          shows pools observed in the auction stream — every pool
+          that has emitted a new / fill / delete auction event.
+          Pools that exist on-chain but haven&apos;t had a liquidation
+          since launch won&apos;t appear until they do.
         </p>
         <p>
-          For now, head to{' '}
+          For more context: head to{' '}
           <Link href="/sources" className="underline decoration-dotted">
             /sources
           </Link>{' '}

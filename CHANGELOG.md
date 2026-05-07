@@ -25,6 +25,17 @@ against.
   applied to OraclesView's /v1/oracle/streams call.
 
 ### Added
+- **`GET /v1/lending/pools`** — returns one row per Blend pool
+  observed in the auction stream, with 24h / all-time auction
+  counts + 30d unique users + last-seen timestamp. Backed by new
+  `Store.ListBlendPools`. Per-pool TVL / utilisation / APYs land
+  via additional fields when the pool-storage reader worker ships;
+  the wire shape is designed to grow rather than version-bump.
+- **/lending pools table** — surfaces the new endpoint at the
+  bottom of /lending, below the existing Blend narrative card,
+  per the user IA spec ("1 table showing all the lending pools,
+  the protocol — all will be blend for now"). Each pool address
+  links out to stellar.expert for the contract page.
 - **/exchanges page** (real, replacing the placeholder shell): per-CEX
   table sorted by 24h USD volume desc, with trade count, pair count,
   and a share-of-CEX-volume bar. Backed by /v1/sources?include=stats
