@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { SignInForm } from './SignInForm';
+
 export const metadata: Metadata = {
   title: 'Sign in — Rates Engine',
   description:
@@ -16,19 +18,13 @@ export default function SignInPage() {
           Magic-link email — no passwords.
         </p>
       </header>
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300">
-        <p className="font-medium">Magic-link login is being built.</p>
-        <p className="mt-2">
-          The current API uses static API keys. We&apos;re replacing
-          that with a proper user-account system — email magic link to
-          sign in, then API keys are scoped to your account. Until that
-          ships, request a key via{' '}
-          <Link href="/contact" className="text-brand-600 hover:underline">
-            /contact
-          </Link>
-          .
-        </p>
-      </div>
+      <SignInForm mode="signin" />
+      <p className="text-center text-sm text-slate-500">
+        Don&apos;t have an account?{' '}
+        <Link href="/signup" className="text-brand-600 hover:underline">
+          Create one
+        </Link>
+      </p>
     </div>
   );
 }

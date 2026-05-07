@@ -3,12 +3,12 @@ import Link from 'next/link';
 
 import { API_BASE_URL } from '@/api/client';
 
-import { SignupForm } from './SignupForm';
+import { SignInForm } from '../signin/SignInForm';
 
 export const metadata: Metadata = {
-  title: 'Sign up — Rates Engine',
+  title: 'Create account — Rates Engine',
   description:
-    'Get a free API key for the Rates Engine. 1000 requests per minute, no credit card required, instant.',
+    'Create your Rates Engine account. Magic-link email auth — no passwords. Free tier included; paid plans unlock higher rate limits + dedicated SLAs.',
 };
 
 const TIERS = [
@@ -16,36 +16,31 @@ const TIERS = [
     name: 'Free',
     rateLimit: '60 req/min per IP',
     cost: '$0',
-    auth: 'No key required',
-    notes: 'Public read of every endpoint. Perfect for casual integrations + initial exploration. Same data as paid tiers — just rate-limited.',
+    notes: 'Public read of every endpoint. No account required for the anonymous tier.',
   },
   {
     name: 'Starter',
     rateLimit: '1,000 req/min per key',
     cost: '$0',
-    auth: 'POST /v1/signup',
-    notes: 'Self-service. The form below mints your key. Same data; higher per-key rate-limit; usage analytics + key rotation via /v1/account/*.',
+    notes: 'Self-service. Sign in with the form on the right; first sign-in creates the account. API keys live under your account once you’re in.',
     highlight: true,
   },
   {
     name: 'Pro',
     rateLimit: '10,000 req/min per key',
     cost: 'Contact sales',
-    auth: 'Operator-issued',
     notes: 'For wallets + portfolio apps with heavy fan-out. Includes Slack channel + 24h SLA on incident response.',
   },
   {
     name: 'Business',
     rateLimit: '50,000 req/min per key',
     cost: 'Contact sales',
-    auth: 'Operator-issued',
-    notes: 'For exchanges + market-data redistributors. Includes dedicated AlertManager routes + named on-call engineer + 1h SLA on SEV-1.',
+    notes: 'For exchanges + market-data redistributors. Dedicated AlertManager routes + named on-call + 1h SLA on SEV-1.',
   },
   {
     name: 'Enterprise',
     rateLimit: 'Custom',
     cost: 'Custom',
-    auth: 'SEP-10 + per-tenant',
     notes: 'Bespoke shape. Multi-tenant key isolation, custom retention, dedicated regional capacity, named TAM. Talk to us.',
   },
 ];
@@ -55,17 +50,25 @@ export default function SignupPage() {
     <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
       <header className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
-          Get a free API key
+          Create your account
         </h1>
         <p className="mt-3 max-w-2xl text-base text-slate-600 dark:text-slate-400">
-          1,000 requests per minute, no credit card, the key is yours
-          in under a second. The same surface as the paid tiers — you
-          just get the higher rate-limit and per-key usage analytics.
+          Magic-link sign-in — no passwords. Once you&apos;re in, mint
+          API keys, watch usage, and manage billing under your account.
+          The free tier covers most prototyping; paid plans unlock
+          higher per-key rate limits + dedicated SLAs.
         </p>
       </header>
 
       <section className="mb-12 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-8">
-        <SignupForm />
+        <SignInForm mode="signup" />
+        <p className="mt-4 text-xs text-slate-500">
+          Already have an account?{' '}
+          <Link href="/signin" className="text-brand-600 hover:underline">
+            Sign in
+          </Link>{' '}
+          — same magic-link form, just lands on your existing account.
+        </p>
       </section>
 
       <section className="mb-12">
@@ -84,9 +87,6 @@ export default function SignupPage() {
                 </th>
                 <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                   Cost
-                </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                  Get one
                 </th>
               </tr>
             </thead>
@@ -116,9 +116,6 @@ export default function SignupPage() {
                       tier.cost
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-300">
-                    {tier.auth}
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -134,45 +131,16 @@ export default function SignupPage() {
         </ul>
       </section>
 
-      <section className="mb-12">
-        <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">
-          Already have a key?
-        </h2>
-        <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
-          <li>
-            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">
-              GET /v1/account/me
-            </code>{' '}
-            — your account info (key_id, tier, created_at).
-          </li>
-          <li>
-            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">
-              POST /v1/account/keys
-            </code>{' '}
-            — mint another key under the same account (e.g. for a
-            second deployment, or to rotate).
-          </li>
-          <li>
-            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">
-              GET /v1/account/usage
-            </code>{' '}
-            — daily request counts (rolled-up reporting is a
-            post-launch enhancement; currently returns an empty
-            array under the locked wire shape).
-          </li>
-        </ul>
-      </section>
-
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-        <strong>Free tier already gets you most of what you need.</strong>{' '}
+        <strong>Anonymous reads work without an account.</strong>{' '}
         If you&rsquo;re prototyping, just hit{' '}
         <a href="https://docs.ratesengine.net" className="underline">
           the public endpoints
         </a>{' '}
-        directly — no signup required. The 60 req/min anonymous floor
-        works for an exploratory script or a low-traffic embed. Sign
-        up when you want the higher per-key rate-limit + usage
-        analytics, or when you&rsquo;re ready to ship to customers.
+        directly — the 60 req/min IP-floor covers exploratory scripts
+        and low-traffic embeds. Create an account when you want the
+        higher per-key rate-limit + usage analytics, or when
+        you&rsquo;re ready to ship to customers.
       </section>
 
       <p className="mt-8 text-xs text-slate-500 dark:text-slate-500">
