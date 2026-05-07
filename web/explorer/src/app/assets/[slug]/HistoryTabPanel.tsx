@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useHistory, type TradeRow } from '@/api/hooks';
@@ -101,12 +103,27 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
               className="border-b border-slate-100 last:border-0 dark:border-slate-800/60"
             >
               <td className="py-2 pr-3 font-mono text-xs text-slate-600 dark:text-slate-400">
-                {ageOf(r.ts)}
+                {r.tx_hash ? (
+                  <a
+                    href={`https://stellar.expert/explorer/public/tx/${r.tx_hash}`}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="hover:text-brand-600 hover:underline"
+                    title={`View tx ${r.tx_hash} on stellar.expert`}
+                  >
+                    {ageOf(r.ts)}
+                  </a>
+                ) : (
+                  ageOf(r.ts)
+                )}
               </td>
               <td className="py-2 pr-3">
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                <Link
+                  href={`/sources/${r.source}`}
+                  className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 hover:text-brand-600 dark:bg-slate-800 dark:text-slate-300"
+                >
                   {r.source}
-                </span>
+                </Link>
               </td>
               <td className="py-2 pr-3 font-mono text-xs text-slate-500">
                 {r.ledger}
