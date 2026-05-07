@@ -573,6 +573,10 @@ func (s *Server) mountRoutes() {
 	// Distinct trading pairs.
 	s.mux.HandleFunc("GET /v1/markets", s.handleMarkets)
 
+	// Per-pool listing — every (source, base, quote) tuple in the
+	// recency window. Backs the /dexes table on the explorer.
+	s.mux.HandleFunc("GET /v1/pools", s.handlePools)
+
 	// Single-pair activity summary.
 	s.mux.HandleFunc("GET /v1/pairs", s.handlePairs)
 

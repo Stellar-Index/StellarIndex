@@ -1029,6 +1029,25 @@ func (r storeMarketsReader) SourceMarkets(ctx context.Context, source, cursor st
 	return out, next, nil
 }
 
+func (r storeMarketsReader) AllPools(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
+	rows, next, err := r.s.AllPools(ctx, cursor, limit, order)
+	if err != nil {
+		return nil, "", err
+	}
+	out := make([]v1.Pool, len(rows))
+	for i, p := range rows {
+		out[i] = v1.Pool{
+			Source:        p.Source,
+			Base:          p.Pair.Base.String(),
+			Quote:         p.Pair.Quote.String(),
+			LastTradeAt:   p.LastTradeAt,
+			TradeCount24h: p.TradeCount24h,
+			Volume24hUSD:  p.Volume24hUSD,
+		}
+	}
+	return out, next, nil
+}
+
 func (r storeMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (v1.Market, bool, error) {
 	m, ok, err := r.s.PairMarket(ctx, base, quote)
 	if err != nil || !ok {
@@ -1173,6 +1192,34 @@ type cachedMarketsReader struct {
 
 func (r cachedMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (v1.Market, bool, error) {
 	return r.inner.PairMarket(ctx, base, quote)
+}
+
+func (r cachedMarketsReader) AllPools(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
+	// Pools queries are heavy (group by source × pair); cache
+	// follows the same TTL as the markets list.
+	if r.rdb == nil {
+		return r.inner.AllPools(ctx, cursor, limit, order)
+	}
+	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order) + ":pools=1"
+	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
+		var p listCachePayload[v1.Pool]
+		if jerr := json.Unmarshal(raw, &p); jerr == nil {
+			return p.Items, p.NextCursor, nil
+		}
+		r.log.Warn("pools cache decode failed", "key", cacheKey)
+	} else if !errors.Is(err, redis.Nil) {
+		r.log.Warn("pools cache read failed", "key", cacheKey, "err", err)
+	}
+	items, next, err := r.inner.AllPools(ctx, cursor, limit, order)
+	if err != nil {
+		return nil, "", err
+	}
+	if buf, jerr := json.Marshal(listCachePayload[v1.Pool]{Items: items, NextCursor: next}); jerr == nil {
+		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
+			r.log.Warn("pools cache write failed", "key", cacheKey, "err", serr)
+		}
+	}
+	return items, next, nil
 }
 
 func (r cachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {

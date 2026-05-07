@@ -1,297 +1,423 @@
 'use client';
 
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
-import { asExample } from '@/api/client';
-import { useSources, type Source } from '@/api/hooks';
+import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 
-type DexEntry = {
-  name: string;
+interface Pool {
   source: string;
-  type: string;
-  status: 'live' | 'experimental' | 'native';
-  blurb: string;
-  notes: string[];
-  contractsUrl?: string;
-  discoveryDoc: string;
+  base: string;
+  quote: string;
+  last_trade_at: string;
+  trade_count_24h: number;
+  volume_24h_usd?: string | null;
+}
+
+type Order = 'volume_24h_usd_desc' | 'pair';
+
+const PAGE_LIMIT = 100;
+
+// Source name → category styling. Anything outside this list still
+// renders, just without a coloured chip — keeps the table working
+// when new sources land before this map gets updated.
+const SOURCE_TONE: Record<string, string> = {
+  soroswap: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
+  phoenix: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+  aquarius: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',
+  sdex: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
+  comet: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
+  binance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200',
+  coinbase: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+  kraken: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200',
+  bitstamp: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200',
 };
 
-const DEXES: DexEntry[] = [
-  {
-    name: 'Soroswap',
-    source: 'soroswap',
-    type: 'Uniswap V2 clone (Soroban)',
-    status: 'live',
-    blurb:
-      'Primary Soroban DEX source — factory + per-pair contracts, event-based ingest verified against the upstream Rust source.',
-    notes: [
-      'SwapEvent carries only in/out deltas — post-state reserves arrive in the immediately-following SyncEvent. Correlation key is (ledger, tx_hash, op_index).',
-      'Pair registry persisted in postgres so live ingest + parallel backfill chunks share one source of truth.',
-    ],
-    contractsUrl: 'https://github.com/soroswap/core',
-    discoveryDoc: '/research/discovery/soroswap',
-  },
-  {
-    name: 'Phoenix',
-    source: 'phoenix',
-    type: 'AMM (Soroban)',
-    status: 'live',
-    blurb:
-      'Soroban AMM with a unique per-field event split — reconstructing one swap requires grouping eight events tagged ("swap", "<field>") on the same (ledger, tx_hash, op_index).',
-    notes: [
-      'Every swap fans out across 8 events, one per field of the swap state. Decoder must group them before emitting a single canonical Trade.',
-      'Topic shape is a 2-tuple ("swap", "<field>") — different from the protocol-namespaced shapes Soroswap and Aquarius use.',
-    ],
-    discoveryDoc: '/research/discovery/phoenix',
-  },
-  {
-    name: 'Aquarius',
-    source: 'aquarius',
-    type: 'AMM with gauges (Soroban)',
-    status: 'live',
-    blurb:
-      'Curve-style AMM with bribe/gauge layer. Constant-product and stableswap pools both ingest into the same canonical Trade shape.',
-    notes: [
-      'Decoder treats stableswap and constant-product pools uniformly — VWAP is a function of in/out amounts, not the bonding curve.',
-    ],
-    discoveryDoc: '/research/discovery/aquarius',
-  },
-  {
-    name: 'SDEX',
-    source: 'sdex',
-    type: 'Native order book (classic)',
-    status: 'native',
-    blurb:
-      'Stellar native on-chain order book. Trades extracted from CAP-67 unified token transfer events plus operations + effects pre-Protocol-23.',
-    notes: [
-      'Post-Protocol 23 (Whisk, mainnet 2025-09-03) every classic asset movement emits a unified transfer/mint/burn event with a 4th sep0011_asset topic.',
-      'Pre-P23 path parses operations + effects directly. Decoder handles both code paths transparently.',
-    ],
-    discoveryDoc: '/research/discovery/sdex',
-  },
-  {
-    name: 'Comet',
-    source: 'comet',
-    type: 'Balancer V1 fork (Soroban)',
-    status: 'experimental',
-    blurb:
-      'Balancer-style multi-asset pool. Shared ("POOL", <event>) topic across every Comet pool contract — narrow coverage filters downstream by Trade.Source + contract address.',
-    notes: [
-      'Topic match alone identifies any pubnet contract that deployed Balancer-V1 Comet code — operators wanting only Blend backstop pools filter at aggregator time, not dispatch time.',
-    ],
-    discoveryDoc: '/research/discovery/comet',
-  },
-];
-
+/**
+ * DexesView — the all-pools explorer table. Same UX as /assets
+ * (sortable header, paginated, drillable) but listing every
+ * (source, base, quote) tuple in the trades store. Source filter
+ * chips at the top let visitors scope the table to one venue.
+ */
 export function DexesView() {
-  // Live per-source 24h stats via /v1/sources?include=stats.
-  // The map indexes by source name so DEXES[].source can look up
-  // its row directly.
-  const sources = useSources(undefined, true);
-  const statsBySource = new Map<string, Source>();
-  for (const s of sources.data ?? []) {
-    statsBySource.set(s.name, s);
+  const [order, setOrder] = useState<Order>('volume_24h_usd_desc');
+  const [cursor, setCursor] = useState<string>('');
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  // Source-side filter applies AFTER the API responds — keeps
+  // the cursor pagination simple. Power users wanting a single-
+  // source paginated list use /dexes/<source> directly.
+  const [sourceFilter, setSourceFilter] = useState<string>('');
+
+  const q = useQuery<{ pools: Pool[]; nextCursor?: string }>({
+    queryKey: ['/v1/pools', order, cursor],
+    queryFn: async () => {
+      const env = await apiGet<{
+        data: Pool[];
+        pagination?: { next?: string };
+      }>('/v1/pools', {
+        order_by: order,
+        limit: PAGE_LIMIT,
+        ...(cursor ? { cursor } : {}),
+      });
+      return {
+        pools: env.data ?? [],
+        nextCursor: env.pagination?.next,
+      };
+    },
+  });
+
+  const pools = useMemo(() => q.data?.pools ?? [], [q.data]);
+  const sourcesOnPage = useMemo(
+    () => Array.from(new Set(pools.map((p) => p.source))).sort(),
+    [pools],
+  );
+  const filtered = sourceFilter
+    ? pools.filter((p) => p.source === sourceFilter)
+    : pools;
+
+  function nextPage() {
+    const next = q.data?.nextCursor;
+    if (!next) return;
+    setCursorStack((s) => [...s, cursor]);
+    setCursor(next);
   }
-  const totalVolume = (sources.data ?? [])
-    .filter((s) => DEXES.some((d) => d.source === s.name))
-    .reduce((sum, s) => {
-      const v = s.volume_24h_usd ? Number(s.volume_24h_usd) : 0;
-      return sum + (Number.isFinite(v) ? v : 0);
-    }, 0);
-  const totalTrades = (sources.data ?? [])
-    .filter((s) => DEXES.some((d) => d.source === s.name))
-    .reduce((sum, s) => sum + (s.trade_count_24h ?? 0), 0);
+  function prevPage() {
+    setCursorStack((s) => {
+      const head = s[s.length - 1] ?? '';
+      setCursor(head);
+      return s.slice(0, -1);
+    });
+  }
+  function changeOrder(next: Order) {
+    setOrder(next);
+    setCursor('');
+    setCursorStack([]);
+  }
+
+  const hasNext = !!q.data?.nextCursor;
+  const hasPrev = cursorStack.length > 0;
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">DEXes</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Pools</h1>
         <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
-          AMMs and the native order book — every venue we ingest from
-          on-chain Stellar. Live 24h numbers below come from{' '}
-          <code className="font-mono text-xs">/v1/sources?include=stats</code>
-          ; integration audit notes live in each card&apos;s linked
-          discovery doc.
+          Every (venue, base, quote) tuple we&apos;ve observed in the
+          last 14 days. The same physical pair traded on multiple
+          DEXes shows as multiple rows — one per venue.
         </p>
       </header>
 
       <Panel
-        title="DEX activity (last 24h)"
-        hint="Aggregated across the five venues below"
-        source={asExample('/v1/sources', { include: 'stats' })}
+        title={`${pools.length} pools on this page${sourceFilter ? ` (${filtered.length} after filter)` : ''}`}
+        hint="Source: /v1/pools"
+        source={asExample('/v1/pools', { limit: PAGE_LIMIT, order_by: order })}
+        bodyClassName="-mx-4"
       >
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Stat
-            label="Total trades"
-            value={totalTrades > 0 ? formatCompact(totalTrades) : '—'}
-          />
-          <Stat
-            label="Total volume"
-            value={
-              totalVolume > 0 ? `$${formatCompact(totalVolume)}` : '—'
-            }
-          />
-          <Stat
-            label="Live venues"
-            value={
-              sources.data
-                ? `${
-                    DEXES.filter((d) => {
-                      const s = statsBySource.get(d.source);
-                      return s && (s.trade_count_24h ?? 0) > 0;
-                    }).length
-                  } / ${DEXES.length}`
-                : '—'
-            }
-          />
+        <div className="space-y-3 px-4 pb-3 pt-1">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-slate-500">Sort:</span>
+            <SortPill
+              active={order === 'volume_24h_usd_desc'}
+              onClick={() => changeOrder('volume_24h_usd_desc')}
+            >
+              24h volume ↓
+            </SortPill>
+            <SortPill
+              active={order === 'pair'}
+              onClick={() => changeOrder('pair')}
+            >
+              Source / pair (A→Z)
+            </SortPill>
+          </div>
+          {sourcesOnPage.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-slate-500">Filter venue:</span>
+              <SourceChip
+                active={sourceFilter === ''}
+                onClick={() => setSourceFilter('')}
+                label="All"
+              />
+              {sourcesOnPage.map((s) => (
+                <SourceChip
+                  key={s}
+                  active={sourceFilter === s}
+                  onClick={() => setSourceFilter(s)}
+                  label={s}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                <Th>#</Th>
+                <Th>Venue</Th>
+                <Th>Base</Th>
+                <Th>Quote</Th>
+                <Th align="right">24h volume</Th>
+                <Th align="right">24h trades</Th>
+                <Th align="right">Last trade</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {q.isLoading && !q.data && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">
+                    Loading pools…
+                  </td>
+                </tr>
+              )}
+              {!q.isLoading && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">
+                    No pools matched.
+                  </td>
+                </tr>
+              )}
+              {filtered.map((p, i) => {
+                const slug = `${p.base}~${p.quote}`;
+                const offset = cursorStack.length * PAGE_LIMIT + i + 1;
+                const vol = p.volume_24h_usd ? Number(p.volume_24h_usd) : null;
+                const tone = SOURCE_TONE[p.source] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+                return (
+                  <tr
+                    key={`${p.source}|${p.base}|${p.quote}`}
+                    className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                  >
+                    <Td>
+                      <span className="font-mono text-[11px] text-slate-400">
+                        {offset}
+                      </span>
+                    </Td>
+                    <Td>
+                      <Link
+                        href={`/dexes/${p.source}`}
+                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                      >
+                        {p.source}
+                      </Link>
+                    </Td>
+                    <Td>
+                      <Link
+                        href={`/markets/${encodeURIComponent(slug)}`}
+                        className="hover:text-brand-600"
+                      >
+                        <AssetLabel canonical={p.base} />
+                      </Link>
+                    </Td>
+                    <Td>
+                      <Link
+                        href={`/markets/${encodeURIComponent(slug)}`}
+                        className="hover:text-brand-600"
+                      >
+                        <AssetLabel canonical={p.quote} />
+                      </Link>
+                    </Td>
+                    <Td align="right">
+                      {vol != null && Number.isFinite(vol) && vol > 0 ? (
+                        <span className="font-mono tabular-nums">
+                          ${formatCompact(vol)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                      )}
+                    </Td>
+                    <Td align="right">
+                      <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                        {p.trade_count_24h > 0
+                          ? formatCompact(p.trade_count_24h)
+                          : '0'}
+                      </span>
+                    </Td>
+                    <Td align="right">
+                      <span className="font-mono tabular-nums text-xs text-slate-500">
+                        {formatRelative(p.last_trade_at)}
+                      </span>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs dark:border-slate-800">
+          <button
+            type="button"
+            onClick={prevPage}
+            disabled={!hasPrev}
+            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400"
+          >
+            ← Previous
+          </button>
+          <span className="font-mono text-[11px] text-slate-400">
+            page {cursorStack.length + 1}
+          </span>
+          <button
+            type="button"
+            onClick={nextPage}
+            disabled={!hasNext}
+            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400"
+          >
+            Next →
+          </button>
         </div>
       </Panel>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {DEXES.map((d) => (
-          <DexCard
-            key={d.source}
-            entry={d}
-            stats={statsBySource.get(d.source)}
-            loading={sources.isLoading && !sources.data}
-          />
-        ))}
-      </div>
+      <p className="text-xs text-slate-500">
+        Drill into a single DEX&apos;s pools at{' '}
+        <Link href="/dexes/sdex" className="text-brand-600 hover:underline">
+          /dexes/sdex
+        </Link>
+        ,{' '}
+        <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">
+          /dexes/soroswap
+        </Link>
+        ,{' '}
+        <Link href="/dexes/phoenix" className="text-brand-600 hover:underline">
+          /dexes/phoenix
+        </Link>
+        ,{' '}
+        <Link href="/dexes/aquarius" className="text-brand-600 hover:underline">
+          /dexes/aquarius
+        </Link>
+        ,{' '}
+        <Link href="/dexes/comet" className="text-brand-600 hover:underline">
+          /dexes/comet
+        </Link>
+        .
+      </p>
     </div>
   );
 }
 
-function DexCard({
-  entry,
-  stats,
-  loading,
+function SortPill({
+  active,
+  onClick,
+  children,
 }: {
-  entry: DexEntry;
-  stats: Source | undefined;
-  loading: boolean;
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
-  const trades = stats?.trade_count_24h ?? 0;
-  const volume = stats?.volume_24h_usd ? Number(stats.volume_24h_usd) : 0;
-  const markets = stats?.markets_count_24h ?? 0;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold tracking-tight">{entry.name}</h2>
-        <StatusBadge status={entry.status} />
-      </div>
-      <p className="mt-1 text-xs uppercase tracking-wider text-slate-500">
-        {entry.type}
-      </p>
-
-      <div className="mt-4 grid grid-cols-3 gap-3 rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-950/40">
-        <Metric
-          label="24h volume"
-          value={
-            loading
-              ? '…'
-              : volume > 0
-                ? `$${formatCompact(volume)}`
-                : '—'
-          }
-        />
-        <Metric
-          label="24h trades"
-          value={
-            loading ? '…' : trades > 0 ? formatCompact(trades) : '—'
-          }
-        />
-        <Metric
-          label="24h pools"
-          value={loading ? '…' : markets > 0 ? `${markets}` : '—'}
-        />
-      </div>
-
-      <p className="mt-4 text-sm text-slate-700 dark:text-slate-300">
-        {entry.blurb}
-      </p>
-      <ul className="mt-3 space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
-        {entry.notes.map((n, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="text-slate-400">•</span>
-            <span>{n}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="mt-4 flex flex-wrap gap-3 text-xs">
-        <Link
-          href={entry.discoveryDoc}
-          className="inline-flex items-center gap-1 text-brand-600 hover:underline"
-        >
-          Read integration audit →
-        </Link>
-        <Link
-          href={`/dexes/${entry.source}`}
-          className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline"
-        >
-          View all pools →
-        </Link>
-        <Link
-          href={`/sources/${entry.source}`}
-          className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600"
-        >
-          Source registry →
-        </Link>
-        {entry.contractsUrl && (
-          <a
-            href={entry.contractsUrl}
-            className="inline-flex items-center gap-1 text-slate-500 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Contracts source
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md px-2 py-0.5 ${
+        active
+          ? 'bg-brand-600 text-white'
+          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
-function StatusBadge({ status }: { status: DexEntry['status'] }) {
-  const cls =
-    status === 'live'
-      ? 'bg-up-soft text-up-strong'
-      : status === 'experimental'
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-200'
-        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
-  const label = status === 'native' ? 'Stellar native' : status;
+function SourceChip({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
   return (
-    <span
-      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${cls}`}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
+        active
+          ? 'bg-brand-600 text-white'
+          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
+      }`}
     >
       {label}
-    </span>
+    </button>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Th({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
+  return (
+    <th
+      scope="col"
+      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
+  return (
+    <td
+      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </td>
+  );
+}
+
+function AssetLabel({ canonical }: { canonical: string | undefined | null }) {
+  if (!canonical) return <span className="text-xs text-slate-400">—</span>;
+  if (canonical === 'native') return <span className="font-medium">XLM</span>;
+  if (canonical.startsWith('fiat:')) {
+    return <span className="font-medium">{canonical.replace('fiat:', '')}</span>;
+  }
+  if (canonical.startsWith('crypto:')) {
+    return <span className="font-medium">{canonical.replace('crypto:', '')}</span>;
+  }
+  if (/^C[A-Z0-9]{55}$/.test(canonical)) {
+    return (
+      <span className="font-mono text-[11px]" title={canonical}>
+        {canonical.slice(0, 6)}…{canonical.slice(-4)}
+      </span>
+    );
+  }
+  const dashIx = canonical.indexOf('-');
+  if (dashIx === -1) {
+    return <span className="font-mono text-xs">{canonical}</span>;
+  }
+  const code = canonical.slice(0, dashIx);
+  const issuer = canonical.slice(dashIx + 1);
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
-        {label}
+      <div className="font-medium">{code}</div>
+      <div className="font-mono text-[10px] text-slate-500" title={issuer}>
+        {issuer.length > 12 ? `${issuer.slice(0, 6)}…${issuer.slice(-4)}` : issuer}
       </div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
     </div>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
-        {label}
-      </div>
-      <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-        {value}
-      </div>
-    </div>
-  );
+function formatRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 0) return 'now';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
 }

@@ -25,12 +25,87 @@ type MarketsReader interface {
 	// for paginated drill-down.
 	SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error)
 
+	// AllPools returns every (source, base, quote) tuple — same
+	// pair on two venues becomes two rows. Backs /v1/pools where
+	// the source dimension matters (the all-pools explorer table).
+	AllPools(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, error)
+
 	// PairMarket returns the activity summary for a single (base,
 	// quote) pair. The bool is false when the pair has no trades —
 	// the /v1/pairs handler translates that to an empty 200 OK array,
 	// not a 404, so the wire shape stays consistent with the
 	// PairsEnvelope contract.
 	PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error)
+}
+
+// Pool is the wire shape for /v1/pools entries. Same fields as
+// Market but with a `source` dimension so the same physical pair
+// traded on two DEXes shows as two rows.
+type Pool struct {
+	Source        string    `json:"source"`
+	Base          string    `json:"base"`
+	Quote         string    `json:"quote"`
+	LastTradeAt   time.Time `json:"last_trade_at"`
+	TradeCount24h int64     `json:"trade_count_24h"`
+	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
+}
+
+// handlePools serves GET /v1/pools — every (source, base, quote)
+// tuple observed in the recency window. Same query params as
+// /v1/markets (cursor, limit, order_by); no `source=` filter
+// since the result already carries source on each row.
+func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
+	cursor := r.URL.Query().Get("cursor")
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-limit",
+				"Invalid limit", http.StatusBadRequest,
+				"limit must be an integer in [1, 500]")
+			return
+		}
+		limit = parsed
+	}
+	var order timescale.MarketsOrder
+	switch r.URL.Query().Get("order_by") {
+	case "", "volume_24h_usd_desc":
+		order = timescale.MarketsOrderVolume24hDesc
+	case "pair":
+		order = timescale.MarketsOrderPair
+	default:
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-order",
+			"Invalid order_by", http.StatusBadRequest,
+			"order_by must be 'pair' or 'volume_24h_usd_desc'")
+		return
+	}
+
+	reader := s.markets
+	if reader == nil {
+		writeJSON(w, []Pool{}, Flags{})
+		return
+	}
+	rows, next, err := reader.AllPools(r.Context(), cursor, limit, order)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("AllPools failed", "err", err)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	if rows == nil {
+		rows = []Pool{}
+	}
+	env := Envelope{Data: rows, Flags: Flags{}}
+	if next != "" {
+		env.Pagination = &Pagination{Next: next}
+	}
+	writeEnvelope(w, env)
 }
 
 // Market is the wire shape for /v1/markets entries.

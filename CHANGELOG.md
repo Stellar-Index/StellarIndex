@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **/dexes is now the all-pools table** — same shape as /assets,
+  one row per (venue, base, quote) tuple. Replaces the 5
+  per-DEX summary cards. Sortable by 24h volume desc / source-pair
+  alphabetical. Cursor-paginated 100 pools per page. Source-filter
+  chip row at the top scopes the table to one venue. Each row
+  deep-links to /markets/<base~quote> for the standard pair detail.
+  Backend: new `/v1/pools` endpoint backed by `Store.AllPools` —
+  one row per (source, base, quote) tuple, distinct from
+  `/v1/markets` which collapses across sources.
+
 ### Added
 - **/dexes/<source>: full pool table per DEX.** Click any DEX
   card on `/dexes` to drill into a paginated table of every

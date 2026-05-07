@@ -38,6 +38,24 @@ func (r *stubMarketsReader) SourceMarkets(_ context.Context, _, _ string, _ int,
 	return r.pairs, r.nextCur, nil
 }
 
+func (r *stubMarketsReader) AllPools(_ context.Context, _ string, _ int, _ timescale.MarketsOrder) ([]v1.Pool, string, error) {
+	if r.err != nil {
+		return nil, "", r.err
+	}
+	out := make([]v1.Pool, len(r.pairs))
+	for i, m := range r.pairs {
+		out[i] = v1.Pool{
+			Source:        "test",
+			Base:          m.Base,
+			Quote:         m.Quote,
+			LastTradeAt:   m.LastTradeAt,
+			TradeCount24h: m.TradeCount24h,
+			Volume24hUSD:  m.Volume24hUSD,
+		}
+	}
+	return out, r.nextCur, nil
+}
+
 func (r *stubMarketsReader) PairMarket(_ context.Context, _ canonical.Asset, _ canonical.Asset) (v1.Market, bool, error) {
 	if r.pairErr != nil {
 		return v1.Market{}, false, r.pairErr
