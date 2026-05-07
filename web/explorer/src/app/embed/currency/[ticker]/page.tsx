@@ -15,6 +15,8 @@ interface CurrencyDetail {
   name: string;
   rate_usd: number;
   inverse_usd: number;
+  change_24h_pct?: number | null;
+  change_7d_pct?: number | null;
   history_7d?: { date: string; rate_usd: number; inverse_usd: number }[];
 }
 
@@ -82,14 +84,18 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
 
   const priceUSD = cur.inverse_usd > 0 ? cur.inverse_usd : null;
   const series = cur.history_7d ?? [];
-  let changePct: number | null = null;
-  if (series.length >= 2) {
+  // Prefer the API-computed 7d change (consistent with the rest of
+  // the explorer) and fall back to deriving from history when the
+  // upstream omits it.
+  let change7d: number | null = cur.change_7d_pct ?? null;
+  if (change7d == null && series.length >= 2) {
     const first = series[0].inverse_usd;
     const last = series[series.length - 1].inverse_usd;
     if (first > 0 && last > 0) {
-      changePct = ((last - first) / first) * 100;
+      change7d = ((last - first) / first) * 100;
     }
   }
+  const change24h: number | null = cur.change_24h_pct ?? null;
 
   return (
     <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
@@ -107,26 +113,19 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
           rates&shy;engine.net ↗
         </a>
       </div>
-      <div className="flex items-baseline gap-3">
+      <div className="flex items-baseline gap-2">
         <span className="font-mono text-2xl tabular-nums">
           {priceUSD != null ? `$${formatRate(priceUSD)}` : '—'}
         </span>
-        {changePct != null && Number.isFinite(changePct) && (
-          <span
-            className={`rounded px-1.5 py-0.5 font-mono text-xs tabular-nums ${
-              changePct > 0
-                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                : changePct < 0
-                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
-                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-            }`}
-          >
-            {changePct > 0 ? '+' : ''}
-            {changePct.toFixed(2)}% 7d
-          </span>
-        )}
+        <ChangeChip pct={change24h} label="24h" />
+        <ChangeChip pct={change7d} label="7d" />
       </div>
-      {series.length >= 2 && <Sparkline points={series.map((p) => p.inverse_usd)} positive={(changePct ?? 0) >= 0} />}
+      {series.length >= 2 && (
+        <Sparkline
+          points={series.map((p) => p.inverse_usd)}
+          positive={(change7d ?? 0) >= 0}
+        />
+      )}
       <div className="mt-auto flex items-center justify-between text-[10px] text-slate-400">
         <span>Powered by Rates Engine</span>
         {cur.rate_usd > 0 && (
@@ -139,6 +138,22 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   );
 }
 
+function ChangeChip({ pct, label }: { pct: number | null | undefined; label: string }) {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  const cls =
+    pct > 0
+      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+      : pct < 0
+        ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+  return (
+    <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
+      {pct > 0 ? '+' : ''}
+      {pct.toFixed(2)}% {label}
+    </span>
+  );
+}
+
 function Sparkline({ points, positive }: { points: number[]; positive: boolean }) {
   const valid = points.filter((n) => Number.isFinite(n) && n > 0);
   if (valid.length < 2) return null;
@@ -148,16 +163,19 @@ function Sparkline({ points, positive }: { points: number[]; positive: boolean }
   const w = 280;
   const h = 36;
   const stepX = w / (valid.length - 1);
-  const path = valid
-    .map((p, i) => {
-      const x = i * stepX;
-      const y = h - ((p - min) / range) * h;
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
+  const xy = valid.map((p, i) => ({
+    x: i * stepX,
+    y: h - ((p - min) / range) * h,
+  }));
+  const path = xy
+    .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`)
     .join(' ');
+  const area = `${path} L${xy[xy.length - 1].x.toFixed(2)},${h} L${xy[0].x.toFixed(2)},${h} Z`;
   const stroke = positive ? '#059669' : '#e11d48';
+  const fill = positive ? 'rgba(16,185,129,0.14)' : 'rgba(244,63,94,0.14)';
   return (
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-9 w-full">
+      <path d={area} fill={fill} stroke="none" />
       <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
