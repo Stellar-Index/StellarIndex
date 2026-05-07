@@ -1,6 +1,6 @@
 'use client';
 
-import { useSACWrappers } from '@/api/hooks';
+import { useIssuerLookup, useSACWrappers } from '@/api/hooks';
 
 /**
  * AssetLabel — single shared component for rendering a canonical
@@ -28,6 +28,7 @@ export function AssetLabel({
   canonical: string | undefined | null;
 }) {
   const { data: sacMap } = useSACWrappers();
+  const { data: issuerMap } = useIssuerLookup();
 
   if (!canonical) return <span className="text-xs text-slate-400">—</span>;
   if (canonical === 'native')
@@ -81,6 +82,24 @@ export function AssetLabel({
   }
   const code = canonical.slice(0, dashIx);
   const issuer = canonical.slice(dashIx + 1);
+  // When we know the issuer's organisation, render the org name
+  // as the subtitle (e.g. "USDC / Circle") instead of the raw
+  // truncated G-strkey. The issuer's full G-strkey stays in the
+  // tooltip so power users can still copy it.
+  const known = issuerMap?.[issuer];
+  if (known?.org_name) {
+    return (
+      <div>
+        <div className="font-medium">{code}</div>
+        <div
+          className="text-[10px] text-slate-500"
+          title={issuer}
+        >
+          by {known.org_name}
+        </div>
+      </div>
+    );
+  }
   return (
     <div>
       <div className="font-medium">{code}</div>

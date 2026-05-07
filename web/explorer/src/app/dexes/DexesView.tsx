@@ -31,6 +31,16 @@ const PAGE_LIMIT = 100;
 // before the first /v1/pools response lands.
 const ALL_DEXES = ['aquarius', 'comet', 'phoenix', 'sdex', 'soroswap'];
 
+// Source-name annotations that appear next to the source chip.
+// Comet's only mainnet deployment is Blend's backstop pool —
+// every Comet trade on Stellar is part of a liquidation auction,
+// not retail price discovery. Surface that context inline so the
+// row isn't read as a normal AMM venue. See
+// docs/operations/wasm-audits/comet.md.
+const SOURCE_NOTE: Record<string, string> = {
+  comet: 'Blend backstop',
+};
+
 // Source name → category styling. Anything outside this list still
 // renders, just without a coloured chip — keeps the table working
 // when new sources land before this map gets updated.
@@ -222,6 +232,11 @@ export function DexesView() {
                       >
                         {p.source}
                       </Link>
+                      {SOURCE_NOTE[p.source] && (
+                        <div className="mt-0.5 text-[9px] uppercase tracking-wide text-slate-500">
+                          {SOURCE_NOTE[p.source]}
+                        </div>
+                      )}
                     </Td>
                     <Td>
                       <Link

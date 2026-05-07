@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **Classic-asset labels show the issuer's organisation** when
+  known. AssetLabel renders `USDC / by Circle` instead of the
+  truncated G-strkey when `/v1/issuers` returns a populated
+  `org_name`. Powered by a new `useIssuerLookup` hook that pulls
+  `/v1/issuers?limit=500` once per session and indexes by
+  G-strkey. Falls back to the truncated G-strkey for unknown
+  issuers.
+- **Comet rows annotated as "Blend backstop"** on `/dexes`. The
+  only Comet pool deployed on Stellar mainnet is Blend's
+  backstop module (per `docs/operations/wasm-audits/comet.md`),
+  so its trades are liquidation-auction artefacts not retail
+  price discovery. The new chip-subscript surfaces that context
+  inline so visitors don't read the row as a normal AMM venue.
+
 ## [v0.5.0-rc.28] — 2026-05-07
 
 ### Added
