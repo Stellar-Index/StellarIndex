@@ -154,6 +154,18 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
 
   const totalObs =
     detail.assets?.reduce((sum, a) => sum + a.observation_count, 0) ?? 0;
+  // Sum per-asset 24h USD volume from the parallel /v1/coins?issuer= fetch.
+  // null/missing volumes drop out cleanly; the panel renders "—" when
+  // every asset row had no recent USD-priced trade.
+  let totalVolume24hUSD = 0;
+  let anyVolume = false;
+  for (const a of detail.assets ?? []) {
+    const v = Number(coinPrices.get(a.asset_id)?.volume_24h_usd ?? '');
+    if (Number.isFinite(v) && v > 0) {
+      totalVolume24hUSD += v;
+      anyVolume = true;
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
@@ -202,8 +214,12 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           panelId="activity-card"
           className="lg:col-span-2"
         >
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
             <Stat label="Assets" value={String(detail.assets?.length ?? 0)} />
+            <Stat
+              label="24h volume"
+              value={anyVolume ? `$${formatCompact(totalVolume24hUSD)}` : '—'}
+            />
             <Stat
               label="Total observations"
               value={formatCompact(totalObs)}
