@@ -27,6 +27,41 @@ export type StatusResponse = {
 };
 
 /**
+ * useIssuerLookup — fetches /v1/issuers once, builds a
+ * g_strkey → { home_domain, org_name } map cached for the
+ * session. Used by AssetLabel to render classic-asset rows with
+ * the issuer's known display name (e.g. "USDC · Circle" instead
+ * of "USDC · GA5Z…KZVN") whenever the API knows the issuer.
+ *
+ * Cache-friendly because /v1/issuers is small (a few hundred
+ * rows max) and changes only when the curated `known_issuers`
+ * fallback gets a new entry or the operator's eventual
+ * issuer-upsert path lands.
+ */
+export function useIssuerLookup() {
+  return useQuery<Record<string, { home_domain?: string; org_name?: string }>>({
+    queryKey: ['/v1/issuers', 'lookup'],
+    queryFn: async () => {
+      const env = await apiGet<{
+        data: Array<{ g_strkey: string; home_domain?: string; org_name?: string }>;
+      }>('/v1/issuers', { limit: 500 });
+      const out: Record<string, { home_domain?: string; org_name?: string }> = {};
+      for (const row of env.data ?? []) {
+        if (row.org_name || row.home_domain) {
+          out[row.g_strkey] = {
+            home_domain: row.home_domain,
+            org_name: row.org_name,
+          };
+        }
+      }
+      return out;
+    },
+    staleTime: 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+/**
  * useSACWrappers — fetches the operator-config Stellar-Asset-Contract
  * wrapper map: SAC C-strkey → "CODE-ISSUER" classic asset key. Used
  * by AssetLabel-style components to render Soroban DEX pool rows
