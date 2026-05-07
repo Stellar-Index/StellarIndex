@@ -23,8 +23,13 @@ interface CurrenciesPayload {
   source?: string;
 }
 
+type SortKey = 'ticker' | 'rate' | 'change_7d';
+type SortDir = 'asc' | 'desc';
+
 export function CurrenciesView() {
   const [q, setQ] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('ticker');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   const query = useQuery<CurrenciesPayload>({
     queryKey: ['/v1/currencies', 'sparkline'],
@@ -40,11 +45,27 @@ export function CurrenciesView() {
   const all = query.data?.currencies ?? [];
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    if (!term) return all;
-    return all.filter(
-      (c) => c.ticker.toLowerCase().includes(term) || c.name.toLowerCase().includes(term),
-    );
-  }, [all, q]);
+    const matched = !term
+      ? all
+      : all.filter(
+          (c) =>
+            c.ticker.toLowerCase().includes(term) ||
+            c.name.toLowerCase().includes(term),
+        );
+    const sorted = [...matched].sort((a, b) => compareCurrencies(a, b, sortKey, sortDir));
+    return sorted;
+  }, [all, q, sortKey, sortDir]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      // Default direction by axis: ticker A→Z, rate / change desc
+      // (most users want "biggest first" for numeric columns).
+      setSortDir(key === 'ticker' ? 'asc' : 'desc');
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
@@ -94,11 +115,17 @@ export function CurrenciesView() {
           <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
-                <Th>Ticker</Th>
+                <SortableTh sortKey="ticker" current={sortKey} dir={sortDir} onToggle={toggleSort}>
+                  Ticker
+                </SortableTh>
                 <Th>Name</Th>
-                <Th align="right">1 USD =</Th>
+                <SortableTh sortKey="rate" current={sortKey} dir={sortDir} onToggle={toggleSort} align="right">
+                  1 USD =
+                </SortableTh>
                 <Th align="right">1 unit = USD</Th>
-                <Th align="right">7d %</Th>
+                <SortableTh sortKey="change_7d" current={sortKey} dir={sortDir} onToggle={toggleSort} align="right">
+                  7d %
+                </SortableTh>
                 <Th align="right">7d chart</Th>
               </tr>
             </thead>
@@ -192,6 +219,73 @@ function formatDate(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function compareCurrencies(
+  a: CurrencyRow,
+  b: CurrencyRow,
+  key: SortKey,
+  dir: SortDir,
+): number {
+  let cmp = 0;
+  switch (key) {
+    case 'ticker':
+      cmp = a.ticker.localeCompare(b.ticker);
+      break;
+    case 'rate':
+      cmp = (a.rate_usd ?? 0) - (b.rate_usd ?? 0);
+      break;
+    case 'change_7d': {
+      // null change → push to end of either direction so unknowns
+      // stay together rather than pretending they're zero.
+      const av = a.change_7d_pct ?? null;
+      const bv = b.change_7d_pct ?? null;
+      if (av == null && bv == null) cmp = 0;
+      else if (av == null) cmp = 1; // a wins-loses to push a after b
+      else if (bv == null) cmp = -1;
+      else cmp = av - bv;
+      break;
+    }
+  }
+  return dir === 'asc' ? cmp : -cmp;
+}
+
+function SortableTh({
+  sortKey,
+  current,
+  dir,
+  onToggle,
+  align,
+  children,
+}: {
+  sortKey: SortKey;
+  current: SortKey;
+  dir: SortDir;
+  onToggle: (k: SortKey) => void;
+  align?: 'left' | 'right';
+  children: React.ReactNode;
+}) {
+  const active = current === sortKey;
+  const arrow = active ? (dir === 'asc' ? '↑' : '↓') : '';
+  return (
+    <th
+      scope="col"
+      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(sortKey)}
+        className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider ${
+          active
+            ? 'text-brand-600 dark:text-brand-400'
+            : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+        }`}
+      >
+        {children}
+        {arrow && <span className="font-mono text-xs">{arrow}</span>}
+      </button>
+    </th>
+  );
 }
 
 function ChangePct({ value }: { value?: number }) {
