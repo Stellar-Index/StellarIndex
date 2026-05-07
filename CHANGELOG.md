@@ -15,7 +15,28 @@ against.
 
 ## [Unreleased]
 
-## [v0.5.0-rc.23] — 2026-05-07
+## [v0.5.0-rc.24] — 2026-05-07
+
+### Added
+- **`circulating_supply` + `market_cap_usd` on `/v1/currencies`**
+  (#973). Joined from a curated quarterly-refreshed CSV at
+  `internal/sources/forex/circulation_data.csv` covering ~25
+  currencies (>95% of global fx spot volume per BIS 2022).
+  Each row cites a central-bank series identifier (FRED:M2SL,
+  ECB:BSI.M2, BoJ:Money_Stock_M2, ...) so the operator can
+  refresh from primary documents in <5 min. Currencies absent
+  from the table emit null on both fields; the frontend renders
+  "—". Broader coverage via the World Bank API
+  (`FM.LBL.BMNY.CN`, ~250 countries) is a follow-up.
+- Same fields on `/v1/currencies/{ticker}` detail.
+
+(rc.23 was cancelled mid-build to bundle #973 into the next
+deployable tag; rc.24 supersedes it. Contents of rc.23 below
+roll forward verbatim.)
+
+### Carried forward from cancelled rc.23
+
+## [v0.5.0-rc.23 — cancelled] — 2026-05-07
 
 ### Added
 - **Massive.com forex provider replaces the currency-api jsDelivr
