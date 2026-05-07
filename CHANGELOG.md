@@ -25,6 +25,18 @@ against.
   applied to OraclesView's /v1/oracle/streams call.
 
 ### Changed
+- **/signin and /signup now use magic-link auth, not API keys.**
+  Replaces /signup's "POST /v1/signup → here is your plaintext key"
+  flow with a magic-link form posting to /v1/auth/login (which
+  already existed via the dashboardauth bundle). The /signin
+  placeholder shipped in #888 also gets the real form. Both pages
+  share the same `SignInForm` component with a `mode` flag for
+  copy variation. The email link goes to whatever the operator
+  configured as DashboardBaseURL — the existing dashboardauth
+  /v1/auth/callback handler verifies the token, sets the session
+  cookie, and redirects. New emails create the account on first
+  callback (no separate signup step). Stale `SignupForm.tsx`
+  removed.
 - **/assets adds a network-filter chip row + suppresses market cap
   on low-volume rows.** Per the user spec: "we need a filter at the
   top to choose the network ... we probably just wont show a market
