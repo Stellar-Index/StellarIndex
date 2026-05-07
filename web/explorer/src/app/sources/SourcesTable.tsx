@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
+import { SourceSparkline } from '@/components/SourceSparkline';
 import { useSources, useCursors, type Source } from '@/api/hooks';
 
 /**
@@ -22,7 +23,7 @@ export function SourcesTable() {
   // table can show the most-active venues at the top of each
   // class group. The opt-in matches the public docs so any caller
   // using /v1/sources directly sees the same shape.
-  const { data, isLoading, isError, error } = useSources(undefined, true);
+  const { data, isLoading, isError, error } = useSources(undefined, true, { sparkline: true });
   const cursors = useCursors();
   const grouped = useMemo(() => groupByClass(data ?? []), [data]);
 
@@ -98,6 +99,7 @@ export function SourcesTable() {
                   <Th>Subclass</Th>
                   <Th align="right">Default weight</Th>
                   <Th align="right">24h trades</Th>
+                  <Th>24h chart</Th>
                   <Th align="right">Last ingest</Th>
                   <Th align="right">Flags</Th>
                 </tr>
@@ -139,6 +141,9 @@ export function SourcesTable() {
                             —
                           </span>
                         )}
+                      </Td>
+                      <Td>
+                        <SourceSparkline buckets={s.volume_history_24h} />
                       </Td>
                       <Td align="right">
                         <CursorAgo cursor={cursor} />

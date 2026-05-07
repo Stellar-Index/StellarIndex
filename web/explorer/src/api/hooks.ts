@@ -183,6 +183,10 @@ export type Source = {
   trade_count_24h?: number;
   volume_24h_usd?: string;
   markets_count_24h?: number;
+  // Populated only when the caller passes `{ sparkline: true }`.
+  // Per-(source, hour) USD-volume buckets — 24 entries oldest →
+  // newest, server-side zero-filled for hours with no trades.
+  volume_history_24h?: { hour: string; volume_usd: string }[];
 };
 
 type SourcesEnvelope = { data: Source[] };
@@ -199,19 +203,25 @@ type SourcesEnvelope = { data: Source[] };
 export function useSources(
   classFilter?: Source['class'],
   includeStats?: boolean,
+  options?: { sparkline?: boolean },
 ) {
+  const include = options?.sparkline
+    ? 'stats,sparkline'
+    : includeStats
+      ? 'stats'
+      : undefined;
   return useQuery<Source[]>({
     queryKey: [
       '/v1/sources',
       classFilter ?? 'all',
-      includeStats ? 'stats' : 'no-stats',
+      include ?? 'no-stats',
     ],
     queryFn: async () => {
       const env = await apiGet<SourcesEnvelope | Source[]>(
         '/v1/sources',
         {
           ...(classFilter ? { class: classFilter } : {}),
-          ...(includeStats ? { include: 'stats' } : {}),
+          ...(include ? { include } : {}),
         },
       );
       return Array.isArray(env) ? env : env.data;
