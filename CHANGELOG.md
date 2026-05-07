@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.27] — 2026-05-07
+
 ### Fixed
 - **status.ratesengine.net stuck on "Status unknown"** — the
   status site fetches `/v1/status` cross-origin from
