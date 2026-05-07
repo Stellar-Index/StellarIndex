@@ -2,26 +2,31 @@
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { useCoins, useCursors } from '@/api/hooks';
+import { useCursors, useNetworkStats } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
  * NetworkLivePanel — live count of classic assets indexed +
- * highest live-cursor ledger. Both come straight from the API;
- * no synthesised history line (the previous sparkline used
- * fabricated month-over-month values to imply growth, which
- * isn't a number we can prove. When the multi-window delta
- * pipeline lands we'll plumb a real series here).
+ * highest live-cursor ledger. Both come straight from the API.
+ *
+ * `assets_indexed` is read from /v1/network/stats — the
+ * server-side count across the full corpus. Earlier this panel
+ * summed `useCoins(500).coins.length` and silently capped at
+ * 500. The real number is ~85,750.
  */
 export function NetworkLivePanel() {
-  const coins = useCoins(500);
+  const stats = useNetworkStats();
   const cursors = useCursors();
 
-  const assetsCount = coins.data?.coins?.length ?? null;
-  const tipLedger = cursors.data ? maxLiveLedger(cursors.data) : null;
+  const assetsCount = stats.data?.assets_indexed ?? null;
+  // Prefer the network/stats snapshot's `latest_ledger`; fall
+  // back to the live cursor table if stats hasn't returned yet.
+  const tipLedger =
+    stats.data?.latest_ledger ??
+    (cursors.data ? maxLiveLedger(cursors.data) : null);
 
   return (
-    <Panel title="Network" hint="Stellar pulse" source={asExample('/v1/coins', { limit: 500 })}>
+    <Panel title="Network" hint="Stellar pulse" source={asExample('/v1/network/stats')}>
       <div className="space-y-3">
         <div>
           <div className="text-2xl font-bold tabular-nums">
