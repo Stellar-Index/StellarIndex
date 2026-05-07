@@ -31,6 +31,12 @@ const PAIR_EXAMPLES: { pair: string; label: string }[] = [
   { pair: 'native~fiat:USD', label: 'XLM / USD' },
 ];
 
+const CURRENCY_EXAMPLES: { ticker: string; label: string }[] = [
+  { ticker: 'EUR', label: 'EUR (Euro)' },
+  { ticker: 'GBP', label: 'GBP (British Pound)' },
+  { ticker: 'JPY', label: 'JPY (Japanese Yen)' },
+];
+
 export default function WidgetsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-12 px-6 py-10">
@@ -107,6 +113,37 @@ export default function WidgetsPage() {
   frameborder="0"
   loading="lazy"
   title="${ex.label} price card"
+></iframe>`}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">Currency card</h2>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+            Live USD-base rate + 7d change for one fiat currency.
+            Source path is{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs dark:bg-slate-800">
+              /embed/currency/&lt;ticker&gt;
+            </code>
+            .
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {CURRENCY_EXAMPLES.map((ex) => (
+            <WidgetCard
+              key={ex.ticker}
+              label={ex.label}
+              src={`${SITE_URL}/embed/currency/${ex.ticker}`}
+              snippet={`<iframe
+  src="${SITE_URL}/embed/currency/${ex.ticker}"
+  width="320"
+  height="180"
+  frameborder="0"
+  loading="lazy"
+  title="${ex.label} rate card"
 ></iframe>`}
             />
           ))}
