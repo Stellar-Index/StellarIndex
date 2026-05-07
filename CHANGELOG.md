@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`/sdk` showcase page.** Surfaces the official Go SDK at
+  `pkg/client`. Install command, quick-start example, five
+  paste-ready common patterns (batch lookup, history, SSE
+  stream, OHLC bar, error handling), authentication modes
+  (anonymous / API key / SEP-10), and links to godoc + GitHub
+  source + REST reference. Reuses the `CopyableSnippet`
+  component from `/widgets` for the code blocks. Linked from
+  footer + Cmd-K search + sitemap.
 - **`/diagnostics` BackfillSummary card.** Surfaces backfill
   worker state (active workers / slowest active lag / furthest
   ledger reached / distinct shards) as a sibling card to the

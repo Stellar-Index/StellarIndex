@@ -37,6 +37,7 @@ const STATIC_PAGES: Result[] = [
   { type: 'page', label: 'Sign up', hint: 'free API key', href: '/signup' },
   { type: 'page', label: 'Widgets', hint: 'embeddable price cards', href: '/widgets' },
   { type: 'page', label: 'Contact', hint: 'sales / security / GitHub', href: '/contact' },
+  { type: 'page', label: 'Go SDK', hint: 'pkg/client examples', href: '/sdk' },
 ];
 
 const PROTOCOLS: Result[] = [
