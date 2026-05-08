@@ -371,11 +371,34 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       },
     ],
   };
+  // Schema.org FAQPage — the same Q/A pairs that render in the
+  // visible AssetFAQ panel below. Emitting them as JSON-LD lets
+  // Google pick them up for rich-snippet rendering on currency-
+  // pair queries like "what is XLM" / "how is USDC priced".
+  // Source of truth is assetFaqFor; the visible panel and this
+  // structured-data block read from the same function so the
+  // copy can never drift.
+  const faqLD = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: assetFaqFor(coin.code, !!coin.issuer).map((entry) => ({
+      '@type': 'Question',
+      name: entry.q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: entry.a,
+      },
+    })),
+  };
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLD) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqLD) }}
       />
       <header className="space-y-3">
         <nav className="text-xs text-slate-500">

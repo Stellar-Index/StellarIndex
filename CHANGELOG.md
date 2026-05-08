@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Explorer**: FAQPage JSON-LD on `/assets/{slug}` static pages —
+  the same Q/A pairs the visible AssetFAQ panel renders are now
+  also emitted as `<script type="application/ld+json">`
+  alongside the existing BreadcrumbList block, so Google can
+  pick them up for rich-snippet rendering on Stellar-asset
+  queries. Mirrors the FAQPage block added on currency pages
+  earlier in this session; same source-of-truth pattern (visible
+  panel + structured data read from the same `assetFaqFor`
+  function).
+
 ### Fixed
 
 - **Explorer**: `/assets/{slug}` no longer bakes "Asset not found"
