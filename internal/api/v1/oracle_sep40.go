@@ -268,11 +268,21 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 
 	snapshot, sources, stale, err := reader.LatestPrice(r.Context(), base, quote)
 	if errors.Is(err, ErrPriceNotFound) {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/price-not-found",
-			"No price data for pair", http.StatusNotFound,
-			"no observation for "+base.String()+" / "+quote.String())
-		return
+		// Same Redis VWAP fallback as /v1/price for stablecoin-
+		// proxy + triangulated pairs. Companion to the equivalent
+		// fix on /v1/oracle/lastprice — see that handler's comment
+		// for the full rationale.
+		var ok bool
+		snapshot, sources, _, ok = s.tryRedisVWAPFallback(r.Context(), base, quote)
+		stale = false
+		if !ok {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/price-not-found",
+				"No price data for pair", http.StatusNotFound,
+				"no observation for "+base.String()+" / "+quote.String())
+			return
+		}
+		err = nil
 	}
 	if err != nil {
 		if clientAborted(r, err) {

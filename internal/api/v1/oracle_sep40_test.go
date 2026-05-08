@@ -187,6 +187,33 @@ func TestOracleXLastPrice_NotFound404(t *testing.T) {
 	}
 }
 
+// TestOracleXLastPrice_RedisVWAPFallback — when prices_1m has no
+// row for the requested cross pair, the SEP-40 x_last_price
+// handler must fall through to the same TriangulatedPriceLooker
+// /v1/price uses. Mirrors the lastprice fallback test.
+func TestOracleXLastPrice_RedisVWAPFallback(t *testing.T) {
+	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+	looker := &stubTriangulatedPriceLooker{
+		value:          "0.91",
+		isTriangulated: true, // x_last_price is the cross-pair surface; triangulation is the headline use
+		found:          true,
+	}
+	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/x_last_price?base=native&quote=fiat:EUR")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via fallback", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.SEP40Price `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.Price != "0.91" {
+		t.Errorf("price = %q, want \"0.91\"", env.Data.Price)
+	}
+}
+
 func TestOracleXLastPrice_InvalidBase400(t *testing.T) {
 	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
 	ts := startHTTPTest(t, srv.Handler())
