@@ -17,6 +17,34 @@ against.
 
 ### Added
 
+- **`/convert/[from]/[to]` static-prerendered conversion pages.**
+  Full N×N matrix (~12k pages: 110 × 109 minus identity pairs).
+  Each page renders the live mid-market rate, an interactive
+  ConvertPair widget pre-filled with the pair, and "X = Y"
+  snippets at common amounts (1 / 10 / 100 / 1000 / 10000) for
+  SEO body content. Inverse pair, both currencies' overview pages,
+  and source attribution all linked. Each page has its own
+  canonical URL + OG card with the live rate baked into the title
+  and description. Includes a server-side initial rate so the
+  first paint is correct without a client roundtrip; the
+  ConvertPair refreshes every 60s after that.
+
+### Changed
+
+- **GH Actions cost: drop arm64 from release.yml + narrow
+  release-validate path filter.** Every release.yml run was
+  cross-compiling 6 binaries × 2 archs and pushing 6 multi-arch
+  container images; arm64 had no consumers (every region is amd64)
+  so it was dead-weight compute. release-validate.yml's `cmd/**`
+  path filter was firing on every config-wiring PR (~60 runs/day);
+  narrowed to only files release.yml actually consumes (workflows,
+  Dockerfiles, Makefile, go.mod/sum, cut-release.sh) — the "did
+  the binary cross-compile?" question is already answered by
+  ci.yml's `go build ./...`. Re-add arm64 when an arm64 host is
+  provisioned.
+
+### Added
+
 - **Configurable per-venue `poll_interval` for external connectors.**
   `ExternalVenueConfig` gains a `poll_interval` field (Duration, empty
   defaults to the connector's built-in cadence). Bake
