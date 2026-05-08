@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -158,9 +159,26 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 		Base:    r.URL.Query().Get("base"),
 		Quote:   r.URL.Query().Get("quote"),
 	}
-	rows, next, err := reader.AllPools(r.Context(), filter, cursor, limit, order)
+	// Hard 8s ceiling — the AllPools query scans the trades
+	// hypertable's 24h window and can take 10s+ on a cold-cache
+	// path even with the cache wrapper above (the prewarm covers
+	// limit=25 + no filter; long-tail variants warm on first hit).
+	// Without this ceiling the user sees a hung request that
+	// eventually times out at the ingress; with it, they get a
+	// fast 503 they can retry against a now-warm cache.
+	pCtx, pCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer pCancel()
+	rows, next, err := reader.AllPools(pCtx, filter, cursor, limit, order)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.logger.Warn("AllPools deadline exceeded", "limit", limit, "filter", filter)
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/pools-timeout",
+				"Pools query timed out", http.StatusServiceUnavailable,
+				"the underlying trades-hypertable scan didn't return in 8s; cache may still be warming. Retry in a few seconds.")
 			return
 		}
 		s.logger.Error("AllPools failed", "err", err)
