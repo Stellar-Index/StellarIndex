@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
@@ -237,13 +237,7 @@ export function CurrenciesView() {
                     <AssetCell row={r} />
                   </Td>
                   <Td align="right">
-                    {r.priceUsd != null ? (
-                      <span className="font-mono tabular-nums text-slate-900 dark:text-slate-100">
-                        ${formatPriceSmart(r.priceUsd)}
-                      </span>
-                    ) : (
-                      <Dash />
-                    )}
+                    <PriceCell value={r.priceUsd} />
                   </Td>
                   <Td align="right">
                     <ChangePct value={r.change1hPct} />
@@ -514,6 +508,46 @@ function Sparkline({ points, positive }: { points: number[]; positive: boolean }
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="inline-block">
       <path d={path} fill="none" stroke={stroke} strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+// PriceCell renders the USD price and flashes green/red when the
+// value changes vs the prior render. Uses a ref to track the last
+// observed price so re-renders triggered by sort/filter (which
+// keep the price stable) don't trigger flashes — only an actual
+// price change from the polling refetch does.
+//
+// Flash is a CSS-driven background tint that auto-clears after
+// 600ms. Tailwind's `transition-colors` smooths the fade-out so
+// rapid successive changes blend rather than strobe.
+function PriceCell({ value }: { value: number | null }) {
+  const prevRef = useRef<number | null>(null);
+  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
+
+  useEffect(() => {
+    const prev = prevRef.current;
+    if (prev != null && value != null && prev !== value) {
+      setFlash(value > prev ? 'up' : 'down');
+      const t = setTimeout(() => setFlash(null), 600);
+      prevRef.current = value;
+      return () => clearTimeout(t);
+    }
+    prevRef.current = value;
+  }, [value]);
+
+  if (value == null) return <Dash />;
+  const flashCls =
+    flash === 'up'
+      ? 'bg-emerald-100/70 dark:bg-emerald-900/40'
+      : flash === 'down'
+        ? 'bg-rose-100/70 dark:bg-rose-900/40'
+        : '';
+  return (
+    <span
+      className={`inline-block rounded px-1 font-mono tabular-nums text-slate-900 transition-colors duration-500 dark:text-slate-100 ${flashCls}`}
+    >
+      ${formatPriceSmart(value)}
+    </span>
   );
 }
 
