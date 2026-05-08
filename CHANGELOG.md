@@ -62,6 +62,12 @@ against.
 
 ### Fixed
 
+- **`/v1/oracle/x_last_price`**: same Redis VWAP fallback as
+  `/v1/oracle/lastprice` and `/v1/price`. Cross-pair queries
+  whose direct trade row is absent (typical when one leg is
+  `fiat:USD` synthesised from a stablecoin) now serve the
+  cached value instead of 404'ing. New unit test
+  `TestOracleXLastPrice_RedisVWAPFallback`.
 - **`/v1/oracle/lastprice`**: now consults the same
   TriangulatedPriceLooker fallback as `/v1/price` when prices_1m
   has no row for the requested pair. Pre-fix, SEP-40
