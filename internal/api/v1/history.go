@@ -208,10 +208,26 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		afterOpIndex = c.opIndex
 	}
 
-	trades, err := reader.TradesInRangeAfter(r.Context(), pair,
+	// 8s ceiling on the trades hypertable range query. Same
+	// pattern as #1082 / #1099 / #1100 / #1101 / #1102. Long
+	// `from` windows (no `from` set, or month-spanning) can take
+	// 5–10s on a cold cache scanning per-trade rows.
+	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer hCancel()
+	trades, err := reader.TradesInRangeAfter(hCtx, pair,
 		from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.logger.Warn("TradesInRangeAfter deadline exceeded",
+				"base", base.String(), "quote", quote.String(),
+				"from", from, "to", to, "limit", limit)
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/history-timeout",
+				"History query timed out", http.StatusServiceUnavailable,
+				"the underlying trades-hypertable scan didn't return in 8s. Try narrowing the from/to window or reducing the limit.")
 			return
 		}
 		s.logger.Error("TradesInRangeAfter failed",
@@ -478,7 +494,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	points, err := s.history.HistoryPoints(r.Context(), pair, gran, historyMaxPoints)
+	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer hCancel()
+	points, err := s.history.HistoryPoints(hCtx, pair, gran, historyMaxPoints)
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/invalid-granularity",
@@ -488,6 +506,15 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	}
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.logger.Warn("HistoryPoints deadline exceeded",
+				"asset", asset.String(), "quote", quote.String(), "granularity", gran)
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/history-timeout",
+				"History query timed out", http.StatusServiceUnavailable,
+				"the underlying CAGG didn't return in 8s; cache may still be warming.")
 			return
 		}
 		s.logger.Error("HistoryPoints failed",
