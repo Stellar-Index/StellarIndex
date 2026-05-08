@@ -81,6 +81,13 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		snapshot, sources, _, ok = s.tryRedisVWAPFallback(r.Context(), asset, defaultPriceQuote)
 		stale = false
 		if !ok {
+			// Fiat-vs-fiat cross-rate from the forex snapshot —
+			// covers `lastprice(fiat:EUR)` etc., which would 404
+			// without this branch. Mirrors #1086's /v1/price
+			// fiat fallback.
+			snapshot, sources, ok = s.tryFiatCrossRate(asset, defaultPriceQuote)
+		}
+		if !ok {
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/price-not-found",
 				"No price data for asset", http.StatusNotFound,
@@ -275,6 +282,13 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		var ok bool
 		snapshot, sources, _, ok = s.tryRedisVWAPFallback(r.Context(), base, quote)
 		stale = false
+		if !ok {
+			// Fiat-vs-fiat cross-rate via the forex snapshot —
+			// covers `x_last_price(fiat:EUR, fiat:GBP)` etc.
+			// Mirrors the `/v1/oracle/lastprice` and `/v1/price`
+			// fiat fallbacks (#1086 / this PR).
+			snapshot, sources, ok = s.tryFiatCrossRate(base, quote)
+		}
 		if !ok {
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/price-not-found",
