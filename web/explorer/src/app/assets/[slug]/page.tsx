@@ -294,13 +294,22 @@ export async function generateMetadata({
       ? `${code} on Stellar:${suffix} · live VWAP across on-chain DEXes, classic SDEX, and major exchanges.`
       : `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`;
 
+  // Canonical URL: prefer the API-returned slug (e.g. `XLM`,
+  // `USDC`, the SAC-wrapped form for SAC tokens) over whatever
+  // form the user typed (`xlm`, `usdc-GA5Z…`, etc). Without a
+  // rel=canonical, Google would treat /assets/XLM and
+  // /assets/native as separate pages with duplicate content.
+  const canonicalSlug = coin?.slug ?? slug;
+  const canonical = `https://ratesengine.net/assets/${canonicalSlug}`;
+
   return {
     title,
     description,
+    alternates: { canonical },
     openGraph: {
       title,
       description,
-      url: `/assets/${slug}`,
+      url: canonical,
       type: 'website',
     },
     twitter: {
