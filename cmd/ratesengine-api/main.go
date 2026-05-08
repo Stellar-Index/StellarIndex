@@ -518,8 +518,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Issuers:           store,
 		Cursors:           store,
 		NetworkStats:      store,
-		SourcesStats:      store,
-		Lending:           store,
+		// Wrap with a 60s TTL cache. The underlying SQL aggregations
+		// (24h trades-hypertable scan grouped by source) take 5-10s;
+		// the explorer hits these on every /dexes + /exchanges page
+		// load. 60s freshness is plenty for a 24h-trailing aggregate.
+		SourcesStats: v1.NewCachedSourcesStatsReader(store, 60*time.Second),
+		Lending:      store,
 		Currencies:        newForexAdapter(forexCache),
 		SEP10:             sep10Validator,
 		Hub:               hub,

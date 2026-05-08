@@ -133,7 +133,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/price/batch',
     group: 'Pricing',
     description: 'Batch lookup, up to 1000 assets',
-    probe: { kind: 'get', path: '/v1/price/batch?assets=native&quote=fiat:USD' },
+    probe: { kind: 'get', path: '/v1/price/batch?asset_ids=native&quote=fiat:USD' },
     tier: 'hot',
   },
   {
@@ -232,13 +232,17 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/oracle/latest',
     group: 'Oracle',
     description: 'Latest oracle readings',
-    probe: { kind: 'get', path: '/v1/oracle/latest' },
+    // SEP-40 endpoints quote in fiat:USD; pick crypto:XLM as the
+    // probe asset because Reflector consistently publishes XLM →
+    // USD oracle observations. (USDC/USDT lastprice 404s — those
+    // are stablecoins quoted in themselves.)
+    probe: { kind: 'get', path: '/v1/oracle/latest?asset=crypto:XLM' },
   },
   {
     path: '/v1/oracle/lastprice',
     group: 'Oracle',
     description: 'SEP-40 lastprice',
-    probe: { kind: 'get', path: '/v1/oracle/lastprice?asset=native' },
+    probe: { kind: 'get', path: '/v1/oracle/lastprice?asset=crypto:XLM' },
   },
   {
     path: '/v1/auth/login',
