@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.32] — 2026-05-08
+
 ### Added
 
 - **Scam-issuer warnings on `/v1/issuers` and the explorer.** New
