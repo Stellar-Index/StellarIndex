@@ -781,6 +781,14 @@ func (s *Server) fetchBatchRow(w http.ResponseWriter, r *http.Request, raw strin
 		if cs, csrc, _, ok := s.tryRedisVWAPFallback(r.Context(), asset, quote); ok {
 			return batchRowOutcome{snap: cs, sources: csrc, asset: asset}
 		}
+		// Same fiat-vs-fiat cross-rate fallback as /v1/price.
+		// Skipping a fiat row in batch output — when the same
+		// query against /v1/price would have returned 200 — was
+		// silently confusing for batch consumers that include
+		// fiat tickers in their asset_ids list.
+		if fs, fsrc, ok := s.tryFiatCrossRate(asset, quote); ok {
+			return batchRowOutcome{snap: fs, sources: fsrc, asset: asset}
+		}
 		return batchRowOutcome{skip: true} // omit, do not 404 the batch
 	}
 	if err != nil {

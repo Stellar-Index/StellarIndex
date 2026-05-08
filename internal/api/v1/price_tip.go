@@ -152,6 +152,13 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	if cacheSnap, cacheSources, _, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
 		return cacheSnap, cacheSources, nil
 	}
+	// Last-resort fiat-vs-fiat cross-rate via the forex snapshot.
+	// Same machinery /v1/price uses (see tryFiatCrossRate). Without
+	// this branch /v1/price/tip?asset=fiat:EUR&quote=fiat:USD 404s
+	// because no on-chain pair carries fiat-vs-fiat trades.
+	if fxSnap, fxSources, ok := s.tryFiatCrossRate(asset, quote); ok {
+		return fxSnap, fxSources, nil
+	}
 	return PriceSnapshot{}, nil, ErrPriceNotFound
 }
 
