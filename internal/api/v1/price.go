@@ -281,27 +281,9 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	snapshot, sources, stale, err := reader.LatestPrice(r.Context(), asset, quote)
 	triangulated := false
 	if errors.Is(err, ErrPriceNotFound) {
-		// Timescale miss — fall through to the triangulation cache
-		// if a TriangulatedPriceLooker is wired (per F-0014). When
-		// the aggregator's triangulation worker has cached an
-		// implied value for this pair, serve that with
-		// `flags.triangulated=true`. When no looker is wired or no
-		// triangulated value is cached, the original 404 stands.
 		var ok bool
-		snapshot, sources, triangulated, ok = s.tryRedisVWAPFallback(r.Context(), asset, quote)
+		snapshot, sources, triangulated, ok = s.priceFallback(r.Context(), asset, quote)
 		stale = false
-		if !ok {
-			// Fiat-vs-fiat last resort: cross-rate via the forex
-			// snapshot. /v1/currencies has rates for ~110 fiats
-			// already; computing fiat:EUR/fiat:USD as
-			// 1/rate_usd[EUR] is exact, and the same machinery
-			// supports any fiat pair. Without this branch,
-			// /v1/price?asset=fiat:EUR&quote=fiat:USD 404s in
-			// steady state because there's no on-chain trade
-			// pair for fiat-vs-fiat.
-			snapshot, sources, ok = s.tryFiatCrossRate(asset, quote)
-			triangulated = ok || triangulated
-		}
 		if !ok {
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/price-not-found",
@@ -457,6 +439,28 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	return snap, []string{}, isTriangulated, true
 }
 
+// priceFallback runs the post-Timescale-miss fallback chain for
+// /v1/price. Two layers, tried in order:
+//
+//  1. Redis VWAP cache (covers triangulated chains + stablecoin
+//     proxy rewrites; provenance marker controls
+//     flags.triangulated).
+//  2. Fiat-vs-fiat cross-rate from the forex snapshot
+//     (always returns triangulated=true since the value is derived).
+//
+// Returns ok=false when both layers miss; the caller turns that
+// into a 404. Extracted from handlePrice to keep that handler
+// under the gocognit cap.
+func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
+	if snap, srcs, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+		return snap, srcs, triangulated, true
+	}
+	if snap, srcs, ok := s.tryFiatCrossRate(asset, quote); ok {
+		return snap, srcs, true, true
+	}
+	return PriceSnapshot{}, nil, false, false
+}
+
 // tryFiatCrossRate synthesises a fiat-vs-fiat price by cross-rating
 // through the wired CurrenciesReader's USD-base snapshot. Used as a
 // last-resort fallback on /v1/price after both the Timescale read
@@ -518,14 +522,14 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		return PriceSnapshot{}, nil, false
 	}
 	// rate_usd[USD] is implicitly 1 — handle that without requiring
-	// the snapshot to carry an explicit USD entry.
+	// the snapshot to carry an explicit USD entry. foundQuote is
+	// not read after this branch; the implicit-USD path just
+	// supplies rateQuote.
 	if !foundQuote {
-		if quote.Code == "USD" {
-			rateQuote = 1
-			foundQuote = true
-		} else {
+		if quote.Code != "USD" {
 			return PriceSnapshot{}, nil, false
 		}
+		rateQuote = 1
 	}
 	cross := rateQuote / rateAsset
 	priceStr := strconv.FormatFloat(cross, 'f', -1, 64)
