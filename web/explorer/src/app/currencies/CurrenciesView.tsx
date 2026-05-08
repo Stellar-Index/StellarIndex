@@ -8,6 +8,7 @@ import { Search } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { useWatchlist } from './watchlist';
 
 /**
  * Unified currencies listing — every currency we price, fiat +
@@ -49,7 +50,7 @@ interface UnifiedRow {
   history7d: number[]; // inverse-USD for fiat, price-USD for crypto
 }
 
-type FilterKind = 'all' | 'crypto' | 'fiat' | 'stablecoin';
+type FilterKind = 'all' | 'crypto' | 'fiat' | 'stablecoin' | 'watchlist';
 
 // STABLECOIN_TICKERS — crypto rows whose ticker matches one of
 // these are treated as stablecoins. Curated from the operator's
@@ -67,6 +68,7 @@ export function CurrenciesView() {
   const [filter, setFilter] = useState<FilterKind>('all');
   const [sortKey, setSortKey] = useState<SortKey>('market_cap');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const watchlist = useWatchlist();
 
   const [cryptoQ, fiatQ] = useQueries({
     queries: [
@@ -111,6 +113,8 @@ export function CurrenciesView() {
     let scoped = rows;
     if (filter === 'stablecoin') {
       scoped = scoped.filter((r) => STABLECOIN_TICKERS.has(r.ticker.toUpperCase()));
+    } else if (filter === 'watchlist') {
+      scoped = scoped.filter((r) => watchlist.has(r.kind, r.ticker));
     } else if (filter !== 'all') {
       scoped = scoped.filter((r) => r.kind === filter);
     }
@@ -132,7 +136,9 @@ export function CurrenciesView() {
       });
     }
     return [...scoped].sort((a, b) => compareRows(a, b, sortKey, sortDir));
-  }, [rows, filter, q, sortKey, sortDir]);
+  // watchlist included so the table re-filters when a star toggles.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, filter, q, sortKey, sortDir, watchlist.size]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -190,7 +196,7 @@ export function CurrenciesView() {
             />
           </div>
           <div className="ml-auto inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs dark:border-slate-700 dark:bg-slate-900">
-            {(['all', 'crypto', 'stablecoin', 'fiat'] as const).map((f) => (
+            {(['all', 'crypto', 'stablecoin', 'fiat', 'watchlist'] as const).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -211,6 +217,7 @@ export function CurrenciesView() {
           <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                <Th><span className="sr-only">Watchlist</span></Th>
                 <SortableTh sortKey="rank" current={sortKey} dir={sortDir} onToggle={toggleSort}>
                   #
                 </SortableTh>
@@ -244,14 +251,14 @@ export function CurrenciesView() {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {isLoading && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
                     Loading currencies…
                   </td>
                 </tr>
               )}
               {!isLoading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={11} className="px-4 py-10 text-center text-sm text-slate-500">
                     <div className="space-y-2">
                       <div>
                         {q
@@ -282,6 +289,23 @@ export function CurrenciesView() {
                   onClick={() => router.push(detailHref(r))}
                   className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/40"
                 >
+                  <Td>
+                    <button
+                      type="button"
+                      aria-label={watchlist.has(r.kind, r.ticker) ? `Unstar ${r.ticker}` : `Star ${r.ticker}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        watchlist.toggle(r.kind, r.ticker);
+                      }}
+                      className={`text-base transition-colors ${
+                        watchlist.has(r.kind, r.ticker)
+                          ? 'text-amber-500'
+                          : 'text-slate-300 hover:text-slate-500 dark:text-slate-700 dark:hover:text-slate-400'
+                      }`}
+                    >
+                      {watchlist.has(r.kind, r.ticker) ? '★' : '☆'}
+                    </button>
+                  </Td>
                   <Td>
                     <span className="font-mono text-[11px] text-slate-400">{i + 1}</span>
                   </Td>
