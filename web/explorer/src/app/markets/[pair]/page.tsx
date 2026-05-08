@@ -199,8 +199,13 @@ async function fetchChart(base: string, quote: string): Promise<ChartResp | null
 async function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
   if (isCIStub) return null;
   try {
+    // /v1/ohlc returns a single bar over [from, to). Default window
+    // is "now - 1h" → "now" when both are absent — exactly what we
+    // want for the markets-pair OHLC strip. The earlier `interval=1h`
+    // param was silently ignored (not in the API schema) but the
+    // default-window happened to match. Drop it for honesty.
     const res = await fetch(
-      `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=1h`,
+      `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
       { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
     );
     if (!res.ok) return null;
