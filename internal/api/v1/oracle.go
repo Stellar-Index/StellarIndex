@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"time"
@@ -143,10 +144,21 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 
 	source := r.URL.Query().Get("source") // optional
 
+	olCtx, olCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer olCancel()
 	updates, err := reader.LatestOracleUpdatesForAssets(
-		r.Context(), oracleAssetCandidates(asset), source)
+		olCtx, oracleAssetCandidates(asset), source)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.logger.Warn("LatestOracleUpdatesForAsset deadline exceeded",
+				"asset", asset.String(), "source", source)
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/oracle-latest-timeout",
+				"Oracle latest query timed out", http.StatusServiceUnavailable,
+				"the oracle_updates hypertable scan didn't return in 8s; retry shortly.")
 			return
 		}
 		s.logger.Error("LatestOracleUpdatesForAsset failed",
@@ -180,9 +192,23 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []OracleReading{}, Flags{})
 		return
 	}
-	updates, err := reader.LatestOracleStreams(r.Context())
+	// 8s ceiling on the oracle_updates hypertable scan. Same
+	// pattern as #1082-#1103. Steady-state ~600ms per the
+	// 2026-05-08 prod probe, but cold-cache scans of 7d × 80
+	// oracle streams can take 5-10s.
+	osCtx, osCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer osCancel()
+	updates, err := reader.LatestOracleStreams(osCtx)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.logger.Warn("LatestOracleStreams deadline exceeded")
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/oracle-streams-timeout",
+				"Oracle streams query timed out", http.StatusServiceUnavailable,
+				"the oracle_updates hypertable scan didn't return in 8s; retry shortly.")
 			return
 		}
 		s.logger.Error("LatestOracleStreams failed", "err", err)
