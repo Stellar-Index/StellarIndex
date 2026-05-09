@@ -734,3 +734,20 @@ func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], err
 	}
 	return &env, nil
 }
+
+// Incidents fetches every customer-facing incident post the API
+// binary has embedded — backed by GET /v1/incidents. Results are
+// sorted started_at descending (most recent first). Severity is
+// the SEV-N tier; Status reports lifecycle. BodyMarkdown carries
+// the full incident write-up.
+//
+// The corpus ships with the binary (per-deploy), so two regions
+// running different builds may return different lists — clients
+// that need cross-region consistency should diff by Slug.
+func (c *Client) Incidents(ctx context.Context) (*Envelope[IncidentsList], error) {
+	var env Envelope[IncidentsList]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/incidents", nil, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}

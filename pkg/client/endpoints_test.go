@@ -1144,6 +1144,93 @@ func TestVersion_HappyPath(t *testing.T) {
 	}
 }
 
+// TestIncidents_HappyPath — pins the path, the IncidentsList
+// nesting (data.incidents + data.count), severity / status
+// strings as opaque tags, and the *time.Time ResolvedAt with
+// the omitempty branch.
+func TestIncidents_HappyPath(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/incidents" {
+			t.Errorf("path = %q, want /v1/incidents", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"incidents": [
+					{
+						"slug": "2026-05-06-postgres-lock-table-full",
+						"title": "[SEV-3] Indexer dropping ~1% of trades",
+						"severity": "SEV-3",
+						"status": "resolved",
+						"started_at": "2026-05-06T15:00:00Z",
+						"resolved_at": "2026-05-06T22:39:00Z",
+						"affected_components": ["indexer", "storage"],
+						"body_markdown": "# heading\n\nbody"
+					},
+					{
+						"slug": "2026-05-09-ongoing",
+						"title": "[SEV-4] Ongoing",
+						"severity": "SEV-4",
+						"status": "investigating",
+						"started_at": "2026-05-09T03:00:00Z",
+						"body_markdown": "# heading\n\nbody"
+					}
+				],
+				"count": 2
+			},
+			"as_of": "2026-05-09T04:24:24Z",
+			"flags": {}
+		}`))
+	})
+	got, err := c.Incidents(context.Background())
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	if got.Data.Count != 2 {
+		t.Errorf("Count = %d, want 2", got.Data.Count)
+	}
+	if len(got.Data.Incidents) != 2 {
+		t.Fatalf("len(Incidents) = %d, want 2", len(got.Data.Incidents))
+	}
+	first := got.Data.Incidents[0]
+	if first.Slug != "2026-05-06-postgres-lock-table-full" {
+		t.Errorf("Slug = %q", first.Slug)
+	}
+	if first.Severity != "SEV-3" || first.Status != "resolved" {
+		t.Errorf("severity/status = (%q, %q)", first.Severity, first.Status)
+	}
+	if first.ResolvedAt == nil || !first.ResolvedAt.Equal(time.Date(2026, 5, 6, 22, 39, 0, 0, time.UTC)) {
+		t.Errorf("ResolvedAt = %v, want 2026-05-06T22:39:00Z", first.ResolvedAt)
+	}
+	if len(first.AffectedComponents) != 2 || first.AffectedComponents[0] != "indexer" {
+		t.Errorf("AffectedComponents = %v", first.AffectedComponents)
+	}
+	// Second incident is ongoing — ResolvedAt absent on the wire
+	// must round-trip to nil so callers can distinguish "still open"
+	// from "resolved at zero time."
+	if got.Data.Incidents[1].ResolvedAt != nil {
+		t.Errorf("ongoing incident ResolvedAt = %v, want nil", got.Data.Incidents[1].ResolvedAt)
+	}
+}
+
+// TestIncidents_EmptyList — fresh deploy with no embedded posts
+// returns count=0 and an empty (or nil) Incidents slice without
+// error. JSON omits the `incidents` key entirely; both shapes
+// must round-trip cleanly.
+func TestIncidents_EmptyList(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"incidents":[],"count":0},"as_of":"2026-05-09T04:24:24Z","flags":{}}`))
+	})
+	got, err := c.Incidents(context.Background())
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	if got.Data.Count != 0 || len(got.Data.Incidents) != 0 {
+		t.Errorf("Count=%d Incidents=%v, want 0/empty", got.Data.Count, got.Data.Incidents)
+	}
+}
+
 // TestCursors_HappyPath — diagnostics endpoint returns
 // non-paginated array; test pins the wire shape.
 func TestCursors_HappyPath(t *testing.T) {

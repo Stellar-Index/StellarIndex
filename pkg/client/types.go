@@ -526,3 +526,28 @@ type NetworkStats struct {
 	ExchangeSources int     `json:"exchange_sources"`
 	TotalSources    int     `json:"total_sources"`
 }
+
+// Incident is one customer-facing incident post returned by
+// [Client.Incidents]. Mirrors the wire shape served at
+// `/v1/incidents`; the SDK can't import the internal incidents
+// package directly. Severity is "SEV-1" / "SEV-2" / "SEV-3" /
+// "SEV-4"; Status is "investigating" / "identified" / "monitoring"
+// / "resolved". BodyMarkdown is the full Markdown post body.
+type Incident struct {
+	Slug               string     `json:"slug"`
+	Title              string     `json:"title"`
+	Severity           string     `json:"severity"`
+	Status             string     `json:"status"`
+	StartedAt          time.Time  `json:"started_at"`
+	ResolvedAt         *time.Time `json:"resolved_at,omitempty"`
+	AffectedComponents []string   `json:"affected_components,omitempty"`
+	PostmortemRef      string     `json:"postmortem,omitempty"`
+	BodyMarkdown       string     `json:"body_markdown"`
+}
+
+// IncidentsList wraps the [Client.Incidents] response. Sorted
+// most-recent-first (started_at desc) by the API.
+type IncidentsList struct {
+	Incidents []Incident `json:"incidents"`
+	Count     int        `json:"count"`
+}

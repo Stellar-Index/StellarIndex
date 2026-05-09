@@ -72,6 +72,15 @@ against.
   preserves the `*string Volume24hUSD` per ADR-0003 so callers
   can distinguish "no data" (nil) from "0". Tests cover the
   happy path and the omitempty volume case.
+- **`pkg/client`: `Incidents(ctx)`** SDK method for
+  `GET /v1/incidents` — every customer-facing incident post the
+  binary has embedded, sorted started_at desc. New
+  `client.Incident` + `client.IncidentsList` types mirror the
+  internal incident wire shape (the SDK can't import
+  `internal/incidents` directly per ADR-0005). Tests cover the
+  happy path and the empty-list path; ResolvedAt round-trips as
+  `*time.Time` so callers distinguish "still open" from "resolved
+  at zero time."
 - **`/v1/price` fiat-vs-fiat cross-rate fallback**: when both
   `asset` and `quote` are fiat (e.g. `asset=fiat:EUR&quote=fiat:USD`)
   and the Timescale + Redis VWAP paths both miss, the handler
