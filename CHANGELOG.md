@@ -279,6 +279,14 @@ against.
   `_redirects` rescue the common patterns (copy-pasted-from-docs
   `/v1/...`, "/api/" prefix habit from other vendors, tools that
   strip subdomains).
+- **`/v1/diagnostics/cursors?max_age=<duration>` filter**. Server-
+  side companion to the explorer's client-side "Hide stale" toggle
+  (#1142). Direct API users can now ask `?max_age=1h` to omit
+  completed-backfill cursors that drown out the live ledgerstream
+  marker. `max_age` accepts any positive Go-duration string
+  (`30m`, `1h`, `5m`, `0.5h`); empty / omitted preserves the
+  legacy "return everything" contract. Invalid duration → 400
+  `errors/invalid-max-age`. Pinned by 5 sub-tests + 3+3 sub-cases.
 
 - **`/v1/price` fiat-vs-fiat cross-rate fallback**: when both
   `asset` and `quote` are fiat (e.g. `asset=fiat:EUR&quote=fiat:USD`)
