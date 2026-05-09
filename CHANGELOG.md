@@ -17,6 +17,16 @@ against.
 
 ### Added
 
+- **`/v1/pools?asset=<asset_id>` filter** — restrict the pools
+  listing to rows where the asset appears on either side (base
+  OR quote). Mirrors the same filter shape just shipped on
+  `/v1/markets` (#1189). Backs the explorer's `/assets/{slug}`
+  Liquidity tab — single API request instead of two parallel
+  `?base=` + `?quote=` fetches with client-side merge. Mutually
+  exclusive with `?base=`/`?quote=` (the OR-shape and AND-shape
+  filters can't be mixed); combining returns 400
+  `conflicting-filters`. Invalid asset_ids return 400
+  `invalid-asset-id`. (PR #1190)
 - **`/v1/markets?asset=<asset_id>` filter** — restrict the markets
   listing to pairs where the given canonical asset_id appears on
   either side (base OR quote). Mirrors the `?base=` / `?quote=`

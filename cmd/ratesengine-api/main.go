@@ -1312,7 +1312,7 @@ func (r cachedMarketsReader) AllPools(ctx context.Context, filter timescale.Pool
 		return r.inner.AllPools(ctx, filter, cursor, limit, order)
 	}
 	srcKey := strings.Join(filter.Sources, ",")
-	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order) + ":pools=1:src=" + srcKey + ":base=" + filter.Base + ":quote=" + filter.Quote
+	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order) + ":pools=1:src=" + srcKey + ":base=" + filter.Base + ":quote=" + filter.Quote + ":asset=" + filter.Asset
 	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
 		var p listCachePayload[v1.Pool]
 		if jerr := json.Unmarshal(raw, &p); jerr == nil {

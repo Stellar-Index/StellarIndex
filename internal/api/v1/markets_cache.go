@@ -113,8 +113,8 @@ func (c *CachedMarketsReader) AllPools(ctx context.Context, filter timescale.Poo
 	// Sources is a slice — fmt %v gives a stable repr for
 	// equal-length slices with the same element order. Handlers
 	// upstream sort sources from a registry so order is stable.
-	key := fmt.Sprintf("AllPools|%v|%s|%s|%s|%d|%d",
-		filter.Sources, filter.Base, filter.Quote, cursor, limit, order)
+	key := fmt.Sprintf("AllPools|%v|%s|%s|%s|%s|%d|%d",
+		filter.Sources, filter.Base, filter.Quote, filter.Asset, cursor, limit, order)
 	rows, next, err := c.fetchPools(ctx, key, func(ctx context.Context) ([]Pool, string, error) {
 		return c.upstream.AllPools(ctx, filter, cursor, limit, order)
 	})
