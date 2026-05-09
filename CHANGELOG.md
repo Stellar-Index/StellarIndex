@@ -110,6 +110,14 @@ against.
   walks the operator through diffing prewarm vs handler args
   (which is what we did manually for #1185 / #1194 / #1195).
   (PR #1197)
+- **`ratesengine_api_cache_ops_total` extended to `coins` and
+  `sources_stats` cache wrappers.** PR #1196 only instrumented
+  `markets`; this fills in the other two so the existing alert
+  (#1197) catches drift on every cached endpoint, not just the
+  ones that motivated the original bugs. New op labels:
+  `coins/list_coins`, `coins/price_history_24h`,
+  `coins/price_history_7d`, `sources_stats/source_stats`,
+  `sources_stats/volume_history_24h`. (PR #1198)
 
 ### Documentation
 
