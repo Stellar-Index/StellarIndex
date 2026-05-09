@@ -719,6 +719,42 @@ func (c *Client) Version(ctx context.Context) (*Envelope[Version], error) {
 	return &env, nil
 }
 
+// ChartQuery selects the asset / quote and the binned chart
+// timeframe + granularity. Asset is required.
+type ChartQuery struct {
+	Asset       string
+	Quote       string // optional; defaults to fiat:USD server-side
+	Timeframe   string // 1h / 24h / 7d / 30d / 90d / 1y / all; default 24h
+	Granularity string // 1m / 5m / 15m / 1h / 1d / 1w; defaults match Timeframe
+}
+
+// Chart returns the binned price + USD-volume series for a chart
+// rendering. Distinct from [Client.HistorySinceInception] (which
+// returns the FULL series at one granularity) — Chart trims to a
+// caller-chosen window and resolves a server-default granularity
+// per timeframe (24h → 1h bins, 7d → 4h, 30d → 1d, etc.).
+func (c *Client) Chart(ctx context.Context, q ChartQuery) (*Envelope[ChartSeries], error) {
+	if q.Asset == "" {
+		return nil, &APIError{Status: 400, Title: "asset required"}
+	}
+	v := url.Values{}
+	v.Set("asset", q.Asset)
+	if q.Quote != "" {
+		v.Set("quote", q.Quote)
+	}
+	if q.Timeframe != "" {
+		v.Set("timeframe", q.Timeframe)
+	}
+	if q.Granularity != "" {
+		v.Set("granularity", q.Granularity)
+	}
+	var env Envelope[ChartSeries]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/chart", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // NetworkStats fetches the home-page aggregate snapshot the
 // explorer renders in its network strip — 24h USD volume, active
 // markets count, indexed-assets count, latest live ledger, source
@@ -730,6 +766,73 @@ func (c *Client) Version(ctx context.Context) (*Envelope[Version], error) {
 func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], error) {
 	var env Envelope[NetworkStats]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/network/stats", nil, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// ObservationsQuery selects the input for [Client.Observations].
+// Asset is required; Quote defaults to fiat:USD; optional Source
+// restricts to a single source; Aggregate="latest" collapses the
+// per-source array to a 0/1-element slice of the most-recent.
+type ObservationsQuery struct {
+	Asset     string
+	Quote     string // optional
+	Source    string // optional
+	Aggregate string // optional; "latest" supported
+}
+
+// Observations returns the rawest per-source trade view per
+// ADR-0018 — one row per source that has recorded a trade on
+// (asset, quote). Empty array (NOT 404) when the pair has no
+// observations. flags.stale is always false on this surface (no
+// aggregation contract to fall short of).
+func (c *Client) Observations(ctx context.Context, q ObservationsQuery) (*Envelope[[]TradeRow], error) {
+	if q.Asset == "" {
+		return nil, &APIError{Status: 400, Title: "asset required"}
+	}
+	v := url.Values{}
+	v.Set("asset", q.Asset)
+	if q.Quote != "" {
+		v.Set("quote", q.Quote)
+	}
+	if q.Source != "" {
+		v.Set("source", q.Source)
+	}
+	if q.Aggregate != "" {
+		v.Set("aggregate", q.Aggregate)
+	}
+	var env Envelope[[]TradeRow]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/observations", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// ChangeSummaryQuery selects the entity (entity_type + id) for
+// a [Client.ChangeSummary] call. Both fields are required.
+// EntityType is one of "coin", "protocol", "pair", "source".
+type ChangeSummaryQuery struct {
+	EntityType string
+	EntityID   string
+}
+
+// ChangeSummary returns the per-entity 1h/24h/7d/30d delta
+// rollup, plus ATH/ATL + streak/acceleration markers. The
+// change-summary worker writes one row per (entity_type, entity_id)
+// every 5 min. For coin entities the API expands friendly slugs
+// (XLM, USDC) into canonical asset_id forms server-side per
+// PR #1115, so passing the slug works.
+func (c *Client) ChangeSummary(ctx context.Context, q ChangeSummaryQuery) (*Envelope[ChangeSummary], error) {
+	if q.EntityType == "" {
+		return nil, &APIError{Status: 400, Title: "entity_type required"}
+	}
+	if q.EntityID == "" {
+		return nil, &APIError{Status: 400, Title: "entity_id required"}
+	}
+	var env Envelope[ChangeSummary]
+	path := "/v1/changes/" + url.PathEscape(q.EntityType) + "/" + url.PathEscape(q.EntityID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, nil, &env); err != nil {
 		return nil, err
 	}
 	return &env, nil
@@ -747,6 +850,22 @@ func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], err
 func (c *Client) Incidents(ctx context.Context) (*Envelope[IncidentsList], error) {
 	var env Envelope[IncidentsList]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/incidents", nil, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// SACWrappers returns the SAC (Stellar Asset Contract) wrapper
+// registry — a map from Soroban contract address to the
+// "<CODE>:<G_STRKEY>" form of the underlying classic asset. Used
+// to resolve `transfer` events on SAC contracts back to the
+// classic asset they wrap.
+//
+// Returned as a plain map; iterate the map keys for contract
+// addresses or look up a specific contract directly.
+func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string], error) {
+	var env Envelope[map[string]string]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/sac-wrappers", nil, nil, &env); err != nil {
 		return nil, err
 	}
 	return &env, nil

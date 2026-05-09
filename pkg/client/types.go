@@ -512,6 +512,46 @@ type Version struct {
 	GoVersion string `json:"go_version"`
 }
 
+// ChartSeries is the data shape returned by [Client.Chart]. The
+// per-point time series uses the same shape as
+// [HistoryPoint] (`t` / `p` / `v_usd`) but the envelope-level
+// metadata differs (Timeframe + bound Granularity).
+type ChartSeries struct {
+	AssetID     string         `json:"asset_id"`
+	Quote       string         `json:"quote"`
+	Granularity string         `json:"granularity"`
+	Timeframe   string         `json:"timeframe"`
+	PriceType   string         `json:"price_type"`
+	Points      []HistoryPoint `json:"points"`
+}
+
+// ChangeSummary is the data shape returned by [Client.ChangeSummary]
+// — per-entity multi-window delta rollup.
+type ChangeSummary struct {
+	EntityType   string  `json:"entity_type"`
+	EntityID     string  `json:"entity_id"`
+	RefreshedAt  string  `json:"refreshed_at"`
+	CurrentValue float64 `json:"current_value"`
+
+	H1Value     *float64 `json:"h1_value,omitempty"`
+	H1DeltaPct  *float64 `json:"h1_delta_pct,omitempty"`
+	H24Value    *float64 `json:"h24_value,omitempty"`
+	H24DeltaPct *float64 `json:"h24_delta_pct,omitempty"`
+	D7Value     *float64 `json:"d7_value,omitempty"`
+	D7DeltaPct  *float64 `json:"d7_delta_pct,omitempty"`
+	D30Value    *float64 `json:"d30_value,omitempty"`
+	D30DeltaPct *float64 `json:"d30_delta_pct,omitempty"`
+
+	ATHValue *float64 `json:"ath_value,omitempty"`
+	ATHAt    string   `json:"ath_at,omitempty"`
+	ATLValue *float64 `json:"atl_value,omitempty"`
+	ATLAt    string   `json:"atl_at,omitempty"`
+
+	StreakDirection string `json:"streak_direction,omitempty"`
+	StreakDays      *int   `json:"streak_days,omitempty"`
+	Acceleration    string `json:"acceleration,omitempty"`
+}
+
 // NetworkStats is the data shape returned by [Client.NetworkStats] —
 // the home-page aggregate snapshot the explorer renders in its
 // network strip. One round trip replaces fan-out across coins +
