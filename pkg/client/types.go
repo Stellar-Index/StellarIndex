@@ -551,3 +551,18 @@ type IncidentsList struct {
 	Incidents []Incident `json:"incidents"`
 	Count     int        `json:"count"`
 }
+
+// LendingPool is one row from [Client.LendingPools] — a Blend pool
+// contract observed in the trailing 7d auction stream. Auction +
+// user counts are derived from the trades hypertable; per-pool
+// TVL / utilisation / supply+borrow APYs land via additional
+// fields once the pool-storage reader worker ships, so this
+// shape is designed to grow rather than version-bump.
+type LendingPool struct {
+	Protocol       string    `json:"protocol"`
+	Pool           string    `json:"pool"`
+	Auctions24h    int64     `json:"auctions_24h"`
+	AuctionsTotal  int64     `json:"auctions_total"`
+	UniqueUsers30d int64     `json:"unique_users_30d"`
+	LastSeen       time.Time `json:"last_seen"`
+}
