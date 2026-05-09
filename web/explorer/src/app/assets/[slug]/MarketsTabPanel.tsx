@@ -16,22 +16,20 @@ import { formatCompact } from '@/lib/format';
  * `/v1/coins/{slug}` lookup.
  */
 export function MarketsTabPanel({ assetID }: { assetID: string }) {
-  // Volume-desc + limit=100 hits the API's prewarmed cache key —
-  // the prewarm covers limits 5/25/100/200, so anything off that
-  // set runs a 5–8s cold-cache SQL scan against the trades
-  // hypertable. For popular assets (USDC, XLM, native, …) the
-  // top 100 by volume covers every market they participate in;
-  // long-tail assets that fall outside the top-100 by volume
-  // would need a server-side base/quote filter on /v1/markets
-  // (today only /v1/pools supports it). Tracked as a follow-up.
-  const markets = useMarkets(100, 'volume_24h_usd_desc');
+  // Server-side filter via `?asset=<assetID>` — the API restricts
+  // the listing to pairs where this asset appears on either side,
+  // so we get back exactly the rows we'd want to render. No
+  // client-side filter needed, and the asset's markets are not
+  // gated on whether they crack the global top-N by volume (the
+  // problem with the previous shape).
+  const markets = useMarkets(100, 'volume_24h_usd_desc', { asset: assetID });
 
   const matched = useMemo(() => {
     if (!markets.data) return [];
-    return markets.data.markets
-      .filter((m) => m.base === assetID || m.quote === assetID)
-      .sort((a, b) => b.trade_count_24h - a.trade_count_24h);
-  }, [markets.data, assetID]);
+    return [...markets.data.markets].sort(
+      (a, b) => b.trade_count_24h - a.trade_count_24h,
+    );
+  }, [markets.data]);
 
   if (markets.isError) {
     return (

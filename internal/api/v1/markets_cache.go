@@ -11,8 +11,9 @@ import (
 )
 
 // CachedMarketsReader wraps a [MarketsReader] with a small per-key
-// TTL cache. The four list endpoints it backs (DistinctPairsExt,
-// SourceMarkets, AllPools, GetPairsVolumeHistory24hBatch) all run
+// TTL cache. The five list endpoints it backs (DistinctPairsExt,
+// SourceMarkets, AssetMarkets, AllPools,
+// GetPairsVolumeHistory24hBatch) all run
 // the same expensive 24h-trades-hypertable scan; the explorer hits
 // them on every /markets, /pools, and /dexes page load.
 //
@@ -88,6 +89,18 @@ func (c *CachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor 
 	key := fmt.Sprintf("SourceMarkets|%s|%s|%d|%d", source, cursor, limit, order)
 	rows, next, err := c.fetchPairs(ctx, key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
+	})
+	return rows, next, err
+}
+
+// AssetMarkets — cached.
+func (c *CachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
+	if c.ttl <= 0 {
+		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
+	}
+	key := fmt.Sprintf("AssetMarkets|%s|%s|%d|%d", asset, cursor, limit, order)
+	rows, next, err := c.fetchPairs(ctx, key, func(ctx context.Context) ([]Market, string, error) {
+		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
 	})
 	return rows, next, err
 }
