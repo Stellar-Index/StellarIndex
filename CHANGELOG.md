@@ -322,6 +322,17 @@ against.
   proven, fires four warm-up requests at server start so the first
   user request after a deploy or pool-size shift doesn't pay the
   cold-cache penalty. No behavior change for ongoing requests.
+- **Monitoring**: two `_never_initialized` alerts close the blind
+  spot in the existing `_stale` / `_stalled` family (#1110).
+  `time() - <missing>` evaluates to `no data`, so a deployment
+  whose supply pipeline has never published anything was invisible
+  to monitoring — confirmed on r1 by the 2026-05-08 audit (timer
+  not installed, `aggregator_refresh_enabled = false`,
+  `asset_supply_history` zero rows). Both new alerts use
+  `absent_over_time(...[36h]) == 1` with the same cushion as
+  `_stale` so fresh installs don't false-positive. Routes to a
+  shared runbook covering the two operator paths (systemd timer or
+  goroutine flag).
 - **`/v1/price` fiat-vs-fiat cross-rate fallback**: when both
   `asset` and `quote` are fiat (e.g. `asset=fiat:EUR&quote=fiat:USD`)
   and the Timescale + Redis VWAP paths both miss, the handler
