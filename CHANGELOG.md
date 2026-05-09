@@ -40,6 +40,12 @@ against.
 
 ### Fixed
 
+- **`/v1/incidents` no longer returns `incidents: null` when the
+  embedded corpus is empty**. A fresh deployment (or one where
+  `incidents.Load` errored at startup) left `s.incidents == nil`,
+  which marshalled as `"incidents":null` and broke the
+  pkg/client SDK + explorer JS that `.map()` over the array.
+  Caught while writing the handler's first regression tests.
 - **Asset detail "Markets" tab fetches 100 by volume, not 500
   alphabetically**. `MarketsTabPanel` on `/assets/{slug}` was
   calling `useMarkets(500)` (default `pair` order) then
