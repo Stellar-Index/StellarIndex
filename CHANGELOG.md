@@ -118,6 +118,18 @@ against.
   `type=https://api.ratesengine.net/errors/invalid-cursor`.
   Pinned by 19 sub-tests across both orderings; companion to
   the same fix shipped on `/v1/coins` in #1134.
+- **`base/quote` endpoints (history, vwap, twap, ohlc, pairs,
+  oracle/x_last_price) emit a self-explanatory 400 when the
+  caller mistakenly passed `asset` instead of `base`**. The
+  endpoints' shared `parseBaseQuote` helper used to flatly
+  return `"base query parameter is required"` — leaving
+  callers who copy-pasted query params from `/v1/price`
+  (which uses `asset`/`quote`) confused about which name to
+  use where. Now, when `base` is missing but `asset` is
+  present, the detail appends a hint:
+  `"this endpoint uses base/quote (not asset/quote — that
+  form is on /v1/price)"`. Pinned by
+  `TestHistory_MissingBaseWithAssetHint`.
 
 ### Added
 
