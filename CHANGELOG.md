@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`/v1/markets?asset=<asset_id>` filter** — restrict the markets
+  listing to pairs where the given canonical asset_id appears on
+  either side (base OR quote). Mirrors the `?base=` / `?quote=`
+  filters already on `/v1/pools`. Backs the explorer's
+  `/assets/{slug}` Markets tab so long-tail assets that fall
+  outside the global top-100 by volume now surface their markets
+  correctly. Mutually exclusive with `?source=`; combining the
+  two returns 400 `conflicting-filters`. Invalid asset_ids
+  return 400 `invalid-asset-id` (silent-empty-page guard, same
+  family as `?source=`). (PR #1189)
+
 ### Fixed
 
 - **Asset detail "Markets" tab fetches 100 by volume, not 500
