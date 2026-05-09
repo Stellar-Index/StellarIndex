@@ -264,3 +264,52 @@ func TestMarkets_SourceAndAssetTogether400(t *testing.T) {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
+
+// TestPools_AssetFilter_HappyPath — `/v1/pools?asset=<id>` is the
+// OR-shape filter (base = X OR quote = X) that lets asset-detail
+// surfaces fetch every pool touching the asset in one request.
+func TestPools_AssetFilter_HappyPath(t *testing.T) {
+	srv := v1.New(v1.Options{Markets: &stubMarketsReader{
+		pairs: []v1.Market{{Base: "native", Quote: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}},
+	}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pools?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestPools_InvalidAsset400 — silent-empty-page guard family.
+func TestPools_InvalidAsset400(t *testing.T) {
+	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pools?asset=USDC")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var p v1.Problem
+	mustDecode(t, resp, &p)
+	if p.Type != "https://api.ratesengine.net/errors/invalid-asset-id" {
+		t.Errorf("Type = %q", p.Type)
+	}
+}
+
+// TestPools_AssetAndBaseTogether400 — asset (OR) + base/quote
+// (AND) is rejected; combining the two filter shapes has no
+// well-defined semantics.
+func TestPools_AssetAndBaseTogether400(t *testing.T) {
+	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pools?asset=native&base=native")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var p v1.Problem
+	mustDecode(t, resp, &p)
+	if p.Type != "https://api.ratesengine.net/errors/conflicting-filters" {
+		t.Errorf("Type = %q", p.Type)
+	}
+}

@@ -151,10 +151,20 @@ func (s *Store) AssetMarkets(ctx context.Context, asset, cursor string, limit in
 // page to render "which venues moved this pair in the last 24h".
 // Single-side filters (Base only / Quote only) are accepted but
 // uncommon.
+//
+// Asset filter is the OR-shape — base = X OR quote = X. Used by
+// asset-detail surfaces ("every pool touching this asset")
+// without forcing the caller to fire two parallel `?base=` +
+// `?quote=` requests and merge client-side. Mutually exclusive
+// with Base/Quote at the handler layer (the storage layer
+// accepts the combination, but its semantics aren't
+// well-defined: an asset-OR + base-AND would land on the
+// intersection or the union depending on interpretation).
 type PoolsFilter struct {
 	Sources []string
 	Base    string
 	Quote   string
+	Asset   string
 }
 
 // AllPools returns every (source, base, quote) tuple observed in
@@ -350,14 +360,22 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
            AND lp.quote_asset = t.quote_asset
          WHERE t.ts >= $1
     `
-	// $4 sources, $5 base, $6 quote are always bound; empty values
-	// short-circuit each predicate so the planner skips it. Keeps
-	// the positional-arg layout stable across filter combinations
-	// (extending the slice would require renumbering downstream).
+	// $4 sources, $5 base, $6 quote, $7 asset are always bound;
+	// empty values short-circuit each predicate so the planner
+	// skips it. Keeps the positional-arg layout stable across
+	// filter combinations (extending the slice would require
+	// renumbering downstream).
+	//
+	// $7 asset is the OR-shape (base = X OR quote = X), distinct
+	// from $5/$6's AND-shape — used by asset-detail surfaces that
+	// want every pool touching an asset on either side without
+	// firing two parallel `?base=` + `?quote=` requests and
+	// merging client-side.
 	cte += `
            AND (cardinality($4::text[]) = 0 OR t.source = ANY($4))
            AND ($5 = '' OR t.base_asset = $5)
            AND ($6 = '' OR t.quote_asset = $6)
+           AND ($7 = '' OR t.base_asset = $7 OR t.quote_asset = $7)
     `
 	if order == MarketsOrderVolume24hDesc {
 		const tail = `
@@ -375,7 +393,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		          (t.source || '|' || t.base_asset || '|' || t.quote_asset) ASC
 		 LIMIT $3
 		`
-		args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote}
+		args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote, filter.Asset}
 		return cte + tail, args
 	}
 	const tail = `
