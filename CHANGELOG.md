@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **Asset detail "Markets" tab fetches 100 by volume, not 500
+  alphabetically**. `MarketsTabPanel` on `/assets/{slug}` was
+  calling `useMarkets(500)` (default `pair` order) then
+  client-side filtering to markets involving the asset. Cold-
+  cache hit a 5–8s SQL scan (limit=500 isn't in the prewarm set
+  of 5/25/100/200), and the alphabetical sort meant the cap
+  could miss popular markets. Switched to
+  `useMarkets(100, 'volume_24h_usd_desc')` — hits warm cache,
+  ~5× smaller payload, and surfaces the asset's top-100-by-volume
+  markets first. Long-tail assets outside the global top-100 by
+  volume need a server-side `?asset=` filter on /v1/markets
+  (only /v1/pools has it today) — tracked as follow-up.
 - **Home page no longer fetches 500 markets to render 10**.
   `HomeTopMarkets` called `useMarkets(500, …)` then immediately
   `.slice(0, 10)` — sending and parsing 490 rows the user never

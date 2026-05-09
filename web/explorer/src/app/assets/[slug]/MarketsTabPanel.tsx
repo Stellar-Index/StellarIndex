@@ -16,10 +16,15 @@ import { formatCompact } from '@/lib/format';
  * `/v1/coins/{slug}` lookup.
  */
 export function MarketsTabPanel({ assetID }: { assetID: string }) {
-  // Same alphabetic-pagination problem as /markets — fetch 500 so
-  // we don't miss markets where this asset participates that
-  // happen to sort beyond the first 100 base|quote keys.
-  const markets = useMarkets(500);
+  // Volume-desc + limit=100 hits the API's prewarmed cache key —
+  // the prewarm covers limits 5/25/100/200, so anything off that
+  // set runs a 5–8s cold-cache SQL scan against the trades
+  // hypertable. For popular assets (USDC, XLM, native, …) the
+  // top 100 by volume covers every market they participate in;
+  // long-tail assets that fall outside the top-100 by volume
+  // would need a server-side base/quote filter on /v1/markets
+  // (today only /v1/pools supports it). Tracked as a follow-up.
+  const markets = useMarkets(100, 'volume_24h_usd_desc');
 
   const matched = useMemo(() => {
     if (!markets.data) return [];
