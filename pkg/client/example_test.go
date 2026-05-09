@@ -370,3 +370,115 @@ func ExampleClient_NetworkStats() {
 
 	// Output: ledger=62490950, markets=23848, assets=86175, exchange/total=11/21, vol24h_usd=3176584845.46668496
 }
+
+// ExampleClient_Currencies demonstrates the unified
+// fiat / fiat-like currency listing — backs the explorer's
+// /currencies page. RateUSD is "1 USD = N units of this currency"
+// per the server contract, so for currencies stronger than USD
+// (EUR, GBP) RateUSD < 1, and weaker (JPY, INR) RateUSD > 1. The
+// `*float64` pointer fields preserve the "no data" vs "0"
+// distinction on circulating-supply / market-cap, important for
+// currencies the operator hasn't wired a circulation source for
+// (about 70 of ~120 fiats today).
+func ExampleClient_Currencies() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"currencies": [
+					{
+						"ticker": "EUR",
+						"name": "Euro",
+						"rate_usd": 0.8483,
+						"updated_at": "2026-05-08T00:00:00Z",
+						"circulating_supply": 15800000000000,
+						"market_cap_usd": 18625486266650.95
+					},
+					{
+						"ticker": "JPY",
+						"name": "Japanese Yen",
+						"rate_usd": 152.34,
+						"updated_at": "2026-05-08T00:00:00Z"
+					}
+				],
+				"published_at": "2026-05-08T00:00:00Z",
+				"fetched_at":   "2026-05-08T01:00:00Z",
+				"source":       "massive"
+			},
+			"as_of": "2026-05-09T10:00:00Z",
+			"flags": {}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := client.New(client.Options{BaseURL: srv.URL})
+	got, err := c.Currencies(context.Background(), client.CurrenciesOptions{Limit: 50})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, cur := range got.Data.Currencies {
+		mcap := "—"
+		if cur.MarketCapUSD != nil {
+			mcap = fmt.Sprintf("$%.0fB", *cur.MarketCapUSD/1e9)
+		}
+		fmt.Printf("%s (%s): 1 USD = %.4f, market_cap=%s\n",
+			cur.Ticker, cur.Name, cur.RateUSD, mcap)
+	}
+
+	// Output:
+	// EUR (Euro): 1 USD = 0.8483, market_cap=$18625B
+	// JPY (Japanese Yen): 1 USD = 152.3400, market_cap=—
+}
+
+// ExampleClient_Incidents demonstrates fetching the
+// incident-postmortem corpus surfaced on status.ratesengine.net.
+// Each entry has a SEV-N severity tier, a lifecycle status, and
+// the full markdown body. ResolvedAt is `*time.Time` (nil for
+// still-active incidents) so callers can distinguish "ongoing"
+// from "resolved at zero time".
+//
+// The corpus ships with the binary (per-deploy), so two regions
+// running different builds may return different lists — clients
+// that need cross-region consistency should diff by Slug.
+func ExampleClient_Incidents() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"incidents": [
+					{
+						"slug": "2026-05-06-postgres-lock-table-full",
+						"title": "[SEV-3] Indexer dropping ~1% of trades",
+						"severity": "SEV-3",
+						"status": "resolved",
+						"started_at": "2026-05-06T15:00:00Z",
+						"resolved_at": "2026-05-06T22:39:00Z",
+						"affected_components": ["indexer"],
+						"body_markdown": "..."
+					}
+				],
+				"count": 1
+			},
+			"as_of": "2026-05-09T15:00:00Z",
+			"flags": {}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := client.New(client.Options{BaseURL: srv.URL})
+	got, err := c.Incidents(context.Background())
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, inc := range got.Data.Incidents {
+		state := "ongoing"
+		if inc.ResolvedAt != nil {
+			state = "resolved " + inc.ResolvedAt.Format("2006-01-02 15:04Z")
+		}
+		fmt.Printf("[%s/%s] %s — %s\n", inc.Severity, inc.Status, inc.Slug, state)
+	}
+
+	// Output: [SEV-3/resolved] 2026-05-06-postgres-lock-table-full — resolved 2026-05-06 22:39Z
+}
