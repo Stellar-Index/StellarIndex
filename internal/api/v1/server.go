@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -590,6 +591,31 @@ func (s *Server) Handler() http.Handler {
 // for debugging / testing.
 func (s *Server) Uptime() time.Duration { return time.Since(s.started) }
 
+// loopbackOnly wraps `next` so it returns 404 for any request
+// whose RemoteAddr is not a loopback IP (127.0.0.0/8 or ::1).
+// Used for `/metrics` so the binary refuses to answer scrapes
+// from anything but localhost — defense-in-depth against a
+// misconfigured reverse proxy that forwards public traffic to
+// the binary's :3000 port.
+//
+// Returns 404 (not 403) deliberately — 403 would confirm the
+// route exists; 404 mirrors what a properly-configured Caddy
+// would emit and gives no signal to a scanner.
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr // RemoteAddr without port (rare)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) mountRoutes() {
 	// Health / meta endpoints. Deliberately NOT behind rate-limit
 	// middleware — infra (k8s probes, load balancers) hits these.
@@ -609,7 +635,19 @@ func (s *Server) mountRoutes() {
 
 	// Prometheus scrape endpoint. Deliberately unversioned — it's
 	// operator-facing, not part of the public API contract.
-	s.mux.Handle("GET /metrics", obs.Handler())
+	//
+	// Defense-in-depth: also gate at the Go layer on RemoteAddr
+	// being a loopback address. The intended posture is that Caddy
+	// 404s `/metrics` from public hosts (configs/caddy/Caddyfile.api)
+	// and only the local Prometheus scraper hits the binary
+	// directly via 127.0.0.1:3000. This guard catches the case where
+	// the Caddyfile config is stale OR the binary is exposed behind
+	// a different proxy that hasn't been audited. /metrics on a
+	// public host fingerprints the deployment (Go runtime stats,
+	// per-source counters, build info) — the cost of a missed
+	// public hit is non-trivial enough to justify two layers of
+	// blocking.
+	s.mux.Handle("GET /metrics", loopbackOnly(obs.Handler()))
 
 	// Asset catalogue.
 	s.mux.HandleFunc("GET /v1/assets", s.handleAssetList)

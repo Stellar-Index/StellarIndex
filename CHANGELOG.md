@@ -62,6 +62,22 @@ against.
 
 ### Security
 
+- **API binary's `/metrics` now refuses non-loopback callers
+  (defense-in-depth)**. PR #1172 added the Caddy block at the
+  edge, but a probe today found `curl https://api.ratesengine.net/metrics`
+  still returning 1372 lines of Go runtime + per-source counter
+  data — the operator hasn't re-applied the Caddyfile yet
+  (operator action pending). Adds a Go-layer gate
+  (`loopbackOnly`) so the binary itself returns 404 to any
+  RemoteAddr that isn't 127.0.0.0/8 or ::1 — the local
+  Prometheus scraper still reaches it via 127.0.0.1:3000, but
+  any reverse proxy that forwards public traffic gets a clean
+  404. Returns 404 (not 403) deliberately so a scanner can't
+  confirm the route exists. Six unit tests pin both branches
+  (3 non-loopback IP families × 404, 3 loopback addrs × 200).
+  Caddy block stays as the primary protection; this is the
+  belt-and-braces second layer that catches misconfiguration.
+  (PR #1207)
 - **Caddy `Caddyfile.api` now 404s `/metrics` from the public
   `api.ratesengine.net` host**. The API binary serves /metrics on
   :3000 alongside /v1/* (one ServeMux), and the catch-all
