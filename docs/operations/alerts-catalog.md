@@ -82,6 +82,7 @@ signal lands.
 | `ratesengine_api_error_rate_high` | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])` | > 1 % for > 2 min | P2 | [api-5xx](runbooks/api-5xx.md) |
 | `ratesengine_api_error_rate_critical` | same | > 5 % for > 2 min | **P1** | [api-5xx](runbooks/api-5xx.md) |
 | `ratesengine_api_price_stale` | `ratesengine_price_staleness_seconds` per asset | > 120 s sustained 5 min | P2 | [price-stale](runbooks/price-stale.md) |
+| `ratesengine_api_cache_miss_rate_high` | `rate(ratesengine_api_cache_ops_total{result="miss"}[5m]) / rate(ratesengine_api_cache_ops_total[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | P2 | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
 
 ## SLA-probe alerts
 
