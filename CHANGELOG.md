@@ -88,6 +88,22 @@ against.
   unaffected (response is origin-independent so Vary would just
   defeat caching). Two regression tests pin both branches.
 
+### Documentation
+
+- **Clarify the source-count semantic gap between
+  `/v1/network/stats` and `/v1/status`**. Both endpoints expose
+  a field called `total_sources`, but they measure different
+  things: network/stats counts entries in the static binary
+  registry (constant per-build); status counts sources the
+  operator has enabled at runtime (Prometheus-derived, region-
+  scoped). On r1 today registry=21, enabled=17, active=15. The
+  semantic gap is by design — keeping the names in separate
+  envelopes prevents collision in any single response — but the
+  contrast was undocumented. Updated docstrings on
+  `internal/api/v1.NetworkStats` + the OpenAPI descriptions on
+  both endpoints so SDK consumers don't need to spelunk to find
+  out which one they want.
+
 ### Performance
 
 - **Cacheable read endpoints now emit `public, max-age=60,
