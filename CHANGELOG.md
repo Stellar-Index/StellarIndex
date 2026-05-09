@@ -100,6 +100,16 @@ against.
   ("dex pools take forever"). With this counter an alert on
   `rate(...{result="miss"}[5m]) / rate(...[5m]) > 0.5` sustained
   catches the next drift in minutes instead of days. (PR #1196)
+- **Prometheus alert `ratesengine_api_cache_miss_rate_high`** wired
+  to the new counter. Fires P2/ticket when miss rate > 50% sustained
+  10 min on any (cache, op) with ≥ 0.1 req/s traffic. The traffic
+  floor avoids flapping on quiet caches; the ratio (not absolute)
+  threshold means a low-volume cache with 100% miss won't page but
+  a high-volume cache with 50% miss will. Runbook
+  [cache-miss-rate-high.md](docs/operations/runbooks/cache-miss-rate-high.md)
+  walks the operator through diffing prewarm vs handler args
+  (which is what we did manually for #1185 / #1194 / #1195).
+  (PR #1197)
 
 ### Documentation
 
