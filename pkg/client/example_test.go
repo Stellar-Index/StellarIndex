@@ -576,3 +576,170 @@ func ExampleClient_SACWrappers() {
 
 	// Output: XLM SAC (CAS3J7…) wraps: native
 }
+
+// ExampleClient_Chart demonstrates the binned price + USD-volume
+// time series. Distinct from [Client.HistorySinceInception] (which
+// returns the FULL series at one granularity) — Chart trims to a
+// caller-chosen window and resolves a server-default granularity
+// per timeframe (24h → 1h bins, 7d → 4h, 30d → 1d, etc.).
+//
+// Use Chart for "render this asset's last N hours/days"; use
+// HistorySinceInception for full historical exports / analytical
+// work that needs every bucket.
+func ExampleClient_Chart() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"asset_id": "native",
+				"quote": "fiat:USD",
+				"granularity": "1h",
+				"timeframe": "24h",
+				"price_type": "vwap",
+				"points": [
+					{"t": "2026-05-08T22:00:00Z", "p": "0.158", "v_usd": "20808.05"},
+					{"t": "2026-05-08T23:00:00Z", "p": "0.161", "v_usd": "31204.18"}
+				]
+			},
+			"as_of": "2026-05-08T23:00:00Z",
+			"flags": {}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := client.New(client.Options{BaseURL: srv.URL})
+	got, err := c.Chart(context.Background(), client.ChartQuery{
+		Asset: "native", Timeframe: "24h",
+	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Printf("%s/%s @ %s, %d points\n",
+		got.Data.AssetID, got.Data.Quote, got.Data.Granularity, len(got.Data.Points))
+	for _, p := range got.Data.Points {
+		fmt.Printf("  %s: %s\n", p.T.Format("15:04Z"), p.P)
+	}
+
+	// Output:
+	// native/fiat:USD @ 1h, 2 points
+	//   22:00Z: 0.158
+	//   23:00Z: 0.161
+}
+
+// ExampleClient_Observations demonstrates the rawest per-source
+// trade view per ADR-0018 — one row per source that has recorded
+// a trade on (asset, quote). Use this when you want to see
+// "where is this rate coming from?" without the aggregator layer.
+//
+// Empty array (NOT 404) when the pair has no observations.
+// flags.stale is always false on this surface — there's no
+// aggregation contract to fall short of.
+//
+// Aggregate="latest" collapses the per-source array to a 0/1-
+// element slice of the most-recent observation across sources.
+func ExampleClient_Observations() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{
+					"source": "binance",
+					"ledger": 0,
+					"tx_hash": "",
+					"ts": "2026-05-09T15:00:00Z",
+					"base_asset": "native",
+					"quote_asset": "fiat:USD",
+					"base_amount": "100",
+					"quote_amount": "16.0",
+					"price": "0.16"
+				},
+				{
+					"source": "sdex",
+					"ledger": 62490950,
+					"tx_hash": "abc",
+					"ts": "2026-05-09T14:59:50Z",
+					"base_asset": "native",
+					"quote_asset": "fiat:USD",
+					"base_amount": "1000000",
+					"quote_amount": "159000",
+					"price": "0.159"
+				}
+			],
+			"as_of": "2026-05-09T15:00:00Z",
+			"flags": {}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := client.New(client.Options{BaseURL: srv.URL})
+	got, err := c.Observations(context.Background(), client.ObservationsQuery{
+		Asset: "native", Quote: "fiat:USD",
+	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, row := range got.Data {
+		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), row.Price)
+	}
+
+	// Output:
+	// binance @ 15:00:00Z: 0.16
+	// sdex @ 14:59:50Z: 0.159
+}
+
+// ExampleClient_ChangeSummary demonstrates the per-entity
+// multi-window delta rollup. The change-summary worker writes one
+// row per (entity_type, entity_id) every 5 min; this method
+// surfaces the latest. EntityType is one of "coin", "protocol",
+// "pair", "source"; for coin entities the API expands friendly
+// slugs (XLM, USDC) into canonical asset_id forms server-side.
+//
+// All H*/D* fields are *float64 — nil distinguishes "no value
+// yet" (window opened recently) from "0% change". Render `—` on
+// nil rather than fabricating a zero.
+func ExampleClient_ChangeSummary() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"entity_type": "coin",
+				"entity_id": "crypto:XLM",
+				"refreshed_at": "2026-05-09T15:00:00Z",
+				"current_value": 0.163,
+				"h24_delta_pct": 3.21,
+				"d7_delta_pct": -1.8,
+				"streak_direction": "up",
+				"acceleration": "increasing"
+			},
+			"as_of": "2026-05-09T15:00:00Z",
+			"flags": {}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := client.New(client.Options{BaseURL: srv.URL})
+	got, err := c.ChangeSummary(context.Background(), client.ChangeSummaryQuery{
+		EntityType: "coin", EntityID: "crypto:XLM",
+	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	pct := func(p *float64) string {
+		if p == nil {
+			return "—"
+		}
+		return fmt.Sprintf("%+.2f%%", *p)
+	}
+	fmt.Printf("%s: $%.4f, 24h=%s 7d=%s (%s, %s)\n",
+		got.Data.EntityID,
+		got.Data.CurrentValue,
+		pct(got.Data.H24DeltaPct),
+		pct(got.Data.D7DeltaPct),
+		got.Data.StreakDirection,
+		got.Data.Acceleration)
+
+	// Output: crypto:XLM: $0.1630, 24h=+3.21% 7d=-1.80% (up, increasing)
+}
