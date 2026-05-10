@@ -337,6 +337,22 @@ against.
 
 ### Fixed
 
+- **Caddy now resolves the real client IP from Cloudflare** —
+  `configs/caddy/Caddyfile.api`. The previous config rewrote
+  `X-Forwarded-For` to `{remote_host}` (the immediate TCP peer,
+  i.e. a CF edge POP), so every API request looked like it came
+  from a Cloudflare IP. Per-IP rate-limit buckets became
+  per-CF-edge buckets — a single CF edge hitting the burst
+  threshold blocked every customer behind it. Access logs were
+  similarly useless (every `remote_ip` was a 162.158.x.x or
+  104.22.x.x CF edge, never the actual customer). Fix: add a
+  global `servers { trusted_proxies static <CF CIDRs>;
+  client_ip_headers CF-Connecting-IP X-Forwarded-For }` block
+  and forward `{client_ip}` instead of `{remote_host}` from the
+  `reverse_proxy` directive. Trust is CIDR-pinned to CF's
+  published ranges so an attacker hitting the box's IP directly
+  can't spoof `CF-Connecting-IP`. README documents the
+  CIDR-refresh cadence.
 - **CoinGecko poller now grows the cooldown exponentially even
   when the venue's `Retry-After` is short** — pre-fix the
   Retry-After branch took the hint at face value (clamped to
