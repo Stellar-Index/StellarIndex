@@ -17,6 +17,20 @@ against.
 
 ### Added
 
+- **Runbook for the `fx_quotes` hypertable / migration 0028 gap.**
+  Captures the 2026-05-10 finding that r1's DB is at migration
+  0027 (PR #1041's migration 0028 was never applied), so the
+  forex worker WARN-spams `pq: relation "fx_quotes" does not
+  exist` on every refresh tick and `/v1/currencies/EUR.history_1y`
+  / `.history_all` stay empty (customer-visible regression of
+  task #104). New runbook at
+  `docs/operations/runbooks/fx-history-missing.md` documents the
+  triage + 5-min recovery (scp migration → `ratesengine-migrate
+  up` → confirm forex worker resumes → optional 10y backfill via
+  `scripts/ops/fx-history-backfill`). Cross-linked from
+  alerts-catalog + external-poller-stale. Prevention notes
+  capture the choice between auto-migrate-in-deploy-workflow
+  vs. gate-readyz-on-schema-version. (PR #1230)
 - **Runbook + customer-facing incident post for the 2026-05-10
   Redis-write-blocked outage** — r1's root filesystem reached
   100% with 35 GB of stale logs, blocking Redis snapshots,
