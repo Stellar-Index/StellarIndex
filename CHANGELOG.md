@@ -329,6 +329,16 @@ against.
 
 ### Fixed
 
+- **`/v1/ohlc` now applies the same X/fiat:USD → X/<peg> stablecoin
+  fallback** as `/v1/price` (#1217), `/v1/chart` (#1015), and the
+  vwap+twap pair (#1219). Pre-fix, `/v1/ohlc?base=native&quote=fiat:USD`
+  404'd "no trades in window" out-of-the-box on every fresh
+  deployment. Freighter RFP §3 names `/v1/ohlc` as a launch-blocker
+  for the asset-detail surface, so this gap was visible to every
+  asset detail page request. New `ohlcTradesWithStablecoinFallback`
+  helper walks the operator's classic USD pegs in priority order;
+  first peg with non-empty trades wins. Response carries
+  `flags.triangulated=true`. (PR #1225)
 - **`/v1/vwap` and `/v1/twap` now apply the same X/fiat:USD →
   X/<peg> stablecoin-fiat proxy fallback** as `/v1/price` (#1217)
   and `/v1/chart` (#1015). Pre-fix, `/v1/vwap?base=native&quote=fiat:USD`
