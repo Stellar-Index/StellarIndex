@@ -36,6 +36,22 @@ func DexSourceNames() []string {
 	return out
 }
 
+// CexSourceNames returns every source registered with
+// Class=Exchange + Subclass=CEX, sorted for stable order. Same
+// shape and rationale as DexSourceNames — exported so the prewarm
+// goroutine in cmd/ratesengine-api can iterate the registered CEXes
+// to warm `/v1/markets?source=<name>` cache slots.
+func CexSourceNames() []string {
+	out := make([]string, 0, len(external.Registry))
+	for name, md := range external.Registry {
+		if md.Class == external.ClassExchange && md.Subclass == external.SubclassCEX {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // MarketsReader is the storage-side interface for /v1/markets
 // and /v1/pairs lookups. Implementations: *timescale.Store
 // (DistinctPairsExt + PairMarket), in-memory stubs for tests.

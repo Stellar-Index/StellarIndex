@@ -2134,8 +2134,19 @@ func prewarmOnce(
 	// sdex soroswap]`). Mirror the handler's behaviour explicitly.
 	dexSources := v1.DexSourceNames()
 	for _, lim := range []int{5, 25, 100, 200} {
+		// /v1/markets default order — alphabetical (MarketsOrderPair).
 		if _, _, err := markets.DistinctPairsExt(mkCtx, "", lim, timescale.MarketsOrderPair); err != nil {
-			logger.Debug("prewarm markets failed", "limit", lim, "err", err)
+			logger.Debug("prewarm markets failed", "limit", lim, "order", "pair", "err", err)
+		}
+		// /v1/markets explorer-actual order — the home page,
+		// HomeTopMarkets, sitemap, and embed/pair routes ALL pass
+		// `?order_by=volume_24h_usd_desc`. Pre-fix, the warmer only
+		// covered MarketsOrderPair so every explorer pageload hit the
+		// 8s timeout (R-001 in docs/review-2026-05-10.md). The cache
+		// key includes the order, so the volume-desc variant is a
+		// separate slot and needs its own prewarm.
+		if _, _, err := markets.DistinctPairsExt(mkCtx, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
+			logger.Debug("prewarm markets failed", "limit", lim, "order", "volume_24h_usd_desc", "err", err)
 		}
 		if _, _, err := markets.AllPools(mkCtx, timescale.PoolsFilter{Sources: dexSources}, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
 			logger.Debug("prewarm pools failed", "limit", lim, "err", err)
@@ -2157,6 +2168,20 @@ func prewarmOnce(
 		filter := timescale.PoolsFilter{Sources: []string{src}}
 		if _, _, err := markets.AllPools(mkCtx, filter, "", 100, timescale.MarketsOrderVolume24hDesc); err != nil {
 			logger.Debug("prewarm per-source pools failed", "source", src, "err", err)
+		}
+	}
+
+	// Per-CEX/source markets prewarm — the explorer's /exchanges/{name}
+	// PairsTable.tsx fires `/v1/markets?source=<src>&limit=200`
+	// (volume-desc default). Each maps to a SourceMarkets cache slot
+	// distinct from the unfiltered DistinctPairsExt warmed above, so
+	// every cold visit to /exchanges/binance, /exchanges/coinbase, etc.
+	// previously paid the full 8s ceiling (R-002). One pass per
+	// registered source on each cycle keeps the typical pageload at
+	// sub-100ms.
+	for _, src := range v1.CexSourceNames() {
+		if _, _, err := markets.SourceMarkets(mkCtx, src, "", 200, timescale.MarketsOrderVolume24hDesc); err != nil {
+			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
 		}
 	}
 
