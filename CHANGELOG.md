@@ -78,6 +78,17 @@ against.
 
 ### Added
 
+- **`pkg/client`: `VWAP`, `TWAP`, `Pools` SDK methods** — closes the
+  remaining gap in the Go SDK's coverage of the v1 surface. New
+  shared `AggregateQuery` shape feeds both VWAP and TWAP (TWAP
+  silently ignores `OutlierSigma` — kept on the shared shape for
+  ergonomic reuse). `Pools` carries a `PoolsQuery` with
+  Source/Base/Quote/Asset filter dimensions and the standard
+  cursor/limit/order_by pagination shape. New wire types:
+  `VWAPResult`, `TWAPResult`, `Pool`. Five tests pin happy-path
+  round-trips, query-param shape, and required-field validation.
+  Supersedes the stale PR #1124 (whose branch had drifted into
+  conflict). (PR #1226)
 - **HSTS on the explorer + status site** — both surfaces were
   missing `Strict-Transport-Security`, leaving them vulnerable
   to a downgrade-protocol-stripping attack on first visit.
