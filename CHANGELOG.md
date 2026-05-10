@@ -17,6 +17,16 @@ against.
 
 ### Fixed
 
+- **Explorer home: `HomeCurrencies` and `HomeTopMarkets` now
+  show a "couldn't load" notice on error instead of silently
+  rendering nothing**. Previously both components had
+  `if (isError) return null;` — so when /v1/markets panicked
+  (PR #1233 fix) or /v1/currencies stalled, the entire
+  section silently disappeared from the homepage and visitors
+  had no signal that something was wrong vs. the section just
+  not existing. The new notice points to the full /currencies
+  + /markets pages (which use a different fetch path) and to
+  status.ratesengine.net for ongoing incident context.
 - **Dispatcher tx-read errors are no longer silently swallowed** —
   `internal/dispatcher/dispatcher.go::ProcessLedger`'s "skip
   malformed tx, keep processing the ledger" branch had no
