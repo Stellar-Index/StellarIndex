@@ -337,6 +337,21 @@ against.
 
 ### Fixed
 
+- **Kraken dust trades now use the typed `ErrDustTrade` sentinel**
+  — extends the #814 / #1234 pattern (Coinbase / Binance /
+  Bitstamp) to Kraken. Before this PR the live `parse.go` path
+  had NO dust check at all — a sub-precision-floor live trade
+  would have produced a Trade with quote=0, the canonical
+  validator would reject on insert, and the indexer would
+  log "insert trade failed" at ERROR per frame (the same
+  pattern that flooded r1 logs for Bitstamp until #1234).
+  Backfill already had a check but used a generic
+  `fmt.Errorf("zero quote")` rather than the typed sentinel
+  the consumers explicitly understand. Kraken isn't enabled on
+  r1 today (see `[external.kraken].enabled` in r1's TOML) so
+  this is a latent-bug fix — closing it now means flipping
+  Kraken on later doesn't surprise the operator with a fresh
+  ERROR storm.
 - **CoinGecko divergence reference now has a built-in default
   IDMap matching the aggregator's default coverage** —
   `internal/divergence/coingecko.go`. Caught from r1 on
