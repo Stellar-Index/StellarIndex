@@ -99,6 +99,16 @@ against.
 
 ### Added
 
+- **Common-name 404 redirects on the explorer.** The 2026-05-10
+  audit found several natural URL guesses returned the
+  static-export 404 catch-all (`/pool`, `/pools`, `/coin`,
+  `/token`, `/tokens`, `/price`, `/prices`, `/api/`, `/docs`,
+  `/docs/<path>`). New 301 redirects send each to its canonical
+  destination: `/pool*` → `/dexes/`, `/coin|/token*` →
+  `/assets/`, `/price*` → `/markets/`, `/api/` →
+  `api.ratesengine.net`, `/docs*` → `docs.ratesengine.net`
+  (splat-preserved deep-link). 19 new rules in
+  `web/explorer/public/_redirects`. (PR #1232)
 - **`/llms.txt` for explorer** — llmstxt.org-spec discovery file
   for AI agents indexing the site. Single hand-curated markdown
   manifest pointing at the API surface, key endpoints, the

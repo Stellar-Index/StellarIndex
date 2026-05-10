@@ -115,6 +115,37 @@
 /lending/blend           /lending/   301
 /lending/blend/          /lending/   301
 
+# Common-name 404s — natural URL guesses that should land on the
+# canonical category page rather than the 404 catch-all. Each was
+# returning 404 in the audit on 2026-05-10. The /coins → /assets
+# rules exist higher in this file already; this block adds the
+# adjacent singular/synonym variants so a user typing /pool, /pools,
+# /token, /tokens, /coin, /price, /prices in the address bar lands
+# somewhere useful instead of hitting the static-export 404.
+/pool          /dexes/                            301
+/pool/         /dexes/                            301
+/pools         /dexes/                            301
+/pools/        /dexes/                            301
+/coin          /assets/                           301
+/coin/         /assets/                           301
+/token         /assets/                           301
+/token/        /assets/                           301
+/tokens        /assets/                           301
+/tokens/       /assets/                           301
+/price         /markets/                          301
+/price/        /markets/                          301
+/prices        /markets/                          301
+/prices/       /markets/                          301
+# /api existed without trailing slash via the cross-host rule above;
+# add the trailing-slash variant so /api/ → api.ratesengine.net too.
+/api/          https://api.ratesengine.net/       301
+# /docs and /docs/* — the rendered API reference lives at
+# docs.ratesengine.net (splat preserves the deep-link path so
+# /docs/v1/price → docs.ratesengine.net/v1/price).
+/docs          https://docs.ratesengine.net/      301
+/docs/         https://docs.ratesengine.net/      301
+/docs/*        https://docs.ratesengine.net/:splat 301
+
 # /favicon.ico → /icon.svg. Next 15's `src/app/icon.svg` metadata
 # route serves the SVG and emits the right <link rel="icon"> in the
 # rendered HTML, so modern browsers find the favicon via that link
