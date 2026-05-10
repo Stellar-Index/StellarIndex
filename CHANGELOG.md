@@ -99,6 +99,15 @@ against.
 
 ### Added
 
+- **SDK godoc examples for `PriceBatch`, `Coins`, `Coin`, `Pair`**
+  (`pkg/client/example_test.go`). Round 2 of the godoc-coverage
+  push — picks the next four highest-traffic methods that lacked
+  examples on pkg.go.dev. PriceBatch (the recommended bulk path
+  per the Freighter RFP), Coins + Coin (what powers the
+  explorer's `/assets` and `/assets/<slug>` pages), and Pair
+  (per-source attribution for one market). Each example follows
+  the established httptest + `// Output:` pattern so it's
+  verified at build time.
 - **SDK godoc examples for `Issuers`, `Issuer`, `AssetMetadata`,
   `History`, `Currency`, `Cursors`** (`pkg/client/example_test.go`).
   Round 3 of the godoc-coverage push — closes the gap on the
