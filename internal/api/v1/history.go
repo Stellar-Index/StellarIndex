@@ -220,7 +220,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(hCtx, err) {
 			s.logger.Warn("TradesInRangeAfter deadline exceeded",
 				"base", base.String(), "quote", quote.String(),
 				"from", from, "to", to, "limit", limit)
@@ -518,7 +518,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(hCtx, err) {
 			s.logger.Warn("HistoryPoints deadline exceeded",
 				"asset", asset.String(), "quote", quote.String(), "granularity", gran)
 			writeProblem(w, r,
