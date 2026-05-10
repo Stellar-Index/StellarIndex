@@ -17,6 +17,21 @@ against.
 
 ### Fixed
 
+- **Dispatcher tx-read errors are no longer silently swallowed** —
+  `internal/dispatcher/dispatcher.go::ProcessLedger`'s "skip
+  malformed tx, keep processing the ledger" branch had no
+  instrumentation: a `LedgerTransactionReader.Read` failure
+  silently dropped the tx and the only signal was a downstream
+  price gap days later. Now bumps a `Stats().TxReadErrors`
+  counter that the statsflush periodic snapshot surfaces at
+  WARN whenever the delta in a flush window > 0. Same pattern
+  as the existing `decodeErrors` per-source counters; sits
+  outside the per-source rows schema because tx-read failures
+  aren't attributable to a single source. Doc comment in the
+  Stats type + the inline skip both updated to reflect the
+  new instrumentation. (No-op on healthy r1 today — the value
+  is the alarm path the moment a corrupt LCM lands in
+  Galexie.)
 - **Divergence sink failures now log at WARN instead of being
   silently swallowed** —
   `internal/divergence/worker.go::flushObservations` discarded
