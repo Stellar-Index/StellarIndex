@@ -99,6 +99,16 @@ against.
 
 ### Added
 
+- **`/v1/coins` and `/v1/coins/{slug}`: `issuer_scam_reason` field**.
+  When an asset's issuer G-strkey appears on the curated scam
+  directory (sourced from stellar.expert, same data the
+  `/v1/issuers` family already exposes), the field is non-empty.
+  Closes a security UX gap: previously a user landing on
+  `/assets/{slug}` for a known-scam asset saw no warning until the
+  IssuerPanel completed its async fetch — now the field comes back
+  on the build-time response and the explorer renders a red banner
+  above the price block at first paint. Always omitted for native
+  XLM (no issuer) and for issuers we have no scam record on.
 - **`?source=<name>` filter on `/v1/diagnostics/cursors`** —
   exact-match filter on the source column. Caught from a r1
   audit: the param was being silently ignored, so an operator
