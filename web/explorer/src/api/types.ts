@@ -1228,6 +1228,11 @@ export interface paths {
          *     server's per-request cap (10000) and the bar reflects only
          *     the chronologically-first N; narrow the window or wait for
          *     CAGG-backed endpoints.
+         *
+         *     High/Low have no statistical robustness — a single dust
+         *     trade can dominate. The `outlier_sigma` filter (default 4σ)
+         *     drops outliers before bar computation; pass `outlier_sigma=0`
+         *     to opt into raw extremes.
          */
         get: {
             parameters: {
@@ -1251,6 +1256,8 @@ export interface paths {
                     quote?: components["parameters"]["Quote"];
                     from?: components["parameters"]["From"];
                     to?: components["parameters"]["To"];
+                    /** @description Drop trades > N σ from window mean before computing the bar. Default 4σ. Pass 0 to disable (raw extremes, including dust). */
+                    outlier_sigma?: number;
                 };
                 header?: never;
                 path?: never;
@@ -4561,6 +4568,28 @@ export interface components {
                 /** @enum {string} */
                 price_type: "vwap" | "twap";
                 points: components["schemas"]["HistoryPoint"][];
+                /**
+                 * @description True when the requested timeframe extends before
+                 *     the earliest available data on this deployment
+                 *     (e.g. asking `?timeframe=1y` when retention is
+                 *     only 7 days). Always false for `timeframe=all`.
+                 */
+                truncated: boolean;
+                /**
+                 * Format: date-time
+                 * @description Earliest bucket in the result set. Only present
+                 *     when `truncated=true`. Render as "history begins
+                 *     at <ts>" so users know to widen retention or
+                 *     pick a shorter timeframe.
+                 */
+                data_starts_at?: string;
+                /**
+                 * Format: date-time
+                 * @description Window start the consumer asked for (derived
+                 *     from `timeframe`). Only present when
+                 *     `truncated=true`.
+                 */
+                requested_from?: string;
             };
         };
         TradeRow: {
