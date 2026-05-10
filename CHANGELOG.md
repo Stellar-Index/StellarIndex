@@ -17,6 +17,22 @@ against.
 
 ### Added
 
+- **ADR-0026 — Stablecoin → fiat proxy is late-binding
+  aggregator policy, not eager ingest normalisation**
+  (`docs/adr/0026-stablecoin-fiat-proxy-late-binding.md`).
+  Records the implicit-from-the-start policy that a flurry
+  of API-side fallback PRs (#1217 / #1218 / #1219 / #1224 /
+  #1225 / #1226) each instantiated. Captures: the
+  late-binding-vs-eager-rewrite tradeoff (depeg detection,
+  per-stablecoin signal preservation, reversibility), the
+  default peg list (USDT/USDC/PYUSD/EUROC/EUROB/MXNe), the
+  operator runbook for a depeg event (remove the affected
+  peg from `api.peg_aliases`), and the cross-region
+  byte-identical contract this introduces (every region
+  ships the SAME peg list; cross-region monitor verifies
+  config hash). The policy was previously documented only
+  in CLAUDE.md "things that will surprise you" + scattered
+  PR descriptions.
 - **Three new Prometheus alert rules backing the 2026-05-10 incident
   postmortem** (#1228 ships the runbook + customer-facing post;
   this PR ships the rules that prevent silent recurrence):
