@@ -103,7 +103,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(chartCtx, err) {
 			s.logger.Warn("HistoryPointsInRange deadline exceeded",
 				"asset", pair.Base.String(), "quote", pair.Quote.String(),
 				"timeframe", tfRaw, "granularity", gran)
