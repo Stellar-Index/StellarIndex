@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"net/http"
 	"time"
@@ -130,7 +129,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
-			"asset query parameter is required")
+			"asset query parameter is required. For the full per-source latest snapshot across every observed asset, call /v1/oracle/streams instead — it returns one row per (source, asset, quote) triple in the trailing 7d.")
 		return
 	}
 	asset, err := canonical.ParseAsset(rawAsset)
@@ -167,7 +166,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(olCtx, err) {
 			s.logger.Warn("LatestOracleUpdatesForAsset deadline exceeded",
 				"asset", asset.String(), "source", source)
 			writeProblem(w, r,
@@ -218,7 +217,7 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(osCtx, err) {
 			s.logger.Warn("LatestOracleStreams deadline exceeded")
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/oracle-streams-timeout",

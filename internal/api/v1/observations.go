@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
@@ -109,7 +108,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(obsCtx, err) {
 			s.logger.Warn("computeObservations deadline exceeded",
 				"asset", asset.String(), "quote", quote.String(), "source", source)
 			writeProblem(w, r,

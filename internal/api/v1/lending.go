@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
@@ -56,7 +55,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(lpCtx, err) {
 			s.logger.Warn("ListBlendPools deadline exceeded")
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/lending-timeout",

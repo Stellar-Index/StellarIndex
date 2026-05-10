@@ -106,7 +106,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	rows, err := s.issuers.ListIssuers(listCtx, limit)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(listCtx, err) {
 			s.logger.Warn("ListIssuers deadline exceeded", "limit", limit)
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/issuers-timeout",
@@ -181,7 +181,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if handlerTimedOut(iCtx, err) {
 			s.logger.Warn("GetIssuer deadline exceeded", "g_strkey", gStrkey)
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/issuer-timeout",
