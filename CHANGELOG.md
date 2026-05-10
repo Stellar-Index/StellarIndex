@@ -99,6 +99,14 @@ against.
 
 ### Added
 
+- **`/llms.txt` for explorer** — llmstxt.org-spec discovery file
+  for AI agents indexing the site. Single hand-curated markdown
+  manifest pointing at the API surface, key endpoints, the
+  ingest sources, the methodology, the SDK, license + status.
+  Lives at `web/explorer/public/llms.txt` so CF Pages serves it
+  at the well-known path. Caught from a 404 audit (2026-05-10):
+  curl-of-`/llms.txt` returned 404 while the 404-fallback page
+  loaded a full bundle just to render a stub.
 - **`/v1/coins` and `/v1/coins/{slug}`: `issuer_scam_reason` field**.
   When an asset's issuer G-strkey appears on the curated scam
   directory (sourced from stellar.expert, same data the
