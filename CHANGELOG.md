@@ -337,6 +337,28 @@ against.
 
 ### Fixed
 
+- **CoinGecko divergence reference now has a built-in default
+  IDMap matching the aggregator's default coverage** —
+  `internal/divergence/coingecko.go`. Caught from r1 on
+  2026-05-10: the type-level docs claimed "empty IDMap falls
+  back to a built-in default covering XLM + major stables"
+  but the constructor copied opts.IDMap as-is with no
+  fallback. Result: every operator without an explicit
+  `[divergence.coingecko].id_map` got `asset_unsupported`
+  failures for every divergence cross-check call —
+  `divergence_observations` silently empty, `flags.divergence_warning`
+  always false, the Compare-layer "ok" counter incremented
+  while no actual cross-check happened (the aggregator's
+  refresh metric showed 23,889 "ok" outcomes on r1 with zero
+  rows in the durable mirror). Default IDMap now covers the
+  canonical asset_id forms the aggregator computes by default
+  (`crypto:XLM` / `native` / `crypto:BTC` / `crypto:ETH` /
+  `crypto:LINK` / `crypto:SOL` / `crypto:ADA` / `crypto:DOT`)
+  plus major USD stablecoins (USDC / USDT / PYUSD) for
+  cross-checks against the underlying X/USDC or X/USDT path
+  enabled by ADR-0026. Operator entries merge OVER the
+  defaults so anyone who relied on the pre-fix behaviour can
+  still narrow the set.
 - **Caddy now resolves the real client IP from Cloudflare** —
   `configs/caddy/Caddyfile.api`. The previous config rewrote
   `X-Forwarded-For` to `{remote_host}` (the immediate TCP peer,
