@@ -1711,6 +1711,24 @@ paths:
         Returns 503 when the deployment hasn't wired the cursors
         reader.
       parameters:
+        - name: status
+          in: query
+          required: false
+          description: |
+            Semantic convenience filter (R-015). Values:
+              - `active` — only rows with `lag_seconds <= 600` (10 min).
+                Excludes completed backfill cursors that linger in the
+                table after their range finished.
+              - `stale`  — complement; only rows older than the 10-min
+                boundary. Useful for spotting dead ingest paths.
+              - omitted — return everything (subject to `max_age` + `source`).
+            Composes with `max_age`: for `status=active` the effective
+            window is whichever bound is tighter; for `status=stale` the
+            window becomes `[10m, max_age]`.
+          schema:
+            type: string
+            enum: [active, stale]
+            example: "active"
         - name: max_age
           in: query
           required: false
@@ -1758,9 +1776,11 @@ paths:
                     lag_seconds: { type: integer, format: int64 }
         "400":
           description: |
-            `max_age` was set to something that doesn't parse as a
-            positive Go duration. Body is the standard problem+json
-            envelope with `type=https://api.ratesengine.net/errors/invalid-max-age`.
+            Either `max_age` didn't parse as a positive Go duration
+            (`type=https://api.ratesengine.net/errors/invalid-max-age`),
+            or `status` was set to a value other than `active` /
+            `stale` (`type=https://api.ratesengine.net/errors/invalid-status`).
+            Body is the standard problem+json envelope.
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }

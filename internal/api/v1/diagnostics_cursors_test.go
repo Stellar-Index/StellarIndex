@@ -223,3 +223,115 @@ func TestHandleCursors_NoReaderReturns503(t *testing.T) {
 		t.Errorf("status = %d, want 503 (no Cursors reader)", resp.StatusCode)
 	}
 }
+
+// TestHandleCursors_StatusActive — `?status=active` filters out
+// rows older than 10 minutes (the active/stale boundary). Matches
+// the R-015 ask: completed backfill cursors that linger in the
+// table shouldn't dominate the listing.
+func TestHandleCursors_StatusActive(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Cursors: &stubCursorsReader{
+			rows: []timescale.Cursor{
+				mkCursor("ledgerstream", "", 100, 5*time.Second),    // active
+				mkCursor("backfill", "stale-1", 50, 12*time.Minute), // stale
+				mkCursor("backfill", "stale-2", 51, 7*24*time.Hour), // stale
+				mkCursor("backfill", "fresh", 99, 1*time.Minute),    // active
+			},
+		},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/diagnostics/cursors?status=active")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.Cursor `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 2 {
+		t.Fatalf("got %d rows, want 2 (active only)", len(env.Data))
+	}
+	for _, c := range env.Data {
+		if c.LagSeconds > 600 {
+			t.Errorf("lag_seconds = %d > 600 leaked through active filter (sub=%q)",
+				c.LagSeconds, c.SubSource)
+		}
+	}
+}
+
+// TestHandleCursors_StatusStale — complement; only rows older
+// than the 10-min boundary.
+func TestHandleCursors_StatusStale(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Cursors: &stubCursorsReader{
+			rows: []timescale.Cursor{
+				mkCursor("ledgerstream", "", 100, 5*time.Second),
+				mkCursor("backfill", "stale-1", 50, 12*time.Minute),
+				mkCursor("backfill", "stale-2", 51, 7*24*time.Hour),
+			},
+		},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/diagnostics/cursors?status=stale")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.Cursor `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 2 {
+		t.Fatalf("got %d rows, want 2 stale", len(env.Data))
+	}
+	for _, c := range env.Data {
+		if c.LagSeconds <= 600 {
+			t.Errorf("lag_seconds = %d <= 600 leaked through stale filter", c.LagSeconds)
+		}
+	}
+}
+
+// TestHandleCursors_StatusInvalid — bad value → 400.
+func TestHandleCursors_StatusInvalid(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Cursors: &stubCursorsReader{rows: nil},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/diagnostics/cursors?status=bogus")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 on invalid status", resp.StatusCode)
+	}
+}
+
+// TestHandleCursors_StatusActiveCombinesWithMaxAge — passing both
+// tightens the window to whichever bound is tighter. status=active
+// caps at 10m; an explicit max_age=5m wins.
+func TestHandleCursors_StatusActiveCombinesWithMaxAge(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Cursors: &stubCursorsReader{
+			rows: []timescale.Cursor{
+				mkCursor("ledgerstream", "fresh", 100, 1*time.Second),
+				mkCursor("ledgerstream", "between", 99, 7*time.Minute),
+				mkCursor("ledgerstream", "stale", 98, 30*time.Minute),
+			},
+		},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/diagnostics/cursors?status=active&max_age=5m")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.Cursor `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("got %d rows, want 1 (only 'fresh' inside the 5m window)", len(env.Data))
+	}
+	if env.Data[0].SubSource != "fresh" {
+		t.Errorf("sub_source = %q, want fresh", env.Data[0].SubSource)
+	}
+}
