@@ -17,6 +17,22 @@ against.
 
 ### Added
 
+- **Catalogue-driven CoinGecko coverage + aggregator-price reader**
+  (R-018 Phase 1.2). The CoinGecko poller's ticker map and the
+  indexer's aggregator pair set now derive from the verified-
+  currency catalogue: adding a verified currency with a
+  `coingecko_id` in `internal/currency/data/seed.yaml`
+  automatically extends polling coverage. CG's hardcoded
+  ticker-to-slug map (13 entries) remains a fallback for tests
+  and pre-Phase-1.2 callers. New storage method
+  `Store.LatestAggregatorPricesForPair(ctx, base, quote, sources)`
+  returns the most-recent observation per aggregator-class source
+  — the seam Phase 1.3's `aggregator_avg` price-authority tier
+  consumes. Reuses the existing `oracle_updates` hypertable (no
+  new migration). CG catalogue-augmentation worker (top-N
+  market-cap refresh) deferred — separate trust surface; the
+  hand-curated seed suffices for v1.
+
 - **Unverified-ticker-collision warning on `/v1/assets/{id}`**
   (R-018 Phase 1.1). Requests for an asset whose code matches a
   verified currency's Stellar ticker (USDC, EURC, AQUA, …) but

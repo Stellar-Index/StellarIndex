@@ -41,6 +41,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/canonical/discovery"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
+	"github.com/RatesEngine/rates-engine/internal/currency"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher/statsflush"
 	"github.com/RatesEngine/rates-engine/internal/ledgerstream"
@@ -273,11 +274,21 @@ func run(cfgPath string, dryRun bool) error {
 		pipeline.PersistEvents(rootCtx, logger, store, events)
 	}()
 
+	// Verified-currency catalogue (R-018 Phase 1.1 / 1.2). Drives
+	// the CG poller's ticker map and the aggregator pair set — so
+	// adding a verified currency to `internal/currency/data/seed.yaml`
+	// automatically expands cross-check coverage.
+	verifiedCurrencies, err := currency.LoadEmbedded()
+	if err != nil {
+		return fmt.Errorf("verified-currency catalogue: %w", err)
+	}
+	logger.Info("verified-currency catalogue loaded", "entries", len(verifiedCurrencies.All()))
+
 	// ─── External streamers (off-chain CEX/FX/aggregators) ──────
 	// Parallel to the Galexie → dispatcher path — same sink.
 	// Per-venue goroutines live inside external.Run; we just
 	// collect the shutdown wait func to block on during drain.
-	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, events, logger)
+	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, verifiedCurrencies, events, logger)
 	if err != nil {
 		return fmt.Errorf("external connectors: %w", err)
 	}
@@ -344,6 +355,7 @@ func run(cfgPath string, dryRun bool) error {
 func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	ctx context.Context,
 	cfg config.ExternalConfig,
+	catalogue *currency.Catalogue,
 	events chan<- consumer.Event,
 	logger *slog.Logger,
 ) (func(), []string, error) {
@@ -485,12 +497,28 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 	// union of fiat-quoted crypto pairs across enabled streamers;
 	// aggregator pollers follow wherever the exchanges are
 	// targeting.
-	aggregatorPairs := defaultAggregatorPairs()
+	//
+	// R-018 Phase 1.2: derive the set from the verified-currency
+	// catalogue so adding USDT / EURC / a new global crypto to the
+	// seed yaml automatically expands aggregator coverage. The
+	// hardcoded list (`defaultAggregatorPairs`) remains as a
+	// fallback when the catalogue isn't wired.
+	aggregatorPairs := aggregatorPairsFromCatalogue(catalogue)
+	if len(aggregatorPairs) == 0 {
+		aggregatorPairs = defaultAggregatorPairs()
+	}
 
 	if cfg.CoinGecko.Enabled {
 		p := externalcoingecko.NewPoller()
 		if cfg.CoinGecko.PollInterval > 0 {
 			p.Interval = cfg.CoinGecko.PollInterval
+		}
+		// Catalogue-derived ticker map (R-018 Phase 1.2). Empty
+		// map (catalogue not wired or seed has no coingecko_id
+		// entries) means the poller falls back to the package
+		// default, preserving the original hardcoded coverage.
+		if ids := catalogue.CoinGeckoIDs(); len(ids) > 0 {
+			p.TickerToID = ids
 		}
 		// CoinGecko's "public no-auth" tier was tightened in late 2024
 		// — unauthenticated requests get throttled aggressively or
@@ -647,11 +675,55 @@ func emitDiscoverySkipMetricDelta(prev, current uint64) uint64 {
 	return current
 }
 
-// defaultAggregatorPairs is the pair set aggregators (CoinGecko /
-// CMC / CryptoCompare) query for cross-check. Mirrors the cross-
-// venue VWAP coverage so the divergence detector has an apples-to-
-// apples reference for every pair we publish a price for. Operators
-// can narrow via a future per-poller Symbols override.
+// aggregatorPairsFromCatalogue builds the aggregator pair set from
+// the verified-currency catalogue. Includes every catalogue ticker
+// that has a `coingecko_id` set — CMC and CryptoCompare key off the
+// ticker symbol directly, so a missing CG slug is the conservative
+// "skip" signal (no upstream coverage worth polling).
+//
+// Cross with the operator's fiat list (currently fixed at USD / EUR
+// / GBP — the divergence layer's coverage). Operators who want
+// narrower polling can add a per-poller Symbols override in a
+// future config field; for now the catalogue is the single knob.
+func aggregatorPairsFromCatalogue(cat *currency.Catalogue) []canonical.Pair {
+	if cat == nil {
+		return nil
+	}
+	cgIDs := cat.CoinGeckoIDs()
+	if len(cgIDs) == 0 {
+		return nil
+	}
+	fiats := []string{"USD", "EUR", "GBP"}
+	out := make([]canonical.Pair, 0, len(cgIDs)*len(fiats))
+	for ticker := range cgIDs {
+		ca, err := canonical.NewCryptoAsset(ticker)
+		if err != nil {
+			// Ticker not on the canonical crypto allow-list (e.g. a
+			// future entry we haven't added). Skip — adding to the
+			// allow-list is a separate, deliberate change.
+			continue
+		}
+		for _, f := range fiats {
+			fa, err := canonical.NewFiatAsset(f)
+			if err != nil {
+				continue
+			}
+			p, err := canonical.NewPair(ca, fa)
+			if err != nil {
+				continue
+			}
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// defaultAggregatorPairs is the pre-catalogue hardcoded pair set
+// aggregators (CoinGecko / CMC / CryptoCompare) query for
+// cross-check. Retained as a fallback when the verified-currency
+// catalogue isn't wired (test fixtures, future config overrides).
+// New entries should be added to `internal/currency/data/seed.yaml`
+// instead — that list is the canonical source.
 func defaultAggregatorPairs() []canonical.Pair {
 	// Anchors + top-cap globals. XLM first per its product-special
 	// status; the rest in alphabetical order to keep diffs minimal.

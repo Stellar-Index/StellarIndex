@@ -532,7 +532,7 @@ captures the agreed design. Five-phase migration:
 | Phase | What | Status |
 |---|---|---|
 | 1.1 | Verified-currency catalogue + unverified-asset warning | shipped 2026-05-11 — `internal/currency` + `internal/currency/data/seed.yaml` embedded + `/v1/assets/{id}.unverified_warning` + `flags.unverified_ticker_collision` (deviated from plan: seed lives embedded in the binary rather than `configs/`, matches `internal/incidents` pattern, no operator setup required) |
-| 1.2 | CG + CMC connectors (catalogue augmentation + aggregator-price ingest) | not started |
+| 1.2 | CG + CMC connectors (catalogue-driven) | shipped 2026-05-11 — catalogue-derived CG ticker map + aggregator pair set + `Store.LatestAggregatorPricesForPair` reader. Reuses existing `oracle_updates` hypertable (no new migration). **Deferred to a later phase:** CG catalogue-augmentation worker (top-N market-cap refresh — separate trust surface, hand-curated seed suffices for v1). |
 | 1.3 | Per-ticker VWAP worker + three-tier fallback chain (`vwap_native` → `aggregator_avg` → `triangulated`) | not started |
 | 1.4 | `/v1/assets/{slug}` global view + drop `/v1/coins` | not started |
 | 1.5 | Explorer migration | not started |

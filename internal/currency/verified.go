@@ -304,3 +304,56 @@ func (v *VerifiedCurrency) StellarEntry() *NetworkEntry {
 	}
 	return nil
 }
+
+// CoinGeckoIDs returns the catalogue's CG mapping as
+// upper-cased-ticker → CG slug, restricted to entries with a
+// non-empty CoinGeckoID. Drives the CG poller's id-lookup table
+// (R-018 Phase 1.2): adding a verified currency with a coingecko_id
+// in the seed automatically expands the poller's coverage.
+func (c *Catalogue) CoinGeckoIDs() map[string]string {
+	if c == nil {
+		return nil
+	}
+	out := make(map[string]string, len(c.entries))
+	for _, vc := range c.entries {
+		if vc.CoinGeckoID == "" {
+			continue
+		}
+		out[strings.ToUpper(vc.Ticker)] = vc.CoinGeckoID
+	}
+	return out
+}
+
+// CoinMarketCapIDs returns the catalogue's CMC mapping as
+// upper-cased-ticker → CMC integer-id string. Restricted to
+// entries with a non-empty CoinMarketCapID. CMC's REST API accepts
+// either the ticker (most reliable) or the id; we surface the id
+// so future per-symbol resolution can disambiguate when needed.
+func (c *Catalogue) CoinMarketCapIDs() map[string]string {
+	if c == nil {
+		return nil
+	}
+	out := make(map[string]string, len(c.entries))
+	for _, vc := range c.entries {
+		if vc.CoinMarketCapID == "" {
+			continue
+		}
+		out[strings.ToUpper(vc.Ticker)] = vc.CoinMarketCapID
+	}
+	return out
+}
+
+// Tickers returns every catalogue ticker, upper-cased, in seed
+// order. Used by the indexer to build the aggregator pair set
+// (a pair-set targeting every verified ticker × the operator's
+// fiat list).
+func (c *Catalogue) Tickers() []string {
+	if c == nil {
+		return nil
+	}
+	out := make([]string, 0, len(c.entries))
+	for _, vc := range c.entries {
+		out = append(out, strings.ToUpper(vc.Ticker))
+	}
+	return out
+}

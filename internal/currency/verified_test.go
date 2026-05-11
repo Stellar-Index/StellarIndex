@@ -276,6 +276,77 @@ func TestLoadFromBytes_validation(t *testing.T) {
 	}
 }
 
+func TestCoinGeckoIDs(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	ids := cat.CoinGeckoIDs()
+	if len(ids) == 0 {
+		t.Fatal("CoinGeckoIDs: empty — seed entries are missing coingecko_id")
+	}
+	// Spot-check well-known entries that must have a CG slug.
+	cases := map[string]string{
+		"XLM":  "stellar",
+		"USDC": "usd-coin",
+		"BTC":  "bitcoin",
+		"ETH":  "ethereum",
+	}
+	for ticker, want := range cases {
+		got, ok := ids[ticker]
+		if !ok {
+			t.Errorf("CoinGeckoIDs: %s not present", ticker)
+			continue
+		}
+		if got != want {
+			t.Errorf("CoinGeckoIDs[%s] = %q, want %q", ticker, got, want)
+		}
+	}
+	// Stellar-native tokens we don't expect CG to track shouldn't
+	// appear (no `coingecko_id` in the seed).
+	for _, ticker := range []string{"BLND", "PHO", "yUSDC"} {
+		if _, ok := ids[ticker]; ok {
+			t.Errorf("CoinGeckoIDs unexpectedly includes %s; the seed entry shouldn't have coingecko_id set", ticker)
+		}
+	}
+}
+
+func TestCoinMarketCapIDs(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	ids := cat.CoinMarketCapIDs()
+	if len(ids) == 0 {
+		t.Fatal("CoinMarketCapIDs: empty")
+	}
+	if got := ids["XLM"]; got != "512" {
+		t.Errorf("CoinMarketCapIDs[XLM] = %q, want 512", got)
+	}
+	if got := ids["BTC"]; got != "1" {
+		t.Errorf("CoinMarketCapIDs[BTC] = %q, want 1", got)
+	}
+}
+
+func TestTickers(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	tickers := cat.Tickers()
+	if len(tickers) != len(cat.All()) {
+		t.Errorf("Tickers count %d != catalogue size %d", len(tickers), len(cat.All()))
+	}
+	for _, ticker := range tickers {
+		if ticker == "" {
+			t.Error("empty ticker in Tickers slice")
+		}
+		if ticker != strings.ToUpper(ticker) {
+			t.Errorf("ticker %q not upper-cased", ticker)
+		}
+	}
+}
+
 func TestSeedDataIntegrity(t *testing.T) {
 	// Sanity-check: every entry with a Stellar classic network entry
 	// must have non-empty code, issuer, and asset_id, and the
