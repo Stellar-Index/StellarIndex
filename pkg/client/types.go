@@ -823,10 +823,13 @@ type Pool struct {
 // See R-018 / docs/architecture/multi-network-assets-migration.md
 // Phase 1.4a for the dispatch rationale.
 type GlobalAssetView struct {
-	Ticker         string `json:"ticker"`
-	Slug           string `json:"slug"`
-	Name           string `json:"name"`
-	Description    string `json:"description,omitempty"`
+	Ticker      string `json:"ticker"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Class is one of "crypto" / "stablecoin" / "fiat" — drives
+	// listing taxonomies on consumers.
+	Class          string `json:"class"`
 	VerifiedIssuer string `json:"verified_issuer,omitempty"`
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
 	CMCID          string `json:"coinmarketcap_id,omitempty"`
@@ -838,6 +841,13 @@ type GlobalAssetView struct {
 	PriceAuthority string     `json:"price_authority,omitempty"` // "vwap_native" | "aggregator_avg" | "triangulated"
 	PriceSources   []string   `json:"price_sources,omitempty"`
 	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
+
+	// Supply + market cap. Populated for fiat (M2 × FX rate).
+	// Crypto/stablecoin market cap stays on /v1/assets/{asset_id}'s
+	// F2 fields.
+	CirculatingSupply *string `json:"circulating_supply,omitempty"`
+	SupplyDecimals    int     `json:"supply_decimals,omitempty"`
+	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
 
 	Networks []NetworkView `json:"networks"`
 }
