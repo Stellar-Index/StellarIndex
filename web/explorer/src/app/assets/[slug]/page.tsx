@@ -55,6 +55,13 @@ export async function generateStaticParams() {
   if ((!cache || cache.size === 0) && verifiedSlugs.length === 0) {
     return fallback;
   }
+  // Dedup case-insensitively. /v1/coins emits uppercase short-form
+  // slugs (XLM, USDC, AQUA); /v1/assets/verified emits lowercase
+  // catalogue slugs (xlm, usdc, aqua). Without case-folding both
+  // routes get pre-rendered as separate pages and the build worker
+  // hangs on the lowercase variants (180s × 3 attempts before the
+  // build hard-fails). First-seen wins so the more-likely-to-be-
+  // linked form (the listing's casing) is the one that materialises.
   const seen = new Set<string>();
   const out: { slug: string }[] = [];
   const cacheKeys = cache ? Array.from(cache.keys()) : [];
@@ -63,8 +70,9 @@ export async function generateStaticParams() {
     ...cacheKeys,
     ...verifiedSlugs,
   ]) {
-    if (!seen.has(slug)) {
-      seen.add(slug);
+    const key = slug.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
       out.push({ slug });
     }
   }
