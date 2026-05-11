@@ -15,6 +15,48 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.46] — 2026-05-11
+
+### Added
+
+- **`/v1/assets?network=<chain>` filter.** `network=stellar` (or
+  omitted) returns the indexer's full Stellar-network catalogue;
+  `ethereum|solana|polygon|base|arbitrum|tron|bitcoin|bsc|
+  avalanche|xrpl` projects the verified-currency catalogue entries
+  with a matching `networks[]` row into `AssetDetail` (`type:
+  external`, `asset_id: <network>:<contract>`). Drives the
+  `/blockchains/{network}` click-through.
+- **AssetDetail coin-equivalence overlay.** `/v1/assets/{id}` now
+  includes `price_usd`, `change_1h_pct`, `change_7d_pct`,
+  `top_markets`, `price_history_24h`, `price_history_7d`,
+  `markets_count`, `trade_count_24h`, `ath`, and
+  `issuer_scam_reason` — lifted from the coins catalogue so the
+  surface is a superset of `/v1/coins/{slug}`. Closes the
+  wire-shape gap blocking the `/v1/coins` → `/v1/assets` consumer
+  migration. Skipped for `fiat:*` assets (no coin row).
+- **`/v1/chart?price_type=market_cap` (fiat phase).** Returns a
+  USD-denominated market-cap series for fiat:CCY base assets,
+  computed on-the-fly as M2 (verified-currency catalogue) × daily
+  FX rate (fx_quotes). Crypto market-cap-over-time is deferred
+  pending the `market_cap_1d` CAGG (returns 501 today with a
+  clear "deferred" message). Closes the explorer's "no market
+  cap over time" gap for the currencies surface.
+
+### Removed (explorer)
+
+- **`/currencies/*` page tree.** The 7 files in
+  `web/explorer/src/app/currencies/` (~2400 lines) are deleted;
+  routes consolidated under `/assets/{friendly-slug}`. Internal
+  link generators (HomeCurrencies, SearchModal, convert pages,
+  sitemap) now use the new `lib/fiat-slugs.ts` ticker → slug map.
+- **`_redirects` consolidated under CF's free-plan ~100-rule
+  cap.** 221 → 52 rules. Cloudflare Pages silently drops rules
+  beyond the cap; the CNY rule was at position #117 and
+  consistently failed to fire. Trims: drop UPPERCASE ISO
+  variants, drop no-trailing-slash forms (Next.js
+  `trailingSlash:true` 308-redirects bare URLs first), drop
+  secondary aliases.
+
 ## [v0.5.0-rc.45] — 2026-05-11
 
 ### Fixed
