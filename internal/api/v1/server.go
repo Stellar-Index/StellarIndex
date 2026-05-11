@@ -13,6 +13,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/currency"
 	"github.com/RatesEngine/rates-engine/internal/incidents"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/version"
@@ -85,6 +86,15 @@ type Server struct {
 	dashboardAuth    DashboardAuthMounter
 	dashboardKeys    DashboardAuthMounter
 	sessionAuth      middleware.Middleware
+	// verifiedCurrencies is the loaded *currency.Catalogue — the
+	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
+	// network identities. Powers the `unverified_warning` body +
+	// flags.unverified_ticker_collision attachment on /v1/assets/{id}
+	// (R-018 Phase 1.1). Nil-safe: applyUnverifiedWarning returns
+	// false when the catalogue isn't wired, leaving every response
+	// without the warning surface — that's the same behaviour as
+	// pre-1.1.
+	verifiedCurrencies *currency.Catalogue
 	// sacWrappers is the operator-config map of Stellar-Asset-Contract
 	// C-strkey → "CODE-ISSUER" canonical asset key. Surfaced on
 	// /v1/sac-wrappers so the explorer can resolve raw Soroban
@@ -421,6 +431,16 @@ type Options struct {
 	// to read the session — DashboardKeys handlers 401 on missing
 	// session context.
 	SessionAuth middleware.Middleware
+
+	// VerifiedCurrencies, when non-nil, enables the verified-
+	// currency overlay on /v1/assets/{id}: an `unverified_warning`
+	// body + flags.unverified_ticker_collision when the requested
+	// asset's code matches a verified currency's Stellar ticker
+	// but the issuer doesn't. Production wiring loads
+	// currency.LoadEmbedded() in cmd/ratesengine-api/main.go. Nil
+	// keeps the warning surface off — every response serves
+	// unchanged.
+	VerifiedCurrencies *currency.Catalogue
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -430,52 +450,53 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:            logger,
-		checks:            opts.ReadyChecks,
-		assets:            opts.Assets,
-		prices:            opts.Prices,
-		history:           opts.History,
-		markets:           opts.Markets,
-		oracle:            opts.Oracle,
-		meta:              opts.Meta,
-		accounts:          opts.Accounts,
-		signups:           opts.Signups,
-		stripe:            opts.Stripe,
-		divergence:        opts.Divergence,
-		freeze:            opts.Freeze,
-		supply:            opts.Supply,
-		volume:            opts.Volume,
-		change24h:         opts.Change24h,
-		changesum:         opts.ChangeSummary,
-		coins:             opts.Coins,
-		issuers:           opts.Issuers,
-		cursors:           opts.Cursors,
-		networkStats:      opts.NetworkStats,
-		sourcesStats:      opts.SourcesStats,
-		lending:           opts.Lending,
-		currencies:        opts.Currencies,
-		fxHistory:         opts.FXHistory,
-		sessionPeeker:     opts.SessionPeeker,
-		sep10:             opts.SEP10,
-		cors:              opts.CORS,
-		auth:              opts.Auth,
-		rateLimit:         opts.RateLimit,
-		usageTracker:      opts.UsageTracker,
-		usageReader:       opts.UsageReader,
-		hub:               opts.Hub,
-		confidence:        opts.Confidence,
-		triangulated:      opts.Triangulated,
-		cdnEnabled:        opts.CDNEnabled,
-		statusBackend:     opts.StatusBackend,
-		regionName:        valueOr(opts.RegionName, "unknown"),
-		regionDeployment:  valueOr(opts.RegionDeployment, "production"),
-		dashboardAuth:     opts.DashboardAuth,
-		dashboardKeys:     opts.DashboardKeys,
-		sessionAuth:       opts.SessionAuth,
-		sacWrappers:       opts.SACWrappers,
-		usdPeggedClassics: opts.USDPeggedClassics,
-		mux:               http.NewServeMux(),
-		started:           time.Now().UTC(),
+		logger:             logger,
+		checks:             opts.ReadyChecks,
+		assets:             opts.Assets,
+		prices:             opts.Prices,
+		history:            opts.History,
+		markets:            opts.Markets,
+		oracle:             opts.Oracle,
+		meta:               opts.Meta,
+		accounts:           opts.Accounts,
+		signups:            opts.Signups,
+		stripe:             opts.Stripe,
+		divergence:         opts.Divergence,
+		freeze:             opts.Freeze,
+		supply:             opts.Supply,
+		volume:             opts.Volume,
+		change24h:          opts.Change24h,
+		changesum:          opts.ChangeSummary,
+		coins:              opts.Coins,
+		issuers:            opts.Issuers,
+		cursors:            opts.Cursors,
+		networkStats:       opts.NetworkStats,
+		sourcesStats:       opts.SourcesStats,
+		lending:            opts.Lending,
+		currencies:         opts.Currencies,
+		fxHistory:          opts.FXHistory,
+		sessionPeeker:      opts.SessionPeeker,
+		sep10:              opts.SEP10,
+		cors:               opts.CORS,
+		auth:               opts.Auth,
+		rateLimit:          opts.RateLimit,
+		usageTracker:       opts.UsageTracker,
+		usageReader:        opts.UsageReader,
+		hub:                opts.Hub,
+		confidence:         opts.Confidence,
+		triangulated:       opts.Triangulated,
+		cdnEnabled:         opts.CDNEnabled,
+		statusBackend:      opts.StatusBackend,
+		regionName:         valueOr(opts.RegionName, "unknown"),
+		regionDeployment:   valueOr(opts.RegionDeployment, "production"),
+		dashboardAuth:      opts.DashboardAuth,
+		dashboardKeys:      opts.DashboardKeys,
+		sessionAuth:        opts.SessionAuth,
+		verifiedCurrencies: opts.VerifiedCurrencies,
+		sacWrappers:        opts.SACWrappers,
+		usdPeggedClassics:  opts.USDPeggedClassics,
+		mux:                http.NewServeMux(),
+		started:            time.Now().UTC(),
 	}
 	// Load + cache the embedded incident corpus once at startup;
 	// the data is small (a few markdown files) and ships with the

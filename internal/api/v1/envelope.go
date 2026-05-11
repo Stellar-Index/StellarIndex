@@ -52,6 +52,14 @@ type Flags struct {
 	DivergenceWarning bool `json:"divergence_warning"`
 	Frozen            bool `json:"frozen,omitempty"`
 	SingleSource      bool `json:"single_source,omitempty"`
+	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
+	// requested asset's code matches a verified currency's Stellar
+	// ticker but its issuer doesn't match the verified entry — i.e.
+	// someone issued their own "USDC" on Stellar. The matching
+	// `unverified_warning` payload on the AssetDetail body carries
+	// the pointer to the verified asset. See R-018 /
+	// docs/architecture/multi-network-assets-migration.md.
+	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 }
 
 // Pagination is present on list-returning endpoints only.

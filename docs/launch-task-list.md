@@ -10,6 +10,15 @@ related:
   - docs/architecture/launch-readiness-backlog.md
 ---
 
+> **Update 2026-05-11:** the site is live on r1 but has no
+> consumer traffic yet ("live in-development"). The §G
+> *launch-blocking* vs §J *post-launch polish* distinction
+> recorded below is no longer load-bearing — operator decision
+> 2026-05-11 is to treat the entire list as one polish queue and
+> ship items as they're ready. Order-of-execution suggestions in
+> §I still hold as guidance for *what to prioritise*, but no row
+> blocks the "launch" event today.
+
 # Launch task list — what's actually left
 
 ## Why this doc exists
@@ -522,7 +531,7 @@ captures the agreed design. Five-phase migration:
 
 | Phase | What | Status |
 |---|---|---|
-| 1.1 | Verified-currency catalogue + unverified-asset warning | not started — first session of the next leg |
+| 1.1 | Verified-currency catalogue + unverified-asset warning | shipped 2026-05-11 — `internal/currency` + `internal/currency/data/seed.yaml` embedded + `/v1/assets/{id}.unverified_warning` + `flags.unverified_ticker_collision` (deviated from plan: seed lives embedded in the binary rather than `configs/`, matches `internal/incidents` pattern, no operator setup required) |
 | 1.2 | CG + CMC connectors (catalogue augmentation + aggregator-price ingest) | not started |
 | 1.3 | Per-ticker VWAP worker + three-tier fallback chain (`vwap_native` → `aggregator_avg` → `triangulated`) | not started |
 | 1.4 | `/v1/assets/{slug}` global view + drop `/v1/coins` | not started |

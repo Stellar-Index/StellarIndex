@@ -17,6 +17,28 @@ against.
 
 ### Added
 
+- **Unverified-ticker-collision warning on `/v1/assets/{id}`**
+  (R-018 Phase 1.1). Requests for an asset whose code matches a
+  verified currency's Stellar ticker (USDC, EURC, AQUA, …) but
+  whose issuer doesn't match the verified entry now carry an
+  `unverified_warning` body pointing at the verified canonical
+  asset, plus `flags.unverified_ticker_collision = true` on the
+  envelope. Warning body fields: `verified_slug`,
+  `verified_asset_id`, `verified_name`, `verified_issuer`, `note`
+  (a one-sentence message rendered verbatim by clients). Powered
+  by a new `internal/currency` package + a 26-currency seed
+  YAML embedded in the binary
+  (`internal/currency/data/seed.yaml`) covering Stellar native +
+  major USD stablecoins (USDC, USDT, PYUSD), EUR stablecoins
+  (EURC), Stellar-native tokens (AQUA, yXLM, SHX, VELO, BLND,
+  PHO, yUSDC) and globals without verified Stellar issuers (BTC,
+  ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, MATIC, DOT, LINK, UNI,
+  AAVE, WBTC). Foundation for the multi-network assets migration
+  (`docs/architecture/multi-network-assets-migration.md`);
+  Phases 1.2 (CG/CMC connectors) → 1.5 (explorer migration) build
+  on this catalogue. OpenAPI + `pkg/client.UnverifiedWarning` +
+  `Flags.UnverifiedTickerCollision` in lockstep.
+
 - **`/v1/methodology`** — machine-readable summary of the active
   aggregation policy (R-023). Returns the VWAP method,
   per-endpoint outlier filters, the operator's stablecoin →
