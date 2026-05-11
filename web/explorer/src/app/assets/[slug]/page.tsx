@@ -128,6 +128,19 @@ interface AssetDetail {
   fdv_usd?: string;
   volume_24h_usd?: string;
   supply_basis?: string;
+  // Verified-currency collision warning (R-018 Phase 1.4a). Present
+  // when the requested asset's code matches a verified currency's
+  // Stellar ticker (USDC, EURC, AQUA, …) but the issuer doesn't
+  // match the verified entry — someone has issued a fake "USDC" on
+  // Stellar with their own G-strkey. Renders a prominent banner
+  // linking to the verified asset.
+  unverified_warning?: {
+    verified_slug: string;
+    verified_asset_id: string;
+    verified_name: string;
+    verified_issuer?: string;
+    note: string;
+  };
 }
 
 interface PriceResp {
@@ -508,6 +521,40 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             do not trust this asset, do not establish trustlines, and
             do not execute the prices below as if they reflected an
             honest market.
+          </div>
+        )}
+        {detail?.unverified_warning && (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            <div className="mb-1 flex items-center gap-2">
+              <strong className="font-semibold">
+                Unverified {coin.code}
+              </strong>
+              <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-900 dark:bg-amber-900/60 dark:text-amber-200">
+                Ticker collision
+              </span>
+            </div>
+            <p>
+              {detail.unverified_warning.note} The verified asset is
+              available at{' '}
+              <Link
+                href={`/assets/${detail.unverified_warning.verified_slug}`}
+                className="font-medium underline hover:text-amber-700 dark:hover:text-amber-100"
+              >
+                {detail.unverified_warning.verified_name}
+              </Link>
+              {detail.unverified_warning.verified_issuer && (
+                <span>
+                  {' '}— issued by{' '}
+                  <span className="font-medium">
+                    {detail.unverified_warning.verified_issuer}
+                  </span>
+                </span>
+              )}
+              .
+            </p>
           </div>
         )}
       </header>
