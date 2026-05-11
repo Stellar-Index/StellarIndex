@@ -618,7 +618,7 @@ gate the public flip; each can ship as time allows.
 | J5 | Re-backfill USD volume on Comet trades after the recent SAC-wrapper config addition | Data-quality cleanup |
 | J6 | R-015 — `/v1/diagnostics/cursors` filter for `?status=active` or auto-cleanup of completed backfill cursors | Diagnostic polish |
 | J7 | R-020 — pure-scam-token suppression beyond the volume-desc default sort on `/v1/markets` | Deferred per operator decision 2026-05-11 (scam warnings are visible; data still useful) |
-| J8 | OpenAPI lint: fix 4 pre-existing `oas3-valid-media-example` errors (`/coins`, `/incidents`, `/network/stats`, `/signup`) so CI on every PR doesn't have a permanent red mark | Lint hygiene |
+| J8 | OpenAPI lint: fix 4 pre-existing `oas3-valid-media-example` errors (`/coins`, `/incidents`, `/network/stats`, `/signup`) so CI on every PR doesn't have a permanent red mark | **Shipped 2026-05-11** — spectral lint now 0 errors (84 warnings remain, non-blocking) |
 | J9 | Refresh `internal/sources/soroswap/decode_test.go` fixture from a real capture (TODO in code) | Test debt |
 
 These items will not appear in §H "Explicit deferrals" because
