@@ -62,10 +62,15 @@ export async function generateMetadata({
 }
 
 async function fetchCoin(slug: string): Promise<Coin | null> {
+  // Per-asset detail fetched from /v1/assets/{slug}, the
+  // CoinSummary-superset surface (rc.46 R-018 final). The `Coin`
+  // type alias here is kept for stability; field shape is identical
+  // for the read columns this embed renders (price_usd /
+  // change_*_pct / volume_24h_usd / price_history_24h / code).
   if (isCIStub) return null;
   try {
     const res = await fetch(
-      `${API_BASE_URL}/v1/coins/${encodeURIComponent(slug)}`,
+      `${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`,
       { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
     );
     if (!res.ok) return null;

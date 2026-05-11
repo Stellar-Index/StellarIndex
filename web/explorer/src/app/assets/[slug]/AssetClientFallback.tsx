@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { API_BASE_URL } from '@/api/client';
 
-// AssetClientFallback — re-fetches /v1/coins/{slug} from the
+// AssetClientFallback — re-fetches /v1/assets/{slug} from the
 // browser when the build-time fetch failed. Cloudflare Pages
 // builds occasionally can't reach api.ratesengine.net (cold
 // connection pool, transient API restart, build host blip),
@@ -32,7 +32,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_BASE_URL}/v1/coins/${encodeURIComponent(slug)}`, {
+    fetch(`${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`, {
       signal: controller.signal,
     })
       .then((r) => {
@@ -45,7 +45,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
       })
       .then((env) => {
         if (env == null) return;
-        if (env?.data?.slug) {
+        if (env?.data?.asset_id) {
           // Static HTML for /assets/{slug}/ rendered without the
           // API response (build-time fetch hit a deploy window).
           // Live API is reachable now — auto-reload ONCE to get
