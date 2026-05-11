@@ -24,7 +24,7 @@ import (
 //     explorer polls it every 15 s, so caching defeats the UX).
 //   - **Closed-bucket historical + catalogues** (`/v1/history*`,
 //     `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/pairs`,
-//     `/v1/oracle/*`, `/v1/sources`, `/v1/coins`, `/v1/issuers*`,
+//     `/v1/oracle/*`, `/v1/sources`, `/v1/assets*`, `/v1/issuers*`,
 //     `/v1/changes/*`) → `public, max-age=60, s-maxage=300` (1 min
 //     client / 5 min CDN). Closed buckets are immutable per
 //     ADR-0015, but the trailing-edge boundary advances as time
@@ -169,20 +169,13 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// Network-stats strip — single SQL query backing the
 		// explorer's home network strip; cheap to cache.
 		path == "/v1/network/stats",
-		// Currencies — daily upstream forex refresh, easily cached.
-		path == "/v1/currencies",
-		strings.HasPrefix(path, "/v1/currencies/"),
 		// Incident JSON list — embedded with the binary, only
 		// changes on redeploy. (.atom variant sets its own header.)
 		path == "/v1/incidents",
 		// SAC wrapper map — operator-config, only changes on
 		// process restart. Most cacheable surface in the API.
 		path == "/v1/sac-wrappers",
-		// Registry catalogues — coin / issuer directories. Same
-		// shape as /v1/markets: large enumerable lists that change
-		// gradually as new assets/issuers are observed.
-		path == "/v1/coins",
-		strings.HasPrefix(path, "/v1/coins/"),
+		// Registry catalogue — issuer directory.
 		path == "/v1/issuers",
 		strings.HasPrefix(path, "/v1/issuers/"),
 		// Multi-window delta strip. Refreshed every 5 min by the

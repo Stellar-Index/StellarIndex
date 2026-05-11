@@ -49,7 +49,7 @@ func (e *envelope404Recorder) WriteHeader(status int) {
 		e.Header().Del("Content-Length")
 		// Errors override the cache-control middleware's per-route
 		// directive: never cache an unknown-path 404 or method-mismatch
-		// 405. A CDN serving /v1/coins (tagged `public, max-age=60,
+		// 405. A CDN serving /v1/assets (tagged `public, max-age=60,
 		// s-maxage=300` by the middleware) would otherwise cache a
 		// transient 405 from a misconfigured client and replay it to
 		// other anonymous clients on the same key.

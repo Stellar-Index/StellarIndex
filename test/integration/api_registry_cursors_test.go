@@ -67,13 +67,13 @@ func TestAPI_RegistryAndCursors(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	t.Run("/v1/coins", func(t *testing.T) {
+	t.Run("/v1/assets", func(t *testing.T) {
 		var env struct {
-			Data []v1.Coin `json:"data"`
+			Data []v1.AssetDetail `json:"data"`
 		}
-		getJSON(t, ts.URL+"/v1/coins?limit=10", &env)
+		getJSON(t, ts.URL+"/v1/assets?limit=10", &env)
 		if len(env.Data) != 2 {
-			t.Fatalf("got %d coins, want 2", len(env.Data))
+			t.Fatalf("got %d assets, want 2", len(env.Data))
 		}
 		// USDC ranks above AQUA (41M vs 14M observations).
 		if env.Data[0].Code != "USDC" {
@@ -81,16 +81,16 @@ func TestAPI_RegistryAndCursors(t *testing.T) {
 		}
 	})
 
-	t.Run("/v1/coins?issuer=G…", func(t *testing.T) {
+	t.Run("/v1/assets?issuer=G…", func(t *testing.T) {
 		var env struct {
-			Data []v1.Coin `json:"data"`
+			Data []v1.AssetDetail `json:"data"`
 		}
-		getJSON(t, ts.URL+"/v1/coins?limit=10&issuer="+issuerA, &env)
+		getJSON(t, ts.URL+"/v1/assets?limit=10&issuer="+issuerA, &env)
 		if len(env.Data) != 1 {
 			t.Fatalf("issuerA filter returned %d rows, want 1", len(env.Data))
 		}
-		if env.Data[0].Issuer != issuerA {
-			t.Errorf("row issuer = %q, want %q", env.Data[0].Issuer, issuerA)
+		if env.Data[0].Issuer == nil || *env.Data[0].Issuer != issuerA {
+			t.Errorf("row issuer = %v, want %q", env.Data[0].Issuer, issuerA)
 		}
 	})
 

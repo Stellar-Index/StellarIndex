@@ -164,7 +164,7 @@ func TestCORS_VaryOriginAlwaysSetForExactMatchMode(t *testing.T) {
 	})(corsOK())
 
 	t.Run("no Origin header still sets Vary", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/v1/coins", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if got := w.Header().Get("Vary"); got != "Origin" {
@@ -172,7 +172,7 @@ func TestCORS_VaryOriginAlwaysSetForExactMatchMode(t *testing.T) {
 		}
 	})
 	t.Run("disallowed Origin still sets Vary", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/v1/coins", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 		r.Header.Set("Origin", "https://attacker.example")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -181,7 +181,7 @@ func TestCORS_VaryOriginAlwaysSetForExactMatchMode(t *testing.T) {
 		}
 	})
 	t.Run("allowed Origin still sets Vary", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/v1/coins", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 		r.Header.Set("Origin", "https://ratesengine.net")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -200,7 +200,7 @@ func TestCORS_VaryNotSetForWildcardMode(t *testing.T) {
 		AllowedOrigins: []string{"*"},
 	})(corsOK())
 
-	r := httptest.NewRequest(http.MethodGet, "/v1/coins", nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 	r.Header.Set("Origin", "https://example.com")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
