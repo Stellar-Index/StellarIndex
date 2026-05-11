@@ -63,9 +63,15 @@ const DefaultDecimals uint8 = 8
 // Compile-time assertion: aggregator class in registry.
 var _ = external.ClassAggregator
 
-// tickerToID maps upper-case crypto tickers to CoinGecko slugs.
+// tickerToID is the package-level default ticker → CG slug map.
+// Used when a Poller has no instance-level override (preserving
+// pre-Phase-1.2 behaviour for tests and any caller that doesn't
+// pass a catalogue-derived map).
+//
 // Slugs verified against https://api.coingecko.com/api/v3/coins/list.
-// Extending is a one-line addition when a new asset enters our fleet.
+// The verified-currency catalogue (`internal/currency`) is now the
+// canonical source of these mappings; an instance-level override
+// via Poller.TickerToID supersedes this map at runtime.
 var tickerToID = map[string]string{
 	"BTC":   "bitcoin",
 	"ETH":   "ethereum",
@@ -109,12 +115,30 @@ type Poller struct {
 	// When both are set Pro wins.
 	DemoAPIKey string
 
+	// TickerToID overrides the package-default map. When non-empty,
+	// only tickers present here will be queried — set this from
+	// `currency.Catalogue.CoinGeckoIDs()` (R-018 Phase 1.2) to
+	// drive the poll set from the verified-currency seed instead of
+	// the hardcoded list. Empty → fall back to the package default.
+	TickerToID map[string]string
+
 	// mu guards the cooldown state. The runner serialises calls per
 	// source so contention is nil; the lock makes concurrent reads
 	// safe under future test fixtures and metrics endpoints.
 	mu             sync.Mutex
 	nextAllowedAt  time.Time     // earliest UTC time the poller is allowed to hit the venue again
 	currentBackoff time.Duration // last applied backoff, doubled on consecutive 429s
+}
+
+// lookupID resolves a ticker to the CG slug, preferring the
+// instance override over the package default.
+func (p *Poller) lookupID(ticker string) (string, bool) {
+	if len(p.TickerToID) > 0 {
+		id, ok := p.TickerToID[ticker]
+		return id, ok
+	}
+	id, ok := tickerToID[ticker]
+	return id, ok
 }
 
 // NewPoller constructs a Poller with defaults. No key required.
@@ -179,7 +203,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			continue
 		}
 		ticker := strings.ToUpper(pair.Base.Code)
-		id, ok := tickerToID[ticker]
+		id, ok := p.lookupID(ticker)
 		if !ok {
 			continue // unknown crypto ticker; skip the whole pair
 		}

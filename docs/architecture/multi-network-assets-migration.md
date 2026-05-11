@@ -175,23 +175,51 @@ same asset; both surface in the response.
 view, no price computation. This is the foundation + the
 anti-confusion warning that ships immediately.
 
-### Phase 1.2 — CG + CMC connectors (2nd PR)
+### Phase 1.2 — CG + CMC connectors, catalogue-driven (shipped 2026-05-11)
 
-- `internal/sources/external/coingecko/catalogue.go` — daily
-  refresh worker. Fetches `/coins/list` then `/coins/{id}` for
-  top N by market cap. Writes to `verified_currencies_external`
-  storage table.
-- `internal/sources/external/coingecko/prices.go` — 1-5 min
-  refresh worker. Fetches `/simple/price?ids=…&vs_currencies=usd`
-  for every catalogue entry. Writes to `aggregator_prices`
-  hypertable.
-- `internal/sources/external/cmc/` — same shape for CMC.
-- Both registered in `external.Registry` as
-  `Class:Aggregator, IncludeInVWAP: false`. They still don't
-  pollute the VWAP; their current-price snapshots feed the
-  `aggregator_avg` price-authority tier only.
-- Migration: `verified_currencies_external` + `aggregator_prices`
-  tables.
+The plan as originally written assumed two new tables
+(`verified_currencies_external`, `aggregator_prices`) and a fresh
+poller package per aggregator. Discovery during implementation:
+
+- The `oracle_updates` hypertable (migration 0003) already stores
+  aggregator-class observations — CG and CMC pollers have been
+  emitting `canonical.OracleUpdate` records since 2026-04-24.
+  Schema-identical to the proposed `aggregator_prices`.
+- `internal/sources/external/coingecko/` and `coinmarketcap/`
+  packages already exist with working pollers.
+
+What 1.2 actually delivers:
+
+1. **Catalogue-driven ticker mapping.** CG's hardcoded `tickerToID`
+   map (13 entries) is now overridable via
+   `Poller.TickerToID`, set at indexer startup from
+   `currency.Catalogue.CoinGeckoIDs()`. Adding a verified currency
+   with a `coingecko_id` in `internal/currency/data/seed.yaml`
+   automatically extends the poll set. The package default stays
+   as a fallback for tests + any caller that doesn't pass the
+   override.
+2. **Catalogue-driven aggregator pair set.** The indexer's
+   `defaultAggregatorPairs` hardcoded crypto list is now derived
+   from the catalogue at startup
+   (`aggregatorPairsFromCatalogue`). Falls back to the hardcoded
+   list when no catalogue is wired.
+3. **Storage reader.**
+   `*timescale.Store.LatestAggregatorPricesForPair(ctx, base, quote, sources)`
+   returns the most-recent aggregator-class observation per source
+   for a given pair. The Phase 1.3 `aggregator_avg` tier consumes
+   this directly; the storage layer doesn't repeat
+   `external.Registry`'s class filter.
+4. **No new migrations.** `oracle_updates` covers the price-storage
+   role.
+
+**Deferred to a later phase: CoinGecko catalogue augmentation
+worker** (the `/coins/list` + top-N market-cap refresh, separate
+trust surface for "known unverified" currencies). The hand-curated
+26-currency seed is sufficient for v1; augmentation lands when
+either (a) a customer's coverage requirement exceeds the seed, or
+(b) the Phase 1.4 global view starts surfacing 404s for popular
+non-Stellar tickers. Tracked in the launch task list under §G15
+Phase 1.2 follow-up.
 
 ### Phase 1.3 — Per-ticker price worker (3rd PR, biggest piece)
 

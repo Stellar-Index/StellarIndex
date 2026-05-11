@@ -435,6 +435,106 @@ func TestAPI_OracleLatest(t *testing.T) {
 	}
 }
 
+// TestStorage_LatestAggregatorPricesForPair exercises the
+// Phase-1.2 reader Phase 1.3's `aggregator_avg` price-authority
+// tier consumes. Seeds three observations against (XLM, fiat:USD):
+// coingecko + coinmarketcap (both aggregator-class) and
+// reflector-cex (oracle-class). Asks the reader for aggregator
+// sources only and verifies (a) it returns one row per requested
+// aggregator source, (b) reflector is excluded, (c) the rows are
+// the most-recent observation per source.
+func TestStorage_LatestAggregatorPricesForPair(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	usd, _ := c.NewFiatAsset("USD")
+	price, _ := new(big.Int).SetString("17000000", 10)
+	ts := time.Now().UTC().Truncate(time.Second)
+
+	seeds := []c.OracleUpdate{
+		// CG older, CG newer — DISTINCT ON (source) must return the newer.
+		{
+			Source: "coingecko", Ledger: 0,
+			TxHash:  "1111111111111111111111111111111111111111111111111111111111111111",
+			OpIndex: 0, Timestamp: ts.Add(-2 * time.Minute),
+			Asset: c.NativeAsset(), Quote: usd,
+			Price: c.NewAmount(price), Decimals: 8,
+		},
+		{
+			Source: "coingecko", Ledger: 0,
+			TxHash:  "2222222222222222222222222222222222222222222222222222222222222222",
+			OpIndex: 0, Timestamp: ts,
+			Asset: c.NativeAsset(), Quote: usd,
+			Price: c.NewAmount(price), Decimals: 8,
+		},
+		// CMC single observation.
+		{
+			Source: "coinmarketcap", Ledger: 0,
+			TxHash:  "3333333333333333333333333333333333333333333333333333333333333333",
+			OpIndex: 0, Timestamp: ts.Add(-30 * time.Second),
+			Asset: c.NativeAsset(), Quote: usd,
+			Price: c.NewAmount(price), Decimals: 8,
+		},
+		// Oracle-class source — must NOT appear in the filtered result.
+		{
+			Source: "reflector-cex", Ledger: 52_000_000,
+			TxHash:  "4444444444444444444444444444444444444444444444444444444444444444",
+			OpIndex: 0, Timestamp: ts,
+			Asset: c.NativeAsset(), Quote: usd,
+			Price: c.NewAmount(price), Decimals: 14,
+		},
+	}
+	for _, u := range seeds {
+		if err := store.InsertOracleUpdate(ctx, u); err != nil {
+			t.Fatalf("InsertOracleUpdate: %v", err)
+		}
+	}
+
+	got, err := store.LatestAggregatorPricesForPair(ctx,
+		c.NativeAsset(), usd, []string{"coingecko", "coinmarketcap"})
+	if err != nil {
+		t.Fatalf("LatestAggregatorPricesForPair: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2 (one per aggregator)", len(got))
+	}
+	bySource := map[string]c.OracleUpdate{}
+	for _, u := range got {
+		bySource[u.Source] = u
+	}
+	if _, ok := bySource["coingecko"]; !ok {
+		t.Error("coingecko missing from result")
+	}
+	if _, ok := bySource["coinmarketcap"]; !ok {
+		t.Error("coinmarketcap missing from result")
+	}
+	if _, leaked := bySource["reflector-cex"]; leaked {
+		t.Error("reflector-cex leaked into aggregator-only result")
+	}
+	// CG must be the *newer* observation (DISTINCT ON discipline).
+	if cg := bySource["coingecko"]; !cg.Timestamp.Equal(ts) {
+		t.Errorf("coingecko timestamp = %v, want %v (the newer seed)", cg.Timestamp, ts)
+	}
+
+	// Empty source list = (nil, nil) — caller's "no aggregators configured" case.
+	got, err = store.LatestAggregatorPricesForPair(ctx, c.NativeAsset(), usd, nil)
+	if err != nil {
+		t.Fatalf("empty-source-list: unexpected err %v", err)
+	}
+	if got != nil {
+		t.Errorf("empty source list returned %d rows; want nil", len(got))
+	}
+}
+
 type oracleAdapter struct{ s *timescale.Store }
 
 func (a oracleAdapter) LatestOracleUpdatesForAsset(ctx context.Context, asset c.Asset, sourceFilter string) ([]c.OracleUpdate, error) {

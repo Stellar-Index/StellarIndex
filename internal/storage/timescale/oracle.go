@@ -190,6 +190,85 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 	return out, nil
 }
 
+// LatestAggregatorPricesForPair returns the most-recent
+// oracle_updates row per source for the given (base, quote) across
+// the supplied source list — the seam Phase 1.3's `aggregator_avg`
+// price-authority tier reads. Caller passes the aggregator-class
+// source names (typically every Source where
+// `external.Registry[name].Class == external.ClassAggregator`);
+// the storage layer doesn't repeat that classification.
+//
+// Returns rows in the order Postgres scans them; callers that want
+// alphabetical or weighted order sort client-side. An empty source
+// list returns (nil, nil) — caller handled the "no aggregators
+// configured" case.
+//
+// The query uses DISTINCT ON (source) over (source, ts DESC,
+// ledger DESC), so each source contributes its single most-recent
+// observation in the (base, quote) pair. No retention or freshness
+// filter is applied here — callers that need "within the last N
+// minutes" check `Timestamp` on each row.
+func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	const q = `
+        SELECT DISTINCT ON (source)
+               source, COALESCE(contract_id, ''),
+               ledger, tx_hash, op_index, ts,
+               asset, quote,
+               price, decimals,
+               COALESCE(confidence, 0),
+               COALESCE(observer, '')
+          FROM oracle_updates
+         WHERE asset  = $1
+           AND quote  = $2
+           AND source = ANY($3)
+         ORDER BY source, ts DESC, ledger DESC
+    `
+	rows, err := s.db.QueryContext(ctx, q,
+		base.String(), quote.String(), pq.StringArray(sources))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestAggregatorPricesForPair: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []canonical.OracleUpdate
+	for rows.Next() {
+		var (
+			u        canonical.OracleUpdate
+			assetStr string
+			quoteStr string
+			decimals int
+		)
+		if err := rows.Scan(
+			&u.Source, &u.ContractID,
+			&u.Ledger, &u.TxHash, &u.OpIndex, &u.Timestamp,
+			&assetStr, &quoteStr,
+			&u.Price, &decimals,
+			&u.Confidence, &u.Observer,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: LatestAggregatorPricesForPair scan: %w", err)
+		}
+		parsedAsset, err := canonical.ParseAsset(assetStr)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: asset %q: %w", assetStr, err)
+		}
+		parsedQuote, err := canonical.ParseAsset(quoteStr)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: quote %q: %w", quoteStr, err)
+		}
+		u.Asset = parsedAsset
+		u.Quote = parsedQuote
+		u.Decimals = uint8(decimals)
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestAggregatorPricesForPair rows: %w", err)
+	}
+	return out, nil
+}
+
 // CountOracleUpdates returns the row count in oracle_updates.
 // Diagnostic helper, not for production hot paths.
 func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {

@@ -164,6 +164,41 @@ func TestPollOnce_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestPollOnce_TickerToIDOverride(t *testing.T) {
+	// With a custom TickerToID, the poller queries only the tickers
+	// the operator passed in — even if the package default would
+	// have resolved more. Catalogue-driven wiring (R-018 Phase 1.2)
+	// relies on this to scope the poll set to the verified seed.
+	srv := newTestServer(t, `{
+      "stellar":  {"usd": 0.17},
+      "bitcoin":  {"usd": 50000.0}
+    }`, http.StatusOK)
+	defer srv.Close()
+
+	p := NewPoller()
+	p.Endpoint = srv.URL
+	// Override scope: only XLM. BTC pair is supplied but BTC isn't
+	// in the override map, so it must be skipped — even though the
+	// venue returns a bitcoin price in the response.
+	p.TickerToID = map[string]string{"XLM": "stellar"}
+
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	// XLM × {USD, EUR} = 2 expected; BTC filtered.
+	xlmCount := 0
+	for _, u := range updates {
+		if u.Asset.Code != "XLM" {
+			t.Errorf("unexpected non-XLM update: %s/%s", u.Asset.Code, u.Quote.Code)
+		}
+		xlmCount++
+	}
+	if xlmCount == 0 {
+		t.Error("expected at least one XLM update; got none")
+	}
+}
+
 func TestPollInterval_Default(t *testing.T) {
 	p := NewPoller()
 	if p.PollInterval() != 60*time.Second {
