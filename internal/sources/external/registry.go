@@ -131,3 +131,27 @@ func FXSources() []string {
 func IsFXSource(source string) bool {
 	return Lookup(source).Subclass == SubclassFX
 }
+
+// AggregatorSources returns every registered source whose Class is
+// ClassAggregator, in deterministic lexicographic order. Powers the
+// `aggregator_avg` tier of the global-price fallback chain (R-018
+// Phase 1.3): handlers pass this list to
+// `Store.LatestAggregatorPricesForPair` to scope queries to the
+// aggregator class without leaking the registry's class-filter
+// policy into the storage layer.
+//
+// Operator-disabled aggregators (e.g. CMC when no API key is
+// configured) still appear in this list — the storage query
+// degrades naturally to "no observations" for disabled sources
+// because the indexer never wrote any. Returning the full registry
+// set keeps this helper deployment-agnostic.
+func AggregatorSources() []string {
+	out := make([]string, 0, 4)
+	for name, m := range Registry {
+		if m.Class == ClassAggregator {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

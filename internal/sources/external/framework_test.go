@@ -172,6 +172,41 @@ func TestIsFXSource_RegistryDriven(t *testing.T) {
 	}
 }
 
+func TestAggregatorSources_DeterministicLexOrder(t *testing.T) {
+	got := AggregatorSources()
+
+	wantSet := map[string]struct{}{}
+	for name, m := range Registry {
+		if m.Class == ClassAggregator {
+			wantSet[name] = struct{}{}
+		}
+	}
+	if len(got) != len(wantSet) {
+		t.Fatalf("AggregatorSources() returned %d, want %d", len(got), len(wantSet))
+	}
+	for _, name := range got {
+		if _, ok := wantSet[name]; !ok {
+			t.Errorf("AggregatorSources() included %q which is not Class=Aggregator", name)
+		}
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1] >= got[i] {
+			t.Errorf("AggregatorSources() not in ascending lex order: %v", got)
+			break
+		}
+	}
+	// Sanity: CG + CMC + CryptoCompare must all be present.
+	have := map[string]bool{}
+	for _, n := range got {
+		have[n] = true
+	}
+	for _, want := range []string{"coingecko", "coinmarketcap", "cryptocompare"} {
+		if !have[want] {
+			t.Errorf("AggregatorSources missing %q", want)
+		}
+	}
+}
+
 func TestEvents_SourceFieldDelegatesToCanonical(t *testing.T) {
 	// The consumer.Event contract's Source() method labels metrics
 	// by venue. For external sources where one TradeEvent type

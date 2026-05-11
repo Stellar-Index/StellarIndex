@@ -17,6 +17,21 @@ against.
 
 ### Added
 
+- **Three-tier global-price fallback chain**
+  (R-018 Phase 1.3a). New `internal/aggregate/ComputeGlobalPrice`
+  walks `vwap_native` → `aggregator_avg` → `triangulated` in
+  order, returning the first tier whose data satisfies its
+  threshold (trade-count floor for tier 1, freshness window for
+  tier 2). Result carries `Price`, `Authority` (one of the three
+  tier labels), `Sources`, and `AsOf` so Phase 1.4's `/v1/assets/
+  {slug}` global view can surface provenance per response. New
+  `external.AggregatorSources()` helper returns the aggregator-
+  class source names in deterministic order — matches the
+  pre-existing `FXSources()` pattern. The cross-chain
+  ticker-bucketed VWAP CAGG (1.3b) is explicitly deferred — it's
+  algorithmically distinct from the per-pair VWAP and only
+  meaningful once we ingest non-Stellar-chain trades.
+
 - **Catalogue-driven CoinGecko coverage + aggregator-price reader**
   (R-018 Phase 1.2). The CoinGecko poller's ticker map and the
   indexer's aggregator pair set now derive from the verified-
