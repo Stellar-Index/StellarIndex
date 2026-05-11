@@ -98,6 +98,7 @@ development. If one does, it's a bug.
 │   ├── obs/                      metrics, tracing, logging
 │   ├── supply/                   circulating/total/max supply derivation
 │   ├── auth/                     API-key + SEP-10 auth primitives
+│   ├── currency/                 verified-currency catalogue (hand-curated seed; R-018)
 │   └── divergence/               cross-check against CoinGecko/CMC/Chainlink-HTTP
 │
 ├── pkg/                      public surface (SemVer-stable)
@@ -301,6 +302,25 @@ linked doc first.
   dispatch on topic[0] symbol not contract address, and gate
   backfill behind a per-WASM-hash decoder audit. →
   [docs/architecture/contract-schema-evolution.md](docs/architecture/contract-schema-evolution.md)
+- **`/v1/assets/{slug}` returns two different wire shapes.**
+  When `{slug}` is a verified-currency catalogue slug (`usdc`,
+  `eurc`, `aqua`, …) the handler returns `GlobalAssetView`
+  (cross-chain identity + `networks[]`); when it's a canonical
+  asset_id (`USDC-G…`, `native`, `C…`, `fiat:USD`) it returns
+  `AssetDetail` (per-Stellar-asset detail). Same route, two
+  shapes — Go's mux dispatches on the catalogue lookup before
+  parsing as canonical. Clients distinguish via wire-shape
+  discriminators (`ticker` + `networks` array vs `asset_id` +
+  `type`). See R-018 / `docs/architecture/multi-network-assets-migration.md`.
+- **`internal/currency` is the verified-currency trust surface.**
+  Hand-curated YAML at `internal/currency/data/seed.yaml`, embedded
+  in the binary via `//go:embed`. Adding a verified currency means
+  a code change + redeploy. The catalogue feeds the CG poller's
+  ticker map, the indexer's aggregator pair set, the
+  unverified-collision warning on `/v1/assets/{id}`, the
+  `/v1/assets/verified` listing endpoint, and the explorer's
+  verified-badge UI. Do NOT auto-populate from CG / CMC — the
+  whole point is that it's hand-vetted.
 
 ---
 
