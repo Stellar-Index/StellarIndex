@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.48] — 2026-05-11
+
+### Removed
+
+- **`/v1/coins` + `/v1/coins/{slug}` retired.** No production
+  consumers (explorer migrated in rc.47). `/v1/assets` is a strict
+  superset and replaces every shape these endpoints carried. Net
+  ~600 lines of handler code + tests + OpenAPI deleted.
+- **`/v1/currencies` + `/v1/currencies/{ticker}` retired.** Same
+  story — no production consumers, explorer migrated weeks back.
+  The in-process `CurrenciesReader` interface stays as the
+  fiat-rate seam consumed by `/v1/price` cross-rate triangulation
+  and `/v1/chart` fiat:fiat / market_cap paths; the HTTP surface
+  goes. Net ~500 lines deleted.
+- **SDK methods removed:** `Client.Coins`, `Client.Coin`,
+  `Client.Currencies`, `Client.Currency` + their options/result
+  types. Use the `Asset`/`Assets` methods backed by `/v1/assets`
+  instead. Internal-API types kept on a private path for cross-
+  endpoint reuse (CoinATH, CoinTopMarket, CoinPricePoint embed
+  in AssetDetail).
+
 ## [v0.5.0-rc.47] — 2026-05-11
 
 ### Added
