@@ -15,6 +15,60 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.44] — 2026-05-11
+
+### Fixed
+
+- **Fiat market cap reads from `PriceReader` (Redis-triangulated FX),
+  not `GlobalPriceReader`.** rc.43 wired the fiat path through
+  `ComputeGlobalPrice` → `GlobalPriceReader`, which only reads
+  `prices_1m`. FX:FX rates (USD/CNY etc.) live in the Redis
+  triangulated cache, not `prices_1m` — so the lookup returned no
+  rows and CNY market_cap stayed empty post-rc.43. Hoist fiat
+  handling above the `globalPrice` nil guard via `populateFiatView`,
+  read FX rates directly through `s.prices`, and switch the
+  verified-listing fan-out gate accordingly.
+- **Asset detail static-fallback recovery loop avoided.** The
+  client-side fallback that re-fetches `/v1/coins/{slug}` from
+  the browser when a build-time fetch missed now auto-reloads
+  once (tracked via `sessionStorage`) and surfaces a friendlier
+  message on the second pass — no more endless flashes of the
+  "couldn't be prerendered" panel.
+
+### Added
+
+- **`/v1/chart` for fiat:fiat pairs reads `fx_quotes`.** When both
+  base and quote are fiat (e.g. `fiat:CNY/fiat:USD`), the handler
+  routes to the fx_quotes hypertable instead of the crypto
+  `prices_1m` / `prices_5m` / `prices_1h` CAGGs. USD↔CCY both
+  directions; cross-fiat (EUR/JPY etc.) returns an empty series
+  pending a follow-up. Closes the "CNY 1y chart has no data"
+  surface — once `fx-history-backfill` runs against a deployment,
+  fiat charts get the full Frankfurter-backed history (back to
+  1999-01-04).
+- **`internal/sources/frankfurter` — ECB rates client.** Range
+  endpoint returns every daily rate for every supported currency
+  in one HTTP request, so a 25-year backfill is ~6 requests
+  total (5-year chunks). No API key, no per-request cost.
+- **Explorer chart truncated banner.** ChartPanel now surfaces
+  the API's `truncated` / `data_starts_at` signal as an amber
+  banner reading "Showing data from YYYY-MM-DD — the deployment
+  hasn't accumulated the full Xy window yet." Replaces the
+  silent "8 flat points for 1y" surface.
+- **Explorer chart quote picker drops XLM for fiat assets.** When
+  `asset_id` starts with `fiat:`, the chart panel forces USD
+  quote and removes XLM from the picker (XLM isn't a meaningful
+  quote against CNY / EUR / JPY).
+
+### Changed
+
+- **`scripts/ops/fx-history-backfill` defaults to Frankfurter.** Drops
+  the `MASSIVE_API_KEY` requirement for historical backfills. Live
+  forex worker continues on Massive for hourly grain + broader
+  ticker coverage; the one-shot tool now uses Frankfurter for the
+  free "populate fx_quotes once" case. Runbook
+  (`docs/operations/runbooks/fx-history-missing.md`) updated.
+
 ## [v0.5.0-rc.43] — 2026-05-11
 
 ### Fixed
