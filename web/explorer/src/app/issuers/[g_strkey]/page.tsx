@@ -90,13 +90,16 @@ async function fetchIssuerCoins(gStrkey: string): Promise<Map<string, CoinPriceR
   const out = new Map<string, CoinPriceRow>();
   if (isCIStub) return out;
   try {
+    // Migrated to /v1/assets?issuer= (rc.47 R-018 finish). Wire
+    // shape is `{data: [AssetDetail]}` — fields match CoinPriceRow
+    // for the read columns this page renders.
     const res = await fetch(
-      `${API_BASE_URL}/v1/coins?issuer=${encodeURIComponent(gStrkey)}&limit=500`,
+      `${API_BASE_URL}/v1/assets?issuer=${encodeURIComponent(gStrkey)}&limit=500`,
       { signal: AbortSignal.timeout(2_000) },
     );
     if (!res.ok) return out;
-    const env = (await res.json()) as { data: { coins?: CoinPriceRow[] } };
-    for (const c of env.data?.coins ?? []) out.set(c.asset_id, c);
+    const env = (await res.json()) as { data?: CoinPriceRow[] };
+    for (const c of env.data ?? []) out.set(c.asset_id, c);
     return out;
   } catch {
     return out;

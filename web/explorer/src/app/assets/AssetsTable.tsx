@@ -197,7 +197,7 @@ export function AssetsTable({
       <p className="text-xs text-slate-500 dark:text-slate-400">
         Live data from{' '}
         <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
-          /v1/coins
+          /v1/assets
         </code>
         . Price + 24h change + market cap + volume populate from the
         latest 1-min VWAP, with USD triangulated via XLM when no
