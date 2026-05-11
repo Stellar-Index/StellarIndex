@@ -9,8 +9,8 @@ import (
 // stripped (query string preserved).
 //
 // Why: every v1 route is registered without a trailing slash
-// (`GET /v1/coins`, `GET /v1/coins/{slug}`, …) and Go's net/http
-// ServeMux treats `/v1/coins/` as a *different* path that 404s.
+// (`GET /v1/assets`, `GET /v1/assets/{slug}`, …) and Go's net/http
+// ServeMux treats `/v1/assets/` as a *different* path that 404s.
 // Many client libraries auto-append a trailing slash by default
 // (curl users mistype, axios with `baseURL: '.../v1/'` joins
 // awkwardly, OpenAPI generators emit either form depending on

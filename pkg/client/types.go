@@ -397,51 +397,9 @@ type KeyCreated struct {
 	Label     string `json:"label,omitempty"`
 }
 
-// Coin is the data shape returned by [Client.Coins] — one entry
-// in the classic-asset directory backed by `/v1/coins`. The
-// directory ranks by `ObservationCount` desc as a cheap activity
-// proxy.
-//
-// Numeric fields are pointer-strings so they can be nil for
-// assets the aggregator hasn't yet computed values for (newly
-// observed, no off-chain peg, etc.). Strings preserve precision
-// per ADR-0003.
-type Coin struct {
-	Slug              string  `json:"slug"`
-	AssetID           string  `json:"asset_id"`
-	Code              string  `json:"code"`
-	Issuer            string  `json:"issuer"`
-	FirstSeenLedger   uint32  `json:"first_seen_ledger"`
-	LastSeenLedger    uint32  `json:"last_seen_ledger"`
-	ObservationCount  int64   `json:"observation_count"`
-	PriceUSD          *string `json:"price_usd,omitempty"`
-	Volume24hUSD      *string `json:"volume_24h_usd,omitempty"`
-	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
-	CirculatingSupply *string `json:"circulating_supply,omitempty"`
-	// Change1hPct / Change24hPct / Change7dPct are the trailing
-	// price changes for those windows as signed percentages with
-	// two fractional digits (e.g. "+1.27"). Nil when the asset
-	// has no current price or no past-bucket snapshot exists in
-	// prices_1m within the window-specific tolerance.
-	Change1hPct  *string `json:"change_1h_pct,omitempty"`
-	Change24hPct *string `json:"change_24h_pct,omitempty"`
-	Change7dPct  *string `json:"change_7d_pct,omitempty"`
-
-	// MarketsCount is the count of distinct (base, quote) pairs
-	// the asset participated in over the trailing 24h. Populated
-	// only on /v1/coins/{slug}. Pointer so 0 (silent asset) is
-	// distinguishable from "not computed" (lookup error).
-	MarketsCount *int64 `json:"markets_count,omitempty"`
-}
-
-// CoinsPage wraps the paginated /v1/coins response. Iterate
-// while NextCursor is non-empty by passing it back as
-// CoinsOptions.Cursor.
-type CoinsPage struct {
-	Coins      []Coin `json:"coins"`
-	NextCursor string `json:"next_cursor,omitempty"`
-	Limit      int    `json:"limit"`
-}
+// Coin + CoinsPage types removed — `/v1/coins` HTTP surface
+// retired (no production consumers). Use the AssetDetail surface
+// from `/v1/assets` instead.
 
 // IssuerListEntry is the data shape returned by [Client.Issuers] —
 // one row in the issuer directory ranked by total observation
@@ -684,70 +642,9 @@ type IncidentsList struct {
 	Count     int        `json:"count"`
 }
 
-// Currency is one row in the [Client.Currencies] response — a fiat
-// or fiat-like currency the upstream forex feed publishes. Per the
-// /v1/currencies contract: `RateUSD` is "1 USD = N units of this
-// currency" (i.e., USD is the base, the listed currency is the
-// quote). Circulating-supply and market-cap fields populate only
-// for currencies the operator has wired a circulation source for
-// (today: ~50 of the ~120 fiats); they're omitted otherwise.
-type Currency struct {
-	Ticker            string    `json:"ticker"`
-	Name              string    `json:"name"`
-	RateUSD           float64   `json:"rate_usd"`
-	Change24hPct      float64   `json:"change_24h_pct,omitempty"`
-	Change7dPct       float64   `json:"change_7d_pct,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	CirculatingSupply *float64  `json:"circulating_supply,omitempty"`
-	MarketCapUSD      *float64  `json:"market_cap_usd,omitempty"`
-	CirculationAsOf   string    `json:"circulation_as_of,omitempty"`
-	CirculationSource string    `json:"circulation_source,omitempty"`
-}
-
-// CurrenciesList wraps the [Client.Currencies] list response.
-// PublishedAt is the upstream feed's wall-clock timestamp;
-// FetchedAt is when our forex worker pulled the snapshot;
-// Source identifies the upstream (e.g. "massive").
-type CurrenciesList struct {
-	Currencies  []Currency `json:"currencies"`
-	PublishedAt time.Time  `json:"published_at"`
-	FetchedAt   time.Time  `json:"fetched_at"`
-	Source      string     `json:"source"`
-}
-
-// CurrencyHistoryPoint is one daily snapshot in
-// [CurrencyDetail.History7d]. `RateUSD` and `InverseUSD` mirror
-// the parent shape (RateUSD = "1 USD = N <ticker>";
-// InverseUSD = "1 <ticker> = N USD").
-type CurrencyHistoryPoint struct {
-	Date       time.Time `json:"date"`
-	RateUSD    float64   `json:"rate_usd"`
-	InverseUSD float64   `json:"inverse_usd"`
-}
-
-// CurrencyDetail is the data shape returned by [Client.Currency]
-// — the per-ticker view backing /currencies/{ticker} on the
-// explorer. Adds `InverseUSD` (1/RateUSD precomputed for display),
-// `CrossRates` (this currency in every other listed currency),
-// and a 7-day history strip on top of the bare-list shape.
-type CurrencyDetail struct {
-	Ticker     string  `json:"ticker"`
-	Name       string  `json:"name"`
-	RateUSD    float64 `json:"rate_usd"`
-	InverseUSD float64 `json:"inverse_usd"`
-	// CrossRates is keyed by ticker — value is "1 <Ticker> = N <key>".
-	CrossRates        map[string]float64     `json:"cross_rates,omitempty"`
-	Change24hPct      float64                `json:"change_24h_pct,omitempty"`
-	Change7dPct       float64                `json:"change_7d_pct,omitempty"`
-	History7d         []CurrencyHistoryPoint `json:"history_7d,omitempty"`
-	CirculatingSupply *float64               `json:"circulating_supply,omitempty"`
-	MarketCapUSD      *float64               `json:"market_cap_usd,omitempty"`
-	CirculationAsOf   string                 `json:"circulation_as_of,omitempty"`
-	CirculationSource string                 `json:"circulation_source,omitempty"`
-	PublishedAt       time.Time              `json:"published_at"`
-	FetchedAt         time.Time              `json:"fetched_at"`
-	Source            string                 `json:"source"`
-}
+// Currency / CurrenciesList / CurrencyHistoryPoint / CurrencyDetail
+// removed — `/v1/currencies` HTTP surface retired (no production
+// consumers). Use AssetDetail from `/v1/assets` instead.
 
 // LendingPool is one row from [Client.LendingPools] — a Blend pool
 // contract observed in the trailing 7d auction stream. Auction +

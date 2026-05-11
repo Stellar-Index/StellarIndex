@@ -419,38 +419,5 @@ func TestAssetByNetwork_MetadataRouteStillWorks(t *testing.T) {
 	}
 }
 
-func TestCoins_DeprecationHeaders(t *testing.T) {
-	// /v1/coins and /v1/coins/{slug} must emit the Deprecation +
-	// Link headers pointing at the new /v1/assets/{slug} surface
-	// (R-018 Phase 1.4a).
-	srv := v1.New(v1.Options{}) // no readers wired — handler degrades to 503 but headers still set
-	ts := httpTestServer(t, srv)
-
-	for _, path := range []string{"/v1/coins", "/v1/coins/usdc"} {
-		t.Run(path, func(t *testing.T) {
-			resp := mustGet(t, ts.URL+path)
-			if got := resp.Header.Get("Deprecation"); got != "true" {
-				t.Errorf("Deprecation header = %q, want true", got)
-			}
-			link := resp.Header.Get("Link")
-			if link == "" {
-				t.Error("Link header missing")
-			}
-			if !contains(link, `rel="successor-version"`) {
-				t.Errorf("Link header missing successor-version rel: %q", link)
-			}
-			if !contains(link, "/v1/assets") {
-				t.Errorf("Link header doesn't point at /v1/assets: %q", link)
-			}
-		})
-	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
+// /v1/coins removed (no production consumers); deprecation-header
+// test deleted along with the routes.

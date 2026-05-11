@@ -552,71 +552,6 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 // by that G-strkey. `Cursor` is the keyset cursor returned by a
 // previous response's `next_cursor` field — empty for the first
 // page; iterate while non-empty.
-type CoinsOptions struct {
-	Limit  int
-	Issuer string
-	Cursor string
-	// Q is a case-insensitive substring filter against `code`,
-	// `slug`, and `issuer_g_strkey`. Server-side limited to 64
-	// chars. Empty means "no search filter."
-	Q string
-	// OrderBy controls sort + cursor scheme. Empty defaults to
-	// "observation_count_desc". "volume_24h_usd_desc" surfaces
-	// the highest-volume assets first (NULLS LAST).
-	OrderBy string
-}
-
-// Coins lists the registry-aware coin directory ranked by
-// observation count desc, joined to the latest 5-minute stats
-// + 1-minute VWAP. Each row carries optional price_usd,
-// volume_24h_usd, market_cap_usd, and circulating_supply.
-//
-// Iterate paginated:
-//
-//	cursor := ""
-//	for {
-//	    page, err := c.Coins(ctx, CoinsOptions{Limit: 500, Cursor: cursor})
-//	    if err != nil { return err }
-//	    process(page.Data.Coins)
-//	    if page.Data.NextCursor == "" { break }
-//	    cursor = page.Data.NextCursor
-//	}
-func (c *Client) Coins(ctx context.Context, opts CoinsOptions) (*Envelope[CoinsPage], error) {
-	v := url.Values{}
-	if opts.Limit > 0 {
-		v.Set("limit", strconv.Itoa(opts.Limit))
-	}
-	if opts.Issuer != "" {
-		v.Set("issuer", opts.Issuer)
-	}
-	if opts.Cursor != "" {
-		v.Set("cursor", opts.Cursor)
-	}
-	if opts.Q != "" {
-		v.Set("q", opts.Q)
-	}
-	if opts.OrderBy != "" {
-		v.Set("order_by", opts.OrderBy)
-	}
-	var env Envelope[CoinsPage]
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/coins", v, nil, &env); err != nil {
-		return nil, err
-	}
-	return &env, nil
-}
-
-// Coin returns a single asset row by slug. Same row shape as
-// one element of [CoinsPage.Coins]. 404 when the slug doesn't
-// match a known classic asset.
-func (c *Client) Coin(ctx context.Context, slug string) (*Envelope[Coin], error) {
-	var env Envelope[Coin]
-	path := "/v1/coins/" + url.PathEscape(slug)
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, nil, &env); err != nil {
-		return nil, err
-	}
-	return &env, nil
-}
-
 // IssuersOptions paginates the issuer directory. Same `Limit`
 // semantics as [CoinsOptions].
 type IssuersOptions struct {
@@ -885,50 +820,6 @@ func (c *Client) Incidents(ctx context.Context) (*Envelope[IncidentsList], error
 func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string], error) {
 	var env Envelope[map[string]string]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sac-wrappers", nil, nil, &env); err != nil {
-		return nil, err
-	}
-	return &env, nil
-}
-
-// CurrenciesOptions controls the limit of [Client.Currencies].
-// Limit is server-clamped to [1, 500]; zero leaves the server
-// default in place (currently the full corpus).
-type CurrenciesOptions struct {
-	Limit int
-}
-
-// Currencies fetches the fiat / fiat-like currency list backing
-// /v1/currencies. RateUSD on each row is "1 USD = N units of this
-// currency" — the server publishes the snapshot from its forex
-// feed; circulating-supply + market-cap fields populate only for
-// the subset of currencies the operator has wired a circulation
-// source for.
-func (c *Client) Currencies(ctx context.Context, opts CurrenciesOptions) (*Envelope[CurrenciesList], error) {
-	v := url.Values{}
-	if opts.Limit > 0 {
-		v.Set("limit", strconv.Itoa(opts.Limit))
-	}
-	var env Envelope[CurrenciesList]
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/currencies", v, nil, &env); err != nil {
-		return nil, err
-	}
-	return &env, nil
-}
-
-// Currency fetches the per-ticker detail backing
-// /v1/currencies/{ticker}. Adds InverseUSD (precomputed
-// 1/RateUSD), CrossRates against every other listed currency, and
-// a 7-day daily history strip on top of the bare-list shape.
-//
-// `ticker` is the ISO 4217 code (USD, EUR, JPY, …); the server
-// uppercase-normalises before lookup, so case doesn't matter.
-// Empty ticker returns 400 client-side without a network call.
-func (c *Client) Currency(ctx context.Context, ticker string) (*Envelope[CurrencyDetail], error) {
-	if ticker == "" {
-		return nil, &APIError{Status: 400, Title: "ticker required"}
-	}
-	var env Envelope[CurrencyDetail]
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/currencies/"+url.PathEscape(ticker), nil, nil, &env); err != nil {
 		return nil, err
 	}
 	return &env, nil

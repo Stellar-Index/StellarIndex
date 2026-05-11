@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TrailingSlashRedirect happy path: /v1/coins/native/ → 308 Location
-// /v1/coins/native (preserves query string), and the inner handler
+// TrailingSlashRedirect happy path: /v1/assets/native/ → 308 Location
+// /v1/assets/native (preserves query string), and the inner handler
 // is NOT called.
 
 func TestTrailingSlashRedirect_redirectsAndSkipsHandler(t *testing.T) {
@@ -17,15 +17,15 @@ func TestTrailingSlashRedirect_redirectsAndSkipsHandler(t *testing.T) {
 	})
 	mw := TrailingSlashRedirect(inner)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/coins/native/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/", nil)
 	rec := httptest.NewRecorder()
 	mw.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusPermanentRedirect {
 		t.Fatalf("status = %d, want 308", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/v1/coins/native" {
-		t.Errorf("Location = %q, want /v1/coins/native", loc)
+	if loc := rec.Header().Get("Location"); loc != "/v1/assets/native" {
+		t.Errorf("Location = %q, want /v1/assets/native", loc)
 	}
 	if called {
 		t.Error("inner handler should not have been called")
@@ -34,15 +34,15 @@ func TestTrailingSlashRedirect_redirectsAndSkipsHandler(t *testing.T) {
 
 func TestTrailingSlashRedirect_preservesQueryString(t *testing.T) {
 	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	req := httptest.NewRequest(http.MethodGet, "/v1/coins/?cursor=abc&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/?cursor=abc&limit=10", nil)
 	rec := httptest.NewRecorder()
 	mw.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusPermanentRedirect {
 		t.Fatalf("status = %d, want 308", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/v1/coins?cursor=abc&limit=10" {
-		t.Errorf("Location = %q, want /v1/coins?cursor=abc&limit=10", loc)
+	if loc := rec.Header().Get("Location"); loc != "/v1/assets?cursor=abc&limit=10" {
+		t.Errorf("Location = %q, want /v1/assets?cursor=abc&limit=10", loc)
 	}
 }
 
@@ -69,7 +69,7 @@ func TestTrailingSlashRedirect_noSlashPassesThrough(t *testing.T) {
 	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/v1/coins", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 	rec := httptest.NewRecorder()
 	mw.ServeHTTP(rec, req)
 

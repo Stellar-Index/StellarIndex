@@ -690,8 +690,6 @@ func loopbackOnly(next http.Handler) http.Handler {
 func (s *Server) mountRoutes() { //nolint:funlen // route registration is intentionally one block for grep-ability; splitting into sub-functions makes "where is /v1/X served?" harder to answer.
 	// Health / meta endpoints. Deliberately NOT behind rate-limit
 	// middleware — infra (k8s probes, load balancers) hits these.
-	s.mux.HandleFunc("GET /v1/coins", s.handleCoins)
-	s.mux.HandleFunc("GET /v1/coins/{slug}", s.handleCoin)
 	s.mux.HandleFunc("GET /v1/issuers", s.handleIssuersList)
 	s.mux.HandleFunc("GET /v1/issuers/{g_strkey}", s.handleIssuer)
 	s.mux.HandleFunc("GET /v1/changes/{entity_type}/{id}", s.handleChangeSummary)
@@ -824,10 +822,6 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 
 	// Lending — Blend pools observed in the auction stream.
 	s.mux.HandleFunc("GET /v1/lending/pools", s.handleLendingPools)
-
-	// Currencies — world fiat rates vs USD (currency-api shim).
-	s.mux.HandleFunc("GET /v1/currencies", s.handleCurrencies)
-	s.mux.HandleFunc("GET /v1/currencies/{ticker}", s.handleCurrencyDetail)
 
 	// Source catalogue — every venue the aggregator knows about,
 	// with class + IncludeInVWAP metadata.
