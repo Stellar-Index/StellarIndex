@@ -3627,6 +3627,54 @@ components:
         # yet (e.g. fresh deploy before the first cycle, or asset
         # below the operator's coverage set).
         change_24h_pct:    { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Computed as (now - then) / then * 100 against the latest closed prices_1m bucket whose end is at-or-before now-24h. Null when the asset has no current USD price OR no comparison bucket in the 24h-ago window." }
+        # Coin-equivalence extension (R-018 final). Populated when a
+        # CoinsReader is wired and the asset has a coin row.
+        price_usd:         { type: string, nullable: true, description: "Latest VWAP/last-trade USD price. Mirror of CoinSummary.price_usd." }
+        change_1h_pct:     { type: string, nullable: true, description: "Trailing-1h price change as a signed percentage." }
+        change_7d_pct:     { type: string, nullable: true, description: "Trailing-7d price change as a signed percentage." }
+        top_markets:
+          type: array
+          nullable: true
+          description: "Top 5 markets by 24h USD volume. Each row is the counterparty of a (base, quote) pair the asset participated in."
+          items:
+            type: object
+            properties:
+              counterparty:    { type: string, description: "The OTHER side of the pair." }
+              side:            { type: string, enum: [base, quote], description: "Which side this asset took." }
+              volume_24h_usd:  { type: string, nullable: true }
+              trade_count_24h: { type: integer }
+            required: [counterparty, side, trade_count_24h]
+        price_history_24h:
+          type: array
+          nullable: true
+          description: "24 hourly USD-price samples (oldest first) for sparkline rendering."
+          items:
+            type: object
+            properties:
+              t: { type: string, format: date-time }
+              p: { type: string, nullable: true }
+            required: [t]
+        price_history_7d:
+          type: array
+          nullable: true
+          description: "7 daily USD-price samples (oldest first)."
+          items:
+            type: object
+            properties:
+              t: { type: string, format: date-time }
+              p: { type: string, nullable: true }
+            required: [t]
+        markets_count:     { type: integer, nullable: true, description: "Distinct (base, quote) pairs the asset participated in over the trailing 24h." }
+        trade_count_24h:   { type: integer, nullable: true, description: "Total trades the asset participated in (as base or quote) over the trailing 24h." }
+        ath:
+          type: object
+          nullable: true
+          description: "All-time-high USD price + day it was set. Null when the asset has no USD-quoted history."
+          properties:
+            usd: { type: string }
+            at:  { type: string, format: date-time }
+          required: [usd, at]
+        issuer_scam_reason: { type: string, description: "Non-empty when this asset's issuer appears in the curated scam directory." }
         volume_24h_usd:    { type: string, nullable: true, description: "aggregator" }
         market_cap_usd:    { type: string, nullable: true, description: "aggregator + supply derivation" }
         fdv_usd:           { type: string, nullable: true, description: "aggregator + supply derivation" }
