@@ -1,9 +1,12 @@
 # Container packaging
 
-One Dockerfile per binary. The release workflow
-(`.github/workflows/release.yml`) builds each on every `v*.*.*` tag
-and pushes to `ghcr.io/RatesEngine/<binary>:<tag>` plus `:latest`
-on non-prerelease tags.
+One Dockerfile per binary — kept in-repo so a self-hoster can build
+their own images on demand. **The release workflow no longer builds
+or pushes these images to ghcr.io** (see the header comment in
+`.github/workflows/release.yml` for the rationale — short version:
+no consumer of the published images existed, multi-arch builds were
+adding ~3-5 min of CI burn per release tag for zero return).
+Decision: 2026-05-11, operator.
 
 Local build (any one binary):
 
@@ -16,6 +19,12 @@ All binaries (matches `make build-docker`):
 ```sh
 make build-docker
 ```
+
+If you want our team to start publishing images to ghcr.io again
+(self-hosted Kubernetes / Docker Compose distribution), file an
+issue or PR restoring the `containers:` job in
+`.github/workflows/release.yml`. The git log under
+`release: drop ghcr.io push` shows the exact block that was removed.
 
 ## Image shape
 

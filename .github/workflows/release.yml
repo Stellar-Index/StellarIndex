@@ -1,16 +1,25 @@
 name: release
 
 # Triggered by pushing a v*.*.* tag to the repo. Cuts a GitHub
-# Release containing cross-compiled Linux binaries (+ SHA256SUMS)
-# and pushes container images to ghcr.io for each binary.
+# Release containing cross-compiled Linux binaries (+ SHA256SUMS).
 #
 # Tag conventions per docs/architecture/semver-policy.md:
-#   v0.1.0          — release; updates :latest container tag
-#   v0.1.0-rc.1     — pre-release; does NOT update :latest
+#   v0.1.0          — release
+#   v0.1.0-rc.1     — pre-release
 #   v0.1.0+build.1  — build metadata; treated like the bare version
 #
 # Operator deploy is a separate workflow (deploy.yml) — this one only
 # produces and publishes artifacts.
+#
+# **Container images are NOT built/pushed by this workflow.** The
+# `docker/*.Dockerfile` files remain in the repo so a self-hoster
+# can build their own image (`make build-docker` or
+# `docker build -f docker/ratesengine-api.Dockerfile .`); we don't
+# push to ghcr.io because no consumer of those images exists today
+# and multi-arch Docker builds were adding ~3-5 min of CI burn per
+# release tag for no return. To re-enable: restore the `containers:`
+# job (search the git log for "release: drop ghcr.io push") and
+# the `packages: write` permission. Decision: 2026-05-11, operator.
 
 on:
   push:
@@ -31,7 +40,6 @@ concurrency:
 
 permissions:
   contents: write          # gh release create + upload assets
-  packages: write          # ghcr.io push
   id-token: write          # future: keyless signing via cosign
 
 jobs:
@@ -224,84 +232,3 @@ jobs:
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
             --verify-tag $PRE \
             dist/*
-
-  # Build container images per binary. One Dockerfile per binary
-  # under docker/<binary>.Dockerfile (added in the same PR as this
-  # workflow). Uses Docker buildx for multi-arch.
-  containers:
-    name: Build + push container ${{ matrix.binary }}
-    needs: [resolve-tag, build]
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        binary:
-          - ratesengine-indexer
-          - ratesengine-aggregator
-          - ratesengine-api
-          - ratesengine-ops
-          - ratesengine-migrate
-          - ratesengine-sla-probe
-    steps:
-      - name: Checkout at tag
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve-tag.outputs.tag }}
-          fetch-depth: 1
-
-      - name: Set up QEMU (for cross-arch)
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Owner segment of ghcr.io must be lowercase. github.repository_owner
-      # is already lowercase for org-owned repos but defensive lc'ing
-      # avoids surprises if a fork is in mixed case.
-      - name: Compute image name
-        id: img
-        run: |
-          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
-          echo "name=ghcr.io/${OWNER}/${{ matrix.binary }}" >> "$GITHUB_OUTPUT"
-
-      # Tags: always tag with the explicit version. Also tag :latest
-      # ONLY when this is not a pre-release (consumers pinning to
-      # :latest expect stable releases).
-      - name: Compute image tags
-        id: tags
-        run: |
-          TAGS="${{ steps.img.outputs.name }}:${{ needs.resolve-tag.outputs.tag }}"
-          if [ "${{ needs.resolve-tag.outputs.is_prerelease }}" = "false" ]; then
-            TAGS="${TAGS},${{ steps.img.outputs.name }}:latest"
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-          echo "Image tags: ${TAGS}"
-
-      - name: Build + push image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: docker/${{ matrix.binary }}.Dockerfile
-          # arm64 dropped 2026-05-08 to halve container build cost.
-          # Re-add when an arm64 host is provisioned. See memory:
-          # feedback_release_cadence.md.
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          build-args: |
-            VERSION=${{ needs.resolve-tag.outputs.tag }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.tag }}
-            org.opencontainers.image.title=${{ matrix.binary }}
-            org.opencontainers.image.licenses=Apache-2.0
-          cache-from: type=gha,scope=${{ matrix.binary }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.binary }}
