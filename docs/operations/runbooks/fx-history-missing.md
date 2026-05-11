@@ -119,26 +119,26 @@ sudo -u postgres psql -d ratesengine -tA -c "SELECT count(*) FROM fx_quotes"
 
 The forward-flow worker only writes the LATEST snapshot per
 refresh tick — it doesn't go back in time. The 1y / all-time
-charts on `/currencies/[ticker]` need historical data that the
-one-shot `fx-history-backfill` binary fetches from the upstream's
-grouped-daily endpoint.
+fiat charts need historical data that the one-shot
+`fx-history-backfill` binary fetches from the ECB-backed
+Frankfurter API (frankfurter.dev) — free, no API key, ~32
+currencies, daily granularity back to 1999-01-04.
 
 ```sh
-# On the operator's workstation (needs MASSIVE_API_KEY):
-export MASSIVE_API_KEY=...
+# On the operator's workstation:
 export DATABASE_URL=postgres://...:5432/ratesengine
-go run ./scripts/ops/fx-history-backfill --years=10 --concurrency=4
+go run ./scripts/ops/fx-history-backfill --years=25
 ```
 
-Cost note: Massive bills per historical request. ~3,650 days ×
-N currencies, with the upstream's day-grouped endpoint
-returning all currencies per day in one call → ~3,650 paid
-requests for a 10-year backfill. Schedule for off-peak.
+No cost — Frankfurter is free (ECB reference rates,
+maintained as a public utility). The script walks the window in
+5-year chunks (one HTTP request per chunk) so a 25-year backfill
+is ~6 requests total. Safe to interrupt and resume — the writer
+upserts on `(ticker, bucket)` so re-running on the same range
+is a no-op.
 
-The script logs one line per day to stderr; on completion it
-writes a final summary (total days, total rows, elapsed). Safe
-to interrupt and resume — the writer upserts on
-`(ticker, bucket)` so re-running on the same range is a no-op.
+The script logs one line per chunk to stderr; on completion it
+writes a final summary (total chunks, total rows, elapsed).
 
 ## Prevention
 

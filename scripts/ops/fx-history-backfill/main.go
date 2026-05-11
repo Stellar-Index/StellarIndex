@@ -1,53 +1,55 @@
 // scripts/ops/fx-history-backfill — one-off historical FX backfill.
 //
-// Walks Massive's grouped-daily endpoint day-by-day for an arbitrary
-// window (defaults: trailing 10y) and writes rows into the
-// fx_quotes hypertable. Idempotent on the (ticker, bucket) primary
-// key — re-running on the same range upserts identical values.
+// Fetches ECB daily reference rates from Frankfurter (frankfurter.dev)
+// and writes them into the fx_quotes hypertable. Frankfurter publishes
+// back to 1999-01-04 for ~32 currencies; one HTTP request returns the
+// entire range, so a 25-year backfill is a single (large) JSON
+// response, not 9,000 paid Massive requests.
 //
-// Why a separate binary not a worker hook: Massive bills per
-// historical request and this fetches ~3,650 days × N currencies of
-// data. Doing it as a one-shot lets the operator schedule it
-// (cron / weekend run) and observe progress in the script's own
-// stderr stream rather than burying it in the API server's logs.
+// Idempotent on the (ticker, bucket) primary key — re-running on
+// the same range upserts identical values.
+//
+// Why a separate binary not a worker hook: a 25-year backfill is a
+// one-shot operator concern (we do it once on a fresh deployment),
+// distinct from the forex worker's continuous ~5min refresh loop.
+// Keeping it out-of-band makes progress observable on the operator's
+// stderr stream instead of the API server log.
 //
 // Usage:
 //
-//	export MASSIVE_API_KEY=...
 //	export DATABASE_URL=postgres://...
 //	go run ./scripts/ops/fx-history-backfill \
-//	    --years=10 --concurrency=4
+//	    --years=25
 //
 // Flags:
 //
-//	--years=N              window depth (default 10)
+//	--years=N              window depth (default 25 — covers ECB
+//	                       inception in 1999)
 //	--from=YYYY-MM-DD      override window start (overrides --years)
 //	--to=YYYY-MM-DD        override window end (default today UTC)
-//	--concurrency=N        parallel daily fetches (default 4 — Massive
-//	                       rate-limits ~5 req/s for paid tier)
+//	--chunk-years=N        split the fetch into N-year chunks
+//	                       (default 5; reduces peak memory + lets the
+//	                       operator see progress every chunk)
 //	--dry-run              fetch + print row counts but skip the DB write
-//	--ticker=USD,EUR,...   restrict to a subset (default: all from
-//	                       the upstream's response)
+//	--ticker=USD,EUR,...   restrict to a subset (default: all
+//	                       Frankfurter-supported currencies)
 //
-// The script logs one line per day (date, n_rows, status) to stderr
-// so progress is visible. Final summary writes total days, total
-// rows, elapsed time.
+// The script logs one line per chunk to stderr; final summary writes
+// total rows + elapsed.
 package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"github.com/RatesEngine/rates-engine/internal/sources/forex"
+	"github.com/RatesEngine/rates-engine/internal/sources/frankfurter"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
 
@@ -57,7 +59,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	client := forex.NewClient(cfg.apiKey)
+	client := frankfurter.NewClient()
 
 	var store *timescale.Store
 	if !cfg.dryRun {
@@ -71,63 +73,50 @@ func main() {
 	}
 
 	logger.Info("fx-history-backfill: start",
+		"source", "frankfurter",
 		"from", cfg.from.Format("2006-01-02"),
 		"to", cfg.to.Format("2006-01-02"),
-		"concurrency", cfg.concurrency,
+		"chunk_years", cfg.chunkYears,
 		"dry_run", cfg.dryRun)
 
-	totalDays := int(cfg.to.Sub(cfg.from).Hours()/24) + 1
-	daysOK, daysErr, totalRows, elapsed := runBackfill(ctx, logger, client, store, cfg)
+	totalRows, chunks, elapsed := runBackfill(ctx, logger, client, store, cfg)
 
 	logger.Info("fx-history-backfill: done",
-		"days_total", totalDays,
-		"days_ok", daysOK,
-		"days_err", daysErr,
+		"chunks", chunks,
 		"rows", totalRows,
 		"elapsed", elapsed)
-
-	if daysErr > 0 {
-		os.Exit(2) // partial success
-	}
 }
 
 type backfillConfig struct {
-	apiKey       string
 	dsn          string
 	from         time.Time
 	to           time.Time
-	concurrency  int
+	chunkYears   int
 	dryRun       bool
 	tickerFilter map[string]struct{}
 }
 
-// parseFlags pulls all CLI + env config and validates it. Splits
-// off the main flow so cognitive-complexity stays manageable.
-// Exits the process on validation failure.
+// parseFlags pulls all CLI + env config and validates it. Exits the
+// process on validation failure.
 func parseFlags() (backfillConfig, *slog.Logger) {
 	var (
-		years       int
-		fromStr     string
-		toStr       string
-		concurrency int
-		dryRun      bool
-		tickerCSV   string
+		years      int
+		fromStr    string
+		toStr      string
+		chunkYears int
+		dryRun     bool
+		tickerCSV  string
 	)
-	flag.IntVar(&years, "years", 10, "trailing window depth in years (default 10)")
+	flag.IntVar(&years, "years", 25, "trailing window depth in years (default 25)")
 	flag.StringVar(&fromStr, "from", "", "window start date YYYY-MM-DD (overrides --years)")
 	flag.StringVar(&toStr, "to", "", "window end date YYYY-MM-DD (default: today UTC)")
-	flag.IntVar(&concurrency, "concurrency", 4, "parallel daily fetches (default 4)")
+	flag.IntVar(&chunkYears, "chunk-years", 5, "split the fetch into N-year chunks (default 5)")
 	flag.BoolVar(&dryRun, "dry-run", false, "skip DB writes; report row counts only")
 	flag.StringVar(&tickerCSV, "ticker", "", "comma-separated ticker subset (default: all)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	apiKey := os.Getenv("MASSIVE_API_KEY")
-	if apiKey == "" {
-		logger.Error("MASSIVE_API_KEY environment variable is required")
-		os.Exit(1)
-	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" && !dryRun {
 		logger.Error("DATABASE_URL environment variable is required (use --dry-run to skip the DB)")
@@ -156,6 +145,9 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 		logger.Error("--from must be before --to", "from", from, "to", to)
 		os.Exit(1)
 	}
+	if chunkYears < 1 {
+		chunkYears = 1
+	}
 
 	tickerFilter := map[string]struct{}{}
 	if tickerCSV != "" {
@@ -165,131 +157,102 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 	}
 
 	return backfillConfig{
-		apiKey:       apiKey,
 		dsn:          dsn,
 		from:         from,
 		to:           to,
-		concurrency:  concurrency,
+		chunkYears:   chunkYears,
 		dryRun:       dryRun,
 		tickerFilter: tickerFilter,
 	}, logger
 }
 
-// runBackfill fans out per-day fetches across `cfg.concurrency`
-// workers and aggregates results. Returns (daysOK, daysErr,
-// totalRows, elapsed). ctx-cancel during the dispatch loop stops
-// new launches but lets in-flight workers drain.
+// runBackfill walks the window in chunkYears-sized segments. Sequential,
+// not parallel — Frankfurter is a free service and one operator-side
+// backfill doesn't justify hammering it. Each chunk is one HTTP
+// request returning every day for every currency in that window.
 func runBackfill(
 	ctx context.Context,
 	logger *slog.Logger,
-	client *forex.Client,
+	client *frankfurter.Client,
 	store *timescale.Store,
 	cfg backfillConfig,
-) (daysOK, daysErr, totalRows int, elapsed time.Duration) {
-	dates := make([]time.Time, 0)
-	for d := cfg.from; !d.After(cfg.to); d = d.AddDate(0, 0, 1) {
-		dates = append(dates, d)
-	}
-
-	type result struct {
-		date time.Time
-		rows int
-		err  error
-	}
-
-	sem := make(chan struct{}, cfg.concurrency)
-	var wg sync.WaitGroup
-	results := make(chan result, len(dates))
-
+) (totalRows, chunks int, elapsed time.Duration) {
 	started := time.Now()
-dispatch:
-	for _, date := range dates {
+	chunkStart := cfg.from
+	for chunkStart.Before(cfg.to) {
 		select {
 		case <-ctx.Done():
-			break dispatch
+			return totalRows, chunks, time.Since(started).Round(time.Second)
 		default:
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(d time.Time) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			rows, err := fetchAndPersist(ctx, client, store, d, cfg.tickerFilter, cfg.dryRun)
-			results <- result{date: d, rows: rows, err: err}
-		}(date)
-	}
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for r := range results {
-		if r.err != nil {
-			if errors.Is(r.err, context.Canceled) {
-				continue
-			}
-			daysErr++
-			logger.Warn("day failed",
-				"date", r.date.Format("2006-01-02"), "err", r.err)
-			continue
+		chunkEnd := chunkStart.AddDate(cfg.chunkYears, 0, 0)
+		if chunkEnd.After(cfg.to) {
+			chunkEnd = cfg.to
 		}
-		daysOK++
-		totalRows += r.rows
-		if daysOK%50 == 0 {
-			logger.Info("progress",
-				"days_ok", daysOK, "days_err", daysErr,
-				"rows", totalRows, "elapsed", time.Since(started).Round(time.Second))
+		rows, err := fetchAndPersist(ctx, client, store, chunkStart, chunkEnd, cfg.tickerFilter, cfg.dryRun)
+		if err != nil {
+			logger.Warn("chunk failed",
+				"from", chunkStart.Format("2006-01-02"),
+				"to", chunkEnd.Format("2006-01-02"),
+				"err", err)
+		} else {
+			totalRows += rows
+			logger.Info("chunk done",
+				"from", chunkStart.Format("2006-01-02"),
+				"to", chunkEnd.Format("2006-01-02"),
+				"rows", rows)
 		}
+		chunks++
+		chunkStart = chunkEnd.AddDate(0, 0, 1)
 	}
-	return daysOK, daysErr, totalRows, time.Since(started).Round(time.Second)
+	return totalRows, chunks, time.Since(started).Round(time.Second)
 }
 
-// fetchAndPersist pulls one day's grouped-daily snapshot, projects
-// it to fx_quotes rows, and writes them in a single batched insert.
-// Returns row count + error. Empty days (weekends, holidays) return
-// 0 rows + nil — they're not a failure, just no published bars.
+// fetchAndPersist pulls one chunk of daily snapshots and projects each
+// (date × ticker × rate) tuple into an fx_quotes row.
 func fetchAndPersist(
 	ctx context.Context,
-	client *forex.Client,
+	client *frankfurter.Client,
 	store *timescale.Store,
-	date time.Time,
+	from, to time.Time,
 	tickerFilter map[string]struct{},
 	dryRun bool,
 ) (int, error) {
-	dateStr := date.Format("2006-01-02")
-	rates, _, err := client.HistoricalUSDRates(ctx, dateStr)
+	days, err := client.RangeUSDRates(ctx, from, to)
 	if err != nil {
-		return 0, fmt.Errorf("massive %s: %w", dateStr, err)
+		return 0, err
 	}
-	if len(rates) == 0 {
+	if len(days) == 0 {
 		return 0, nil
 	}
 
-	bucket := date.UTC().Truncate(24 * time.Hour)
-	rows := make([]timescale.FXQuote, 0, len(rates))
-	for code, rate := range rates {
-		if rate <= 0 {
-			continue
-		}
-		ticker := strings.ToUpper(code)
-		if len(tickerFilter) > 0 {
-			if _, ok := tickerFilter[ticker]; !ok {
+	rows := make([]timescale.FXQuote, 0, len(days)*16)
+	for _, day := range days {
+		bucket := day.Date.UTC().Truncate(24 * time.Hour)
+		for code, rate := range day.Rates {
+			if rate <= 0 {
 				continue
 			}
+			ticker := strings.ToUpper(code)
+			if len(tickerFilter) > 0 {
+				if _, ok := tickerFilter[ticker]; !ok {
+					continue
+				}
+			}
+			rows = append(rows, timescale.FXQuote{
+				Bucket:     bucket,
+				Ticker:     ticker,
+				RateUSD:    rate,
+				InverseUSD: 1.0 / rate,
+				Source:     "frankfurter-historical",
+			})
 		}
-		rows = append(rows, timescale.FXQuote{
-			Bucket:     bucket,
-			Ticker:     ticker,
-			RateUSD:    rate,
-			InverseUSD: 1.0 / rate,
-			Source:     "massive-historical",
-		})
 	}
 	if dryRun || store == nil {
 		return len(rows), nil
 	}
 	if err := store.InsertFXQuoteBatch(ctx, rows); err != nil {
-		return 0, fmt.Errorf("insert %s: %w", dateStr, err)
+		return 0, fmt.Errorf("insert %s..%s: %w", from.Format("2006-01-02"), to.Format("2006-01-02"), err)
 	}
 	return len(rows), nil
 }
