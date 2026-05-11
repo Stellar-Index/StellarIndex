@@ -322,6 +322,58 @@ to any operator-pinned stale-version proxy lifetimes.
   unverified-collision pages.
 - Remove every `/v1/coins` consumer in the explorer.
 
+## Design extension — everything-is-an-asset (operator 2026-05-11)
+
+The original plan treated `/v1/currencies` (fiat + USD-pegged
+stablecoins acting as fiat proxies) and `/v1/assets` (Stellar-
+canonical assets) as two separate surfaces. Operator decision
+2026-05-11 supersedes that: **`/v1/currencies` dissolves into
+`/v1/assets`**. Every entity served by the API is an *asset* with a
+class tag.
+
+### Asset class taxonomy
+
+Each asset carries an `asset_class` field. Initial classes:
+
+- `fiat` — sovereign currencies (USD, EUR, GBP, JPY, MXN, BRL, …).
+  Replace `/v1/currencies/us-dollar` with `/v1/assets/us-dollar`.
+- `stablecoin` — fiat-pegged crypto (USDC, USDT, EURC, PYUSD,
+  MXNe, …). Distinct from `fiat` so the explorer can render the
+  peg relationship + depeg-risk surface differently from a pure
+  fiat rate.
+- `crypto` — non-pegged crypto (BTC, ETH, XLM, AQUA, SOL, …).
+- (future) `stock`, `metal`, `fund`, `commodity` — same shape;
+  added when ingestion lights up.
+
+Class is operator-curated in the verified-currency catalogue (one
+extra field per `verified_currencies.yaml` entry, default
+`crypto`). Phase 1.5 explorer migration consumes the class to
+render category sections (Fiat / Stablecoins / Crypto / …) on the
+landing page.
+
+### Routing implications
+
+- `/v1/currencies` and `/v1/currencies/{ticker}` follow the same
+  deprecation pattern as `/v1/coins` (Deprecation + Link headers
+  in Phase 1.4a-ish; deletion after the explorer migrates).
+- `/v1/assets/{slug}` resolves every class: `usdc` (stablecoin)
+  → GlobalAssetView; `us-dollar` (fiat) → GlobalAssetView with
+  `asset_class: "fiat"` and an empty-or-FX-only `networks[]`
+  (fiat doesn't have on-chain issuances per se).
+- The fiat-overlay registry (`internal/canonical/asset_fiat.go`)
+  remains the source of truth for which fiat codes are
+  allow-listed; the verified-currency catalogue *references* fiat
+  by ISO code rather than restating it.
+
+### Scope this phase
+
+Capturing only — no implementation yet. The class field gets
+added to `internal/currency/data/seed.yaml` + the Catalogue type
+in a future commit (likely bundled with Phase 1.4b's `/v1/coins`
+deletion + a parallel `/v1/currencies` deprecation). Phase 1.5
+consumes it. Recording here so the next implementation pass has
+the design intent.
+
 ## Open questions / decisions deferred
 
 - **N for VWAP threshold** — how many trades does a ticker need
