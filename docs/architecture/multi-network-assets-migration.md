@@ -221,24 +221,54 @@ either (a) a customer's coverage requirement exceeds the seed, or
 non-Stellar tickers. Tracked in the launch task list under §G15
 Phase 1.2 follow-up.
 
-### Phase 1.3 — Per-ticker price worker (3rd PR, biggest piece)
+### Phase 1.3 — Three-tier global-price fallback chain
 
-- `internal/aggregate/global.go` — per-ticker VWAP computation.
-  Reads trades across all `Class:Exchange` sources where one
-  side is the ticker. Bucketizes on `(ticker, quote, bucket)`.
-- New CAGG `verified_currency_prices_1m` keyed on
-  `(ticker, quote, bucket)`. Retention + auto-refresh policies
-  matching `prices_1m`.
-- Fallback chain implementation:
-  1. Read `verified_currency_prices_1m` for the most-recent
-     closed bucket.
-  2. If row count below threshold, read `aggregator_prices`
-     for the latest tick from each `Class:Aggregator` source
-     and average.
-  3. If neither has data but the ticker has a `?:BTC` pair,
-     triangulate via `BTC_USD × ASSET_BTC`.
-- Wire the fallback into a new helper
-  `internal/api/v1/global_price.go::computeGlobalPrice`.
+Split into 1.3a (shipped) and 1.3b (deferred):
+
+**1.3a — fallback orchestration (shipped 2026-05-11)**
+
+- `internal/aggregate/global.go::ComputeGlobalPrice` walks the
+  three tiers in order:
+  1. `vwap_native` — `GlobalPriceReader.LatestVWAP` reads the
+     existing `prices_1m` CAGG for the (base, quote) pair. Wins
+     when `trade_count >= VWAPMinTradeCount` (default 5,
+     matches the existing reduced-redundancy threshold).
+  2. `aggregator_avg` — reads via the Phase 1.2
+     `Store.LatestAggregatorPricesForPair` reader across
+     `external.AggregatorSources()`. Averages the fresh
+     observations (< `MaxAggregatorAge`, default 10m). Cross-
+     decimal scaling normalises CG-style 8dp observations to the
+     14dp common scale before averaging.
+  3. `triangulated` — reads the existing Redis triangulation
+     looker (`TriangulatedPriceLooker.LookupTriangulated`),
+     same Redis-cached implied VWAPs `/v1/price` already
+     consults.
+- Result type (`GlobalPriceResult`) carries `Price`, `Authority`
+  (`vwap_native` / `aggregator_avg` / `triangulated`), `Sources`,
+  `AsOf`, and `TradeCount` for transparency.
+- Storage errors short-circuit lower tiers — a transient VWAP
+  failure must not silently degrade to aggregator. Only "no
+  rows" / `ok=false` triggers the next tier.
+
+**1.3b — cross-chain ticker-bucketed VWAP CAGG (deferred)**
+
+The plan's `verified_currency_prices_1m` CAGG bucketed on
+`(ticker, quote, bucket)` would normalise Stellar SDEX USDC/XLM
+trades + CEX USDC/USD trades into one mixed-quote VWAP. That
+requires per-trade FX-anchor multiplication (convert XLM-quoted
+trades to USD via the prevailing XLM/USD rate at trade time) — a
+distinct algorithm from our existing per-pair VWAP, and
+operationally only meaningful when we have non-Stellar-chain
+trade data to actually aggregate across.
+
+For today's deployment (Stellar trades + off-chain CEX/FX path
+only), tier 1's per-pair VWAP is functionally equivalent — the
+"cross-chain" aggregation reduces to whatever's already in
+`prices_1m` for the specific (base, quote) requested. 1.3b lands
+when one of: (a) we ingest non-Stellar-chain trades (Ethereum
+USDC, etc.), (b) Phase 1.4's global view exposes a price-quality
+gap the per-pair tier-1 can't bridge, or (c) a customer
+explicitly requires a cross-network VWAP surface.
 
 ### Phase 1.4 — `/v1/assets/{slug}` global view (4th PR)
 
