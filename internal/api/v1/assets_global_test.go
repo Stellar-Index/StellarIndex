@@ -222,6 +222,91 @@ func TestAssetGet_UnknownSlug_FallsThroughToCanonicalParse(t *testing.T) {
 	}
 }
 
+// TestAssetGet_Fiat_USDIdentity — /v1/assets/us-dollar synthesises
+// a 1.00 price (identity) without hitting the global-price reader,
+// and computes market_cap_usd directly from the catalogue's M2 figure.
+func TestAssetGet_Fiat_USDIdentity(t *testing.T) {
+	cat := newTestCatalogue(t)
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		// Provide a stub reader so the price block isn't short-
+		// circuited by the nil-guard; the USD path doesn't call
+		// the reader but the handler checks s.globalPrice != nil.
+		GlobalPrice: &stubGlobalPriceReader{},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/us-dollar")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.GlobalAssetView `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	d := env.Data
+
+	if d.Class != "fiat" {
+		t.Errorf("class = %q, want fiat", d.Class)
+	}
+	if d.PriceUSD == nil || *d.PriceUSD != "1.00000000000000" {
+		t.Errorf("price_usd = %v, want 1.00000000000000", d.PriceUSD)
+	}
+	if d.CirculatingSupply == nil {
+		t.Errorf("circulating_supply missing for USD")
+	}
+	// USD M2 × 1.00 → "21700000000000.00" (seed M2 value × identity).
+	if d.MarketCapUSD == nil {
+		t.Fatalf("market_cap_usd missing for USD")
+	}
+	if *d.MarketCapUSD != "21700000000000.00" {
+		t.Errorf("USD market_cap_usd = %q, want 21700000000000.00", *d.MarketCapUSD)
+	}
+	if len(d.Networks) != 0 {
+		t.Errorf("fiat shouldn't have networks; got %d", len(d.Networks))
+	}
+}
+
+// TestAssetGet_Fiat_CNY_MarketCap — non-USD fiat: handler runs
+// ComputeGlobalPrice on the fiat:CNY → fiat:USD pair (FX feeds
+// populate prices_1m for these), then multiplies M2 by the result.
+// Stubbing a known FX rate to verify the cap math.
+func TestAssetGet_Fiat_CNY_MarketCap(t *testing.T) {
+	cat := newTestCatalogue(t)
+	reader := &stubGlobalPriceReader{}
+	reader.vwap.price = "0.14000000000000"
+	reader.vwap.tradeCount = 100
+	reader.vwap.sources = []string{"polygon-forex"}
+	reader.vwap.ok = true
+
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		GlobalPrice:        reader,
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/chinese-yuan")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.GlobalAssetView `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	d := env.Data
+
+	if d.Class != "fiat" {
+		t.Errorf("class = %q, want fiat", d.Class)
+	}
+	if d.PriceUSD == nil || *d.PriceUSD != "0.14000000000000" {
+		t.Errorf("price_usd = %v, want 0.14000000000000", d.PriceUSD)
+	}
+	// CNY M2 = 302_000_000_000_000; × 0.14 = 42_280_000_000_000.00
+	if d.MarketCapUSD == nil || *d.MarketCapUSD != "42280000000000.00" {
+		t.Errorf("CNY market_cap_usd = %v, want 42280000000000.00", d.MarketCapUSD)
+	}
+}
+
 func TestCoins_DeprecationHeaders(t *testing.T) {
 	// /v1/coins and /v1/coins/{slug} must emit the Deprecation +
 	// Link headers pointing at the new /v1/assets/{slug} surface

@@ -3,7 +3,9 @@ package v1
 import (
 	"context"
 	"errors"
+	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate"
@@ -28,7 +30,8 @@ type GlobalAssetView struct {
 	Slug           string `json:"slug"`
 	Name           string `json:"name"`
 	Description    string `json:"description,omitempty"`
-	VerifiedIssuer string `json:"verified_issuer,omitempty"` // e.g. "Circle (centre.io)"
+	Class          string `json:"class"` // crypto / stablecoin / fiat
+	VerifiedIssuer string `json:"verified_issuer,omitempty"`
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
 	CMCID          string `json:"coinmarketcap_id,omitempty"`
 
@@ -44,6 +47,25 @@ type GlobalAssetView struct {
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
 	PriceSources   []string                 `json:"price_sources,omitempty"`
 	PriceAsOf      *time.Time               `json:"price_as_of,omitempty"`
+
+	// ─── Supply + market cap (catalogue-sourced) ──────────────────
+	//
+	// CirculatingSupply is the natural-unit amount in circulation.
+	// For fiat this is M2 (broad money: cash + checkable deposits
+	// + savings + money-market funds), populated from central-bank
+	// reporting via `internal/currency/data/seed.yaml`. For crypto /
+	// stablecoin classes the catalogue field is unset today; the
+	// per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the
+	// canonical source.
+	CirculatingSupply *string `json:"circulating_supply,omitempty"`
+	// SupplyDecimals exponent maps the integer in CirculatingSupply
+	// to a display value. 0 for fiat (raw dollars/yen/yuan).
+	SupplyDecimals int `json:"supply_decimals,omitempty"`
+	// MarketCapUSD = CirculatingSupply × PriceUSD when both are
+	// available. Decimal string with 2 fractional digits. For fiat
+	// at scale: CNY M2 × USD/CNY ≈ $42T, which ranks #1 globally.
+	// Null when supply or price is unavailable.
+	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
 
 	// ─── Per-network entries (from catalogue) ─────────────────────
 	Networks []NetworkView `json:"networks"`
@@ -76,10 +98,19 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 		Slug:           vc.Slug,
 		Name:           vc.Name,
 		Description:    vc.Description,
+		Class:          string(vc.Class),
 		VerifiedIssuer: vc.VerifiedIssuerLabel,
 		CoinGeckoID:    vc.CoinGeckoID,
 		CMCID:          vc.CoinMarketCapID,
 		Networks:       networkViewsFromCatalogue(vc),
+	}
+	// Catalogue-sourced supply (M2 for fiat; usually empty for
+	// crypto/stablecoin — the F2 supply pipeline is the source of
+	// truth there).
+	if vc.CirculatingSupply != "" {
+		supply := vc.CirculatingSupply
+		view.CirculatingSupply = &supply
+		view.SupplyDecimals = vc.SupplyDecimals
 	}
 
 	// Populate the price block via the three-tier fallback chain
@@ -91,7 +122,7 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 		return view
 	}
 
-	base, ok := globalBaseForTicker(vc.Ticker)
+	base, ok := assetForCurrency(vc)
 	if !ok {
 		return view
 	}
@@ -100,6 +131,19 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 		// "USD" must be on the canonical-fiat allow-list; failing here
 		// is a code bug rather than a runtime data issue.
 		s.logger.Error("global asset view: USD asset construction failed", "err", err)
+		return view
+	}
+
+	// Special-case: USD vs USD. Skip the storage lookup (which would
+	// 404 or return weird semantics) and synthesise an identity price.
+	if vc.Class == currency.ClassFiat && strings.EqualFold(vc.Ticker, "USD") {
+		identity := "1.00000000000000"
+		asOf := time.Now().UTC()
+		view.PriceUSD = &identity
+		view.PriceAuthority = aggregate.AuthorityVWAPNative
+		view.PriceSources = []string{"identity"}
+		view.PriceAsOf = &asOf
+		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, identity)
 		return view
 	}
 
@@ -126,7 +170,53 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 	view.PriceSources = res.Sources
 	asOf := res.AsOf
 	view.PriceAsOf = &asOf
+
+	// Fiat market cap: CirculatingSupply (M2) × PriceUSD.
+	// Crypto / stablecoin market cap stays on the per-asset surface
+	// (/v1/assets/{asset_id}); not computed here because the
+	// catalogue's CirculatingSupply is typically empty for those
+	// classes.
+	if vc.Class == currency.ClassFiat {
+		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, price)
+	}
 	return view
+}
+
+// assetForCurrency builds the canonical asset to query global pricing
+// for. Fiat slugs map to a `fiat:CCY` asset (FX feeds populate
+// prices_1m for these pairs). Crypto / stablecoin slugs map to
+// `crypto:TICKER`. Non-allow-listed tickers return ok=false; the
+// caller renders the catalogue identity without a price block.
+func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
+	if vc.Class == currency.ClassFiat {
+		a, err := canonical.NewFiatAsset(vc.Ticker)
+		if err != nil {
+			return canonical.Asset{}, false
+		}
+		return a, true
+	}
+	return globalBaseForTicker(vc.Ticker)
+}
+
+// computeFiatMarketCap returns market_cap_usd = supplyStr × priceStr
+// formatted to 2 fractional digits, or nil when either operand can't
+// be parsed as a decimal. supplyStr is the natural-unit amount
+// (raw yen/yuan/etc.; supply_decimals = 0 for fiat).
+func computeFiatMarketCap(supplyStr, priceStr string) *string {
+	if supplyStr == "" || priceStr == "" {
+		return nil
+	}
+	supply, ok := new(big.Float).SetPrec(128).SetString(supplyStr)
+	if !ok {
+		return nil
+	}
+	price, ok := new(big.Float).SetPrec(128).SetString(priceStr)
+	if !ok {
+		return nil
+	}
+	product := new(big.Float).SetPrec(128).Mul(supply, price)
+	out := product.Text('f', 2)
+	return &out
 }
 
 // globalBaseForTicker returns the canonical asset to query the
