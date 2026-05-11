@@ -62,6 +62,17 @@ func TestAPI_EndToEnd(t *testing.T) {
 		}
 	}
 
+	// Force-refresh prices_1m so the /v1/markets sub-test sees the
+	// seeded trades. /v1/markets reads from prices_1m (the 1-min
+	// CAGG) rather than the raw trades table — without an explicit
+	// refresh the seeded trades are present in trades but absent
+	// from prices_1m until the 30s policy fires.
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
+	); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
 	// Build the same v1.Server the ratesengine-api binary builds —
 	// minus the adapters we don't need here.
 	srv := v1.New(v1.Options{
