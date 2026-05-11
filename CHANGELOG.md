@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.42] — 2026-05-11
+
+### Added
+
+- **Assets unification — fiat currencies as first-class assets**
+  (R-018 operator decision 2026-05-11). Six-commit batch:
+  - Catalogue extension: `internal/currency` gains `class`
+    (crypto/stablecoin/fiat), `circulating_supply`, `supply_decimals`.
+    Seed adds 19 fiat entries (USD, EUR, GBP, JPY, CNY, AUD, CAD,
+    CHF, INR, BRL, MXN, KRW, HKD, SGD, ZAR, TRY, NZD, SEK, NOK)
+    with M2 figures from central-bank reporting + friendly slugs
+    (`/assets/us-dollar`, `/assets/chinese-yuan`, …).
+  - `/v1/assets/{slug}` GlobalAssetView gains `class`,
+    `circulating_supply`, `supply_decimals`, `market_cap_usd`.
+    Fiat slugs compute market cap via `M2 × current FX rate`;
+    USD identity-cased to 1.00. CNY computes to ≈ $42T, the
+    largest M2 globally.
+  - `/v1/assets/{slug}/{network}` sub-route for per-network
+    drill-down. Stellar entries 303-redirect to the canonical
+    `/v1/assets/{asset_id}` view; non-Stellar return a thin
+    `PerNetworkAssetView` with the catalogue's contract +
+    external block-explorer link.
+  - `/v1/assets/verified` listing now carries `market_cap_usd`
+    for fiat rows (parallel FX fan-out, ~19 lookups per request).
+    Crypto / stablecoin rows still skip — their cap lives on
+    /v1/assets/{asset_id}.
+  - Explorer: `/currencies/*` → `/assets/*` CF Pages redirects
+    for the full G20+ set. The verified-currency strip on
+    `/assets` now sorts by market_cap_usd descending (CNY first).
+
 ## [v0.5.0-rc.41] — 2026-05-11
 
 ### Added
