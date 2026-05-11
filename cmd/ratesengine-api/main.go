@@ -69,6 +69,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/cachekeys"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/currency"
 	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
 	"github.com/RatesEngine/rates-engine/internal/notify"
@@ -510,6 +511,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	usdPegs := parseUSDPeggedClassics(cfg.Trades.USDPeggedClassicAssets, logger)
 
+	// Load the verified-currency catalogue (R-018 Phase 1.1).
+	// Failure here is fatal — the seed YAML is embedded; a parse
+	// error means a code change broke the build artifact, not an
+	// operator misconfiguration.
+	verifiedCurrencies, err := currency.LoadEmbedded()
+	if err != nil {
+		return fmt.Errorf("load verified-currency catalogue: %w", err)
+	}
+	logger.Info("verified-currency catalogue loaded", "entries", len(verifiedCurrencies.All()))
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -542,27 +553,28 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// (24h trades-hypertable scan grouped by source) take 5-10s;
 		// the explorer hits these on every /dexes + /exchanges page
 		// load. 60s freshness is plenty for a 24h-trailing aggregate.
-		SourcesStats:      cachedSourcesStats,
-		Lending:           store,
-		Currencies:        newForexAdapter(forexCache),
-		FXHistory:         &fxHistoryReader{store: store},
-		SEP10:             sep10Validator,
-		Hub:               hub,
-		CORS:              cors,
-		Auth:              authMW,
-		RateLimit:         rateLimit,
-		UsageTracker:      middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
-		UsageReader:       usageReaderAdapter{c: usageCounter},
-		CDNEnabled:        cfg.API.CDNEnabled,
-		StatusBackend:     statusBackend,
-		RegionName:        cfg.Region.ID,
-		RegionDeployment:  "production",
-		DashboardAuth:     nilOrMounter(dashboardBundle.auth),
-		DashboardKeys:     nilOrMounter(dashboardBundle.keys),
-		SessionAuth:       dashboardBundle.middleware,
-		SessionPeeker:     sessionPeekerAdapter{},
-		SACWrappers:       cfg.Supply.SACWrappers,
-		USDPeggedClassics: usdPegs,
+		SourcesStats:       cachedSourcesStats,
+		Lending:            store,
+		Currencies:         newForexAdapter(forexCache),
+		FXHistory:          &fxHistoryReader{store: store},
+		SEP10:              sep10Validator,
+		Hub:                hub,
+		CORS:               cors,
+		Auth:               authMW,
+		RateLimit:          rateLimit,
+		UsageTracker:       middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
+		UsageReader:        usageReaderAdapter{c: usageCounter},
+		CDNEnabled:         cfg.API.CDNEnabled,
+		StatusBackend:      statusBackend,
+		RegionName:         cfg.Region.ID,
+		RegionDeployment:   "production",
+		DashboardAuth:      nilOrMounter(dashboardBundle.auth),
+		DashboardKeys:      nilOrMounter(dashboardBundle.keys),
+		SessionAuth:        dashboardBundle.middleware,
+		SessionPeeker:      sessionPeekerAdapter{},
+		SACWrappers:        cfg.Supply.SACWrappers,
+		USDPeggedClassics:  usdPegs,
+		VerifiedCurrencies: verifiedCurrencies,
 	})
 
 	// Closed-bucket producer — only spawn when the operator

@@ -2955,13 +2955,19 @@ components:
           source. When `frozen=true` this is forced true (an LKG
           fallback is by definition single-sourced). Informational;
           combined with `frozen` this is the manipulation signature.
+        - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
+          when the asset's code matches a verified currency's
+          Stellar ticker but the issuer doesn't. The matching
+          `unverified_warning` body on the AssetDetail carries
+          the verified-currency pointer (R-018 Phase 1.1).
       properties:
-        stale:              { type: boolean, default: false }
-        reduced_redundancy: { type: boolean, default: false }
-        triangulated:       { type: boolean, default: false }
-        divergence_warning: { type: boolean, default: false }
-        frozen:             { type: boolean, default: false }
-        single_source:      { type: boolean, default: false }
+        stale:                       { type: boolean, default: false }
+        reduced_redundancy:          { type: boolean, default: false }
+        triangulated:                { type: boolean, default: false }
+        divergence_warning:          { type: boolean, default: false }
+        frozen:                      { type: boolean, default: false }
+        single_source:               { type: boolean, default: false }
+        unverified_ticker_collision: { type: boolean, default: false }
       required: [stale, reduced_redundancy, triangulated, divergence_warning]
 
     Pagination:
@@ -3219,7 +3225,37 @@ components:
             multiplication for non-USD on-chain quotes is L2.2
             phase 2, post-launch. The schema is forward-compatible:
             phase 2 lands additively without a wire-shape change.
+        unverified_warning:
+          allOf:
+            - { $ref: "#/components/schemas/UnverifiedWarning" }
+          nullable: true
+          description: |
+            Attached when the requested asset's code matches a
+            verified currency's Stellar ticker (USDC, EURC, AQUA, …)
+            but the issuer doesn't match the verified entry. Lights
+            `flags.unverified_ticker_collision` on the envelope.
+
+            Null for the verified asset itself, for non-classic
+            assets (native / Soroban / fiat), and for any code that
+            no verified currency claims on Stellar. See R-018 /
+            docs/architecture/multi-network-assets-migration.md
+            Phase 1.1.
       required: [asset_id, type, code, decimals, sep1_status]
+
+    UnverifiedWarning:
+      type: object
+      description: |
+        Pointer at the verified Stellar-canonical asset when an
+        unverified asset shares the same ticker code. Every field
+        is human-render-ready — the `note` sentence is verbatim-safe
+        for a warning banner.
+      properties:
+        verified_slug:     { type: string,  description: "Canonical slug (e.g. \"usdc\") the consumer can redirect to." }
+        verified_asset_id: { type: string,  description: "Verified canonical asset_id (e.g. USDC-GA5Z…)." }
+        verified_name:     { type: string,  description: "Human-readable currency name (e.g. \"USD Coin\")." }
+        verified_issuer:   { type: string,  nullable: true, description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        note:              { type: string,  description: "One-sentence warning rendered verbatim by clients." }
+      required: [verified_slug, verified_asset_id, verified_name, note]
 
     AssetEnvelope:
       allOf:

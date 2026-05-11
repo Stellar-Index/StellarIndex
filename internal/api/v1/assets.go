@@ -3,12 +3,14 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/currency"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
 )
 
@@ -167,6 +169,39 @@ type AssetDetail struct {
 	// "issuer didn't say" case is distinguishable from "issuer said
 	// false".
 	IsUnlimited *bool `json:"is_unlimited,omitempty"`
+
+	// UnverifiedWarning points at the verified Stellar-canonical
+	// asset when the requested asset uses a verified currency's
+	// ticker code but is NOT the verified issuer (R-018 ticker
+	// collision). Populated by handleAssetGet via the verified-
+	// currency catalogue; nil for the verified asset itself and
+	// for any code not claimed by a verified currency on Stellar.
+	// Pairs with Flags.UnverifiedTickerCollision for client-side
+	// detection.
+	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
+}
+
+// UnverifiedWarning is the body attached to /v1/assets/{id} when
+// the requested asset code-collides with a verified Stellar
+// currency but the issuer doesn't match. Designed to be lifted
+// directly into UI: every field is human-render-ready, and the
+// `note` sentence is verbatim-safe to render in a warning banner.
+type UnverifiedWarning struct {
+	// VerifiedSlug is the canonical slug ("usdc") consumers can
+	// redirect to.
+	VerifiedSlug string `json:"verified_slug"`
+	// VerifiedAssetID is the verified canonical asset_id ("USDC-G…").
+	VerifiedAssetID string `json:"verified_asset_id"`
+	// VerifiedName is the human-readable name ("USD Coin").
+	VerifiedName string `json:"verified_name"`
+	// VerifiedIssuer is the verified-issuer attribution
+	// ("Circle (centre.io)"). Empty when the catalogue entry
+	// didn't include a verified_issuer_label.
+	VerifiedIssuer string `json:"verified_issuer,omitempty"`
+	// Note is a one-sentence warning rendered verbatim by clients.
+	// Composed server-side from the verified currency's metadata
+	// so the wording stays consistent.
+	Note string `json:"note"`
 }
 
 // detailFromAsset populates an AssetDetail from the canonical shape.
@@ -387,7 +422,73 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// declaration, which the market-cap math reads.
 	s.applyF2Fields(r.Context(), &detail, parsed)
 
-	writeJSON(w, detail, Flags{})
+	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
+	// `unverified_warning` body + flips flags.unverified_ticker_collision
+	// when the asset code matches a verified Stellar ticker but the
+	// issuer doesn't. No-op when no catalogue is wired or the asset
+	// isn't a classic Stellar asset.
+	writeJSON(w, detail, s.verifiedCurrencyFlags(&detail, parsed))
+}
+
+// verifiedCurrencyFlags applies the unverified-collision warning
+// to detail and returns the matching envelope flags. Separated
+// from handleAssetGet so the latter stays linear-readable.
+func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asset) Flags {
+	flags := Flags{}
+	if applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
+		flags.UnverifiedTickerCollision = true
+	}
+	return flags
+}
+
+// applyUnverifiedWarning stamps detail.UnverifiedWarning when asset
+// is a classic Stellar asset whose code matches a verified-currency
+// ticker but whose issuer doesn't. Returns true when the warning
+// was attached so the caller can set the matching envelope flag.
+//
+// Lookups against a nil catalogue are safe and return false — the
+// handler can call this unconditionally.
+func applyUnverifiedWarning(detail *AssetDetail, asset canonical.Asset, cat *currency.Catalogue) bool {
+	if cat == nil {
+		return false
+	}
+	if asset.Type != canonical.AssetClassic {
+		return false
+	}
+	verified, collision := cat.StellarCollision(asset.Code, asset.Issuer)
+	if !collision {
+		return false
+	}
+	stellar := verified.StellarEntry()
+	if stellar == nil {
+		// Defensive — StellarCollision only returns true when the
+		// catalogue has a Stellar entry for the code, so this branch
+		// is unreachable in practice. Bail safely if the invariant
+		// ever changes.
+		return false
+	}
+	var note string
+	if verified.VerifiedIssuerLabel != "" {
+		note = fmt.Sprintf(
+			"Exercise caution — this asset uses the ticker %q but is not the verified %s on Stellar. The verified %s on Stellar is issued by %s: %s.",
+			verified.Ticker, verified.Ticker, verified.Ticker,
+			verified.VerifiedIssuerLabel, stellar.AssetID,
+		)
+	} else {
+		note = fmt.Sprintf(
+			"Exercise caution — this asset uses the ticker %q but is not the verified %s on Stellar. The verified %s on Stellar is %s.",
+			verified.Ticker, verified.Ticker, verified.Ticker,
+			stellar.AssetID,
+		)
+	}
+	detail.UnverifiedWarning = &UnverifiedWarning{
+		VerifiedSlug:    verified.Slug,
+		VerifiedAssetID: stellar.AssetID,
+		VerifiedName:    verified.Name,
+		VerifiedIssuer:  verified.VerifiedIssuerLabel,
+		Note:            note,
+	}
+	return true
 }
 
 // AssetMetadata is the wire shape of /v1/assets/{id}/metadata —

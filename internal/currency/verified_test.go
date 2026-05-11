@@ -1,0 +1,316 @@
+package currency
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestLoadEmbedded(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	if cat == nil {
+		t.Fatal("LoadEmbedded returned nil catalogue")
+	}
+	if got := len(cat.All()); got < 10 {
+		t.Errorf("seed catalogue has %d entries; want at least 10", got)
+	}
+
+	// Sanity-check a few well-known entries.
+	cases := []struct {
+		slug   string
+		ticker string
+		// hasStellar: must have a Stellar network entry with a code (not native-only).
+		hasStellarClassic bool
+	}{
+		{"usdc", "USDC", true},
+		{"xlm", "XLM", false},
+		{"btc", "BTC", false},
+		{"aqua", "AQUA", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.slug, func(t *testing.T) {
+			v, ok := cat.LookupBySlug(tc.slug)
+			if !ok {
+				t.Fatalf("LookupBySlug(%q): not found", tc.slug)
+			}
+			if v.Ticker != tc.ticker {
+				t.Errorf("ticker = %q, want %q", v.Ticker, tc.ticker)
+			}
+			if tc.hasStellarClassic {
+				se := v.StellarEntry()
+				if se == nil {
+					t.Fatalf("StellarEntry: nil for %s", tc.slug)
+				}
+				if se.Code == "" || se.Issuer == "" || se.AssetID == "" {
+					t.Errorf("Stellar entry incomplete: code=%q issuer=%q asset_id=%q",
+						se.Code, se.Issuer, se.AssetID)
+				}
+				// asset_id should be CODE-ISSUER format.
+				want := se.Code + "-" + se.Issuer
+				if se.AssetID != want {
+					t.Errorf("asset_id %q != %q", se.AssetID, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLookupByTicker_caseInsensitive(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	v1, ok1 := cat.LookupByTicker("USDC")
+	v2, ok2 := cat.LookupByTicker("usdc")
+	v3, ok3 := cat.LookupByTicker("UsDc")
+	if !(ok1 && ok2 && ok3) {
+		t.Fatalf("LookupByTicker: case sensitivity leaked (ok1=%v ok2=%v ok3=%v)", ok1, ok2, ok3)
+	}
+	if v1 != v2 || v2 != v3 {
+		t.Error("LookupByTicker returned different pointers for case-variants — index is inconsistent")
+	}
+}
+
+func TestLookupByStellarAssetID(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+
+	const usdcID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	v, ok := cat.LookupByStellarAssetID(usdcID)
+	if !ok {
+		t.Fatalf("LookupByStellarAssetID(%s): not found", usdcID)
+	}
+	if v.Slug != "usdc" {
+		t.Errorf("slug = %q, want usdc", v.Slug)
+	}
+
+	// Native XLM is indexed as the literal "native" asset_id.
+	v, ok = cat.LookupByStellarAssetID("native")
+	if !ok {
+		t.Fatal("LookupByStellarAssetID(native): not found")
+	}
+	if v.Ticker != "XLM" {
+		t.Errorf("native ticker = %q, want XLM", v.Ticker)
+	}
+
+	// Unverified asset returns false.
+	_, ok = cat.LookupByStellarAssetID("USDC-GBADISSUERSOMETHINGTHATWILLNEVERMATCHANYREALACCOUNTAB")
+	if ok {
+		t.Error("LookupByStellarAssetID returned a hit for an unverified asset")
+	}
+}
+
+func TestStellarCollision(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+
+	const realUSDCIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const fakeIssuer = "GBADISSUERSOMETHINGTHATWILLNEVERMATCHANYREALACCOUNTAB"
+
+	t.Run("real issuer = no collision", func(t *testing.T) {
+		v, collision := cat.StellarCollision("USDC", realUSDCIssuer)
+		if v == nil {
+			t.Fatal("StellarCollision returned nil verified currency for real USDC")
+		}
+		if collision {
+			t.Error("StellarCollision flagged the real USDC as a collision")
+		}
+	})
+
+	t.Run("fake issuer with verified code = collision", func(t *testing.T) {
+		v, collision := cat.StellarCollision("USDC", fakeIssuer)
+		if v == nil {
+			t.Fatal("StellarCollision returned nil for a code that IS verified")
+		}
+		if !collision {
+			t.Error("StellarCollision missed the fake-issuer collision")
+		}
+		if v.Slug != "usdc" {
+			t.Errorf("returned verified currency slug = %q, want usdc", v.Slug)
+		}
+	})
+
+	t.Run("case-insensitive code match", func(t *testing.T) {
+		_, collisionLower := cat.StellarCollision("usdc", fakeIssuer)
+		_, collisionUpper := cat.StellarCollision("USDC", fakeIssuer)
+		if collisionLower != collisionUpper {
+			t.Errorf("case sensitivity in StellarCollision: lower=%v upper=%v", collisionLower, collisionUpper)
+		}
+	})
+
+	t.Run("unknown code returns (nil, false)", func(t *testing.T) {
+		v, collision := cat.StellarCollision("NOTAVERIFIEDCODE", fakeIssuer)
+		if v != nil || collision {
+			t.Errorf("StellarCollision for unknown code: v=%v collision=%v", v, collision)
+		}
+	})
+
+	t.Run("empty inputs return (nil, false)", func(t *testing.T) {
+		v, collision := cat.StellarCollision("", fakeIssuer)
+		if v != nil || collision {
+			t.Errorf("empty code: v=%v collision=%v", v, collision)
+		}
+		v, collision = cat.StellarCollision("USDC", "")
+		if v != nil || collision {
+			t.Errorf("empty issuer: v=%v collision=%v", v, collision)
+		}
+	})
+}
+
+func TestNilCatalogue(t *testing.T) {
+	// Lookups on a nil catalogue should be safe — handlers may
+	// invoke them when no catalogue is wired.
+	var cat *Catalogue
+	if v, ok := cat.LookupBySlug("usdc"); v != nil || ok {
+		t.Errorf("nil catalogue LookupBySlug: v=%v ok=%v", v, ok)
+	}
+	if v, ok := cat.LookupByTicker("USDC"); v != nil || ok {
+		t.Errorf("nil catalogue LookupByTicker: v=%v ok=%v", v, ok)
+	}
+	if v, ok := cat.LookupByStellarAssetID("native"); v != nil || ok {
+		t.Errorf("nil catalogue LookupByStellarAssetID: v=%v ok=%v", v, ok)
+	}
+	if v, ok := cat.StellarCollision("USDC", "G123"); v != nil || ok {
+		t.Errorf("nil catalogue StellarCollision: v=%v ok=%v", v, ok)
+	}
+}
+
+func TestLoadFromBytes_validation(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string // expected substring in the error
+	}{
+		{
+			"missing ticker",
+			`verified_currencies:
+  - slug: foo
+    name: Foo
+    networks: [{network: stellar}]
+`,
+			"ticker is required",
+		},
+		{
+			"missing slug",
+			`verified_currencies:
+  - ticker: FOO
+    name: Foo
+    networks: [{network: stellar}]
+`,
+			"slug is required",
+		},
+		{
+			"missing networks",
+			`verified_currencies:
+  - ticker: FOO
+    slug: foo
+    name: Foo
+`,
+			"at least one network entry",
+		},
+		{
+			"duplicate slug",
+			`verified_currencies:
+  - ticker: FOO
+    slug: foo
+    name: Foo
+    networks: [{network: stellar}]
+  - ticker: BAR
+    slug: foo
+    name: Bar
+    networks: [{network: stellar}]
+`,
+			"duplicate slug",
+		},
+		{
+			"duplicate ticker",
+			`verified_currencies:
+  - ticker: FOO
+    slug: foo
+    name: Foo
+    networks: [{network: stellar}]
+  - ticker: FOO
+    slug: bar
+    name: Bar
+    networks: [{network: stellar}]
+`,
+			"duplicate ticker",
+		},
+		{
+			"two currencies claim same code on stellar",
+			`verified_currencies:
+  - ticker: USDC
+    slug: usdc
+    name: USD Coin
+    networks:
+      - network: stellar
+        code: USDC
+        issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+  - ticker: USDC2
+    slug: usdc2
+    name: Other USDC
+    networks:
+      - network: stellar
+        code: USDC
+        issuer: GBADISSUERSOMETHINGTHATWILLNEVERMATCHANYREALACCOUNTAB
+`,
+			"claimed by both",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadFromBytes([]byte(tc.yaml))
+			if err == nil {
+				t.Fatalf("LoadFromBytes: nil err, want error containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSeedDataIntegrity(t *testing.T) {
+	// Sanity-check: every entry with a Stellar classic network entry
+	// must have non-empty code, issuer, and asset_id, and the
+	// asset_id must be code-issuer concatenation.
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	for _, vc := range cat.All() {
+		for _, n := range vc.Networks {
+			if n.Network != "stellar" {
+				continue
+			}
+			// Native XLM: asset_id == "native", code/issuer empty.
+			if n.AssetID == "native" {
+				if n.Code != "" || n.Issuer != "" {
+					t.Errorf("%s native: expected empty code/issuer, got %q/%q",
+						vc.Ticker, n.Code, n.Issuer)
+				}
+				continue
+			}
+			// Classic asset.
+			if n.Code == "" || n.Issuer == "" || n.AssetID == "" {
+				t.Errorf("%s stellar entry incomplete: code=%q issuer=%q asset_id=%q",
+					vc.Ticker, n.Code, n.Issuer, n.AssetID)
+				continue
+			}
+			want := n.Code + "-" + n.Issuer
+			if n.AssetID != want {
+				t.Errorf("%s asset_id = %q, want %q", vc.Ticker, n.AssetID, want)
+			}
+			// G-strkey must be 56 chars.
+			if len(n.Issuer) != 56 || !strings.HasPrefix(n.Issuer, "G") {
+				t.Errorf("%s issuer %q: not a valid G-strkey", vc.Ticker, n.Issuer)
+			}
+		}
+	}
+}

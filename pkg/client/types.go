@@ -176,6 +176,34 @@ type AssetDetail struct {
 	// fixed_number / max_number / is_unlimited declaration); false
 	// when they did and committed to a bounded supply.
 	IsUnlimited *bool `json:"is_unlimited,omitempty"`
+
+	// UnverifiedWarning points at the verified Stellar-canonical
+	// asset when the requested asset uses a verified currency's
+	// ticker code but is NOT the verified issuer. The classic
+	// "someone issued their own USDC on Stellar" surface. Nil for
+	// the verified asset itself and for any code not claimed by a
+	// verified currency. Pairs with `Flags.UnverifiedTickerCollision`
+	// on the envelope. See R-018 /
+	// docs/architecture/multi-network-assets-migration.md.
+	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
+}
+
+// UnverifiedWarning is the warning body attached to AssetDetail
+// when an asset code-collides with a verified Stellar currency
+// but the issuer doesn't match.
+type UnverifiedWarning struct {
+	// VerifiedSlug is the canonical slug the consumer can redirect to.
+	VerifiedSlug string `json:"verified_slug"`
+	// VerifiedAssetID is the verified canonical asset_id.
+	VerifiedAssetID string `json:"verified_asset_id"`
+	// VerifiedName is the human-readable currency name.
+	VerifiedName string `json:"verified_name"`
+	// VerifiedIssuer is the short attribution string
+	// (e.g. "Circle (centre.io)"). Empty when the catalogue entry
+	// didn't include a verified_issuer_label.
+	VerifiedIssuer string `json:"verified_issuer,omitempty"`
+	// Note is a one-sentence warning rendered verbatim by the client.
+	Note string `json:"note"`
 }
 
 // TradeRow is the data shape returned by [Client.History] — one

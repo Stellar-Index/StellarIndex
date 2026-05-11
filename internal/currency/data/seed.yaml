@@ -1,0 +1,345 @@
+# Verified-currency catalogue — seed.
+#
+# Source of truth for "what is the canonical cross-chain currency
+# behind ticker X". Phase 1.1 of the multi-network assets migration
+# (R-018; docs/architecture/multi-network-assets-migration.md).
+#
+# This file is embedded into the ratesengine-api binary at build
+# time via `//go:embed`. Changing the catalogue requires a code
+# change + redeploy — that's intentional, the catalogue is part of
+# the trust surface. Phase 1.2 will add runtime CoinGecko / CMC
+# augmentation on top.
+#
+# Per entry:
+#   ticker:                Display ticker (e.g. "USDC"). Case-folded
+#                          for lookup.
+#   slug:                  URL slug (lowercase, hyphen-separated).
+#   name:                  Human-readable currency name.
+#   description:           One-sentence summary.
+#   coingecko_id:          Optional — CG's `/coins/{id}` slug.
+#   coinmarketcap_id:      Optional — CMC's integer id.
+#   verified_issuer_label: Optional — short attribution string
+#                          shown on the unverified-collision warning
+#                          banner. Free-form (e.g. "Circle (centre.io)").
+#                          For non-Stellar-native currencies leave
+#                          empty.
+#   networks:              Per-network identities. At least one entry.
+#                          Each entry has:
+#                              network:        "stellar", "ethereum",
+#                                              "solana", "bitcoin", ...
+#                              code:           classic asset code (Stellar)
+#                              issuer:         G-strkey (Stellar classic)
+#                              contract:       contract address (non-Stellar)
+#                              asset_id:       precomputed canonical
+#                                              asset_id (Stellar; lets
+#                                              consumers skip parsing).
+#                              external_link:  optional override for
+#                                              the explorer drill-out
+#                                              link.
+
+verified_currencies:
+  # ─── Stellar native ─────────────────────────────────────────────
+  - ticker: XLM
+    slug: xlm
+    name: Stellar Lumens
+    description: Native asset of the Stellar network.
+    coingecko_id: stellar
+    coinmarketcap_id: 512
+    verified_issuer_label: Stellar Development Foundation
+    networks:
+      - network: stellar
+        asset_id: native
+
+  # ─── Major USD stablecoins ──────────────────────────────────────
+  - ticker: USDC
+    slug: usdc
+    name: USD Coin
+    description: Circle's USD-pegged stablecoin redeemable 1:1 for USD.
+    coingecko_id: usd-coin
+    coinmarketcap_id: 3408
+    verified_issuer_label: Circle (centre.io)
+    networks:
+      - network: stellar
+        code: USDC
+        issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+        asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+      - network: ethereum
+        contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+      - network: solana
+        contract: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      - network: polygon
+        contract: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+      - network: arbitrum
+        contract: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+      - network: base
+        contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+  - ticker: USDT
+    slug: usdt
+    name: Tether
+    description: Tether-issued USD-pegged stablecoin (Tether Holdings Ltd.).
+    coingecko_id: tether
+    coinmarketcap_id: 825
+    networks:
+      - network: ethereum
+        contract: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+      - network: tron
+        contract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+      - network: solana
+        contract: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+      - network: polygon
+        contract: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+
+  - ticker: PYUSD
+    slug: pyusd
+    name: PayPal USD
+    description: PayPal's USD-pegged stablecoin issued by Paxos Trust.
+    coingecko_id: paypal-usd
+    coinmarketcap_id: 27772
+    networks:
+      - network: ethereum
+        contract: "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"
+      - network: solana
+        contract: "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"
+
+  # ─── EUR stablecoins ────────────────────────────────────────────
+  - ticker: EURC
+    slug: eurc
+    name: Euro Coin
+    description: Circle's EUR-pegged stablecoin.
+    coingecko_id: euro-coin
+    coinmarketcap_id: 20641
+    verified_issuer_label: Circle (centre.io)
+    networks:
+      - network: stellar
+        code: EURC
+        issuer: GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2
+        asset_id: EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2
+      - network: ethereum
+        contract: "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c"
+      - network: base
+        contract: "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42"
+
+  # ─── Major non-Stellar crypto (no Stellar-native verified issuer) ─
+  - ticker: BTC
+    slug: btc
+    name: Bitcoin
+    description: The original cryptocurrency.
+    coingecko_id: bitcoin
+    coinmarketcap_id: 1
+    networks:
+      - network: bitcoin
+        external_link: https://mempool.space/
+
+  - ticker: ETH
+    slug: eth
+    name: Ethereum
+    description: Native asset of the Ethereum network.
+    coingecko_id: ethereum
+    coinmarketcap_id: 1027
+    networks:
+      - network: ethereum
+        external_link: https://etherscan.io/
+
+  - ticker: SOL
+    slug: sol
+    name: Solana
+    description: Native asset of the Solana network.
+    coingecko_id: solana
+    coinmarketcap_id: 5426
+    networks:
+      - network: solana
+        external_link: https://solscan.io/
+
+  - ticker: BNB
+    slug: bnb
+    name: BNB
+    description: Native asset of the BNB Chain (formerly Binance Smart Chain).
+    coingecko_id: binancecoin
+    coinmarketcap_id: 1839
+    networks:
+      - network: bsc
+        external_link: https://bscscan.com/
+
+  - ticker: XRP
+    slug: xrp
+    name: XRP
+    description: Native asset of the XRP Ledger.
+    coingecko_id: ripple
+    coinmarketcap_id: 52
+    networks:
+      - network: xrpl
+        external_link: https://xrpscan.com/
+
+  - ticker: ADA
+    slug: ada
+    name: Cardano
+    description: Native asset of the Cardano network.
+    coingecko_id: cardano
+    coinmarketcap_id: 2010
+    networks:
+      - network: cardano
+        external_link: https://cardanoscan.io/
+
+  - ticker: DOGE
+    slug: doge
+    name: Dogecoin
+    description: A peer-to-peer cryptocurrency originally launched as a parody of Bitcoin.
+    coingecko_id: dogecoin
+    coinmarketcap_id: 74
+    networks:
+      - network: dogecoin
+        external_link: https://dogechain.info/
+
+  - ticker: AVAX
+    slug: avax
+    name: Avalanche
+    description: Native asset of the Avalanche network.
+    coingecko_id: avalanche-2
+    coinmarketcap_id: 5805
+    networks:
+      - network: avalanche
+        external_link: https://snowtrace.io/
+
+  - ticker: MATIC
+    slug: matic
+    name: Polygon
+    description: Native asset of the Polygon (formerly Matic) network.
+    coingecko_id: matic-network
+    coinmarketcap_id: 3890
+    networks:
+      - network: polygon
+        external_link: https://polygonscan.com/
+
+  - ticker: DOT
+    slug: dot
+    name: Polkadot
+    description: Native asset of the Polkadot network.
+    coingecko_id: polkadot
+    coinmarketcap_id: 6636
+    networks:
+      - network: polkadot
+        external_link: https://polkadot.subscan.io/
+
+  - ticker: LINK
+    slug: link
+    name: Chainlink
+    description: Native token of the Chainlink decentralized oracle network.
+    coingecko_id: chainlink
+    coinmarketcap_id: 1975
+    networks:
+      - network: ethereum
+        contract: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+
+  # ─── Stellar-native tokens ──────────────────────────────────────
+  - ticker: AQUA
+    slug: aqua
+    name: Aquarius
+    description: Governance token of the Aquarius DEX on Stellar.
+    coingecko_id: aquarius
+    verified_issuer_label: Aquarius (aqua.network)
+    networks:
+      - network: stellar
+        code: AQUA
+        issuer: GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA
+        asset_id: AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA
+
+  - ticker: yXLM
+    slug: yxlm
+    name: yieldXLM
+    description: Ultra Capital's yield-bearing wrapped XLM on Stellar.
+    verified_issuer_label: Ultra Capital (ultracapital.xyz)
+    networks:
+      - network: stellar
+        code: yXLM
+        issuer: GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55
+        asset_id: yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55
+
+  - ticker: SHX
+    slug: shx
+    name: Stronghold Token
+    description: Native token of Stronghold's institutional crypto platform.
+    coingecko_id: stronghold-token
+    verified_issuer_label: Stronghold (stronghold.co)
+    networks:
+      - network: stellar
+        code: SHX
+        issuer: GDSTRSHXHGJ7ZIVRBXEYE5Q74XUVCUSEKEBR7UCHEUUEK72N7I7KJ6JH
+        asset_id: SHX-GDSTRSHXHGJ7ZIVRBXEYE5Q74XUVCUSEKEBR7UCHEUUEK72N7I7KJ6JH
+
+  - ticker: VELO
+    slug: velo
+    name: Velo
+    description: Native token of the Velo Labs financial protocol on Stellar.
+    coingecko_id: velo
+    verified_issuer_label: Velo Labs (velo.org)
+    networks:
+      - network: stellar
+        code: VELO
+        issuer: GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M
+        asset_id: VELO-GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M
+
+  - ticker: BLND
+    slug: blnd
+    name: Blend
+    description: Governance token of Blend Capital's lending protocol on Stellar.
+    verified_issuer_label: Blend Capital (blend.capital)
+    networks:
+      - network: stellar
+        code: BLND
+        issuer: GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY
+        asset_id: BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY
+
+  - ticker: PHO
+    slug: pho
+    name: Phoenix
+    description: Governance token of the Phoenix DEX on Stellar.
+    verified_issuer_label: Phoenix (phoenix-hub.io)
+    networks:
+      - network: stellar
+        code: PHO
+        issuer: GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO
+        asset_id: PHO-GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO
+
+  # ─── Stellar-wrapped assets (verified issuers) ──────────────────
+  - ticker: yUSDC
+    slug: yusdc
+    name: yieldUSDC
+    description: Ultra Capital's yield-bearing wrapped USDC on Stellar.
+    verified_issuer_label: Ultra Capital (ultracapital.xyz)
+    networks:
+      - network: stellar
+        code: yUSDC
+        issuer: GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF
+        asset_id: yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF
+
+  # ─── Other globals (no Stellar-native verified issuer) ──────────
+  - ticker: UNI
+    slug: uni
+    name: Uniswap
+    description: Governance token of the Uniswap decentralized exchange.
+    coingecko_id: uniswap
+    coinmarketcap_id: 7083
+    networks:
+      - network: ethereum
+        contract: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+
+  - ticker: AAVE
+    slug: aave
+    name: Aave
+    description: Governance token of the Aave lending protocol.
+    coingecko_id: aave
+    coinmarketcap_id: 7278
+    networks:
+      - network: ethereum
+        contract: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+
+  - ticker: WBTC
+    slug: wbtc
+    name: Wrapped Bitcoin
+    description: Bitcoin tokenized on Ethereum (1:1 BTC-backed).
+    coingecko_id: wrapped-bitcoin
+    coinmarketcap_id: 3717
+    networks:
+      - network: ethereum
+        contract: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
