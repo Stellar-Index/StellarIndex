@@ -231,10 +231,19 @@ function getBuildCoinsCache(): Promise<Map<string, CoinSummary> | null> {
       const rows = Array.isArray(env.data)
         ? env.data
         : (env.data?.coins ?? []);
+      // Index by slug ONLY — not asset_id. The cache previously
+      // double-indexed (slug + asset_id), which made
+      // generateStaticParams emit ~1000 routes (500 short-form
+      // slugs + 500 long-form asset_ids like USDC-GA5Z…). Both
+      // routes rendered the same content; the long-form copies
+      // were duplicate static work that consistently hung the
+      // CF Pages build worker (180s × 3 retries on
+      // /assets/USDC-GA5Z…). The canonical URL is the short
+      // slug anyway; long-form navigations resolve via the same
+      // page through the API at runtime.
       const map = new Map<string, CoinSummary>();
       for (const c of rows) {
         if (c.slug) map.set(c.slug, c);
-        if (c.asset_id) map.set(c.asset_id, c);
       }
       return map;
     } catch {
