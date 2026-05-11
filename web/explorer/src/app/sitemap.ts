@@ -316,12 +316,20 @@ async function fetchIssuerKeys(): Promise<string[]> {
 
 async function fetchCoinSlugs(): Promise<string[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/coins?limit=500`, {
+    const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: { coins: { slug: string }[] } };
-    return (env.data?.coins ?? []).map((c) => c.slug);
+    // /v1/assets returns rows with `slug` populated when sourced
+    // from the coins reader (rc.47 lift). Fall back to `asset_id`
+    // for any row without a friendly slug — those routes are still
+    // pre-rendered under /assets/{asset_id}.
+    const env = (await res.json()) as {
+      data: { slug?: string; asset_id?: string }[];
+    };
+    return (env.data ?? [])
+      .map((d) => d.slug || d.asset_id || '')
+      .filter(Boolean);
   } catch {
     return [];
   }

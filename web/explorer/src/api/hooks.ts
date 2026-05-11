@@ -358,16 +358,25 @@ export type CoinsPage = {
 /**
  * useCoins — fetches the registry-aware asset directory.
  *
- * The /v1/coins response is paginated via keyset cursor. This
- * hook fetches a single page; consumers that want the full set
- * iterate by passing the previous response's `next_cursor` as
- * the next call's `cursor`.
+ * Sourced from /v1/assets (R-018 finish — assets-unification). The
+ * hook name is kept for ergonomics during the consumer migration:
+ * callers reading `data.coins[i].price_usd` work unchanged because
+ * /v1/assets rows now carry the same field shape as /v1/coins
+ * rows did (rc.47 lifted the missing scalars onto AssetDetail).
+ *
+ * Response envelope is reshaped from /v1/assets's `{data: [], pagination: {next}}`
+ * to the legacy `{coins: [], next_cursor, limit}` shape so existing
+ * consumers don't have to change. Future consumers should use
+ * `useAssets` directly when one ships.
  *
  * Each row carries optional price_usd / volume_24h_usd /
  * market_cap_usd / circulating_supply when the aggregator has
  * computed them.
  */
-type CoinsEnvelope = { data: CoinsPage };
+type AssetsListEnvelope = {
+  data: Coin[];
+  pagination?: { next?: string };
+};
 
 export function useCoins(
   limit = 100,
@@ -384,7 +393,7 @@ export function useCoins(
   const include = includeParts.length > 0 ? includeParts.join(',') : undefined;
   return useQuery<CoinsPage>({
     queryKey: [
-      '/v1/coins',
+      '/v1/assets',
       limit,
       issuer ?? null,
       cursor ?? '',
@@ -393,7 +402,7 @@ export function useCoins(
       include ?? '',
     ],
     queryFn: async () => {
-      const env = await apiGet<CoinsEnvelope>('/v1/coins', {
+      const env = await apiGet<AssetsListEnvelope>('/v1/assets', {
         limit,
         ...(issuer ? { issuer } : {}),
         ...(cursor ? { cursor } : {}),
@@ -401,7 +410,15 @@ export function useCoins(
         ...(orderBy ? { order_by: orderBy } : {}),
         ...(include ? { include } : {}),
       });
-      return env.data;
+      // Reshape /v1/assets envelope into the legacy CoinsPage so
+      // existing consumers stay byte-for-byte compatible during the
+      // migration. The row shape is identical (AssetDetail is a
+      // strict superset of the old Coin) — just envelope re-wrap.
+      return {
+        coins: env.data ?? [],
+        next_cursor: env.pagination?.next ?? '',
+        limit,
+      };
     },
     // Keep showing the previous page data while a new query (e.g.
     // sparkline-augmented or paginated) is in flight. Avoids a

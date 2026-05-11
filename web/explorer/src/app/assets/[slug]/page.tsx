@@ -239,16 +239,19 @@ function getBuildCoinsCache(): Promise<Map<string, CoinSummary> | null> {
   buildCoinsCachePromise = (async () => {
     if (isCIStub) return null;
     try {
+      // Migrated to /v1/assets?limit=500 — R-018 finish. Wire shape
+      // is `{data: [AssetDetail], pagination: {next}}`. AssetDetail
+      // is a superset of CoinSummary so every read column on this
+      // page still resolves. Defensive on both shapes during the
+      // migration overlap (in case a stale build hits an older API).
       const res = await fetch(
-        `${API_BASE_URL}/v1/coins?limit=500&include=sparkline,sparkline7d,ath`,
+        `${API_BASE_URL}/v1/assets?limit=500&include=sparkline,sparkline7d,ath`,
         { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS * 2) },
       );
       if (!res.ok) return null;
       const env = (await res.json()) as {
         data: { coins?: CoinSummary[] } | CoinSummary[];
       };
-      // Envelope shape varies: list endpoints wrap in
-      // `{coins: [...]}`, but defensive on the type.
       const rows = Array.isArray(env.data)
         ? env.data
         : (env.data?.coins ?? []);
@@ -311,7 +314,7 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(
-        `${API_BASE_URL}/v1/coins/${encodeURIComponent(slug)}`,
+        `${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`,
         { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
       );
       if (res.status >= 400 && res.status < 500) return null;
@@ -938,7 +941,7 @@ function OverviewBody({
         <Panel
           title="Top markets"
           hint={`${coin.top_markets.length} most active by 24h volume`}
-          source={asExample('/v1/coins/{slug}', { slug: coin.slug })}
+          source={asExample('/v1/assets/{slug}', { slug: coin.slug })}
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">

@@ -45,12 +45,12 @@ const EXAMPLES: Example[] = [
     path: '/v1/network/stats',
   },
   {
-    label: 'XLM coin detail',
-    path: '/v1/coins/XLM',
+    label: 'XLM asset detail',
+    path: '/v1/assets/XLM',
   },
   {
-    label: 'Top-10 coins',
-    path: '/v1/coins?limit=10',
+    label: 'Top-10 assets',
+    path: '/v1/assets?limit=10',
   },
   {
     label: 'Top-10 markets by 24h volume',

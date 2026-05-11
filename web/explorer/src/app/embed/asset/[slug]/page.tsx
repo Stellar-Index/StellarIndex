@@ -26,12 +26,16 @@ export async function generateStaticParams() {
   const fallback = [{ slug: 'XLM' }];
   if (isCIStub) return fallback;
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/coins?limit=500`, {
+    const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: { coins: { slug: string }[] } };
-    const slugs = env.data?.coins?.map((c) => c.slug) ?? [];
+    const env = (await res.json()) as {
+      data: { slug?: string; asset_id?: string }[];
+    };
+    const slugs = (env.data ?? [])
+      .map((d) => d.slug || d.asset_id || '')
+      .filter(Boolean);
     if (slugs.length === 0) return fallback;
     // Always include XLM + native explicitly.
     const seen = new Set<string>();
