@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useCoins, type Coin } from '@/api/hooks';
+import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
@@ -26,6 +26,7 @@ export function HomeTopAssets() {
     undefined,
     { sparkline: true },
   );
+  const { data: verifiedSlugs } = useVerifiedSlugs();
 
   return (
     <section className="space-y-3">
@@ -88,7 +89,12 @@ export function HomeTopAssets() {
               </tr>
             )}
             {data?.coins.map((coin, idx) => (
-              <Row key={coin.asset_id} coin={coin} rank={idx + 1} />
+              <Row
+                key={coin.asset_id}
+                coin={coin}
+                rank={idx + 1}
+                verified={verifiedSlugs?.has(coin.slug.toLowerCase()) ?? false}
+              />
             ))}
           </tbody>
         </table>
@@ -97,7 +103,15 @@ export function HomeTopAssets() {
   );
 }
 
-function Row({ coin, rank }: { coin: Coin; rank: number }) {
+function Row({
+  coin,
+  rank,
+  verified,
+}: {
+  coin: Coin;
+  rank: number;
+  verified: boolean;
+}) {
   const price = parseDec(coin.price_usd);
   const volume = parseDec(coin.volume_24h_usd);
   return (
@@ -114,6 +128,27 @@ function Row({ coin, rank }: { coin: Coin; rank: number }) {
           <span className="font-medium text-ink group-hover:text-brand-600 dark:text-slate-100">
             {coin.code}
           </span>
+          {verified && (
+            <span
+              title="Verified currency"
+              aria-label="Verified currency"
+              className="inline-flex items-center"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </span>
+          )}
           <span className="text-[11px] text-slate-500">{coin.slug}</span>
         </Link>
       </td>

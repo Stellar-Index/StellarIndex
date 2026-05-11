@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useCoins, type Coin } from '@/api/hooks';
+import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 
 /**
  * HomeTopMovers — top 5 gainers + top 5 losers by 24h % change.
@@ -16,6 +16,7 @@ import { useCoins, type Coin } from '@/api/hooks';
  */
 export function HomeTopMovers() {
   const { data, isLoading, isError } = useCoins(50);
+  const { data: verifiedSlugs } = useVerifiedSlugs();
 
   const { gainers, losers } = pickMovers(data?.coins ?? []);
 
@@ -38,12 +39,14 @@ export function HomeTopMovers() {
           tone="up"
           coins={gainers}
           isLoading={isLoading && !data}
+          verifiedSlugs={verifiedSlugs}
         />
         <MoverColumn
           title="Losers"
           tone="down"
           coins={losers}
           isLoading={isLoading && !data}
+          verifiedSlugs={verifiedSlugs}
         />
       </div>
     </section>
@@ -55,11 +58,13 @@ function MoverColumn({
   tone,
   coins,
   isLoading,
+  verifiedSlugs,
 }: {
   title: string;
   tone: 'up' | 'down';
   coins: Coin[];
   isLoading: boolean;
+  verifiedSlugs?: Set<string>;
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -89,6 +94,27 @@ function MoverColumn({
                 <span className="font-medium text-ink dark:text-slate-100">
                   {c.code}
                 </span>
+                {verifiedSlugs?.has(c.slug.toLowerCase()) && (
+                  <span
+                    title="Verified currency"
+                    aria-label="Verified currency"
+                    className="inline-flex items-center"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="h-3 w-3 text-emerald-600 dark:text-emerald-400"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </span>
+                )}
                 {c.price_usd && (
                   <span className="font-mono tabular-nums text-xs text-slate-500">
                     ${formatPrice(Number(c.price_usd))}
