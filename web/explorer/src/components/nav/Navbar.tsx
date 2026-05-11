@@ -31,7 +31,7 @@ export function Navbar() {
 
         {/* Desktop nav */}
         <div className="hidden items-center gap-1 text-sm md:flex">
-          <NavLink href="/currencies" label="Currencies" />
+          <NavLink href="/assets" label="Assets" />
           <Dropdown label="Blockchain" items={BLOCKCHAIN_ITEMS} />
           <NavLink href="https://docs.ratesengine.net" label="API Docs" external />
           <Dropdown label="About" items={ABOUT_ITEMS} />
@@ -68,11 +68,11 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
   return (
     <div className="border-t border-slate-200 bg-white px-4 py-3 text-sm shadow-inner dark:border-slate-800 dark:bg-slate-950 md:hidden">
       <Link
-        href="/currencies"
+        href="/assets"
         onClick={onClose}
         className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
       >
-        Currencies
+        Assets
       </Link>
       <MobileSection label="Blockchain" items={BLOCKCHAIN_ITEMS} onClose={onClose} />
       <a

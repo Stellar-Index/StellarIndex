@@ -23,7 +23,6 @@ export function Footer() {
           <FooterColumn
             title="Browse"
             links={[
-              { label: 'Currencies', href: '/currencies' },
               { label: 'Assets', href: '/assets' },
               { label: 'Markets', href: '/markets' },
               { label: 'Issuers', href: '/issuers' },
