@@ -189,3 +189,59 @@ func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *c
 	view := s.buildGlobalAssetView(r.Context(), vc)
 	writeJSON(w, view, Flags{})
 }
+
+// VerifiedCurrencyListItem is one entry in the response to
+// `GET /v1/assets/verified` — the verified-currency catalogue
+// directory listing.
+//
+// Distinct from [GlobalAssetView] in two ways:
+//
+//  1. No price block. Computing per-currency global prices for
+//     every catalogue entry on every request would N-multiply the
+//     storage round-trips for a directory listing; the listing
+//     surface is identity-only. Consumers fetch
+//     `/v1/assets/{slug}` per row when they need pricing.
+//  2. Description is omitted to keep payloads small — the detail
+//     page already surfaces it.
+type VerifiedCurrencyListItem struct {
+	Ticker         string        `json:"ticker"`
+	Slug           string        `json:"slug"`
+	Name           string        `json:"name"`
+	VerifiedIssuer string        `json:"verified_issuer,omitempty"`
+	CoinGeckoID    string        `json:"coingecko_id,omitempty"`
+	CMCID          string        `json:"coinmarketcap_id,omitempty"`
+	NetworkCount   int           `json:"network_count"`
+	Networks       []NetworkView `json:"networks"`
+}
+
+// handleAssetsVerified serves GET /v1/assets/verified — the full
+// verified-currency catalogue as a directory listing. Drives the
+// explorer's "verified currencies" section at the top of the
+// /assets page (R-018 Phase 1.5d).
+//
+// Order matches the seed-file order (deterministic; the catalogue
+// loader preserves entry order). 503 when no catalogue is wired.
+func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
+	if s.verifiedCurrencies == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/verified-currencies-unavailable",
+			"Verified-currency catalogue not wired", http.StatusServiceUnavailable,
+			"This deployment hasn't loaded the verified-currency catalogue.")
+		return
+	}
+	entries := s.verifiedCurrencies.All()
+	out := make([]VerifiedCurrencyListItem, 0, len(entries))
+	for _, vc := range entries {
+		out = append(out, VerifiedCurrencyListItem{
+			Ticker:         vc.Ticker,
+			Slug:           vc.Slug,
+			Name:           vc.Name,
+			VerifiedIssuer: vc.VerifiedIssuerLabel,
+			CoinGeckoID:    vc.CoinGeckoID,
+			CMCID:          vc.CoinMarketCapID,
+			NetworkCount:   len(vc.Networks),
+			Networks:       networkViewsFromCatalogue(vc),
+		})
+	}
+	writeJSON(w, out, Flags{})
+}

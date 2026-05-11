@@ -195,6 +195,31 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /assets/verified:
+    get:
+      tags: [assets]
+      summary: Verified-currency catalogue listing.
+      description: |
+        Returns every entry in the binary's verified-currency
+        catalogue (`internal/currency/data/seed.yaml`) — the
+        hand-curated set of cross-chain currencies (USDC, EURC,
+        AQUA, …) that the API surfaces with a "verified" badge.
+
+        Distinct from `/v1/assets` which lists every Stellar-indexed
+        asset (verified or not). This endpoint is identity-only —
+        no price block, no per-currency `network_count` × price
+        round-trips — so it's a cheap directory call suitable for
+        building a verified-currencies section on a listing page.
+
+        Order matches the seed-file order (deterministic).
+      responses:
+        "200":
+          description: List of verified-currency directory entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerifiedCurrencyListEnvelope" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /assets/{asset_id}:
     get:
       tags: [assets]
@@ -3348,6 +3373,38 @@ components:
         - type: object
           properties:
             data: { $ref: "#/components/schemas/GlobalAssetView" }
+          required: [data]
+
+    VerifiedCurrencyListItem:
+      type: object
+      description: |
+        One entry in the response to GET /v1/assets/verified — the
+        verified-currency catalogue directory. Distinct from
+        GlobalAssetView in two ways: no price block (listing payload
+        stays small; consumers fetch /v1/assets/{slug} per row for
+        pricing) and the cross-chain `networks[]` is preserved for
+        each row so a listing UI can render network chips inline.
+      properties:
+        ticker:           { type: string, description: "Display ticker (e.g. \"USDC\")." }
+        slug:             { type: string, description: "URL slug (lowercase, e.g. \"usdc\")." }
+        name:             { type: string, description: "Human-readable currency name." }
+        verified_issuer:  { type: string, description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        coingecko_id:     { type: string, description: "CoinGecko slug for this currency (when known)." }
+        coinmarketcap_id: { type: string, description: "CoinMarketCap integer ID for this currency (when known)." }
+        network_count:    { type: integer, description: "Number of networks this currency is issued on — convenience for listing UIs that don't need the full networks[] array." }
+        networks:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkView" }
+      required: [ticker, slug, name, network_count, networks]
+
+    VerifiedCurrencyListEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/VerifiedCurrencyListItem" }
           required: [data]
 
     AssetEnvelope:

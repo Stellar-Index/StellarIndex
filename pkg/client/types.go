@@ -858,3 +858,19 @@ type NetworkView struct {
 	Contract     string `json:"contract,omitempty"`
 	ExternalLink string `json:"external_link,omitempty"`
 }
+
+// VerifiedCurrencyListItem is one row in the response to
+// [Client.AssetsVerified] (`GET /v1/assets/verified`) — a directory
+// entry from the verified-currency catalogue. Identity-only;
+// pricing requires a per-row fetch via [Client.Asset] with the
+// `Slug` value.
+type VerifiedCurrencyListItem struct {
+	Ticker         string        `json:"ticker"`
+	Slug           string        `json:"slug"`
+	Name           string        `json:"name"`
+	VerifiedIssuer string        `json:"verified_issuer,omitempty"`
+	CoinGeckoID    string        `json:"coingecko_id,omitempty"`
+	CMCID          string        `json:"coinmarketcap_id,omitempty"`
+	NetworkCount   int           `json:"network_count"`
+	Networks       []NetworkView `json:"networks"`
+}

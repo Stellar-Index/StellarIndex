@@ -15,6 +15,45 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`/v1/assets/verified` catalogue listing endpoint** + explorer
+  verified-currencies strip (R-018 Phase 1.5d). New endpoint returns
+  every entry in the verified-currency catalogue
+  (`internal/currency/data/seed.yaml`) as a directory listing —
+  identity + cross-chain networks, no price block. Designed for
+  listing-page consumption: cheap (single fetch, no per-row price
+  round-trip), deterministic order. The explorer's `/assets` page
+  now renders a "Verified currencies" chip-row above the main table,
+  one chip per catalogue entry with a green check + network count
+  + link to `/assets/{slug}`.
+
+- **Verified-currency badge + name on `/assets/{slug}`** (R-018
+  Phase 1.5c). When the route slug resolves to a verified currency,
+  the page header now surfaces the friendly name (e.g. "USD Coin")
+  alongside the ticker, a green "Verified" check badge with
+  attribution tooltip, and an "Issued by …" line replacing the bare
+  "Issuer home domain" line when the catalogue carries a
+  verified_issuer label.
+
+- **Cross-chain Networks panel on `/assets/{slug}`** (R-018 Phase
+  1.5b). When the slug resolves to a verified-currency catalogue
+  entry, the page shows a per-network identity panel listing every
+  chain the currency is issued on. Each row carries a data-quality
+  badge ("Indexed" or "External"), the contract or asset_id, and a
+  deep_link into the per-Stellar-asset detail view (for Stellar
+  rows) or a block-explorer link (etherscan/polygonscan/basescan/
+  arbiscan/snowtrace/bscscan/solscan/tronscan defaults; operators
+  can override per-entry via the catalogue's `external_link` field).
+
+- **Unverified-collision warning banner on `/assets/{slug}`**
+  (R-018 Phase 1.5a). The amber banner rendered when the requested
+  asset's code matches a verified currency's Stellar ticker but the
+  issuer doesn't, with an inline link to the verified asset's slug
+  page. Reads `unverified_warning` from the existing
+  `/v1/assets/{asset_id}` response (Phase 1.4a) so no new fetch
+  path is needed.
+
 ## [v0.5.0-rc.40] — 2026-05-11
 
 ### Added

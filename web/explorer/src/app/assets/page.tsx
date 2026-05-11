@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { AssetsTable } from './AssetsTable';
+import { VerifiedCurrenciesStrip } from './VerifiedCurrenciesStrip';
 
 export const metadata: Metadata = {
   title: 'Assets — every token on Stellar',
@@ -29,6 +30,9 @@ export default function AssetsPage() {
           trades, supply detail, and issuer profile.
         </p>
       </header>
+      <Suspense fallback={null}>
+        <VerifiedCurrenciesStrip />
+      </Suspense>
       <Suspense
         fallback={
           <div className="rounded-md border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">

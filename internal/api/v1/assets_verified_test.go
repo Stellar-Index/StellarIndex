@@ -166,6 +166,81 @@ func TestAssetGet_UnknownCode_NoWarning(t *testing.T) {
 	}
 }
 
+func TestAssetsVerified_ListsCatalogue(t *testing.T) {
+	srv := v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t)})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/verified")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.VerifiedCurrencyListItem `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	if len(env.Data) < 10 {
+		t.Fatalf("got %d entries; seed has at least 10", len(env.Data))
+	}
+
+	bySlug := map[string]v1.VerifiedCurrencyListItem{}
+	for _, e := range env.Data {
+		bySlug[e.Slug] = e
+	}
+	usdc, ok := bySlug["usdc"]
+	if !ok {
+		t.Fatal("usdc entry missing from /v1/assets/verified")
+	}
+	if usdc.Ticker != "USDC" || usdc.Name != "USD Coin" {
+		t.Errorf("usdc entry: %+v", usdc)
+	}
+	if usdc.NetworkCount < 2 {
+		t.Errorf("usdc network_count = %d, want at least 2", usdc.NetworkCount)
+	}
+	foundStellarDeepLink := false
+	for _, n := range usdc.Networks {
+		if n.Network == "stellar" && n.DeepLink != "" {
+			foundStellarDeepLink = true
+		}
+	}
+	if !foundStellarDeepLink {
+		t.Error("usdc stellar entry missing deep_link in listing response")
+	}
+
+	xlm, ok := bySlug["xlm"]
+	if !ok {
+		t.Fatal("xlm entry missing")
+	}
+	if xlm.Ticker != "XLM" {
+		t.Errorf("xlm ticker = %q", xlm.Ticker)
+	}
+}
+
+func TestAssetsVerified_NoCatalogue_503(t *testing.T) {
+	srv := v1.New(v1.Options{})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/verified")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestAssetsVerified_StaticPathDoesNotShadowSlugDispatch(t *testing.T) {
+	// /v1/assets/verified must route to the catalogue listing
+	// handler, NOT collapse onto /v1/assets/{asset_id} where
+	// "verified" would be parsed as an asset_id (and 400 on the
+	// canonical-id check). Go 1.22+ ServeMux picks the more-
+	// specific pattern; this test pins that behaviour.
+	srv := v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t)})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/verified")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d (slug dispatch shadowed the static route?)", resp.StatusCode)
+	}
+}
+
 func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 	// Lock the exact JSON keys the explorer + Freighter will consume.
 	// Renaming any field is a wire-shape break.

@@ -722,6 +722,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 
 	// Asset catalogue.
 	s.mux.HandleFunc("GET /v1/assets", s.handleAssetList)
+	// /v1/assets/verified must register before /v1/assets/{asset_id}
+	// — Go 1.22+ ServeMux picks the more-specific pattern, but
+	// listing the static path first keeps the precedence obvious
+	// to anyone reading the mount order.
+	s.mux.HandleFunc("GET /v1/assets/verified", s.handleAssetsVerified)
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.handleAssetGet)
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
 
