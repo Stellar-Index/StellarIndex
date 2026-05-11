@@ -186,3 +186,164 @@
 # the SVG would have rendered nothing here anyway (no prior .ico),
 # so this is strictly an improvement.
 /favicon.ico             /icon.svg   301
+
+# Fiat-currency unification (R-018 assets-unification 2026-05-11):
+# /currencies/{fiat} → /assets/{friendly-slug}. The catalogue uses
+# friendly slugs (us-dollar, japanese-yen, chinese-yuan, …) for
+# fiat entries; ISO codes (USD, EUR, JPY, …) also redirect to the
+# friendly slug so existing links work.
+#
+# Crypto entries in /currencies/* are handled by the per-currency
+# entries above. Fiat is a separate set because the older
+# /currencies pages routed by ISO ticker; the new /assets routing
+# uses friendly slugs.
+
+# US Dollar
+/currencies/us-dollar       /assets/us-dollar    301
+/currencies/us-dollar/      /assets/us-dollar/   301
+/currencies/usd             /assets/us-dollar    301
+/currencies/usd/            /assets/us-dollar/   301
+/currencies/USD             /assets/us-dollar    301
+/currencies/USD/            /assets/us-dollar/   301
+# Euro
+/currencies/euro            /assets/euro         301
+/currencies/euro/           /assets/euro/        301
+/currencies/eur             /assets/euro         301
+/currencies/eur/            /assets/euro/        301
+/currencies/EUR             /assets/euro         301
+/currencies/EUR/            /assets/euro/        301
+# British Pound
+/currencies/british-pound   /assets/british-pound   301
+/currencies/british-pound/  /assets/british-pound/  301
+/currencies/gbp             /assets/british-pound   301
+/currencies/gbp/            /assets/british-pound/  301
+/currencies/GBP             /assets/british-pound   301
+/currencies/GBP/            /assets/british-pound/  301
+# Japanese Yen
+/currencies/japanese-yen    /assets/japanese-yen    301
+/currencies/japanese-yen/   /assets/japanese-yen/   301
+/currencies/yen             /assets/japanese-yen    301
+/currencies/yen/            /assets/japanese-yen/   301
+/currencies/jpy             /assets/japanese-yen    301
+/currencies/jpy/            /assets/japanese-yen/   301
+/currencies/JPY             /assets/japanese-yen    301
+/currencies/JPY/            /assets/japanese-yen/   301
+# Chinese Yuan (Renminbi)
+/currencies/chinese-yuan    /assets/chinese-yuan    301
+/currencies/chinese-yuan/   /assets/chinese-yuan/   301
+/currencies/renminbi        /assets/chinese-yuan    301
+/currencies/renminbi/       /assets/chinese-yuan/   301
+/currencies/yuan            /assets/chinese-yuan    301
+/currencies/yuan/           /assets/chinese-yuan/   301
+/currencies/cny             /assets/chinese-yuan    301
+/currencies/cny/            /assets/chinese-yuan/   301
+/currencies/CNY             /assets/chinese-yuan    301
+/currencies/CNY/            /assets/chinese-yuan/   301
+# Indian Rupee
+/currencies/indian-rupee    /assets/indian-rupee    301
+/currencies/indian-rupee/   /assets/indian-rupee/   301
+/currencies/rupee           /assets/indian-rupee    301
+/currencies/rupee/          /assets/indian-rupee/   301
+/currencies/inr             /assets/indian-rupee    301
+/currencies/inr/            /assets/indian-rupee/   301
+/currencies/INR             /assets/indian-rupee    301
+/currencies/INR/            /assets/indian-rupee/   301
+# Swiss Franc
+/currencies/swiss-franc     /assets/swiss-franc     301
+/currencies/swiss-franc/    /assets/swiss-franc/    301
+/currencies/chf             /assets/swiss-franc     301
+/currencies/chf/            /assets/swiss-franc/    301
+/currencies/CHF             /assets/swiss-franc     301
+/currencies/CHF/            /assets/swiss-franc/    301
+# Canadian Dollar
+/currencies/canadian-dollar /assets/canadian-dollar  301
+/currencies/canadian-dollar/ /assets/canadian-dollar/ 301
+/currencies/cad             /assets/canadian-dollar  301
+/currencies/cad/            /assets/canadian-dollar/ 301
+/currencies/CAD             /assets/canadian-dollar  301
+/currencies/CAD/            /assets/canadian-dollar/ 301
+# Australian Dollar
+/currencies/australian-dollar  /assets/australian-dollar   301
+/currencies/australian-dollar/ /assets/australian-dollar/  301
+/currencies/aud             /assets/australian-dollar   301
+/currencies/aud/            /assets/australian-dollar/  301
+/currencies/AUD             /assets/australian-dollar   301
+/currencies/AUD/            /assets/australian-dollar/  301
+# New Zealand Dollar
+/currencies/new-zealand-dollar  /assets/new-zealand-dollar   301
+/currencies/new-zealand-dollar/ /assets/new-zealand-dollar/  301
+/currencies/nzd             /assets/new-zealand-dollar  301
+/currencies/nzd/            /assets/new-zealand-dollar/ 301
+/currencies/NZD             /assets/new-zealand-dollar  301
+/currencies/NZD/            /assets/new-zealand-dollar/ 301
+# Brazilian Real
+/currencies/brazilian-real  /assets/brazilian-real   301
+/currencies/brazilian-real/ /assets/brazilian-real/  301
+/currencies/real            /assets/brazilian-real   301
+/currencies/real/           /assets/brazilian-real/  301
+/currencies/brl             /assets/brazilian-real   301
+/currencies/brl/            /assets/brazilian-real/  301
+/currencies/BRL             /assets/brazilian-real   301
+/currencies/BRL/            /assets/brazilian-real/  301
+# Mexican Peso
+/currencies/mexican-peso    /assets/mexican-peso     301
+/currencies/mexican-peso/   /assets/mexican-peso/    301
+/currencies/mxn             /assets/mexican-peso     301
+/currencies/mxn/            /assets/mexican-peso/    301
+/currencies/MXN             /assets/mexican-peso     301
+/currencies/MXN/            /assets/mexican-peso/    301
+# South Korean Won
+/currencies/south-korean-won  /assets/south-korean-won   301
+/currencies/south-korean-won/ /assets/south-korean-won/  301
+/currencies/won             /assets/south-korean-won   301
+/currencies/won/            /assets/south-korean-won/  301
+/currencies/krw             /assets/south-korean-won   301
+/currencies/krw/            /assets/south-korean-won/  301
+/currencies/KRW             /assets/south-korean-won   301
+/currencies/KRW/            /assets/south-korean-won/  301
+# Hong Kong Dollar
+/currencies/hong-kong-dollar  /assets/hong-kong-dollar  301
+/currencies/hong-kong-dollar/ /assets/hong-kong-dollar/ 301
+/currencies/hkd             /assets/hong-kong-dollar  301
+/currencies/hkd/            /assets/hong-kong-dollar/ 301
+/currencies/HKD             /assets/hong-kong-dollar  301
+/currencies/HKD/            /assets/hong-kong-dollar/ 301
+# Singapore Dollar
+/currencies/singapore-dollar  /assets/singapore-dollar  301
+/currencies/singapore-dollar/ /assets/singapore-dollar/ 301
+/currencies/sgd             /assets/singapore-dollar  301
+/currencies/sgd/            /assets/singapore-dollar/ 301
+/currencies/SGD             /assets/singapore-dollar  301
+/currencies/SGD/            /assets/singapore-dollar/ 301
+# South African Rand
+/currencies/south-african-rand  /assets/south-african-rand   301
+/currencies/south-african-rand/ /assets/south-african-rand/  301
+/currencies/rand            /assets/south-african-rand   301
+/currencies/rand/           /assets/south-african-rand/  301
+/currencies/zar             /assets/south-african-rand   301
+/currencies/zar/            /assets/south-african-rand/  301
+/currencies/ZAR             /assets/south-african-rand   301
+/currencies/ZAR/            /assets/south-african-rand/  301
+# Turkish Lira
+/currencies/turkish-lira    /assets/turkish-lira     301
+/currencies/turkish-lira/   /assets/turkish-lira/    301
+/currencies/lira            /assets/turkish-lira     301
+/currencies/lira/           /assets/turkish-lira/    301
+/currencies/try             /assets/turkish-lira     301
+/currencies/try/            /assets/turkish-lira/    301
+/currencies/TRY             /assets/turkish-lira     301
+/currencies/TRY/            /assets/turkish-lira/    301
+# Swedish Krona
+/currencies/swedish-krona   /assets/swedish-krona    301
+/currencies/swedish-krona/  /assets/swedish-krona/   301
+/currencies/sek             /assets/swedish-krona    301
+/currencies/sek/            /assets/swedish-krona/   301
+/currencies/SEK             /assets/swedish-krona    301
+/currencies/SEK/            /assets/swedish-krona/   301
+# Norwegian Krone
+/currencies/norwegian-krone /assets/norwegian-krone  301
+/currencies/norwegian-krone/ /assets/norwegian-krone/ 301
+/currencies/nok             /assets/norwegian-krone  301
+/currencies/nok/            /assets/norwegian-krone/ 301
+/currencies/NOK             /assets/norwegian-krone  301
+/currencies/NOK/            /assets/norwegian-krone/ 301
