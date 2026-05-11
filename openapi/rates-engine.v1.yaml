@@ -1419,24 +1419,27 @@ paths:
                     description: Empty when no more pages.
                   limit:
                     type: integer
+              # Example documents the `data` block shape only — every
+               # response is wrapped in the standard envelope (data +
+               # as_of + flags); see EnvelopeMeta. Showing the inner
+               # shape here keeps the spectral oas3-valid-media-example
+               # rule happy without falsely implying the envelope can
+               # be omitted.
               example:
-                data:
-                  coins:
-                    - slug: USDC
-                      asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                      code: USDC
-                      issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                      first_seen_ledger: 50457424
-                      last_seen_ledger: 62413938
-                      observation_count: 41610618
-                      price_usd: "1.00012"
-                      volume_24h_usd: "573830.99"
-                      market_cap_usd: "812345678.45"
-                      circulating_supply: "812245567.21"
-                  next_cursor: "32406192:yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
-                  limit: 100
-                as_of: "2026-05-05T16:03:05.111Z"
-                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+                coins:
+                  - slug: USDC
+                    asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                    code: USDC
+                    issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                    first_seen_ledger: 50457424
+                    last_seen_ledger: 62413938
+                    observation_count: 41610618
+                    price_usd: "1.00012"
+                    volume_24h_usd: "573830.99"
+                    market_cap_usd: "812345678.45"
+                    circulating_supply: "812245567.21"
+                next_cursor: "32406192:yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+                limit: 100
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1794,20 +1797,20 @@ paths:
                           type: string
                           description: Markdown body — render with the renderer of your choice.
                   count: { type: integer }
+              # Example shows the `data` block only — responses are
+              # wrapped in the standard envelope (data + as_of + flags);
+              # see EnvelopeMeta.
               example:
-                data:
-                  count: 1
-                  incidents:
-                    - slug: "2026-05-06-postgres-lock-table-full"
-                      title: "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full"
-                      severity: "SEV-3"
-                      status: "resolved"
-                      started_at: "2026-05-06T15:00:00Z"
-                      resolved_at: "2026-05-06T22:39:00Z"
-                      affected_components: ["indexer", "storage"]
-                      body_markdown: "## Identification\n\nSome trades arriving on coinbase, binance…"
-                as_of: "2026-05-07T00:45:00Z"
-                flags: {}
+                count: 1
+                incidents:
+                  - slug: "2026-05-06-postgres-lock-table-full"
+                    title: "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full"
+                    severity: "SEV-3"
+                    status: "resolved"
+                    started_at: "2026-05-06T15:00:00Z"
+                    resolved_at: "2026-05-06T22:39:00Z"
+                    affected_components: ["indexer", "storage"]
+                    body_markdown: "## Identification\n\nSome trades arriving on coinbase, binance…"
         "500": { $ref: "#/components/responses/InternalError" }
 
   /incidents.atom:
@@ -1903,16 +1906,16 @@ paths:
                       by design; see the field doc on
                       `internal/api/v1.NetworkStats` for the full
                       semantic table.
+              # Example shows the `data` block only — responses are
+              # wrapped in the standard envelope (data + as_of + flags);
+              # see EnvelopeMeta.
               example:
-                data:
-                  volume_24h_usd: "5941104763.13358600"
-                  markets_count_24h: 4934
-                  assets_indexed: 442190
-                  latest_ledger: 62450017
-                  exchange_sources: 11
-                  total_sources: 21
-                as_of: "2026-05-07T01:55:00Z"
-                flags: {}
+                volume_24h_usd: "5941104763.13358600"
+                markets_count_24h: 4934
+                assets_indexed: 442190
+                latest_ledger: 62450017
+                exchange_sources: 11
+                total_sources: 21
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -2382,6 +2385,7 @@ paths:
                   tier: "apikey"
                   rate_limit_per_min: 1000
                 as_of: "2026-05-05T14:35:42.881Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "400":
           description: Missing or invalid email, body too large, or already authenticated.
           content:
