@@ -138,6 +138,52 @@ type AssetDetail struct {
 	// fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
 
+	// ─── Coin-equivalence extension (R-018 final) ────────────────
+	//
+	// Fields lifted from CoinSummary so /v1/assets/{id} is a
+	// superset of /v1/coins/{slug}. Lets the explorer migrate every
+	// /v1/coins consumer to /v1/assets without losing data. Populated
+	// only when a CoinsReader is wired AND the asset has a row in
+	// the coins catalogue (skipped for fiat:* and external:* assets).
+
+	// PriceUSD is the latest VWAP/last-trade USD price. Mirror of
+	// CoinSummary.PriceUSD. Null when no USD-quoted price exists for
+	// this asset.
+	PriceUSD *string `json:"price_usd,omitempty"`
+
+	// Change1hPct / Change7dPct round out the trailing-window set
+	// alongside Change24hPct. Same shape — signed percentage with
+	// two fractional digits, null when no past-bucket snapshot
+	// exists within the window's tolerance.
+	Change1hPct *string `json:"change_1h_pct,omitempty"`
+	Change7dPct *string `json:"change_7d_pct,omitempty"`
+
+	// TopMarkets is a preview of the asset's top markets by 24h USD
+	// volume. Up to 5 entries; null when the coin reader doesn't
+	// return any.
+	TopMarkets []CoinTopMarket `json:"top_markets,omitempty"`
+
+	// PriceHistory24h / PriceHistory7d are sparkline-grade USD-price
+	// timeseries (24 hourly + 7 daily samples respectively).
+	PriceHistory24h []CoinPricePoint `json:"price_history_24h,omitempty"`
+	PriceHistory7d  []CoinPricePoint `json:"price_history_7d,omitempty"`
+
+	// MarketsCount / TradeCount24h are the trailing-24h activity
+	// counters mirrored from CoinSummary. Pointers so 0 ("silent
+	// 24h") is distinguishable from "not computed" (no reader / lookup
+	// error) in alerting.
+	MarketsCount  *int64 `json:"markets_count,omitempty"`
+	TradeCount24h *int64 `json:"trade_count_24h,omitempty"`
+
+	// ATH is the asset's all-time-high USD price + the day it was
+	// set. Sourced from prices_1d, USD-quotes only.
+	ATH *CoinATH `json:"ath,omitempty"`
+
+	// IssuerScamReason is non-empty when this asset's issuer appears
+	// in the curated scam directory. Clients should render a
+	// prominent warning when present.
+	IssuerScamReason string `json:"issuer_scam_reason,omitempty"`
+
 	// ─── SEP-1 issuance declarations ───────────────────────────
 	//
 	// Drawn directly from the issuer's stellar.toml [[CURRENCIES]]
@@ -526,6 +572,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// detail.Decimals from the issuer's display_decimals
 	// declaration, which the market-cap math reads.
 	s.applyF2Fields(r.Context(), &detail, parsed)
+
+	// Coin-equivalence overlay (R-018 final) — lifts price / top_markets
+	// / history / changes / ATH / scam_reason from the coins catalogue
+	// so /v1/assets/{id} is a superset of /v1/coins/{slug}. Skipped
+	// for fiat:* (no coin row); a no-op when no coins reader is wired
+	// or the asset has no coin row.
+	s.applyCoinExtensionFields(r.Context(), &detail, parsed)
 
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
 	// `unverified_warning` body + flips flags.unverified_ticker_collision
