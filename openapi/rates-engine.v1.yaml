@@ -3492,10 +3492,14 @@ components:
         coingecko_id:     { type: string, description: "CoinGecko slug for this currency (when known)." }
         coinmarketcap_id: { type: string, description: "CoinMarketCap integer ID for this currency (when known)." }
         network_count:    { type: integer, description: "Number of networks this currency is issued on — convenience for listing UIs that don't need the full networks[] array." }
+        market_cap_usd:   { type: string, description: "Decimal string (2 fractional digits). Computed for fiat rows only: M2 × current FX rate. Crypto/stablecoin rows leave this empty (their per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
+        class:            { type: string, enum: [crypto, stablecoin, fiat], description: "Asset taxonomy — drives listing-side rendering + filtering." }
+        circulating_supply: { type: string, description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin." }
+        supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
         networks:
           type: array
           items: { $ref: "#/components/schemas/NetworkView" }
-      required: [ticker, slug, name, network_count, networks]
+      required: [ticker, slug, name, class, network_count, networks]
 
     VerifiedCurrencyListEnvelope:
       allOf:

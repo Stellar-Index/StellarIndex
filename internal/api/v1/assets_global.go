@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate"
@@ -198,6 +199,39 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 	return globalBaseForTicker(vc.Ticker)
 }
 
+// fiatMarketCapUSD computes market_cap_usd for a fiat catalogue
+// entry. USD is special-cased to identity (price = 1.00); every
+// other fiat goes through ComputeGlobalPrice against fiat:CCY →
+// fiat:USD to get the current FX rate, then multiplies by M2.
+// Returns nil when the FX rate isn't available (no fiat pair in
+// prices_1m yet) or the supply parse fails.
+func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurrency) *string {
+	if vc.CirculatingSupply == "" {
+		return nil
+	}
+	if strings.EqualFold(vc.Ticker, "USD") {
+		return computeFiatMarketCap(vc.CirculatingSupply, "1.00000000000000")
+	}
+	base, err := canonical.NewFiatAsset(vc.Ticker)
+	if err != nil {
+		// Ticker isn't on the canonical fiat allow-list. Skip.
+		return nil
+	}
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return nil
+	}
+	opts := s.globalPriceOpts
+	if opts.AggregatorSources == nil {
+		opts.AggregatorSources = nil
+	}
+	res, err := aggregate.ComputeGlobalPrice(ctx, base, quote, s.globalPrice, opts)
+	if err != nil {
+		return nil
+	}
+	return computeFiatMarketCap(vc.CirculatingSupply, res.Price)
+}
+
 // computeFiatMarketCap returns market_cap_usd = supplyStr × priceStr
 // formatted to 2 fractional digits, or nil when either operand can't
 // be parsed as a decimal. supplyStr is the natural-unit amount
@@ -387,17 +421,24 @@ func (s *Server) handleAssetByNetwork(w http.ResponseWriter, r *http.Request) {
 //  2. Description is omitted to keep payloads small — the detail
 //     page already surfaces it.
 type VerifiedCurrencyListItem struct {
-	Ticker            string        `json:"ticker"`
-	Slug              string        `json:"slug"`
-	Name              string        `json:"name"`
-	Class             string        `json:"class"`
-	VerifiedIssuer    string        `json:"verified_issuer,omitempty"`
-	CoinGeckoID       string        `json:"coingecko_id,omitempty"`
-	CMCID             string        `json:"coinmarketcap_id,omitempty"`
-	CirculatingSupply string        `json:"circulating_supply,omitempty"`
-	SupplyDecimals    int           `json:"supply_decimals,omitempty"`
-	NetworkCount      int           `json:"network_count"`
-	Networks          []NetworkView `json:"networks"`
+	Ticker            string `json:"ticker"`
+	Slug              string `json:"slug"`
+	Name              string `json:"name"`
+	Class             string `json:"class"`
+	VerifiedIssuer    string `json:"verified_issuer,omitempty"`
+	CoinGeckoID       string `json:"coingecko_id,omitempty"`
+	CMCID             string `json:"coinmarketcap_id,omitempty"`
+	CirculatingSupply string `json:"circulating_supply,omitempty"`
+	SupplyDecimals    int    `json:"supply_decimals,omitempty"`
+	// MarketCapUSD is computed for fiat rows only — M2 × current
+	// FX rate. Empty string for crypto/stablecoin rows (their market
+	// cap lives on /v1/assets/{asset_id}'s per-Stellar-asset F2
+	// fields; computing it inline here would N-multiply storage
+	// round-trips on the listing). Fiat fan-out is parallel; ~19
+	// FX lookups happen concurrently per request.
+	MarketCapUSD string        `json:"market_cap_usd,omitempty"`
+	NetworkCount int           `json:"network_count"`
+	Networks     []NetworkView `json:"networks"`
 }
 
 // handleAssetsVerified serves GET /v1/assets/verified — the full
@@ -416,9 +457,9 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries := s.verifiedCurrencies.All()
-	out := make([]VerifiedCurrencyListItem, 0, len(entries))
-	for _, vc := range entries {
-		out = append(out, VerifiedCurrencyListItem{
+	out := make([]VerifiedCurrencyListItem, len(entries))
+	for i, vc := range entries {
+		out[i] = VerifiedCurrencyListItem{
 			Ticker:            vc.Ticker,
 			Slug:              vc.Slug,
 			Name:              vc.Name,
@@ -430,7 +471,30 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 			SupplyDecimals:    vc.SupplyDecimals,
 			NetworkCount:      len(vc.Networks),
 			Networks:          networkViewsFromCatalogue(vc),
-		})
+		}
 	}
+
+	// Compute market_cap_usd for fiat rows in parallel. Skipped for
+	// crypto/stablecoin (no catalogue supply) and when no
+	// GlobalPriceReader is wired (no FX rate source).
+	if s.globalPrice != nil {
+		ctx := r.Context()
+		var wg sync.WaitGroup
+		for i, vc := range entries {
+			if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
+				continue
+			}
+			i, vc := i, vc
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+					out[i].MarketCapUSD = *capStr
+				}
+			}()
+		}
+		wg.Wait()
+	}
+
 	writeJSON(w, out, Flags{})
 }

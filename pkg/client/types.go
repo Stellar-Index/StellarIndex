@@ -880,14 +880,18 @@ type VerifiedCurrencyListItem struct {
 	Name   string `json:"name"`
 	// Class is one of "crypto" / "stablecoin" / "fiat" — drives the
 	// listing taxonomy on consumers (R-018 assets-unification).
-	Class             string        `json:"class"`
-	VerifiedIssuer    string        `json:"verified_issuer,omitempty"`
-	CoinGeckoID       string        `json:"coingecko_id,omitempty"`
-	CMCID             string        `json:"coinmarketcap_id,omitempty"`
-	CirculatingSupply string        `json:"circulating_supply,omitempty"`
-	SupplyDecimals    int           `json:"supply_decimals,omitempty"`
-	NetworkCount      int           `json:"network_count"`
-	Networks          []NetworkView `json:"networks"`
+	Class             string `json:"class"`
+	VerifiedIssuer    string `json:"verified_issuer,omitempty"`
+	CoinGeckoID       string `json:"coingecko_id,omitempty"`
+	CMCID             string `json:"coinmarketcap_id,omitempty"`
+	CirculatingSupply string `json:"circulating_supply,omitempty"`
+	SupplyDecimals    int    `json:"supply_decimals,omitempty"`
+	// MarketCapUSD is computed for fiat rows only (M2 × current FX
+	// rate). Empty for crypto/stablecoin rows. Decimal string with
+	// 2 fractional digits.
+	MarketCapUSD string        `json:"market_cap_usd,omitempty"`
+	NetworkCount int           `json:"network_count"`
+	Networks     []NetworkView `json:"networks"`
 }
 
 // PerNetworkAssetView is the wire shape returned by

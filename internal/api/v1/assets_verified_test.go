@@ -226,6 +226,66 @@ func TestAssetsVerified_NoCatalogue_503(t *testing.T) {
 	}
 }
 
+// TestAssetsVerified_FiatMarketCap — verifies fiat rows in the
+// listing carry computed market_cap_usd; crypto/stablecoin rows
+// don't. The fiat fan-out queries the global-price reader; we
+// stub a fixed FX rate to make the math predictable.
+//
+// Pulls every USD row (price = 1.00 → cap = supply) and one
+// non-USD row to exercise the reader path.
+func TestAssetsVerified_FiatMarketCap(t *testing.T) {
+	cat := newTestCatalogue(t)
+	reader := &stubGlobalPriceReader{}
+	// FX rate stub: every fiat:CCY → fiat:USD pair returns 0.14
+	// (matches CNY/USD; not realistic for the rest of the world
+	// but fine for the unit test — we only need the cap math to
+	// work).
+	reader.vwap.price = "0.14000000000000"
+	reader.vwap.tradeCount = 100
+	reader.vwap.sources = []string{"polygon-forex"}
+	reader.vwap.ok = true
+
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		GlobalPrice:        reader,
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/verified")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.VerifiedCurrencyListItem `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	bySlug := map[string]v1.VerifiedCurrencyListItem{}
+	for _, e := range env.Data {
+		bySlug[e.Slug] = e
+	}
+
+	// USD: identity → cap = supply = "21700000000000.00"
+	usd := bySlug["us-dollar"]
+	if usd.MarketCapUSD != "21700000000000.00" {
+		t.Errorf("USD market_cap_usd = %q, want 21700000000000.00", usd.MarketCapUSD)
+	}
+	// CNY: supply=302T × 0.14 → "42280000000000.00"
+	cny := bySlug["chinese-yuan"]
+	if cny.MarketCapUSD != "42280000000000.00" {
+		t.Errorf("CNY market_cap_usd = %q, want 42280000000000.00", cny.MarketCapUSD)
+	}
+	// Crypto rows: no market_cap_usd (catalogue has no supply for crypto)
+	xlm := bySlug["xlm"]
+	if xlm.MarketCapUSD != "" {
+		t.Errorf("XLM (crypto) market_cap_usd = %q; want empty (catalogue carries no supply)", xlm.MarketCapUSD)
+	}
+	usdc := bySlug["usdc"]
+	if usdc.MarketCapUSD != "" {
+		t.Errorf("USDC (stablecoin) market_cap_usd = %q; want empty", usdc.MarketCapUSD)
+	}
+}
+
 func TestAssetsVerified_StaticPathDoesNotShadowSlugDispatch(t *testing.T) {
 	// /v1/assets/verified must route to the catalogue listing
 	// handler, NOT collapse onto /v1/assets/{asset_id} where
