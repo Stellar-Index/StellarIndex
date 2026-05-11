@@ -38,6 +38,36 @@ export type StatusResponse = {
  * fallback gets a new entry or the operator's eventual
  * issuer-upsert path lands.
  */
+/**
+ * useVerifiedSlugs — fetches the lowercase slug set of every
+ * verified-currency catalogue entry via /v1/assets/verified
+ * (R-018 Phase 1.5). Used by listing / homepage components to mark
+ * verified rows with a green check badge.
+ *
+ * Catalogue changes only at API restart (the catalogue is embedded
+ * in the binary), so a 1-hour stale window is plenty. The hook
+ * exposes a `has(slug)` helper so callers don't re-derive the Set
+ * on every render.
+ */
+export function useVerifiedSlugs() {
+  return useQuery<Set<string>>({
+    queryKey: ['/v1/assets/verified', 'slug-set'],
+    queryFn: async () => {
+      const env = await apiGet<{
+        data: Array<{ slug: string }>;
+      }>('/v1/assets/verified');
+      return new Set((env.data ?? []).map((e) => e.slug.toLowerCase()));
+    },
+    staleTime: 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+    // Don't surface fetch errors to the UI — the badge degrades
+    // silently to "not verified" when the catalogue endpoint isn't
+    // wired or is unreachable. Same UX as if every slug were
+    // unverified.
+    retry: false,
+  });
+}
+
 export function useIssuerLookup() {
   return useQuery<Record<string, { home_domain?: string; org_name?: string }>>({
     queryKey: ['/v1/issuers', 'lookup'],
