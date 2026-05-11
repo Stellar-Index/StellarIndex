@@ -55,6 +55,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/RatesEngine/rates-engine/internal/aggregate"
 	"github.com/RatesEngine/rates-engine/internal/aggregate/confidence"
 	"github.com/RatesEngine/rates-engine/internal/aggregate/freeze"
 	"github.com/RatesEngine/rates-engine/internal/api/streaming"
@@ -77,6 +78,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/platform"
 	"github.com/RatesEngine/rates-engine/internal/platform/postgresstore"
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
+	"github.com/RatesEngine/rates-engine/internal/sources/external"
 	"github.com/RatesEngine/rates-engine/internal/sources/forex"
 	"github.com/RatesEngine/rates-engine/internal/storage/redisclient"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
@@ -575,6 +577,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SACWrappers:        cfg.Supply.SACWrappers,
 		USDPeggedClassics:  usdPegs,
 		VerifiedCurrencies: verifiedCurrencies,
+		GlobalPrice: globalPriceReader{
+			s:   store,
+			tri: redisTriangulatedLooker{rdb: rdb},
+			pkPairFor: func(base, quote canonical.Asset) (canonical.Pair, error) {
+				return canonical.NewPair(base, quote)
+			},
+		},
+		GlobalPriceOpts: aggregate.GlobalPriceOptions{
+			AggregatorSources: external.AggregatorSources(),
+		},
 	})
 
 	// Closed-bucket producer — only spawn when the operator
@@ -1526,6 +1538,67 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 		return "", false, false, fmt.Errorf("provenance cache get %s: %w", provKey, err)
 	}
 	return val, prov == cachekeys.VWAPProvenanceTriangulated, true, nil
+}
+
+// globalPriceReader adapts *timescale.Store + the existing Redis
+// triangulated looker to aggregate.GlobalPriceReader (R-018 Phase
+// 1.4a). Each method maps to one tier of ComputeGlobalPrice:
+//
+//   - LatestVWAP → Store.LatestClosedVWAP1mForPair (tier 1)
+//   - LatestAggregatorPrices → Store.LatestAggregatorPricesForPair (tier 2)
+//   - LookupTriangulated → wraps redisTriangulatedLooker (tier 3)
+//
+// Constructed once at startup and passed via v1.Options.GlobalPrice.
+type globalPriceReader struct {
+	s         *timescale.Store
+	tri       redisTriangulatedLooker
+	pkPairFor func(base, quote canonical.Asset) (canonical.Pair, error)
+}
+
+func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
+	pair, err := g.pkPairFor(base, quote)
+	if err != nil {
+		// Invalid pair (e.g. quote == base, or any other allow-list
+		// violation) is the same as "no data" from this seam's
+		// perspective — caller falls through to the aggregator tier.
+		return "", time.Time{}, 0, nil, false, nil //nolint:nilerr // intentional: invalid pair → "no data" from this tier
+	}
+	row, err := g.s.LatestClosedVWAP1mForPair(ctx, pair)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, 0, nil, false, nil
+	}
+	if err != nil {
+		return "", time.Time{}, 0, nil, false, err
+	}
+	// row.Bucket is the bucket's *start*; the closed-bucket contract
+	// (ADR-0015) means the bucket's served observation_at is the
+	// bucket end. Add one minute to surface the consumer-facing
+	// timestamp matching every other closed-bucket surface.
+	asOf := row.Bucket.Add(time.Minute)
+	return row.VWAP, asOf, row.TradeCount, row.Sources, true, nil
+}
+
+func (g globalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
+	return g.s.LatestAggregatorPricesForPair(ctx, base, quote, sources)
+}
+
+func (g globalPriceReader) LookupTriangulated(ctx context.Context, base, quote canonical.Asset, window time.Duration) (string, time.Time, bool, error) {
+	val, isTri, found, err := g.tri.LookupTriangulatedVWAP(ctx, base, quote, window)
+	if err != nil || !found || !isTri {
+		// `found && !isTri` means the cache had a direct (non-
+		// triangulated) value — per the marker contract we shouldn't
+		// serve that as the triangulation tier. Tell the caller the
+		// tier missed.
+		return "", time.Time{}, false, err
+	}
+	// The Redis cache doesn't store an observed-at timestamp alongside
+	// the VWAP value (the producer's `vwap:` key is a bare string).
+	// Use the request time as the as_of — the cache's TTL means the
+	// value is at most the configured window old, so this is an
+	// upper-bound approximation rather than the exact observation
+	// timestamp. Future improvement: have the producer also write a
+	// sibling `:observed_at` key.
+	return val, time.Now().UTC(), true, nil
 }
 
 // storeHistoryReader adapts *timescale.Store to v1.HistoryReader.

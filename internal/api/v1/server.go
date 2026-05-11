@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RatesEngine/rates-engine/internal/aggregate"
 	"github.com/RatesEngine/rates-engine/internal/api/streaming"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
@@ -95,6 +96,14 @@ type Server struct {
 	// without the warning surface — that's the same behaviour as
 	// pre-1.1.
 	verifiedCurrencies *currency.Catalogue
+	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
+	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
+	// Nil-safe: handleGlobalAsset returns a view without the price
+	// block when not wired — the slug still resolves to a catalogue
+	// entry, networks[] still populates, and consumers can drill
+	// into the Stellar network's deep_link for per-asset pricing.
+	globalPrice     aggregate.GlobalPriceReader
+	globalPriceOpts aggregate.GlobalPriceOptions
 	// sacWrappers is the operator-config map of Stellar-Asset-Contract
 	// C-strkey → "CODE-ISSUER" canonical asset key. Surfaced on
 	// /v1/sac-wrappers so the explorer can resolve raw Soroban
@@ -440,7 +449,28 @@ type Options struct {
 	// currency.LoadEmbedded() in cmd/ratesengine-api/main.go. Nil
 	// keeps the warning surface off — every response serves
 	// unchanged.
+	//
+	// When set, also enables the slug dispatch on
+	// `/v1/assets/{slug}`: a path that matches a verified-currency
+	// slug routes to the global view (Phase 1.4a) instead of the
+	// per-Stellar-asset surface.
 	VerifiedCurrencies *currency.Catalogue
+
+	// GlobalPrice, when non-nil, powers the price block on
+	// `/v1/assets/{slug}` global views via the three-tier fallback
+	// chain (vwap_native → aggregator_avg → triangulated). Nil
+	// leaves the price block empty — the slug still resolves, the
+	// catalogue identity + networks list still surface, but
+	// consumers fall back to the Stellar-network deep_link for a
+	// headline price.
+	GlobalPrice aggregate.GlobalPriceReader
+
+	// GlobalPriceOpts tunes the three-tier policy. Leave zero-value
+	// to use [aggregate.DefaultGlobalPriceOptions] except for the
+	// aggregator source list, which is wired explicitly (the
+	// defaults can't safely guess which sources are aggregator
+	// class without importing the registry).
+	GlobalPriceOpts aggregate.GlobalPriceOptions
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -493,6 +523,8 @@ func New(opts Options) *Server {
 		dashboardKeys:      opts.DashboardKeys,
 		sessionAuth:        opts.SessionAuth,
 		verifiedCurrencies: opts.VerifiedCurrencies,
+		globalPrice:        opts.GlobalPrice,
+		globalPriceOpts:    globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:        opts.SACWrappers,
 		usdPeggedClassics:  opts.USDPeggedClassics,
 		mux:                http.NewServeMux(),
@@ -517,6 +549,24 @@ func valueOr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// globalPriceOptsWithDefaults backs `Options.GlobalPriceOpts` with
+// [aggregate.DefaultGlobalPriceOptions] for any zero field so
+// callers can supply just the aggregator source list and get
+// sensible defaults for everything else.
+func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.GlobalPriceOptions {
+	defaults := aggregate.DefaultGlobalPriceOptions()
+	if o.VWAPMinTradeCount == 0 {
+		o.VWAPMinTradeCount = defaults.VWAPMinTradeCount
+	}
+	if o.TriangulationWindow == 0 {
+		o.TriangulationWindow = defaults.TriangulationWindow
+	}
+	if o.MaxAggregatorAge == 0 {
+		o.MaxAggregatorAge = defaults.MaxAggregatorAge
+	}
+	return o
 }
 
 // Handler returns the mux wrapped in the standard middleware stack

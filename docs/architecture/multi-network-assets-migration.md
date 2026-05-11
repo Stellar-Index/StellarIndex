@@ -270,22 +270,47 @@ USDC, etc.), (b) Phase 1.4's global view exposes a price-quality
 gap the per-pair tier-1 can't bridge, or (c) a customer
 explicitly requires a cross-network VWAP surface.
 
-### Phase 1.4 — `/v1/assets/{slug}` global view (4th PR)
+### Phase 1.4 — `/v1/assets/{slug}` global view
 
-- `handleAssetGet` dispatches:
-  - If `{id}` is a verified slug → global view (handled by new
-    `handleGlobalAsset`)
-  - Else if `{id}` is a canonical Stellar asset_id → existing
-    Stellar-network view (unchanged shape; gains
-    `unverified_warning` from Phase 1.1)
-- New wire fields on the global view: `ticker`, `slug`,
-  `market_cap_usd`, `circulating_supply`, `ath`, `atl`,
-  `price_usd`, `price_authority`, `sources[]`, `networks[]`.
-- `networks[].stellar.deep_link` points at the canonical
-  Stellar-network view.
-- Drop `/v1/coins` and `/v1/coins/{slug}`. Add Sunset header
-  for two weeks before final removal; document migration in
-  the release notes.
+Split into 1.4a (shipped) and 1.4b (deferred):
+
+**1.4a — slug dispatch + GlobalAssetView (shipped 2026-05-11)**
+
+- `handleAssetGet` dispatches on the path parameter:
+  - Verified-currency slug (`usdc`, `eurc`, `aqua`, …) →
+    `handleGlobalAsset`, returning the new `GlobalAssetView`
+    wire shape (catalogue identity + `price_usd` /
+    `price_authority` / `price_sources` from
+    `ComputeGlobalPrice` + `networks[]` with Stellar
+    `deep_link` + non-Stellar `contract` / `external_link`).
+  - Canonical Stellar asset_id (`native`, `CODE-G…`, `C…`,
+    `fiat:CODE`) → existing per-Stellar-asset handler.
+- Production wiring binds `aggregate.GlobalPriceReader` to
+  `*timescale.Store` + the existing Redis triangulated looker,
+  with `external.AggregatorSources()` as the tier-2 source list.
+- Deferred fields on the global view (`market_cap_usd`,
+  `circulating_supply`, `ath`, `atl`, `change_24h_pct`) are
+  not populated yet — those need either Phase 1.2's deferred
+  CG catalogue-augmentation worker (for non-Stellar tickers)
+  or an operator-wired supply pipeline (for Stellar-anchored
+  ones). Schema is forward-compatible: adding these fields
+  later is additive.
+- `/v1/coins` + `/v1/coins/{slug}` mark themselves deprecated
+  via the `Deprecation: true` + `Link: rel="successor-version"`
+  headers per RFC 9745 / 8288. No `Sunset` header yet (we
+  don't have a firm removal date — Phase 1.5's explorer
+  migration sets the schedule).
+
+**1.4b — `/v1/coins` deletion (deferred to after Phase 1.5)**
+
+Actual deletion of the `/v1/coins` and `/v1/coins/{slug}`
+routes waits for the explorer to migrate to
+`/v1/assets/{slug}`. Per the operator's API+frontend deploy-
+order rule (the explorer auto-deploys faster than the API
+binary), removing the route before the explorer migration
+would break the live explorer. Phase 1.5 lands the explorer
+change; 1.4b removes the routes + adds the `Sunset` header
+to any operator-pinned stale-version proxy lifetimes.
 
 ### Phase 1.5 — Explorer migration (5th PR)
 

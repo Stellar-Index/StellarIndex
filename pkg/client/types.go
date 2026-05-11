@@ -814,3 +814,47 @@ type Pool struct {
 	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
 	LastPrice     *string   `json:"last_price,omitempty"`
 }
+
+// GlobalAssetView is the wire shape returned by [Client.Asset]
+// when called with a verified-currency slug ("usdc", "eurc",
+// "aqua"). Distinct from [AssetDetail] which is the per-Stellar-
+// network view returned for canonical asset_ids.
+//
+// See R-018 / docs/architecture/multi-network-assets-migration.md
+// Phase 1.4a for the dispatch rationale.
+type GlobalAssetView struct {
+	Ticker         string `json:"ticker"`
+	Slug           string `json:"slug"`
+	Name           string `json:"name"`
+	Description    string `json:"description,omitempty"`
+	VerifiedIssuer string `json:"verified_issuer,omitempty"`
+	CoinGeckoID    string `json:"coingecko_id,omitempty"`
+	CMCID          string `json:"coinmarketcap_id,omitempty"`
+
+	// Headline price block — all nil/empty together when no tier of
+	// the fallback chain produced a price (typically a Stellar-only
+	// token whose price isn't aggregated at the global level).
+	PriceUSD       *string    `json:"price_usd,omitempty"`
+	PriceAuthority string     `json:"price_authority,omitempty"` // "vwap_native" | "aggregator_avg" | "triangulated"
+	PriceSources   []string   `json:"price_sources,omitempty"`
+	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
+
+	Networks []NetworkView `json:"networks"`
+}
+
+// NetworkView is one per-network identity entry on GlobalAssetView.
+type NetworkView struct {
+	Network string `json:"network"`
+	// DataQuality is "indexed" (Stellar — we ingest trades; deep_link
+	// is set) or "external" (we know the contract address but don't
+	// ingest the network's trades).
+	DataQuality string `json:"data_quality"`
+	// Stellar fields — only present when Network == "stellar".
+	AssetID  string `json:"asset_id,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Issuer   string `json:"issuer,omitempty"`
+	DeepLink string `json:"deep_link,omitempty"`
+	// Non-Stellar fields.
+	Contract     string `json:"contract,omitempty"`
+	ExternalLink string `json:"external_link,omitempty"`
+}

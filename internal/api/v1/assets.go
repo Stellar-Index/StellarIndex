@@ -344,8 +344,26 @@ func normaliseAssetIDInput(raw string) string {
 }
 
 // handleAssetGet serves GET /v1/assets/{asset_id}.
+//
+// Dispatch order (R-018 Phase 1.4a):
+//  1. If the path parameter matches a verified-currency slug
+//     (USDC, EURC, AQUA, …), route to the global view at
+//     [handleGlobalAsset] — cross-chain identity with per-network
+//     entries.
+//  2. Otherwise parse as a canonical asset_id (native | CODE-G… |
+//     C… | fiat:CODE) and serve the per-Stellar-asset view.
+//
+// Slug lookup is case-insensitive (via Catalogue.LookupBySlug) and
+// runs before canonical-id parsing — slugs never collide with
+// canonical-id shapes because canonical ids have anchored prefixes
+// (a single bare ticker like "usdc" doesn't parse as any canonical
+// shape, so dispatch order is the only deciding factor).
 func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	rawID := normaliseAssetIDInput(r.PathValue("asset_id"))
+
+	if s.tryServeGlobalAsset(w, r, rawID) {
+		return
+	}
 
 	parsed, err := canonical.ParseAsset(rawID)
 	if err != nil {
@@ -363,33 +381,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reader := s.assetReaderOrNil()
-	var detail AssetDetail
-	if reader != nil {
-		d, err := reader.GetAsset(r.Context(), parsed)
-		if errors.Is(err, ErrAssetNotFound) {
-			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/asset-not-found",
-				"Asset not found", http.StatusNotFound,
-				"no trades or oracle observations for "+parsed.String())
-			return
-		}
-		if err != nil {
-			if clientAborted(r, err) {
-				return
-			}
-			s.logger.Error("GetAsset failed", "err", err, "asset_id", parsed.String())
-			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/internal",
-				"Internal error", http.StatusInternalServerError, "")
-			return
-		}
-		detail = d
-	} else {
-		// No reader wired — echo back a pure-canonical representation.
-		// Useful for clients integrating against the wire contract
-		// before we have an asset catalogue populated.
-		detail = detailFromAsset(parsed)
+	detail, served := s.resolveAssetDetail(w, r, parsed)
+	if served {
+		return
 	}
 
 	// Backfill HomeDomain from the curated known-issuers map when
@@ -428,6 +422,58 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
 	writeJSON(w, detail, s.verifiedCurrencyFlags(&detail, parsed))
+}
+
+// resolveAssetDetail fetches the AssetDetail for parsed: from the
+// reader when wired, else a canonical-echo. Returns served=true
+// when a problem response was already written (404 / 500 / client-
+// abort), and the caller must bail out without further work.
+// Extracted from handleAssetGet to keep that function's gocognit
+// complexity under the 20-line ceiling.
+func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, parsed canonical.Asset) (AssetDetail, bool) {
+	reader := s.assetReaderOrNil()
+	if reader == nil {
+		// No reader wired — echo back a pure-canonical representation.
+		// Useful for clients integrating against the wire contract
+		// before we have an asset catalogue populated.
+		return detailFromAsset(parsed), false
+	}
+	d, err := reader.GetAsset(r.Context(), parsed)
+	if errors.Is(err, ErrAssetNotFound) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/asset-not-found",
+			"Asset not found", http.StatusNotFound,
+			"no trades or oracle observations for "+parsed.String())
+		return AssetDetail{}, true
+	}
+	if err != nil {
+		if clientAborted(r, err) {
+			return AssetDetail{}, true
+		}
+		s.logger.Error("GetAsset failed", "err", err, "asset_id", parsed.String())
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return AssetDetail{}, true
+	}
+	return d, false
+}
+
+// tryServeGlobalAsset returns true when `raw` matched a verified-
+// currency slug and the global view was served. Caller bails out of
+// the canonical-id path on a true return. Pulled out of
+// handleAssetGet to keep that function's complexity budget under
+// the gocognit ceiling.
+func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw string) bool {
+	if s.verifiedCurrencies == nil {
+		return false
+	}
+	vc, ok := s.verifiedCurrencies.LookupBySlug(raw)
+	if !ok {
+		return false
+	}
+	s.handleGlobalAsset(w, r, vc)
+	return true
 }
 
 // verifiedCurrencyFlags applies the unverified-collision warning

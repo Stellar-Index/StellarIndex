@@ -198,15 +198,39 @@ paths:
   /assets/{asset_id}:
     get:
       tags: [assets]
-      summary: Asset detail.
+      summary: Asset detail — Stellar-network view OR cross-chain global view.
+      description: |
+        Dispatch depends on the `asset_id` path parameter:
+
+        - **Verified-currency slug** (e.g. `usdc`, `eurc`, `aqua`) →
+          returns the cross-chain `GlobalAssetView` shape: ticker, slug,
+          name, verified-issuer attribution, current USD price + price
+          authority, plus a `networks[]` list with one entry per
+          network the currency is issued on. Stellar network entries
+          carry a `deep_link` to the per-Stellar-asset view; non-
+          Stellar entries carry contract + external_link. See R-018
+          Phase 1.4a.
+        - **Canonical Stellar asset_id** (`native`, `CODE-G…`,
+          `C…` SAC contract, `fiat:CODE`) → returns the existing
+          `Asset` shape (per-Stellar-network detail with SEP-1
+          overlay + F2 supply fields).
+
+        Slugs match a hand-curated catalogue
+        (`internal/currency/data/seed.yaml`); unknown slugs fall
+        through to canonical parsing and return 400 if no canonical
+        form matches.
       parameters:
         - { $ref: "#/components/parameters/AssetIdPath" }
       responses:
         "200":
-          description: Asset + metadata.
+          description: Asset + metadata. Shape depends on whether `asset_id` is a slug or a canonical id.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AssetEnvelope" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AssetEnvelope"
+                  - $ref: "#/components/schemas/GlobalAssetEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /assets/{asset_id}/metadata:
@@ -3256,6 +3280,71 @@ components:
         verified_issuer:   { type: string,  nullable: true, description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         note:              { type: string,  description: "One-sentence warning rendered verbatim by clients." }
       required: [verified_slug, verified_asset_id, verified_name, note]
+
+    GlobalAssetView:
+      type: object
+      description: |
+        Cross-chain identity surface served by /v1/assets/{slug} (R-018
+        Phase 1.4a). Distinct from `Asset` which is the per-Stellar-
+        network view. Consumers reach this surface by passing a
+        catalogue slug (e.g. `usdc`); the `Asset` surface is reached
+        by passing a canonical asset_id (e.g. `USDC-GA5Z…`).
+      properties:
+        ticker:           { type: string,  description: "Display ticker (e.g. \"USDC\")." }
+        slug:             { type: string,  description: "URL slug (lowercase, e.g. \"usdc\")." }
+        name:             { type: string,  description: "Human-readable currency name." }
+        description:      { type: string,  description: "One-sentence summary." }
+        verified_issuer:  { type: string,  description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        coingecko_id:     { type: string,  description: "CoinGecko slug for this currency (when known)." }
+        coinmarketcap_id: { type: string,  description: "CoinMarketCap integer ID for this currency (when known)." }
+        price_usd:        { type: string,  nullable: true, description: "USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into networks[].stellar.deep_link for the per-Stellar-asset price instead." }
+        price_authority:
+          type: string
+          enum: [vwap_native, aggregator_avg, triangulated]
+          description: |
+            Which tier of the fallback chain produced `price_usd`.
+            - `vwap_native`: our own VWAP across exchange-class trades.
+            - `aggregator_avg`: average across CG / CMC / CryptoCompare.
+            - `triangulated`: derived via bridge currency (X_USD ≈
+              X_BTC × BTC_USD or similar).
+        price_sources:    { type: array, items: { type: string }, description: "Contributor venue / aggregator names — for transparency." }
+        price_as_of:      { type: string, format: date-time, nullable: true, description: "Observation timestamp of the served price." }
+        networks:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkView" }
+      required: [ticker, slug, name, networks]
+
+    NetworkView:
+      type: object
+      description: One per-network identity entry in a GlobalAssetView's networks list.
+      properties:
+        network:       { type: string, description: "Network identifier (lowercase): `stellar`, `ethereum`, `solana`, `bitcoin`, `tron`, `polygon`, `base`, `arbitrum`, `bsc`, `avalanche`, `xrpl`, etc." }
+        data_quality:
+          type: string
+          enum: [indexed, external]
+          description: |
+            `indexed`: we ingest this network's trades; explorer
+            renders a deep_link to the per-Stellar-asset view.
+            `external`: we know the asset exists there but don't
+            ingest trades; explorer renders contract + an external
+            link (etherscan.io, solscan.io, etc).
+        # Stellar fields (only when network == "stellar")
+        asset_id:      { type: string, description: "Canonical Stellar asset_id (e.g. USDC-GA5Z…). Only present for stellar entries." }
+        code:          { type: string, description: "Classic asset code (Stellar only)." }
+        issuer:        { type: string, description: "G-strkey issuer address (Stellar only)." }
+        deep_link:     { type: string, description: "Path to the per-Stellar-asset view (e.g. /v1/assets/USDC-GA5Z…). Stellar entries only." }
+        # Non-Stellar fields
+        contract:      { type: string, description: "Token contract address on the non-Stellar network." }
+        external_link: { type: string, description: "Override URL for the explorer's drill-out link. Optional — explorer applies a per-network default when empty." }
+      required: [network, data_quality]
+
+    GlobalAssetEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/GlobalAssetView" }
+          required: [data]
 
     AssetEnvelope:
       allOf:
