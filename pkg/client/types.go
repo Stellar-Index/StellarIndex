@@ -889,3 +889,19 @@ type VerifiedCurrencyListItem struct {
 	NetworkCount      int           `json:"network_count"`
 	Networks          []NetworkView `json:"networks"`
 }
+
+// PerNetworkAssetView is the wire shape returned by
+// [Client.AssetByNetwork] (`GET /v1/assets/{slug}/{network}`) when
+// the network entry is non-Stellar. Stellar entries redirect to
+// the canonical `/v1/assets/{asset_id}` view (which returns the
+// full AssetDetail body).
+type PerNetworkAssetView struct {
+	Ticker       string `json:"ticker"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	Class        string `json:"class"`
+	Network      string `json:"network"`
+	DataQuality  string `json:"data_quality"`
+	Contract     string `json:"contract,omitempty"`
+	ExternalLink string `json:"external_link,omitempty"`
+}

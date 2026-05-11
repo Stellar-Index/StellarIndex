@@ -258,6 +258,63 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /assets/{asset_id}/{network}:
+    get:
+      tags: [assets]
+      summary: Verified-currency per-network drill-down.
+      description: |
+        Companion to the global view at `/v1/assets/{slug}`. When
+        `{asset_id}` is a verified-currency catalogue slug and
+        `{network}` matches a network the currency is issued on,
+        the handler dispatches:
+
+        - **Stellar entries** → 303 redirect to
+          `/v1/assets/{canonical_asset_id}` so consumers get the
+          full `AssetDetail` shape (SEP-1 overlay, F2 supply
+          fields, `unverified_warning` flag).
+        - **Non-Stellar entries** → 200 `PerNetworkAssetView` with
+          the catalogue's contract address + external link.
+
+        404 when either the slug or the network isn't in the
+        catalogue. R-018 assets-unification step 3.
+
+        Note: the more-specific `/v1/assets/{asset_id}/metadata`
+        path wins via Go 1.22+ mux precedence (literal beats
+        wildcard).
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+        - name: network
+          in: path
+          required: true
+          description: |
+            Network identifier (lowercase): `stellar`, `ethereum`,
+            `solana`, `polygon`, `base`, `arbitrum`, `bsc`,
+            `avalanche`, `tron`, `bitcoin`, `xrpl`, `cardano`,
+            `dogecoin`, `polkadot`. Must match a network entry on
+            the catalogue's `{asset_id}` slug.
+          schema:
+            type: string
+            example: "stellar"
+      responses:
+        "200":
+          description: Non-Stellar network drill-down — identity + contract address.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/PerNetworkAssetView" }
+                    required: [data]
+        "303":
+          description: Stellar entry — see Location header for the canonical asset_id view.
+          headers:
+            Location:
+              description: Path to the `/v1/assets/{canonical_asset_id}` view.
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /assets/{asset_id}/metadata:
     get:
       tags: [assets]
@@ -3394,6 +3451,29 @@ components:
           properties:
             data: { $ref: "#/components/schemas/GlobalAssetView" }
           required: [data]
+
+    PerNetworkAssetView:
+      type: object
+      description: |
+        Drill-down shape returned by `/v1/assets/{slug}/{network}`
+        for non-Stellar network entries. Stellar entries redirect
+        (303) to `/v1/assets/{canonical_asset_id}` instead.
+      properties:
+        ticker:        { type: string }
+        slug:          { type: string }
+        name:          { type: string }
+        class:         { type: string, enum: [crypto, stablecoin, fiat] }
+        network:       { type: string, description: "Network identifier (lowercase)." }
+        data_quality:
+          type: string
+          enum: [external]
+          description: |
+            Always `external` for this surface — we don't ingest
+            trades from non-Stellar networks. Stellar dispatches
+            via 303 redirect; this view never serves Stellar.
+        contract:      { type: string, description: "Token contract address on the target network." }
+        external_link: { type: string, description: "Block-explorer URL (operator-overridable via the catalogue's external_link field)." }
+      required: [ticker, slug, name, class, network, data_quality]
 
     VerifiedCurrencyListItem:
       type: object

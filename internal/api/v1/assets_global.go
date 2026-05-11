@@ -280,6 +280,99 @@ func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *c
 	writeJSON(w, view, Flags{})
 }
 
+// PerNetworkAssetView is the wire shape returned by
+// `/v1/assets/{slug}/{network}` when the per-network entry is on a
+// chain we don't ingest trades from. Stellar entries redirect to
+// the per-Stellar-asset view instead (which carries the full
+// AssetDetail shape).
+type PerNetworkAssetView struct {
+	Ticker       string `json:"ticker"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	Class        string `json:"class"`
+	Network      string `json:"network"`
+	DataQuality  string `json:"data_quality"`
+	Contract     string `json:"contract,omitempty"`
+	ExternalLink string `json:"external_link,omitempty"`
+}
+
+// handleAssetByNetwork serves GET /v1/assets/{slug}/{network} for
+// the verified-currency drill-down. Dispatch:
+//
+//   - {network} == "metadata" — never reached here; the more-
+//     specific /v1/assets/{asset_id}/metadata route wins via Go
+//     1.22+ mux precedence (literal beats wildcard).
+//   - {slug} matches a verified-currency catalogue entry AND
+//     the entry has a {network} sub-entry — handle below.
+//   - Otherwise — 404 (the slug or the network isn't in the
+//     catalogue).
+//
+// For Stellar entries with a non-empty asset_id, redirect to
+// `/v1/assets/{asset_id}` (303 See Other) so consumers get the full
+// AssetDetail shape via the canonical URL. For non-Stellar
+// entries (Ethereum / Solana / etc.), return a sparse
+// PerNetworkAssetView with the contract + external_link metadata
+// from the catalogue — we don't index trades on those chains so
+// there's no price data to surface.
+func (s *Server) handleAssetByNetwork(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("asset_id")
+	network := strings.ToLower(r.PathValue("network"))
+
+	if s.verifiedCurrencies == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/not-found",
+			"Not found", http.StatusNotFound,
+			"Per-network drill-down requires the verified-currency catalogue.")
+		return
+	}
+
+	vc, ok := s.verifiedCurrencies.LookupBySlug(slug)
+	if !ok {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/not-found",
+			"Slug not in verified-currency catalogue", http.StatusNotFound,
+			"The /assets/{slug}/{network} route requires {slug} to be a verified-currency slug; got "+slug)
+		return
+	}
+
+	var entry *currency.NetworkEntry
+	for i := range vc.Networks {
+		if strings.EqualFold(vc.Networks[i].Network, network) {
+			entry = &vc.Networks[i]
+			break
+		}
+	}
+	if entry == nil {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/not-found",
+			"Network not in catalogue", http.StatusNotFound,
+			"verified currency "+vc.Slug+" has no entry for network "+network)
+		return
+	}
+
+	// Stellar entries redirect to the per-Stellar-asset canonical view.
+	// Native XLM gets routed to /v1/assets/native; classic + Soroban
+	// to the CODE-ISSUER asset_id. Consumers that follow the redirect
+	// receive the AssetDetail body with SEP-1 overlay + F2 fields.
+	if entry.Network == "stellar" && entry.AssetID != "" {
+		http.Redirect(w, r, "/v1/assets/"+entry.AssetID, http.StatusSeeOther)
+		return
+	}
+
+	// Non-Stellar: return identity + contract + external link.
+	out := PerNetworkAssetView{
+		Ticker:       vc.Ticker,
+		Slug:         vc.Slug,
+		Name:         vc.Name,
+		Class:        string(vc.Class),
+		Network:      entry.Network,
+		DataQuality:  "external",
+		Contract:     entry.Contract,
+		ExternalLink: entry.ExternalLink,
+	}
+	writeJSON(w, out, Flags{})
+}
+
 // VerifiedCurrencyListItem is one entry in the response to
 // `GET /v1/assets/verified` — the verified-currency catalogue
 // directory listing.

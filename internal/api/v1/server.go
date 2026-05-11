@@ -728,7 +728,17 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// to anyone reading the mount order.
 	s.mux.HandleFunc("GET /v1/assets/verified", s.handleAssetsVerified)
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.handleAssetGet)
+	// /v1/assets/{asset_id}/metadata is more specific than
+	// /v1/assets/{asset_id}/{network} (literal segment beats
+	// wildcard); Go's mux handles the precedence, but listing the
+	// literal route first keeps the ordering obvious.
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
+	// Per-network drill-down (R-018 assets-unification step 3). When
+	// {asset_id} is a verified-currency slug, the handler dispatches
+	// per network: Stellar redirects to the canonical asset_id view;
+	// non-Stellar returns a thin PerNetworkAssetView with the catalogue's
+	// contract + external_link.
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/{network}", s.handleAssetByNetwork)
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.
