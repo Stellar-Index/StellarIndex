@@ -10,8 +10,13 @@ export interface VerifiedItem {
   ticker: string;
   slug: string;
   name: string;
+  class?: 'crypto' | 'stablecoin' | 'fiat';
   verified_issuer?: string;
   network_count: number;
+  // market_cap_usd is populated for fiat rows by /v1/assets/verified
+  // (R-018 assets-unification step 5). Decimal string with 2
+  // fractional digits. Empty for crypto/stablecoin rows.
+  market_cap_usd?: string;
   networks: Array<{
     network: string;
     data_quality: 'indexed' | 'external';
@@ -63,6 +68,22 @@ export function VerifiedCurrenciesStrip({
 }) {
   if (verified.length === 0) return null;
 
+  // Sort: rows with a market_cap_usd descending (CNY first, etc.),
+  // then rows without a cap (crypto/stablecoin) in their original
+  // seed order. Big-number-safe via lexicographic comparison after
+  // left-padding — both strings are decimals with the same number
+  // of fractional digits, so character-by-character compare works
+  // up to the integer-part length. For our M2 figures (≤ 15-digit
+  // integer parts) this is exact without parseFloat losing precision.
+  const sorted = [...verified].sort((a, b) => {
+    const ac = a.market_cap_usd ?? '';
+    const bc = b.market_cap_usd ?? '';
+    if (ac === '' && bc === '') return 0;
+    if (ac === '') return 1; // empties last
+    if (bc === '') return -1;
+    return compareDecimalDesc(ac, bc);
+  });
+
   return (
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
@@ -74,7 +95,7 @@ export function VerifiedCurrenciesStrip({
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
-        {verified.map((vc) => (
+        {sorted.map((vc) => (
           <Link
             key={vc.slug}
             href={`/assets/${vc.slug}`}
@@ -108,4 +129,34 @@ export function VerifiedCurrenciesStrip({
       </div>
     </section>
   );
+}
+
+/**
+ * compareDecimalDesc compares two decimal strings (e.g.
+ * "42280000000000.00" and "21700000000000.00") and returns a
+ * comparator-style number for descending sort.
+ *
+ * Works exactly for our M2 figures (15-digit integer parts) without
+ * the float64 precision loss that `parseFloat(...)` would incur.
+ * Strategy: compare integer-part length first (longer = bigger);
+ * tie-break with character-by-character comparison.
+ */
+function compareDecimalDesc(a: string, b: string): number {
+  const [aInt = '', aFrac = ''] = a.split('.');
+  const [bInt = '', bFrac = ''] = b.split('.');
+  // Strip any leading zeros so "00042" vs "42" both compare as "42".
+  const aIntTrim = aInt.replace(/^0+/, '') || '0';
+  const bIntTrim = bInt.replace(/^0+/, '') || '0';
+  if (aIntTrim.length !== bIntTrim.length) {
+    return bIntTrim.length - aIntTrim.length;
+  }
+  if (aIntTrim !== bIntTrim) {
+    return aIntTrim < bIntTrim ? 1 : -1;
+  }
+  // Same integer part: compare fractional. Right-pad to equal length.
+  const maxLen = Math.max(aFrac.length, bFrac.length);
+  const af = aFrac.padEnd(maxLen, '0');
+  const bf = bFrac.padEnd(maxLen, '0');
+  if (af === bf) return 0;
+  return af < bf ? 1 : -1;
 }
