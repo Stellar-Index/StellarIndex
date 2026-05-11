@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.41] — 2026-05-11
+
 ### Added
 
 - **`/v1/assets/verified` catalogue listing endpoint** + explorer
