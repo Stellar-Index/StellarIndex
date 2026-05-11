@@ -17,6 +17,25 @@ against.
 
 ### Added
 
+- **`/v1/assets/{slug}` global view + `/v1/coins` deprecation**
+  (R-018 Phase 1.4a). The `/v1/assets/{asset_id}` route now
+  dispatches on the path parameter: a verified-currency slug
+  (`usdc`, `eurc`, `aqua`, …) returns the new `GlobalAssetView`
+  wire shape — cross-chain identity + price block from the Phase
+  1.3a three-tier fallback chain + a `networks[]` list with
+  Stellar `deep_link` entries pointing at the per-Stellar-asset
+  view. Canonical asset_ids (`USDC-GA5Z…`, `native`, `C…`,
+  `fiat:USD`) still route to the existing per-Stellar-asset
+  surface unchanged. Production wiring binds
+  `aggregate.GlobalPriceReader` to `*timescale.Store` + the
+  existing Redis triangulated looker, with
+  `external.AggregatorSources()` as the tier-2 source list.
+  `/v1/coins` and `/v1/coins/{slug}` now emit `Deprecation: true`
+  + `Link: </v1/assets/{slug}>; rel="successor-version"` headers
+  per RFC 9745 / 8288 — runtime behaviour unchanged so the
+  explorer (Phase 1.5) keeps working. Actual `/v1/coins`
+  deletion (1.4b) lands after the explorer migrates.
+
 - **Three-tier global-price fallback chain**
   (R-018 Phase 1.3a). New `internal/aggregate/ComputeGlobalPrice`
   walks `vwap_native` → `aggregator_avg` → `triangulated` in

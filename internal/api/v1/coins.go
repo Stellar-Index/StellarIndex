@@ -13,6 +13,29 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
 
+// setCoinsDeprecation marks `/v1/coins` responses as deprecated in
+// favour of `/v1/assets/{slug}` (R-018 Phase 1.4a). When `slug` is
+// non-empty (the per-coin handler), the Link header points at the
+// matching `/v1/assets/{slug}` so clients can follow it directly;
+// the bare /v1/coins listing points at /v1/assets without a slug.
+//
+// No `Sunset` header is set yet — the explorer (Phase 1.5) still
+// reads /v1/coins, and we don't have a firm removal date. When
+// Phase 1.5 lands, add `Sunset: <YYYY-MM-DD>` per RFC 8594 to
+// commit to a removal window.
+//
+// Headers:
+//   - `Deprecation: true` per RFC 9745
+//   - `Link: </v1/assets/{slug}>; rel="successor-version"` per RFC 8288
+func setCoinsDeprecation(w http.ResponseWriter, slug string) {
+	w.Header().Set("Deprecation", "true")
+	successor := "/v1/assets"
+	if slug != "" {
+		successor = "/v1/assets/" + slug
+	}
+	w.Header().Set("Link", "<"+successor+`>; rel="successor-version"`)
+}
+
 // CoinsReader is the seam the /v1/coins handlers read through.
 // timescale.Store satisfies it via ListCoinsExt + GetCoinBySlug
 // + GetNativeCoinRow + GetCoinTopMarkets + GetCoinPriceHistory24h
@@ -169,6 +192,7 @@ type CoinsPage struct {
 //	  ...envelope...
 //	}
 func (s *Server) handleCoins(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + native-prepend + sparkline opt-in are linear & cohesive; splitting would just spread the request lifecycle across helpers
+	setCoinsDeprecation(w, "")
 	if s.coins == nil {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/coins-unavailable",
@@ -386,7 +410,8 @@ func (s *Server) handleCoins(w http.ResponseWriter, r *http.Request) { //nolint:
 // top-N listing first.
 //
 // Returns 404 when the slug doesn't match any classic asset.
-func (s *Server) handleCoin(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // dispatch fans across optional reader calls + 4-shape input parsing (XLM/native intercept, canonical asset_id, friendly slug, case-insensitive retry); collapsing would lose call-site context
+func (s *Server) handleCoin(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // dispatch fans across optional reader calls + 4-shape input parsing (XLM/native intercept, canonical asset_id, friendly slug, case-insensitive retry); collapsing would lose call-site context
+	setCoinsDeprecation(w, r.PathValue("slug"))
 	if s.coins == nil {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/coins-unavailable",
