@@ -6,7 +6,7 @@ import { API_BASE_URL } from '@/api/client';
  * Mirror of `VerifiedCurrencyListItem` on the wire.
  * See `internal/api/v1/assets_global.go`.
  */
-interface VerifiedItem {
+export interface VerifiedItem {
   ticker: string;
   slug: string;
   name: string;
@@ -25,15 +25,17 @@ const isCIStub =
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
-async function fetchVerifiedCurrencies(): Promise<VerifiedItem[]> {
+/**
+ * fetchVerifiedCurrencies is the shared `/v1/assets/verified`
+ * fetcher consumed by both this strip and the AssetsTable. Single
+ * server-side fetch per page render — the page calls this once,
+ * passes the result to both components as a prop.
+ */
+export async function fetchVerifiedCurrencies(): Promise<VerifiedItem[]> {
   if (isCIStub) return [];
   try {
     const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      // Cloudflare Pages caches the rendered page at build time; this
-      // fetch participates in the same cache cycle. No need for
-      // Next's per-fetch revalidate — the static export regenerates
-      // on every push.
     });
     if (!res.ok) return [];
     const env = (await res.json()) as { data?: VerifiedItem[] };
@@ -47,15 +49,18 @@ async function fetchVerifiedCurrencies(): Promise<VerifiedItem[]> {
  * VerifiedCurrenciesStrip renders a curated chip-row of every
  * verified currency in the catalogue at the top of `/assets`.
  *
- * Server-rendered: one fetch at build time (CF Pages auto-deploy)
- * or request time (dev). Empty state: returns null so the listing
- * page is unchanged when no catalogue is wired.
+ * Takes the pre-fetched verified list as a prop so the page-level
+ * fetch can be shared with the AssetsTable (which uses the slug set
+ * to mark rows with a verified badge). Empty array → returns null.
  *
  * Each chip links to `/assets/{slug}` — the global view added in
  * R-018 Phase 1.5.
  */
-export async function VerifiedCurrenciesStrip() {
-  const verified = await fetchVerifiedCurrencies();
+export function VerifiedCurrenciesStrip({
+  verified,
+}: {
+  verified: VerifiedItem[];
+}) {
   if (verified.length === 0) return null;
 
   return (

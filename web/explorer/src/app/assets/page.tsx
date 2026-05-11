@@ -1,7 +1,10 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { AssetsTable } from './AssetsTable';
-import { VerifiedCurrenciesStrip } from './VerifiedCurrenciesStrip';
+import {
+  VerifiedCurrenciesStrip,
+  fetchVerifiedCurrencies,
+} from './VerifiedCurrenciesStrip';
 
 export const metadata: Metadata = {
   title: 'Assets — every token on Stellar',
@@ -16,7 +19,14 @@ export const metadata: Metadata = {
  * the static export can pre-render the page chrome while the
  * client reads `?cursor=` / `?limit=` / `?issuer=` from the URL.
  */
-export default function AssetsPage() {
+export default async function AssetsPage() {
+  // Single server-side fetch of the verified-currency catalogue
+  // shared between the strip (renders each entry as a chip) and the
+  // table (marks each row whose slug is in the catalogue with a
+  // green check). One round-trip, no double fetch.
+  const verified = await fetchVerifiedCurrencies();
+  const verifiedSlugs = verified.map((v) => v.slug);
+
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
@@ -30,9 +40,7 @@ export default function AssetsPage() {
           trades, supply detail, and issuer profile.
         </p>
       </header>
-      <Suspense fallback={null}>
-        <VerifiedCurrenciesStrip />
-      </Suspense>
+      <VerifiedCurrenciesStrip verified={verified} />
       <Suspense
         fallback={
           <div className="rounded-md border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
@@ -40,7 +48,7 @@ export default function AssetsPage() {
           </div>
         }
       >
-        <AssetsTable />
+        <AssetsTable verifiedSlugs={verifiedSlugs} />
       </Suspense>
     </div>
   );

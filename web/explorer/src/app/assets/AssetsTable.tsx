@@ -35,9 +35,22 @@ const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 const NETWORK_OPTIONS = ['all', 'stellar'] as const;
 type NetworkOption = typeof NETWORK_OPTIONS[number];
 
-export function AssetsTable() {
+export function AssetsTable({
+  verifiedSlugs = [],
+}: {
+  /**
+   * Slugs from `/v1/assets/verified` (fetched server-side and
+   * passed in). Used to decorate matching rows with a green-check
+   * verified badge so listing readers can spot verified currencies
+   * at a glance. Empty array is the safe default — when the
+   * catalogue endpoint isn't wired or returned nothing, no row
+   * gets the badge.
+   */
+  verifiedSlugs?: string[];
+} = {}) {
   const router = useRouter();
   const params = useSearchParams();
+  const verifiedSlugSet = new Set(verifiedSlugs.map((s) => s.toLowerCase()));
   const cursor = params.get('cursor') ?? '';
   const limitParam = params.get('limit');
   const issuerFilter = params.get('issuer') ?? undefined;
@@ -165,6 +178,7 @@ export function AssetsTable() {
                   key={coin.asset_id}
                   coin={coin}
                   rank={idx + 1}
+                  verified={verifiedSlugSet.has(coin.slug.toLowerCase())}
                 />
               ))}
           </tbody>
@@ -281,7 +295,15 @@ function FilterBar({
   );
 }
 
-function AssetRow({ coin, rank }: { coin: Coin; rank: number }) {
+function AssetRow({
+  coin,
+  rank,
+  verified,
+}: {
+  coin: Coin;
+  rank: number;
+  verified: boolean;
+}) {
   const price = parseDec(coin.price_usd);
   const marketCapRaw = parseDec(coin.market_cap_usd);
   const volume = parseDec(coin.volume_24h_usd);
@@ -309,6 +331,27 @@ function AssetRow({ coin, rank }: { coin: Coin; rank: number }) {
           <span className="font-medium text-ink group-hover:text-brand-600 dark:text-slate-100">
             {coin.code}
           </span>
+          {verified && (
+            <span
+              title="Verified currency — in the catalogue at /v1/assets/verified"
+              className="inline-flex items-center"
+              aria-label="Verified currency"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </span>
+          )}
           <span className="text-[11px] text-slate-500">{coin.slug}</span>
         </Link>
       </Td>
