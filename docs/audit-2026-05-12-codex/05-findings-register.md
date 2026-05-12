@@ -175,12 +175,21 @@ Recent waves closed by code (chronological):
   both `buildAPIKeyCreateArgs` (insert path) and `APIKeyStore.Update`
   (update path). 3 unit tests; the F-1257 quota-race integration
   is now unmasked. F-1262 → fixed.
-- wave 51 — F-1243 duplicate-replay drift half: `InsertTrade` now
-  reads `res.RowsAffected()` from the `ON CONFLICT DO NOTHING`
-  and skips the registry hook when the row was a duplicate.
-  Driver-side `RowsAffected` failures fail open. Backfill
-  replays + restarts no longer drift `observation_count`.
-  F-1243 → fixed.
+- wave 51 — F-1243 duplicate-replay drift half gains a source-level
+  remediation: `InsertTrade` now reads `res.RowsAffected()` from the
+  `ON CONFLICT DO NOTHING` insert and skips the registry hook when the
+  row was a duplicate. Driver-side `RowsAffected` failures fail open.
+  The mechanism is materially improved, but this audit still requires a
+  closure-grade replay integration before declaring the finding terminal.
+- wave 52 — F-1244 webhook-secret contract reconciliation +
+  F-1259 Postman residual: `platform.CustomerWebhook` struct
+  doc no longer claims a fictional "column-encryption posture";
+  `RotateWebhookSecret` interface doc separates the "shown
+  once" customer-facing visibility from the "persisted in
+  `secret_hash`" at-rest property; `dashboardwebhooks.webhookDTO`
+  doc rewritten to match. Removed the residual gitignored
+  `docs/reference/api/postman-collection.json` (the canonical
+  is `examples/postman/...`).
 
 ## Status Values
 
@@ -239,8 +248,8 @@ Recent waves closed by code (chronological):
 | F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | fixed | docker/release | All six `docker/ratesengine-*.Dockerfile` files now use `FROM golang:1.25-alpine`, matching `go.mod`'s `go 1.25.10` and the CI/release toolchain pin. Binary-equivalence claim in docs is now true. |
 | F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | fixed | db/docs/ops | `migrations/README.md` now documents every migration 0007 through 0030 with one-line rationale and links, including the F-1205 follow-up `0030_asset_supply_history_unique_constraint`. |
 | F-1242 | medium | Contribution-history `volume_usd` remediation is still inconsistent with the filtered contribution set | Aggregator contribution sink; contribution schema/storage; future source-breakdown API/UI | XFI-0034; EV-0060; EV-0103; EV-0104; EV-0105 | fixed | aggregate/storage/product | Current committed code carries per-trade USD attribution by stable trade ID and persists only post-filter survivor dollars per source, so the previously-recorded attribution mismatch no longer reproduces. |
-| F-1243 | high | Classic-asset registry freshness now recovers after the wave-47 TTL fix, but duplicate replay can still drift observation counts because registry mutation is not conditioned on actual trade insertion | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062; EV-0117; EV-0135; EV-0149 | fixed | storage/assets/data-quality | Wave 47 fixed the same-process freeze half (TTL'd dedupe). Wave 51 (2026-05-13) closes the duplicate-replay drift half: `InsertTrade` now reads `res.RowsAffected()` from the `INSERT ... ON CONFLICT DO NOTHING` and returns early before the registry hook when the row was a duplicate. Driver-side `RowsAffected` failures fail open (assume row inserted) so a driver quirk can never silence legitimate registry updates — only stale-replay drift is tightened. Backfill replays + process restarts that re-encounter already-stored trades no longer increment `observation_count`. |
-| F-1244 | high | Dashboard webhook signing secrets are persisted as recoverable live HMAC keys while the surrounding contract still overstates their protection and non-persistence semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068; EV-0117; EV-0125; EV-0138; EV-0154 | open | security/platform/webhooks | Current source is still internally contradictory: it truthfully says `SecretHash` is the live HMAC key, but still claims a "standard column-encryption posture" not implemented in repo, the handler DTO still says plaintext is never persisted, the rotation interface still says new plaintext is not stored while the Postgres implementation is unimplemented, and direct `secret_hash bytea` persistence remains the actual signing source. |
+| F-1243 | high | Classic-asset registry replay drift has a source-level fix, but closure-grade duplicate-replay proof is still missing | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062; EV-0117; EV-0135; EV-0149; EV-0158 | needs_evidence | storage/assets/data-quality | Wave 47 fixed the same-process freeze half with TTL-based dedupe. Wave 51 on 2026-05-12 now guards registry mutation behind `RowsAffected()` so duplicate `INSERT ... ON CONFLICT DO NOTHING` rows return before the hook. The source defect is materially addressed and focused packages pass, but the audit-requested DB replay proof across duplicate inserts/process-equivalent replay boundaries did not land with the change, so this stays evidence-blocked rather than fully fixed. |
+| F-1244 | high | Dashboard webhook signing secrets are persisted as recoverable live HMAC keys while the surrounding contract still overstates their protection and non-persistence semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068; EV-0117; EV-0125; EV-0138; EV-0154 | fixed | security/platform/webhooks | Wave 52 (2026-05-13) reconciles the three remaining contradictory contracts the audit listed: (1) `platform.CustomerWebhook` struct doc no longer claims a "standard column-encryption posture" — it now honestly says the bytes are persisted as bare `bytea` and operators rely on Postgres TDE / cloud disk encryption + the Redis ACL lockdown for defence in depth; (2) `RotateWebhookSecret` interface doc separates the "shown once" customer-facing visibility property from the "persisted in `customer_webhooks.secret_hash`" at-rest property, and explicitly notes the Postgres impl is intentionally unwired (callers rotate by delete + recreate); (3) `dashboardwebhooks.webhookDTO` doc rewritten to draw the same distinction. Source code now describes the true contract end-to-end. |
 | F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069; EV-0096 | fixed | security/platform/webhooks | Current workspace now validates internal/private destinations at registration, re-resolves before delivery, and disables redirect following in the worker client. |
 | F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072; EV-0096 | fixed | docs/api/product | `docs/reference/api-design.md` now states webhook callbacks shipped and explains how they relate to SSE. |
 | F-1247 | high | Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt | API worker startup; webhook queue store; multi-region / multi-process delivery semantics | XFI-0039; EV-0073; EV-0098 | fixed | platform/webhooks/ops | Current `HEAD` claims due rows with `FOR UPDATE SKIP LOCKED` plus a lease before network I/O, closing the duplicate-worker race. |
@@ -253,12 +262,13 @@ Recent waves closed by code (chronological):
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | fixed | platform/auth/data-quality | Current `HEAD` adds a Redis-SETNX-backed `EmailLocker` seam wired through `dashboardauth.Config`. The losing callback short-circuits before `Account.Create`, polls briefly for the winner's user, and never inserts a speculative-account row. Redis-less deployments fall back to the Suspend-on-conflict path as defence in depth. Tests: in-memory locker preempts loser (no speculative Account row created) + miniredis adapter (acquire/release round-trip + TTL expiry). `signup:lock:*` added to the Redis ACL allow-list. |
 | F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090; EV-0150 | fixed | dashboard/docs/product | OpenAPI's `rate_limit_per_min` description was rewritten in wave 31 to enumerate the per-tier clamp ladder (Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000). Wave 48 on 2026-05-12 brings the dashboard form hint in line: `web/dashboard/src/app/keys/page.tsx` now reads "Capped to your account tier - Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000. Higher values silently clamp to the tier ceiling on save." Both surfaces now describe the actual persisted semantics. |
-| F-1257 | medium | The 25-active-key/account quota remediation now uses an advisory lock, but closure is still evidence-blocked by a separate Postgres key-create failure | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103; EV-0121; EV-0148; EV-0152 | needs_evidence | platform/keys | Current code wraps capped `APIKeyStore.Create` calls in `pg_advisory_xact_lock(hashtext('apikey:'||account_id))` with a dedicated concurrent cap test. Wave 46 clears the old migration block, but current-head integration still fails earlier on `F-1262` because omitted `referer_allowlist` values become SQL NULL against a NOT NULL schema column. |
+| F-1257 | medium | The 25-active-key/account quota remediation now uses an advisory lock, but closure is still evidence-blocked by an invalid concurrent integration fixture | Dashboard key quota check; Postgres insert path; platform schema; integration test harness | XFI-0049; EV-0092; EV-0103; EV-0121; EV-0148; EV-0152; EV-0156; EV-0157 | needs_evidence | platform/keys | Wave 50 clears the old `referer_allowlist` blocker, but the full concurrent quota proof still does not reach quota assertions because the integration fixture now builds IDs as `kid_` + `uuid.New().String()[:12]`, which contains a hyphen and violates `api_keys_id_check`. `F-1263` tracks that proof-harness defect. |
 | F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | fixed | api/ops/runtime | Wave 33 (2026-05-12) replaces the unconditional `UsageReader: usageReaderAdapter{c: usageCounter}` with `UsageReader: usageReaderOrNil(usageCounter)`. The helper returns a typed-nil v1.UsageReader when the counter is nil; the `/v1/account/usage` handler already short-circuits on `usageReader == nil` with an empty list, so Redis-less deployments degrade cleanly instead of nil-deref'ing on `Read`. |
-| F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs; Postman collection | XFI-0051; EV-0095; EV-0103; EV-0153 | open | docs/api/product | The current 2026-05-12 workspace materially narrows this finding: source OpenAPI, `handleAccountUsage` comments, API-design reference, explorer-data inventory, and generated reference YAML now describe the live Redis-backed usage path plus `/readyz` fallback semantics. The generated Postman collection still says `"Usage-summary placeholder (currently empty)."`, so the published artifact set is not yet coherent and the finding cannot close. |
+| F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs; Postman collection | XFI-0051; EV-0095; EV-0103; EV-0153 | fixed | docs/api/product | Source OpenAPI, `handleAccountUsage` comments, API-design reference, explorer-data inventory, and the canonical customer-facing Postman collection (`examples/postman/rates-engine.postman_collection.json`) all describe the live Redis-backed usage path. Wave 52 (2026-05-13) follow-up: the stale gitignored docs-site copy at `docs/reference/api/postman-collection.json` was a residual local artifact (the docs-postman.sh script writes only to the `examples/postman/` canonical path); removed locally so the audit's working tree no longer trips on it. |
 | F-1260 | high | `aggregate.min_usd_volume` still evaluates discarded pre-filter volume, so thin survivor windows can publish above a manipulation floor they do not actually meet | Aggregator stablecoin/USD-volume path; class/outlier filtering; VWAP publish gate | XFI-0052; EV-0105 | fixed | aggregate/market-data | Current `HEAD` recomputes USD volume across the post-class/post-outlier survivor slice via [survivorUSDVolume] before invoking [dropForMinUSDVolume], with regression test `class filter gutted window: drops despite pre-filter clearing threshold`. |
 | F-1261 | high | Migration `0030_asset_supply_history_unique_constraint` could not apply while `asset_supply_history` compression was enabled | `migrations/0030_asset_supply_history_unique_constraint.up.sql`; `migrations/0005_create_asset_supply_history.up.sql`; migration runner; R1 schema state | XFI-0053; EV-0120; EV-0137; EV-0147 | fixed | db/release/ops | Wave 46 on 2026-05-12 rewrites the up migration to decompress chunks, disable compression around the constraint swap, then restore the original 0005 compression settings. Fresh migration round-trip now succeeds, and the former Timescale `0A000` bootstrap failure no longer reproduces on current head. |
-| F-1262 | high | Dashboard/Postgres API-key creation can 500 when optional `referer_allowlist` is omitted because nil slices are inserted as SQL NULL into a NOT NULL array column | Dashboard key create handler; platform APIKey store create/update writers; Postgres schema; dashboard client defaults | XFI-0054; EV-0148; EV-0152 | fixed | platform/keys/db | Wave 50 (2026-05-13) wraps both `text[]` boundaries (`buildAPIKeyCreateArgs` + `APIKeyStore.Update`) through a new `nonNilStringArray(in []string) pq.StringArray` helper that converts a nil slice to a non-nil zero-length one. The lib/pq driver now emits the SQL `'{}'` array literal instead of NULL, satisfying the migration-0027 `NOT NULL DEFAULT '{}'` constraint. 3 unit tests cover nil → empty / non-nil pass-through / explicit-empty pass-through. The F-1257 `APIKeyStore/Concurrent_QuotaCap_Holds` integration test is now unmasked. |
+| F-1262 | high | Dashboard/Postgres API-key creation can 500 when optional `referer_allowlist` is omitted because nil slices are inserted as SQL NULL into a NOT NULL array column | Dashboard key create handler; platform APIKey store create/update writers; Postgres schema; dashboard client defaults | XFI-0054; EV-0148; EV-0152; EV-0156 | fixed | platform/keys/db | Wave 50 on 2026-05-12 wraps both `text[]` boundaries (`buildAPIKeyCreateArgs` + `APIKeyStore.Update`) through `nonNilStringArray(in []string) pq.StringArray`, converting nil slices to non-nil zero-length arrays so lib/pq emits `'{}'` instead of SQL NULL. Focused store/dashboard-key packages pass, and the former `referer_allowlist` failure no longer reproduces in the full integration run; the next remaining failure is the separate malformed-ID proof harness tracked as `F-1263`. |
+| F-1263 | medium | The concurrent API-key quota integration fixture violates the real `api_keys` ID constraint, so it cannot prove the advisory-lock cap path | `test/integration/platform_postgres_stores_test.go`; migration 0027 `api_keys_id_check`; dashboard key ID generation | XFI-0055; EV-0157 | open | platform/tests/evidence | The concurrent quota test builds IDs with `\"kid_\" + uuid.New().String()[:12]`, which includes a hyphen and fails schema regex `^kid_[a-f0-9]{12,}$`. Production `generateKeyID` emits hex-only IDs, so this is a proof-harness defect rather than a product create-path defect, but it still blocks terminal closure evidence for `F-1257`. |
 
 ## Finding Template
 
@@ -411,7 +421,7 @@ Remediation direction: choose the canonical incident source for `web/status`, up
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1493,20 +1503,20 @@ Current-head reconciliation: wave 47 fixes the first half of the original
 finding. `assetRegistryDedupe` is now TTL-backed (`60s`) instead of a
 process-lifetime sentinel, so same-process repeated observations eventually
 re-enter the SQL upsert and refresh `last_seen_*` plus `observation_count`.
-The new pure unit tests pin that behavior and pass. The second half remains
-open unchanged: duplicate trade replays can still mutate registry counters
-because the registry hook is not conditioned on whether the `trades` insert
-actually inserted a row.
+Wave 51 now addresses the second mechanism at source level too:
+`InsertTrade` inspects `RowsAffected()` from the
+`INSERT ... ON CONFLICT DO NOTHING` and returns before registry mutation when
+no new trade row was inserted. Focused timescale/API packages pass. The code
+change is credible, but a closure-grade duplicate replay integration was not
+added with the wave, so this audit keeps the finding in `needs_evidence`
+until the replay contract is proven against the real DB path.
 
 Impact: asset and issuer catalogue metadata can undercount observations by orders of magnitude during continuous ingest, overcount during replay/restart duplicate windows, preserve the wrong first-seen ledger during out-of-order replay, and freeze last-seen freshness until the process restarts. Those fields drive default asset ordering, issuer total-observation ranking, and customer-facing asset/issuer detail views, so this is a live data-quality issue rather than a cosmetic counter drift.
 
-Remediation direction: retain the landed TTL-based coalescing, then restore a
-single idempotent contract between trade persistence and registry mutation.
-Either gate registry updates on `RowsAffected > 0`, or move both into a durable
-SQL-side aggregation path that cannot drift from committed trade rows. Add
-integration coverage that replays duplicates across a fresh store/process
-boundary, includes out-of-order ledgers, and asserts `first_seen_*`,
-`last_seen_*`, and `observation_count`.
+Remediation direction: retain the landed TTL coalescing and `RowsAffected`
+guard, then add the missing DB-backed replay proof: duplicate inserts across a
+fresh store/process-equivalent boundary, out-of-order ledgers, and assertions
+over `first_seen_*`, `last_seen_*`, and `observation_count`.
 
 ### F-1244. Dashboard webhook signing secrets are persisted as recoverable live HMAC keys while the surrounding contract still overstates their protection and non-persistence semantics
 
@@ -2134,14 +2144,16 @@ Evidence:
 
 - `XFI-0054`
 - `EV-0148`
+- `EV-0152`
+- `EV-0156`
 
 Expected: dashboard/API-key creates that omit optional allowlist fields should
 persist empty arrays and continue normally; zero-value slices must not be
 converted into SQL NULL against NOT NULL array columns.
 
-Observed: after wave 46 clears migration bootstrap, the full platform-store
-integration reaches `APIKeyStore/Concurrent_QuotaCap_Holds` and every create
-still fails on current head with:
+Observed during the initial post-migration pass: after wave 46 cleared
+migration bootstrap, the full platform-store integration reached
+`APIKeyStore/Concurrent_QuotaCap_Holds` and every create failed with:
 
 - `pq: null value in column "referer_allowlist" of relation "api_keys" violates not-null constraint (23502)`
 
@@ -2159,11 +2171,64 @@ store-marshalling bug. The handler happy-path unit test misses this because it
 uses a fake store; the dashboard client type marks `referer_allowlist`
 optional, making omission a normal user path rather than a pathological fixture.
 
-Impact: dashboard users can hit server-side key-create failures on the default
-request shape, and the new advisory-lock quota proof for `F-1257` remains
-masked behind this lower-level persistence bug.
+Current-head reconciliation: wave 50 closes the product defect. Both
+Postgres-bound `text[]` writers now call
+`nonNilStringArray(k.RefererAllowlist)`, which converts nil to a non-nil
+zero-length `pq.StringArray`; lib/pq therefore emits `'{}'` instead of SQL
+NULL. Focused store/dashboard-key packages pass, and the full integration no
+longer fails on `referer_allowlist`. It now advances to the separate malformed
+ID fixture problem tracked under `F-1263`, which is evidence/test drift rather
+than the original customer-facing create bug.
 
-Remediation direction: normalize nil allowlist slices to empty arrays before
-Postgres insert/update, add real Postgres coverage for dashboard/API-key create
-with omitted allowlists, then rerun the full platform-store integration plus the
-concurrent API-key quota proof.
+Impact: retained for audit history. The default dashboard create path no longer
+fails on omitted `referer_allowlist`; remaining evidence debt belongs to
+`F-1263`/`F-1257`.
+
+Remediation direction: retained for audit history; the nil-array persistence
+boundary is fixed in current source.
+
+### F-1263. The concurrent API-key quota integration fixture violates the real `api_keys` ID constraint, so it cannot prove the advisory-lock cap path
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `test/integration/platform_postgres_stores_test.go`
+- `migrations/0027_platform_v1_schema.up.sql`
+- `internal/api/v1/dashboardkeys/handlers.go`
+
+Evidence:
+
+- `XFI-0055`
+- `EV-0157`
+
+Expected: the closure-grade concurrent quota test should generate API-key IDs
+that obey the same schema contract as the real dashboard key minting path, then
+reach the advisory-lock/quota assertions it exists to prove.
+
+Observed: after wave 50 fixes the `referer_allowlist` NULL defect, the full
+`TestPlatformPostgresStores` integration advances to a new failure in
+`APIKeyStore/Concurrent_QuotaCap_Holds`: every create violates
+`api_keys_id_check (23514)`. The reason is local to the test harness:
+
+- the fixture uses `ID: "kid_" + uuid.New().String()[:12]`
+- migration 0027 requires `id ~ '^kid_[a-f0-9]{12,}$'`
+- the real dashboard `generateKeyID` path emits hex-only bytes via
+  `hex.EncodeToString`, so production-shaped IDs satisfy the constraint
+
+The integration test therefore fails before it can assert the actual quota
+race outcome. Other test rows in the same file already strip UUID hyphens via
+`strings.ReplaceAll(..., "-", "")`, so this is an isolated proof-fixture drift,
+not an intentional schema mismatch.
+
+Impact: the advisory-lock quota remediation under `F-1257` still lacks terminal
+DB-backed closure evidence even though the prior production create bug is fixed.
+The broken fixture also risks hiding future regressions behind a non-product
+23514 failure.
+
+Remediation direction: generate the concurrent test IDs with the same
+hex-only shape used by production, rerun `TestPlatformPostgresStores`, and only
+then close the `F-1257` quota evidence gate if the cap winners/losers and row
+count assertions pass.
