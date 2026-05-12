@@ -323,3 +323,169 @@ func TestHandleDelete_RejectsCrossAccount(t *testing.T) {
 		t.Error("cross-account delete should not have removed the row")
 	}
 }
+
+// TestHandleDelete_HappyPath — owner deletes their own webhook;
+// row gone, 204.
+func TestHandleDelete_HappyPath(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID,
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	req := sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+mine.String(), nil, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleDelete(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
+	}
+	if _, ok := store.webhooks[mine]; ok {
+		t.Error("row should be deleted")
+	}
+}
+
+// TestHandleUpdate_HappyPath — owner patches name + enabled; the
+// resulting row carries the new values, secret + account id stay
+// immutable.
+func TestHandleUpdate_HappyPath(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mine := uuid.New()
+	originalSecret := []byte("original-secret")
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID:         mine,
+		AccountID:  sc.Account.ID,
+		Name:       "before",
+		URL:        "https://before.example/hook",
+		SecretHash: originalSecret,
+		Events:     []string{"incident.sev1"},
+		Enabled:    true,
+	}
+
+	falseB := false
+	patch := updateRequest{
+		Name:    strPtr("after"),
+		Enabled: &falseB,
+	}
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), patch, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	got := store.webhooks[mine]
+	if got.Name != "after" {
+		t.Errorf("Name = %q, want after", got.Name)
+	}
+	if got.Enabled {
+		t.Errorf("Enabled should be false after update")
+	}
+	if string(got.SecretHash) != string(originalSecret) {
+		t.Errorf("SecretHash mutated: got %q, want %q", got.SecretHash, originalSecret)
+	}
+	if got.AccountID != sc.Account.ID {
+		t.Errorf("AccountID mutated: got %v, want %v", got.AccountID, sc.Account.ID)
+	}
+}
+
+// TestHandleUpdate_RejectsCrossAccount — same existence-leak
+// posture as Delete.
+func TestHandleUpdate_RejectsCrossAccount(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	stranger := uuid.New()
+	store.webhooks[stranger] = platform.CustomerWebhook{
+		ID: stranger, AccountID: uuid.New(),
+		Name: "stranger", URL: "https://x.example",
+		Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	patch := updateRequest{Name: strPtr("renamed")}
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+stranger.String(), patch, sc)
+	req.SetPathValue("id", stranger.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+	if store.webhooks[stranger].Name != "stranger" {
+		t.Error("cross-account update should not have mutated the row")
+	}
+}
+
+// TestHandleUpdate_RejectsBadURL — PATCHing an http:// URL must
+// 400 (HTTPS-only contract).
+func TestHandleUpdate_RejectsBadURL(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID,
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	patch := updateRequest{URL: strPtr("http://insecure.example/hook")}
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), patch, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if store.webhooks[mine].URL != "https://ok.example" {
+		t.Error("rejected update should have preserved the original URL")
+	}
+}
+
+// TestHandleListDeliveries_HappyPath — returns the delivery log
+// for the caller's own webhook.
+func TestHandleListDeliveries_HappyPath(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID,
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	// Seed two delivery rows.
+	store.deliveries[mine] = []platform.WebhookDelivery{
+		{ID: uuid.New(), WebhookID: mine, EventType: "incident.sev1", AttemptCount: 1, LastResponseStatus: 200},
+		{ID: uuid.New(), WebhookID: mine, EventType: "anomaly.freeze", AttemptCount: 3, LastResponseStatus: 503},
+	}
+
+	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+mine.String()+"/deliveries", nil, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleListDeliveries(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp deliveriesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Deliveries) != 2 {
+		t.Errorf("got %d deliveries, want 2", len(resp.Deliveries))
+	}
+}
+
+// TestHandleListDeliveries_CrossAccount404 — listing another
+// account's deliveries returns 404 (existence-leak protection).
+func TestHandleListDeliveries_CrossAccount404(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	stranger := uuid.New()
+	store.webhooks[stranger] = platform.CustomerWebhook{
+		ID: stranger, AccountID: uuid.New(),
+		URL: "https://x.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	store.deliveries[stranger] = []platform.WebhookDelivery{
+		{ID: uuid.New(), WebhookID: stranger, EventType: "incident.sev1"},
+	}
+	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+stranger.String()+"/deliveries", nil, sc)
+	req.SetPathValue("id", stranger.String())
+	w := httptest.NewRecorder()
+	h.HandleListDeliveries(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// strPtr is a tiny test helper — Go has no literal *string syntax
+// and inline helpers like `&s` need a temporary variable.
+func strPtr(s string) *string { return &s }
