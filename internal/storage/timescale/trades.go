@@ -273,7 +273,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
 		usdVolume = *v
 	}
-	_, err := s.db.ExecContext(ctx, q,
+	res, err := s.db.ExecContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 		t.Pair.Base.String(), t.Pair.Quote.String(),
 		t.BaseAmount, t.QuoteAmount, usdVolume,
@@ -281,6 +281,24 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertTrade: %w", err)
+	}
+
+	// F-1243 (codex audit-2026-05-13) second half: skip the
+	// registry hook when the trade was a duplicate (rows-affected
+	// = 0 from the `ON CONFLICT DO NOTHING`). The wave-47 TTL fix
+	// already addressed the freeze; this guard fixes the
+	// observation_count drift on backfill replays / process
+	// restarts that re-encounter already-stored trades. The
+	// `RowsAffected` failure mode (driver doesn't report it)
+	// fails open: we fall through to the registry hook so a
+	// driver quirk can never SILENCE legitimate registry
+	// updates — only stale-replay drift is tightened.
+	rowsInserted := int64(1)
+	if n, raErr := res.RowsAffected(); raErr == nil {
+		rowsInserted = n
+	}
+	if rowsInserted == 0 {
+		return nil
 	}
 
 	// Phase 4 (per migration 0023's docblock): auto-register the
