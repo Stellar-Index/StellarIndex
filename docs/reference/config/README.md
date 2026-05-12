@@ -81,9 +81,13 @@ the `env:` column.
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
 | `external.binance.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
+| `external.binance.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.kraken.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
+| `external.kraken.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.bitstamp.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
+| `external.bitstamp.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.coinbase.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
+| `external.coinbase.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.exchangeratesapi.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
 | `external.exchangeratesapi.api_key` | `string` | _(required)_ | `EXCHANGERATESAPI_KEY` | ExchangeRatesApi access key. Prefer env var; TOML fallback exists for local-dev convenience. |
 | `external.exchangeratesapi.base` | `string` | `USD` | — | Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat. |
@@ -91,11 +95,13 @@ the `env:` column.
 | `external.polygon_forex.api_key` | `string` | _(required)_ | `POLYGON_API_KEY` | Polygon.io API key. Prefer env var POLYGON_API_KEY; TOML fallback for local-dev only. |
 | `external.polygon_forex.base` | `string` | `USD` | — | Base currency filter. Only tickers matching C:<base><quote> emit. Defaults to USD. |
 | `external.coingecko.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
+| `external.coingecko.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.coinmarketcap.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
 | `external.coinmarketcap.api_key` | `string` | _(required)_ | `COINMARKETCAP_API_KEY` | CMC Pro API key, passed as X-CMC_PRO_API_KEY header. Prefer env var. |
 | `external.cryptocompare.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
 | `external.cryptocompare.api_key` | `string` | _(required)_ | `CRYPTOCOMPARE_API_KEY` | CryptoCompare API key, passed as 'Authorization: Apikey <KEY>'. Prefer env var. |
 | `external.ecb.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
+| `external.ecb.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 
 ### `[aggregate]`
 

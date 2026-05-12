@@ -251,9 +251,13 @@ type Options struct {
 	// the explorer. Nil makes the endpoint return 503.
 	ChangeSummary ChangeSummaryReader
 
-	// Coins, when non-nil, backs GET /v1/coins. Production wiring
-	// is timescale.Store directly (it implements ListCoins). Nil
-	// makes the endpoint return 503.
+	// Coins, when non-nil, supplies the coin-equivalence overlay
+	// the /v1/assets handlers fan out across (price / volume /
+	// market_cap / sparkline / ATH / top_markets). The standalone
+	// /v1/coins HTTP route was removed in rc.48; this seam stays
+	// because every /v1/assets row sources the same data through
+	// it. Production wiring is timescale.Store directly (implements
+	// ListCoinsExt). Nil makes the affected /v1/assets fields 503.
 	Coins CoinsReader
 
 	// Issuers, when non-nil, backs GET /v1/issuers/{g_strkey}.
@@ -284,16 +288,17 @@ type Options struct {
 	// empty array — same degradation pattern as Markets.
 	Lending LendingReader
 
-	// Currencies, when non-nil, backs /v1/currencies — the world
-	// fiat-currency rates listing. Leave nil and the handler serves
-	// an empty currencies list ("warming up") with the source label
-	// still populated.
+	// Currencies, when non-nil, supplies the world fiat-currency
+	// rates snapshot used by /v1/assets fiat rows + chart fiat:fiat
+	// fallback. The standalone /v1/currencies route was removed in
+	// rc.48; this seam stays because /v1/assets and /v1/chart both
+	// consume the same snapshot. Leave nil to fall back to empty
+	// currencies state.
 	Currencies CurrenciesReader
 
-	// FXHistory, when non-nil, lets /v1/currencies/{ticker} surface
-	// long-form persisted history (fx_quotes hypertable) when the
-	// request carries `?range=1y` etc. Leave nil to keep the handler
-	// in 7d-only mode.
+	// FXHistory, when non-nil, lets /v1/chart serve fiat:fiat pairs
+	// from the fx_quotes hypertable for ranges beyond 7d. Leave nil
+	// to keep /v1/chart fiat:fiat in 7d-only mode.
 	FXHistory FXHistoryReader
 
 	// SessionPeeker, when non-nil, lets handlers read the
@@ -612,7 +617,7 @@ func (s *Server) Handler() http.Handler {
 		// directive a regular handler-side response would.
 		middleware.Envelope404,
 		// 308-redirect trailing-slash paths to their no-slash form
-		// (e.g. /v1/coins/native/ → /v1/coins/native). Every v1
+		// (e.g. /v1/assets/native/ → /v1/assets/native). Every v1
 		// route is registered without a trailing slash; without this
 		// middleware, clients that auto-append (axios with `/v1/`
 		// baseURL, OpenAPI codegens, mistyped curl) hit a dead 404.

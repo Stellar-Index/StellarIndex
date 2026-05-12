@@ -15,6 +15,50 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **rc.48 dead-route cleanup follow-up.** rc.48 removed the
+  `/v1/coins` + `/v1/currencies` HTTP surface but left several
+  stale references behind: `cmd/ratesengine-sla-probe` was still
+  probing `/coins` (would 404 after rc.48 deploy → SLA-probe
+  perma-fail on availability); `examples/curl/04-coins.sh` +
+  README still advertised the removed route; `web/status` synthetic
+  smoke probe still pointed at `/v1/coins?limit=1`; `openapi/rates-engine.v1.yaml`
+  carried 3 stale `/v1/coins` text references (incl. the rate-limit
+  example's `instance` field); `internal/api/v1/server.go` Options
+  doc comments still said "backs GET /v1/coins" / "backs /v1/currencies"
+  even though the seams now feed `/v1/assets` and `/v1/chart`.
+  All migrated to live equivalents:
+  - `cmd/ratesengine-sla-probe/main.go` `staticEndpoints` switches
+    `/coins` → `/assets` (same fan-out coverage; comment explains
+    the rc.47 → rc.48 → rc.49 progression).
+  - `examples/curl/04-coins.sh` deleted; replaced with `04-assets.sh`
+    using `?order=volume_24h_usd:desc`.
+  - `web/status/src/app/page.tsx` synthetic-probe entry switched
+    to `/v1/assets?limit=1` with the same Catalogue group.
+  - `openapi/rates-engine.v1.yaml` lines 193 / 1602 / 2608
+    updated.
+  - `internal/api/v1/server.go` Options.Coins / .Currencies /
+    .FXHistory doc comments rewritten to describe the actual
+    `/v1/assets` + `/v1/chart` consumers.
+  Net: `make verify` clean; `go test ./internal/api/v1/...` +
+  `./cmd/ratesengine-sla-probe/...` green.
+  Closes audit findings F-1202, F-1210 (cosmetic doc-text portion),
+  F-1211, F-1223, F-1245 (smoke surface), F-RFP-0017.
+
+### Tooling
+
+- **`docs/reference/api/rates-engine.v1.yaml` regenerated**
+  from `openapi/rates-engine.v1.yaml` via `make docs-api`. The
+  checked-in copy had drifted ~990 lines (561 ins / 429 del) since
+  the last regeneration. `web/explorer/src/api/types.ts` (the
+  openapi-typescript output) auto-regenerated as a transitive
+  consequence (~415 lines lighter; `pnpm typecheck` clean). Closes
+  F-1246.
+- **`docs/reference/config/README.md` regenerated** from
+  `internal/config/config.go` via `make docs-config` (+6 lines).
+  Closes F-1255.
+
 ## [v0.5.0-rc.48] — 2026-05-11
 
 ### Removed

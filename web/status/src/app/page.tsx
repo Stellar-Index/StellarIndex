@@ -198,10 +198,10 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     tier: 'hot',
   },
   {
-    path: '/v1/coins',
+    path: '/v1/assets',
     group: 'Catalogue',
-    description: 'Asset directory (440K+ classic assets)',
-    probe: { kind: 'get', path: '/v1/coins?limit=1' },
+    description: 'Asset directory (440K+ classic assets, with coin-overlay fields)',
+    probe: { kind: 'get', path: '/v1/assets?limit=1' },
   },
   {
     path: '/v1/assets/{id}',
