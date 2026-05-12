@@ -28,7 +28,20 @@ type FreezeEventSink struct {
 	db        *sql.DB
 	clock     func() time.Time
 	getLedger LedgerProvider
+	// onFreeze, when non-nil, is invoked AFTER a successful
+	// RecordFreeze that actually inserted a new row (idempotent
+	// no-ops don't fire). Production wiring: the aggregator
+	// binary plugs a customerwebhook.Fanout.Publish closure so
+	// dashboard-registered hooks subscribed to `anomaly.freeze`
+	// receive a callback. F-1249 (codex audit-2026-05-12).
+	onFreeze FreezeHook
 }
+
+// FreezeHook is the callback shape for post-insert side-effects.
+// Best-effort: errors are logged and dropped by the sink so a
+// downstream failure (e.g. customerwebhook fan-out) doesn't take
+// the load-bearing INSERT down.
+type FreezeHook func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision)
 
 // LedgerProvider is the seam for reading the most-recently-ingested
 // ledger sequence. Used to stamp `frozen_at_ledger` on inserts so
@@ -71,6 +84,18 @@ func WithFreezeClock(clock func() time.Time) FreezeEventSinkOption {
 func WithFreezeLedgerProvider(p LedgerProvider) FreezeEventSinkOption {
 	return func(s *FreezeEventSink) {
 		s.getLedger = p
+	}
+}
+
+// WithFreezeHook installs a post-insert side-effect closure.
+// Invoked AFTER a successful row insert (idempotent no-ops
+// don't fire). F-1249 (codex audit-2026-05-12): wired by the
+// aggregator binary to bridge into customerwebhook.Fanout.Publish
+// so dashboard hooks subscribed to `anomaly.freeze` get
+// callbacks. Best-effort — hook panics/errors don't propagate.
+func WithFreezeHook(hook FreezeHook) FreezeEventSinkOption {
+	return func(s *FreezeEventSink) {
+		s.onFreeze = hook
 	}
 }
 
@@ -156,18 +181,29 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 		)
 		ON CONFLICT (asset_id, quote_id, frozen_at) DO NOTHING
 	`
-	if _, err := tx.ExecContext(ctx, q,
+	res, err := tx.ExecContext(ctx, q,
 		asset.String(), quote.String(),
 		now, int64(ledger),
 		reason,
 		frozenValueArg,
 		detail,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("timescale: RecordFreeze %s/%s: %w",
 			asset.String(), quote.String(), err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("timescale: RecordFreeze: commit: %w", err)
+	}
+	// F-1249 (codex audit-2026-05-12): fire the post-insert hook
+	// only when a row was actually appended. The idempotency check
+	// + ON CONFLICT DO NOTHING means RowsAffected==0 is the
+	// "already firing, this is just a TTL refresh" path; firing
+	// the webhook then would spam subscribers.
+	if s.onFreeze != nil {
+		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
+			s.onFreeze(ctx, asset, quote, frozenValueArg, decision)
+		}
 	}
 	return nil
 }

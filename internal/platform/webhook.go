@@ -113,6 +113,12 @@ type WebhookStore interface {
 	// disabled) for the account.
 	ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]CustomerWebhook, error)
 
+	// ListWebhooksSubscribedTo returns every enabled webhook
+	// (across all accounts) subscribed to `eventType`. Used by
+	// the fan-out service to enqueue one delivery per subscriber
+	// when a product event fires. F-1249 (codex audit-2026-05-12).
+	ListWebhooksSubscribedTo(ctx context.Context, eventType WebhookEventType) ([]CustomerWebhook, error)
+
 	// UpdateWebhook writes mutable fields (name, url, events,
 	// enabled). Secret rotation is a separate explicit method.
 	UpdateWebhook(ctx context.Context, w CustomerWebhook) error

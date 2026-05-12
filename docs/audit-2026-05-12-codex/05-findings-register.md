@@ -32,7 +32,7 @@ Cold findings only. No prior finding is imported into this register.
 | F-1213 | high | Stablecoin fiat proxy undercounts Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011 | open | aggregate/market-data | Classic/SAC USDC quotes are 7-decimal, but `windowUSDVolume` always divides quote amounts by 1e8 for fiat-USD windows; R1 currently avoids false drops only by setting `min_usd_volume=0`, disabling the threshold. |
 | F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | GitHub reports `main.protected=false`; branch protection/rulesets are unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
-| F-1216 | high | GitHub Actions allows all third-party actions without SHA pinning while workflows use tag-pinned actions | GitHub Actions repository policy; `.github/workflows/*.yml` | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | Hosted Actions policy has `allowed_actions=all` and `sha_pinning_required=false`; workflows invoke many external actions by mutable version tags, including deployment and release paths. |
+| F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
 | F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails, and Redis-less deployments still skip duplicate protection entirely | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099 | open | api/security/billing | The same-email race is now closed when Redis tracking is wired, but signup still returns usable keys without email ownership proof and tracker-nil deployments still mint duplicates by design. |
 | F-1219 | high | Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053 | open | billing/platform/api | Current source has Postgres Stripe event dedupe/audit wiring, but the webhook still mutates only Redis keys by `client_reference_id`; subscriptions, accounts, and Postgres dashboard keys are not upgraded. |
@@ -273,6 +273,7 @@ Evidence:
 - `XFI-0010`
 - `EV-0025`
 - `EV-0026`
+- `EV-0104`
 
 Expected: `main` should require green CI, CODEOWNER review, signed commits, and no force-push/direct-push path, matching the local contribution policy.
 
@@ -329,11 +330,13 @@ Evidence:
 
 Expected: release/deploy workflows should either use an allow-list of trusted actions or pin external actions to immutable SHAs.
 
-Observed: Actions policy is `allowed_actions=all` and `sha_pinning_required=false`; workflow files call many external actions by mutable version tags, including `cloudflare/wrangler-action@v3`, `stoplightio/spectral-action@v0.8.13`, `grafana/setup-k6-action@v1`, `pnpm/action-setup@v6`, and standard `actions/*` tags.
+Observed during the initial pass: Actions policy was `allowed_actions=all` and `sha_pinning_required=false`; workflow files called many external actions by mutable version tags, including `cloudflare/wrangler-action@v3`, `stoplightio/spectral-action@v0.8.13`, `grafana/setup-k6-action@v1`, `pnpm/action-setup@v6`, and standard `actions/*` tags.
+
+Current-workspace reconciliation: `.github/workflows/ci.yml` now adds an `actions-pinning` job and `scripts/ci/lint-actions-pinning.sh`. The script warns on every existing mutable third-party tag and, in `PR_DIFF=1` mode, fails newly introduced mutable third-party `uses:` lines. Running it both normally and with `PR_DIFF=1` reports 12 existing tag-pinned third-party actions and exits zero. That narrows the future-regression risk, but it does not remediate the current mutable tags, nor does it change the hosted repo-level Actions policy reported in the original finding.
 
 Impact: a compromised upstream action tag or newly introduced unreviewed action can execute in CI with repository or deployment secrets, including release/deploy paths.
 
-Remediation direction: set Actions policy to selected trusted actions, enable SHA pinning or pin non-GitHub-owned actions to full commit SHAs, review transitive deployment actions, and add workflow linting for unpinned `uses:` entries.
+Remediation direction: keep the PR-diff lint if desired, but finish the actual remediation: restrict hosted Actions policy, SHA-pin or otherwise immutably lock existing third-party actions, and decide whether the lint should fail on existing mutable pins in protected branches rather than warning forever.
 
 ### F-1217. SEP-10 replay protection is optional and can run guard-free when Redis is absent
 

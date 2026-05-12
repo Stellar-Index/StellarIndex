@@ -76,6 +76,24 @@ func (s *fakeStore) ListWebhooksForAccount(_ context.Context, accountID uuid.UUI
 	return out, nil
 }
 
+func (s *fakeStore) ListWebhooksSubscribedTo(_ context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []platform.CustomerWebhook
+	for _, w := range s.webhooks {
+		if !w.Enabled {
+			continue
+		}
+		for _, ev := range w.Events {
+			if ev == string(eventType) {
+				out = append(out, w)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *fakeStore) UpdateWebhook(_ context.Context, w platform.CustomerWebhook) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
