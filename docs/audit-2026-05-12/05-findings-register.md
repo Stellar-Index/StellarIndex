@@ -42,11 +42,11 @@ The 2026-05-12 audit kicked off with 75 findings (F-1201 .. F-1275
 + notes). After the remediation pass that ran over the same day,
 the per-finding disposition stands at:
 
-**Closed by code/doc changes (this session):** F-1212b · F-1222 ·
-F-1228 · F-1229 · F-1230 · F-1231 (store half) · F-1234 · F-1235 ·
-F-1238 · F-1239 · F-1240 · F-1242 (Comet + CAP-67; SEP-41 transfer
-refuted by N-1248) · F-1243 · F-1244 · F-1246 · F-1247 · F-1254 ·
-F-1262 · F-1271 · F-1219+F-1220 (config side; deploy operator-side)
+**Closed by code/doc changes (this session):** F-1212b · F-1219 ·
+F-1220 · F-1222 · F-1228 · F-1229 · F-1230 · F-1231 (store half) ·
+F-1234 · F-1235 · F-1238 · F-1239 · F-1240 · F-1242 (Comet +
+CAP-67; SEP-41 transfer refuted by N-1248) · F-1243 · F-1244 ·
+F-1246 · F-1247 · F-1254 · F-1262 · F-1270 · F-1271
 
 **Verified already-resolved when re-checked:** F-1211, F-1221,
 F-1223, F-1233, F-1236, F-1245, F-1250, F-1251, F-1253, F-1264,
@@ -56,7 +56,10 @@ F-1269, F-1272, F-1273, F-1275.
 after F-1212b deploy), F-1213, F-1252, F-1265, F-1266, F-1267.
 
 **Still open, substantive future scope:** F-1268 (FX-anchor
-phase 2), F-1270 (Discord/Slack callbacks).
+phase 2). The customer-facing CRUD handlers for
+`/v1/account/webhooks` (built atop the F-1270 store + worker
+landed this session) are a wire-shape follow-up — the data
+plane is end-to-end-ready.
 
 The table below is preserved with original wording for historical
 audit-trail integrity. The disposition column reflects each
