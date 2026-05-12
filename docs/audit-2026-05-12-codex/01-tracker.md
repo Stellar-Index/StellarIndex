@@ -15,7 +15,7 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | Current findings imported | none |
 | Tracked file source | `git ls-files` |
 | Tracked file count before this directory | `1,747` |
-| Execution-time scope drift | current `HEAD` advanced to `9f68ef9a...`; the inventory was reconciled back to parity at `1,870` tracked rows on 2026-05-12 after `internal/customerwebhook/ssrf.go` entered scope; see `EV-0063`, `EV-0078`, and `EV-0097` |
+| Execution-time scope drift | current `HEAD` advanced to `7c9e79ae...`; the inventory remains reconciled at `1,870` tracked rows on 2026-05-12 after `internal/customerwebhook/ssrf.go` entered scope and the follow-on Wave 5 remediation commit landed; see `EV-0063`, `EV-0078`, `EV-0097`, and `EV-0098` |
 | File inventory | [inventory/file-coverage.tsv](inventory/file-coverage.tsv) |
 | Evidence ledger | [evidence/log.md](evidence/log.md) |
 | Command ledger | [evidence/commands.md](evidence/commands.md) |
@@ -44,21 +44,21 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | W02 | Architecture, ADRs, and negative space | todo | code-to-doc trace |
 | W03 | Build, toolchain, reproducibility, and release | in_progress | EV-0013, EV-0009, EV-0031, EV-0032, EV-0037, EV-0041 |
 | W04 | Dependency, provenance, and supply chain | in_progress | EV-0014, EV-0015, EV-0025, EV-0026 |
-| W05 | Configuration and secret boundaries | in_progress | EV-0022, EV-0024, EV-0033, EV-0083, EV-0084 |
+| W05 | Configuration and secret boundaries | in_progress | EV-0022, EV-0024, EV-0033, EV-0083, EV-0084, EV-0098 |
 | W06 | Canonical identity, asset semantics, and numeric safety | todo | code refs, tests |
 | W07 | Ledger ingest, transport, backfill, and dispatch | in_progress | EV-0040, EV-0044, EV-0080 |
 | W08 | Stellar DEX and Soroban source decoders | in_progress | EV-0044 |
 | W09 | Stellar account, supply, and balance observers | in_progress | EV-0047 |
 | W10 | Oracle and reference-price source decoders | in_progress | EV-0045 |
-| W11 | External market-data source fleet | in_progress | EV-0046 |
+| W11 | External market-data source fleet | in_progress | EV-0046, EV-0098 |
 | W12 | Storage, migrations, and query correctness | in_progress | EV-0017, EV-0058, EV-0059, EV-0060, EV-0062, EV-0079, EV-0080, EV-0086, EV-0092 |
 | W13 | Redis, cache keys, streaming pub/sub, and freshness | in_progress | EV-0038, EV-0039, EV-0084, EV-0094 |
 | W14 | Aggregation, baselines, anomaly, freeze, and confidence | in_progress | EV-0024, EV-0079 |
-| W15 | API runtime, middleware, contracts, and client SDK | in_progress | EV-0010, EV-0011, EV-0012, EV-0068, EV-0069, EV-0076, EV-0086, EV-0089, EV-0090, EV-0092, EV-0094, EV-0095, EV-0096 |
+| W15 | API runtime, middleware, contracts, and client SDK | in_progress | EV-0010, EV-0011, EV-0012, EV-0068, EV-0069, EV-0076, EV-0086, EV-0089, EV-0090, EV-0092, EV-0094, EV-0095, EV-0096, EV-0098 |
 | W16 | Dashboard, explorer, status page, SEO, and embeds | in_progress | EV-0012, EV-0014, EV-0090 |
-| W17 | Observability, metrics, alerts, status, and incident flow | in_progress | R1-0010, EV-0073 |
+| W17 | Observability, metrics, alerts, status, and incident flow | in_progress | R1-0010, EV-0073, EV-0098 |
 | W18 | Operations, R1 runtime, archive completeness, and DR | in_progress | R1-0001 through R1-0010, EV-0073, EV-0082 |
-| W19 | Security, auth, abuse, and privacy | in_progress | F-1201, F-1207, EV-0015, EV-0068, EV-0069, EV-0083, EV-0084, EV-0086, EV-0096 |
+| W19 | Security, auth, abuse, and privacy | in_progress | F-1201, F-1207, EV-0015, EV-0068, EV-0069, EV-0083, EV-0084, EV-0086, EV-0096, EV-0098 |
 | W20 | Tests, fixtures, chaos, load, and CI reality | in_progress | EV-0006, EV-0013, EV-0041, EV-0070, EV-0095 |
 | W21 | Documentation truth and customer commitments | in_progress | EV-0021, EV-0032, EV-0039, EV-0040, EV-0072, EV-0076, EV-0082, EV-0090, EV-0095, EV-0096 |
 | W22 | Competitive product completeness | in_progress | EV-0035, EV-0038, EV-0040, EV-0042 |

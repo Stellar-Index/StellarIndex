@@ -7,6 +7,7 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/events"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/scval"
 )
 
@@ -116,7 +117,11 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 				// drop the ones we don't. Matches the Reflector
 				// per-entry convention and keeps the canonical-asset
 				// allow-list a one-line amendment, not an ingest
-				// blocker.
+				// blocker. F-1234 (codex audit-2026-05-12): count
+				// the skip so operators get a signal that an
+				// upstream Redstone batch added a feed we don't
+				// yet recognise.
+				obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
 				continue
 			}
 			return nil, fmt.Errorf("feed[%d] %q: %w", i, feedIDs[i], err)
