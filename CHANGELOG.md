@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Removed
+
+- **Unused GIN indexes on `blend_auctions.bid` / `.lot` (F-1238).**
+  Migration 0029 drops the two JSONB GIN indexes from migration
+  0009. No reader in `internal/storage/timescale/` queries those
+  columns by content — `LatestBlendAuctionEvent` and
+  `ListBlendPools` both filter only by `pool` /`auction_type` /
+  `user_address` / `ts`. Index write-amplification on every
+  blend-auction INSERT for a read path that never materialised.
+  Down migration restores them.
+
 ### Changed
 
 - **`ratesengine_ingestion_source_stopped` alert window widened
