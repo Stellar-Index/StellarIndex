@@ -17,6 +17,20 @@ against.
 
 ### Changed
 
+- **R1 prometheus.r1.yml scrape coverage + rule_files path
+  (F-1219 + F-1220).** Added scrape jobs for redis_exporter
+  (port 9121, installed by the redis-sentinel ansible role),
+  alertmanager self-scrape (so we can alert on alertmanager
+  being down), postgres_exporter / pgbackrest_exporter
+  placeholder slots (operator deploys the exporters, scrape
+  picks them up), and minio cluster metrics with bearer-token
+  auth path. Each job has a one-line comment naming the alert
+  family it feeds. `rule_files` path changed from the empty-
+  opt-in glob `/etc/prometheus/rules.d/*.yml` to the canonical
+  `/etc/prometheus/rules.r1/*.yml` matching the deployed-asset
+  path so operators no longer have to symlink the full
+  configs/prometheus/rules.r1/ set into a parallel directory.
+
 - **Prometheus multi-host ↔ R1 overlay drift caught at CI (F-1222).**
   Multi-host rules in `deploy/monitoring/rules/` use underscored
   job labels (`ratesengine_api`) matching the multi-host ansible
