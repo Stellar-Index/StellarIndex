@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/scval"
 )
 
@@ -141,6 +142,10 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		if err != nil {
 			if errors.Is(err, ErrUnknownSymbol) {
 				// Partial-event skip, same pattern as Reflector.
+				// F-1234 (codex audit-2026-05-12): count the skip
+				// so the decode-error runbook signals on upstream
+				// coverage drift.
+				obs.SourceUnknownSymbolsTotal.WithLabelValues("band").Inc()
 				continue
 			}
 			return nil, fmt.Errorf("symbol_rates[%d] %q: %w", i, sym, err)

@@ -35,6 +35,7 @@ func init() {
 		SourceLastEventUnix,
 		SourceEnabled,
 		SourceDecodeErrorsTotal,
+		SourceUnknownSymbolsTotal,
 		SourceOrphanEventsTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
@@ -197,6 +198,27 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_source_decode_errors_total",
 		Help: "Events that failed to decode, per source.",
+	},
+	[]string{"source"},
+)
+
+// SourceUnknownSymbolsTotal — per-source counter of asset slots
+// dropped from an otherwise-decoded event because the symbol/feed
+// id isn't in our canonical asset allow-list (ADR-0010). Distinct
+// from SourceDecodeErrorsTotal because the rest of the event still
+// decodes cleanly — the parent decode `continue`s past the slot.
+//
+// F-1234 (codex audit-2026-05-12): upstream oracle coverage can
+// expand while we silently omit the new asset; without this counter
+// operators have no signal that a feed is being skipped. Reflector,
+// Redstone, and Band all increment this on ErrUnknownSymbol /
+// ErrUnknownFeedID branches; the alert in
+// `deploy/monitoring/rules/external-pollers.yml` fires on a
+// sustained per-source non-zero rate.
+var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_source_unknown_symbols_total",
+		Help: "Asset slots skipped from a decoded event because the symbol/feed id isn't in the canonical allow-list.",
 	},
 	[]string{"source"},
 )

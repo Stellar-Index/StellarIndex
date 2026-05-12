@@ -7,6 +7,7 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/events"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/scval"
 )
 
@@ -228,9 +229,16 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 				// model, not a structural event problem. Skip this
 				// one entry and continue — losing a single asset
 				// slot in a mixed-payload event is strictly better
-				// than dropping all prices in that event. The
-				// orchestrator's SourceDecodeErrorsTotal counter
-				// surfaces sustained skip rates.
+				// than dropping all prices in that event.
+				// F-1234 (codex audit-2026-05-12): count the skip
+				// on ratesengine_source_unknown_symbols_total so
+				// operators can spot upstream coverage drift
+				// without parsing logs. The metric label uses the
+				// generic "reflector" because the decoder is
+				// shared across reflector-dex/cex/fx; the parent
+				// dispatcher attributes per-contract context if
+				// needed.
+				obs.SourceUnknownSymbolsTotal.WithLabelValues("reflector").Inc()
 				continue
 			}
 			return nil, fmt.Errorf("update_data[%d]: %w", i, err)

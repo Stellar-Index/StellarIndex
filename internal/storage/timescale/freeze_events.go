@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate/anomaly"
@@ -114,6 +115,33 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 		frozenValueArg = "0"
 	}
 
+	// F-1250 (codex audit-2026-05-12): atomic dedupe under
+	// concurrent RecordFreeze calls. Two aggregator workers
+	// racing on the same (asset, quote) pair used to both pass
+	// the `WHERE NOT EXISTS` check and each insert a still-firing
+	// row, leaving duplicate open rows for the same pair —
+	// every recovery worker now had to clear N rows instead of 1.
+	//
+	// The fix: wrap the check + insert in a transaction guarded
+	// by `pg_advisory_xact_lock` keyed on a stable hash of
+	// (asset, quote). The lock is process-local to the txn so
+	// it auto-releases on COMMIT/ROLLBACK and never strands the
+	// row. Advisory locks (vs row locks) work here because the
+	// "no row yet" branch has nothing to row-lock against;
+	// Timescale also forbids unique constraints that don't
+	// include the partition key, so a partial UNIQUE index
+	// isn't an option.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("timescale: RecordFreeze: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // safe no-op after COMMIT
+
+	pairKey := pairAdvisoryLockKey(asset.String(), quote.String())
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, pairKey); err != nil {
+		return fmt.Errorf("timescale: RecordFreeze: advisory lock: %w", err)
+	}
+
 	const q = `
 		INSERT INTO freeze_events (
 		    asset_id, quote_id,
@@ -128,7 +156,7 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 		)
 		ON CONFLICT (asset_id, quote_id, frozen_at) DO NOTHING
 	`
-	if _, err := s.db.ExecContext(ctx, q,
+	if _, err := tx.ExecContext(ctx, q,
 		asset.String(), quote.String(),
 		now, int64(ledger),
 		reason,
@@ -138,7 +166,22 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 		return fmt.Errorf("timescale: RecordFreeze %s/%s: %w",
 			asset.String(), quote.String(), err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("timescale: RecordFreeze: commit: %w", err)
+	}
 	return nil
+}
+
+// pairAdvisoryLockKey derives a stable int64 advisory-lock key
+// from the (asset, quote) pair. FNV-1a 64-bit; collisions are
+// possible across distinct pairs but cosmetic (false serialisation,
+// no correctness loss).
+func pairAdvisoryLockKey(asset, quote string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(asset))
+	_, _ = h.Write([]byte{':'})
+	_, _ = h.Write([]byte(quote))
+	return int64(h.Sum64()) //nolint:gosec // narrowing to int64 is acceptable; pg accepts signed bigint
 }
 
 // ListOpen returns every (asset, quote) currently in firing state

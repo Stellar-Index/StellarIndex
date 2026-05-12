@@ -514,7 +514,24 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 	}
 	for _, peg := range s.usdPeggedClassics {
 		if peg.Equal(asset) {
-			continue
+			// F-1232 (codex audit-2026-05-12): asset IS one of
+			// the operator-declared USD pegs. /v1/price?asset=<peg>
+			// &quote=fiat:USD previously skipped this peg and
+			// fell through to the cross-rate path, returning 404
+			// even though the asset-detail page surfaces an
+			// approximately-$1 enrichment price for the same asset.
+			// Return $1.0 with triangulated=true so the wire shape
+			// is consistent. SingleSource=true because the value
+			// is derived from the peg assumption, not from
+			// VWAP-contributing trades.
+			snap := PriceSnapshot{
+				AssetID:    asset.String(),
+				Quote:      quote.String(),
+				Price:      "1.000000000000",
+				PriceType:  "peg",
+				ObservedAt: time.Now().UTC(),
+			}
+			return snap, nil, true
 		}
 		snap, srcs, _, err := s.prices.LatestPrice(ctx, asset, peg)
 		if err != nil {

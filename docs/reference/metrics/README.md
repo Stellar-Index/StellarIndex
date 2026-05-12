@@ -99,6 +99,20 @@ canonical-invariant violations. Distinct from `orphan_events`
 (decoded fine but persistence broke). Emitted from dispatcher stats
 deltas after each processed ledger.
 
+### `ratesengine_source_unknown_symbols_total`
+
+Counter, label `source`.
+
+Asset slots skipped from an otherwise-decoded oracle event because
+the symbol or feed-id isn't in our canonical asset allow-list
+(ADR-0010). Distinct from `decode_errors`: the rest of the event
+still decoded cleanly — the parent decoder `continue`d past the
+unknown slot rather than failing the whole event. Reflector, Band,
+and Redstone are the live emitters; CEX streamers don't fan out
+into mixed-asset batches the same way. A sustained non-zero rate
+means an upstream oracle expanded its feed set and our allow-list
+needs an amendment. F-1234 (codex audit-2026-05-12).
+
 ### `ratesengine_source_orphan_events_total`
 
 Counter, label `source`.

@@ -369,6 +369,45 @@ func TestPrice_StablecoinFiatProxy_NoPegsLeaves404(t *testing.T) {
 	}
 }
 
+// TestPrice_StablecoinFiatProxy_PegItselfReturnsOne pins F-1232
+// (codex audit-2026-05-12): querying the declared USD peg against
+// fiat:USD must return ~$1, not 404. Pre-fix, /v1/price?asset=
+// USDC-GA5Z…&quote=fiat:USD 404'd because the fallback loop
+// skipped peg==asset; the asset-detail page meanwhile surfaced a
+// real enrichment price. Now the peg-self branch returns a
+// synthetic price=1.0 snapshot with PriceType=peg so the wire
+// shape across single + batch + asset-detail is consistent.
+func TestPrice_StablecoinFiatProxy_PegItselfReturnsOne(t *testing.T) {
+	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{usdcClassic},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.PriceSnapshot `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.Price != "1.000000000000" {
+		t.Errorf("price = %q, want 1.000000000000 (peg-self should map to $1)", env.Data.Price)
+	}
+	if env.Data.PriceType != "peg" {
+		t.Errorf("price_type = %q, want peg", env.Data.PriceType)
+	}
+	if env.Data.Quote != "fiat:USD" {
+		t.Errorf("quote = %q, want fiat:USD", env.Data.Quote)
+	}
+}
+
 // TestPrice_StablecoinFiatProxy_NonUSDQuoteSkips — the fallback only
 // fires for quote=fiat:USD. Other fiat quotes (EUR, GBP) shouldn't
 // pull the USD-pegged classic; if the user wants EUR pricing they
