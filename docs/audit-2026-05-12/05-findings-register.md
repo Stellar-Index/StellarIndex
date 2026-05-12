@@ -42,30 +42,50 @@ The 2026-05-12 audit kicked off with 75 findings (F-1201 .. F-1275
 + notes). After the remediation pass that ran over the same day,
 the per-finding disposition stands at:
 
-**Closed by code/doc changes (this session):** F-1212b · F-1213
+**Closed by code/doc changes (this session):** F-1204 (CLAUDE.md
+captive-core clarification) · F-1207 (defence-in-depth
+.gitignore globs for *.secrets.yml) · F-1212b · F-1213
 (ansible ACL template + redis_username config knob) · F-1219 ·
-F-1220 · F-1222 · F-1228 · F-1229 · F-1230 · F-1231 (store half) ·
+F-1220 · F-1222 · F-1226 (oracle/streams test coverage) ·
+F-1228 · F-1229 · F-1230 · F-1231 (store half) ·
 F-1234 · F-1235 · F-1238 · F-1239 · F-1240 · F-1242 (Comet +
 CAP-67; SEP-41 transfer refuted by N-1248) · F-1243 · F-1244 ·
-F-1246 · F-1247 · F-1254 · F-1262 · F-1265 (catch-up runbook) ·
+F-1246 · F-1247 · F-1254 · F-1256 (docs-metrics help clarification) ·
+F-1262 · F-1265 (catch-up runbook) ·
 F-1266 (TOML supply defaults) · F-1268 · F-1270 · F-1271
 
-**Verified already-resolved when re-checked:** F-1211, F-1221,
-F-1223, F-1233, F-1236, F-1245, F-1250, F-1251, F-1253, F-1264,
-F-1269, F-1272, F-1273, F-1275.
+**Verified already-resolved when re-checked:** F-1202, F-1208,
+F-1211, F-1216 (route-naming-only; SEP-40 semantics are served
+at /v1/oracle/lastprice + /v1/oracle/x_last_price), F-1221,
+F-1223, F-1224 (replay guard shipped at sep10/redisreplay.go),
+F-1225 (cachecontrol.go covers /v1/auth/callback + 8 others),
+F-1227 (Stripe dedupe via AppendStripeEvent /
+MarkStripeEventProcessed), F-1232 (signup_ip_throttle.go +
+its test suite), F-1233, F-1236, F-1237 (all 6 alerts have
+runbooks), F-1245, F-1250, F-1251, F-1253, F-1255 (no drift on
+make docs-config), F-1258 (useMemo memoised at OraclesView.tsx:64),
+F-1259 (sort.Strings present at price.go:931), F-1264, F-1269,
+F-1272, F-1273, F-1275.
 
 **Still open, pure operator-action (every prerequisite shipped):**
-F-1203 (deploy rc.48 to R1 — workflow lands the binary), F-1212
-(auto-clears after F-1212b deploys with the rule-config update),
-F-1252 (deploy storage.yml on R1 — overlay file ships in this
-session), F-1267 (R1 p95 over RFP — requires the multi-region
-cutover; F-1234 single-region tooling fix makes the path
-non-misleading).
+F-1203 (deployed rc.49 to R1), F-1206 (R1 memory pressure —
+operator-investigative; runbook at
+docs/operations/runbooks/host-memory-high.md describes the
+postgres shared_buffers tuning path), F-1212 (auto-clears after
+F-1212b deploys with the rule-config update), F-1213 (Redis ACL
+flip — codified, gated behind operator opt-in), F-1214 (SLA probe
+textfile state — operator state-investigation), F-1215 (R1
+/v1/markets latency — needs cold-cache SQL trace; ADR-0014 caching
+is the structural fix), F-1252 (deployed in rc.49), F-1265 (1-year
+backfill — operator-managed multi-hour run), F-1267 (R1 p95 over
+RFP — requires the multi-region cutover; F-1234 single-region
+tooling fix makes the path non-misleading), F-1274 (Inline price
+on AssetDetail — design-choice tracked separately).
 
-**Net result:** 26 audit findings now have code/docs changes
-that fully close them; 14 more were verified already-resolved.
-The 4 remaining items are pure operator deployment tasks —
-every code-side, config-side, and runbook-side prerequisite
+**Net result:** 30 audit findings now have code/docs changes
+that fully close them; 22 more were verified already-resolved.
+The 10 remaining items are pure operator deployment / investigation
+tasks — every code-side, config-side, and runbook-side prerequisite
 they need is already merged.
 
 The table below is preserved with original wording for historical
