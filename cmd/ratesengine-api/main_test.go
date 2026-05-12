@@ -5,8 +5,43 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/usage"
 )
+
+// TestUsageReaderOrNil_RedisAbsent — when the usage counter is
+// nil (Redis-less deployment), the helper must return a
+// typed-nil v1.UsageReader rather than wrapping the nil counter
+// in a non-nil adapter. The /v1/account/usage handler treats
+// `usageReader == nil` as "no backend wired" and short-circuits
+// to `[]`; the buggy pre-fix shape was a non-nil adapter that
+// nil-deref'd on `Read`. F-1258 (codex audit-2026-05-12).
+func TestUsageReaderOrNil_RedisAbsent(t *testing.T) {
+	if r := usageReaderOrNil(nil); r != nil {
+		t.Errorf("usageReaderOrNil(nil) = %v (non-nil), want nil — handler short-circuits on nil; non-nil wrapper would deref the inner nil counter on Read", r)
+	}
+}
+
+// TestUsageReaderOrNil_RedisPresent — when the counter is
+// non-nil, the helper returns a non-nil adapter that bridges
+// to the v1 package. Uses miniredis so the underlying
+// usage.New() doesn't itself short-circuit to nil.
+func TestUsageReaderOrNil_RedisPresent(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	c := usage.New(rdb)
+	if c == nil {
+		t.Fatal("usage.New(real rdb) returned nil — test setup invariant broken")
+	}
+	r := usageReaderOrNil(c)
+	if r == nil {
+		t.Fatal("usageReaderOrNil(real-counter) = nil, want non-nil")
+	}
+}
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))

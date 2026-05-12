@@ -31,8 +31,12 @@ highest-priority items re-verified late in the audit window.
 - `F-1220` is fixed by wave 32 (2026-05-12): `.github/workflows/deploy.yml`
   now runs `ansible-galaxy collection install -r configs/ansible/requirements.yml`
   so `ansible.posix.synchronize` resolves on the deploy runner.
-- `F-1226`, `F-1236`, and `F-1258` remain open after direct source review
-  and targeted tests; recent remediation narrowed them without reaching
+- `F-1258` is fixed by wave 33 (2026-05-12): `cmd/ratesengine-api/main.go`
+  now wires `UsageReader: usageReaderOrNil(usageCounter)` so Redis-less
+  deployments pass a typed-nil reader and `/v1/account/usage` short-
+  circuits cleanly to `[]` instead of nil-deref'ing on `Read`.
+- `F-1226` and `F-1236` remain open after direct source review and
+  targeted tests; recent remediation narrowed them without reaching
   closure-grade.
 
 Recent waves closed by code (chronological):
@@ -46,6 +50,8 @@ Recent waves closed by code (chronological):
 - wave 31 — F-1203 generated explorer API types regen committed.
 - wave 32 — F-1219 Stripe platform bridge wired + F-1220 deploy ansible
   collection install.
+- wave 33 — F-1258 Redis-less UsageReader is now typed-nil instead of
+  wrapping a nil counter.
 
 ## Status Values
 
@@ -74,7 +80,7 @@ Recent waves closed by code (chronological):
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | open | api/ops | Health/ready only report process/postgres/redis ok while material ingest, latency, memory, and timer evidence failures are active. |
 | F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021 | open | ops/comms/web | During a SEV, the binding runbook tells operators to edit absent `deploy/status-page/cstate/**` files or use Upptime issues, while the repo ships `web/status` as a custom Next.js static export. |
 | F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023; EV-0089 | fixed | dashboard/billing/api | Current `HEAD` now clamps dashboard-minted key budgets by account tier before insert and tests the tier ladder, so the privilege-escalation path no longer reproduces. |
-| F-1213 | high | Stablecoin fiat proxy undercounts Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011 | open | aggregate/market-data | Classic/SAC USDC quotes are 7-decimal, but `windowUSDVolume` always divides quote amounts by 1e8 for fiat-USD windows; R1 currently avoids false drops only by setting `min_usd_volume=0`, disabling the threshold. |
+| F-1213 | high | Stablecoin fiat proxy undercounted Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011; EV-0116 | fixed | aggregate/market-data | Current code computes USD totals against each source pair's real quote-decimal convention before pair rewrite, and the classic-USDC `$10k` regression test passes. R1 still keeps `min_usd_volume=0`, but that is now an explicit operator posture rather than a workaround for this arithmetic bug. |
 | F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | GitHub reports `main.protected=false`; branch protection/rulesets are unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
@@ -86,7 +92,7 @@ Recent waves closed by code (chronological):
 | F-1222 | medium | Rollback docs point operators to nonexistent `/opt/ratesengine/release-<tag>` directories instead of actual binary backups | Release process runbook; Ansible deploy backup layout; R1 sidecars | XFI-0014; EV-0032; R1-0013 | open | ops/release | Incident fallback rollback can fail because the documented artifact path is not produced by the current deploy task. |
 | F-1223 | high | R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014; EV-0113 | fixed | ops/security | Current live R1 Caddy now carries the trusted-proxy/client-IP block, forwards `{client_ip}`, and public `/metrics` returns HTTP 404. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | open | dashboard/security | Login/security audit fields intended for IP/new-country signals parse `r.RemoteAddr` directly instead of the middleware-resolved remote IP. |
-| F-1225 | high | `/v1/history/since-inception` returns empty XLM/USD history while chart and direct USDC history have data | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers | XFI-0017; EV-0035; R1-0015 | open | api/market-data | Since-inception reads only literal `native/fiat:USD`; it lacks the configured USD-pegged stablecoin fallback used by chart/price/VWAP/TWAP/OHLC surfaces. |
+| F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100 | open | platform/api/security | The current workspace starts wiring IP/referer/permission enforcement, but cache hits still shed the new policy fields and monthly quota plus `TouchUsage` remain unimplemented. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | open | docker/db | Runtime image copies only the binary while the binary defaults to a missing `migrations` directory. |
 | F-1228 | high | SSE streams are cut off after 30 seconds by the API server write timeout | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016 | open | api/streaming/ops | R1 tip stream closes at elapsed 30s despite 5s events and 15s heartbeats. |
@@ -119,7 +125,7 @@ Recent waves closed by code (chronological):
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | fixed | platform/auth/data-quality | Current `HEAD` adds a Redis-SETNX-backed `EmailLocker` seam wired through `dashboardauth.Config`. The losing callback short-circuits before `Account.Create`, polls briefly for the winner's user, and never inserts a speculative-account row. Redis-less deployments fall back to the Suspend-on-conflict path as defence in depth. Tests: in-memory locker preempts loser (no speculative Account row created) + miniredis adapter (acquire/release round-trip + TTL expiry). `signup:lock:*` added to the Redis ACL allow-list. |
 | F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | open | dashboard/docs/product | Free users are told the default is 1000/min and every user can submit 100000/min, but current backend persists Free keys at 60/min and other tiers at smaller caps unless the tier allows more. |
 | F-1257 | medium | The attempted 25-active-key/account quota fix still uses a raceable unlocked count CTE | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103 | open | platform/keys | The workspace moved quota handling into `APIKeyStore.Create`, but the new `WITH active_count ... INSERT ... WHERE n < max` has the same MVCC snapshot race already preserved for webhooks under `F-1248`. |
-| F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | open | api/ops/runtime | The workspace now omits the middleware counter when Redis is absent, but still passes `UsageReader: usageReaderAdapter{c:nil}` into the server; `/v1/account/usage` then dereferences the nil inner counter on `Read`. |
+| F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | fixed | api/ops/runtime | Wave 33 (2026-05-12) replaces the unconditional `UsageReader: usageReaderAdapter{c: usageCounter}` with `UsageReader: usageReaderOrNil(usageCounter)`. The helper returns a typed-nil v1.UsageReader when the counter is nil; the `/v1/account/usage` handler already short-circuits on `usageReader == nil` with an empty list, so Redis-less deployments degrade cleanly instead of nil-deref'ing on `Read`. |
 | F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs | XFI-0051; EV-0095; EV-0103 | open | docs/api/product | The source OpenAPI text now describes live Redis-backed usage, but generated reference YAML, Postman, API-design docs, architecture inventory, and the handler comment remain stale; the new source text also incorrectly says Redis absence is reflected on `/v1/healthz` checks. |
 | F-1260 | high | `aggregate.min_usd_volume` still evaluates discarded pre-filter volume, so thin survivor windows can publish above a manipulation floor they do not actually meet | Aggregator stablecoin/USD-volume path; class/outlier filtering; VWAP publish gate | XFI-0052; EV-0105 | fixed | aggregate/market-data | Current `HEAD` recomputes USD volume across the post-class/post-outlier survivor slice via [survivorUSDVolume] before invoking [dropForMinUSDVolume], with regression test `class filter gutted window: drops despite pre-filter clearing threshold`. |
 
@@ -152,7 +158,7 @@ Reproduction or reasoning path:
 Remediation direction:
 ```
 
-### F-1201. R1 exposes internal storage, observability, and admin services publicly
+### F-1201. Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains
 
 Severity: `critical`
 
@@ -190,11 +196,18 @@ However `/etc/nftables.conf` explicitly permits
 live firewall shape diverges from the repo template comments stating
 captive cores dial out and do not accept inbound.
 
-Impact: Public exposure of storage, metrics, logs, admin surfaces, and infrastructure fingerprints creates immediate attack surface and data disclosure risk.
+Impact: The highest-risk storage/observability/admin exposure is materially
+reduced versus the initial pass, but live firewall semantics still diverge
+from source intent around captive-core ingress. Leaving that unresolved keeps
+an undocumented public listener in the production attack surface and weakens
+trust in firewall-as-code drift control.
 
-Remediation direction: Apply/verify the nftables role, bind internal daemons to loopback/private interfaces where possible, close public ports at host/provider firewall, and add a pre-launch external port probe that fails on unexpected listeners.
+Remediation direction: keep the now-live default-drop policy for internal
+services, then either remove public `11726/tcp` or update the source firewall
+contract, runbooks, and justification so the listener is explicitly reviewed
+as intentional. Preserve the external port probe as a release gate.
 
-### F-1207. Web apps pin vulnerable Next.js and lack pnpm advisory gates
+### F-1207. Hosted GitHub dependency-alert controls remain disabled after the web Next.js remediation wave
 
 Severity: `critical`
 
@@ -230,7 +243,10 @@ one moderate advisory rather than any high/critical result. The remaining
 open portion is hosted GitHub control posture: vulnerability alerts and
 Dependabot alerts are still disabled at repository level.
 
-Remediation direction: upgrade `next`/`eslint-config-next` across all web apps to a patched compatible release, regenerate lockfiles, add Dependabot npm entries for each web app, and enable GitHub vulnerability/Dependabot alerts.
+Remediation direction: keep the patched Next.js baseline and web Dependabot
+coverage in place, enable hosted GitHub vulnerability alerts and Dependabot
+alerts, and decide whether `eslint-config-next@15.0.4` should be moved with
+the current `next@15.5.18` baseline as part of dependency hygiene.
 
 ### F-1211. Status-page incident workflow docs point to removed implementations
 
@@ -288,11 +304,11 @@ Current-head reconciliation: `dashboardkeys.HandleCreate` now clamps the request
 
 Remediation direction: retained for audit history. The backend clamp and regression tests now close this finding's abuse path; residual dashboard/OpenAPI messaging cleanup lives under `F-1256`.
 
-### F-1213. Stablecoin fiat proxy undercounts Stellar USD volume by 10x in the min-volume manipulation gate
+### F-1213. Stablecoin fiat proxy undercounted Stellar USD volume by 10x in the min-volume manipulation gate
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -309,16 +325,34 @@ Evidence:
 - `XFI-0009`
 - `EV-0024`
 - `R1-0011`
+- `EV-0116`
 
 Expected: when `XLM/fiat:USD` expands to on-chain classic/SAC USD-pegged pairs, the min-volume manipulation gate should compute USD volume using the same decimal convention as the quote asset or the stored `trades.usd_volume` value.
 
-Observed: `ExpandTargetPairWithClassicPegs` appends classic USD-pegged assets from `[trades].usd_pegged_classic_assets`; `fetchForTarget` rewrites those trades to `fiat:USD`; then `windowUSDVolume` divides every `QuoteAmount` by `100_000_000`. The storage path separately documents and implements classic/SAC USD pegs as 7-decimal values. R1 has proxy expansion enabled and Circle USDC configured, but sets `min_usd_volume = 0`.
+Observed during the initial pass: `ExpandTargetPairWithClassicPegs`
+appended classic USD-pegged assets from
+`[trades].usd_pegged_classic_assets`; `fetchForTarget` rewrote those
+trades to `fiat:USD`; then `windowUSDVolume` divided every `QuoteAmount`
+by `100_000_000`. The storage path separately documented and implemented
+classic/SAC USD pegs as 7-decimal values. R1 had proxy expansion enabled
+and Circle USDC configured, but set `min_usd_volume = 0`.
+
+Current-head reconciliation: `fetchForTarget` now computes USD totals and
+per-trade USD maps against the source pair's quote-decimal convention before
+rewriting onto the fiat target. `usdVolumeForPairPerTrade` uses 7 decimals
+for configured classic USD pegs and 8 decimals for fiat-USD rows, and
+`TestTick_MinUSDVolumeFilter/classic USD-pegged proxy: $10k publishes under
+min=10000` pins the repaired path. R1 still sets `min_usd_volume = 0`, but
+its inline comment now frames that as an operator posture for an on-chain-only
+deployment rather than a correctness workaround for this undercount.
 
 Impact: if the default `aggregate.min_usd_volume = 10000` is enabled with Stellar USD-pegged proxy expansion, a real $10,000 classic-USDC window is treated as $1,000 and dropped. R1 currently avoids the false negative by disabling the threshold entirely, removing a launch-readiness manipulation defense.
 
 Reproduction or reasoning path: a Stellar XLM/USDC trade with `quote_amount=100_000_000_000` represents $10,000 at 7 decimals. `windowUSDVolume` divides that by `1e8` and returns $1,000. The same quote asset is treated as 7-decimal by `USDVolumeQuoteSpec.QuoteUSDPegInfo` and `tradeUSDVolume`.
 
-Remediation direction: make the min-volume gate operate on normalized USD volume, preferably from `trades.usd_volume` or an aggregation query that already carries quote-decimal metadata. If raw trades remain the input, annotate each proxy-expanded trade with the quote scale before rewriting to `fiat:USD`, and add tests covering classic/SAC USDC plus external `crypto:USDC` in the same fiat-USD window.
+Remediation direction: retained for audit history. The arithmetic bug is
+fixed in current source with targeted regression coverage; any future change
+to R1's `min_usd_volume` posture is an operator/policy decision, not this bug.
 
 ### F-1214. `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced
 
@@ -586,7 +620,7 @@ Impact: during a production rollback, the documented fallback path can fail at t
 
 Remediation direction: update rollback docs to use the workflow as primary and the actual `.prev-<tag>` backup layout as fallback, including sidecar updates and post-rollback health checks.
 
-### F-1223. R1 runs a stale Caddyfile that exposes `/metrics` publicly and collapses Cloudflare client IPs to edge IPs
+### F-1223. R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs
 
 Severity: `high`
 
@@ -624,7 +658,9 @@ returns `HTTP/2 404`.
 
 Impact: anonymous clients can scrape internal operational metrics and route counters; behind Cloudflare, per-IP logging/rate limiting sees Cloudflare edge IPs rather than customers, so unrelated users on the same edge can collide in anonymous buckets.
 
-Remediation direction: deploy the current source Caddyfile or equivalent immediately; verify `/metrics` returns 404 externally, `{client_ip}` reaches the API from Cloudflare, and direct-origin requests cannot spoof client identity.
+Remediation direction: retained for audit history. The concrete live
+exposure now verifies closed on R1; remaining drift-detection or checksum
+automation belongs in follow-up hardening rather than this finding.
 
 ### F-1224. Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs
 
@@ -655,7 +691,7 @@ Impact: new-login/new-country security signals and account audit data are inaccu
 
 Remediation direction: replace dashboard auth's local helper with `middleware.RemoteIPFrom(r)` or pass the resolved IP through a small shared helper; add tests where `RemoteAddr=127.0.0.1` and trusted XFF carries the client IP.
 
-### F-1225. `/v1/history/since-inception` returns empty XLM/USD history while chart and direct USDC history have data
+### F-1225. Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated
 
 Severity: `high`
 
@@ -676,14 +712,33 @@ Evidence:
 - `XFI-0017`
 - `EV-0035`
 - `R1-0015`
+- `EV-0116`
 
 Expected: historical USD price surfaces should agree on the declared Stellar USD proxy policy, or return an explicit unsupported/fallback-missing signal.
 
-Observed: `handleHistorySinceInception` queries the literal CAGG pair and returns it directly. It does not apply the stablecoin fallback that chart, price, VWAP, TWAP, and OHLC paths use for `X/fiat:USD`. On R1, `native/fiat:USD` since-inception returned no points while the chart endpoint returned XLM/USD daily points and direct `native/USDC-GA5Z...` history returned populated points.
+Observed during the initial pass: `handleHistorySinceInception` queried the
+literal CAGG pair and returned it directly. It did not apply the stablecoin
+fallback that chart, price, VWAP, TWAP, and OHLC paths use for
+`X/fiat:USD`. On R1, `native/fiat:USD` since-inception returned no points
+while the chart endpoint returned XLM/USD daily points and direct
+`native/USDC-GA5Z...` history returned populated points.
+
+Current-head reconciliation: source now calls
+`historySinceInceptionStablecoinFallback` when the literal `fiat:USD`
+series is empty, and `TestHistorySinceInception_StablecoinFallback` pins the
+behavior. Live R1 still reproduces the user-visible defect: the public
+`native/fiat:USD` since-inception call returns zero points, while direct
+Circle-USDC history returns nine populated daily rows. `/etc/ratesengine.toml`
+shows `enable_stablecoin_fiat_proxy = true` plus the Circle USDC classic peg,
+so the remaining issue is source/live runtime drift or an unverified deployed
+path, not a missing source implementation.
 
 Impact: clients building long-range price charts from the documented since-inception API see no XLM/USD history even though the system has the data under the configured Stellar USDC market. This is a visible product parity failure against CoinGecko/CMC-style historical chart APIs.
 
-Remediation direction: share the chart stablecoin fallback with since-inception history, preserve `flags.triangulated=true` when it fires, and add tests comparing direct peg history with `fiat:USD` history for the same asset/granularity.
+Remediation direction: deploy or otherwise reconcile the live API path so R1
+serves the already-implemented fallback, then verify public
+`native/fiat:USD` since-inception history matches the direct Circle-USDC
+series under the configured peg list.
 
 ### F-1226. Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced at runtime
 
