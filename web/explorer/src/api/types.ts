@@ -260,6 +260,14 @@ export interface paths {
                     cursor?: components["parameters"]["Cursor"];
                     limit?: components["parameters"]["Limit"];
                     /**
+                     * @description Filter the listing to assets minted by the supplied
+                     *     issuer G-strkey. Sourced from the same ListCoinsExt path
+                     *     `/v1/coins?issuer=` uses; rows include the full coin-
+                     *     overlay shape (price_usd / volume_24h_usd / change_*_pct
+                     *     / etc) when a CoinsReader is wired.
+                     */
+                    issuer?: string;
+                    /**
                      * @description Restrict to assets on the named network. `stellar` (or
                      *     omitted) returns the indexer's full Stellar-network
                      *     catalogue. Off-Stellar networks (`ethereum`, `solana`,
@@ -1351,6 +1359,15 @@ export interface paths {
                     quote?: components["parameters"]["Quote"];
                     timeframe?: components["parameters"]["Timeframe"];
                     granularity?: components["parameters"]["Granularity"];
+                    /**
+                     * @description Series type. `vwap` (default) returns the price series.
+                     *     `twap` is reserved for forward compatibility (currently
+                     *     400). `market_cap` returns a USD-denominated market-cap
+                     *     series for fiat:* base assets (M2 from the verified-
+                     *     currency catalogue × daily FX rate from fx_quotes). Crypto
+                     *     market_cap is deferred until the market_cap_1d CAGG ships
+                     *     (501 today).
+                     */
                     price_type?: components["parameters"]["PriceType"];
                 };
                 header?: never;
@@ -1920,126 +1937,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/currencies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * World fiat currencies — USD-base rates.
-         * @description Returns the latest USD-base rates for every supported
-         *     ISO-4217 currency. Backed by an in-memory cache the
-         *     forex worker refreshes hourly from the upstream
-         *     currency-api feed. Each row carries
-         *     `change_7d_pct` computed server-side; `?include=sparkline`
-         *     attaches the per-day inverse-USD series to every row for
-         *     listing-side mini charts.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    /**
-                     * @description Optional. Cap the returned currencies. Must be 1-500
-                     *     inclusive; out-of-range or non-integer input returns
-                     *     400 `type=https://api.ratesengine.net/errors/invalid-limit`.
-                     */
-                    limit?: number;
-                    /** @description Comma-separated. `sparkline` attaches `history_7d_rates`. */
-                    include?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description CurrenciesPayload — currencies + published_at + fetched_at + source. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            data?: Record<string, never>;
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/currencies/{ticker}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Per-currency detail with cross-rates + 7d history.
-         * @description Returns the requested currency's USD-base rate, inverse,
-         *     full cross-rates map (1 unit of ticker → every other
-         *     supported currency, derived from the cached USD-base
-         *     snapshot), and the 7d daily history series.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description ISO-4217 ticker (case-insensitive); e.g. EUR, JPY.
-                     * @example EUR
-                     */
-                    ticker: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description CurrencyDetail. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            data?: Record<string, never>;
-                        };
-                    };
-                };
-                /** @description Ticker not in the current snapshot. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Cache warming up (no snapshot yet). */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/markets": {
         parameters: {
             query?: never;
@@ -2276,300 +2173,6 @@ export interface paths {
                                 /** Format: int64 */
                                 observation_count?: number;
                             }[];
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/coins": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Asset directory — every classic asset observed on Stellar.
-         * @description Auto-populated registry of every classic asset observed in
-         *     any trade or ChangeTrust op. Each row joins the latest
-         *     5-minute stats (`classic_asset_stats_5m`) for volume +
-         *     outstanding supply and the latest 1-minute price
-         *     (`prices_1m` against `fiat:USD`) for VWAP — `price_usd`,
-         *     `volume_24h_usd`, `market_cap_usd`, and
-         *     `circulating_supply` are emitted as JSON nulls when the
-         *     aggregator hasn't yet produced a value (newly-observed
-         *     asset, no off-chain peg, etc.).
-         *
-         *     The response is paginated via keyset cursor: the previous
-         *     response's `next_cursor` is passed back as `?cursor=…` to
-         *     fetch the next page. Empty `next_cursor` means no more
-         *     pages.
-         *
-         *     Powers the explorer's `/assets` directory.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Max rows to return; 1-500, default 100. */
-                    limit?: number;
-                    /**
-                     * @description Keyset cursor returned by a previous response's
-                     *     `next_cursor`. Empty for the first page; iterate while
-                     *     non-empty.
-                     */
-                    cursor?: string;
-                    /**
-                     * @description Restrict the listing to assets minted by this G-strkey.
-                     *     Used by the explorer to deep-link from `/issuers` into
-                     *     "assets by this issuer."
-                     */
-                    issuer?: string;
-                    /**
-                     * @description Case-insensitive substring filter against `code`, `slug`,
-                     *     and `issuer_g_strkey`. Used by the explorer's `/assets`
-                     *     search box so a 440K-asset directory is searchable
-                     *     without paging through every cursor. Limited to 64
-                     *     characters.
-                     */
-                    q?: string;
-                    /**
-                     * @description Sort order. `observation_count_desc` (default) ranks
-                     *     by all-time activity. `volume_24h_usd_desc` surfaces
-                     *     highest-volume assets first (NULLS LAST). Cursor
-                     *     format adapts to the active ordering.
-                     */
-                    order_by?: "observation_count_desc" | "volume_24h_usd_desc";
-                    /**
-                     * @description Comma-separated opt-ins.
-                     *     `sparkline` attaches `price_history_24h` (24 hourly
-                     *     samples) per row. `ath` attaches `ath: { usd, at }`
-                     *     per row, batched in a single round trip. Default
-                     *     (no `include`) keeps the listing payload compact.
-                     */
-                    include?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Page of asset entries + next-cursor. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        /**
-                         * @example {
-                         *       "coins": [
-                         *         {
-                         *           "slug": "USDC",
-                         *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "code": "USDC",
-                         *           "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                         *           "first_seen_ledger": 50457424,
-                         *           "last_seen_ledger": 62413938,
-                         *           "observation_count": 41610618,
-                         *           "price_usd": "1.00012",
-                         *           "volume_24h_usd": "573830.99",
-                         *           "market_cap_usd": "812345678.45",
-                         *           "circulating_supply": "812245567.21"
-                         *         }
-                         *       ],
-                         *       "next_cursor": "32406192:yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
-                         *       "limit": 100
-                         *     }
-                         */
-                        "application/json": {
-                            coins: {
-                                slug: string;
-                                asset_id: string;
-                                code: string;
-                                issuer: string;
-                                first_seen_ledger: number;
-                                last_seen_ledger: number;
-                                /** Format: int64 */
-                                observation_count: number;
-                                /** @description Decimal string; null when no peg. */
-                                price_usd?: string | null;
-                                volume_24h_usd?: string | null;
-                                /** @description price_usd × circulating_supply when both present. */
-                                market_cap_usd?: string | null;
-                                /** @description Outstanding supply (canonical units). */
-                                circulating_supply?: string | null;
-                                /**
-                                 * @description Trailing-1h price change as a signed
-                                 *     percentage with two fractional digits.
-                                 *     Null when no current price or no
-                                 *     1h-ago prices_1m bucket within ±5min.
-                                 */
-                                change_1h_pct?: string | null;
-                                /**
-                                 * @description Trailing-24h price change as a signed
-                                 *     percentage with two fractional digits
-                                 *     (e.g. "+1.27", "-0.05", "0.00"). Null
-                                 *     when no current price or no
-                                 *     24h-ago prices_1m bucket within ±30min.
-                                 */
-                                change_24h_pct?: string | null;
-                                /**
-                                 * @description Trailing-7d price change as a signed
-                                 *     percentage with two fractional digits.
-                                 *     Null when no current price or no
-                                 *     7d-ago prices_1m bucket within ±2h.
-                                 */
-                                change_7d_pct?: string | null;
-                                /**
-                                 * @description Non-empty when the asset's `issuer`
-                                 *     G-strkey appears on the curated scam
-                                 *     directory sourced from
-                                 *     stellar.expert. Same field surfaced on
-                                 *     `/v1/issuers/{g_strkey}.scam_reason`;
-                                 *     duplicated here so the asset detail
-                                 *     page can render a warning at first
-                                 *     paint without a second fetch. Always
-                                 *     omitted for native XLM (no issuer) and
-                                 *     for issuers with no scam record.
-                                 */
-                                issuer_scam_reason?: string;
-                            }[];
-                            /** @description Empty when no more pages. */
-                            next_cursor?: string;
-                            limit: number;
-                        };
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                429: components["responses"]["RateLimited"];
-                500: components["responses"]["InternalError"];
-                503: components["responses"]["ServiceUnavailable"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/coins/{slug}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Single asset by slug.
-         * @description Returns one row of `/coins` shape, looked up by URL-safe
-         *     `slug` (the slug column from `classic_assets`, falling
-         *     back to `code` when slug is null). Used by the explorer
-         *     asset-detail page so a deep link doesn't need to scan
-         *     the top-N listing first.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description URL-safe asset slug. Unlike the `/v1/price` and `/v1/ohlc`
-                     *     endpoints which require strict canonical IDs, the slug
-                     *     handler accepts the short symbol forms (`USDC`, `XLM`,
-                     *     `AQUA`) and special-cases `XLM` to native. Defaults to
-                     *     `XLM` for the Scalar default-test request.
-                     * @example XLM
-                     */
-                    slug: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description One asset row. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            slug: string;
-                            asset_id: string;
-                            code: string;
-                            issuer: string;
-                            first_seen_ledger: number;
-                            last_seen_ledger: number;
-                            /** Format: int64 */
-                            observation_count: number;
-                            price_usd?: string | null;
-                            volume_24h_usd?: string | null;
-                            market_cap_usd?: string | null;
-                            circulating_supply?: string | null;
-                            /**
-                             * @description Trailing-1h price change as a signed
-                             *     percentage with two fractional digits.
-                             */
-                            change_1h_pct?: string | null;
-                            /**
-                             * @description Trailing-24h price change as a signed
-                             *     percentage with two fractional digits.
-                             */
-                            change_24h_pct?: string | null;
-                            /**
-                             * @description Trailing-7d price change as a signed
-                             *     percentage with two fractional digits.
-                             */
-                            change_7d_pct?: string | null;
-                            /**
-                             * @description Count of distinct (base_asset, quote_asset)
-                             *     pairs the asset participated in over the
-                             *     trailing 24h. 0 when the asset went silent
-                             *     in that window. Null only on lookup error.
-                             */
-                            markets_count?: number | null;
-                            /**
-                             * @description Count of trades the asset participated in
-                             *     (as base OR quote) over the trailing 24h.
-                             *     Read from the `trades` hypertable directly —
-                             *     complements the all-time `observation_count`
-                             *     with a "right now" activity figure. Null
-                             *     only on lookup error.
-                             */
-                            trade_count_24h?: number | null;
-                            /**
-                             * @description All-time-high USD price + day it was set.
-                             *     Sourced from `prices_1d` filtered to
-                             *     USD-denominated quotes (USDC, USDT,
-                             *     `fiat:USD`). Triangulated paths are excluded —
-                             *     a single bad XLM/USD reading on a thin day
-                             *     could fabricate an ATH. Null when the asset
-                             *     has no USD-quoted history.
-                             */
-                            ath?: {
-                                /** @description ATH price as a fixed-point string. */
-                                usd: string;
-                                /**
-                                 * Format: date-time
-                                 * @description RFC-3339 day-bucket the high was set
-                                 *     (00:00:00Z snapped — daily granularity).
-                                 */
-                                at: string;
-                            } | null;
                         };
                     };
                 };
@@ -5494,7 +5097,16 @@ export interface components {
         Base: string;
         From: string;
         To: string;
-        PriceType: "vwap" | "twap";
+        /**
+         * @description Series type. `vwap` (default) returns the price series.
+         *     `twap` is reserved for forward compatibility (currently
+         *     400). `market_cap` returns a USD-denominated market-cap
+         *     series for fiat:* base assets (M2 from the verified-
+         *     currency catalogue × daily FX rate from fx_quotes). Crypto
+         *     market_cap is deferred until the market_cap_1d CAGG ships
+         *     (501 today).
+         */
+        PriceType: "vwap" | "twap" | "market_cap";
         TypeFilter: "native" | "classic" | "soroban" | "fiat" | "any";
         CodeFilter: string;
         IssuerFilter: string;

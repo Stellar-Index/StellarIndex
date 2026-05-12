@@ -184,6 +184,44 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
+        - name: issuer
+          in: query
+          required: false
+          description: |
+            Filter the listing to assets minted by the supplied
+            issuer G-strkey. Sourced from the same ListCoinsExt path
+            `/v1/coins?issuer=` uses; rows include the full coin-
+            overlay shape (price_usd / volume_24h_usd / change_*_pct
+            / etc) when a CoinsReader is wired.
+          schema:
+            type: string
+            pattern: "^G[A-Z2-7]{55}$"
+        - name: network
+          in: query
+          required: false
+          description: |
+            Restrict to assets on the named network. `stellar` (or
+            omitted) returns the indexer's full Stellar-network
+            catalogue. Off-Stellar networks (`ethereum`, `solana`,
+            `polygon`, `base`, `arbitrum`, `tron`, `bitcoin`, `bsc`,
+            `avalanche`, `xrpl`) source from the verified-currency
+            catalogue; rows are returned with `type: external` and
+            `asset_id` shaped as `<network>:<contract>`. Drives the
+            `/blockchains/{network}` click-through in the explorer.
+          schema:
+            type: string
+            enum:
+              - stellar
+              - ethereum
+              - solana
+              - polygon
+              - base
+              - arbitrum
+              - tron
+              - bitcoin
+              - bsc
+              - avalanche
+              - xrpl
       responses:
         "200":
           description: Page of assets.
@@ -195,18 +233,124 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /assets/verified:
+    get:
+      tags: [assets]
+      summary: Verified-currency catalogue listing.
+      description: |
+        Returns every entry in the binary's verified-currency
+        catalogue (`internal/currency/data/seed.yaml`) — the
+        hand-curated set of cross-chain currencies (USDC, EURC,
+        AQUA, …) that the API surfaces with a "verified" badge.
+
+        Distinct from `/v1/assets` which lists every Stellar-indexed
+        asset (verified or not). This endpoint is identity-only —
+        no price block, no per-currency `network_count` × price
+        round-trips — so it's a cheap directory call suitable for
+        building a verified-currencies section on a listing page.
+
+        Order matches the seed-file order (deterministic).
+      responses:
+        "200":
+          description: List of verified-currency directory entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerifiedCurrencyListEnvelope" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /assets/{asset_id}:
     get:
       tags: [assets]
-      summary: Asset detail.
+      summary: Asset detail — Stellar-network view OR cross-chain global view.
+      description: |
+        Dispatch depends on the `asset_id` path parameter:
+
+        - **Verified-currency slug** (e.g. `usdc`, `eurc`, `aqua`) →
+          returns the cross-chain `GlobalAssetView` shape: ticker, slug,
+          name, verified-issuer attribution, current USD price + price
+          authority, plus a `networks[]` list with one entry per
+          network the currency is issued on. Stellar network entries
+          carry a `deep_link` to the per-Stellar-asset view; non-
+          Stellar entries carry contract + external_link. See R-018
+          Phase 1.4a.
+        - **Canonical Stellar asset_id** (`native`, `CODE-G…`,
+          `C…` SAC contract, `fiat:CODE`) → returns the existing
+          `Asset` shape (per-Stellar-network detail with SEP-1
+          overlay + F2 supply fields).
+
+        Slugs match a hand-curated catalogue
+        (`internal/currency/data/seed.yaml`); unknown slugs fall
+        through to canonical parsing and return 400 if no canonical
+        form matches.
       parameters:
         - { $ref: "#/components/parameters/AssetIdPath" }
       responses:
         "200":
-          description: Asset + metadata.
+          description: Asset + metadata. Shape depends on whether `asset_id` is a slug or a canonical id.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AssetEnvelope" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AssetEnvelope"
+                  - $ref: "#/components/schemas/GlobalAssetEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /assets/{asset_id}/{network}:
+    get:
+      tags: [assets]
+      summary: Verified-currency per-network drill-down.
+      description: |
+        Companion to the global view at `/v1/assets/{slug}`. When
+        `{asset_id}` is a verified-currency catalogue slug and
+        `{network}` matches a network the currency is issued on,
+        the handler dispatches:
+
+        - **Stellar entries** → 303 redirect to
+          `/v1/assets/{canonical_asset_id}` so consumers get the
+          full `AssetDetail` shape (SEP-1 overlay, F2 supply
+          fields, `unverified_warning` flag).
+        - **Non-Stellar entries** → 200 `PerNetworkAssetView` with
+          the catalogue's contract address + external link.
+
+        404 when either the slug or the network isn't in the
+        catalogue. R-018 assets-unification step 3.
+
+        Note: the more-specific `/v1/assets/{asset_id}/metadata`
+        path wins via Go 1.22+ mux precedence (literal beats
+        wildcard).
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+        - name: network
+          in: path
+          required: true
+          description: |
+            Network identifier (lowercase): `stellar`, `ethereum`,
+            `solana`, `polygon`, `base`, `arbitrum`, `bsc`,
+            `avalanche`, `tron`, `bitcoin`, `xrpl`, `cardano`,
+            `dogecoin`, `polkadot`. Must match a network entry on
+            the catalogue's `{asset_id}` slug.
+          schema:
+            type: string
+            example: "stellar"
+      responses:
+        "200":
+          description: Non-Stellar network drill-down — identity + contract address.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/PerNetworkAssetView" }
+                    required: [data]
+        "303":
+          description: Stellar entry — see Location header for the canonical asset_id view.
+          headers:
+            Location:
+              description: Path to the `/v1/assets/{canonical_asset_id}` view.
+              schema: { type: string }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /assets/{asset_id}/metadata:
@@ -688,11 +832,20 @@ paths:
         server's per-request cap (10000) and the bar reflects only
         the chronologically-first N; narrow the window or wait for
         CAGG-backed endpoints.
+
+        High/Low have no statistical robustness — a single dust
+        trade can dominate. The `outlier_sigma` filter (default 4σ)
+        drops outliers before bar computation; pass `outlier_sigma=0`
+        to opt into raw extremes.
       parameters:
         - { $ref: "#/components/parameters/Base" }
         - { $ref: "#/components/parameters/Quote" }
         - { $ref: "#/components/parameters/From" }
         - { $ref: "#/components/parameters/To" }
+        - name: outlier_sigma
+          in: query
+          schema: { type: number, minimum: 0, default: 4 }
+          description: "Drop trades > N σ from window mean before computing the bar. Default 4σ. Pass 0 to disable (raw extremes, including dust)."
       responses:
         "200":
           description: Single OHLC bar.
@@ -952,74 +1105,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OracleLatestEnvelope" }
 
-  /currencies:
-    get:
-      tags: [markets]
-      summary: World fiat currencies — USD-base rates.
-      description: |
-        Returns the latest USD-base rates for every supported
-        ISO-4217 currency. Backed by an in-memory cache the
-        forex worker refreshes hourly from the upstream
-        currency-api feed. Each row carries
-        `change_7d_pct` computed server-side; `?include=sparkline`
-        attaches the per-day inverse-USD series to every row for
-        listing-side mini charts.
-      parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 500 }
-          description: |
-            Optional. Cap the returned currencies. Must be 1-500
-            inclusive; out-of-range or non-integer input returns
-            400 `type=https://api.ratesengine.net/errors/invalid-limit`.
-        - name: include
-          in: query
-          schema: { type: string }
-          description: "Comma-separated. `sparkline` attaches `history_7d_rates`."
-      responses:
-        "200":
-          description: CurrenciesPayload — currencies + published_at + fetched_at + source.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-
-  /currencies/{ticker}:
-    get:
-      tags: [markets]
-      summary: Per-currency detail with cross-rates + 7d history.
-      description: |
-        Returns the requested currency's USD-base rate, inverse,
-        full cross-rates map (1 unit of ticker → every other
-        supported currency, derived from the cached USD-base
-        snapshot), and the 7d daily history series.
-      parameters:
-        - name: ticker
-          in: path
-          required: true
-          schema:
-            type: string
-            example: EUR
-          example: EUR
-          description: "ISO-4217 ticker (case-insensitive); e.g. EUR, JPY."
-      responses:
-        "200":
-          description: CurrencyDetail.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-        "404":
-          description: Ticker not in the current snapshot.
-        "503":
-          description: Cache warming up (no snapshot yet).
-
   /markets:
     get:
       tags: [markets]
@@ -1045,18 +1130,25 @@ paths:
           in: query
           required: false
           description: |
-            Sort order. `pair` (default) returns markets in lex
-            order of `<base>|<quote>` — stable for paginating the
-            full set. `volume_24h_usd_desc` orders by 24h USD
-            volume desc (NULLS LAST), then by `<base>|<quote>`
-            for ties — surfaces the high-activity pairs first
-            without paginating through ~5K alphabetic dust pairs.
+            Sort order. `volume_24h_usd_desc` (default) orders by
+            24h USD volume desc (NULLS LAST), then by
+            `<base>|<quote>` for ties — surfaces the high-activity
+            pairs first without paginating through ~5K alphabetic
+            dust pairs.
+
+            `pair` returns markets in lex order of
+            `<base>|<quote>` — stable for paginating the full set,
+            but surfaces spam-token pairs (`0-…`, `0TAX-…`) at the
+            top of the listing. Pre-2026-05-10 this was the
+            default; we kept it as an explicit option so callers
+            paginating the entire universe of pairs aren't broken.
+
             Cursor format differs per ordering; keep using the
             cursor returned by the previous response.
           schema:
             type: string
             enum: [pair, volume_24h_usd_desc]
-            default: pair
+            default: volume_24h_usd_desc
         - name: source
           in: query
           required: false
@@ -1207,324 +1299,6 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
-  /coins:
-    get:
-      tags: [meta]
-      summary: Asset directory — every classic asset observed on Stellar.
-      description: |
-        Auto-populated registry of every classic asset observed in
-        any trade or ChangeTrust op. Each row joins the latest
-        5-minute stats (`classic_asset_stats_5m`) for volume +
-        outstanding supply and the latest 1-minute price
-        (`prices_1m` against `fiat:USD`) for VWAP — `price_usd`,
-        `volume_24h_usd`, `market_cap_usd`, and
-        `circulating_supply` are emitted as JSON nulls when the
-        aggregator hasn't yet produced a value (newly-observed
-        asset, no off-chain peg, etc.).
-
-        The response is paginated via keyset cursor: the previous
-        response's `next_cursor` is passed back as `?cursor=…` to
-        fetch the next page. Empty `next_cursor` means no more
-        pages.
-
-        Powers the explorer's `/assets` directory.
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          description: Max rows to return; 1-500, default 100.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 100
-        - name: cursor
-          in: query
-          required: false
-          description: |
-            Keyset cursor returned by a previous response's
-            `next_cursor`. Empty for the first page; iterate while
-            non-empty.
-          schema:
-            type: string
-        - name: issuer
-          in: query
-          required: false
-          description: |
-            Restrict the listing to assets minted by this G-strkey.
-            Used by the explorer to deep-link from `/issuers` into
-            "assets by this issuer."
-          schema:
-            type: string
-        - name: q
-          in: query
-          required: false
-          description: |
-            Case-insensitive substring filter against `code`, `slug`,
-            and `issuer_g_strkey`. Used by the explorer's `/assets`
-            search box so a 440K-asset directory is searchable
-            without paging through every cursor. Limited to 64
-            characters.
-          schema:
-            type: string
-            maxLength: 64
-        - name: order_by
-          in: query
-          required: false
-          description: |
-            Sort order. `observation_count_desc` (default) ranks
-            by all-time activity. `volume_24h_usd_desc` surfaces
-            highest-volume assets first (NULLS LAST). Cursor
-            format adapts to the active ordering.
-          schema:
-            type: string
-            enum: [observation_count_desc, volume_24h_usd_desc]
-            default: observation_count_desc
-        - name: include
-          in: query
-          required: false
-          description: |
-            Comma-separated opt-ins.
-            `sparkline` attaches `price_history_24h` (24 hourly
-            samples) per row. `ath` attaches `ath: { usd, at }`
-            per row, batched in a single round trip. Default
-            (no `include`) keeps the listing payload compact.
-          schema:
-            type: string
-            example: "sparkline,ath"
-      responses:
-        "200":
-          description: Page of asset entries + next-cursor.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [coins, limit]
-                properties:
-                  coins:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - slug
-                        - asset_id
-                        - code
-                        - issuer
-                        - first_seen_ledger
-                        - last_seen_ledger
-                        - observation_count
-                      properties:
-                        slug: { type: string }
-                        asset_id: { type: string }
-                        code: { type: string }
-                        issuer: { type: string }
-                        first_seen_ledger: { type: integer }
-                        last_seen_ledger: { type: integer }
-                        observation_count: { type: integer, format: int64 }
-                        price_usd:
-                          type: string
-                          nullable: true
-                          description: Decimal string; null when no peg.
-                        volume_24h_usd:
-                          type: string
-                          nullable: true
-                        market_cap_usd:
-                          type: string
-                          nullable: true
-                          description: price_usd × circulating_supply when both present.
-                        circulating_supply:
-                          type: string
-                          nullable: true
-                          description: Outstanding supply (canonical units).
-                        change_1h_pct:
-                          type: string
-                          nullable: true
-                          description: |
-                            Trailing-1h price change as a signed
-                            percentage with two fractional digits.
-                            Null when no current price or no
-                            1h-ago prices_1m bucket within ±5min.
-                        change_24h_pct:
-                          type: string
-                          nullable: true
-                          description: |
-                            Trailing-24h price change as a signed
-                            percentage with two fractional digits
-                            (e.g. "+1.27", "-0.05", "0.00"). Null
-                            when no current price or no
-                            24h-ago prices_1m bucket within ±30min.
-                        change_7d_pct:
-                          type: string
-                          nullable: true
-                          description: |
-                            Trailing-7d price change as a signed
-                            percentage with two fractional digits.
-                            Null when no current price or no
-                            7d-ago prices_1m bucket within ±2h.
-                        issuer_scam_reason:
-                          type: string
-                          description: |
-                            Non-empty when the asset's `issuer`
-                            G-strkey appears on the curated scam
-                            directory sourced from
-                            stellar.expert. Same field surfaced on
-                            `/v1/issuers/{g_strkey}.scam_reason`;
-                            duplicated here so the asset detail
-                            page can render a warning at first
-                            paint without a second fetch. Always
-                            omitted for native XLM (no issuer) and
-                            for issuers with no scam record.
-                  next_cursor:
-                    type: string
-                    description: Empty when no more pages.
-                  limit:
-                    type: integer
-              example:
-                data:
-                  coins:
-                    - slug: USDC
-                      asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                      code: USDC
-                      issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                      first_seen_ledger: 50457424
-                      last_seen_ledger: 62413938
-                      observation_count: 41610618
-                      price_usd: "1.00012"
-                      volume_24h_usd: "573830.99"
-                      market_cap_usd: "812345678.45"
-                      circulating_supply: "812245567.21"
-                  next_cursor: "32406192:yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
-                  limit: 100
-                as_of: "2026-05-05T16:03:05.111Z"
-                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "429": { $ref: "#/components/responses/RateLimited" }
-        "500": { $ref: "#/components/responses/InternalError" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
-
-  /coins/{slug}:
-    get:
-      tags: [meta]
-      summary: Single asset by slug.
-      description: |
-        Returns one row of `/coins` shape, looked up by URL-safe
-        `slug` (the slug column from `classic_assets`, falling
-        back to `code` when slug is null). Used by the explorer
-        asset-detail page so a deep link doesn't need to scan
-        the top-N listing first.
-      parameters:
-        - name: slug
-          in: path
-          required: true
-          description: |
-            URL-safe asset slug. Unlike the `/v1/price` and `/v1/ohlc`
-            endpoints which require strict canonical IDs, the slug
-            handler accepts the short symbol forms (`USDC`, `XLM`,
-            `AQUA`) and special-cases `XLM` to native. Defaults to
-            `XLM` for the Scalar default-test request.
-          schema:
-            type: string
-            example: XLM
-          example: XLM
-      responses:
-        "200":
-          description: One asset row.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - slug
-                  - asset_id
-                  - code
-                  - issuer
-                  - first_seen_ledger
-                  - last_seen_ledger
-                  - observation_count
-                properties:
-                  slug: { type: string }
-                  asset_id: { type: string }
-                  code: { type: string }
-                  issuer: { type: string }
-                  first_seen_ledger: { type: integer }
-                  last_seen_ledger: { type: integer }
-                  observation_count: { type: integer, format: int64 }
-                  price_usd:
-                    type: string
-                    nullable: true
-                  volume_24h_usd:
-                    type: string
-                    nullable: true
-                  market_cap_usd:
-                    type: string
-                    nullable: true
-                  circulating_supply:
-                    type: string
-                    nullable: true
-                  change_1h_pct:
-                    type: string
-                    nullable: true
-                    description: |
-                      Trailing-1h price change as a signed
-                      percentage with two fractional digits.
-                  change_24h_pct:
-                    type: string
-                    nullable: true
-                    description: |
-                      Trailing-24h price change as a signed
-                      percentage with two fractional digits.
-                  change_7d_pct:
-                    type: string
-                    nullable: true
-                    description: |
-                      Trailing-7d price change as a signed
-                      percentage with two fractional digits.
-                  markets_count:
-                    type: integer
-                    nullable: true
-                    description: |
-                      Count of distinct (base_asset, quote_asset)
-                      pairs the asset participated in over the
-                      trailing 24h. 0 when the asset went silent
-                      in that window. Null only on lookup error.
-                  trade_count_24h:
-                    type: integer
-                    nullable: true
-                    description: |
-                      Count of trades the asset participated in
-                      (as base OR quote) over the trailing 24h.
-                      Read from the `trades` hypertable directly —
-                      complements the all-time `observation_count`
-                      with a "right now" activity figure. Null
-                      only on lookup error.
-                  ath:
-                    type: object
-                    nullable: true
-                    description: |
-                      All-time-high USD price + day it was set.
-                      Sourced from `prices_1d` filtered to
-                      USD-denominated quotes (USDC, USDT,
-                      `fiat:USD`). Triangulated paths are excluded —
-                      a single bad XLM/USD reading on a thin day
-                      could fabricate an ATH. Null when the asset
-                      has no USD-quoted history.
-                    required: [usd, at]
-                    properties:
-                      usd:
-                        type: string
-                        description: ATH price as a fixed-point string.
-                      at:
-                        type: string
-                        format: date-time
-                        description: |
-                          RFC-3339 day-bucket the high was set
-                          (00:00:00Z snapped — daily granularity).
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        "429": { $ref: "#/components/responses/RateLimited" }
-        "500": { $ref: "#/components/responses/InternalError" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
-
   /changes/{entity_type}/{id}:
     get:
       tags: [meta]
@@ -1643,6 +1417,24 @@ paths:
         Returns 503 when the deployment hasn't wired the cursors
         reader.
       parameters:
+        - name: status
+          in: query
+          required: false
+          description: |
+            Semantic convenience filter (R-015). Values:
+              - `active` — only rows with `lag_seconds <= 600` (10 min).
+                Excludes completed backfill cursors that linger in the
+                table after their range finished.
+              - `stale`  — complement; only rows older than the 10-min
+                boundary. Useful for spotting dead ingest paths.
+              - omitted — return everything (subject to `max_age` + `source`).
+            Composes with `max_age`: for `status=active` the effective
+            window is whichever bound is tighter; for `status=stale` the
+            window becomes `[10m, max_age]`.
+          schema:
+            type: string
+            enum: [active, stale]
+            example: "active"
         - name: max_age
           in: query
           required: false
@@ -1690,9 +1482,11 @@ paths:
                     lag_seconds: { type: integer, format: int64 }
         "400":
           description: |
-            `max_age` was set to something that doesn't parse as a
-            positive Go duration. Body is the standard problem+json
-            envelope with `type=https://api.ratesengine.net/errors/invalid-max-age`.
+            Either `max_age` didn't parse as a positive Go duration
+            (`type=https://api.ratesengine.net/errors/invalid-max-age`),
+            or `status` was set to a value other than `active` /
+            `stale` (`type=https://api.ratesengine.net/errors/invalid-status`).
+            Body is the standard problem+json envelope.
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -1754,20 +1548,20 @@ paths:
                           type: string
                           description: Markdown body — render with the renderer of your choice.
                   count: { type: integer }
+              # Example shows the `data` block only — responses are
+              # wrapped in the standard envelope (data + as_of + flags);
+              # see EnvelopeMeta.
               example:
-                data:
-                  count: 1
-                  incidents:
-                    - slug: "2026-05-06-postgres-lock-table-full"
-                      title: "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full"
-                      severity: "SEV-3"
-                      status: "resolved"
-                      started_at: "2026-05-06T15:00:00Z"
-                      resolved_at: "2026-05-06T22:39:00Z"
-                      affected_components: ["indexer", "storage"]
-                      body_markdown: "## Identification\n\nSome trades arriving on coinbase, binance…"
-                as_of: "2026-05-07T00:45:00Z"
-                flags: {}
+                count: 1
+                incidents:
+                  - slug: "2026-05-06-postgres-lock-table-full"
+                    title: "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full"
+                    severity: "SEV-3"
+                    status: "resolved"
+                    started_at: "2026-05-06T15:00:00Z"
+                    resolved_at: "2026-05-06T22:39:00Z"
+                    affected_components: ["indexer", "storage"]
+                    body_markdown: "## Identification\n\nSome trades arriving on coinbase, binance…"
         "500": { $ref: "#/components/responses/InternalError" }
 
   /incidents.atom:
@@ -1863,18 +1657,46 @@ paths:
                       by design; see the field doc on
                       `internal/api/v1.NetworkStats` for the full
                       semantic table.
+              # Example shows the `data` block only — responses are
+              # wrapped in the standard envelope (data + as_of + flags);
+              # see EnvelopeMeta.
               example:
-                data:
-                  volume_24h_usd: "5941104763.13358600"
-                  markets_count_24h: 4934
-                  assets_indexed: 442190
-                  latest_ledger: 62450017
-                  exchange_sources: 11
-                  total_sources: 21
-                as_of: "2026-05-07T01:55:00Z"
-                flags: {}
+                volume_24h_usd: "5941104763.13358600"
+                markets_count_24h: 4934
+                assets_indexed: 442190
+                latest_ledger: 62450017
+                exchange_sources: 11
+                total_sources: 21
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /methodology:
+    get:
+      tags: [meta]
+      summary: Machine-readable summary of the active aggregation policy.
+      description: |
+        Returns a static projection of the aggregator's policy: the
+        VWAP method, per-endpoint outlier filters, the operator's
+        stablecoin → fiat-USD proxy allow-list, the four source
+        classes (exchange / aggregator / oracle / authority_sanity)
+        and which contributes to the served price, the flat list of
+        registered venues with class / weight / VWAP-inclusion flags,
+        and pointers to the long-form ADRs that govern each section.
+
+        Designed for transparency consumers (compliance, auditors,
+        AI agents, integrators verifying RFP §10 "open methodology"
+        claims) who want to verify what the deployment is doing
+        without parsing the explorer's HTML at /methodology or
+        chasing ADR cross-refs. Sub-millisecond — no DB call;
+        derived from compile-time constants + the in-memory source
+        registry + operator config.
+      responses:
+        "200":
+          description: Methodology snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MethodologyEnvelope" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /sources:
     get:
@@ -2314,6 +2136,7 @@ paths:
                   tier: "apikey"
                   rate_limit_per_min: 1000
                 as_of: "2026-05-05T14:35:42.881Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "400":
           description: Missing or invalid email, body too large, or already authenticated.
           content:
@@ -2688,9 +2511,17 @@ components:
     PriceType:
       name: price_type
       in: query
+      description: |
+        Series type. `vwap` (default) returns the price series.
+        `twap` is reserved for forward compatibility (currently
+        400). `market_cap` returns a USD-denominated market-cap
+        series for fiat:* base assets (M2 from the verified-
+        currency catalogue × daily FX rate from fx_quotes). Crypto
+        market_cap is deferred until the market_cap_1d CAGG ships
+        (501 today).
       schema:
         type: string
-        enum: [vwap, twap]
+        enum: [vwap, twap, market_cap]
         default: vwap
     TypeFilter:
       name: type
@@ -2911,13 +2742,19 @@ components:
           source. When `frozen=true` this is forced true (an LKG
           fallback is by definition single-sourced). Informational;
           combined with `frozen` this is the manipulation signature.
+        - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
+          when the asset's code matches a verified currency's
+          Stellar ticker but the issuer doesn't. The matching
+          `unverified_warning` body on the AssetDetail carries
+          the verified-currency pointer (R-018 Phase 1.1).
       properties:
-        stale:              { type: boolean, default: false }
-        reduced_redundancy: { type: boolean, default: false }
-        triangulated:       { type: boolean, default: false }
-        divergence_warning: { type: boolean, default: false }
-        frozen:             { type: boolean, default: false }
-        single_source:      { type: boolean, default: false }
+        stale:                       { type: boolean, default: false }
+        reduced_redundancy:          { type: boolean, default: false }
+        triangulated:                { type: boolean, default: false }
+        divergence_warning:          { type: boolean, default: false }
+        frozen:                      { type: boolean, default: false }
+        single_source:               { type: boolean, default: false }
+        unverified_ticker_collision: { type: boolean, default: false }
       required: [stale, reduced_redundancy, triangulated, divergence_warning]
 
     Pagination:
@@ -3175,7 +3012,161 @@ components:
             multiplication for non-USD on-chain quotes is L2.2
             phase 2, post-launch. The schema is forward-compatible:
             phase 2 lands additively without a wire-shape change.
+        unverified_warning:
+          allOf:
+            - { $ref: "#/components/schemas/UnverifiedWarning" }
+          nullable: true
+          description: |
+            Attached when the requested asset's code matches a
+            verified currency's Stellar ticker (USDC, EURC, AQUA, …)
+            but the issuer doesn't match the verified entry. Lights
+            `flags.unverified_ticker_collision` on the envelope.
+
+            Null for the verified asset itself, for non-classic
+            assets (native / Soroban / fiat), and for any code that
+            no verified currency claims on Stellar. See R-018 /
+            docs/architecture/multi-network-assets-migration.md
+            Phase 1.1.
       required: [asset_id, type, code, decimals, sep1_status]
+
+    UnverifiedWarning:
+      type: object
+      description: |
+        Pointer at the verified Stellar-canonical asset when an
+        unverified asset shares the same ticker code. Every field
+        is human-render-ready — the `note` sentence is verbatim-safe
+        for a warning banner.
+      properties:
+        verified_slug:     { type: string,  description: "Canonical slug (e.g. \"usdc\") the consumer can redirect to." }
+        verified_asset_id: { type: string,  description: "Verified canonical asset_id (e.g. USDC-GA5Z…)." }
+        verified_name:     { type: string,  description: "Human-readable currency name (e.g. \"USD Coin\")." }
+        verified_issuer:   { type: string,  nullable: true, description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        note:              { type: string,  description: "One-sentence warning rendered verbatim by clients." }
+      required: [verified_slug, verified_asset_id, verified_name, note]
+
+    GlobalAssetView:
+      type: object
+      description: |
+        Cross-chain identity surface served by /v1/assets/{slug} (R-018
+        Phase 1.4a). Distinct from `Asset` which is the per-Stellar-
+        network view. Consumers reach this surface by passing a
+        catalogue slug (e.g. `usdc`); the `Asset` surface is reached
+        by passing a canonical asset_id (e.g. `USDC-GA5Z…`).
+      properties:
+        ticker:           { type: string,  description: "Display ticker (e.g. \"USDC\")." }
+        slug:             { type: string,  description: "URL slug (lowercase, e.g. \"usdc\")." }
+        name:             { type: string,  description: "Human-readable currency name." }
+        description:      { type: string,  description: "One-sentence summary." }
+        verified_issuer:  { type: string,  description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        coingecko_id:     { type: string,  description: "CoinGecko slug for this currency (when known)." }
+        coinmarketcap_id: { type: string,  description: "CoinMarketCap integer ID for this currency (when known)." }
+        price_usd:        { type: string,  nullable: true, description: "USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into networks[].stellar.deep_link for the per-Stellar-asset price instead." }
+        price_authority:
+          type: string
+          enum: [vwap_native, aggregator_avg, triangulated]
+          description: |
+            Which tier of the fallback chain produced `price_usd`.
+            - `vwap_native`: our own VWAP across exchange-class trades.
+            - `aggregator_avg`: average across CG / CMC / CryptoCompare.
+            - `triangulated`: derived via bridge currency (X_USD ≈
+              X_BTC × BTC_USD or similar).
+        price_sources:    { type: array, items: { type: string }, description: "Contributor venue / aggregator names — for transparency." }
+        price_as_of:      { type: string, format: date-time, nullable: true, description: "Observation timestamp of the served price." }
+        networks:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkView" }
+      required: [ticker, slug, name, networks]
+
+    NetworkView:
+      type: object
+      description: One per-network identity entry in a GlobalAssetView's networks list.
+      properties:
+        network:       { type: string, description: "Network identifier (lowercase): `stellar`, `ethereum`, `solana`, `bitcoin`, `tron`, `polygon`, `base`, `arbitrum`, `bsc`, `avalanche`, `xrpl`, etc." }
+        data_quality:
+          type: string
+          enum: [indexed, external]
+          description: |
+            `indexed`: we ingest this network's trades; explorer
+            renders a deep_link to the per-Stellar-asset view.
+            `external`: we know the asset exists there but don't
+            ingest trades; explorer renders contract + an external
+            link (etherscan.io, solscan.io, etc).
+        # Stellar fields (only when network == "stellar")
+        asset_id:      { type: string, description: "Canonical Stellar asset_id (e.g. USDC-GA5Z…). Only present for stellar entries." }
+        code:          { type: string, description: "Classic asset code (Stellar only)." }
+        issuer:        { type: string, description: "G-strkey issuer address (Stellar only)." }
+        deep_link:     { type: string, description: "Path to the per-Stellar-asset view (e.g. /v1/assets/USDC-GA5Z…). Stellar entries only." }
+        # Non-Stellar fields
+        contract:      { type: string, description: "Token contract address on the non-Stellar network." }
+        external_link: { type: string, description: "Override URL for the explorer's drill-out link. Optional — explorer applies a per-network default when empty." }
+      required: [network, data_quality]
+
+    GlobalAssetEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/GlobalAssetView" }
+          required: [data]
+
+    PerNetworkAssetView:
+      type: object
+      description: |
+        Drill-down shape returned by `/v1/assets/{slug}/{network}`
+        for non-Stellar network entries. Stellar entries redirect
+        (303) to `/v1/assets/{canonical_asset_id}` instead.
+      properties:
+        ticker:        { type: string }
+        slug:          { type: string }
+        name:          { type: string }
+        class:         { type: string, enum: [crypto, stablecoin, fiat] }
+        network:       { type: string, description: "Network identifier (lowercase)." }
+        data_quality:
+          type: string
+          enum: [external]
+          description: |
+            Always `external` for this surface — we don't ingest
+            trades from non-Stellar networks. Stellar dispatches
+            via 303 redirect; this view never serves Stellar.
+        contract:      { type: string, description: "Token contract address on the target network." }
+        external_link: { type: string, description: "Block-explorer URL (operator-overridable via the catalogue's external_link field)." }
+      required: [ticker, slug, name, class, network, data_quality]
+
+    VerifiedCurrencyListItem:
+      type: object
+      description: |
+        One entry in the response to GET /v1/assets/verified — the
+        verified-currency catalogue directory. Distinct from
+        GlobalAssetView in two ways: no price block (listing payload
+        stays small; consumers fetch /v1/assets/{slug} per row for
+        pricing) and the cross-chain `networks[]` is preserved for
+        each row so a listing UI can render network chips inline.
+      properties:
+        ticker:           { type: string, description: "Display ticker (e.g. \"USDC\")." }
+        slug:             { type: string, description: "URL slug (lowercase, e.g. \"usdc\")." }
+        name:             { type: string, description: "Human-readable currency name." }
+        verified_issuer:  { type: string, description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        coingecko_id:     { type: string, description: "CoinGecko slug for this currency (when known)." }
+        coinmarketcap_id: { type: string, description: "CoinMarketCap integer ID for this currency (when known)." }
+        network_count:    { type: integer, description: "Number of networks this currency is issued on — convenience for listing UIs that don't need the full networks[] array." }
+        market_cap_usd:   { type: string, description: "Decimal string (2 fractional digits). Computed for fiat rows only: M2 × current FX rate. Crypto/stablecoin rows leave this empty (their per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
+        class:            { type: string, enum: [crypto, stablecoin, fiat], description: "Asset taxonomy — drives listing-side rendering + filtering." }
+        circulating_supply: { type: string, description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin." }
+        supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
+        networks:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkView" }
+      required: [ticker, slug, name, class, network_count, networks]
+
+    VerifiedCurrencyListEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/VerifiedCurrencyListItem" }
+          required: [data]
 
     AssetEnvelope:
       allOf:
@@ -3267,6 +3258,54 @@ components:
         # yet (e.g. fresh deploy before the first cycle, or asset
         # below the operator's coverage set).
         change_24h_pct:    { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Computed as (now - then) / then * 100 against the latest closed prices_1m bucket whose end is at-or-before now-24h. Null when the asset has no current USD price OR no comparison bucket in the 24h-ago window." }
+        # Coin-equivalence extension (R-018 final). Populated when a
+        # CoinsReader is wired and the asset has a coin row.
+        price_usd:         { type: string, nullable: true, description: "Latest VWAP/last-trade USD price. Mirror of CoinSummary.price_usd." }
+        change_1h_pct:     { type: string, nullable: true, description: "Trailing-1h price change as a signed percentage." }
+        change_7d_pct:     { type: string, nullable: true, description: "Trailing-7d price change as a signed percentage." }
+        top_markets:
+          type: array
+          nullable: true
+          description: "Top 5 markets by 24h USD volume. Each row is the counterparty of a (base, quote) pair the asset participated in."
+          items:
+            type: object
+            properties:
+              counterparty:    { type: string, description: "The OTHER side of the pair." }
+              side:            { type: string, enum: [base, quote], description: "Which side this asset took." }
+              volume_24h_usd:  { type: string, nullable: true }
+              trade_count_24h: { type: integer }
+            required: [counterparty, side, trade_count_24h]
+        price_history_24h:
+          type: array
+          nullable: true
+          description: "24 hourly USD-price samples (oldest first) for sparkline rendering."
+          items:
+            type: object
+            properties:
+              t: { type: string, format: date-time }
+              p: { type: string, nullable: true }
+            required: [t]
+        price_history_7d:
+          type: array
+          nullable: true
+          description: "7 daily USD-price samples (oldest first)."
+          items:
+            type: object
+            properties:
+              t: { type: string, format: date-time }
+              p: { type: string, nullable: true }
+            required: [t]
+        markets_count:     { type: integer, nullable: true, description: "Distinct (base, quote) pairs the asset participated in over the trailing 24h." }
+        trade_count_24h:   { type: integer, nullable: true, description: "Total trades the asset participated in (as base or quote) over the trailing 24h." }
+        ath:
+          type: object
+          nullable: true
+          description: "All-time-high USD price + day it was set. Null when the asset has no USD-quoted history."
+          properties:
+            usd: { type: string }
+            at:  { type: string, format: date-time }
+          required: [usd, at]
+        issuer_scam_reason: { type: string, description: "Non-empty when this asset's issuer appears in the curated scam directory." }
         volume_24h_usd:    { type: string, nullable: true, description: "aggregator" }
         market_cap_usd:    { type: string, nullable: true, description: "aggregator + supply derivation" }
         fdv_usd:           { type: string, nullable: true, description: "aggregator + supply derivation" }
@@ -3365,7 +3404,29 @@ components:
                 points:
                   type: array
                   items: { $ref: "#/components/schemas/HistoryPoint" }
-              required: [asset_id, quote, timeframe, granularity, price_type, points]
+                truncated:
+                  type: boolean
+                  description: |
+                    True when the requested timeframe extends before
+                    the earliest available data on this deployment
+                    (e.g. asking `?timeframe=1y` when retention is
+                    only 7 days). Always false for `timeframe=all`.
+                data_starts_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    Earliest bucket in the result set. Only present
+                    when `truncated=true`. Render as "history begins
+                    at <ts>" so users know to widen retention or
+                    pick a shorter timeframe.
+                requested_from:
+                  type: string
+                  format: date-time
+                  description: |
+                    Window start the consumer asked for (derived
+                    from `timeframe`). Only present when
+                    `truncated=true`.
+              required: [asset_id, quote, timeframe, granularity, price_type, points, truncated]
           required: [data]
 
     TradeRow:
@@ -3590,6 +3651,77 @@ components:
         default_weight:     { type: integer, description: "Default per-source weight for weighted-aggregation paths (when those land)." }
         trade_count_24h:    { type: integer, description: "Trailing-24h trade count for this source. Populated only when the request used `?include=stats`; absent (omitted) otherwise." }
       required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight]
+
+    Methodology:
+      type: object
+      properties:
+        version:
+          type: string
+          description: On-disk shape version. Bumps on breaking changes.
+        aggregation:
+          type: object
+          properties:
+            price_method:
+              type: string
+              enum: [vwap]
+              description: Formula for the headline served price.
+            outlier_filter:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                  description: API surface this rule applies to. Empty = global default.
+                default_sigma:
+                  type: number
+                  description: σ threshold applied when caller doesn't override via `?outlier_sigma=`.
+                note:
+                  type: string
+              required: [default_sigma]
+            stablecoin_fiat_proxy:
+              type: array
+              items:
+                type: object
+                properties:
+                  asset_id: { type: string }
+                  pegs_to:  { type: string }
+                required: [asset_id, pegs_to]
+            closed_bucket_window_seconds:
+              type: integer
+              description: Boundary granularity rate endpoints snap "now" to. Per ADR-0015.
+          required: [price_method, outlier_filter, stablecoin_fiat_proxy, closed_bucket_window_seconds]
+        source_classes:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                enum: [exchange, aggregator, oracle, authority_sanity]
+              contributes_to_vwap: { type: boolean }
+              description:         { type: string }
+            required: [name, contributes_to_vwap, description]
+        sources:
+          type: array
+          description: Same data as `/v1/sources` (without live trade-count stats) — included so a transparency consumer can verify the policy in one round trip.
+          items: { $ref: "#/components/schemas/Source" }
+        references:
+          type: array
+          items:
+            type: object
+            properties:
+              id:    { type: string, description: "ADR identifier (e.g. ADR-0007)." }
+              title: { type: string }
+              url:   { type: string, description: "Repo-relative path." }
+            required: [id, title, url]
+      required: [version, aggregation, source_classes, sources, references]
+
+    MethodologyEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Methodology" }
+          required: [data]
 
     SourcesEnvelope:
       allOf:

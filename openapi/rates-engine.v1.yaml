@@ -189,10 +189,11 @@ paths:
           required: false
           description: |
             Filter the listing to assets minted by the supplied
-            issuer G-strkey. Sourced from the same ListCoinsExt path
-            `/v1/coins?issuer=` uses; rows include the full coin-
-            overlay shape (price_usd / volume_24h_usd / change_*_pct
-            / etc) when a CoinsReader is wired.
+            issuer G-strkey. Sourced from the same ListCoinsExt
+            path the legacy issuer-scoped listing used; rows
+            include the full coin-overlay shape (price_usd /
+            volume_24h_usd / change_*_pct / etc) when a
+            CoinsReader is wired.
           schema:
             type: string
             pattern: "^G[A-Z2-7]{55}$"
@@ -1599,7 +1600,7 @@ paths:
       summary: Consolidated home-page aggregate stats.
       description: |
         Single-call replacement for the home network-strip's
-        previous fan-out across `/v1/markets`, `/v1/coins`,
+        previous fan-out across `/v1/markets`, `/v1/assets`,
         `/v1/sources`, and `/v1/diagnostics/cursors`. Returns
         total trailing-24h USD volume, count of pairs that
         recorded volume in 24h, total `classic_assets` row count,
@@ -2605,7 +2606,7 @@ components:
             title: "Rate limit exceeded"
             status: 429
             detail: "anonymous tier limited to 60 requests per minute; retry in 23 seconds"
-            instance: "/v1/coins"
+            instance: "/v1/assets"
             request_id: "feb6615b1a38211b4835c0fefcd94ede"
     InternalError:
       description: Internal error. Body includes the request_id for correlation.
