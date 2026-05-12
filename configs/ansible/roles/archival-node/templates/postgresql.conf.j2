@@ -13,6 +13,18 @@ port                      = {{ postgres_port }}
 max_connections           = {{ postgres_max_connections }}
 unix_socket_directories   = '/var/run/postgresql'
 
+# Per-tx lock table sizing. Postgres sizes its lock table as
+# `max_locks_per_transaction × max_connections`. TimescaleDB's
+# chunk-based storage takes one shared-memory lock per chunk an
+# INSERT touches — under concurrent ingest from many sources, the
+# default of 64 saturates the table and writes start failing with
+# SQLSTATE 53200 ("out of shared memory"). The 2026-05-06 SEV-3
+# (`internal/incidents/data/2026-05-06-postgres-lock-table-full.md`)
+# hit this path: ~1% of trades dropped before operators bumped
+# this knob to 256 by hand on R1. Codified here so a from-scratch
+# R1 rebuild or R2/R3 cutover inherits the fix automatically.
+max_locks_per_transaction = {{ postgres_max_locks_per_transaction | default(256) }}
+
 # ─── Memory (~25% shared_buffers, ~50% effective_cache_size) ────────
 shared_buffers            = {{ postgres_shared_buffers }}
 effective_cache_size      = {{ postgres_effective_cache_size }}

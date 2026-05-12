@@ -100,6 +100,58 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 	}
 }
 
+// F-1242 (audit-2026-05-12): Comet's `("POOL", "swap")` topic shape
+// is the Balancer-v1 contract event family, not the Soroban-Balancer
+// contract address. Any future pubnet contract deployed from the same
+// Balancer-v1 WASM (or any contract that mimics the topic + body
+// shape) will match this decoder. CLAUDE.md "Things that will surprise
+// you" calls this out and the operator-side mitigation is downstream
+// filter on `(Trade.Source = "comet", contract_address)` — but the
+// decoder itself does NOT discriminate by contract address. This test
+// makes the contract explicit: a synthetic event from a *different*
+// contract address with the Comet topic + body shape will be decoded
+// to a Comet TradeEvent. Any future change that adds a contract-id
+// allow-list at the decoder layer (rather than downstream) MUST flip
+// this test's expectation.
+func TestDecoder_Decode_NoContractIDDiscrimination(t *testing.T) {
+	d := NewDecoder()
+	caller := accountStrkeyFromSeed(t, 0x10)
+	tokenIn := contractStrkeyFromSeed(t, 0x20)
+	tokenOut := contractStrkeyFromSeed(t, 0x30)
+	body := encodeSwapBody(t, caller, tokenIn, tokenOut,
+		big.NewInt(1_000_000), big.NewInt(2_500_000))
+
+	// Synthetic event from a contract that is NOT the documented Blend
+	// backstop pool — same topic shape, same body shape, different
+	// emitting contract.
+	otherContract := contractStrkeyFromSeed(t, 0xFF)
+	ev := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          body,
+		ContractID:     otherContract,
+		Ledger:         52_000_000,
+		TxHash:         "non-blend-tx",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1 (decoder matches by topic, not contract)", len(out))
+	}
+	te := out[0].(TradeEvent)
+	if te.Trade.Source != SourceName {
+		t.Errorf("Trade.Source = %q, want %q", te.Trade.Source, SourceName)
+	}
+	// Operator filter happens DOWNSTREAM (at aggregator class lookup
+	// + per-pair allow-listing); the decoder doesn't carry the
+	// contract identity in the canonical Trade beyond the topic
+	// match. This is the documented contract per CLAUDE.md.
+}
+
 func TestDecoder_Decode_FallbackTimestampOnMissingClosedAt(t *testing.T) {
 	// LedgerClosedAt is empty — the adapter must still return a valid
 	// trade by falling back to time.Now(). The fallback path is only

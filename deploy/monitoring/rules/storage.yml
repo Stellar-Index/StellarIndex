@@ -38,6 +38,39 @@ groups:
             are being held back until it catches up — look for saturation on
             the replica.
 
+      # F-1251 (audit-2026-05-12): lock-table headroom. The
+      # 2026-05-06 SEV-3 hit `out of shared memory (53200)` when
+      # the per-tx lock table saturated under concurrent ingest.
+      # Default Postgres setting (max_locks_per_transaction = 64)
+      # × max_connections = 200 = 12,800-entry table. The R1
+      # ansible role now templates max_locks_per_transaction = 256
+      # by default (51,200 entries — 4× headroom). This alert
+      # fires at 70% saturation so we get warning before the
+      # next bump is forced. Depends on postgres_exporter (not
+      # currently scraped on R1 — see configs/prometheus/rules.r1/
+      # README.md "remaining files NOT shipped"; the alert lights
+      # up when the exporter lands.)
+      - alert: ratesengine_timescale_lock_table_pressure
+        expr: |
+          pg_locks_count
+            / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)
+            > 0.7
+        for: 5m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: storage
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+        annotations:
+          summary: "Postgres lock-table > 70% saturated (P3)"
+          description: |
+            Lock-table utilisation is {{ $value | humanizePercentage }}.
+            The next sustained ingest spike risks SQLSTATE 53200
+            ("out of shared memory") and dropped INSERTs — the
+            2026-05-06 SEV-3 class. Bump
+            `postgres_max_locks_per_transaction` in the archival-node
+            role and reapply.
+
       - alert: ratesengine_timescale_disk_full
         expr: |
           (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql"} /

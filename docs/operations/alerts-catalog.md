@@ -61,6 +61,7 @@ signal lands.
 | `ratesengine_node_root_disk_warning` | same | < 20 % | P2 | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 | (no active alert — surfaced via API log) | `forex: fx_quotes persist failed` log line — runtime symptom of an unapplied schema migration | repeating every ~5 min | P3 | [fx-history-missing](runbooks/fx-history-missing.md) |
 | `ratesengine_timescale_connections_saturated` | `pg_stat_activity_count / pg_settings_max_connections * 100` | > 80 % for > 5 min | P2 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
+| `ratesengine_timescale_lock_table_pressure` | `pg_locks_count / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | P3 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `ratesengine_timescale_cagg_stale` | `time() - ratesengine_cagg_last_refresh_unix` per CAGG | > 5× its refresh interval | P2 | [cagg-stale](runbooks/cagg-stale.md) |
 | `ratesengine_timescale_compression_lag` | `ratesengine_uncompressed_chunks_older_than_7d` | > 0 for > 24 h | P3 | [compression-lag](runbooks/compression-lag.md) |
 | `ratesengine_timescale_backup_failed` | `ratesengine_pgbackrest_last_success_unix` | > 2× expected interval | P2 | [backup-failed](runbooks/backup-failed.md) |
