@@ -77,6 +77,18 @@ against.
 
 ### Documented
 
+- **ADR-0012 placeholder (F-1262).** Filled the numeric gap in
+  `docs/adr/` — 0011 jumped to 0013 with no file at 0012, even
+  though `docs/adr/README.md` had listed the slot as `Planned`
+  (reserved for Quorum-set composition per ADR-0004 Phase 3)
+  since the initial audit. The placeholder documents what the
+  future ADR must cover (third-party validator selection,
+  HALT-LIVE-DROP scoring, cross-region quorum overlap, stellar-
+  core `[QUORUM_SET]` thresholds) and what invariants it must
+  preserve (Tier-1 independence, no self-included validators,
+  ≤ 33% effective weight per validator). README index now links
+  to the file.
+
 - **Dashboard surface bypasses the v1 envelope on purpose (F-1235).**
   `/v1/dashboard/keys*` handlers write bare JSON rather than the
   `data` / `as_of` / `flags` envelope used by market-data
