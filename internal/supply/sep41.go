@@ -51,6 +51,12 @@ type SEP41SupplyComponents struct {
 	// [Policy.PerAsset]. Same single-query rationale as
 	// LockedAccountBalances.
 	LockedContractBalances *big.Int
+
+	// MinComponentLedger is the lowest ledger any contributing
+	// observation was last updated at. Threaded into Supply for
+	// the F-1236 (codex audit-2026-05-12) refresher freshness
+	// gate. Zero = "reader didn't populate" — the gate skips.
+	MinComponentLedger uint32
 }
 
 // SEP41SupplyReader is the read-side interface the [SEP41Computer]
@@ -165,13 +171,14 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	}
 
 	return Supply{
-		AssetKey:          key,
-		TotalSupply:       total,
-		CirculatingSupply: circulating,
-		MaxSupply:         maxSupply,
-		Basis:             basis,
-		LedgerSequence:    ledger,
-		ObservedAt:        observedAt.UTC(),
+		AssetKey:           key,
+		TotalSupply:        total,
+		CirculatingSupply:  circulating,
+		MaxSupply:          maxSupply,
+		Basis:              basis,
+		LedgerSequence:     ledger,
+		ObservedAt:         observedAt.UTC(),
+		MinComponentLedger: comps.MinComponentLedger,
 	}, nil
 }
 

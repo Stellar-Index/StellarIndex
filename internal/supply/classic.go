@@ -59,6 +59,17 @@ type ClassicSupplyComponents struct {
 	// [Policy.PerAsset]. Same single-query rationale as
 	// LockedAccountBalances.
 	LockedContractBalances *big.Int
+
+	// MinComponentLedger is the lowest ledger any of the per-
+	// component observations contributing to this aggregate was
+	// last updated at. Used by the [Refresher] (F-1236, codex
+	// audit-2026-05-12) to detect snapshots whose components
+	// lag the snapshot ledger by more than a threshold. Readers
+	// that can compute this should populate it; readers that
+	// can't leave zero — the gate treats zero as "no freshness
+	// signal" and skips the check, preserving the pre-F-1236
+	// posture.
+	MinComponentLedger uint32
 }
 
 // ClassicSupplyReader is the read-side interface the
@@ -166,13 +177,14 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 	}
 
 	return Supply{
-		AssetKey:          key,
-		TotalSupply:       total,
-		CirculatingSupply: circulating,
-		MaxSupply:         maxSupply,
-		Basis:             basis,
-		LedgerSequence:    ledger,
-		ObservedAt:        observedAt.UTC(),
+		AssetKey:           key,
+		TotalSupply:        total,
+		CirculatingSupply:  circulating,
+		MaxSupply:          maxSupply,
+		Basis:              basis,
+		LedgerSequence:     ledger,
+		ObservedAt:         observedAt.UTC(),
+		MinComponentLedger: comps.MinComponentLedger,
 	}, nil
 }
 
