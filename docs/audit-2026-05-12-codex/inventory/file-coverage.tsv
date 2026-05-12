@@ -1029,7 +1029,7 @@ internal/archivecompleteness/report.go	internal	internal/archivecompleteness/rep
 internal/auth/apikey.go	internal	internal/auth/apikey.go	runtime	todo			cold audit pending
 internal/auth/apikey_postgres.go	internal	internal/auth/apikey_postgres.go	runtime	in_progress	EV-0023;EV-0100;EV-0128;F-1212;F-1226	XFI-0008;XFI-0018	Reviewed rate-limit propagation, allowlist/permission cache parity, and new MonthlyQuota propagation through canonical/cache subject paths
 internal/auth/apikey_postgres_test.go	internal	internal/auth/apikey_postgres_test.go	test	todo			cold audit pending
-internal/auth/apikey_redis.go	internal	internal/auth/apikey_redis.go	runtime	in_progress	EV-0118;EV-0128;F-1226	XFI-0018	Reviewed Redis auth-cache policy payload plus in-flight MonthlyQuota cache field; broader Redis validator pass still open
+internal/auth/apikey_redis.go	internal	internal/auth/apikey_redis.go	runtime	in_progress	EV-0118;EV-0128;F-1226	XFI-0018	Reviewed Redis auth-cache policy payload plus landed MonthlyQuota cache field; broader Redis validator pass still open
 internal/auth/apikey_redis_test.go	internal	internal/auth/apikey_redis_test.go	test	todo			cold audit pending
 internal/auth/doc.go	internal	internal/auth/doc.go	runtime	todo			cold audit pending
 internal/auth/errors.go	internal	internal/auth/errors.go	runtime	todo			cold audit pending
@@ -1050,7 +1050,9 @@ internal/auth/store.go	internal	internal/auth/store.go	runtime	todo			cold audit
 internal/auth/store_redis_test.go	internal	internal/auth/store_redis_test.go	test	todo			cold audit pending
 internal/auth/store_update.go	internal	internal/auth/store_update.go	runtime	todo			cold audit pending
 internal/auth/store_update_test.go	internal	internal/auth/store_update_test.go	test	todo			cold audit pending
-internal/auth/subject.go	internal	internal/auth/subject.go	runtime	in_progress	EV-0100;EV-0128;F-1226	XFI-0018	Reviewed policy-carrying subject fields plus in-flight MonthlyQuota subject propagation; broader auth subject audit still open
+internal/auth/subject.go	internal	internal/auth/subject.go	runtime	in_progress	EV-0100;EV-0128;F-1226	XFI-0018	Reviewed policy-carrying subject fields plus landed MonthlyQuota subject propagation; broader auth subject audit still open
+internal/auth/touch_debouncer.go	internal	internal/auth/touch_debouncer.go	runtime	done	EV-0132;EV-0133;F-1226	XFI-0018	Reviewed landed Redis SETNX debounce implementation, TTL behavior, key namespace, and ACL coupling
+internal/auth/touch_debouncer_test.go	internal	internal/auth/touch_debouncer_test.go	test	done	EV-0132;F-1226	XFI-0018	Reviewed committed debouncer coverage for TTL expiry, per-key isolation, empty-key bypass, and default TTL selection
 internal/auth/subject_test.go	internal	internal/auth/subject_test.go	test	todo			cold audit pending
 internal/auth/validators_test.go	internal	internal/auth/validators_test.go	test	todo			cold audit pending
 internal/cachekeys/doc.go	internal	internal/cachekeys/doc.go	runtime	todo			cold audit pending
@@ -1552,8 +1554,8 @@ migrations/0028_create_fx_quotes.down.sql	migrations	migrations	migration_or_sql
 migrations/0028_create_fx_quotes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0029_drop_unused_blend_jsonb_gin_indexes.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0029_drop_unused_blend_jsonb_gin_indexes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
-migrations/0030_asset_supply_history_unique_constraint.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
-migrations/0030_asset_supply_history_unique_constraint.up.sql	migrations	migrations	migration_or_sql	in_progress	EV-0120;F-1261	XFI-0053	Reviewed the failing compressed-hypertable constraint swap; remediation/retest still open
+migrations/0030_asset_supply_history_unique_constraint.down.sql	migrations	migrations	migration_or_sql	in_progress	EV-0137;F-1261	XFI-0053	Reviewed rollback shape while rechecking the broken compressed-hypertable migration pair
+migrations/0030_asset_supply_history_unique_constraint.up.sql	migrations	migrations	migration_or_sql	in_progress	EV-0120;EV-0137;F-1261	XFI-0053	Reviewed the failing compressed-hypertable constraint swap; remediation/retest still open
 migrations/README.md	migrations	migrations	documentation	in_progress	EV-0120;F-1261	XFI-0053	Reviewed the 0030 entry; wording still claims a constraint path that does not match the executable SQL
 openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;EV-0095;EV-0103;F-1203;F-1256;F-1259	XFI-0048;XFI-0051	Reviewed source spec against generated artifacts, dashboard key-budget contract drift, partially revised usage docs, and incorrect healthz checks wording
 pkg/client/asset_detail_test.go	pkg	pkg	test	todo			cold audit pending
@@ -1661,7 +1663,7 @@ test/integration/fx_quote_at_or_before_test.go	test	test/integration	test	todo		
 test/integration/issuers_coins_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/ledgerstream_to_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/migrations_test.go	test	test/integration	test	todo			cold audit pending
-test/integration/platform_postgres_stores_test.go	test	test/integration	test	in_progress	EV-0120;EV-0121;F-1248;F-1257;F-1261	XFI-0040;XFI-0049;XFI-0053	Reviewed new concurrent quota scenarios and the migration bootstrap failure that prevents them from executing
+test/integration/platform_postgres_stores_test.go	test	test/integration	test	in_progress	EV-0120;EV-0121;EV-0137;F-1248;F-1257;F-1261	XFI-0040;XFI-0049;XFI-0053	Reviewed new concurrent quota scenarios and re-confirmed the current migration bootstrap failure that prevents them from executing
 test/integration/sep41_supply_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/supply_storage_test.go	test	test/integration	test	todo			cold audit pending
