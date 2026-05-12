@@ -90,6 +90,54 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 
 // TestRefreshPair_FiresWarning — references agree on a price that
 // disagrees with our value by > threshold; WarningFired=true.
+// TestRefreshPair_OnWarningFiredEdgeOnly pins F-1249 (codex
+// audit-2026-05-12): the OnWarningFired hook fires only on the
+// `below threshold → above threshold` edge, not on every refresh
+// while a divergence stays elevated. Multiple consecutive
+// above-threshold refreshes must produce one hook call; a return
+// to below-threshold + re-cross re-arms the latch.
+func TestRefreshPair_OnWarningFiredEdgeOnly(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", price: 1.00},
+		&stubReference{name: "b", price: 1.00},
+		&stubReference{name: "c", price: 1.00},
+	}
+	var fired int
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) {
+			fired++
+		},
+	})
+	ctx := context.Background()
+	// 1) Below threshold (1%) → no fire.
+	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.01, time.Now())
+	if fired != 0 {
+		t.Fatalf("fired=%d after below-threshold refresh, want 0", fired)
+	}
+	// 2) Above threshold (10%) → first fire.
+	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.10, time.Now())
+	if fired != 1 {
+		t.Fatalf("fired=%d after first above-threshold, want 1", fired)
+	}
+	// 3) Still above threshold → no second fire (latch held).
+	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.12, time.Now())
+	if fired != 1 {
+		t.Fatalf("fired=%d on still-elevated refresh, want 1 (latch should hold)", fired)
+	}
+	// 4) Drop below threshold → latch resets (no fire on the way down).
+	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.02, time.Now())
+	if fired != 1 {
+		t.Fatalf("fired=%d on recovery refresh, want 1", fired)
+	}
+	// 5) Re-cross threshold → second fire.
+	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.10, time.Now())
+	if fired != 2 {
+		t.Fatalf("fired=%d after re-cross, want 2 (latch should re-arm)", fired)
+	}
+}
+
 func TestRefreshPair_FiresWarning(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", price: 1.00},

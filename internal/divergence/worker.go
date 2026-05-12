@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -126,7 +127,27 @@ type ServiceOptions struct {
 	// The aggregator passes its component logger so failures land
 	// in the same journal stream as the rest of the orchestrator.
 	Logger *slog.Logger
+
+	// OnWarningFired, when non-nil, is invoked from RefreshPair on
+	// the EDGE — a refresh that flips a pair from "below
+	// threshold" → "above threshold" (or fires for the first
+	// time). Best-effort: errors / panics inside the hook do not
+	// propagate. F-1249 (codex audit-2026-05-12): the aggregator
+	// wires this to customerwebhook.Fanout.Publish so dashboard
+	// hooks subscribed to `divergence.firing` get a callback.
+	//
+	// Edge-only firing (vs every-refresh-while-firing) prevents
+	// the API binary's delivery queue from re-spamming subscribers
+	// on every aggregator tick a divergence stays above the
+	// threshold. The fanout service is itself idempotent on the
+	// subscriber list but the callbacks would still pile up.
+	OnWarningFired WarningHook
 }
+
+// WarningHook is the callback shape for edge-triggered divergence
+// warnings. `cached` is the same CachedResult Redis has just
+// stored; reuse it to build the webhook payload.
+type WarningHook func(ctx context.Context, pair canonical.Pair, cached CachedResult)
 
 // Service wraps a set of References + a cache writer, exposing a
 // single [Service.RefreshPair] method the aggregator hooks into
@@ -151,6 +172,14 @@ type Service struct {
 	// — operators only saw it when the explorer's /divergences
 	// page surfaced a gap, days later.
 	logger *slog.Logger
+
+	// onWarning + warningState power the edge-triggered fan-out
+	// hook (F-1249 codex audit-2026-05-12). `warningState` maps
+	// pair.String() → most-recent WarningFired bool; the hook fires
+	// only on `false → true` transitions.
+	onWarning    WarningHook
+	warningMu    sync.Mutex
+	warningState map[string]bool
 }
 
 // NewService constructs a divergence service. Returns an error when
@@ -172,13 +201,15 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		timeout = 5 * time.Second
 	}
 	return &Service{
-		refs:       opts.References,
-		cache:      opts.Cache,
-		threshold:  threshold,
-		minSources: minSources,
-		timeout:    timeout,
-		sink:       opts.ObservationSink,
-		logger:     opts.Logger,
+		refs:         opts.References,
+		cache:        opts.Cache,
+		threshold:    threshold,
+		minSources:   minSources,
+		timeout:      timeout,
+		sink:         opts.ObservationSink,
+		logger:       opts.Logger,
+		onWarning:    opts.OnWarningFired,
+		warningState: map[string]bool{},
 	}, nil
 }
 
@@ -234,6 +265,22 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// on the API response — has already succeeded.
 	if s.sink != nil {
 		s.flushObservations(ctx, pair, ourPrice, res, cached.ComputedAt)
+	}
+
+	// F-1249 (codex audit-2026-05-12): edge-triggered warning hook.
+	// Only fires on `false → true` so the customer-webhook
+	// delivery queue doesn't get one POST per refresh-while-firing.
+	// Returns to "false" reset the latch so the next time the
+	// pair re-crosses the threshold the customer gets a fresh
+	// callback.
+	if s.onWarning != nil {
+		s.warningMu.Lock()
+		prev := s.warningState[pair.String()]
+		s.warningState[pair.String()] = cached.WarningFired
+		s.warningMu.Unlock()
+		if cached.WarningFired && !prev {
+			s.onWarning(ctx, pair, cached)
+		}
 	}
 	return nil
 }
