@@ -308,6 +308,36 @@ func run(cfgPath string, dryRun bool) error {
 		// post-mortems can verify against ground truth. See
 		// migrations/0019 + Phase 2 of the explorer implementation
 		// plan.
+		// F-1249 (codex audit-2026-05-12) divergence half: edge-
+		// triggered customer-webhook fan-out. Reuses the same
+		// fanout instance the freeze sink wires above by re-
+		// constructing it here (the store ctor is cheap).
+		// `OnWarningFired` fires only on `below-threshold → above-
+		// threshold` transitions so subscribers don't get
+		// per-tick re-spam while a divergence stays elevated.
+		divFanout := customerwebhook.NewFanout(
+			postgresstore.NewWebhookStore(postgresstore.New(store.DB())),
+			logger.With("component", "webhook-fanout"))
+		var divWarningHook divergence.WarningHook
+		if divFanout != nil {
+			divWarningHook = func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) {
+				payload := customerwebhook.MarshalPayload(logger, map[string]any{
+					"event":          string(platform.WebhookEventDivergenceFiring),
+					"pair":           pair.String(),
+					"our_price":      cached.OurPrice,
+					"median":         cached.Median,
+					"divergence_pct": cached.DivergencePct,
+					"success_count":  cached.SuccessCount,
+					"sources":        cached.Sources,
+					"at":             cached.ComputedAt.Format(time.RFC3339Nano),
+				})
+				if payload == nil {
+					return
+				}
+				divFanout.Publish(ctx, platform.WebhookEventDivergenceFiring, payload)
+			}
+		}
+
 		divSvc, err := divergence.NewService(divergence.ServiceOptions{
 			Cache:                rdb,
 			References:           divRefs,
@@ -317,6 +347,7 @@ func run(cfgPath string, dryRun bool) error {
 				cfg.Divergence.PerReferenceTimeoutSeconds) * time.Second,
 			ObservationSink: timescale.NewDivergenceSink(store),
 			Logger:          logger.With("component", "divergence"),
+			OnWarningFired:  divWarningHook,
 		})
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
