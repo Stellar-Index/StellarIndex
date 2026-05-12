@@ -357,14 +357,8 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		return opts, cfg, errors.New("no sources to backfill — set -source or cfg.Ingestion.EnabledSources")
 	}
 
-	if unsafeSources := unsafeBackfillSources(sources); len(unsafeSources) > 0 {
-		return opts, cfg, fmt.Errorf(
-			"refusing to backfill — sources not BackfillSafe (per-WASM-hash audit pending): %v; "+
-				"run ratesengine-ops wasm-history -from %d -to %d -contracts <CID> for each on-chain source, "+
-				"review every emitted WASM hash against the current decoder, then flip BackfillSafe=true in "+
-				"internal/sources/external/registry.go in the same PR (see CLAUDE.md \"Soroban DeFi contracts "+
-				"upgrade in place\")",
-			unsafeSources, *from, *to)
+	if err := checkBackfillSources(sources, uint32(*from), uint32(*to)); err != nil {
+		return opts, cfg, err
 	}
 
 	bucket := cfg.Storage.S3BucketArchive
@@ -388,6 +382,44 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	return opts, cfg, nil
 }
 
+// checkBackfillSources returns nil when every source in `sources`
+// is BackfillSafe, otherwise an error explaining which subset
+// blocked the run and why. Distinguishes supply-observer names
+// from genuinely audit-pending Soroban sources so the operator
+// gets a targeted message rather than the generic WASM-audit one.
+// F-1243 (audit-2026-05-12).
+func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
+	unsafeSources := unsafeBackfillSources(sources)
+	if len(unsafeSources) == 0 {
+		return nil
+	}
+	var supplyObservers, sorobanPending []string
+	for _, s := range unsafeSources {
+		if isKnownSupplyObserverName(s) {
+			supplyObservers = append(supplyObservers, s)
+		} else {
+			sorobanPending = append(sorobanPending, s)
+		}
+	}
+	if len(supplyObservers) > 0 {
+		return fmt.Errorf(
+			"refusing to backfill — these are supply observers, not price/oracle sources, and don't run "+
+				"through `ratesengine-ops backfill`: %v; supply observers plug into the indexer's "+
+				"LedgerEntryChange / OpDecoder / SEP-41 event hooks (there's no historical replay path here). "+
+				"Use the supply-snapshot systemd timer for current state, or open a wasm-audit ticket if "+
+				"you actually need a historical SEP-41 supply window — that's the only one that has a "+
+				"chance of working with a future supply-backfill command (F-1243)",
+			supplyObservers)
+	}
+	return fmt.Errorf(
+		"refusing to backfill — sources not BackfillSafe (per-WASM-hash audit pending): %v; "+
+			"run ratesengine-ops wasm-history -from %d -to %d -contracts <CID> for each on-chain source, "+
+			"review every emitted WASM hash against the current decoder, then flip BackfillSafe=true in "+
+			"internal/sources/external/registry.go in the same PR (see CLAUDE.md \"Soroban DeFi contracts "+
+			"upgrade in place\")",
+		sorobanPending, fromLedger, toLedger)
+}
+
 // unsafeBackfillSources filters `sources` to those whose registry
 // entry has BackfillSafe=false. The intent is to fail fast on a list
 // the operator can paste into a wasm-history audit ticket.
@@ -399,6 +431,35 @@ func unsafeBackfillSources(sources []string) []string {
 		}
 	}
 	return out
+}
+
+// knownSupplyObserverNames is the closed set of supply-observer
+// package names the indexer registers. None of these are in
+// external.Registry (supply observers plug into a different
+// dispatcher hook than price/oracle sources) — but we want a
+// targeted error message when an operator tries to backfill one,
+// rather than the generic "WASM-hash audit pending" message that
+// drove the F-1243 audit finding.
+//
+// Update this set when a new supply observer ships under
+// internal/supply/. Keeping the list local to backfill.go avoids
+// a cross-cutting "supply registry" abstraction for this single
+// error-message use case.
+var knownSupplyObserverNames = map[string]struct{}{
+	"accounts":           {},
+	"trustlines":         {},
+	"claimable_balances": {},
+	"sac_balances":       {},
+	"sep41_supply":       {},
+	"liquidity_pools":    {},
+}
+
+// isKnownSupplyObserverName reports whether `name` matches one of
+// the known supply observers. Used by the backfill flag-parser to
+// emit a tailored error rather than the generic BackfillSafe one.
+func isKnownSupplyObserverName(name string) bool {
+	_, ok := knownSupplyObserverNames[name]
+	return ok
 }
 
 // mkBackfillLogger returns a slog.Logger configured for one-shot

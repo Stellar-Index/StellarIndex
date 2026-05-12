@@ -223,6 +223,67 @@ func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
 	}
 }
 
+// TestIsKnownSupplyObserverName — F-1243 wants `ratesengine-ops
+// backfill accounts` to fail with a supply-observer-aware error
+// rather than the generic "WASM-hash audit pending" message
+// (which is misleading for these names — they're not Soroban
+// sources at all). Pin the closed set so a future supply-observer
+// addition that forgets to update this map will surface in a code
+// review or a failing test rather than a misleading prod error.
+func TestIsKnownSupplyObserverName(t *testing.T) {
+	supplyNames := []string{
+		"accounts",
+		"trustlines",
+		"claimable_balances",
+		"sac_balances",
+		"sep41_supply",
+		"liquidity_pools",
+	}
+	for _, n := range supplyNames {
+		if !isKnownSupplyObserverName(n) {
+			t.Errorf("isKnownSupplyObserverName(%q) = false; want true", n)
+		}
+	}
+	for _, n := range []string{"binance", "soroswap", "comet", "unknown-future-source"} {
+		if isKnownSupplyObserverName(n) {
+			t.Errorf("isKnownSupplyObserverName(%q) = true; want false (it's a price/oracle source, not a supply observer)", n)
+		}
+	}
+}
+
+// TestCheckBackfillSources_TailoredErrors — F-1243 wants the
+// supply-observer error message to differ from the WASM-audit one
+// so operators don't waste time auditing decoders for sources
+// that aren't Soroban sources at all.
+func TestCheckBackfillSources_TailoredErrors(t *testing.T) {
+	t.Run("supply observer surfaces the supply-specific message", func(t *testing.T) {
+		err := checkBackfillSources([]string{"accounts"}, 100, 200)
+		if err == nil {
+			t.Fatal("expected error for supply-observer backfill request")
+		}
+		if !strings.Contains(err.Error(), "supply observers") {
+			t.Errorf("error %q should mention 'supply observers'", err.Error())
+		}
+		if strings.Contains(err.Error(), "WASM-hash audit") {
+			t.Errorf("supply-observer error should NOT reference the WASM-audit gate; got %q", err.Error())
+		}
+	})
+	t.Run("genuine audit-pending soroban source surfaces the wasm-audit message", func(t *testing.T) {
+		err := checkBackfillSources([]string{"unknown-future-source"}, 100, 200)
+		if err == nil {
+			t.Fatal("expected error for unknown source")
+		}
+		if !strings.Contains(err.Error(), "WASM-hash audit") {
+			t.Errorf("audit-pending error should mention 'WASM-hash audit'; got %q", err.Error())
+		}
+	})
+	t.Run("clean source list returns nil", func(t *testing.T) {
+		if err := checkBackfillSources([]string{"binance", "soroswap"}, 100, 200); err != nil {
+			t.Errorf("clean source list should pass; got %v", err)
+		}
+	})
+}
+
 // planBackfillChunks tests — the parallelism plan must satisfy two
 // invariants: the union of chunks covers [from, to] exactly with no
 // gaps and no overlaps; chunk count equals the requested parallel

@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tailored error for supply-observer backfill attempts (F-1243).**
+  `ratesengine-ops backfill accounts` (or any of the six supply
+  observers: `accounts`, `trustlines`, `claimable_balances`,
+  `sac_balances`, `sep41_supply`, `liquidity_pools`) used to fail
+  with the generic "WASM-hash audit pending" error — misleading,
+  since supply observers aren't Soroban price/oracle sources at
+  all. They plug into different dispatcher hooks
+  (`LedgerEntryChange` / `OpDecoder` / SEP-41) and have no
+  historical replay path through this command. New
+  `checkBackfillSources` helper distinguishes the two cases and
+  emits a supply-observer-specific message pointing operators
+  at the supply-snapshot timer (or a future supply-backfill
+  command for SEP-41 windows). 3 new unit tests cover the
+  closed name set, the tailored error path, and the unchanged
+  WASM-audit gate.
+
 ### Documented
 
 - **Dashboard surface bypasses the v1 envelope on purpose (F-1235).**
