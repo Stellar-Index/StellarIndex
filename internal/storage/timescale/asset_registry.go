@@ -62,6 +62,11 @@ func (s *Store) registerClassicAssetSeen(
 		return err
 	}
 
+	// first_seen_* uses LEAST so chunked / parallel backfill that
+	// processes ledgers out of order cannot leave a higher value
+	// behind. Without this, replaying an older window after the
+	// row already exists would leave first_seen_ledger pinned at
+	// the original (later) ledger — wrong by definition. F-1239.
 	const q = `
 		INSERT INTO classic_assets (
 			asset_id, code, issuer_g_strkey, slug,
@@ -73,6 +78,8 @@ func (s *Store) registerClassicAssetSeen(
 			$4, $5, $4, $5, 1
 		)
 		ON CONFLICT (asset_id) DO UPDATE SET
+			first_seen_at     = LEAST(classic_assets.first_seen_at, EXCLUDED.first_seen_at),
+			first_seen_ledger = LEAST(classic_assets.first_seen_ledger, EXCLUDED.first_seen_ledger),
 			last_seen_at      = GREATEST(classic_assets.last_seen_at, EXCLUDED.last_seen_at),
 			last_seen_ledger  = GREATEST(classic_assets.last_seen_ledger, EXCLUDED.last_seen_ledger),
 			observation_count = classic_assets.observation_count + 1
