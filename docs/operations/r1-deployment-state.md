@@ -580,6 +580,46 @@ and rolled R1 + applied operator-side config changes.
   - F-1267 (p95 over RFP target) — needs the multi-region
     cutover per `docs/architecture/r2-r3-bringup.md`
 
+### 2026-05-12 F-1223 Caddyfile roll (post-rc.49)
+
+R1 was running a pre-F-1223 Caddyfile that didn't block
+`/metrics`. Public hit returned 200 with the full Prometheus
+metrics surface — Go runtime stats, request counters, per-source
+ingest gauges all readable by anyone hitting
+`https://api.ratesengine.net/metrics`. Codex audit-2026-05-12.
+
+Roll:
+
+  - `scp configs/caddy/Caddyfile.api root@…:/etc/caddy/Caddyfile.new`
+  - `caddy validate --config /etc/caddy/Caddyfile.new` → Valid
+  - Backup at `/etc/caddy/Caddyfile.bak-pre-f1223-<ts>`
+  - `mv Caddyfile.new → Caddyfile && systemctl reload caddy`
+  - Post-roll: `curl /metrics` → 404, `/v1/healthz` → 200.
+
+The new Caddyfile also brings the Cloudflare-real-client-IP
+header chain (`client_ip_headers CF-Connecting-IP, X-Forwarded-For`)
+that F-1224 ships against — F-1224's app-side fix is now end-to-
+end live since Caddy is propagating real IPs.
+
+### 2026-05-12 alert-state snapshot post-Caddy roll
+
+Firing alerts (14 total):
+
+  - 3× `ratesengine_ingestion_source_stopped` — blend, ecb,
+    phoenix (genuinely low-volume; F-1212b's wider window doesn't
+    catch the long-tail). Not a deploy-blocker.
+  - 2× `ratesengine_api_cache_miss_rate_high`
+  - 1× `ratesengine_supply_snapshot_never_initialized` — supply
+    pipeline starting fresh post-rc.49 config roll; clears once
+    the first snapshot lands per `docs/operations/runbooks/
+    aggregator-supply-refresh-never-initialized.md`
+  - 1× `ratesengine_slo_latency_burn_slow` (F-1267 territory)
+  - 1× `ratesengine_slo_availability_burn_slow`
+  - 1× `ratesengine_host_memory_high` (F-1209 — operator action)
+  - 1× `ratesengine_external_poller_stale`
+  - 1× `ratesengine_deadmansswitch` — alertmanager heartbeat
+  - 1× `ratesengine_aggregator_supply_refresh_never_initialized`
+
 ## Credentials (pointers, not values)
 
 - Vault password: in ash's password manager
