@@ -48,12 +48,19 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		maxSupply = sql.NullString{Valid: true, String: snap.MaxSupply.String()}
 	}
 
+	// F-1205 follow-up (codex audit-2026-05-12): use the named-
+	// constraint form. Timescale hypertables in PG 16 + TS 2.16
+	// don't expose unique constraints to ON CONFLICT's column-
+	// inference path, so the cleaner `ON CONFLICT (cols)` syntax
+	// fails with `there is no unique or exclusion constraint
+	// matching the ON CONFLICT specification`. The named-target
+	// form bypasses inference. Constraint added by migration 0030.
 	const q = `
 		INSERT INTO asset_supply_history
 		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence)
 		VALUES
 		    ($1, $2, $3::numeric, $4::numeric, $5::numeric, $6, $7)
-		ON CONFLICT (asset_key, ledger_sequence, time) DO NOTHING
+		ON CONFLICT ON CONSTRAINT asset_supply_history_asset_ledger_idx DO NOTHING
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		snap.ObservedAt.UTC(),
