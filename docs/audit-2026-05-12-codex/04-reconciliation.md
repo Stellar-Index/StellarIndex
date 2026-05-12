@@ -30,7 +30,7 @@ Generated from `git ls-files` before this audit directory was added.
 | Check | Status | Notes |
 | --- | --- | --- |
 | Every top-level area has at least one workstream owner | complete | See table above |
-| Every tracked file is represented in inventory | todo | Regenerate and verify line counts at execution start |
+| Every tracked file is represented in inventory | complete | `EV-0078` refresh/merge restored 1,869 tracked rows for 1,869 current files |
 | Every Go package is represented in a workstream | todo | Compare `go list ./...` to W06-W20 |
 | Every binary has a journey or operator flow | todo | `cmd/*` to J45-J56 and API/data journeys |
 | Every migration has a store/API/test review path | todo | W12 and J45 |
@@ -100,11 +100,13 @@ without evidence IDs.
 
 ### 2026-05-12 Execution Reconciliation
 
-- Cold execution evidence now spans `CMD-0007` through `CMD-0053`,
-  `EV-0005` through `EV-0049`, `R1-0001` through `R1-0018`, and
-  `XFI-0001` through `XFI-0029`.
-- Findings `F-1201` through `F-1237` are all open, evidence-backed,
-  and mapped to remediation rows `R-1201` through `R-1235`.
+- Cold execution evidence now spans `CMD-0007` through `CMD-0084`,
+  `EV-0005` through `EV-0081`, `R1-0001` through `R1-0018`, and
+  `XFI-0001` through `XFI-0043`.
+- Findings `F-1201` through `F-1251` remain evidence-backed and are
+  mapped to remediation rows `R-1201` through `R-1249`; `F-1202` is
+  now marked `fixed` because R1 caught up to the route removal during
+  the audit window.
 - Live R1 checks covered process state, timers, firewall/listeners,
   external reachability, host capacity, Prometheus alerts, config
   snippets, Caddy drift, API/history/SSE behavior, and stablecoin
@@ -115,10 +117,28 @@ without evidence IDs.
   under unprotected main, stablecoin price cross-surface mismatch,
   SDEX legacy-claim backfill loss, oracle partial-coverage drift,
   external streamer parse-error observability, supply component
-  freshness, and CMC identity ambiguity.
-- `CMD-0053` reran `./scripts/ci/lint-docs.sh` after ledger updates and
-  passed.
+  freshness, CMC identity ambiguity, API Redis optionality,
+  ops WASM progress-counter crash behavior, Docker Go toolchain
+  drift, migration-index drift between shipped SQL and the
+  operator-facing schema inventory, contribution-history rows that
+  persist without their advertised USD-volume field, and classic
+  asset registry metadata that freezes after the first same-process
+  observation. The moving `HEAD` also surfaced newly landed dashboard
+  webhook security/correctness seams: stored signing-key material is
+  misdescribed as hash-only, URL validation leaves an SSRF-capable
+  outbound worker path, quota enforcement races under concurrent create
+  requests, and the callback queue currently has no production event
+  producer at all. The follow-on new-runtime pass also found raceable
+  freeze-event open-row dedupe and a verified failing integration path in
+  FX-derived `usd_volume` freshness handling.
+- `CMD-0084` reran `./scripts/ci/lint-docs.sh` after the latest ledger
+  updates and passed.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
-  literal every-file closure; current findings are nevertheless
-  source/R1 verified and not imported from prior audits.
+  literal every-file closure. `EV-0063` documented the scope drift when
+  the repository advanced from the original `80c57e...` anchor to
+  current `6e873cac...`; `EV-0078` resolves that count mismatch by
+  refreshing and merging the inventory back to `1,869` tracked rows.
+  Current findings remain source/R1 verified and not imported from prior
+  audits, but final whole-repo closure still requires terminal review
+  status across the refreshed TSV.

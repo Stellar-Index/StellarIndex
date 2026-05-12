@@ -18,9 +18,9 @@ Cold findings only. No prior finding is imported into this register.
 | ID | Severity | Title | Affected Surface | Evidence | Status | Owner | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | F-1201 | critical | R1 exposes internal storage, observability, and admin services publicly while both nftables and UFW are inactive | R1 host firewall; Ansible archival-node firewall; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; EV-0019 | open | ops/security | External TCP connections succeeded to internal-service ports that repo config says should be default-deny or internal-only. |
-| F-1202 | high | Source API contract and deployed R1 API disagree for removed `/v1/coins` and `/v1/currencies` surfaces | API route table; R1 deployed binary; generated API artifacts | XFI-0002; EV-0012; EV-0020; R1-0001 | open | api/release | Local source removed legacy HTTP surfaces, but R1 and public smoke/audit still expect them; audit of source is not representative of production behavior until deployment state is reconciled. |
-| F-1203 | high | Generated OpenAPI reference and explorer API types were stale and local docs verification did not catch it | `docs/reference/api/rates-engine.v1.yaml`; `web/explorer/src/api/types.ts`; docs/scripts CI | XFI-0002; EV-0007; EV-0010; EV-0011; EV-0013 | open | api/web/ci | `docs-api.sh` and `pnpm generate:api` both produced diffs; `make verify` and `lint-docs` still passed locally. |
-| F-1204 | high | Active frontend, status, examples, and smoke scripts still call removed `/v1/coins` and `/v1/currencies` endpoints | `web/explorer/**`; `web/status/**`; `examples/**`; `scripts/dev/*` | XFI-0002; EV-0012; EV-0020 | open | web/api | Current source deployment would break or degrade HomeCurrencies, converters, embed currency pages, status probes, examples, and public API audit/smoke checks. |
+| F-1202 | high | Source API contract and deployed R1 API disagreed for removed `/v1/coins` and `/v1/currencies` surfaces | API route table; R1 deployed binary; generated API artifacts | XFI-0002; EV-0012; EV-0020; EV-0066; R1-0001 | fixed | api/release | Current R1 now returns 404 for all removed legacy routes, matching source. Keep the historical evidence because it existed earlier in the same audit window; the live mismatch itself is no longer open. |
+| F-1203 | high | Generated explorer API types remain stale and local docs verification did not catch it | `web/explorer/src/api/types.ts`; generation/docs CI | XFI-0002; EV-0007; EV-0011; EV-0013; EV-0067 | open | api/web/ci | On current `HEAD`, docs YAML regenerates cleanly, but `pnpm generate:api` still produces a 362-line diff in explorer TS types, including dashboard webhook routes and updated legacy-route wording. |
+| F-1204 | medium | Public API audit tooling and machine-facing docs still advertise removed `/v1/coins` and `/v1/currencies` routes | `scripts/dev/audit-public-api.sh`; `web/explorer/public/llms.txt` | XFI-0002; EV-0065; EV-0066 | open | web/api/docs | Live explorer/status and smoke consumers were migrated, but the public audit script still fails 5 checks against current R1 and `llms.txt` still advertises `GET /v1/coins`. |
 | F-1205 | high | R1 is missing SLA, archive-integrity, and supply evidence timers that repo monitoring/runbooks expect | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004 | open | ops | Only smoke and heartbeat timers from Rates Engine are installed; evidence-producing timers are absent. |
 | F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013 | open | release/ops | Cross-region, security-review, failover-chaos, and finalisation blockers remain red. |
 | F-1207 | critical | All three public web apps pin vulnerable `next@15.0.4` and CI/Dependabot do not cover pnpm advisories | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051 | open | web/security | `pnpm audit` reports 2 critical and 8 high advisories per app; Dependabot has gomod/actions/docker only, CI has no pnpm audit step, and hosted GitHub vulnerability/Dependabot alerts are disabled. |
@@ -54,6 +54,20 @@ Cold findings only. No prior finding is imported into this register.
 | F-1235 | medium | External CEX stream parser errors are skipped without the decode-error metrics promised by runbooks | Binance/Kraken/Bitstamp/Coinbase streamers; external metrics; decode-error runbook | XFI-0027; EV-0046 | open | external/observability | Vendor frame/schema drift can drop live trades while `SourceDecodeErrorsTotal` stays clean. |
 | F-1236 | high | Supply snapshots can be stamped at a fresh ledger while using stale component observations | Supply refreshers; supply observer storage; asset supply API/market-cap fields | XFI-0028; EV-0047 | open | supply/data-quality | Snapshot ledger is the max ingestion cursor, but component readers use latest-at-or-before rows without freshness checks. |
 | F-1237 | medium | CoinMarketCap polling ignores verified CMC IDs and can bind ambiguous tickers to the wrong asset | Verified currency catalogue; CMC poller; external aggregator observations | XFI-0029; EV-0048 | open | external/identity | The poller queries CMC by ticker and takes the first duplicate-ticker result even though the catalogue stores numeric CMC IDs. |
+| F-1238 | medium | Redis-less API deployments fail startup because closed-bucket stream subscriber is gated on Hub, not Redis | API startup; Redis optionality; closed-bucket SSE stream | XFI-0030; EV-0054 | open | api/streaming/ops | API wiring says Redis is optional, but `redispub.NewSubscriber(nil, ...)` aborts startup whenever Redis is deliberately absent. |
+| F-1239 | medium | WASM history and extraction ops tools panic at completion when progress output is disabled | `ratesengine-ops` WASM audit/extraction commands; Soroban coverage evidence | XFI-0031; EV-0055 | open | ops/data-quality | `-progress-every 0` suppresses in-loop progress but completion still computes modulo by zero after the ledger walk. |
+| F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | open | docker/release | All Dockerfiles use `golang:1.26-alpine`; CI/release use `go.mod` `1.25.10`, and Docker docs still claim `golang:1.25-alpine` and release-equivalent binaries. |
+| F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | open | db/docs/ops | The README claims to be the current migration inventory and says to update it on every new migration, but it omits fourteen live migration families that materially change schema and operational expectations. |
+| F-1242 | medium | The live contribution-history sink persists rows with `volume_usd=NULL` even though the schema reserves that field for source-transparency UX | Aggregator contribution sink; contribution schema/storage; future source-breakdown API/UI | XFI-0034; EV-0060 | open | aggregate/storage/product | The binary writes contribution rows today, but the adapter never forwards USD volume into the durable row shape, so historical source-level USD contribution data is already missing. |
+| F-1243 | high | Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062 | open | storage/assets/data-quality | The dedupe cache exits before the upsert that should update first/last seen ledgers and increment observations, so a long-running ingest/backfill process leaves registry metadata stale until restart. |
+| F-1244 | high | Dashboard webhook signing secrets are persisted as live HMAC keys while docs and type names claim hash-only / never-persisted semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068 | open | security/platform/webhooks | A database read of `customer_webhooks.secret_hash` yields the actual signing key bytes the worker uses, contrary to the published secret-handling contract. |
+| F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069 | open | security/platform/webhooks | A customer-controlled webhook destination can target private/internal HTTPS hosts or redirect chains; no private-address, DNS-rebinding, redirect, or credential guards exist. |
+| F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072 | open | docs/api/product | Product/design guidance now contradicts the implemented callback feature and can mislead integrators or reviewers about the actual push model. |
+| F-1247 | high | Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt | API worker startup; webhook queue store; multi-region / multi-process delivery semantics | XFI-0039; EV-0073 | open | platform/webhooks/ops | The current worker is only correct under a single-worker assumption that conflicts with replicated API deployment and the planned R2/R3 rollout. |
+| F-1248 | medium | The documented ten-webhook-per-account limit is enforced with a raceable pre-check, so concurrent creates can exceed the cap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074 | open | platform/webhooks | The ceiling holds only for serial creates; parallel requests can all pass the handler pre-check before any insert lands. |
+| F-1249 | high | Customer webhook callbacks are exposed and operated as a shipped feature, but no production code enqueues any delivery events | Customer webhook event model; queue writer; dashboard/API docs; operational runbooks | XFI-0041; EV-0076 | open | platform/webhooks/product | The worker can drain rows and the API lets customers subscribe, yet no incident/anomaly/divergence producer ever calls `EnqueueDelivery`, so the feature cannot deliver real callbacks. |
+| F-1250 | medium | Freeze-event open-row dedupe is raceable, so concurrent same-pair freezes can create multiple still-firing durable rows | Freeze writer; Timescale freeze-event mirror; anomalies timeline/recovery semantics | XFI-0042; EV-0079 | open | aggregate/storage/anomaly | The SQL comment claims transactional dedupe, but the code uses an unlocked `WHERE NOT EXISTS` insert and the PK includes `frozen_at`, so concurrent callers can both insert distinct open rows. |
+| F-1251 | high | FX-based `usd_volume` enrichment rejects historical-but-valid rates because freshness is measured against wall-clock time instead of the trade timestamp | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080 | open | storage/indexer/data-quality | A resolver query at `trade.ts` can find the correct VWAP row and still return `ok=false` solely because the row is older than one hour relative to `time.Now()`, which breaks delayed/backfilled enrichment. |
 
 ## Finding Template
 
@@ -622,6 +636,32 @@ Impact: self-hosted Docker/Compose/Kubernetes operators can build a valid-lookin
 
 Remediation direction: either copy migrations into the migrate image at a stable path and set the documented default accordingly, or require a bind mount in the Docker docs and smoke-test that the image can open the configured migration source.
 
+### F-1238. Redis-less API deployments fail startup because closed-bucket stream subscriber is gated on Hub, not Redis
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-api/main.go`
+- `internal/api/streaming/redispub/subscriber.go`
+- `docs/reference/config/README.md`
+- `configs/example.toml`
+
+Evidence:
+
+- `XFI-0030`
+- `EV-0054`
+
+Expected: Redis-dependent API features should degrade independently when Redis is absent, matching the startup comments and readiness semantics. A Redis-less API should still boot if the operator intentionally omits Redis, with closed-bucket streaming disabled/degraded rather than fatal.
+
+Observed: `cmd/ratesengine-api` creates `hub := streaming.NewHub(0)` unconditionally. Later, it checks `if hub != nil` and calls `redispub.NewSubscriber(rdb, ...)`; `hub` is always non-nil, so a nil Redis client returns `redispub: RedisSubscriber is required` and aborts startup. Other Redis-backed features are correctly gated on `rdb != nil`.
+
+Impact: an operator following the documented "Redis optional at API layer" posture cannot run a Redis-less API. A local, staging, or degraded production deployment that should serve read-only Timescale-backed endpoints instead fails before listening.
+
+Remediation direction: gate the Redis pub/sub subscriber on `rdb != nil`, and make the stream endpoint's no-Redis behavior explicit: either no Hub so it returns 503, or Hub-only heartbeats with a degraded metric. Add a startup unit test for `run`/wiring with nil Redis or a small constructor-level test proving subscriber creation is skipped.
+
 ### F-1228. SSE streams are cut off after 30 seconds by the API server write timeout
 
 Severity: `high`
@@ -909,3 +949,364 @@ Observed: the indexer builds a ticker-only `aggregatorPairs` list, and the CMC p
 Impact: CMC can write an oracle update for the wrong project when tickers collide or ranking changes. That corrupts external divergence checks and customer-facing parity against CMC for any ambiguous ticker.
 
 Remediation direction: thread `Catalogue.CoinMarketCapIDs()` into the CMC poller and query/filter by CMC ID when available. Keep symbol fallback only for entries without an ID, and add tests where the correct verified ID is not the first duplicate ticker.
+
+### F-1239. WASM history and extraction ops tools panic at completion when progress output is disabled
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-ops/main.go`
+- `cmd/ratesengine-ops/wasm_extract.go`
+- `cmd/ratesengine-ops/wasm_history_test.go`
+- `cmd/ratesengine-ops/wasm_extract_test.go`
+- `docs/operations/wasm-audits/**`
+
+Evidence:
+
+- `XFI-0031`
+- `EV-0055`
+
+Expected: long-running WASM history and WASM extraction audit commands should either reject `-progress-every 0` or treat it consistently as "disable progress output" without affecting final artifact production.
+
+Observed: both command paths guard in-loop progress printing with `progressEvery > 0`, but after the stream finishes they add the uncounted residue with `workerScanned % progressEvery`. Supplying `-progress-every 0` therefore panics after the expensive ledger walk.
+
+Impact: an operator can lose a long-running WASM audit/extraction run at completion and may be left with incomplete or missing final JSON/WASM artifacts. That directly weakens the evidence trail used for Stellar-specific Soroban market coverage.
+
+Remediation direction: validate `-progress-every` as `> 0` or make zero a supported disable mode by adding the full `workerScanned` residue without modulo. Add tests for zero and nonzero progress intervals in both `wasm-history` and `extract-wasm-from-galexie`.
+
+### F-1240. Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `docker/ratesengine-api.Dockerfile`
+- `docker/ratesengine-indexer.Dockerfile`
+- `docker/ratesengine-aggregator.Dockerfile`
+- `docker/ratesengine-ops.Dockerfile`
+- `docker/ratesengine-migrate.Dockerfile`
+- `docker/ratesengine-sla-probe.Dockerfile`
+- `docker/README.md`
+- `go.mod`
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `.github/workflows/release-validate.yml`
+
+Evidence:
+
+- `XFI-0032`
+- `EV-0057`
+
+Expected: container builds should use the same reviewed Go toolchain as CI and release binaries, or the repository should explicitly document and test a deliberate toolchain skew.
+
+Observed: CI and release builds resolve Go from `go.mod`, currently `go 1.25.10`. The Docker README says the builder stage uses `golang:1.25-alpine` and produces binaries equivalent to release builds. Every Dockerfile instead uses `golang:1.26-alpine`.
+
+Impact: self-hosted Docker images can be built with a newer compiler/runtime than the release artifacts and tested CI matrix. That weakens reproducibility and can create build, performance, or behavior differences that the release workflow did not exercise.
+
+Remediation direction: align all Dockerfiles with the module/release Go version, preferably from a single generated or linted source of truth. Add a CI check that Dockerfile `FROM golang:` tags match `go.mod`, or update docs/tests if a newer image toolchain is intentionally supported.
+
+### F-1241. The operator migration index stops at `0015` even though the repository ships dense schema history through `0029`
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `migrations/README.md`
+- `migrations/0016_*.sql` through `migrations/0029_*.sql`
+- deployment, incident, and schema-review workflows that use the README as the human-readable migration map
+
+Evidence:
+
+- `XFI-0033`
+- `EV-0058`
+- `EV-0059`
+
+Expected: the migration README's "Current migrations" table should enumerate every shipped numbered migration family and stay synchronized with the dense on-disk migration sequence it claims to describe.
+
+Observed: the migration tree is dense and paired through `0029`, and the integration round-trip test passes against that full set. The README's current-migration table still ends at `0015` while explicitly telling maintainers to update it whenever a new migration lands.
+
+Impact: operators and reviewers using the README to reason about deploy prerequisites, schema drift, or incident response can miss fourteen later schema families, including platform billing/auth tables, FX history storage, contribution/router tables, classic asset registry, and recent schema maintenance. That increases the chance of incorrect deploy assumptions or incomplete troubleshooting.
+
+Remediation direction: update the README table through the latest migration, add a lightweight drift check that compares listed migration numbers to on-disk `.up.sql` families, and keep future schema-index changes coupled to migration review.
+
+### F-1242. The live contribution-history sink persists rows with `volume_usd=NULL` even though the schema reserves that field for source-transparency UX
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-aggregator/main.go`
+- `cmd/ratesengine-aggregator/contribution_sink.go`
+- `internal/aggregate/vwap.go`
+- `internal/aggregate/orchestrator/orchestrator.go`
+- `internal/storage/timescale/price_source_contributions.go`
+- `migrations/0026_create_source_contributions_and_sdex_offers.up.sql`
+
+Evidence:
+
+- `XFI-0034`
+- `EV-0060`
+
+Expected: if the aggregator durably records per-source contribution history before the source-breakdown product surface ships, the persisted row should contain the fields that schema/comments say will power that surface, or the unused fields should stay explicitly unclaimed and unwritten.
+
+Observed: the production aggregator wires `ContributionSink` on every orchestrator run. The storage row includes `VolumeUSD`, and migration 0026 says `volume_usd` powers the per-source dollar tooltip, but the sink forwards only asset, quote, bucket, source, weight, and trade count. `VolumeUSD` is never populated by any production caller, so the database stores `NULL` for every contribution row.
+
+Impact: the system is already accumulating contribution-history rows that cannot support source-level USD-attribution UX or analytics later without recomputing historical state from the raw trade table. That weakens the planned CoinGecko/CoinMarketCap-parity transparency surface and makes future rollout depend on a backfill the current design does not mention.
+
+Remediation direction: decide whether `volume_usd` is part of the shipped contribution-history contract. If yes, carry per-source USD volume into `SourceContribution`/`ContributionRecord` and persist it with tests; if no, remove or clearly defer the column/commentary until the feature has a real writer. Add a migration/storage integration test proving the chosen contract.
+
+### F-1243. Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/storage/timescale/trades.go`
+- `internal/storage/timescale/asset_registry.go`
+- `internal/storage/timescale/coins.go`
+- `internal/storage/timescale/issuers.go`
+- `internal/api/v1/assets.go`
+- `internal/api/v1/issuers.go`
+- `test/integration/issuers_coins_storage_test.go`
+
+Evidence:
+
+- `XFI-0035`
+- `EV-0062`
+
+Expected: repeated observed trades for a classic asset should keep `classic_assets.first_seen_*`, `last_seen_*`, and `observation_count` accurate within a single long-running live-ingest or backfill process. Replay order should not matter.
+
+Observed: `InsertTrade` invokes `registerClassicAssetSeen` after each successful stored trade, but `assetRegistryDedupe` returns early once an asset has been touched once in the current process. That happens before the SQL upsert which would apply `LEAST` to first-seen, `GREATEST` to last-seen, and increment `observation_count`. The conflict-update logic therefore does not run for later same-process observations. Existing integration coverage seeds `classic_assets` directly instead of exercising this writer path.
+
+Impact: asset and issuer catalogue metadata can undercount observations by orders of magnitude, preserve the wrong first-seen ledger during out-of-order replay, and freeze last-seen freshness until the indexer restarts. Those fields drive ranking, trust signals, and customer-facing asset/issuer detail views, so this is a live data-quality issue rather than a cosmetic counter drift.
+
+Remediation direction: remove or narrow the process-lifetime dedupe so correctness updates still occur, or replace it with a bounded coalescing/batching strategy that preserves first/last/count semantics. Add integration coverage that inserts multiple trades for the same classic asset in one process, including out-of-order ledger replay, then asserts `first_seen_*`, `last_seen_*`, and `observation_count`.
+
+### F-1244. Dashboard webhook signing secrets are persisted as live HMAC keys while docs and type names claim hash-only / never-persisted semantics
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/api/v1/dashboardwebhooks/handlers.go`
+- `internal/platform/webhook.go`
+- `internal/platform/postgresstore/webhook_store.go`
+- `internal/customerwebhook/worker.go`
+- `migrations/0027_platform_v1_schema.up.sql`
+- `openapi/rates-engine.v1.yaml`
+
+Evidence:
+
+- `XFI-0036`
+- `EV-0068`
+
+Expected: the webhook secret-handling contract should be explicit and true. If only hashes are persisted, the runtime must not need the plaintext-equivalent signing key later. If outbound signing requires retrievable key material, the schema/API/docs should say so and the stored key should receive an appropriate at-rest protection model.
+
+Observed: the create handler generates a plaintext `wsec_*` secret, passes `SecretHash: []byte(secret)`, and the Postgres store inserts those bytes directly into `customer_webhooks.secret_hash`. The delivery worker later uses that field as the actual HMAC key. Simultaneously, the platform type comments, rotate stub, handler comments, and OpenAPI text say the field is a hash or that plaintext is returned once and never persisted.
+
+Impact: operators, reviewers, and customers are given a false security model. A database compromise or over-broad read path exposes signing keys that let an attacker forge outbound webhook signatures for customers, while the code/docs currently imply those secrets are not recoverable from storage.
+
+Remediation direction: choose one honest design. Either store an encrypted/recoverable signing key under a correctly named field with documented at-rest protections and rotation, or change the delivery protocol so the persisted value can truly be non-reversible. Update schema naming/docs/tests in lockstep.
+
+### F-1245. Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/api/v1/dashboardwebhooks/handlers.go`
+- `internal/customerwebhook/worker.go`
+- `cmd/ratesengine-api/main.go`
+- `internal/api/v1/dashboardwebhooks/handlers_test.go`
+- `internal/customerwebhook/worker_test.go`
+
+Evidence:
+
+- `XFI-0037`
+- `EV-0069`
+
+Expected: user-configured outbound webhooks should enforce a clear egress policy that prevents access to loopback, link-local, RFC1918, cluster-local, or otherwise internal destinations, including redirects and DNS changes after validation.
+
+Observed: `validateWebhookURL` checks only non-empty, `https://`, and `url.Parse`. Production starts the delivery worker whenever dashboard webhooks are enabled. The worker uses a default `http.Client`, so redirect behavior is unrestricted by this code. The tests cover only plain-HTTP rejection, not private hosts, redirect chains, DNS rebinding, or embedded credentials.
+
+Impact: an authenticated dashboard user can turn the API worker into an outbound network probe or request relay against internal HTTPS services, and redirect handling expands the reachable surface beyond the initially submitted URL. That is a control-plane boundary violation, especially on hosts that can reach internal storage, observability, or admin services already exposed in other findings.
+
+Remediation direction: add destination policy enforcement at both registration and send time: reject local/private/reserved IP ranges after DNS resolution, reject userinfo, constrain ports if appropriate, disable or strictly validate redirects, and re-resolve on delivery. Add unit/integration tests for loopback, RFC1918, link-local, redirect-to-private, and DNS-rebinding-style cases.
+
+### F-1246. API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `docs/reference/api-design.md`
+- `docs/reference/api/rates-engine.v1.yaml`
+- `internal/api/v1/dashboardwebhooks/doc.go`
+- `cmd/ratesengine-api/main.go`
+- `docs/operations/runbooks/customer-webhook-delivery-failing.md`
+
+Evidence:
+
+- `XFI-0038`
+- `EV-0072`
+
+Expected: the API-design reference should match the current product contract after a previously deferred capability ships.
+
+Observed: the design doc's "Open questions — closed" section still says "Webhook callbacks? Not in v1. Customers who want push use SSE." The current API reference, route mounts, delivery worker, and operations runbook all describe a shipped dashboard webhook callback feature.
+
+Impact: integrators, operators, and auditors get contradictory answers about whether push callbacks exist, which complicates product positioning and weakens confidence in docs as a source of truth during security and launch review.
+
+Remediation direction: update the API design reference to reflect the shipped dashboard webhook model, document how it relates to SSE, and make design-reference drift part of the docs-truth checks for features that move from deferred to shipped.
+
+### F-1247. Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-api/main.go`
+- `internal/customerwebhook/worker.go`
+- `internal/platform/postgresstore/webhook_store.go`
+- `docs/architecture/r2-r3-bringup.md`
+
+Evidence:
+
+- `XFI-0039`
+- `EV-0073`
+
+Expected: each pending webhook delivery attempt should be claimed once before network I/O so horizontal API scale or multi-region rollout does not multiply customer callbacks.
+
+Observed: every API process with dashboard webhooks enabled starts its own worker. `ListPendingDeliveries` fetches due rows with a plain SELECT, without a lease, claim update, or `FOR UPDATE SKIP LOCKED`; the worker performs the HTTP POST and only afterwards marks the row delivered or failed. Two workers can therefore read and send the same pending row concurrently. The package comment explicitly assumes one worker and calls duplicate delivery cosmetically harmless.
+
+Impact: duplicate SEV/anomaly/divergence callbacks can hit customer automation, paging, or Slack/Discord sinks during routine horizontal scaling, blue/green deploy overlap, or the documented R2/R3 rollout. That is a correctness and customer-trust issue, especially for incident automation.
+
+Remediation direction: add atomic claim semantics before outbound POSTs. Good options are a transactional `SELECT ... FOR UPDATE SKIP LOCKED` plus state transition, or a claim/lease column with compare-and-swap updates and expiry recovery. Add concurrency tests with two workers racing the same due row and assert exactly one POST per scheduled attempt.
+
+### F-1248. The documented ten-webhook-per-account limit is enforced with a raceable pre-check, so concurrent creates can exceed the cap
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/api/v1/dashboardwebhooks/handlers.go`
+- `internal/platform/postgresstore/webhook_store.go`
+- `migrations/0027_platform_v1_schema.up.sql`
+- `internal/api/v1/dashboardwebhooks/handlers_test.go`
+
+Evidence:
+
+- `XFI-0040`
+- `EV-0074`
+
+Expected: the advertised per-account webhook ceiling should remain true under concurrent requests, not just serial UI use.
+
+Observed: `HandleCreate` calls `checkQuota`, which loads current account hooks and compares `len(hooks)` to ten, then later performs a separate store insert. The Postgres store is a plain insert path, migration 0027 has no database-side cap, and the current quota test exercises only sequential creation.
+
+Impact: a customer or script issuing parallel create requests can exceed the service's own control-plane limit, growing outbound delivery fan-out, SSRF exposure, and incident-notification noise beyond the bounded posture the code comments promise.
+
+Remediation direction: move quota enforcement into an atomic database/store operation. A transactional account-level advisory lock or row lock plus count-and-insert, or another explicit compare-and-insert design, is materially stronger than a handler-side pre-check. Add concurrency tests that launch more than ten creates in parallel and prove the persisted count never exceeds ten.
+
+### F-1249. Customer webhook callbacks are exposed and operated as a shipped feature, but no production code enqueues any delivery events
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/platform/webhook.go`
+- `internal/platform/postgresstore/webhook_store.go`
+- `cmd/ratesengine-api/main.go`
+- `internal/api/v1/dashboardwebhooks/doc.go`
+- `openapi/rates-engine.v1.yaml`
+- `docs/operations/runbooks/customer-webhook-delivery-failing.md`
+
+Evidence:
+
+- `XFI-0041`
+- `EV-0076`
+
+Expected: once customers can register event subscriptions and operators monitor webhook delivery health, the product must actually fan incident/anomaly/divergence events into the delivery queue.
+
+Observed: the codebase defines event types, accepts them in dashboard CRUD, exposes them in OpenAPI, starts a queue-draining worker, and publishes a runbook for delivery failures. But a repo-wide source search finds `EnqueueDelivery` only at its interface/store implementation and tests/fakes; no production event producer inserts pending rows for `incident.sev1`, `incident.resolved`, `anomaly.freeze`, or `divergence.firing`.
+
+Impact: customers can configure a callback feature that never receives real product events, while operators can watch worker metrics and runbooks that appear to describe a live system. That is a shipped-surface correctness failure and a direct customer-trust risk.
+
+Remediation direction: implement the missing producer side explicitly. Wire concrete incident/anomaly/divergence event sources to a fan-out service that filters subscribed enabled hooks and calls `EnqueueDelivery` once per target webhook, with idempotency and observability. Add integration tests that trigger each event class and assert delivery rows are created before the worker runs.
+
+### F-1250. Freeze-event open-row dedupe is raceable, so concurrent same-pair freezes can create multiple still-firing durable rows
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/aggregate/freeze/freeze.go`
+- `internal/storage/timescale/freeze_events.go`
+- `test/integration/freeze_events_test.go`
+
+Evidence:
+
+- `XFI-0042`
+- `EV-0079`
+
+Expected: while one `(asset, quote)` pair is already frozen, concurrent refreshes should preserve exactly one open durable `freeze_events` row for that pair.
+
+Observed: `FreezeEventSink.RecordFreeze` comments say the idempotency check and insert happen "in the same transaction," but the implementation issues a single unlocked `INSERT ... SELECT ... WHERE NOT EXISTS (...) ON CONFLICT (...) DO NOTHING`. The `freeze_events` primary key includes `frozen_at`, so two concurrent callers with different timestamps can both evaluate `NOT EXISTS` before either row is visible and insert distinct open rows. The current integration test proves only sequential idempotency.
+
+Impact: the anomaly timeline can overcount active freeze incidents for a pair, open-row monitoring can inflate, and recovery semantics rely on a later bulk update cleaning up duplicate history that should not exist in the first place.
+
+Remediation direction: make "one open row per pair" a real database invariant. A partial unique index on `(asset_id, quote_id) WHERE recovered_at IS NULL`, or an equivalent transactional lock/UPSERT design, would close the race. Add concurrent integration coverage that fires multiple same-pair freezes together and asserts exactly one open row persists.
+
+### F-1251. FX-based `usd_volume` enrichment rejects historical-but-valid rates because freshness is measured against wall-clock time instead of the trade timestamp
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-indexer/main.go`
+- `internal/storage/timescale/usd_fx_resolver.go`
+- `internal/storage/timescale/trades.go`
+- `test/integration/usd_fx_resolver_test.go`
+
+Evidence:
+
+- `XFI-0043`
+- `EV-0080`
+
+Expected: when resolving USD volume for a trade at timestamp `T`, staleness should be evaluated relative to `T` (or another clearly documented trade-time policy), so valid historical/backfilled trades can still inherit a contemporaneous FX/VWAP anchor.
+
+Observed: `VWAPUSDFXResolver.queryDB` correctly finds the latest peg VWAP at-or-before the supplied trade timestamp, but `USDPriceAt` rejects it using `r.clock().Sub(observedAt) > freshness`. That compares the row to wall-clock now, not to the trade timestamp. Any trade older than the one-hour default window can therefore lose Phase-2 USD enrichment even when the at-time rate exists. The same file documents `Freshness: 0` as disabling the check, while the constructor interprets zero as "apply the 1h default"; the integration test relies on the documented disable behavior and currently fails.
+
+Impact: historical replay, backfill, and delayed indexing can systematically under-populate `trades.usd_volume` for non-USD quotes covered by the new FX resolver. Downstream 24h volume, ranking, and transparency surfaces then understate coverage exactly where Phase 2 was intended to improve it.
+
+Reproduction or reasoning path:
+
+- `go test -tags=integration ./test/integration -run TestVWAPUSDFXResolver_QueriesPrices1m -count=1`
+- Current result: fails with `expected resolver to find EURC/USDC VWAP, got ok=false`.
+
+Remediation direction: define freshness relative to the requested trade timestamp, not wall-clock process time, and split "unset" from "explicitly disabled" freshness semantics if zero is meant to disable checks. Keep an integration case with an old wall-clock seed but a valid at-trade anchor, and add a second case proving genuinely stale-at-trade anchors are rejected.

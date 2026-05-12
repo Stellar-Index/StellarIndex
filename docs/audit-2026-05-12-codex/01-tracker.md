@@ -15,6 +15,7 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | Current findings imported | none |
 | Tracked file source | `git ls-files` |
 | Tracked file count before this directory | `1,747` |
+| Execution-time scope drift | current `HEAD` advanced to `6e873cac...`; the inventory was refreshed/merged back to parity at `1,869` tracked rows on 2026-05-12; see `EV-0063` and `EV-0078` |
 | File inventory | [inventory/file-coverage.tsv](inventory/file-coverage.tsv) |
 | Evidence ledger | [evidence/log.md](evidence/log.md) |
 | Command ledger | [evidence/commands.md](evidence/commands.md) |
@@ -45,24 +46,24 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | W04 | Dependency, provenance, and supply chain | in_progress | EV-0014, EV-0015, EV-0025, EV-0026 |
 | W05 | Configuration and secret boundaries | in_progress | EV-0022, EV-0024, EV-0033 |
 | W06 | Canonical identity, asset semantics, and numeric safety | todo | code refs, tests |
-| W07 | Ledger ingest, transport, backfill, and dispatch | in_progress | EV-0040, EV-0044 |
+| W07 | Ledger ingest, transport, backfill, and dispatch | in_progress | EV-0040, EV-0044, EV-0080 |
 | W08 | Stellar DEX and Soroban source decoders | in_progress | EV-0044 |
 | W09 | Stellar account, supply, and balance observers | in_progress | EV-0047 |
 | W10 | Oracle and reference-price source decoders | in_progress | EV-0045 |
 | W11 | External market-data source fleet | in_progress | EV-0046 |
-| W12 | Storage, migrations, and query correctness | in_progress | EV-0017 |
+| W12 | Storage, migrations, and query correctness | in_progress | EV-0017, EV-0058, EV-0059, EV-0060, EV-0062, EV-0079, EV-0080 |
 | W13 | Redis, cache keys, streaming pub/sub, and freshness | in_progress | EV-0038, EV-0039 |
-| W14 | Aggregation, baselines, anomaly, freeze, and confidence | in_progress | EV-0024 |
-| W15 | API runtime, middleware, contracts, and client SDK | in_progress | EV-0010, EV-0011, EV-0012 |
+| W14 | Aggregation, baselines, anomaly, freeze, and confidence | in_progress | EV-0024, EV-0079 |
+| W15 | API runtime, middleware, contracts, and client SDK | in_progress | EV-0010, EV-0011, EV-0012, EV-0068, EV-0069, EV-0076 |
 | W16 | Dashboard, explorer, status page, SEO, and embeds | in_progress | EV-0012, EV-0014 |
-| W17 | Observability, metrics, alerts, status, and incident flow | in_progress | R1-0010 |
-| W18 | Operations, R1 runtime, archive completeness, and DR | in_progress | R1-0001 through R1-0010 |
-| W19 | Security, auth, abuse, and privacy | in_progress | F-1201, F-1207, EV-0015 |
-| W20 | Tests, fixtures, chaos, load, and CI reality | in_progress | EV-0006, EV-0013, EV-0041 |
-| W21 | Documentation truth and customer commitments | in_progress | EV-0021, EV-0032, EV-0039, EV-0040 |
+| W17 | Observability, metrics, alerts, status, and incident flow | in_progress | R1-0010, EV-0073 |
+| W18 | Operations, R1 runtime, archive completeness, and DR | in_progress | R1-0001 through R1-0010, EV-0073 |
+| W19 | Security, auth, abuse, and privacy | in_progress | F-1201, F-1207, EV-0015, EV-0068, EV-0069 |
+| W20 | Tests, fixtures, chaos, load, and CI reality | in_progress | EV-0006, EV-0013, EV-0041, EV-0070 |
+| W21 | Documentation truth and customer commitments | in_progress | EV-0021, EV-0032, EV-0039, EV-0040, EV-0072, EV-0076 |
 | W22 | Competitive product completeness | in_progress | EV-0035, EV-0038, EV-0040, EV-0042 |
 | W23 | Generated artifacts and drift | in_progress | F-1203 |
-| W24 | Cross-file interaction and system coupling | in_progress | XFI-0001 through XFI-0029 |
+| W24 | Cross-file interaction and system coupling | in_progress | XFI-0001 through XFI-0043 |
 
 ## Mandatory Pass Tracker
 
@@ -83,6 +84,7 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | Gate | Status |
 | --- | --- |
 | No `todo` file rows remain | todo |
+| Current tracked tree reconciled to inventory | complete |
 | No untriaged `blocked` rows remain | todo |
 | All findings have evidence | in_progress |
 | All evidence has source anchors | in_progress |

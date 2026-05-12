@@ -27,42 +27,42 @@ Makefile	Makefile	Makefile	unknown	in_progress	EV-0013,F-1206		Reviewed verify a
 README.md	README.md	README.md	documentation	todo			cold audit pending
 SECURITY.md	SECURITY.md	SECURITY.md	documentation	done	EV-0050;EV-0051;F-1207		Reviewed disclosure/dependency-security context; dependency alerts disabled separately tracked
 VERSIONS.md	VERSIONS.md	VERSIONS.md	documentation	todo			cold audit pending
-cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runtime	todo			cold audit pending
-cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	todo			cold audit pending
-cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	todo			cold audit pending
-cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	todo			cold audit pending
-cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	todo			cold audit pending
-cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	todo			cold audit pending
-cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	todo			cold audit pending
-cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	todo			cold audit pending
-cmd/ratesengine-migrate/main.go	cmd	cmd/ratesengine-migrate	runtime	todo			cold audit pending
-cmd/ratesengine-ops/backfill.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/backfill_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/cross_region_check.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/cross_region_check_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/cross_region_monitor.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/cross_region_monitor_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/discovery.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/hubble_check.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/hubble_check_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/hubble_soroban_events.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/hubble_soroban_events_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/main.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/mint_key.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/seed_soroswap_pairs.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/sep1_refresh.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/supply.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/upgrade_key.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/verify_archive_chunks.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/verify_archive_chunks_integration_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/verify_archive_chunks_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/wasm_extract.go	cmd	cmd/ratesengine-ops	runtime	todo			cold audit pending
-cmd/ratesengine-ops/wasm_extract_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-ops/wasm_history_test.go	cmd	cmd/ratesengine-ops	test	todo			cold audit pending
-cmd/ratesengine-sla-probe/main.go	cmd	cmd/ratesengine-sla-probe	runtime	todo			cold audit pending
-cmd/ratesengine-sla-probe/main_test.go	cmd	cmd/ratesengine-sla-probe	test	todo			cold audit pending
-cmd/ratesengine-sla-probe/textfile.go	cmd	cmd/ratesengine-sla-probe	runtime	todo			cold audit pending
-cmd/ratesengine-sla-probe/textfile_test.go	cmd	cmd/ratesengine-sla-probe	test	todo			cold audit pending
+cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055		Reviewed storage-neutral adapter boundary for change summaries; no standalone finding
+cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055,EV-0060	XFI-0034	Reviewed contribution sink adapter and batch forwarding; F-1242 records that live writes omit `volume_usd`.
+cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;F-1213;F-1236	XFI-0009;XFI-0028	Reviewed aggregation, stablecoin/min-volume, Redis/cache, supply refresher, and timers
+cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	done	EV-0052;EV-0055		Command package tests pass; coverage tied to main wiring
+cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;F-1217;F-1219;F-1228;F-1238;F-1245;F-1247;F-1249	XFI-0011;XFI-0013;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, server construction, and webhook worker/producer coupling
+cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	done	EV-0052;EV-0055		Command package tests pass; startup/test seams reviewed
+cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, CMC identity propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
+cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	done	EV-0052;EV-0055		Command package tests pass; indexer wiring coverage reviewed
+cmd/ratesengine-migrate/main.go	cmd	cmd/ratesengine-migrate	runtime	done	EV-0037;EV-0055;F-1227	XFI-0019	Reviewed migration source defaults, status/up/down semantics, and Docker packaging interaction
+cmd/ratesengine-ops/backfill.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0040;EV-0044;EV-0055;F-1230;F-1233	XFI-0022;XFI-0025	Reviewed backfill range planning, source gates, cursor semantics, and historical coverage interactions
+cmd/ratesengine-ops/backfill_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed backfill flag/source-gate/range tests
+cmd/ratesengine-ops/cross_region_check.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0009;EV-0055		Reviewed region comparison, query construction, field comparison, and pre-R2 no-op behavior
+cmd/ratesengine-ops/cross_region_check_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed cross-region agreement/divergence/fetch-error test coverage
+cmd/ratesengine-ops/cross_region_monitor.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0009;EV-0055		Reviewed monitor exporter, health semantics, and single-region startup behavior
+cmd/ratesengine-ops/cross_region_monitor_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed Prometheus outcome/fetch-error/divergence tests
+cmd/ratesengine-ops/discovery.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed discovered-asset list command, client-side filtering, and output shape
+cmd/ratesengine-ops/hubble_check.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0044;EV-0055;F-1233	XFI-0025	Reviewed SDEX-vs-Hubble count/amount comparison and BigQuery parameter binding
+cmd/ratesengine-ops/hubble_check_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed count/stat diff tests, tolerance behavior, and validation tests
+cmd/ratesengine-ops/hubble_soroban_events.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed Soroban event-count primitive, BigQuery parameters, topic filters, and output modes
+cmd/ratesengine-ops/hubble_soroban_events_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed SQL-generation and flag-validation tests
+cmd/ratesengine-ops/main.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055;F-1239	XFI-0031	Reviewed ops command dispatcher plus archive/WASM commands; progress-zero panic tracked
+cmd/ratesengine-ops/mint_key.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0053;EV-0055;F-1219	XFI-0013	Reviewed Redis key bootstrap path and billing/key-source split interaction
+cmd/ratesengine-ops/seed_soroswap_pairs.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed Soroswap factory seeding, RPC fallback, and pair upsert hook
+cmd/ratesengine-ops/sep1_refresh.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed issuer SEP-1 refresh loop, resolver boundary, and dry-run/write behavior
+cmd/ratesengine-ops/supply.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0047;EV-0055;F-1236	XFI-0028	Reviewed supply snapshot/audit commands and component freshness interaction
+cmd/ratesengine-ops/upgrade_key.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0053;EV-0055;F-1219	XFI-0013	Reviewed Redis-only key upgrade path and billing/platform split interaction
+cmd/ratesengine-ops/verify_archive_chunks.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed archive verification chunks, boundary stitching, checkpoint checks, and metrics server
+cmd/ratesengine-ops/verify_archive_chunks_integration_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed filesystem-backed parallel archive verification integration test
+cmd/ratesengine-ops/verify_archive_chunks_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed split/stitch/resume-hash tests
+cmd/ratesengine-ops/wasm_extract.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055;F-1239	XFI-0031	Reviewed Galexie WASM extraction worker path; progress-zero panic tracked
+cmd/ratesengine-ops/wasm_extract_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed WASM code extraction change-type tests; missing progress-zero coverage tracked
+cmd/ratesengine-ops/wasm_history_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed WASM transition/storage/code-upload/merge tests; missing progress-zero coverage tracked
+cmd/ratesengine-sla-probe/main.go	cmd	cmd/ratesengine-sla-probe	runtime	done	EV-0020;EV-0055	XFI-0002	Reviewed endpoint construction, auth header, observed_at freshness, and report verdict logic
+cmd/ratesengine-sla-probe/main_test.go	cmd	cmd/ratesengine-sla-probe	test	done	EV-0052;EV-0055		Reviewed SLA latency/availability/freshness/static endpoint tests
+cmd/ratesengine-sla-probe/textfile.go	cmd	cmd/ratesengine-sla-probe	runtime	done	EV-0055		Reviewed Prometheus textfile output, pass/fail timestamp behavior, and atomic write
+cmd/ratesengine-sla-probe/textfile_test.go	cmd	cmd/ratesengine-sla-probe	test	done	EV-0052;EV-0055		Reviewed textfile metric ordering/pass/fail/atomic-write tests
 commitlint.config.js	commitlint.config.js	commitlint.config.js	config	done	EV-0050		Reviewed commit style policy config; enforcement depends on broader GitHub controls
 configs/alertmanager/README.md	configs	configs/alertmanager	documentation	todo			cold audit pending
 configs/alertmanager/alertmanager.r1.yml	configs	configs/alertmanager	config	todo			cold audit pending
@@ -198,6 +198,7 @@ configs/ansible/roles/redis-sentinel/tasks/main.yml	configs	configs/ansible	conf
 configs/ansible/roles/redis-sentinel/templates/redis-systemd-override.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/templates/redis.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
+configs/ansible/roles/redis-sentinel/templates/users.acl.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/tasks/deploy-one-binary.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/audit/README.md	configs	configs/audit	documentation	todo			cold audit pending
 configs/audit/wasm-walk-contracts.yaml	configs	configs/audit	config	todo			cold audit pending
@@ -222,11 +223,23 @@ configs/prometheus/README.md	configs	configs/prometheus	documentation	todo			col
 configs/prometheus/prometheus.r1.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/README.md	configs	configs/prometheus	documentation	todo			cold audit pending
 configs/prometheus/rules.r1/aggregator.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/anomaly.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/api.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/archive-completeness.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/cache.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/divergence.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/external-pollers.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/infra.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/ingestion.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/meta.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/slo.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/stellar.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/storage.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/supply-refresh.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/supply-snapshot.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/supply.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/verify-archive.yml	configs	configs/prometheus	config	todo			cold audit pending
 deploy/comms/README.md	deploy	deploy/comms	documentation	in_progress	EV-0021,F-1211	XFI-0007	Comms template still points to Upptime/status repo flow
 deploy/comms/incident-update.md	deploy	deploy/comms	documentation	in_progress	EV-0021,F-1211	XFI-0007	Incident template still assumes Upptime issue body flow
 deploy/comms/launch-announcement.md	deploy	deploy/comms	documentation	todo			cold audit pending
@@ -268,13 +281,13 @@ deploy/systemd/supply-snapshot.service	deploy	deploy/systemd	unknown	todo			cold
 deploy/systemd/supply-snapshot.timer	deploy	deploy/systemd	unknown	in_progress	XFI-0003,F-1205		Expected timer absent on R1
 deploy/systemd/verify-archive-tier-a.service	deploy	deploy/systemd	unknown	todo			cold audit pending
 deploy/systemd/verify-archive-tier-a.timer	deploy	deploy/systemd	unknown	in_progress	XFI-0003,F-1205		Expected timer absent on R1
-docker/README.md	docker	docker	documentation	todo			cold audit pending
-docker/ratesengine-aggregator.Dockerfile	docker	docker	deploy	todo			cold audit pending
-docker/ratesengine-api.Dockerfile	docker	docker	deploy	todo			cold audit pending
-docker/ratesengine-indexer.Dockerfile	docker	docker	deploy	todo			cold audit pending
-docker/ratesengine-migrate.Dockerfile	docker	docker	deploy	todo			cold audit pending
-docker/ratesengine-ops.Dockerfile	docker	docker	deploy	todo			cold audit pending
-docker/ratesengine-sla-probe.Dockerfile	docker	docker	deploy	todo			cold audit pending
+docker/README.md	docker	docker	documentation	done	EV-0037;EV-0057;F-1227;F-1240	XFI-0019;XFI-0032	Reviewed container publishing docs, migrate-image caveat, and Go toolchain drift
+docker/ratesengine-aggregator.Dockerfile	docker	docker	deploy	done	EV-0057;F-1240	XFI-0032	Reviewed builder/runtime image shape, nonroot user, exposed metrics port, and Go toolchain drift
+docker/ratesengine-api.Dockerfile	docker	docker	deploy	done	EV-0057;F-1240	XFI-0032	Reviewed builder/runtime image shape, nonroot user, exposed API port, and Go toolchain drift
+docker/ratesengine-indexer.Dockerfile	docker	docker	deploy	done	EV-0057;F-1240	XFI-0032	Reviewed builder/runtime image shape, nonroot user, exposed metrics port, and Go toolchain drift
+docker/ratesengine-migrate.Dockerfile	docker	docker	deploy	done	EV-0037;EV-0057;F-1227;F-1240	XFI-0019;XFI-0032	Reviewed builder/runtime image shape, missing migrations packaging, and Go toolchain drift
+docker/ratesengine-ops.Dockerfile	docker	docker	deploy	done	EV-0055;EV-0057;F-1239;F-1240	XFI-0031;XFI-0032	Reviewed builder/runtime image shape, ops binary packaging, and Go toolchain drift
+docker/ratesengine-sla-probe.Dockerfile	docker	docker	deploy	done	EV-0057;F-1240	XFI-0032	Reviewed builder/runtime image shape, nonroot user, no listening port, and Go toolchain drift
 docs/adr/0001-horizon-deprecated.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0002-minio-s3-compat-storage.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0003-i128-no-truncation.md	docs	docs/adr	documentation	todo			cold audit pending
@@ -286,6 +299,7 @@ docs/adr/0008-ha-topology.md	docs	docs/adr	documentation	todo			cold audit pendi
 docs/adr/0009-latency-budget.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0010-off-chain-fiat-representation.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0011-supply-algorithm.md	docs	docs/adr	documentation	todo			cold audit pending
+docs/adr/0012-quorum-set-composition.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0013-go-stellar-sdk-xdr-for-scval.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0014-crypto-ticker-representation.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0015-last-closed-bucket-rate-serving.md	docs	docs/adr	documentation	todo			cold audit pending
@@ -326,6 +340,7 @@ docs/architecture/oracle-manipulation-defense.md	docs	docs/architecture	document
 docs/architecture/patroni-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/platform-spec.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/prometheus-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/r2-r3-bringup.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/redis-sentinel-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/repo-hygiene-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/semver-policy.md	docs	docs/architecture	documentation	todo			cold audit pending
@@ -367,6 +382,76 @@ docs/audit-2026-05-02/inventory/area-counts.md	docs	docs/audit-2026-05-02	docume
 docs/audit-2026-05-02/inventory/file-coverage.tsv	docs	docs/audit-2026-05-02	unknown	todo			cold audit pending
 docs/audit-2026-05-02/inventory/generate.sh	docs	docs/audit-2026-05-02	script	todo			cold audit pending
 docs/audit-2026-05-02/inventory/repo-snapshot.md	docs	docs/audit-2026-05-02	documentation	todo			cold audit pending
+docs/audit-2026-05-12/00-plan.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/01-tracker.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/02-protocol.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/03-journeys.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/04-reconciliation.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/05-findings-register.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/06-exclusions-register.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/07-remediation-plan.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/08-cgcmc-parity-matrix.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/09-stellar-coverage-matrix.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/10-attack-tree.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/11-severity-rubric.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/12-r1-live-probe-protocol.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/CLOSURE-SUMMARY.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/README.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/README.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/commands.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/cross-file-interactions.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/journeys/README.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/log.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/r1-probes/_template.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/r1-probes/r1-baseline-2026-05-12.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/tree-observations.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/evidence/workstreams/README.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/README.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/adr-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/alert-rule-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/api-route-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/area-counts.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/dependency-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/docker-systemd-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/external-source-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/file-coverage.tsv	docs	docs/audit-2026-05-12	unknown	todo			cold audit pending
+docs/audit-2026-05-12/inventory/generate.sh	docs	docs/audit-2026-05-12	script	todo			cold audit pending
+docs/audit-2026-05-12/inventory/metric-name-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/migration-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/repo-snapshot.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/runbook-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/source-decoder-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/webfrontend-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/inventory/workflow-inventory.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/journeys-traces/J01-J66-bulk-traces.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/journeys-traces/_template.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/README.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W01-snapshot-governance-hygiene.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W02-architecture-adrs.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W03-build-ci-release.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W04-dependency-provenance.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W05-canonical-numeric-serialization.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W06-ingest-transport.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W07-onchain-source-decoders.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W08-external-source-fleet.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W09-storage-schema-cache-migrations.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W10-aggregation-divergence-anomaly.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W11-api-runtime-streaming-auth.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W12-supply-metadata-asset-detail.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W13-operator-tooling-archive.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W14-observability-metrics-alerts.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W15-tests-and-ci-reality.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W16-documentation-truth.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W17-web-frontends-explorer-dashboard-status.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W18-deployment-infrastructure.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W19-security-secrets-billing.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W20-cgcmc-parity-execution.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W21-r1-live-state-execution.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W22-launch-readiness-public-flip.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W23-multi-region-determinism.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W24-contract-schema-evolution-wasm-history.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W25-generated-artifacts-and-drift.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
+docs/audit-2026-05-12/workstreams/W26-cross-file-interactions.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
 docs/blog/2026-05-07-shipping-the-ia-restructure.md	docs	docs/blog	documentation	todo			cold audit pending
 docs/blog/README.md	docs	docs/blog	documentation	todo			cold audit pending
 docs/ctx-proposal.md	docs	docs/ctx-proposal.md	documentation	todo			cold audit pending
@@ -459,9 +544,11 @@ docs/operations/runbooks/aggregator-class-drop-spike.md	docs	docs/operations	doc
 docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/aggregator-outlier-storm.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/aggregator-silent.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/aggregator-supply-refresh-never-initialized.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/alertmanager-bad-config.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/all-ingestion-down.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/anomaly-freeze-engaged.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/anomaly-freeze-sustained.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/api-5xx.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/api-down.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/api-latency.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -478,20 +565,25 @@ docs/operations/runbooks/compression-lag.md	docs	docs/operations	documentation	t
 docs/operations/runbooks/core-lag.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/core-peers.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/cursor-stuck.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/customer-webhook-delivery-failing.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/db-disk-full.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/deadmansswitch.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/decode-errors.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/discovery-drops.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/divergence-refresh-error-dominant.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/dr-activation.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/external-poller-error-rate-high.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/external-poller-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/first-archival-node-deployment.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/freeze-recovery-stalled.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/fx-history-missing.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/host-cpu-high.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/host-down.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/host-memory-high.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/ingestion-lag.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/insert-errors.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/node-root-disk-full.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/node-root-disk-warning.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/nvme-smart.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/nvme-thermal.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/operator-unblock-2026-05-08.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -513,6 +605,12 @@ docs/operations/runbooks/sla-probe-freshness-breach.md	docs	docs/operations	docu
 docs/operations/runbooks/sla-probe-p95-breach.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/sla-probe-unit-failed.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/slo-availability-burn-fast.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/slo-availability-burn-medium.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/slo-availability-burn-slow.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/slo-latency-burn-fast.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/slo-latency-burn-medium.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/slo-latency-burn-slow.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/source-stopped.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/supply-cross-check-divergence.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/supply-refresh-error-dominant.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -700,7 +798,7 @@ examples/README.md	examples	examples	documentation	todo			cold audit pending
 examples/curl/01-healthz.sh	examples	examples	script	todo			cold audit pending
 examples/curl/02-signup.sh	examples	examples	script	todo			cold audit pending
 examples/curl/03-account-me.sh	examples	examples	script	todo			cold audit pending
-examples/curl/04-coins.sh	examples	examples	script	in_progress	EV-0012,F-1204		Calls removed /v1/coins surface
+examples/curl/04-assets.sh	examples	examples	script	todo			cold audit pending
 examples/curl/05-price.sh	examples	examples	script	todo			cold audit pending
 examples/curl/06-price-stream.sh	examples	examples	script	todo			cold audit pending
 examples/curl/07-ohlc.sh	examples	examples	script	todo			cold audit pending
@@ -735,6 +833,8 @@ internal/aggregate/doc.go	internal	internal/aggregate/doc.go	runtime	todo			cold
 internal/aggregate/freeze/doc.go	internal	internal/aggregate/freeze	runtime	todo			cold audit pending
 internal/aggregate/freeze/freeze.go	internal	internal/aggregate/freeze	runtime	todo			cold audit pending
 internal/aggregate/freeze/freeze_test.go	internal	internal/aggregate/freeze	test	todo			cold audit pending
+internal/aggregate/freeze/recovery.go	internal	internal/aggregate/freeze	runtime	todo			cold audit pending
+internal/aggregate/freeze/recovery_test.go	internal	internal/aggregate/freeze	test	todo			cold audit pending
 internal/aggregate/global.go	internal	internal/aggregate/global.go	runtime	todo			cold audit pending
 internal/aggregate/global_test.go	internal	internal/aggregate/global_test.go	test	todo			cold audit pending
 internal/aggregate/ohlc.go	internal	internal/aggregate/ohlc.go	runtime	todo			cold audit pending
@@ -809,6 +909,9 @@ internal/api/v1/dashboardauth/middleware.go	internal	internal/api/v1	runtime	tod
 internal/api/v1/dashboardkeys/doc.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	in_progress	EV-0023,F-1212	XFI-0008	Customer-controlled key rate limit accepted up to 100000/min
 internal/api/v1/dashboardkeys/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
+internal/api/v1/dashboardwebhooks/doc.go	internal	internal/api/v1	runtime	done	EV-0072;EV-0076;F-1246;F-1249	XFI-0038;XFI-0041	Reviewed dashboard webhook contract docs against live worker/store/product seams
+internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, secret handling, SSRF boundary, quota race, and missing producer path
+internal/api/v1/dashboardwebhooks/handlers_test.go	internal	internal/api/v1	test	done	EV-0069;EV-0070;EV-0074;F-1245;F-1248	XFI-0037;XFI-0040	Reviewed current coverage; tests miss private-destination validation and concurrent quota enforcement
 internal/api/v1/diagnostics_cursors.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/diagnostics_cursors_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/doc.go	internal	internal/api/v1	runtime	todo			cold audit pending
@@ -924,8 +1027,12 @@ internal/auth/list_keys.go	internal	internal/auth/list_keys.go	runtime	todo			co
 internal/auth/sep10.go	internal	internal/auth/sep10.go	runtime	todo			cold audit pending
 internal/auth/sep10/doc.go	internal	internal/auth/sep10	runtime	todo			cold audit pending
 internal/auth/sep10/jwt.go	internal	internal/auth/sep10	runtime	todo			cold audit pending
+internal/auth/sep10/redisreplay.go	internal	internal/auth/sep10	runtime	todo			cold audit pending
+internal/auth/sep10/redisreplay_test.go	internal	internal/auth/sep10	test	todo			cold audit pending
 internal/auth/sep10/validator.go	internal	internal/auth/sep10	runtime	todo			cold audit pending
 internal/auth/sep10/validator_test.go	internal	internal/auth/sep10	test	todo			cold audit pending
+internal/auth/signup_ip_throttle.go	internal	internal/auth/signup_ip_throttle.go	runtime	todo			cold audit pending
+internal/auth/signup_ip_throttle_test.go	internal	internal/auth/signup_ip_throttle_test.go	test	todo			cold audit pending
 internal/auth/signup_tracker.go	internal	internal/auth/signup_tracker.go	runtime	todo			cold audit pending
 internal/auth/store.go	internal	internal/auth/store.go	runtime	todo			cold audit pending
 internal/auth/store_redis_test.go	internal	internal/auth/store_redis_test.go	test	todo			cold audit pending
@@ -982,6 +1089,8 @@ internal/currency/data/seed.yaml	internal	internal/currency/data	config	todo			c
 internal/currency/doc.go	internal	internal/currency/doc.go	runtime	todo			cold audit pending
 internal/currency/verified.go	internal	internal/currency/verified.go	runtime	todo			cold audit pending
 internal/currency/verified_test.go	internal	internal/currency/verified_test.go	test	todo			cold audit pending
+internal/customerwebhook/worker.go	internal	internal/customerwebhook/worker.go	runtime	done	EV-0068;EV-0069;EV-0073;EV-0076;F-1244;F-1245;F-1247;F-1249	XFI-0036;XFI-0037;XFI-0039;XFI-0041	Reviewed HMAC-key storage contract, outbound network boundary, multi-worker duplicate delivery, and producer absence
+internal/customerwebhook/worker_test.go	internal	internal/customerwebhook/worker_test.go	test	done	EV-0069;EV-0070;F-1245	XFI-0037	Reviewed delivery worker coverage; tests do not exercise SSRF redirect/private-host controls
 internal/dispatcher/contract_call_test.go	internal	internal/dispatcher/contract_call_test.go	test	todo			cold audit pending
 internal/dispatcher/contract_event_conv_test.go	internal	internal/dispatcher/contract_event_conv_test.go	test	todo			cold audit pending
 internal/dispatcher/dispatcher.go	internal	internal/dispatcher/dispatcher.go	runtime	todo			cold audit pending
@@ -997,12 +1106,14 @@ internal/divergence/chainlink.go	internal	internal/divergence/chainlink.go	runti
 internal/divergence/chainlink_test.go	internal	internal/divergence/chainlink_test.go	test	todo			cold audit pending
 internal/divergence/coingecko.go	internal	internal/divergence/coingecko.go	runtime	todo			cold audit pending
 internal/divergence/compare.go	internal	internal/divergence/compare.go	runtime	todo			cold audit pending
+internal/divergence/depeg_test.go	internal	internal/divergence/depeg_test.go	test	todo			cold audit pending
 internal/divergence/divergence_test.go	internal	internal/divergence/divergence_test.go	test	todo			cold audit pending
 internal/divergence/doc.go	internal	internal/divergence/doc.go	runtime	todo			cold audit pending
 internal/divergence/reference.go	internal	internal/divergence/reference.go	runtime	todo			cold audit pending
 internal/divergence/worker.go	internal	internal/divergence/worker.go	runtime	todo			cold audit pending
 internal/divergence/worker_test.go	internal	internal/divergence/worker_test.go	test	todo			cold audit pending
 internal/events/event.go	internal	internal/events/event.go	runtime	todo			cold audit pending
+internal/events/event_test.go	internal	internal/events/event_test.go	test	todo			cold audit pending
 internal/hashdb/hashdb.go	internal	internal/hashdb/hashdb.go	runtime	todo			cold audit pending
 internal/hashdb/hashdb_test.go	internal	internal/hashdb/hashdb_test.go	test	todo			cold audit pending
 internal/incidents/data/2026-05-06-postgres-lock-table-full.md	internal	internal/incidents/data	documentation	todo			cold audit pending
@@ -1057,14 +1168,17 @@ internal/platform/errors.go	internal	internal/platform/errors.go	runtime	todo			
 internal/platform/errors_test.go	internal	internal/platform/errors_test.go	test	todo			cold audit pending
 internal/platform/postgresstore/account_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/apikey_store.go	internal	internal/platform/postgresstore	runtime	in_progress	EV-0023,F-1212	XFI-0008	Persists dashboard-supplied key budget fields
+internal/platform/postgresstore/audit_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
+internal/platform/postgresstore/billing_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/doc.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/token_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/user_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
+internal/platform/postgresstore/webhook_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0068;EV-0073;EV-0074;EV-0076;F-1244;F-1247;F-1248;F-1249	XFI-0036;XFI-0039;XFI-0040;XFI-0041	Reviewed CRUD/store queue semantics, plaintext-equivalent signing-key storage, duplicate-delivery queue race, quota atomicity gap, and missing producer path
 internal/platform/token.go	internal	internal/platform/token.go	runtime	todo			cold audit pending
 internal/platform/usage.go	internal	internal/platform/usage.go	runtime	todo			cold audit pending
 internal/platform/user.go	internal	internal/platform/user.go	runtime	todo			cold audit pending
-internal/platform/webhook.go	internal	internal/platform/webhook.go	runtime	todo			cold audit pending
+internal/platform/webhook.go	internal	internal/platform/webhook.go	runtime	done	EV-0068;EV-0076;F-1244;F-1249	XFI-0036;XFI-0041	Reviewed webhook domain model and interface contract against implemented storage and absent event fan-out
 internal/ratelimit/bucket.go	internal	internal/ratelimit/bucket.go	runtime	todo			cold audit pending
 internal/ratelimit/bucket_edges_test.go	internal	internal/ratelimit/bucket_edges_test.go	test	todo			cold audit pending
 internal/ratelimit/bucket_test.go	internal	internal/ratelimit/bucket_test.go	test	todo			cold audit pending
@@ -1312,7 +1426,7 @@ internal/storage/timescale/decoder_stats.go	internal	internal/storage/timescale	
 internal/storage/timescale/discovery.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/divergence_observations.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/doc.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
-internal/storage/timescale/freeze_events.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
+internal/storage/timescale/freeze_events.go	internal	internal/storage/timescale	runtime	done	EV-0079;F-1250	XFI-0042	Reviewed durable freeze-event insert/recovery semantics and open-row concurrency race
 internal/storage/timescale/fx_quotes.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/issuers.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/markets.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
@@ -1330,6 +1444,8 @@ internal/storage/timescale/supply.go	internal	internal/storage/timescale	runtime
 internal/storage/timescale/supply_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
 internal/storage/timescale/trades.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/trades_usd_volume_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
+internal/storage/timescale/usd_fx_resolver.go	internal	internal/storage/timescale	runtime	done	EV-0080;F-1251	XFI-0043	Reviewed FX-anchor lookup/freshness semantics; wall-clock freshness breaks historical enrichment
+internal/storage/timescale/usd_fx_resolver_test.go	internal	internal/storage/timescale	test	done	EV-0080;F-1251	XFI-0043	Reviewed direct resolver coverage; unit tests miss the trade-time-vs-now freshness bug
 internal/storage/timescale/usd_volume_quote_spec.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/supply/classic.go	internal	internal/supply/classic.go	runtime	todo			cold audit pending
 internal/supply/classic_test.go	internal	internal/supply/classic_test.go	test	todo			cold audit pending
@@ -1361,6 +1477,7 @@ internal/supply/textfile_test.go	internal	internal/supply/textfile_test.go	test	
 internal/supply/xlm.go	internal	internal/supply/xlm.go	runtime	todo			cold audit pending
 internal/supply/xlm_test.go	internal	internal/supply/xlm_test.go	test	todo			cold audit pending
 internal/usage/counter.go	internal	internal/usage/counter.go	runtime	todo			cold audit pending
+internal/usage/counter_test.go	internal	internal/usage/counter_test.go	test	todo			cold audit pending
 internal/version/version.go	internal	internal/version/version.go	runtime	todo			cold audit pending
 internal/version/version_test.go	internal	internal/version/version_test.go	test	todo			cold audit pending
 migrations/0001_create_trades_hypertable.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
@@ -1419,6 +1536,8 @@ migrations/0027_platform_v1_schema.down.sql	migrations	migrations	migration_or_s
 migrations/0027_platform_v1_schema.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0028_create_fx_quotes.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0028_create_fx_quotes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
+migrations/0029_drop_unused_blend_jsonb_gin_indexes.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
+migrations/0029_drop_unused_blend_jsonb_gin_indexes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/README.md	migrations	migrations	documentation	todo			cold audit pending
 openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010,EV-0011,F-1203		Reviewed source spec against generated artifacts
 pkg/client/asset_detail_test.go	pkg	pkg	test	todo			cold audit pending
@@ -1520,6 +1639,7 @@ test/integration/decoders_to_storage_test.go	test	test/integration	test	todo			c
 test/integration/discovery_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/doc.go	test	test/integration	runtime	todo			cold audit pending
 test/integration/external_fleet_test.go	test	test/integration	test	todo			cold audit pending
+test/integration/freeze_events_test.go	test	test/integration	test	done	EV-0079;F-1250	XFI-0042	Reviewed integration coverage; serial idempotency exists but no concurrent same-pair insert test
 test/integration/fx_quote_at_or_before_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/issuers_coins_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/ledgerstream_to_storage_test.go	test	test/integration	test	todo			cold audit pending
@@ -1530,6 +1650,7 @@ test/integration/storage_test.go	test	test/integration	test	todo			cold audit pe
 test/integration/supply_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/trades_range_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/trades_usd_volume_test.go	test	test/integration	test	todo			cold audit pending
+test/integration/usd_fx_resolver_test.go	test	test/integration	test	done	EV-0080;F-1251	XFI-0043	Reviewed and executed targeted failing integration path for historical FX resolution
 test/load/README.md	test	test/load	documentation	todo			cold audit pending
 test/load/doc.go	test	test/load	runtime	todo			cold audit pending
 test/load/docker-compose.k6.yaml	test	test/load	config	todo			cold audit pending
@@ -1746,3 +1867,4 @@ web/status/src/lib/incidents.ts	web	web/status	frontend	todo			cold audit pendin
 web/status/src/lib/markdown.tsx	web	web/status	frontend	todo			cold audit pending
 web/status/tailwind.config.ts	web	web/status	frontend	todo			cold audit pending
 web/status/tsconfig.json	web	web/status	fixture_or_config	todo			cold audit pending
+web/status/wrangler.toml	web	web/status	config	todo			cold audit pending
