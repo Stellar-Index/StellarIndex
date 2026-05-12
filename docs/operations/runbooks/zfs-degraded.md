@@ -104,7 +104,7 @@ ssh <host> 'zpool status | grep -A5 resilver'
 - `nvme-thermal.md` — another precursor.
 - `db-disk-full.md` — running tight on capacity amplifies
   recovery stress.
-- Tier-1 posture: `docs/adr/0004-three-validator-aspiration.md` —
+- Tier-1 posture: `docs/adr/0004-tier1-validator-aspiration.md` —
   we're committed to independent history archives, which means
   drive failures on one of the three validator hosts must not
   cascade to the others.

@@ -170,7 +170,7 @@ sentinels.
 - `redis-replication.md` — replicas not following.
 - HA plan §3.4: `docs/architecture/ha-plan.md` (Redis topology,
   fail-open rationale).
-- ADR-0007 (key schema) — `docs/adr/0007-redis-key-schema.md`.
+- ADR-0007 (key schema) — `docs/adr/0007-redis-cache-schema.md`.
 
 ## Changelog
 
