@@ -1,6 +1,6 @@
 ---
 title: r1 archival node — current state and next-steps
-last_verified: 2026-05-04
+last_verified: 2026-05-12
 status: living doc
 ---
 
@@ -510,6 +510,75 @@ These are all now fixed in the role, but noted so the lessons survive:
    captive-less mode, or drop stellar-rpc and build our own
    consumer around `ingest.ApplyLedgerMetadata` from the galexie
    datastore.
+
+### 2026-05-12 audit-2026-05-12 remediation deploy
+
+Cut `v0.5.0-rc.49` (audit-remediation + F-1201 explorer migration)
+and rolled R1 + applied operator-side config changes.
+
+**Binary deploy** via `gh workflow run deploy.yml`:
+
+  - `ratesengine-indexer` / `ratesengine-aggregator` / `ratesengine-api`
+    all on `v0.5.0-rc.49` (build 2026-05-12T15:28:59Z, commit
+    `e5b684f2`).
+
+**Prometheus config roll** (F-1219 + F-1220 + F-1252):
+
+  - `/etc/prometheus/prometheus.yml` replaced with the new
+    `configs/prometheus/prometheus.r1.yml` (rule_files glob now
+    `/etc/prometheus/rules.r1/*.yml`; scrape jobs added for
+    redis_exporter, alertmanager self-scrape, postgres_exporter
+    + pgbackrest_exporter + minio placeholders).
+  - All 18 rule families in `configs/prometheus/rules.r1/` copied
+    to `/etc/prometheus/rules.r1/`. Pre-roll R1 loaded 6 families;
+    post-roll loads 19 (the 18 files + meta self-group).
+  - Pre-roll backups at `/etc/prometheus/{prometheus.yml,rules.d}.bak-pre-rc49`.
+  - `/etc/prometheus/minio.token` created empty (operator wires
+    the real `mc admin prometheus generate` token when needed —
+    until then the minio scrape 401s and `up{job=minio}` reports 0).
+
+**TOML config roll** (F-1266):
+
+  - `[supply]` block added to `/etc/ratesengine.toml` with 8
+    `watched_classic_assets` (USDC / EURC / AQUA / yXLM / VELO /
+    BLND / PHO / KALE — mirroring `internal/currency/data/seed.yaml`).
+  - `watched_sep41_contracts` and `sdf_reserve_accounts` set to
+    empty (operator opt-in).
+  - Aggregator + indexer restarted to pick up the new config.
+    Indexer log line `"supply observers wired" watched_classic_assets=8`.
+  - Pre-roll backup at `/etc/ratesengine.toml.bak-pre-supply`.
+
+**Alert state delta**:
+
+  - `ratesengine_ingestion_source_stopped` family went from 5
+    firing (pre-rc.49) → 2 firing (band + ecb only — both
+    genuinely low-volume Soroban/FX sources). F-1212b's
+    30m × 15m widened window working as designed.
+  - 13 new alert families became visible to the deadmansswitch
+    pipeline (supply / supply-snapshot / supply-refresh / cache /
+    divergence / archive-completeness / sla-probe / SLO-burn /
+    external-pollers / storage / stellar / verify-archive /
+    anomaly).
+
+**Audit findings closed by this deploy**:
+
+  - F-1201 (explorer migration) — shipped in rc.49
+  - F-1203 (rc.48 → R1) — superseded by rc.49 landing
+  - F-1212 (5 false-positive source_stopped alerts) — auto-cleared
+    when F-1212b's wider window took effect
+  - F-1219 (R1 loaded only 7 rule files) — now loads 19
+  - F-1252 (storage.yml not deployed) — now active
+  - F-1266 (F2 fields NULL on R1) — supply observers running for
+    the 8 watched currencies; F2 fields populate as data accrues
+
+**Still open, operator-discretion**:
+
+  - F-1213 (Redis ACL lockdown) — opt-in flag in ansible role;
+    flip when ready to migrate every binary to per-user auth
+  - F-1265 (1-year `prices_1m` backfill) — operator runs the
+    catch-up per `docs/operations/backfill-procedure.md`
+  - F-1267 (p95 over RFP target) — needs the multi-region
+    cutover per `docs/architecture/r2-r3-bringup.md`
 
 ## Credentials (pointers, not values)
 
