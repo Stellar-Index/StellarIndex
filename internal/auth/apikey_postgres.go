@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -184,16 +185,64 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 	if tier == "" {
 		tier = TierAPIKey
 	}
+	// F-1226 (codex audit-2026-05-12): hydrate policy fields from
+	// the cache row so cache-hit Subjects carry the same gates as
+	// cache-miss Subjects. Pre-fix these fields were missing, so
+	// KeyPolicy enforcement silently turned into a no-op for any
+	// request that hit the cache TTL window.
+	ipAllow, err := decodeIPAllowlist(rec.IPAllowlist)
+	if err != nil {
+		// Corrupt cache entry — same degrade-not-fail rationale as
+		// Unmarshal failures upstream.
+		return Subject{}, false, nil //nolint:nilerr // deliberate degrade-not-fail
+	}
 	return Subject{
-		Identifier:      rec.Identifier,
-		Tier:            tier,
-		Scopes:          rec.Scopes,
-		KeyID:           rec.KeyID,
-		RateLimitPerMin: rec.RateLimitPerMin,
-		CreatedAt:       rec.CreatedAt,
-		Label:           rec.Label,
-		KeyPrefix:       rec.KeyPrefix,
+		Identifier:          rec.Identifier,
+		Tier:                tier,
+		Scopes:              rec.Scopes,
+		KeyID:               rec.KeyID,
+		RateLimitPerMin:     rec.RateLimitPerMin,
+		CreatedAt:           rec.CreatedAt,
+		Label:               rec.Label,
+		KeyPrefix:           rec.KeyPrefix,
+		IPAllowlist:         ipAllow,
+		RefererAllowlist:    rec.RefererAllowlist,
+		AllowAllPermissions: rec.PermissionsAll,
+		AllowPermissions:    rec.AllowPermissions,
+		DenyPermissions:     rec.DenyPermissions,
 	}, true, nil
+}
+
+// decodeIPAllowlist parses the on-the-wire CIDR-text slice back
+// into netip.Prefix values. Empty input yields nil. Returns an
+// error on the first un-parseable entry so the caller can treat
+// the cache row as corrupt.
+func decodeIPAllowlist(cidrs []string) ([]netip.Prefix, error) {
+	if len(cidrs) == 0 {
+		return nil, nil
+	}
+	out := make([]netip.Prefix, 0, len(cidrs))
+	for _, s := range cidrs {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("auth: decode IP allowlist entry %q: %w", s, err)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// encodeIPAllowlist renders the in-memory netip.Prefix slice
+// into the on-the-wire CIDR-text slice. Empty input yields nil.
+func encodeIPAllowlist(prefixes []netip.Prefix) []string {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		out = append(out, p.String())
+	}
+	return out
 }
 
 // cacheStore writes the Postgres-derived Subject into Redis with
@@ -211,6 +260,15 @@ func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string
 		RateLimitPerMin: sub.RateLimitPerMin,
 		CreatedAt:       sub.CreatedAt,
 		ExpiresAt:       pgKey.ExpiresAt,
+		// F-1226 (codex audit-2026-05-12): persist policy fields so
+		// cache-hit reads can reconstruct an enforcement-complete
+		// Subject. Without these the dashboard's IP/Referer/
+		// permission gates would be silently bypassed on cache hits.
+		IPAllowlist:      encodeIPAllowlist(sub.IPAllowlist),
+		RefererAllowlist: sub.RefererAllowlist,
+		PermissionsAll:   sub.AllowAllPermissions,
+		AllowPermissions: sub.AllowPermissions,
+		DenyPermissions:  sub.DenyPermissions,
 	}
 	body, err := json.Marshal(rec)
 	if err != nil {

@@ -52,6 +52,10 @@ Recent waves closed by code (chronological):
   collection install.
 - wave 33 — F-1258 Redis-less UsageReader is now typed-nil instead of
   wrapping a nil counter.
+- wave 34 — F-1226 cache-hit policy parity: `APIKeyRecord` now round-
+  trips IP/Referer/permission fields so the cache-hit Subject is
+  policy-identical to the cache-miss Subject (monthly quota +
+  TouchUsage still open).
 
 ## Status Values
 
@@ -93,7 +97,7 @@ Recent waves closed by code (chronological):
 | F-1223 | high | R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014; EV-0113 | fixed | ops/security | Current live R1 Caddy now carries the trusted-proxy/client-IP block, forwards `{client_ip}`, and public `/metrics` returns HTTP 404. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | open | dashboard/security | Login/security audit fields intended for IP/new-country signals parse `r.RemoteAddr` directly instead of the middleware-resolved remote IP. |
 | F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
-| F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100 | open | platform/api/security | The current workspace starts wiring IP/referer/permission enforcement, but cache hits still shed the new policy fields and monthly quota plus `TouchUsage` remain unimplemented. |
+| F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118 | open | platform/api/security | Wave 34 (2026-05-12) ships the cache-hit policy parity: `APIKeyRecord` now carries `IPAllowlist`/`RefererAllowlist`/`PermissionsAll`/`AllowPermissions`/`DenyPermissions` and `PostgresAPIKeyValidator.cacheStore` / `cacheLookup` round-trip them; regression test `TestPostgresValidator_CacheRoundTripsPolicy` proves cache-hit Subject is policy-identical to cache-miss Subject. Monthly quota enforcement plus production `TouchUsage`/last-used updates remain the still-open halves. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | open | docker/db | Runtime image copies only the binary while the binary defaults to a missing `migrations` directory. |
 | F-1228 | high | SSE streams are cut off after 30 seconds by the API server write timeout | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016 | open | api/streaming/ops | R1 tip stream closes at elapsed 30s despite 5s events and 15s heartbeats. |
 | F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | open | ops/api | Script uses `base=` where handlers require `asset=` and expects `no-store` while SSE sets `no-cache`. |
@@ -110,8 +114,8 @@ Recent waves closed by code (chronological):
 | F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | open | docker/release | All Dockerfiles use `golang:1.26-alpine`; CI/release use `go.mod` `1.25.10`, and Docker docs still claim `golang:1.25-alpine` and release-equivalent binaries. |
 | F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | open | db/docs/ops | The README claims to be the current migration inventory and says to update it on every new migration, but it omits fourteen live migration families that materially change schema and operational expectations. |
 | F-1242 | medium | Contribution-history `volume_usd` remediation is still inconsistent with the filtered contribution set | Aggregator contribution sink; contribution schema/storage; future source-breakdown API/UI | XFI-0034; EV-0060; EV-0103; EV-0104; EV-0105 | fixed | aggregate/storage/product | Current committed code carries per-trade USD attribution by stable trade ID and persists only post-filter survivor dollars per source, so the previously-recorded attribution mismatch no longer reproduces. |
-| F-1243 | high | Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062 | open | storage/assets/data-quality | The dedupe cache exits before the upsert that should update first/last seen ledgers and increment observations, so a long-running ingest/backfill process leaves registry metadata stale until restart. |
-| F-1244 | high | Dashboard webhook signing secrets are persisted as live HMAC keys while docs and type names claim hash-only / never-persisted semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068 | open | security/platform/webhooks | A database read of `customer_webhooks.secret_hash` yields the actual signing key bytes the worker uses, contrary to the published secret-handling contract. |
+| F-1243 | high | Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062; EV-0117 | open | storage/assets/data-quality | The dedupe cache still exits before the upsert that should update first/last seen ledgers and increment observations, so a long-running ingest/backfill process leaves registry metadata stale until restart. |
+| F-1244 | high | Dashboard webhook signing secrets are persisted as live HMAC keys while docs and type names claim hash-only / never-persisted semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068; EV-0117 | open | security/platform/webhooks | The platform model now truthfully says `SecretHash` carries the live HMAC key, but the DB still persists those raw bytes while handler/store comments and customer-facing prose still imply once-only / not-stored semantics. |
 | F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069; EV-0096 | fixed | security/platform/webhooks | Current workspace now validates internal/private destinations at registration, re-resolves before delivery, and disables redirect following in the worker client. |
 | F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072; EV-0096 | fixed | docs/api/product | `docs/reference/api-design.md` now states webhook callbacks shipped and explains how they relate to SSE. |
 | F-1247 | high | Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt | API worker startup; webhook queue store; multi-region / multi-process delivery semantics | XFI-0039; EV-0073; EV-0098 | fixed | platform/webhooks/ops | Current `HEAD` claims due rows with `FOR UPDATE SKIP LOCKED` plus a lease before network I/O, closing the duplicate-worker race. |
@@ -762,16 +766,30 @@ Evidence:
 - `XFI-0018`
 - `EV-0036`
 - `EV-0100`
+- `EV-0118`
 
 Expected: customer-visible key policy fields should be enforced on every authenticated request, or the UI/API should clearly mark them as not active.
 
 Observed during the initial pass: dashboard key creation stored `monthly_quota`, `permissions`, `ip_allowlist`, `referer_allowlist`, and expiry/revocation fields. Runtime auth validated only key hash, revocation, expiry, and account status, then returned a subject containing tier/key/rate-limit. There was no request-aware check for client IP, referer, permissions, monthly quota, or usage increments; `TouchUsage` had no production caller.
 
-Current-workspace reconciliation: the shared workspace now has a `KeyPolicy` middleware, production API wiring for that middleware, and subject propagation of Postgres-backed IP allowlists, referer allowlists, and permission entries. That narrows the finding, but does not close it. `PostgresAPIKeyValidator.cacheStore` still writes the old `APIKeyRecord` shape, and `cacheLookup` rebuilds a `Subject` from that shape without the new allowlist/permission fields, so a Postgres cache miss can enforce policy while subsequent Redis cache hits silently bypass it. The same workspace still does not enforce `monthly_quota`, and `TouchUsage` still has no production caller.
+Current-workspace reconciliation: the shared workspace now has a `KeyPolicy`
+middleware, production API wiring for that middleware, subject propagation of
+Postgres-backed IP allowlists, referer allowlists, and permission entries,
+plus a Redis cache schema that round-trips those policy fields on cache hits.
+`TestPostgresValidator_CacheRoundTripsPolicy` passes, so the specific
+cache-hit bypass recorded earlier is now addressed in-flight. The finding
+still does not close: `monthly_quota` is not enforced at runtime, and
+`TouchUsage` / `last_used_*` still have no production caller.
 
-Impact: customers can still create keys whose request-time policy weakens after cache warm-up, and the advertised monthly quota / last-used surfaces remain non-authoritative. This is still a security and trust issue for dashboard users and a billing-control gap for paid plans.
+Impact: customer allowlist/permission policy is materially closer to truthful
+end-to-end, but the advertised monthly quota / last-used surfaces remain
+non-authoritative. This is still a security and trust issue for dashboard
+users and a billing-control gap for paid plans.
 
-Remediation direction: finish the policy path end-to-end. Preserve IP/referer/permission fields through the cache schema or bypass the cache for policy-bearing keys, enforce monthly quotas, wire debounced `TouchUsage`, and add tests that prove a cache miss and a cache hit enforce the same restrictions.
+Remediation direction: finish the remaining policy path end-to-end. Keep the
+new cache-parity coverage, enforce monthly quotas, wire debounced `TouchUsage`
+and `last_used_*`, and add tests that prove those remaining fields behave the
+same on cache miss and cache hit.
 
 ### F-1227. The `ratesengine-migrate` container cannot apply bundled migrations out of the box
 
@@ -1279,10 +1297,11 @@ Evidence:
 
 - `XFI-0035`
 - `EV-0062`
+- `EV-0117`
 
 Expected: repeated observed trades for a classic asset should keep `classic_assets.first_seen_*`, `last_seen_*`, and `observation_count` accurate within a single long-running live-ingest or backfill process. Replay order should not matter.
 
-Observed: `InsertTrade` invokes `registerClassicAssetSeen` after each successful stored trade, but `assetRegistryDedupe` returns early once an asset has been touched once in the current process. That happens before the SQL upsert which would apply `LEAST` to first-seen, `GREATEST` to last-seen, and increment `observation_count`. The conflict-update logic therefore does not run for later same-process observations. Existing integration coverage seeds `classic_assets` directly instead of exercising this writer path.
+Observed: `InsertTrade` invokes `registerClassicAssetSeen` after each successful stored trade, but `assetRegistryDedupe` returns early once an asset has been touched once in the current process. That happens before the SQL upsert which would apply `LEAST` to first-seen, `GREATEST` to last-seen, and increment `observation_count`. The conflict-update logic therefore does not run for later same-process observations. Existing integration coverage still seeds `classic_assets` directly instead of exercising this writer path.
 
 Impact: asset and issuer catalogue metadata can undercount observations by orders of magnitude, preserve the wrong first-seen ledger during out-of-order replay, and freeze last-seen freshness until the indexer restarts. Those fields drive ranking, trust signals, and customer-facing asset/issuer detail views, so this is a live data-quality issue rather than a cosmetic counter drift.
 
@@ -1307,10 +1326,11 @@ Evidence:
 
 - `XFI-0036`
 - `EV-0068`
+- `EV-0117`
 
 Expected: the webhook secret-handling contract should be explicit and true. If only hashes are persisted, the runtime must not need the plaintext-equivalent signing key later. If outbound signing requires retrievable key material, the schema/API/docs should say so and the stored key should receive an appropriate at-rest protection model.
 
-Observed: the create handler generates a plaintext `wsec_*` secret, passes `SecretHash: []byte(secret)`, and the Postgres store inserts those bytes directly into `customer_webhooks.secret_hash`. The delivery worker later uses that field as the actual HMAC key. Simultaneously, the platform type comments, rotate stub, handler comments, and OpenAPI text say the field is a hash or that plaintext is returned once and never persisted.
+Observed: the create handler generates a plaintext `wsec_*` secret, passes `SecretHash: []byte(secret)`, and the Postgres store inserts those bytes directly into `customer_webhooks.secret_hash`. The delivery worker later uses that field as the actual HMAC key. Current source partially acknowledges that reality: `platform.CustomerWebhook` now states `SecretHash` is the literal HMAC key, not a hash. But the rest of the contract is still inconsistent: the DB field name remains `secret_hash`, `dashboardwebhooks.webhookDTO` still says the plaintext is shown once and never persisted, `WebhookStore.RotateWebhookSecret` still says the returned plaintext is not stored, and customer-facing webhook docs still do not make the persisted signing-key model explicit.
 
 Impact: operators, reviewers, and customers are given a false security model. A database compromise or over-broad read path exposes signing keys that let an attacker forge outbound webhook signatures for customers, while the code/docs currently imply those secrets are not recoverable from storage.
 

@@ -111,6 +111,37 @@ type APIKeyRecord struct {
 	// the future, which would be a bug in the writer) triggers
 	// [ErrUnauthorized].
 	RevokedAt time.Time `json:"revoked_at,omitempty"`
+
+	// IPAllowlist / RefererAllowlist / Permissions are the
+	// per-key policy fields the dashboard exposes for
+	// Postgres-backed keys (the PostgresAPIKeyValidator cache).
+	// F-1226 (codex audit-2026-05-12): without these the cache-
+	// hit path constructed a Subject with empty policy fields,
+	// silently bypassing KeyPolicy enforcement until the cache
+	// entry TTL elapsed and the next request rebuilt from
+	// Postgres. Now the cache mirrors what the Postgres rebuild
+	// produces so the cache-hit Subject is policy-identical to
+	// the cache-miss Subject.
+	//
+	// IPAllowlist is rendered as `[]string` of CIDR text on the
+	// wire (e.g. ["10.0.0.0/8"]) — netip.Prefix isn't directly
+	// JSON-friendly. Empty / nil = "no IP gate".
+	IPAllowlist []string `json:"ip_allowlist,omitempty"`
+
+	// RefererAllowlist is rendered as `[]string` of exact-host
+	// values. Empty / nil = "no Referer gate".
+	RefererAllowlist []string `json:"referer_allowlist,omitempty"`
+
+	// PermissionsAll = true bypasses the per-endpoint allow/deny
+	// check (operator-style "any endpoint" keys).
+	PermissionsAll bool `json:"permissions_all,omitempty"`
+
+	// AllowPermissions / DenyPermissions carry the per-endpoint
+	// or prefix permission entries. Wire shape uses the same
+	// (endpoint, endpoint_prefix) two-of pattern as
+	// platform.KeyPermissionEntry.
+	AllowPermissions []SubjectPermissionEntry `json:"allow_permissions,omitempty"`
+	DenyPermissions  []SubjectPermissionEntry `json:"deny_permissions,omitempty"`
 }
 
 // RedisOption configures a [RedisAPIKeyValidator] at construction.

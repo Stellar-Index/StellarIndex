@@ -127,9 +127,14 @@ type Subject struct {
 // platform package. Either Endpoint (exact `<METHOD> <PATH>`) or
 // EndpointPrefix (`<PATH-PREFIX>`) — never both. F-1226 (codex
 // audit-2026-05-12).
+//
+// JSON tags are present so this type can round-trip through the
+// `APIKeyRecord` cache entry the PostgresAPIKeyValidator writes
+// into Redis. Without them the cache-hit Subject would have
+// empty permission fields, silently bypassing KeyPolicy.
 type SubjectPermissionEntry struct {
-	Endpoint       string
-	EndpointPrefix string
+	Endpoint       string `json:"endpoint,omitempty"`
+	EndpointPrefix string `json:"endpoint_prefix,omitempty"`
 }
 
 // Anonymous returns the subject the middleware attaches when no

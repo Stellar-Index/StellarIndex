@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -170,6 +171,74 @@ func TestPostgresValidator_Invalidate(t *testing.T) {
 	}
 }
 
+// TestPostgresValidator_CacheRoundTripsPolicy — when a key has
+// IP/Referer allowlists and per-endpoint permissions set, the
+// cache-hit Subject MUST carry the same fields as the cache-
+// miss Subject. Without this F-1226 (codex audit-2026-05-12)
+// reopens — the KeyPolicy middleware silently bypasses
+// enforcement on cache hits.
+func TestPostgresValidator_CacheRoundTripsPolicy(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys:     keys,
+		Accounts: accounts,
+		Cache:    rdb,
+		CacheTTL: 5 * time.Minute,
+	})
+	plaintext := "rek_policy_roundtrip"
+	acct := seedActiveAccount(accounts, "policy")
+	seedKeyWithPolicy(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey,
+		[]string{"10.0.0.0/8", "192.168.1.0/24"},
+		[]string{"app.example.com", "console.example.com"},
+		platform.KeyPermissions{
+			All: false,
+			Allow: []platform.KeyPermissionEntry{
+				{Endpoint: "GET /v1/price"},
+				{EndpointPrefix: "/v1/history"},
+			},
+			Deny: []platform.KeyPermissionEntry{
+				{Endpoint: "POST /v1/admin"},
+			},
+		})
+
+	// First lookup: Postgres miss → populates cache.
+	first, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+	if len(first.IPAllowlist) != 2 || len(first.RefererAllowlist) != 2 || len(first.AllowPermissions) != 2 || len(first.DenyPermissions) != 1 {
+		t.Fatalf("first lookup policy fields incomplete: ip=%v ref=%v allow=%v deny=%v",
+			first.IPAllowlist, first.RefererAllowlist, first.AllowPermissions, first.DenyPermissions)
+	}
+
+	// Second lookup: cache hit. Must carry the same policy.
+	second, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("second lookup (cache hit): %v", err)
+	}
+	if got := len(second.IPAllowlist); got != 2 {
+		t.Errorf("cache-hit IPAllowlist len = %d, want 2 (cache shed the field)", got)
+	}
+	if got := len(second.RefererAllowlist); got != 2 {
+		t.Errorf("cache-hit RefererAllowlist len = %d, want 2", got)
+	}
+	if got := len(second.AllowPermissions); got != 2 {
+		t.Errorf("cache-hit AllowPermissions len = %d, want 2", got)
+	}
+	if got := len(second.DenyPermissions); got != 1 {
+		t.Errorf("cache-hit DenyPermissions len = %d, want 1", got)
+	}
+	if second.AllowAllPermissions {
+		t.Error("cache-hit AllowAllPermissions = true, want false")
+	}
+	// IP prefixes must round-trip as the same parsed value.
+	for i, p := range second.IPAllowlist {
+		if p.String() != first.IPAllowlist[i].String() {
+			t.Errorf("ip[%d] round-trip = %q, want %q", i, p.String(), first.IPAllowlist[i].String())
+		}
+	}
+}
+
 func TestPostgresValidator_RequiresStores(t *testing.T) {
 	if _, err := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{}); err == nil {
 		t.Error("expected error when Keys nil")
@@ -224,6 +293,42 @@ func seedKey(s *stubKeyStore, plaintext string, accountID uuid.UUID, tier platfo
 	s.byID[rec.ID] = rec
 	s.byHash[hex.EncodeToString(sum[:])] = rec
 	return rec
+}
+
+// seedKeyWithPolicy is like seedKey but stamps IP/Referer/
+// permission policy fields so cache round-trip tests can verify
+// the cache-hit Subject carries them. F-1226 (codex audit-
+// 2026-05-12).
+func seedKeyWithPolicy(s *stubKeyStore, plaintext string, accountID uuid.UUID, tier platform.APIKeyTier, ipCIDRs, referers []string, perms platform.KeyPermissions) platform.APIKey {
+	sum := sha256.Sum256([]byte(plaintext))
+	rec := platform.APIKey{
+		ID:               "kid_" + uuid.New().String()[:12],
+		AccountID:        accountID,
+		Name:             "policy",
+		KeyHash:          sum[:],
+		KeyPrefix:        plaintext[:12],
+		Tier:             tier,
+		RateLimitPerMin:  1000,
+		IPAllowlist:      mustParsePrefixes(ipCIDRs),
+		RefererAllowlist: referers,
+		Permissions:      perms,
+		CreatedAt:        time.Now().UTC(),
+	}
+	s.byID[rec.ID] = rec
+	s.byHash[hex.EncodeToString(sum[:])] = rec
+	return rec
+}
+
+func mustParsePrefixes(cidrs []string) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(cidrs))
+	for _, s := range cidrs {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 type stubKeyStore struct {

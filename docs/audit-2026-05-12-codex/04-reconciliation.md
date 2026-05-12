@@ -100,14 +100,15 @@ without evidence IDs.
 
 ### 2026-05-12 Execution Reconciliation
 
-- Cold execution evidence now spans `CMD-0007` through `CMD-0103`,
-  `EV-0005` through `EV-0101`, `R1-0001` through `R1-0018`, and
-  `XFI-0001` through `XFI-0051`.
-- Findings `F-1201` through `F-1259` remain evidence-backed and are
-  mapped to remediation rows `R-1201` through `R-1257`; `F-1202`,
-  `F-1212`, `F-1217`, `F-1235`, `F-1238`, `F-1245`, `F-1246`,
-  `F-1247`, `F-1253`, `F-1254`, and `F-1231` are now marked `fixed`
-  on the current shared `HEAD`.
+- Cold execution evidence now spans `CMD-0007` through `CMD-0120`,
+  `EV-0005` through `EV-0118`, `R1-0001` through `R1-0018`, and
+  `XFI-0001` through `XFI-0052`.
+- Findings `F-1201` through `F-1260` remain evidence-backed and are
+  mapped to remediation rows `R-1201` through `R-1258`; `F-1202`,
+  `F-1203`, `F-1212`, `F-1213`, `F-1217`, `F-1220`, `F-1223`, `F-1231`,
+  `F-1233`, `F-1235`, `F-1238`, `F-1242`, `F-1245`, `F-1246`,
+  `F-1247`, `F-1249`, `F-1253`, `F-1254`, and `F-1260` are now marked
+  `fixed` on the current shared `HEAD` or verified live R1 state.
 - Live R1 checks covered process state, timers, firewall/listeners,
   external reachability, host capacity, Prometheus alerts, config
   snippets, Caddy drift, API/history/SSE behavior, and stablecoin
