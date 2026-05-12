@@ -4,7 +4,7 @@ path	top_level	audit_unit	file_kind	status	evidence_refs	cross_refs	notes
 .github/dependabot.yml	.github	.github/dependabot.yml	config	done	EV-0014;EV-0051;F-1207	XFI-0005	Reviewed dependency coverage; lacks web npm/pnpm ecosystems and hosted alerts are disabled
 .github/workflows/api-audit.yml	.github	.github/workflows	config	done	EV-0041;EV-0050;F-1231	XFI-0023	Reviewed path-limited main-push smoke coverage
 .github/workflows/api-docs.yml	.github	.github/workflows	config	done	EV-0050;F-1203	XFI-0002	Reviewed manual-only generated API docs publish path
-.github/workflows/ci.yml	.github	.github/workflows	config	done	EV-0013;EV-0014;EV-0041;EV-0050;F-1207;F-1231	XFI-0005;XFI-0023	Reviewed CI web/build/security gates; no pnpm audit and PR-only trigger
+.github/workflows/ci.yml	.github	.github/workflows	config	done	EV-0013;EV-0014;EV-0041;EV-0050;EV-0099;F-1207;F-1231	XFI-0005;XFI-0023	Reviewed CI web/build/security gates, current push-to-main restoration, and added pnpm audit gates; remaining web vulnerability posture tracked separately
 .github/workflows/deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0031;EV-0050;F-1215;F-1216;F-1220	XFI-0010;XFI-0014	Reviewed production deploy workflow, environment approval, action pinning, migration coupling
 .github/workflows/docs-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;F-1215;F-1216	XFI-0010	Reviewed Cloudflare Pages deploy fallback path and environment/action controls
 .github/workflows/explorer-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;F-1215;F-1216	XFI-0010	Reviewed Cloudflare Pages deploy fallback path and environment/action controls
@@ -31,7 +31,7 @@ cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runt
 cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055,EV-0060	XFI-0034	Reviewed contribution sink adapter and batch forwarding; F-1242 records that live writes omit `volume_usd`.
 cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;F-1213;F-1236	XFI-0009;XFI-0028	Reviewed aggregation, stablecoin/min-volume, Redis/cache, supply refresher, and timers
 cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	done	EV-0052;EV-0055		Command package tests pass; coverage tied to main wiring
-cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;EV-0096;F-1217;F-1219;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0013;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, webhook worker/producer coupling, usage-counter optionality/docs drift, and current fixes for SEP-10/stream startup gaps
+cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;EV-0096;EV-0100;F-1217;F-1219;F-1226;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0013;XFI-0018;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, webhook worker/producer coupling, usage-counter optionality/docs drift, current fixes for SEP-10/stream startup gaps, and partial KeyPolicy production wiring
 cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	done	EV-0052;EV-0055		Command package tests pass; startup/test seams reviewed
 cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, CMC identity propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
 cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	done	EV-0052;EV-0055		Command package tests pass; indexer wiring coverage reviewed
@@ -991,10 +991,10 @@ internal/api/v1/price_tip_test.go	internal	internal/api/v1	test	todo			cold audi
 internal/api/v1/sac_wrappers.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/sac_wrappers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/scaled_decimal_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/server.go	internal	internal/api/v1	runtime	in_progress	EV-0012;EV-0094;EV-0095;F-1202;F-1258;F-1259	XFI-0050;XFI-0051	Reviewed route table, middleware stack, usage optionality wiring, and usage reader contract
+internal/api/v1/server.go	internal	internal/api/v1	runtime	in_progress	EV-0012;EV-0094;EV-0095;EV-0100;F-1202;F-1226;F-1258;F-1259	XFI-0018;XFI-0050;XFI-0051	Reviewed route table, middleware stack, usage optionality wiring, usage reader contract, and partial KeyPolicy middleware stack integration
 internal/api/v1/server_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/signup.go	internal	internal/api/v1	runtime	todo			cold audit pending
-internal/api/v1/signup_test.go	internal	internal/api/v1	test	todo			cold audit pending
+internal/api/v1/signup.go	internal	internal/api/v1	runtime	in_progress	EV-0028;EV-0099;F-1218	XFI-0012	Reviewed unverified plaintext-key minting, Redis-backed reservation fix, and tracker-nil residual abuse path; broader signup/API audit still open
+internal/api/v1/signup_test.go	internal	internal/api/v1	test	in_progress	EV-0028;EV-0099;F-1218	XFI-0012	Reviewed current duplicate-signup test posture and tracker-nil behavior; broader signup test audit still open
 internal/api/v1/sources.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/sources_stats_cache.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/sources_stats_cache_test.go	internal	internal/api/v1	test	todo			cold audit pending
@@ -1017,7 +1017,7 @@ internal/archivecompleteness/metrics.go	internal	internal/archivecompleteness/me
 internal/archivecompleteness/metrics_test.go	internal	internal/archivecompleteness/metrics_test.go	test	todo			cold audit pending
 internal/archivecompleteness/report.go	internal	internal/archivecompleteness/report.go	runtime	todo			cold audit pending
 internal/auth/apikey.go	internal	internal/auth/apikey.go	runtime	todo			cold audit pending
-internal/auth/apikey_postgres.go	internal	internal/auth/apikey_postgres.go	runtime	in_progress	EV-0023,F-1212	XFI-0008	Copies platform key rate limit into auth subject
+internal/auth/apikey_postgres.go	internal	internal/auth/apikey_postgres.go	runtime	in_progress	EV-0023;EV-0100;F-1212;F-1226	XFI-0008;XFI-0018	Reviewed rate-limit propagation plus partial allowlist/permission subject propagation and cache-shape gap
 internal/auth/apikey_postgres_test.go	internal	internal/auth/apikey_postgres_test.go	test	todo			cold audit pending
 internal/auth/apikey_redis.go	internal	internal/auth/apikey_redis.go	runtime	todo			cold audit pending
 internal/auth/apikey_redis_test.go	internal	internal/auth/apikey_redis_test.go	test	todo			cold audit pending
@@ -1033,12 +1033,12 @@ internal/auth/sep10/validator.go	internal	internal/auth/sep10	runtime	todo			col
 internal/auth/sep10/validator_test.go	internal	internal/auth/sep10	test	todo			cold audit pending
 internal/auth/signup_ip_throttle.go	internal	internal/auth/signup_ip_throttle.go	runtime	todo			cold audit pending
 internal/auth/signup_ip_throttle_test.go	internal	internal/auth/signup_ip_throttle_test.go	test	todo			cold audit pending
-internal/auth/signup_tracker.go	internal	internal/auth/signup_tracker.go	runtime	done	EV-0084;F-1254	XFI-0046	Reviewed duplicate-signup Redis namespace and ACL coupling
+internal/auth/signup_tracker.go	internal	internal/auth/signup_tracker.go	runtime	done	EV-0084;EV-0099;F-1218;F-1254	XFI-0012;XFI-0046	Reviewed duplicate-signup Redis namespace, ACL coupling, and current SETNX reservation semantics
 internal/auth/store.go	internal	internal/auth/store.go	runtime	todo			cold audit pending
 internal/auth/store_redis_test.go	internal	internal/auth/store_redis_test.go	test	todo			cold audit pending
 internal/auth/store_update.go	internal	internal/auth/store_update.go	runtime	todo			cold audit pending
 internal/auth/store_update_test.go	internal	internal/auth/store_update_test.go	test	todo			cold audit pending
-internal/auth/subject.go	internal	internal/auth/subject.go	runtime	todo			cold audit pending
+internal/auth/subject.go	internal	internal/auth/subject.go	runtime	in_progress	EV-0100;F-1226	XFI-0018	Reviewed newly added policy-carrying subject fields; broader auth subject audit still open
 internal/auth/subject_test.go	internal	internal/auth/subject_test.go	test	todo			cold audit pending
 internal/auth/validators_test.go	internal	internal/auth/validators_test.go	test	todo			cold audit pending
 internal/cachekeys/doc.go	internal	internal/cachekeys/doc.go	runtime	todo			cold audit pending

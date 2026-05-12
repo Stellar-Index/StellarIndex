@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/netip"
 	"time"
 )
 
@@ -85,6 +86,50 @@ type Subject struct {
 	// subjects. Customers see this in dashboard listings to
 	// identify which key matches a row in their secret manager.
 	KeyPrefix string
+
+	// IPAllowlist — when non-empty, the request's resolved client
+	// IP must fall in at least one prefix or the request is
+	// rejected with 403. F-1226 (codex audit-2026-05-12): pre-fix
+	// the dashboard accepted this field but no middleware
+	// enforced it. Populated only by API-key validators that have
+	// the field from the Postgres platform store (the legacy
+	// Redis-only validator leaves it empty so allowlist
+	// enforcement is opt-in per validator).
+	IPAllowlist []netip.Prefix
+
+	// RefererAllowlist — when non-empty, the request's `Referer`
+	// header's host must exactly match one entry or the request
+	// is rejected with 403. Populated like IPAllowlist; empty
+	// disables the check. F-1226 (codex audit-2026-05-12).
+	RefererAllowlist []string
+
+	// AllowAllPermissions — if true, the per-endpoint permission
+	// check is skipped (legacy posture). When false, the
+	// Allow/Deny lists below decide. Populated by the validator
+	// from the persisted KeyPermissions.All flag. F-1226 (codex
+	// audit-2026-05-12).
+	AllowAllPermissions bool
+
+	// AllowPermissions — exact (METHOD PATH) or prefix-on-path
+	// rules that grant access. Non-empty with AllowAllPermissions
+	// false enables allow-list mode. F-1226 (codex audit-2026-05-12).
+	AllowPermissions []SubjectPermissionEntry
+
+	// DenyPermissions — exact / prefix rules that deny access
+	// even when the allow-list would otherwise admit them. Always
+	// consulted (even when AllowAllPermissions is true).
+	// F-1226 (codex audit-2026-05-12).
+	DenyPermissions []SubjectPermissionEntry
+}
+
+// SubjectPermissionEntry mirrors platform.KeyPermissionEntry so
+// the auth layer can carry the policy without importing the
+// platform package. Either Endpoint (exact `<METHOD> <PATH>`) or
+// EndpointPrefix (`<PATH-PREFIX>`) — never both. F-1226 (codex
+// audit-2026-05-12).
+type SubjectPermissionEntry struct {
+	Endpoint       string
+	EndpointPrefix string
 }
 
 // Anonymous returns the subject the middleware attaches when no
