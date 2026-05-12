@@ -280,8 +280,18 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		rec.IPAllowlist = prefixes
 	}
 
-	out, err := h.cfg.Keys.Create(r.Context(), rec)
+	out, err := h.cfg.Keys.Create(r.Context(), rec, MaxKeysPerAccount)
 	if err != nil {
+		// F-1257 race-window loser: another concurrent create
+		// pushed this account over the 25-key cap between the
+		// precheck and the INSERT. Surface the same 409 the
+		// precheck would have.
+		if errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
+			writeProblem(w, http.StatusConflict,
+				fmt.Sprintf("account already has %d active keys (max %d) — revoke one first", MaxKeysPerAccount, MaxKeysPerAccount),
+				r.URL.Path)
+			return
+		}
 		h.cfg.Logger.Error("create key in postgres", "err", err, "account_id", sc.Account.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return

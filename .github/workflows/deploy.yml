@@ -151,6 +151,34 @@ jobs:
           done
           echo "Checksums OK"
 
+      # F-1220 (codex audit-2026-05-12): ship the migrations dir
+      # alongside binaries so the playbook can sync + apply them
+      # BEFORE the binary swap. Without this, a tagged deploy that
+      # depends on a new schema would restart binaries onto an
+      # out-of-date DB and produce partial-outage shapes that
+      # /v1/healthz wouldn't catch.
+      - name: Stage migrations from the release tag's tree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Use `gh api` to read the migrations tree at the exact
+          # tag — guarantees binary ↔ migration set parity even if
+          # main has advanced since the tag.
+          mkdir -p dist/migrations
+          gh api "repos/${{ github.repository }}/git/trees/${{ inputs.version }}?recursive=1" \
+            --jq '.tree[] | select(.path | startswith("migrations/")) | .path' \
+            | while read -r path; do
+                rel="${path#migrations/}"
+                if [ -z "$rel" ]; then continue; fi
+                target="dist/migrations/$rel"
+                mkdir -p "$(dirname "$target")"
+                gh api "repos/${{ github.repository }}/contents/${path}?ref=${{ inputs.version }}" \
+                  --jq '.content' | base64 -d > "$target"
+              done
+          echo "---"
+          ls -la dist/migrations/ | head
+
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}

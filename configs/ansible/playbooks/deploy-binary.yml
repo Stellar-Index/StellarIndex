@@ -62,6 +62,47 @@
     - name: Confirm SSH connectivity
       ansible.builtin.ping:
 
+    # F-1220 (codex audit-2026-05-12): migration sync + apply
+    # before any binary swap. The previous flow could restart a
+    # binary onto a database whose schema_migrations was older
+    # than the binary expected, producing partial-outage shapes
+    # at runtime even though /v1/healthz returned 200. Now the
+    # playbook copies the migrations dir from the controller and
+    # runs `ratesengine-migrate up` BEFORE touching any binary.
+    # Idempotent — golang-migrate skips already-applied versions.
+    - name: Sync migrations dir from controller
+      ansible.posix.synchronize:
+        src: "{{ local_dist_dir }}/migrations/"
+        dest: /usr/local/share/ratesengine/migrations/
+        delete: true
+        recursive: true
+      when:
+        - local_dist_dir is defined
+        - migrations_skip is not defined or not migrations_skip
+
+    - name: Apply outstanding migrations
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/ratesengine-migrate
+          - -dsn
+          - "{{ migrate_dsn | default('postgres://ratesengine@127.0.0.1:5432/ratesengine?sslmode=disable') }}"
+          - -migrations
+          - /usr/local/share/ratesengine/migrations
+          - up
+      register: migrate_result
+      changed_when: "'migrations applied' in migrate_result.stdout"
+      failed_when:
+        - migrate_result.rc != 0
+      when: migrations_skip is not defined or not migrations_skip
+
+    - name: Migration sync skipped — operator override
+      ansible.builtin.debug:
+        msg: |
+          migrations_skip=true — skipping migration sync + apply.
+          Use this ONLY for hot-fix deploys where you've verified
+          the schema is unchanged from the prior tag.
+      when: migrations_skip is defined and migrations_skip
+
   tasks:
     - name: Per-binary deploy
       include_tasks: ../tasks/deploy-one-binary.yml

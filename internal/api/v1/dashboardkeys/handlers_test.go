@@ -325,9 +325,20 @@ func newFakeKeyStore() *fakeKeyStore {
 	return &fakeKeyStore{byID: map[string]platform.APIKey{}}
 }
 
-func (f *fakeKeyStore) Create(_ context.Context, k platform.APIKey) (platform.APIKey, error) {
+func (f *fakeKeyStore) Create(_ context.Context, k platform.APIKey, maxActiveKeysPerAccount int) (platform.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if maxActiveKeysPerAccount > 0 {
+		active := 0
+		for _, existing := range f.byID {
+			if existing.AccountID == k.AccountID && existing.RevokedAt.IsZero() {
+				active++
+			}
+		}
+		if active >= maxActiveKeysPerAccount {
+			return platform.APIKey{}, platform.ErrAPIKeyQuotaExceeded
+		}
+	}
 	for _, existing := range f.byID {
 		if string(existing.KeyHash) == string(k.KeyHash) {
 			return platform.APIKey{}, platform.ErrConflict

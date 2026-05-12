@@ -143,7 +143,14 @@ without evidence IDs.
   drift findings. It also attempted to close the ten-webhook/account
   quota race, but the new count-then-insert CTE is still not serializing
   concurrent creates under normal PostgreSQL MVCC, so `F-1248` remains
-  open.
+  open. Wave 9 then narrowed three more findings without closing them:
+  the indexer now passes CoinMarketCap IDs, but ops verification still
+  does not and the poller has no committed ID-mode response fixture;
+  FX freshness is now anchored to trade time, but the targeted
+  integration still fails on NUMERIC text-shape drift and zero-value
+  freshness semantics remain contradictory; first-login callbacks now
+  reload the winning user instead of preserving the old conflict path,
+  but the speculative loser account can still remain orphaned.
 - `CMD-0100` revalidated the settled `7c9e79ae...` workspace against
   those Wave 5 changes, ran the targeted webhook/external-source test
   set, and recorded that `F-1248` survives the attempted remediation.
@@ -159,6 +166,10 @@ without evidence IDs.
 - `CMD-0103` reran docs lint after the committed Wave 8 middleware/test
   files entered tracked scope and restored literal inventory parity at
   `tracked=1872`, `rows=1872`.
+- `CMD-0104` reconciled the settled `82a6052c...` Wave 9 commit,
+  verified package-level CMC/timescale/dashboard-auth tests, reran the
+  targeted FX integration, and recorded why `F-1237`, `F-1251`, and
+  `F-1255` remain open.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when

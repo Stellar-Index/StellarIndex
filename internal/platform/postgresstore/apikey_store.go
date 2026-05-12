@@ -135,14 +135,54 @@ func parseCIDRArray(in pq.StringArray) []netip.Prefix {
 }
 
 // Create inserts a new key. Caller has already hashed the
-// plaintext + computed the prefix.
-func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey) (platform.APIKey, error) {
+// plaintext + computed the prefix. Enforces the per-account
+// `maxActiveKeysPerAccount` cap atomically inside a CTE-gated
+// INSERT so concurrent callers at the cap boundary can't all
+// pass a handler-side precheck and each append a row past the
+// cap. F-1257 (codex audit-2026-05-12): mirrors the same atomic
+// gate pattern as F-1248's webhook quota fix. Returns
+// [platform.ErrAPIKeyQuotaExceeded] when the cap is met.
+//
+// `maxActiveKeysPerAccount` is passed by the handler
+// (MaxKeysPerAccount = 25 at time of writing). Zero or negative
+// disables the cap (used by ratesengine-ops staff seeding).
+func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKeysPerAccount int) (platform.APIKey, error) {
 	permissionsJSON, err := encodePermissions(k.Permissions)
 	if err != nil {
 		return platform.APIKey{}, fmt.Errorf("encode permissions: %w", err)
 	}
 
-	const q = `
+	const qCapped = `
+		WITH active_count AS (
+		    SELECT COUNT(*) AS n
+		      FROM api_keys
+		     WHERE account_id = $2 AND revoked_at IS NULL
+		)
+		INSERT INTO api_keys (
+			id, account_id, created_by_user_id,
+			name, description,
+			key_hash, key_prefix, tier,
+			rate_limit_per_min, monthly_quota,
+			permissions,
+			ip_allowlist,
+			referer_allowlist,
+			expires_at,
+			usage_alert_threshold_pct
+		)
+		SELECT $1, $2, NULLIF($3::text, '')::uuid,
+		       $4, NULLIF($5, ''),
+		       $6, $7, $8,
+		       $9, NULLIF($10, 0)::bigint,
+		       $11::jsonb,
+		       $12::cidr[],
+		       $13::text[],
+		       $14,
+		       NULLIF($15, 0)
+		  FROM active_count
+		 WHERE active_count.n < $16
+		RETURNING ` + apiKeyColumns
+
+	const qUncapped = `
 		INSERT INTO api_keys (
 			id, account_id, created_by_user_id,
 			name, description,
@@ -165,7 +205,7 @@ func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey) (platform.A
 		        NULLIF($15, 0))
 		RETURNING ` + apiKeyColumns
 
-	row := r.s.db.QueryRowContext(ctx, q,
+	args := []any{
 		k.ID, k.AccountID, uuidOrEmpty(k.CreatedByUserID),
 		k.Name, k.Description,
 		k.KeyHash, k.KeyPrefix, string(k.Tier),
@@ -175,9 +215,19 @@ func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey) (platform.A
 		pq.StringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),
 		k.UsageAlertThresholdPct,
-	)
+	}
+	q := qUncapped
+	if maxActiveKeysPerAccount > 0 {
+		q = qCapped
+		args = append(args, maxActiveKeysPerAccount)
+	}
+
+	row := r.s.db.QueryRowContext(ctx, q, args...)
 	out, err := scanAPIKey(row)
 	if err != nil {
+		if maxActiveKeysPerAccount > 0 && errors.Is(err, sql.ErrNoRows) {
+			return platform.APIKey{}, platform.ErrAPIKeyQuotaExceeded
+		}
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
 			return platform.APIKey{}, fmt.Errorf("create api key: %w", platform.ErrConflict)

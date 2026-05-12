@@ -133,11 +133,22 @@ func decodeClaimAtom(
 		boughtAmount = lp.AmountBought
 
 	case xdr.ClaimAtomTypeClaimAtomTypeV0:
-		// Legacy — pre-CAP-27 shape. Shouldn't appear on recent
-		// ledgers (protocol 18+), but surface rather than silently
-		// drop so we notice if backfill replays old history.
-		return canonical.Trade{}, fmt.Errorf("%w: ClaimAtomTypeV0 (legacy, pre-P18)",
-			ErrUnknownClaimAtomType)
+		// F-1233 (codex audit-2026-05-12): legacy pre-CAP-27 shape.
+		// Distinguishable from ClaimOfferAtom only by carrying the
+		// seller's raw ed25519 bytes (uint256) instead of an
+		// AccountId discriminant. Surface as a regular OrderBook
+		// trade by deriving the G-strkey from the raw bytes — the
+		// rest of the shape (offer_id, asset+amount sold/bought) is
+		// identical. Pre-fix we returned ErrUnknownClaimAtomType
+		// here and the parent decoder's per-claim skip dropped V0
+		// fills silently, leaving since-inception SDEX history with
+		// a coverage hole.
+		v0 := atom.MustV0()
+		sellerAccount, _ = strkey.Encode(strkey.VersionByteAccountID, v0.SellerEd25519[:])
+		soldAsset = v0.AssetSold
+		boughtAsset = v0.AssetBought
+		soldAmount = v0.AmountSold
+		boughtAmount = v0.AmountBought
 
 	default:
 		return canonical.Trade{}, fmt.Errorf("%w: type=%d", ErrUnknownClaimAtomType, atom.Type)

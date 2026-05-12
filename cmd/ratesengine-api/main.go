@@ -319,11 +319,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	// Per-account usage counter — daily INCRs alongside rate-limit
-	// for /v1/account/usage. Shares the same Redis client; uses a
-	// distinct "usage:" key prefix so it never collides with the
-	// rate-limit bucket. Always wired when Redis is available; the
-	// middleware degrades to no-op if rdb is nil.
-	usageCounter := usage.New(rdb)
+	// for /v1/account/usage. F-1258 (codex audit-2026-05-12): only
+	// constructed when Redis is actually wired. The previous
+	// `usage.New(rdb)` with nil rdb returned a non-nil counter
+	// whose Increment path dereferenced `c.rdb.TxPipeline()` and
+	// panicked on the first authenticated request. The middleware
+	// is now passed nil when Redis is absent and treats nil counters
+	// as disabled.
+	var usageCounter *usage.Counter
+	if rdb != nil {
+		usageCounter = usage.New(rdb)
+	}
 
 	// authMW is built later (after the dashboard bundle) so the
 	// Postgres backend can borrow the same platform stores. Forward-

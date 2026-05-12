@@ -58,6 +58,14 @@ func WithKeyPrefix(prefix string) Option {
 // the rate-limit Bucket uses — usage shares the bucket's Redis
 // host since the keys never collide (different prefix).
 func New(rdb redis.Cmdable, opts ...Option) *Counter {
+	// F-1258 (codex audit-2026-05-12) — defence-in-depth. The
+	// caller in cmd/ratesengine-api/main.go now only constructs a
+	// counter when Redis is wired, but if a future call site
+	// passes nil here, return nil so [middleware.UsageTracker]'s
+	// `counter == nil` short-circuit fires before any Redis op.
+	if rdb == nil {
+		return nil
+	}
 	c := &Counter{
 		rdb:       rdb,
 		keyPrefix: "usage:",

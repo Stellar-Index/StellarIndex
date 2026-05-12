@@ -33,7 +33,7 @@ cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	E
 cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	done	EV-0052;EV-0055		Command package tests pass; coverage tied to main wiring
 cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;EV-0096;EV-0100;F-1217;F-1219;F-1226;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0013;XFI-0018;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, webhook worker/producer coupling, usage-counter optionality/docs drift, current fixes for SEP-10/stream startup gaps, and partial KeyPolicy production wiring
 cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	done	EV-0052;EV-0055		Command package tests pass; startup/test seams reviewed
-cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, CMC identity propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
+cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;EV-0102;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, committed CMC ID propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
 cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	done	EV-0052;EV-0055		Command package tests pass; indexer wiring coverage reviewed
 cmd/ratesengine-migrate/main.go	cmd	cmd/ratesengine-migrate	runtime	done	EV-0037;EV-0055;F-1227	XFI-0019	Reviewed migration source defaults, status/up/down semantics, and Docker packaging interaction
 cmd/ratesengine-ops/backfill.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0040;EV-0044;EV-0055;F-1230;F-1233	XFI-0022;XFI-0025	Reviewed backfill range planning, source gates, cursor semantics, and historical coverage interactions
@@ -47,7 +47,7 @@ cmd/ratesengine-ops/hubble_check.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0044
 cmd/ratesengine-ops/hubble_check_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed count/stat diff tests, tolerance behavior, and validation tests
 cmd/ratesengine-ops/hubble_soroban_events.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed Soroban event-count primitive, BigQuery parameters, topic filters, and output modes
 cmd/ratesengine-ops/hubble_soroban_events_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed SQL-generation and flag-validation tests
-cmd/ratesengine-ops/main.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055;F-1239	XFI-0031	Reviewed ops command dispatcher plus archive/WASM commands; progress-zero panic tracked
+cmd/ratesengine-ops/main.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055;EV-0102;F-1237;F-1239	XFI-0029;XFI-0031	Reviewed ops command dispatcher, archive/WASM commands, and the still-unwired CMC ID path in verification poller construction
 cmd/ratesengine-ops/mint_key.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0053;EV-0055;F-1219	XFI-0013	Reviewed Redis key bootstrap path and billing/key-source split interaction
 cmd/ratesengine-ops/seed_soroswap_pairs.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed Soroswap factory seeding, RPC fallback, and pair upsert hook
 cmd/ratesengine-ops/sep1_refresh.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055		Reviewed issuer SEP-1 refresh loop, resolver boundary, and dry-run/write behavior
@@ -903,7 +903,7 @@ internal/api/v1/coins_cache_test.go	internal	internal/api/v1	test	todo			cold au
 internal/api/v1/currencies.go	internal	internal/api/v1	runtime	in_progress	EV-0012,F-1202		Reviewed removed legacy HTTP surface note
 internal/api/v1/dashboardauth/auth.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/dashboardauth/fakes_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/dashboardauth/handlers.go	internal	internal/api/v1	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed magic-link login/callback/logout handlers and concurrent first-login provisioning race
+internal/api/v1/dashboardauth/handlers.go	internal	internal/api/v1	runtime	done	EV-0086;EV-0087;EV-0102;F-1255	XFI-0047	Reviewed magic-link login/callback/logout handlers and the narrowed but still non-atomic concurrent first-login provisioning race
 internal/api/v1/dashboardauth/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardauth/middleware.go	internal	internal/api/v1	runtime	done	EV-0087		Reviewed dashboard session resolution/touch middleware during auth slice pass
 internal/api/v1/dashboardkeys/doc.go	internal	internal/api/v1	runtime	todo			cold audit pending
@@ -1447,8 +1447,8 @@ internal/storage/timescale/supply.go	internal	internal/storage/timescale	runtime
 internal/storage/timescale/supply_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
 internal/storage/timescale/trades.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/trades_usd_volume_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
-internal/storage/timescale/usd_fx_resolver.go	internal	internal/storage/timescale	runtime	done	EV-0080;F-1251	XFI-0043	Reviewed FX-anchor lookup/freshness semantics; wall-clock freshness breaks historical enrichment
-internal/storage/timescale/usd_fx_resolver_test.go	internal	internal/storage/timescale	test	done	EV-0080;F-1251	XFI-0043	Reviewed direct resolver coverage; unit tests miss the trade-time-vs-now freshness bug
+internal/storage/timescale/usd_fx_resolver.go	internal	internal/storage/timescale	runtime	done	EV-0080;EV-0102;F-1251	XFI-0043	Reviewed FX-anchor lookup/freshness semantics; trade-time freshness now lands but option/docs and returned NUMERIC text contract remain inconsistent
+internal/storage/timescale/usd_fx_resolver_test.go	internal	internal/storage/timescale	test	done	EV-0080;EV-0102;F-1251	XFI-0043	Reviewed direct resolver coverage; package tests pass, while the integration contract still catches unresolved FX resolver semantics
 internal/storage/timescale/usd_volume_quote_spec.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/supply/classic.go	internal	internal/supply/classic.go	runtime	todo			cold audit pending
 internal/supply/classic_test.go	internal	internal/supply/classic_test.go	test	todo			cold audit pending
@@ -1653,7 +1653,7 @@ test/integration/storage_test.go	test	test/integration	test	todo			cold audit pe
 test/integration/supply_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/trades_range_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/trades_usd_volume_test.go	test	test/integration	test	todo			cold audit pending
-test/integration/usd_fx_resolver_test.go	test	test/integration	test	done	EV-0080;F-1251	XFI-0043	Reviewed and executed targeted failing integration path for historical FX resolution
+test/integration/usd_fx_resolver_test.go	test	test/integration	test	done	EV-0080;EV-0102;F-1251	XFI-0043	Reviewed and re-executed the targeted integration; the historical lookup now succeeds but the test still fails on NUMERIC text-shape drift
 test/load/README.md	test	test/load	documentation	todo			cold audit pending
 test/load/doc.go	test	test/load	runtime	todo			cold audit pending
 test/load/docker-compose.k6.yaml	test	test/load	config	todo			cold audit pending
