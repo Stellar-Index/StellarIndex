@@ -46,7 +46,7 @@ Key signals:
 - [ ] Step 1 — confirm the freeze is the right call by sampling 3 cross-references (CoinGecko / CoinMarketCap / Reflector). If our LKG matches references within ±2%, the freeze is over-cautious — relax the per-class threshold via the aggregator config and restart.
 - [ ] Step 2 — if reference disagree → market really is distressed; let the freeze ride and update the status page (sev-status-page-update.md).
 - [ ] Step 3 — if NO reference is available either (e.g. CoinGecko 429) → the divergence worker is the upstream issue; jump to `divergence-refresh-error-dominant.md`.
-- [ ] Verification: `freeze_events.recovered_at` populates within 60 s of the underlying anomaly clearing OR the operator manually calls `MarkRecovered` (TODO: ops command pending F-1229 closure).
+- [ ] Verification: `freeze_events.recovered_at` populates within 60 s of the underlying anomaly clearing — the `internal/aggregate/freeze.Recovery` worker polls every 60 s, checks whether the Redis marker still exists for each open row, and calls `MarkRecovered` automatically once the TTL elapses. F-1229 (audit-2026-05-12) shipped the worker; operators no longer need to MarkRecovered by hand. If the durable row stays open past the marker TTL, see [freeze-recovery-stalled](freeze-recovery-stalled.md).
 
 ## Root cause analysis
 
