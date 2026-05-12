@@ -100,14 +100,14 @@ without evidence IDs.
 
 ### 2026-05-12 Execution Reconciliation
 
-- Cold execution evidence now spans `CMD-0007` through `CMD-0100`,
-  `EV-0005` through `EV-0098`, `R1-0001` through `R1-0018`, and
+- Cold execution evidence now spans `CMD-0007` through `CMD-0101`,
+  `EV-0005` through `EV-0099`, `R1-0001` through `R1-0018`, and
   `XFI-0001` through `XFI-0051`.
 - Findings `F-1201` through `F-1259` remain evidence-backed and are
   mapped to remediation rows `R-1201` through `R-1257`; `F-1202`,
   `F-1212`, `F-1217`, `F-1235`, `F-1238`, `F-1245`, `F-1246`,
-  `F-1247`, `F-1253`, and `F-1254` are now marked `fixed` on the
-  current shared `HEAD`.
+  `F-1247`, `F-1253`, `F-1254`, and `F-1231` are now marked `fixed`
+  on the current shared `HEAD`.
 - Live R1 checks covered process state, timers, firewall/listeners,
   external reachability, host capacity, Prometheus alerts, config
   snippets, Caddy drift, API/history/SSE behavior, and stablecoin
@@ -147,13 +147,18 @@ without evidence IDs.
 - `CMD-0100` revalidated the settled `7c9e79ae...` workspace against
   those Wave 5 changes, ran the targeted webhook/external-source test
   set, and recorded that `F-1248` survives the attempted remediation.
+- `CMD-0101` revalidated the later `27343a46...` workspace after the
+  Wave 7 CI/signup commit. It closes `F-1231`, records that `F-1207`
+  narrowed but remains open, and records that `F-1218` narrowed but
+  remains open because unverified plaintext-key issuance and
+  tracker-nil duplicate minting still exist.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when
   the repository advanced from the original `80c57e...` anchor to
-  current `7c9e79ae...`; `EV-0078` resolves the first count mismatch,
+  current `27343a46...`; `EV-0078` resolves the first count mismatch,
   and `EV-0097` preserves the later refresh back to `1,870` tracked rows.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=99`, `in_progress=41`, `todo=1730`.
+  `done=99`, `in_progress=47`, `todo=1724`.

@@ -23,7 +23,7 @@ Cold findings only. No prior finding is imported into this register.
 | F-1204 | medium | Public API audit tooling and machine-facing docs still advertise removed `/v1/coins` and `/v1/currencies` routes | `scripts/dev/audit-public-api.sh`; `web/explorer/public/llms.txt` | XFI-0002; EV-0065; EV-0066 | open | web/api/docs | Live explorer/status and smoke consumers were migrated, but the public audit script still fails 5 checks against current R1 and `llms.txt` still advertises `GET /v1/coins`. |
 | F-1205 | high | R1 is missing SLA, archive-integrity, and supply evidence timers that repo monitoring/runbooks expect | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004 | open | ops | Only smoke and heartbeat timers from Rates Engine are installed; evidence-producing timers are absent. |
 | F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013 | open | release/ops | Cross-region, security-review, failover-chaos, and finalisation blockers remain red. |
-| F-1207 | critical | All three public web apps pin vulnerable `next@15.0.4` and CI/Dependabot do not cover pnpm advisories | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051 | open | web/security | `pnpm audit` reports 2 critical and 8 high advisories per app; Dependabot has gomod/actions/docker only, CI has no pnpm audit step, and hosted GitHub vulnerability/Dependabot alerts are disabled. |
+| F-1207 | critical | All three public web apps still pin vulnerable `next@15.0.4`, and hosted dependency-update coverage remains incomplete | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099 | open | web/security | CI now runs `pnpm audit --audit-level high` in each web job, but the vulnerable Next pins remain, Dependabot still omits npm/pnpm ecosystems, and hosted GitHub vulnerability/Dependabot alerts are still disabled. |
 | F-1208 | high | Multiple enabled ingestion sources are stopped or throttled on R1 while API health remains green | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010 | open | ingestion/ops | Prometheus shows firing source-stopped alerts for ECB/Soroswap/Band/Phoenix and pending alerts for Comet/Blend/Redstone; Coingecko 429s repeat in logs. |
 | F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010 | open | ops | Memory alert is firing at about 95.41%, swap is full, and MinIO has 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | open | api/ops | Health/ready only report process/postgres/redis ok while material ingest, latency, memory, and timer evidence failures are active. |
@@ -34,7 +34,7 @@ Cold findings only. No prior finding is imported into this register.
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions allows all third-party actions without SHA pinning while workflows use tag-pinned actions | GitHub Actions repository policy; `.github/workflows/*.yml` | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | Hosted Actions policy has `allowed_actions=all` and `sha_pinning_required=false`; workflows invoke many external actions by mutable version tags, including deployment and release paths. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
-| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails and non-atomic duplicate checks | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028 | open | api/security/billing | Attackers can script unique emails, missing tracker deployments, or concurrent same-email races to mint many Starter keys without email ownership proof or billing gate. |
+| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails, and Redis-less deployments still skip duplicate protection entirely | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099 | open | api/security/billing | The same-email race is now closed when Redis tracking is wired, but signup still returns usable keys without email ownership proof and tracker-nil deployments still mint duplicates by design. |
 | F-1219 | high | Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053 | open | billing/platform/api | Current source has Postgres Stripe event dedupe/audit wiring, but the webhook still mutates only Redis keys by `client_reference_id`; subscriptions, accounts, and Postgres dashboard keys are not upgraded. |
 | F-1220 | high | Tagged deploys can restart schema-dependent binaries without shipping or applying matching migrations | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; R1-0013 | open | release/ops/db | The production deploy path downloads and swaps binaries only; migration sync/apply is an initial bring-up/manual step, and there is no schema-compatibility readiness gate. |
 | F-1221 | medium | Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed | Release workflow; release/deploy docs; Docker image expectations | XFI-0014; EV-0032 | open | docs/release | Operators and self-hosters are told to expect GHCR artifacts that the workflow intentionally no longer produces. |
@@ -42,12 +42,12 @@ Cold findings only. No prior finding is imported into this register.
 | F-1223 | high | R1 runs a stale Caddyfile that exposes `/metrics` publicly and collapses Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014 | open | ops/security | Source Caddy blocks `/metrics` and forwards `{client_ip}` after Cloudflare CIDR validation; R1 forwards `{remote_host}` and public `/metrics` returns HTTP 200 with internal Prometheus metrics. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | open | dashboard/security | Login/security audit fields intended for IP/new-country signals parse `r.RemoteAddr` directly instead of the middleware-resolved remote IP. |
 | F-1225 | high | `/v1/history/since-inception` returns empty XLM/USD history while chart and direct USDC history have data | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers | XFI-0017; EV-0035; R1-0015 | open | api/market-data | Since-inception reads only literal `native/fiat:USD`; it lacks the configured USD-pegged stablecoin fallback used by chart/price/VWAP/TWAP/OHLC surfaces. |
-| F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036 | open | platform/api/security | Key records carry policy fields, but the authenticated request path propagates only identity/tier/rate-limit and never checks allowlists, referer, permissions, monthly quotas, or last-used updates. |
+| F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100 | open | platform/api/security | The current workspace starts wiring IP/referer/permission enforcement, but cache hits still shed the new policy fields and monthly quota plus `TouchUsage` remain unimplemented. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | open | docker/db | Runtime image copies only the binary while the binary defaults to a missing `migrations` directory. |
 | F-1228 | high | SSE streams are cut off after 30 seconds by the API server write timeout | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016 | open | api/streaming/ops | R1 tip stream closes at elapsed 30s despite 5s events and 15s heartbeats. |
 | F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | open | ops/api | Script uses `base=` where handlers require `asset=` and expects `no-store` while SSE sets `no-cache`. |
 | F-1230 | high | R1 `since-inception` history for core XLM/USDC starts on 2026-05-03, not one year or inception | Historical API; backfill; R1 data depth | XFI-0022; EV-0040; R1-0017 | open | data/backfill/api | Direct XLM/Circle-USDC daily history has only nine buckets. |
-| F-1231 | high | Canonical CI is PR-only while `main` is unprotected, so direct pushes can bypass full verification | GitHub CI triggers; branch protection; release governance | XFI-0023; EV-0041; EV-0025 | open | repo-admin/ci | Full `ci` does not run on main pushes, but hosted branch protection does not enforce the PR-only assumption. |
+| F-1231 | high | Canonical CI is PR-only while `main` is unprotected, so direct pushes can bypass full verification | GitHub CI triggers; branch protection; release governance | XFI-0023; EV-0041; EV-0025; EV-0099 | fixed | repo-admin/ci | Current `ci.yml` now runs on pushes to `main`, closing the direct-main verification bypass even though branch protection itself remains open under `F-1214`. |
 | F-1232 | high | Circle USDC has `price_usd` on asset detail but 404s or disappears from `/v1/price` and batch price APIs | Price API; batch API; asset detail price enrichment | XFI-0024; EV-0042; R1-0018 | open | api/market-data | Asset detail returns USDC USD price, but single price 404s and batch returns an empty array for the same asset. |
 | F-1233 | high | SDEX historical backfill silently drops legacy V0 claim atoms while claiming genesis coverage | SDEX decoder; dispatcher metrics; historical backfill | XFI-0025; EV-0044 | open | ingest/backfill/sdex | Legacy V0 claim atoms are rejected then suppressed inside the source adapter, so old SDEX fills disappear without decode-error metrics. |
 | F-1234 | medium | Oracle decoders silently skip unknown feeds inside mixed batches, hiding upstream coverage drift | Reflector/Redstone/Band decoders; canonical allow-lists; decoder metrics | XFI-0026; EV-0045 | open | oracle/coverage/observability | New oracle-supported assets can be omitted from stored oracle rows without decode-error metrics as long as the same event contains at least one known asset. |
@@ -84,7 +84,7 @@ Cold findings only. No prior finding is imported into this register.
 
 Severity: `high`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -139,7 +139,7 @@ Remediation direction: Apply/verify the nftables role, bind internal daemons to 
 
 Severity: `critical`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -154,14 +154,17 @@ Evidence:
 - `XFI-0005`
 - `EV-0014`
 - `EV-0051`
+- `EV-0099`
 
 Expected: Public Next.js apps should be on patched versions, with automated pnpm updates and CI advisory gates.
 
-Observed: all three apps pin `next@15.0.4`; `pnpm audit --audit-level moderate` reports 27 advisories per app including 2 critical and 8 high. CI typechecks/lints/builds web apps but does not run `pnpm audit`; Dependabot does not include npm/pnpm ecosystems; hosted GitHub vulnerability and Dependabot alerts are disabled.
+Observed during the initial pass: all three apps pinned `next@15.0.4`; `pnpm audit --audit-level moderate` reported 27 advisories per app including 2 critical and 8 high. CI typechecked/linted/built web apps but did not run `pnpm audit`; Dependabot omitted npm/pnpm ecosystems; hosted GitHub vulnerability and Dependabot alerts were disabled.
 
 Impact: Public explorer/status/dashboard surfaces inherit known RCE/auth-bypass/DoS/cache/XSS classes until upgraded. Dashboard risk is higher because it is account-facing.
 
-Remediation direction: upgrade `next`/`eslint-config-next` across all web apps to a patched compatible release, regenerate lockfiles, add Dependabot npm entries for each web app, enable GitHub vulnerability/Dependabot alerts, and add `pnpm audit --prod --audit-level high` or equivalent to CI.
+Current-head reconciliation: Wave 7 added `pnpm audit --audit-level high` to explorer, dashboard, and status CI jobs, so the missing CI advisory gate is no longer part of the open defect. The package pins remain vulnerable, Dependabot still does not cover npm/pnpm, and hosted GitHub vulnerability/Dependabot alerts remain disabled.
+
+Remediation direction: upgrade `next`/`eslint-config-next` across all web apps to a patched compatible release, regenerate lockfiles, add Dependabot npm entries for each web app, and enable GitHub vulnerability/Dependabot alerts.
 
 ### F-1211. Status-page incident workflow docs point to removed implementations
 
@@ -336,7 +339,7 @@ Remediation direction: set Actions policy to selected trusted actions, enable SH
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -382,20 +385,23 @@ Evidence:
 
 - `XFI-0012`
 - `EV-0028`
+- `EV-0099`
 
 Expected: self-service key minting should prove email ownership or use a stronger anti-abuse gate before issuing a usable 1000/min key; duplicate checks should be atomic if they are the idempotency guarantee.
 
-Observed: `/v1/signup` mints a plaintext Starter API key immediately from a parsed email string. The duplicate tracker is optional and tests pin that duplicate signup succeeds when it is nil. When Redis is wired, the flow still performs lookup, key create, then SETNX mark, so concurrent same-email requests can mint multiple keys.
+Observed during the initial pass: `/v1/signup` minted a plaintext Starter API key immediately from a parsed email string. The duplicate tracker was optional and tests pinned that duplicate signup succeeded when it was nil. When Redis was wired, the flow still performed lookup, key create, then SETNX mark, so concurrent same-email requests could mint multiple keys.
 
-Impact: attackers can cheaply mint large numbers of free API keys with rotating email strings or races, bypassing the anonymous 60/min floor and creating capacity/billing abuse.
+Current-head reconciliation: the Redis-backed path now calls `ReserveEmail` before minting, and `RedisSignupTracker.ReserveEmail` uses `SETNX` with a pending placeholder plus a five-minute TTL, so the same-email concurrent race is closed when tracking exists. The route still returns a usable plaintext Starter key without email ownership proof, and the documented/tested `signups == nil` path still disables duplicate protection entirely.
 
-Remediation direction: route signup through the magic-link/dashboard account flow or require email verification before exposing plaintext keys; make idempotency atomic by reserving the email hash before key creation; add per-email/domain/device abuse controls and alerting.
+Impact: attackers can still cheaply mint large numbers of free API keys with rotating email strings or Redis-less deployments, bypassing the anonymous 60/min floor and creating capacity/billing abuse.
+
+Remediation direction: route signup through the magic-link/dashboard account flow or require email verification before exposing plaintext keys; make duplicate protection mandatory or remove the Redis-less mint path; add per-email/domain/device abuse controls and alerting.
 
 ### F-1219. Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -611,14 +617,17 @@ Evidence:
 
 - `XFI-0018`
 - `EV-0036`
+- `EV-0100`
 
 Expected: customer-visible key policy fields should be enforced on every authenticated request, or the UI/API should clearly mark them as not active.
 
-Observed: dashboard key creation stores `monthly_quota`, `permissions`, `ip_allowlist`, `referer_allowlist`, and expiry/revocation fields. Runtime auth validates only key hash, revocation, expiry, and account status, then returns a subject containing tier/key/rate-limit. There is no request-aware check for client IP, referer, permissions, monthly quota, or usage increments; `TouchUsage` has no production caller.
+Observed during the initial pass: dashboard key creation stored `monthly_quota`, `permissions`, `ip_allowlist`, `referer_allowlist`, and expiry/revocation fields. Runtime auth validated only key hash, revocation, expiry, and account status, then returned a subject containing tier/key/rate-limit. There was no request-aware check for client IP, referer, permissions, monthly quota, or usage increments; `TouchUsage` had no production caller.
 
-Impact: customers can create keys that appear IP-bound, referer-bound, scoped, or quota-limited, but those controls do not protect the API. This is a security and trust issue for dashboard users and a billing-control gap for paid plans.
+Current-workspace reconciliation: the shared workspace now has a `KeyPolicy` middleware, production API wiring for that middleware, and subject propagation of Postgres-backed IP allowlists, referer allowlists, and permission entries. That narrows the finding, but does not close it. `PostgresAPIKeyValidator.cacheStore` still writes the old `APIKeyRecord` shape, and `cacheLookup` rebuilds a `Subject` from that shape without the new allowlist/permission fields, so a Postgres cache miss can enforce policy while subsequent Redis cache hits silently bypass it. The same workspace still does not enforce `monthly_quota`, and `TouchUsage` still has no production caller.
 
-Remediation direction: add a request-aware key policy middleware after auth that enforces IP/referer/permission/monthly quota, updates debounced usage, and returns 403/429 with clear problem bodies. Hide or label fields as pending until enforcement is live.
+Impact: customers can still create keys whose request-time policy weakens after cache warm-up, and the advertised monthly quota / last-used surfaces remain non-authoritative. This is still a security and trust issue for dashboard users and a billing-control gap for paid plans.
+
+Remediation direction: finish the policy path end-to-end. Preserve IP/referer/permission fields through the cache schema or bypass the cache for policy-bearing keys, enforce monthly quotas, wire debounced `TouchUsage`, and add tests that prove a cache miss and a cache hit enforce the same restrictions.
 
 ### F-1227. The `ratesengine-migrate` container cannot apply bundled migrations out of the box
 
@@ -767,7 +776,7 @@ Remediation direction: run and verify historical backfill for launch-critical pa
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -781,14 +790,17 @@ Evidence:
 - `XFI-0023`
 - `EV-0041`
 - `EV-0025`
+- `EV-0099`
 
 Expected: every change reaching `main` should either have passed the canonical CI workflow through an enforced PR path, or the same canonical gate should run on main pushes.
 
-Observed: `ci.yml` triggers only on `pull_request` and explicitly disables push-to-main CI. Hosted GitHub reports `main.protected=false`, so the PR-only assumption is not enforced. The path-limited `api-audit` workflow can run on some main pushes, but it only smokes public API examples and is not equivalent to lint, tests, builds, import rules, govulncheck, gitleaks, OpenAPI generation, and web app checks.
+Observed during the initial pass: `ci.yml` triggered only on `pull_request` and explicitly disabled push-to-main CI. Hosted GitHub reported `main.protected=false`, so the PR-only assumption was not enforced. The path-limited `api-audit` workflow could run on some main pushes, but it only smoked public API examples and was not equivalent to lint, tests, builds, import rules, govulncheck, gitleaks, OpenAPI generation, and web app checks.
 
 Impact: a direct push to `main` can land broken code or vulnerable dependencies without the full suite running. This compounds the existing branch-protection finding and weakens release confidence for a project preparing public market-data launch.
 
-Remediation direction: either enable enforceable branch protection that requires the `ci` jobs before merge, or restore the canonical `ci` push trigger for `main` until protection is actually active.
+Current-head reconciliation: `ci.yml` now has `push: branches: [main]` with the same docs-only path exclusions as pull requests, so direct code pushes to `main` now fire the canonical CI workflow. The hosted branch-protection gap remains separately tracked as `F-1214`.
+
+Remediation direction: retained for audit history; the CI trigger gap itself is now fixed.
 
 ### F-1232. Circle USDC has `price_usd` on asset detail but 404s or disappears from `/v1/price` and batch price APIs
 

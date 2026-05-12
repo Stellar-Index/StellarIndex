@@ -130,13 +130,18 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	}
 
 	sub := Subject{
-		Identifier:      "acct:" + acct.Slug,
-		Tier:            pgTierToAuthTier(pgKey.Tier),
-		KeyID:           pgKey.ID,
-		RateLimitPerMin: pgKey.RateLimitPerMin,
-		CreatedAt:       pgKey.CreatedAt,
-		Label:           pgKey.Name,
-		KeyPrefix:       pgKey.KeyPrefix,
+		Identifier:          "acct:" + acct.Slug,
+		Tier:                pgTierToAuthTier(pgKey.Tier),
+		KeyID:               pgKey.ID,
+		RateLimitPerMin:     pgKey.RateLimitPerMin,
+		CreatedAt:           pgKey.CreatedAt,
+		Label:               pgKey.Name,
+		KeyPrefix:           pgKey.KeyPrefix,
+		IPAllowlist:         pgKey.IPAllowlist,
+		RefererAllowlist:    pgKey.RefererAllowlist,
+		AllowAllPermissions: pgKey.Permissions.All,
+		AllowPermissions:    convertPermissionEntries(pgKey.Permissions.Allow),
+		DenyPermissions:     convertPermissionEntries(pgKey.Permissions.Deny),
 	}
 
 	// 3. Cache write-back. Best-effort; a write failure doesn't
@@ -212,6 +217,24 @@ func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string
 		return
 	}
 	_ = v.cache.Set(ctx, cachekeys.APIKey(hexHash), body, v.cacheTTL).Err()
+}
+
+// convertPermissionEntries maps platform.KeyPermissionEntry into
+// auth.SubjectPermissionEntry so the middleware can enforce
+// per-endpoint allow/deny without importing the platform package.
+// F-1226 (codex audit-2026-05-12).
+func convertPermissionEntries(entries []platform.KeyPermissionEntry) []SubjectPermissionEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]SubjectPermissionEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, SubjectPermissionEntry{
+			Endpoint:       e.Endpoint,
+			EndpointPrefix: e.EndpointPrefix,
+		})
+	}
+	return out
 }
 
 // pgTierToAuthTier maps the platform-side enum to the auth-side

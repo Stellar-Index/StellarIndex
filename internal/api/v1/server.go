@@ -75,6 +75,7 @@ type Server struct {
 	sep10             auth.SEP10Validator
 	cors              middleware.Middleware
 	auth              middleware.Middleware
+	keyPolicy         middleware.Middleware
 	rateLimit         middleware.Middleware
 	usageTracker      middleware.Middleware
 	usageReader       UsageReader
@@ -339,6 +340,17 @@ type Options struct {
 	// the rate-limit middleware then keys on RemoteIP only.
 	Auth middleware.Middleware
 
+	// KeyPolicy, when non-nil, runs AFTER Auth and BEFORE RateLimit.
+	// Enforces the per-key policy fields the dashboard surfaces
+	// (IP allowlist, Referer allowlist, per-endpoint permissions)
+	// against the authenticated Subject. F-1226 (codex
+	// audit-2026-05-12): pre-fix these were accepted at key
+	// creation but no middleware enforced them at request time.
+	// Anonymous subjects pass through unchanged; the policy data
+	// only ships on Subjects produced by the Postgres validator.
+	// Typically constructed via middleware.KeyPolicy().
+	KeyPolicy middleware.Middleware
+
 	// RateLimit, when non-nil, is appended to the middleware stack
 	// as the innermost wrapper — so the Logger + Auth middlewares
 	// have already populated remote_ip + Subject into the request
@@ -538,6 +550,7 @@ func New(opts Options) *Server {
 		sep10:              opts.SEP10,
 		cors:               opts.CORS,
 		auth:               opts.Auth,
+		keyPolicy:          opts.KeyPolicy,
 		rateLimit:          opts.RateLimit,
 		usageTracker:       opts.UsageTracker,
 		usageReader:        opts.UsageReader,
@@ -657,6 +670,12 @@ func (s *Server) Handler() http.Handler {
 	// per-tier limits see the authenticated Subject in context).
 	if s.auth != nil {
 		stack = append(stack, s.auth)
+	}
+	// KeyPolicy runs after Auth (so the Subject is on context) but
+	// before RateLimit (so a policy-denied 403 never spends a
+	// rate-limit token). F-1226 (codex audit-2026-05-12).
+	if s.keyPolicy != nil {
+		stack = append(stack, s.keyPolicy)
 	}
 	if s.rateLimit != nil {
 		stack = append(stack, s.rateLimit)

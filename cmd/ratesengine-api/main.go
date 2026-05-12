@@ -632,6 +632,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Hub:                hub,
 		CORS:               cors,
 		Auth:               authMW,
+		KeyPolicy:          middleware.KeyPolicy(),
 		RateLimit:          rateLimit,
 		UsageTracker:       middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
 		UsageReader:        usageReaderAdapter{c: usageCounter},
