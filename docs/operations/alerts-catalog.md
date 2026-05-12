@@ -33,7 +33,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
-| `ratesengine_ingestion_source_stopped` | `rate(ratesengine_source_events_total[5m])` per source | == 0 for > 5 min on an enabled source | P2 | [source-stopped](runbooks/source-stopped.md) |
+| `ratesengine_ingestion_source_stopped` | `rate(ratesengine_source_events_total[30m])` per source | == 0 for > 15 min on an enabled source | P2 | [source-stopped](runbooks/source-stopped.md) |
 | `ratesengine_ingestion_all_sources_stopped` | `sum(rate(ratesengine_source_events_total[5m]))` | == 0 for > 3 min | **P1** | [all-ingestion-down](runbooks/all-ingestion-down.md) |
 | `ratesengine_ingestion_cursor_stuck` | `increase(ratesengine_cursor_last_ledger[5m])` per source | == 0 while source is live | P2 | [cursor-stuck](runbooks/cursor-stuck.md) |
 | `ratesengine_ingestion_orphan_events` | `rate(ratesengine_source_orphan_events_total[10m])` | > 10/min per source | P3 | [orphan-events](runbooks/orphan-events.md) |
