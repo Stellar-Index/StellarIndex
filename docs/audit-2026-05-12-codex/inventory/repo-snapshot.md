@@ -2,21 +2,29 @@
 
 | Item | Value |
 | --- | --- |
-| Generated At | `2026-05-12T19:46:05Z` |
-| Commit | `fb0b3073671501ba38a4930047eae9f2928dbc33` |
+| Generated At | `2026-05-12T22:08:13Z` |
+| Commit | `8ff641689dd59fc2bd1a024ca7b5fa9bbffc750b` |
 | Branch | `main` |
-| Tracked Files | `1875` |
-| Dirty Files After Plan Creation | `10` |
+| Tracked Files | `1882` |
+| Dirty Files After Plan Creation | `18` |
 
 ## Dirty Worktree
 
-- `docs/audit-2026-05-12-codex/01-tracker.md`
+- `cmd/ratesengine-api/main.go`
 - `docs/audit-2026-05-12-codex/04-reconciliation.md`
 - `docs/audit-2026-05-12-codex/05-findings-register.md`
 - `docs/audit-2026-05-12-codex/07-remediation-plan.md`
 - `docs/audit-2026-05-12-codex/evidence/commands.md`
 - `docs/audit-2026-05-12-codex/evidence/cross-file-interactions.md`
 - `docs/audit-2026-05-12-codex/evidence/log.md`
+- `docs/audit-2026-05-12-codex/inventory/area-counts.md`
+- `docs/audit-2026-05-12-codex/inventory/file-coverage.tsv`
 - `docs/audit-2026-05-12-codex/inventory/repo-snapshot.md`
-- `docs/operations/r1-deployment-state.md`
-- `internal/api/v1/stripe_webhook.go`
+- `internal/api/v1/server.go`
+- `internal/api/v1/middleware/monthly_quota.go`
+- `internal/api/v1/middleware/monthly_quota_test.go`
+- `internal/auth/apikey_postgres.go`
+- `internal/auth/apikey_redis.go`
+- `internal/auth/subject.go`
+- `internal/usage/counter.go`
+- `internal/usage/counter_test.go`

@@ -103,6 +103,48 @@ type Day struct {
 	Requests int64
 }
 
+// MonthToDate returns the sum of `subject`'s per-day counters
+// from the 1st of the current UTC month through (and including)
+// today. Used by [middleware.MonthlyQuota] to enforce per-key
+// monthly request ceilings. F-1226 (codex audit-2026-05-12).
+//
+// Empty subject or a Redis-side failure returns (0, err); the
+// caller treats both as "fail open" — usage caps must never be
+// the reason a request 500s. Returns (0, nil) for the first day
+// of the month before any counter has been written.
+func (c *Counter) MonthToDate(ctx context.Context, subject string) (int64, error) {
+	if c == nil || subject == "" {
+		return 0, nil
+	}
+	now := c.nowFn().UTC()
+	year, month, today := now.Date()
+	keys := make([]string, 0, today)
+	for d := 1; d <= today; d++ {
+		date := time.Date(year, month, d, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		keys = append(keys, c.keyPrefix+url.QueryEscape(subject)+":"+date)
+	}
+	raw, err := c.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return 0, fmt.Errorf("usage: month-to-date mget: %w", err)
+	}
+	var total int64
+	for _, v := range raw {
+		if v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			continue
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // Read returns up to `days` daily counts for the subject, oldest
 // first. Days with no requests are omitted (the caller fills
 // gaps with zero buckets if the wire contract requires it). days

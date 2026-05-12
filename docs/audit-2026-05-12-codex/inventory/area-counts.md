@@ -20,7 +20,7 @@ Generated from `git ls-files` excluding `docs/audit-2026-05-12-codex/**`.
 | `README.md` | 1 |
 | `SECURITY.md` | 1 |
 | `VERSIONS.md` | 1 |
-| `cmd` | 36 |
+| `cmd` | 38 |
 | `commitlint.config.js` | 1 |
 | `configs` | 176 |
 | `deploy` | 41 |
@@ -29,8 +29,8 @@ Generated from `git ls-files` excluding `docs/audit-2026-05-12-codex/**`.
 | `examples` | 14 |
 | `go.mod` | 1 |
 | `go.sum` | 1 |
-| `internal` | 674 |
-| `migrations` | 59 |
+| `internal` | 677 |
+| `migrations` | 61 |
 | `openapi` | 1 |
 | `pkg` | 10 |
 | `scripts` | 28 |

@@ -78,6 +78,14 @@ Recent waves closed by code (chronological):
   MIN(observation ledger) across the SDF reserve accounts;
   XLMComputer probes via type assertion and stamps
   `Supply.MinComponentLedger`.
+- wave 38 — F-1226 monthly-quota enforcement: `Subject.MonthlyQuota`
+  cascades from per-key → account-override → 0 (unmetered);
+  `usage.Counter.MonthToDate` sums current-month days;
+  `middleware.MonthlyQuota` returns 429 with the documented
+  X-RatesEngine-Monthly-{Quota,Used} headers when the cap is
+  met. Wired BEFORE rate-limit so a quota-rejected request
+  doesn't spend a per-minute token. (TouchUsage + account-
+  aggregated usage reader still open.)
 
 ## Status Values
 
@@ -111,7 +119,7 @@ Recent waves closed by code (chronological):
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
-| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails, and Redis-less deployments still skip duplicate protection entirely | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099 | open | api/security/billing | The same-email race is now closed when Redis tracking is wired, but signup still returns usable keys without email ownership proof and tracker-nil deployments still mint duplicates by design. |
+| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099; EV-0127 | open | api/security/billing | The Redis-backed same-email race is now closed, and the current main binary does not mint through a Redis-less `signups == nil` path because the account store is nil too and signup returns 503. The remaining high-severity defect is still material: a valid-looking email string yields a usable plaintext Starter key with no ownership proof. |
 | F-1219 | high | Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112 | fixed | billing/platform/api | Wave 32 (2026-05-12) sets `stripeCfg.Platform = &v1.StripePlatformBridge{Accounts: …, Billing: …}` in `cmd/ratesengine-api/main.go`, so a successful Stripe upgrade now both lifts the Redis API-key budgets AND writes the Subscription row + bumps the account's Tier through the canonical platform stores. Earlier waves had already wired `invoice.paid` subscription-window refresh and `customer.subscription.{updated,deleted}` handling. |
 | F-1220 | high | Tagged deploy migration handling is still not closure-grade after the new staging path | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; EV-0103; R1-0013 | fixed | release/ops/db | Wave 32 (2026-05-12) adds `ansible-galaxy collection install -r configs/ansible/requirements.yml` to the Install-Ansible step in `.github/workflows/deploy.yml` so `ansible.posix.synchronize` (used by the binary-staging task) resolves. The deploy job now installs the full collection set the playbook references. |
 | F-1221 | medium | Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed | Release workflow; release/deploy docs; Docker image expectations | XFI-0014; EV-0032 | open | docs/release | Operators and self-hosters are told to expect GHCR artifacts that the workflow intentionally no longer produces. |
@@ -119,7 +127,7 @@ Recent waves closed by code (chronological):
 | F-1223 | high | R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014; EV-0113 | fixed | ops/security | Current live R1 Caddy now carries the trusted-proxy/client-IP block, forwards `{client_ip}`, and public `/metrics` returns HTTP 404. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | open | dashboard/security | Login/security audit fields intended for IP/new-country signals parse `r.RemoteAddr` directly instead of the middleware-resolved remote IP. |
 | F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
-| F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118 | open | platform/api/security | Wave 34 (2026-05-12) ships the cache-hit policy parity: `APIKeyRecord` now carries `IPAllowlist`/`RefererAllowlist`/`PermissionsAll`/`AllowPermissions`/`DenyPermissions` and `PostgresAPIKeyValidator.cacheStore` / `cacheLookup` round-trip them; regression test `TestPostgresValidator_CacheRoundTripsPolicy` proves cache-hit Subject is policy-identical to cache-miss Subject. Monthly quota enforcement plus production `TouchUsage`/last-used updates remain the still-open halves. |
+| F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118; EV-0126; EV-0128 | open | platform/api/security | Wave 34 ships cache-hit policy parity. Wave 38 (2026-05-12) adds runtime monthly-quota enforcement: `Subject.MonthlyQuota` (cascaded from per-key value → account-level `MonthlyRequestQuotaOverride` → 0 = unmetered) flows through both Postgres validator paths AND the Redis cache row; `usage.Counter.MonthToDate` sums the current month's per-day counters; new `middleware.MonthlyQuota` returns 429 + Problem-JSON + `X-RatesEngine-Monthly-{Quota,Used}` headers when the cap is met. Wired AFTER auth/key-policy and BEFORE rate-limit so a quota-rejected request doesn't also spend a per-minute token. Tests: 7 middleware cases + 3 counter cases. The remaining gaps: the cap is read-before-counter-increment so concurrent near-cap requests can overshoot by a few (inherent to Redis-counter rate limiting), `TouchUsage`/last-used updates still have no production caller, and the usage reader remains credential-scoped. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | fixed | docker/db | `docker/ratesengine-migrate.Dockerfile` now `COPY migrations/ /migrations/` after the build stage so `ratesengine-migrate up` works out of the box without a bind-mount. Verified live on `HEAD`. |
 | F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119 | fixed | api/streaming/ops | Source-side fix is committed: `internal/api/streaming/handler.go` calls `http.NewResponseController(w).SetWriteDeadline(time.Time{})` per SSE connection, with `logger.go`/`envelope404.go` wrappers preserving access to `SetWriteDeadline`. Any remaining R1 cutoff observation reflects pre-redeploy binary state — flipped to fixed once a fresh API release lands. |
 | F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | fixed | ops/api | `scripts/dev/verify-cdn.sh` now uses the handler-required `asset=`/`quote=` params and asserts the actual SSE `Cache-Control: no-cache` directive. |
@@ -496,7 +504,7 @@ Current-workspace reconciliation: `cmd/ratesengine-api/main.go` now returns a st
 
 Remediation direction: retained for audit history; the current workspace implements the fail-startup branch.
 
-### F-1218. Public signup can mint immediately usable 1000/min API keys from unverified emails and non-atomic duplicate checks
+### F-1218. Public signup can mint immediately usable 1000/min API keys from unverified emails
 
 Severity: `high`
 
@@ -516,16 +524,17 @@ Evidence:
 - `XFI-0012`
 - `EV-0028`
 - `EV-0099`
+- `EV-0127`
 
-Expected: self-service key minting should prove email ownership or use a stronger anti-abuse gate before issuing a usable 1000/min key; duplicate checks should be atomic if they are the idempotency guarantee.
+Expected: self-service key minting should prove email ownership or use a stronger anti-abuse gate before issuing a usable 1000/min key; duplicate checks should stay atomic where they are the idempotency guarantee.
 
 Observed during the initial pass: `/v1/signup` minted a plaintext Starter API key immediately from a parsed email string. The duplicate tracker was optional and tests pinned that duplicate signup succeeded when it was nil. When Redis was wired, the flow still performed lookup, key create, then SETNX mark, so concurrent same-email requests could mint multiple keys.
 
-Current-head reconciliation: the Redis-backed path now calls `ReserveEmail` before minting, and `RedisSignupTracker.ReserveEmail` uses `SETNX` with a pending placeholder plus a five-minute TTL, so the same-email concurrent race is closed when tracking exists. The route still returns a usable plaintext Starter key without email ownership proof, and the documented/tested `signups == nil` path still disables duplicate protection entirely.
+Current-head reconciliation: the Redis-backed path now calls `ReserveEmail` before minting, and `RedisSignupTracker.ReserveEmail` uses `SETNX` with a pending placeholder plus a five-minute TTL, so the same-email concurrent race is closed when tracking exists. A fresh production-wiring check also narrows the earlier tracker-nil statement: `cmd/ratesengine-api/main.go` only wires the signup account store when Redis exists, and `parseAndValidateSignup` returns `503 account-store-unavailable` when `s.accounts == nil`, so the current main binary does not mint signup keys in a Redis-less deployment. The route still returns a usable plaintext Starter key without email ownership proof whenever the normal Redis-backed path is healthy.
 
-Impact: attackers can still cheaply mint large numbers of free API keys with rotating email strings or Redis-less deployments, bypassing the anonymous 60/min floor and creating capacity/billing abuse.
+Impact: attackers can still cheaply mint large numbers of free API keys with rotating email strings through the intended healthy path, bypassing the anonymous 60/min browsing posture and creating capacity/billing abuse.
 
-Remediation direction: route signup through the magic-link/dashboard account flow or require email verification before exposing plaintext keys; make duplicate protection mandatory or remove the Redis-less mint path; add per-email/domain/device abuse controls and alerting.
+Remediation direction: route signup through the magic-link/dashboard account flow or require email verification before exposing plaintext keys; keep the atomic Redis reservation; add per-email/domain/device abuse controls and alerting around the healthy path that still self-issues plaintext keys.
 
 ### F-1219. Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth
 
@@ -790,6 +799,8 @@ Evidence:
 - `EV-0036`
 - `EV-0100`
 - `EV-0118`
+- `EV-0126`
+- `EV-0128`
 
 Expected: customer-visible key policy fields should be enforced on every authenticated request, or the UI/API should clearly mark them as not active.
 
@@ -800,19 +811,40 @@ middleware, production API wiring for that middleware, subject propagation of
 Postgres-backed IP allowlists, referer allowlists, and permission entries,
 plus a Redis cache schema that round-trips those policy fields on cache hits.
 `TestPostgresValidator_CacheRoundTripsPolicy` passes, so the specific
-cache-hit bypass recorded earlier is now addressed in-flight. The finding
-still does not close: `monthly_quota` is not enforced at runtime, and
-`TouchUsage` / `last_used_*` still have no production caller.
+cache-hit bypass recorded earlier is now addressed in-flight. The workspace
+then moves again: `Subject.MonthlyQuota`, `APIKeyRecord.MonthlyQuota`,
+`usage.Counter.MonthToDate`, and `middleware.MonthlyQuota` now implement a
+positive per-key month-to-date gate. That narrows the finding, but does not
+close it. `APIKey.MonthlyQuota == 0` is documented as "inherit from plan", yet
+the middleware treats `MonthlyQuota <= 0` as "skip the check", so ordinary
+default-quota keys still bypass monthly caps. `Account.MonthlyRequestQuotaOverride`
+is likewise only stored and never read by the request path. The new quota gate
+also reads existing Redis counters before the handler and `UsageTracker`
+increments those counters only after the handler returns; multiple concurrent
+near-cap requests can therefore all pass the same stale month-to-date total
+before any of them are recorded. `TouchUsage` / `last_used_*` still have no
+production caller. Finally, the current Redis usage model counts
+`key:<KeyID>` first and `id:<Identifier>` second, then `/v1/account/usage`
+reads that same credential-scoped key back. That means the live reader can show
+one key's request series, but it cannot by itself power the account-level quota
+and dashboard model described elsewhere without an additional aggregation layer.
 
 Impact: customer allowlist/permission policy is materially closer to truthful
-end-to-end, but the advertised monthly quota / last-used surfaces remain
-non-authoritative. This is still a security and trust issue for dashboard
-users and a billing-control gap for paid plans.
+end-to-end, and explicit positive per-key caps now have a remediation path in
+flight, but the advertised monthly quota / last-used surfaces remain
+non-authoritative for the default/inherited path and any account-level policy.
+The present usage-key model also undercuts any account-wide quota or billing
+display assembled from this path unless extra reconciliation exists elsewhere.
+This is still a security and trust issue for dashboard users and a
+billing-control gap for paid plans.
 
 Remediation direction: finish the remaining policy path end-to-end. Keep the
-new cache-parity coverage, enforce monthly quotas, wire debounced `TouchUsage`
-and `last_used_*`, and add tests that prove those remaining fields behave the
-same on cache miss and cache hit.
+new cache-parity coverage, define the authoritative quota attribution model
+(per key, per account, or both), make `0 = inherit plan default` real rather
+than a silent bypass, enforce stored account overrides, make quota admission
+atomic enough for the promised cap semantics, wire debounced `TouchUsage` and
+`last_used_*`, and add tests that prove those remaining fields behave the same
+on cache miss and cache hit.
 
 ### F-1227. The `ratesengine-migrate` container cannot apply bundled migrations out of the box
 

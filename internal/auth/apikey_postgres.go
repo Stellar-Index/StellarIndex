@@ -130,6 +130,17 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		return Subject{}, ErrUnauthorized
 	}
 
+	// F-1226 (codex audit-2026-05-12) monthly-quota cascade:
+	// per-key value wins; if 0 (default/inherit), fall back to
+	// the account-level override; if both are 0, the middleware's
+	// `MonthlyQuota <= 0` short-circuit leaves the request
+	// unmetered. Plan-default values plug in at policy-config
+	// time (operators set a non-zero override on the account
+	// row when they upgrade the customer to a metered plan).
+	monthlyQuota := pgKey.MonthlyQuota
+	if monthlyQuota == 0 && acct.MonthlyRequestQuotaOverride > 0 {
+		monthlyQuota = acct.MonthlyRequestQuotaOverride
+	}
 	sub := Subject{
 		Identifier:          "acct:" + acct.Slug,
 		Tier:                pgTierToAuthTier(pgKey.Tier),
@@ -143,6 +154,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		AllowAllPermissions: pgKey.Permissions.All,
 		AllowPermissions:    convertPermissionEntries(pgKey.Permissions.Allow),
 		DenyPermissions:     convertPermissionEntries(pgKey.Permissions.Deny),
+		MonthlyQuota:        monthlyQuota,
 	}
 
 	// 3. Cache write-back. Best-effort; a write failure doesn't
@@ -210,6 +222,7 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 		AllowAllPermissions: rec.PermissionsAll,
 		AllowPermissions:    rec.AllowPermissions,
 		DenyPermissions:     rec.DenyPermissions,
+		MonthlyQuota:        rec.MonthlyQuota,
 	}, true, nil
 }
 
@@ -269,6 +282,7 @@ func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string
 		PermissionsAll:   sub.AllowAllPermissions,
 		AllowPermissions: sub.AllowPermissions,
 		DenyPermissions:  sub.DenyPermissions,
+		MonthlyQuota:     sub.MonthlyQuota,
 	}
 	body, err := json.Marshal(rec)
 	if err != nil {

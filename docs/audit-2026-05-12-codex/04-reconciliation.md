@@ -249,6 +249,21 @@ without evidence IDs.
 - `CMD-0120` narrowed `F-1226` by closing cache-hit policy shedding, but
   monthly quota enforcement and production `TouchUsage` propagation remain
   absent.
+- `CMD-0127` deepened `F-1226`: neither per-key nor per-account monthly
+  quota fields have a request-path consumer, `TouchUsage` still has no
+  production caller, and `/v1/account/usage` currently reads credential-local
+  counters rather than a real account aggregation.
+- `CMD-0128` narrowed `F-1218`: the current main binary does not mint signup
+  keys through a Redis-less tracker-nil path because the signup account store
+  is absent too and the handler returns `503`. The unverified plaintext-key
+  issuance finding remains high severity on the healthy Redis-backed path.
+- `CMD-0129` rechecked `F-1226` against the new shared-workspace monthly
+  quota patch. Positive per-key quota propagation/enforcement is now in
+  flight, but default/inherited quota semantics, account override usage,
+  admission atomicity near cap, `TouchUsage`, and account-level aggregation
+  remain unresolved.
+- `CMD-0130` folded the new highest-priority auth/quota/signup reviews back
+  into the per-file control ledger and refreshed the snapshot/area metadata.
 - `CMD-0121` preserved `F-1228` as a source/live drift issue: the SSE deadline
   fix exists in code, yet the public R1 stream still terminates around the
   former 30-second cutoff.
@@ -281,5 +296,5 @@ without evidence IDs.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=105`, `in_progress=60`, `todo=1717`, with tracked-file parity
-  restored at `1882` rows and preserved through `CMD-0125`.
+  `done=105`, `in_progress=64`, `todo=1713`, with tracked-file parity
+  restored at `1882` rows and preserved through `CMD-0130`.

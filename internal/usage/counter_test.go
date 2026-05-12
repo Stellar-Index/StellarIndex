@@ -22,6 +22,69 @@ func newRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 
 // TestIncrementAndRead_RoundTrip — Increment + Read recover the
 // counts they wrote. The happy path.
+// TestMonthToDate_SumsCurrentMonthOnly — only counters dated
+// within the current UTC calendar month are summed. F-1226
+// (codex audit-2026-05-12).
+func TestMonthToDate_SumsCurrentMonthOnly(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) // 1st of month
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+
+	// April 30 — previous month, must NOT be counted.
+	clock = time.Date(2026, 4, 30, 23, 0, 0, 0, time.UTC)
+	_ = c.Increment(ctx, "subj-mtd")
+	_ = c.Increment(ctx, "subj-mtd")
+
+	// May 1.
+	clock = time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC)
+	_ = c.Increment(ctx, "subj-mtd")
+	_ = c.Increment(ctx, "subj-mtd")
+	_ = c.Increment(ctx, "subj-mtd")
+
+	// May 3.
+	clock = time.Date(2026, 5, 3, 8, 0, 0, 0, time.UTC)
+	_ = c.Increment(ctx, "subj-mtd")
+	_ = c.Increment(ctx, "subj-mtd")
+
+	// Read MTD as-of May 3.
+	got, err := c.MonthToDate(ctx, "subj-mtd")
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 5 {
+		t.Errorf("MonthToDate = %d, want 5 (3 from May 1 + 2 from May 3; April's 2 must be excluded)", got)
+	}
+}
+
+// TestMonthToDate_EmptySubjectIsZero — empty subject returns 0
+// without touching Redis (matches Increment's no-op behaviour).
+func TestMonthToDate_EmptySubjectIsZero(t *testing.T) {
+	_, rdb := newRedis(t)
+	c := usage.New(rdb)
+	got, err := c.MonthToDate(context.Background(), "")
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("MonthToDate = %d, want 0", got)
+	}
+}
+
+// TestMonthToDate_NoActivity — a subject with zero days
+// written returns 0, no error.
+func TestMonthToDate_NoActivity(t *testing.T) {
+	_, rdb := newRedis(t)
+	c := usage.New(rdb)
+	got, err := c.MonthToDate(context.Background(), "subj-quiet")
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("MonthToDate = %d, want 0 (no activity)", got)
+	}
+}
+
 func TestIncrementAndRead_RoundTrip(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
