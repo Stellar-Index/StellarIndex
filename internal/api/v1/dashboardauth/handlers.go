@@ -2,6 +2,8 @@ package dashboardauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,37 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/platform"
 )
 
+// EmailLocker serialises first-login provisioning per email so
+// concurrent /v1/auth/callback callers can't both create
+// speculative Account rows before the email-unique-index Users
+// insert decides a winner.
+//
+// F-1255 (codex audit-2026-05-12): without this seam, two valid
+// magic links for the same just-verified email racing through
+// the callback both pass `GetUserByEmail → ErrNotFound`, both
+// `Accounts.Create` succeed (slug uniqueness gets resolved with
+// the 4-hex retry), then only the first `Users.CreateUser` wins.
+// The losing caller's Account row is then orphaned. A best-
+// effort Suspend-mark on the orphan exists as defence-in-depth,
+// but acquiring a per-email lock BEFORE the Account.Create
+// removes the orphan creation entirely.
+//
+// Implementations:
+//   - production: Redis SETNX with a 30s TTL (the
+//     `dashboardauth.RedisEmailLocker` adapter).
+//   - tests / Redis-less dev: nil — the Suspend-on-conflict
+//     fallback handles the rare race without serialisation.
+//
+// `Acquire` returns (true, …) when the caller now holds the
+// lock and must call `Release`. (false, …) means another
+// caller holds it — the caller should poll `Users.GetUserByEmail`
+// briefly to find the winner's user. Errors propagate; treat
+// them as "lock not acquired, fall through to the legacy path".
+type EmailLocker interface {
+	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, error)
+	Release(ctx context.Context, emailHash string) error
+}
+
 // Config wires the auth handlers' dependencies. Constructed
 // once at server boot; mounted into the v1 mux.
 type Config struct {
@@ -30,6 +63,10 @@ type Config struct {
 	Generator *Generator
 	Logger    *slog.Logger
 	Now       func() time.Time
+	// EmailLocker (optional) serialises first-login provisioning
+	// per email. nil = no locking; the handler falls through to
+	// the legacy Suspend-on-conflict recovery path. F-1255.
+	EmailLocker EmailLocker
 	// DashboardBaseURL is the absolute URL of the customer
 	// dashboard SPA (typically https://app.ratesengine.net).
 	// The magic-link callback URL embedded in emails is
@@ -327,14 +364,28 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // F-1255 (codex audit-2026-05-12): concurrent /v1/auth/callback
 // callbacks for the same just-verified email can race — both pass
 // the GetUserByEmail check, both create an account, only the
-// first user-insert wins on `users_email_idx`. Pre-fix the loser
-// returned 500 and the speculative-account row stayed orphaned.
-// Now we catch the ErrConflict path on CreateUser, re-fetch the
-// winning user (so both callers converge on the same User row),
-// and return it. The speculative account row is now an orphan
-// the operator-side reaper handles; better than 500ing the
-// customer's first-login attempt.
+// first user-insert wins on `users_email_idx`. The full fix is
+// the optional per-email EmailLocker (Redis SETNX): the loser
+// short-circuits before Account.Create, polls briefly for the
+// winner's user, and never inserts a speculative-account row.
+//
+// When no EmailLocker is configured (tests, Redis-less dev) the
+// legacy Suspend-on-conflict path stays as defence-in-depth:
+// catch ErrConflict on CreateUser, mark the speculative-account
+// row Suspended with reason `signup-race:` so the operator
+// reaper has an unambiguous signal, then reload the winner.
 func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.User, error) {
+	winner, gotWinner, release, err := h.acquireSignupLock(ctx, email)
+	if err != nil {
+		return platform.User{}, err
+	}
+	if gotWinner {
+		return winner, nil
+	}
+	if release != nil {
+		defer release()
+	}
+
 	slug := slugFromEmail(email)
 	acct, err := h.cfg.Accounts.Create(ctx, platform.Account{
 		Name:         email, // operator can rename later
@@ -396,6 +447,112 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 		return platform.User{}, fmt.Errorf("create user: %w", err)
 	}
 	return user, nil
+}
+
+// acquireSignupLock attempts to serialise first-login provisioning
+// for `email` through the configured EmailLocker. Returns:
+//
+//	(winner, true, nil, nil)  — lock lost AND the winner's user row
+//	                            became visible while we polled.
+//	                            Caller returns the winner directly.
+//	(_, false, release, nil)  — either no locker is configured, the
+//	                            lock acquire failed (treat as "fall
+//	                            through to legacy path"), or we won
+//	                            the lock. `release` is non-nil only
+//	                            when we hold the lock; caller must
+//	                            defer it.
+//	(_, false, nil, err)      — re-check under the lock surfaced a
+//	                            non-NotFound store error.
+//
+// Extracted from [signupNewUser] to keep that function's cognitive
+// complexity under the linter's gocognit cap.
+func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platform.User, bool, func(), error) {
+	if h.cfg.EmailLocker == nil {
+		return platform.User{}, false, nil, nil
+	}
+	emailHash := hashEmailForLocker(email)
+	acquired, lockErr := h.cfg.EmailLocker.Acquire(ctx, emailHash, 30*time.Second)
+	if lockErr != nil {
+		h.cfg.Logger.Warn("signup email-lock acquire failed; falling through to non-locked path",
+			"err", lockErr, "email", email)
+		return platform.User{}, false, nil, nil
+	}
+	if !acquired {
+		winner, pollErr := h.waitForWinnerUser(ctx, email)
+		if pollErr != nil {
+			return platform.User{}, false, nil, fmt.Errorf("signup race: poll for winner: %w", pollErr)
+		}
+		if winner.ID != uuid.Nil {
+			return winner, true, nil, nil
+		}
+		h.cfg.Logger.Warn("signup email-lock held by another caller but winner did not materialise in poll window; attempting provisioning ourselves",
+			"email", email)
+		return platform.User{}, false, nil, nil
+	}
+	release := func() {
+		if relErr := h.cfg.EmailLocker.Release(ctx, emailHash); relErr != nil {
+			h.cfg.Logger.Warn("signup email-lock release failed",
+				"err", relErr, "email", email)
+		}
+	}
+	// Inside the lock, a concurrent winner may have already
+	// committed before we acquired (the lock TTL elapsed between
+	// their Release and our Acquire). Re-check user-by-email
+	// before the speculative Account.Create.
+	if existing, getErr := h.cfg.Users.GetUserByEmail(ctx, email); getErr == nil {
+		release()
+		return existing, true, nil, nil
+	} else if !errors.Is(getErr, platform.ErrNotFound) {
+		release()
+		return platform.User{}, false, nil, fmt.Errorf("recheck user under lock: %w", getErr)
+	}
+	return platform.User{}, false, release, nil
+}
+
+// hashEmailForLocker produces a stable hex digest for the per-
+// email signup lock. The plaintext email is never the cache
+// key so a Redis dump doesn't leak addresses; the digest is
+// stable across processes so two API workers serialise on the
+// same key.
+func hashEmailForLocker(email string) string {
+	h := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(h[:])
+}
+
+// waitForWinnerUser polls Users.GetUserByEmail until the
+// winner's row materialises, the context expires, or the local
+// budget (1500ms across ~10 attempts) is exhausted. Returns the
+// zero-value [platform.User] (with `ID == uuid.Nil`) if we time
+// out without seeing a winner — the caller falls through and
+// tries to provision themselves.
+//
+// Tight budget on purpose: the user is waiting on the callback
+// redirect; a long poll would surface as a hung browser tab.
+// 1.5s is generous enough to bridge a slow first INSERT but
+// short enough to fail open if the lock-holder crashed.
+func (h *Handlers) waitForWinnerUser(ctx context.Context, email string) (platform.User, error) {
+	const (
+		maxAttempts = 10
+		gap         = 150 * time.Millisecond
+	)
+	for i := 0; i < maxAttempts; i++ {
+		if ctx.Err() != nil {
+			return platform.User{}, ctx.Err()
+		}
+		u, err := h.cfg.Users.GetUserByEmail(ctx, email)
+		if err == nil {
+			return u, nil
+		}
+		if !errors.Is(err, platform.ErrNotFound) {
+			return platform.User{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return platform.User{}, ctx.Err()
+		case <-time.After(gap):
+		}
+	}
+	return platform.User{}, nil
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────

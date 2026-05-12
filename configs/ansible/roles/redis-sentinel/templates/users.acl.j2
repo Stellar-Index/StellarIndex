@@ -50,7 +50,7 @@ user ratesengine on >{{ redis_password }} \
   -@all +@read +@write +@scripting +@pubsub +@connection \
   -@admin -@dangerous \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
-  ~rl:* ~signup-ip:* ~signup:email:* \
+  ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* \
   ~toml:* ~meta:* ~price:* ~apikey:* ~health:* ~oracle:* \
   ~sub:* ~sep10:seen:* ~usage:* \
   ~assets:list:* ~markets:list:* \
@@ -66,6 +66,11 @@ user ratesengine on >{{ redis_password }} \
 # component WithKeyPrefix sites in ratelimit, signup_tracker,
 # sep10/redisreplay, and usage/counter. Update this allow-list
 # in lockstep when a new namespace lands.
+#
+# F-1255 (codex audit-2026-05-12): `signup:lock:*` is the SETNX
+# per-email serialisation namespace the dashboardauth callback
+# acquires before Account.Create to keep concurrent first-login
+# callbacks from racing.
 
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}
