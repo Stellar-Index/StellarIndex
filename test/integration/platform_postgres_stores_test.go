@@ -880,8 +880,16 @@ func TestPlatformPostgresStores(t *testing.T) {
 				<-start
 				plaintext := fmt.Sprintf("rek_race_%d_%s", i, uuid.New().String()[:8])
 				hash := sha256.Sum256([]byte(plaintext))
+				// F-1263 (codex audit-2026-05-13): the ID must
+				// satisfy migration 0027's
+				// `api_keys_id_check (id ~ '^kid_[a-f0-9]{12,}$')`.
+				// `uuid.New().String()` includes hyphens, so the
+				// raw `[:12]` slice can include `-` and trip the
+				// check before the advisory-lock assertions run.
+				// Strip hyphens like every other test row in this
+				// file already does.
 				_, err := keys.Create(ctx, platform.APIKey{
-					ID:              "kid_" + uuid.New().String()[:12],
+					ID:              "kid_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
 					AccountID:       acct.ID,
 					Name:            fmt.Sprintf("k-%d", i),
 					KeyHash:         hash[:],

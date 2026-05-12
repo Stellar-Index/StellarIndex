@@ -421,18 +421,32 @@ func scanDeliveryRow(s rowScanner) (platform.WebhookDelivery, error) {
 // ─── Dashboard-flow surfaces (extends EnqueueDelivery/MarkDelivered) ─────
 
 // RotateWebhookSecret replaces the signing secret. Returns the new
-// plaintext (shown once to the customer + never stored). Caller
-// hashes the secret before passing it in via the WebhookStore-
-// caller pattern; here we just regenerate + persist a fresh hash.
+// plaintext.
 //
-// Stub: today returns "" + a not-implemented error so the dashboard
-// path can be wired up incrementally. The interface seam is what
-// matters for F-1270 — actual rotation lands when the dashboard CRUD
-// API surface is built.
+// F-1244 (codex audit-2026-05-13): the prior docstring claimed
+// "shown once to the customer + never stored" and that "caller
+// hashes the secret before passing it in". Both were misleading:
+// the bytes ARE persisted as the canonical
+// `customer_webhooks.secret_hash` (the delivery worker needs
+// them to sign future requests, identical to the create path),
+// and the caller-side "hash before persisting" pattern doesn't
+// exist anywhere — the field name is a historical mis-name and
+// the schema stores the live HMAC key. The "shown once"
+// property is API-surface visibility only: the plaintext is
+// returned by this call exactly once and never served back
+// through any subsequent read. See [platform.CustomerWebhook]
+// for the at-rest model.
+//
+// Stub: today returns "" + a not-implemented error. Customers
+// rotate by deleting + recreating the webhook (which already
+// works via the create path), so the in-place rotation surface
+// isn't on the critical path. The interface seam stays here so
+// the v2 dashboard can plug in-place rotation without
+// re-shaping the store boundary.
 func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID) (string, error) {
 	_ = ctx
 	_ = id
-	return "", errors.New("postgresstore: RotateWebhookSecret not yet implemented (dashboard CRUD pending)")
+	return "", errors.New("postgresstore: RotateWebhookSecret not yet implemented (dashboard rotates by delete + recreate today; the v2 in-place path lands when the dashboard CRUD UI ships it)")
 }
 
 // AppendDelivery records one delivery attempt. Returns the
