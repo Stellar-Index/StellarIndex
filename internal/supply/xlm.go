@@ -54,6 +54,41 @@ type ReserveBalanceReader interface {
 	ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error)
 }
 
+// ReserveBalanceFreshnessReader is the optional extension to
+// [ReserveBalanceReader] that reports the lowest observation
+// ledger across the configured SDF reserve accounts at or
+// before the snapshot ledger.
+//
+// F-1236 (codex audit-2026-05-12): closes the third leg of the
+// supply-snapshot freshness gate (the classic + SEP41 legs were
+// shipped in waves 17 + 18). Without an XLM freshness signal,
+// the Refresher's stale-component gate stays permissive on
+// every native-XLM snapshot — a backfilled-reserve observer
+// that drifts hours behind tip would still produce snapshots
+// stamped at the fresh ledger.
+//
+// Implementations:
+//   - [LCMReserveBalanceReader] iterates the per-account
+//     observation rows and returns MIN(row.Ledger) across all
+//     non-removal accounts.
+//   - [ConfigReserveBalanceReader] DELIBERATELY does NOT
+//     implement this — the static config has no per-ledger
+//     freshness concept, so the legacy permissive posture is
+//     preserved when the static fallback fires.
+//
+// The XLM computer probes for this interface via a type
+// assertion; if not satisfied, MinComponentLedger stays 0 and
+// the Refresher's gate falls back to legacy-permissive — same
+// shape as classic/SEP41 when their MinComponentLedger is 0.
+//
+// Zero return value means "no observation found for at least
+// one account at-or-before `asOfLedger`" and is the gate's
+// permissive bypass signal. A non-zero return is the actual
+// MIN across observed accounts.
+type ReserveBalanceFreshnessReader interface {
+	MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error)
+}
+
 // XLMComputer derives Algorithm 1 supply for native XLM. Wraps a
 // configured reserve-account list (from [Policy.SDFReserveAccounts])
 // + a [ReserveBalanceReader] that resolves balances on demand.
@@ -128,13 +163,29 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 
 	circulating := new(big.Int).Sub(total, reserved)
 
+	// F-1236 (codex audit-2026-05-12): if the reader implements
+	// [ReserveBalanceFreshnessReader], probe it for the
+	// per-account observation freshness signal. A failure here
+	// is non-fatal — the gate falls back to legacy permissive
+	// (MinComponentLedger=0) the same way classic/SEP41 do on
+	// transient freshness-query errors. The reader's WARN log
+	// path is the operator-facing signal; we don't surface it
+	// here to keep the supply hot path lean.
+	var minLedger uint32
+	if fr, ok := c.reader.(ReserveBalanceFreshnessReader); ok && len(c.reserveAccounts) > 0 {
+		if got, ferr := fr.MinReserveAccountLedger(ctx, c.reserveAccounts, ledger); ferr == nil {
+			minLedger = got
+		}
+	}
+
 	return Supply{
-		AssetKey:          xlmAssetKey,
-		TotalSupply:       total,
-		CirculatingSupply: circulating,
-		MaxSupply:         new(big.Int).Set(total),
-		Basis:             BasisXLMSDFReserveExclusion,
-		LedgerSequence:    ledger,
-		ObservedAt:        observedAt.UTC(),
+		AssetKey:           xlmAssetKey,
+		TotalSupply:        total,
+		CirculatingSupply:  circulating,
+		MaxSupply:          new(big.Int).Set(total),
+		Basis:              BasisXLMSDFReserveExclusion,
+		LedgerSequence:     ledger,
+		ObservedAt:         observedAt.UTC(),
+		MinComponentLedger: minLedger,
 	}, nil
 }

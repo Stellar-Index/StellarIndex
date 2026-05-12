@@ -96,3 +96,78 @@ func TestLCMReserveBalanceReader_StoreError(t *testing.T) {
 		t.Errorf("err=%v want wrapping ErrNoObservation", err)
 	}
 }
+
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath —
+// returns MIN(row.Ledger) across the supplied accounts. F-1236
+// (codex audit-2026-05-12): closes the third leg of the supply-
+// snapshot freshness gate (the classic + SEP41 legs were shipped
+// in waves 17 + 18).
+func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T) {
+	r := NewLCMReserveBalanceReader(&fakeLookup{
+		rows: map[string]AccountObservationRow{
+			"GA1": {Balance: big.NewInt(100), Ledger: 50_000_000},
+			"GA2": {Balance: big.NewInt(200), Ledger: 49_999_500},
+			"GA3": {Balance: big.NewInt(300), Ledger: 50_000_100},
+		},
+	})
+	got, err := r.MinReserveAccountLedger(context.Background(), []string{"GA1", "GA2", "GA3"}, 50_001_000)
+	if err != nil {
+		t.Fatalf("MinReserveAccountLedger: %v", err)
+	}
+	if got != 49_999_500 {
+		t.Errorf("min=%d want 49_999_500 (GA2 oldest)", got)
+	}
+}
+
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalContributes
+// — a removed-account observation IS the freshness signal for that
+// account (the AccountEntry-delete is the most-recent observation we
+// have). Pretending the removal didn't happen would over-state
+// freshness for an account that no longer exists.
+func TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalContributes(t *testing.T) {
+	r := NewLCMReserveBalanceReader(&fakeLookup{
+		rows: map[string]AccountObservationRow{
+			"GA1": {Balance: big.NewInt(100), Ledger: 50_000_000},
+			"GA2": {IsRemoval: true, Ledger: 49_990_000}, // removal observation IS the signal
+		},
+	})
+	got, err := r.MinReserveAccountLedger(context.Background(), []string{"GA1", "GA2"}, 50_001_000)
+	if err != nil {
+		t.Fatalf("MinReserveAccountLedger: %v", err)
+	}
+	if got != 49_990_000 {
+		t.Errorf("min=%d want 49_990_000 (GA2 removal IS the freshness signal)", got)
+	}
+}
+
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_EmptyAccounts —
+// no accounts means no freshness signal to compute; the gate-permissive
+// 0 sentinel matches the [ConfigReserveBalanceReader] posture.
+func TestLCMReserveBalanceReader_MinReserveAccountLedger_EmptyAccounts(t *testing.T) {
+	r := NewLCMReserveBalanceReader(&fakeLookup{})
+	got, err := r.MinReserveAccountLedger(context.Background(), nil, 100)
+	if err != nil {
+		t.Fatalf("MinReserveAccountLedger: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("min=%d want 0 (no accounts → no signal)", got)
+	}
+}
+
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_MissingAccount
+// — when one of the supplied accounts has no observation, the
+// reader returns the sentinel-wrapped error so the chain reader
+// drops to the gate-permissive bypass instead of pretending the
+// other accounts' freshness applies to the missing one.
+func TestLCMReserveBalanceReader_MinReserveAccountLedger_MissingAccount(t *testing.T) {
+	r := NewLCMReserveBalanceReader(&fakeLookup{
+		rows: map[string]AccountObservationRow{
+			"GA1": {Balance: big.NewInt(100), Ledger: 50_000_000},
+			// GA2 missing on purpose.
+		},
+	})
+	_, err := r.MinReserveAccountLedger(context.Background(), []string{"GA1", "GA2"}, 50_001_000)
+	if !errors.Is(err, ErrNoObservation) {
+		t.Errorf("err=%v want wrapping ErrNoObservation", err)
+	}
+}

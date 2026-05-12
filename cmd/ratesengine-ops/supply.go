@@ -188,6 +188,27 @@ func (c supplyChainReader) ReserveBalanceTotal(ctx context.Context, accounts []s
 	return nil, err
 }
 
+// MinReserveAccountLedger forwards the freshness probe to the
+// live reader when it implements [supply.ReserveBalanceFreshnessReader].
+// The static fallback reader has no per-ledger freshness concept;
+// when the live reader can't satisfy the probe (or doesn't implement
+// the interface) we return 0 — the gate-permissive bypass — so the
+// supply-snapshot subcommand stays on the legacy posture for static
+// deployments. F-1236 (codex audit-2026-05-12).
+func (c supplyChainReader) MinReserveAccountLedger(ctx context.Context, accounts []string, ledger uint32) (uint32, error) {
+	if fr, ok := c.live.(supply.ReserveBalanceFreshnessReader); ok {
+		got, err := fr.MinReserveAccountLedger(ctx, accounts, ledger)
+		if err == nil {
+			return got, nil
+		}
+		if errors.Is(err, supply.ErrNoObservation) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return 0, nil
+}
+
 // supplySnapshotMaybeEmitFailure writes a fail-marker textfile (so
 // the staleness alert keys on time-since-last-pass) and returns
 // the original error. Empty textfileOut skips the emit but still

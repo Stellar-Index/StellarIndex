@@ -197,3 +197,89 @@ func TestCompute_DefensiveCopyOfReserveAccounts(t *testing.T) {
 		t.Errorf("reserve accounts mutation leaked into computer; saw %q", reader.last.accounts[0])
 	}
 }
+
+// freshnessReader is a reader that ALSO satisfies
+// [supply.ReserveBalanceFreshnessReader], used by the F-1236
+// (codex audit-2026-05-12) XLM freshness gate tests below.
+type freshnessReader struct {
+	balance   *big.Int
+	minLedger uint32
+	freshErr  error
+}
+
+func (f *freshnessReader) ReserveBalanceTotal(_ context.Context, _ []string, _ uint32) (*big.Int, error) {
+	return new(big.Int).Set(f.balance), nil
+}
+
+func (f *freshnessReader) MinReserveAccountLedger(_ context.Context, _ []string, _ uint32) (uint32, error) {
+	if f.freshErr != nil {
+		return 0, f.freshErr
+	}
+	return f.minLedger, nil
+}
+
+// TestCompute_FreshnessReaderPopulatesMinComponentLedger — when
+// the reader implements ReserveBalanceFreshnessReader, the
+// computed [supply.Supply] carries the per-component freshness
+// signal the Refresher's stale-component gate uses. F-1236
+// (codex audit-2026-05-12) — closes the third leg of the gate
+// after classic + SEP41 shipped in waves 17 + 18.
+func TestCompute_FreshnessReaderPopulatesMinComponentLedger(t *testing.T) {
+	reader := &freshnessReader{balance: big.NewInt(1_000_000), minLedger: 49_999_000}
+	c, err := supply.NewXLMComputer([]string{"GA1", "GA2"}, reader)
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	got, err := c.Compute(context.Background(), 50_000_000, time.Now())
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if got.MinComponentLedger != 49_999_000 {
+		t.Errorf("MinComponentLedger = %d, want 49_999_000", got.MinComponentLedger)
+	}
+}
+
+// TestCompute_FreshnessReaderErrorIsNonFatal — a freshness probe
+// failure must NOT take the snapshot down. The Refresher's gate
+// stays permissive (MinComponentLedger=0) on freshness-query
+// errors, same shape classic + SEP41 already use. Operators read
+// the WARN log on the reader's path.
+func TestCompute_FreshnessReaderErrorIsNonFatal(t *testing.T) {
+	reader := &freshnessReader{
+		balance:  big.NewInt(1_000_000),
+		freshErr: errors.New("transient db failure"),
+	}
+	c, err := supply.NewXLMComputer([]string{"GA1"}, reader)
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	got, err := c.Compute(context.Background(), 50_000_000, time.Now())
+	if err != nil {
+		t.Fatalf("Compute (should swallow freshness err): %v", err)
+	}
+	if got.MinComponentLedger != 0 {
+		t.Errorf("MinComponentLedger = %d, want 0 (permissive on freshness-query error)", got.MinComponentLedger)
+	}
+	if got.CirculatingSupply == nil {
+		t.Error("CirculatingSupply must still be populated when only freshness fails")
+	}
+}
+
+// TestCompute_LegacyReader_NoFreshnessSignal — a reader that
+// does NOT implement ReserveBalanceFreshnessReader leaves
+// MinComponentLedger at 0, preserving the pre-F-1236 permissive
+// posture for deployments that haven't migrated.
+func TestCompute_LegacyReader_NoFreshnessSignal(t *testing.T) {
+	reader := &stubReader{balance: big.NewInt(1_000_000)}
+	c, err := supply.NewXLMComputer([]string{"GA1"}, reader)
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	got, err := c.Compute(context.Background(), 50_000_000, time.Now())
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if got.MinComponentLedger != 0 {
+		t.Errorf("MinComponentLedger = %d, want 0 (legacy reader → no freshness signal)", got.MinComponentLedger)
+	}
+}

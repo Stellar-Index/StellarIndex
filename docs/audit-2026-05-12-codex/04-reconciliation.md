@@ -260,6 +260,14 @@ without evidence IDs.
   closure of `F-1248` and `F-1257` to `needs_evidence`: their new advisory-lock
   code paths and concurrent tests are present, but the closure proof cannot
   execute until `F-1261` is cleared.
+- `CMD-0124` sharpened `F-1236` rather than changing its status. Classic and
+  SEP41 freshness producers are now real, but native XLM still has no
+  freshness producer and its live-observation miss path intentionally falls
+  back to static reserve config while still stamping the snapshot at the
+  freshest cursor ledger. Because that path emits `MinComponentLedger=0`, the
+  stale-component gate is guaranteed to skip the least-proven provenance path.
+- `CMD-0125` folds that supply pass back into the file-level control ledger;
+  parity remains exact at `tracked=1882`, `rows=1882`.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when
@@ -267,12 +275,11 @@ without evidence IDs.
   current `fb0b3073...`; `EV-0078` resolves the first count mismatch,
   `EV-0097` preserves the refresh back to `1,870` tracked rows,
   `EV-0101` restores parity after the two committed key-policy files
-  increased tracked scope to `1,872`, and the latest inventory refresh
-  now lands at `1,875` tracked non-audit rows after
-  `scripts/ci/lint-actions-pinning.sh`,
-  `internal/customerwebhook/fanout.go`, and
-  `docs/operations/github-actions-sha-pinning.md` entered scope.
+  increased tracked scope to `1,872`, and `EV-0122` now restores parity
+  again at `1,882` tracked non-audit rows after the incident-emitter,
+  signup-locker, and migration-0030 files entered scope.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=105`, `in_progress=51`, `todo=1719`.
+  `done=105`, `in_progress=60`, `todo=1717`, with tracked-file parity
+  restored at `1882` rows and preserved through `CMD-0125`.

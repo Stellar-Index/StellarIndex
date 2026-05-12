@@ -94,5 +94,56 @@ func (r *LCMReserveBalanceReader) ReserveBalanceTotal(ctx context.Context, accou
 	return total, nil
 }
 
-// Compile-time check.
-var _ ReserveBalanceReader = (*LCMReserveBalanceReader)(nil)
+// MinReserveAccountLedger implements [ReserveBalanceFreshnessReader].
+// Returns MIN(row.Ledger) across the supplied accounts at-or-before
+// `asOfLedger`. F-1236 (codex audit-2026-05-12): closes the third
+// leg of the supply-snapshot freshness gate.
+//
+// Removed-account observations contribute their removal ledger
+// (the AccountEntry-delete is the most-recent observation we
+// have for that key, so it IS the freshness signal — pretending
+// the removal didn't happen would over-state freshness for an
+// account that no longer exists).
+//
+// Returns 0 (gate-permissive bypass) when:
+//   - `accounts` is empty (no signal to compute);
+//   - any account has no observation at-or-before `asOfLedger`
+//     (indistinguishable from "the observer hasn't backfilled
+//     this account yet"); same shape the
+//     [ConfigReserveBalanceReader] preserves by not implementing
+//     this interface at all.
+//
+// Returns a non-nil error only on storage-side failures the
+// caller should bubble; the [XLMComputer] swallows them and
+// falls back to the legacy permissive posture so a transient
+// query error doesn't reject an otherwise-valid snapshot.
+func (r *LCMReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error) {
+	if len(accounts) == 0 {
+		return 0, nil
+	}
+	var minLedger uint32
+	for _, acc := range accounts {
+		row, err := r.store.LatestAccountObservationAtOrBefore(ctx, acc, asOfLedger)
+		if err != nil {
+			// Treat lookup failure as "no signal" rather than
+			// surfacing — caller (XLMComputer) treats this as
+			// the gate-permissive bypass.
+			return 0, fmt.Errorf("%w: account %s: %w", ErrNoObservation, acc, err)
+		}
+		if row.Ledger == 0 {
+			// Sentinel "no observation found" — the gate sees
+			// this as no-signal across the set.
+			return 0, nil
+		}
+		if minLedger == 0 || row.Ledger < minLedger {
+			minLedger = row.Ledger
+		}
+	}
+	return minLedger, nil
+}
+
+// Compile-time checks.
+var (
+	_ ReserveBalanceReader          = (*LCMReserveBalanceReader)(nil)
+	_ ReserveBalanceFreshnessReader = (*LCMReserveBalanceReader)(nil)
+)

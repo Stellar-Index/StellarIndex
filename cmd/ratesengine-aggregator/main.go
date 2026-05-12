@@ -781,6 +781,29 @@ func (c supplyAggregatorChainReader) ReserveBalanceTotal(ctx context.Context, ac
 	return nil, err
 }
 
+// MinReserveAccountLedger forwards the freshness probe to the
+// live reader when it implements [supply.ReserveBalanceFreshnessReader].
+// Static fallback callers don't have a per-ledger freshness
+// concept; in that case we return 0 (the gate-permissive bypass)
+// to preserve the legacy posture. F-1236 (codex audit-2026-05-12).
+func (c supplyAggregatorChainReader) MinReserveAccountLedger(ctx context.Context, accounts []string, ledger uint32) (uint32, error) {
+	if fr, ok := c.live.(supply.ReserveBalanceFreshnessReader); ok {
+		got, err := fr.MinReserveAccountLedger(ctx, accounts, ledger)
+		if err == nil {
+			return got, nil
+		}
+		if errors.Is(err, supply.ErrNoObservation) {
+			// Live reader couldn't satisfy → mirror the
+			// ReserveBalanceTotal fallback semantics (drop to
+			// static). Static has no freshness, so the gate
+			// stays permissive.
+			return 0, nil
+		}
+		return 0, err
+	}
+	return 0, nil
+}
+
 // supplyAggregatorInserter adapts *timescale.Store to
 // supply.SnapshotInserter.
 type supplyAggregatorInserter struct{ s *timescale.Store }
