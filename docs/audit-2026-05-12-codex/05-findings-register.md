@@ -446,15 +446,18 @@ Evidence:
 
 - `XFI-0014`
 - `EV-0031`
+- `EV-0103`
 - `R1-0013`
 
 Expected: a tagged production deploy that can introduce code depending on new tables, columns, CAGGs, or indexes should ship and apply the matching migration set before restarting binaries, or fail readiness when the binary and database schema diverge.
 
-Observed: the current deploy workflow downloads release binaries, verifies checksums, and runs an Ansible binary-swap playbook. That playbook restarts/probes services but does not copy `migrations/`, run `ratesengine-migrate up`, or check `schema_migrations`. Migration sync/apply exists in the initial archival-node role and manual runbook instructions instead. R1 currently reports schema `28|f`, but the deploy mechanism itself would not prevent a future binary/schema mismatch.
+Observed during the initial pass: the deploy workflow downloaded release binaries, verified checksums, and ran an Ansible binary-swap playbook. That playbook restarted/probed services but did not copy `migrations/`, run `ratesengine-migrate up`, or check `schema_migrations`. Migration sync/apply existed only in the initial archival-node role and manual runbook instructions. R1 reported schema `28|f`, but the deploy mechanism itself would not prevent a future binary/schema mismatch.
 
-Impact: a release can pass checksum and `/v1/healthz` probes while code paths depending on a new migration fail at runtime, creating partial outages or silent feature breakage after deploy.
+Current-workspace reconciliation: `.github/workflows/deploy.yml` now stages the release tag's `migrations/` tree into `dist/migrations`, and `configs/ansible/playbooks/deploy-binary.yml` now synchronizes that directory plus runs `ratesengine-migrate up` before any binary swap. That is directionally correct, but not closure-grade yet. The deploy job installs only `ansible-core==2.18.*`, while the new playbook task calls `ansible.posix.synchronize`; Ansible documents that module as part of the separate `ansible.posix` collection rather than `ansible-core`. The workflow does not install that collection, so the new pre-swap migration path is not yet proven runnable in the actual deploy job.
 
-Remediation direction: make migrations a first-class deploy artifact and pre-binary step, or embed an expected schema version in each binary and gate `/readyz`/deploy on matching `schema_migrations`. Add an integration test or CI check proving migrations are included in the release/deploy contract.
+Impact: the original binary/schema mismatch risk is materially reduced in design, but the current in-flight implementation can still fail before it provides that protection because the workflow's Ansible environment does not obviously include the newly referenced collection. Until the deploy job proves the migration-sync/apply path executes, release safety remains unresolved.
+
+Remediation direction: retain the staged tag-matched migrations and pre-binary migration ordering, then make the deploy job self-contained: install `ansible.posix` or replace the task with a builtin-supported transfer primitive, and add a CI or dry-run proof that the exact workflow/playbook combination can execute the sync/apply path. A schema-compatibility readiness gate is still desirable defense in depth.
 
 ### F-1221. Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed
 
@@ -1088,14 +1091,17 @@ Evidence:
 
 - `XFI-0034`
 - `EV-0060`
+- `EV-0103`
 
 Expected: if the aggregator durably records per-source contribution history before the source-breakdown product surface ships, the persisted row should contain the fields that schema/comments say will power that surface, or the unused fields should stay explicitly unclaimed and unwritten.
 
-Observed: the production aggregator wires `ContributionSink` on every orchestrator run. The storage row includes `VolumeUSD`, and migration 0026 says `volume_usd` powers the per-source dollar tooltip, but the sink forwards only asset, quote, bucket, source, weight, and trade count. `VolumeUSD` is never populated by any production caller, so the database stores `NULL` for every contribution row.
+Observed during the initial pass: the production aggregator wired `ContributionSink` on every orchestrator run. The storage row included `VolumeUSD`, and migration 0026 said `volume_usd` powers the per-source dollar tooltip, but the sink forwarded only asset, quote, bucket, source, weight, and trade count. `VolumeUSD` was never populated by any production caller, so the database stored `NULL` for every contribution row.
 
-Impact: the system is already accumulating contribution-history rows that cannot support source-level USD-attribution UX or analytics later without recomputing historical state from the raw trade table. That weakens the planned CoinGecko/CoinMarketCap-parity transparency surface and makes future rollout depend on a backfill the current design does not mention.
+Current-workspace reconciliation: the sink now sets `row.VolumeUSD = rec.USDVolumeTotal * c.Weight`, and the orchestrator now passes `USDVolumeTotal` into `ContributionRecord`. That changes the failure mode rather than closing it. `usdVolumeTotal` is computed in `fetchForTarget` before the later class filter and outlier filter mutate the trade slice; `aggregate.SourceContributions(trades)` runs after those filters. Persisted per-source USD rows can therefore split the pre-filter total across post-filter weights, overstating or misallocating the contribution-history dollars whenever trades are dropped before VWAP publication.
 
-Remediation direction: decide whether `volume_usd` is part of the shipped contribution-history contract. If yes, carry per-source USD volume into `SourceContribution`/`ContributionRecord` and persist it with tests; if no, remove or clearly defer the column/commentary until the feature has a real writer. Add a migration/storage integration test proving the chosen contract.
+Impact: the system is no longer guaranteed to accumulate all-`NULL` volume rows, but it can now accumulate inaccurate non-null rows. That is worse for a future transparency UI because the values look authoritative while drifting from the filtered contribution set actually used for publication.
+
+Remediation direction: if `volume_usd` is part of the shipped contract, compute it from the same post-filter trade slice that determines contribution weights, or carry per-source USD amounts through filtering directly. Add tests that include a dropped outlier or class-filtered row and prove the sum of persisted per-source USD volume matches the intended published contribution population.
 
 ### F-1243. Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset
 
