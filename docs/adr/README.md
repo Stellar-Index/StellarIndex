@@ -53,7 +53,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0009](0009-latency-budget.md) | Accepted | API latency budget — per-component time slices summing to p95 ≤ 200ms / p99 ≤ 500ms | 2026-04-27 |
 | [0010](0010-off-chain-fiat-representation.md) | Accepted | Off-chain fiat currencies as AssetType "fiat" | 2026-04-22 |
 | [0011](0011-supply-algorithm.md) | Accepted | Three-domain supply algorithm — XLM hard-coded, classic from ledger entries, SEP-41 from event sums | 2026-04-27 |
-| 0012 | *Planned* | Quorum-set composition (referenced by multi-region-topology) | — |
+| [0012](0012-quorum-set-composition.md) | *Planned* | Quorum-set composition (referenced by multi-region-topology) | — |
 | [0013](0013-go-stellar-sdk-xdr-for-scval.md) | Accepted | Adopt go-stellar-sdk/xdr for SCVal decoding in source connectors | 2026-04-23 |
 | [0014](0014-crypto-ticker-representation.md) | Accepted | Crypto tickers as AssetType "crypto" | 2026-04-23 |
 | [0015](0015-last-closed-bucket-rate-serving.md) | Accepted | API rates served from last-closed bucket, never in-progress | 2026-04-27 |
