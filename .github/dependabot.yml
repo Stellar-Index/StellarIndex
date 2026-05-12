@@ -46,3 +46,59 @@ updates:
     labels:
       - dependencies
       - docker
+
+  # F-1207 (codex audit-2026-05-12): npm/pnpm ecosystems for the
+  # three Next.js apps. Without these, Dependabot doesn't surface
+  # next.js / typescript / react security advisories — operators
+  # have to run `pnpm audit` manually. The CI gate
+  # (`pnpm audit --audit-level high`) catches new advisories on
+  # PR; Dependabot opens the bump PR proactively.
+  #
+  # `package-ecosystem: npm` is Dependabot's identifier for the
+  # whole JS-ecosystem family (npm + yarn + pnpm). It reads
+  # pnpm-lock.yaml and opens PRs that update package.json + the
+  # lockfile in-step.
+  - package-ecosystem: npm
+    directory: /web/explorer
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - web
+    groups:
+      next:
+        patterns: ["next", "@next/*", "react", "react-dom"]
+      tooling:
+        patterns: ["typescript", "eslint*", "@types/*", "tailwindcss", "postcss", "autoprefixer"]
+
+  - package-ecosystem: npm
+    directory: /web/dashboard
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - web
+    groups:
+      next:
+        patterns: ["next", "@next/*", "react", "react-dom"]
+      tooling:
+        patterns: ["typescript", "eslint*", "@types/*", "tailwindcss", "postcss", "autoprefixer"]
+
+  - package-ecosystem: npm
+    directory: /web/status
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - web
+    groups:
+      next:
+        patterns: ["next", "@next/*", "react", "react-dom"]
+      tooling:
+        patterns: ["typescript", "eslint*", "@types/*", "tailwindcss", "postcss", "autoprefixer"]
