@@ -643,9 +643,21 @@ the audit log.
 ### 8.1 Encryption
 
 - TLS everywhere (Caddy / Cloudflare in front)
-- Secrets at rest: libsodium sealed boxes for sensitive blobs
-  (TOTP seeds, customer webhook secrets); managed via a single
-  master key in operator-supplied env var
+- Secrets at rest:
+  - **TOTP seeds** — libsodium sealed boxes under an operator-
+    supplied master key, persisted as `users.mfa_secret_enc`
+    (planned; the sealed-box path lands when the dashboard MFA
+    UI ships).
+  - **Customer webhook signing keys** — F-1244 (codex audit-
+    2026-05-13): the field name `customer_webhooks.secret_hash`
+    is a historical misnomer. The bytes are persisted as
+    plain `bytea` (no application-layer envelope encryption);
+    the delivery worker reads them back to compute
+    `hmac.New(sha256.New, secret_hash)` per delivery. A
+    hash-only design isn't possible without changing the
+    receiver's verification protocol. Defence in depth comes
+    from Postgres at-rest disk encryption + the F-1254 Redis
+    ACL lockdown, not from per-row envelope encryption.
 - Postgres at-rest encryption: trust the disk subsystem (LUKS on
   R1) for v1; future: per-table TDE if Enterprise customers
   demand

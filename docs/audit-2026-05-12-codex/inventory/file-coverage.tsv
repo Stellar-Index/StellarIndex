@@ -340,7 +340,7 @@ docs/architecture/loki-ansible-role-design-note.md	docs	docs/architecture	docume
 docs/architecture/multi-network-assets-migration.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/oracle-manipulation-defense.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/patroni-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/platform-spec.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/platform-spec.md	docs	docs/architecture	documentation	in_progress	EV-0161;F-1244	XFI-0036	Reviewed webhook-secret protection claims; still contradicts the shipped recoverable `bytea secret_hash` model by promising libsodium sealed boxes
 docs/architecture/prometheus-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/r2-r3-bringup.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/redis-sentinel-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
@@ -1199,7 +1199,7 @@ internal/platform/postgresstore/doc.go	internal	internal/platform/postgresstore	
 internal/platform/postgresstore/store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/token_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed magic-link token atomicity and its per-token rather than per-email boundary
 internal/platform/postgresstore/user_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed user/session store behavior and email uniqueness boundary in first-login race
-internal/platform/postgresstore/webhook_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0068;EV-0073;EV-0074;EV-0076;EV-0098;EV-0121;EV-0154;F-1244;F-1247;F-1248;F-1249	XFI-0036;XFI-0039;XFI-0040;XFI-0041	Reviewed CRUD/store queue semantics, direct plaintext-equivalent signing-key persistence, fixed delivery claiming, complete producer coverage, and the advisory-lock quota remediation whose integration proof was separately reconciled
+internal/platform/postgresstore/webhook_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0068;EV-0073;EV-0074;EV-0076;EV-0098;EV-0121;EV-0154;EV-0159;EV-0161;F-1244;F-1247;F-1248;F-1249	XFI-0036;XFI-0039;XFI-0040;XFI-0041	Reviewed CRUD/store queue semantics, recoverable signing-key storage comments, fixed delivery claiming, complete producer coverage, and the advisory-lock quota remediation whose integration proof was separately reconciled
 internal/platform/token.go	internal	internal/platform/token.go	runtime	done	EV-0086;F-1255	XFI-0047	Reviewed token lifecycle contract for magic-link provisioning
 internal/platform/usage.go	internal	internal/platform/usage.go	runtime	todo			cold audit pending
 internal/platform/user.go	internal	internal/platform/user.go	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed user/session domain contract for auth provisioning flow
@@ -1673,7 +1673,7 @@ test/integration/fx_quote_at_or_before_test.go	test	test/integration	test	todo		
 test/integration/issuers_coins_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/ledgerstream_to_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/migrations_test.go	test	test/integration	test	todo			cold audit pending
-test/integration/platform_postgres_stores_test.go	test	test/integration	test	in_progress	EV-0120;EV-0121;EV-0137;EV-0147;EV-0148;EV-0152;EV-0156;EV-0157;F-1248;F-1257;F-1261;F-1262;F-1263	XFI-0040;XFI-0049;XFI-0053;XFI-0054;XFI-0055	Reviewed concurrent quota scenarios after migration bootstrap recovered: webhook proof passes, referer-array product bug is fixed, but API-key quota proof now fails on a malformed `kid_` fixture ID that violates the schema regex
+test/integration/platform_postgres_stores_test.go	test	test/integration	test	in_progress	EV-0120;EV-0121;EV-0137;EV-0147;EV-0148;EV-0152;EV-0156;EV-0157;EV-0160;EV-0162;F-1248;F-1257;F-1261;F-1262;F-1263	XFI-0040;XFI-0049;XFI-0053;XFI-0054;XFI-0055	Reviewed concurrent quota scenarios after migration bootstrap recovered: webhook proof passes, referer-array product bug is fixed, wave-53 fixture ID/prefix drift is repaired, and the full Postgres-store proof now reaches/passes the API-key advisory-lock cap assertions
 test/integration/sep41_supply_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/supply_storage_test.go	test	test/integration	test	todo			cold audit pending
