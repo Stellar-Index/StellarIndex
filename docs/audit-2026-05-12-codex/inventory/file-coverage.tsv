@@ -31,7 +31,7 @@ cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runt
 cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055,EV-0060	XFI-0034	Reviewed contribution sink adapter and batch forwarding; F-1242 records that live writes omit `volume_usd`.
 cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;F-1213;F-1236	XFI-0009;XFI-0028	Reviewed aggregation, stablecoin/min-volume, Redis/cache, supply refresher, and timers
 cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	done	EV-0052;EV-0055		Command package tests pass; coverage tied to main wiring
-cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;F-1217;F-1219;F-1228;F-1238;F-1245;F-1247;F-1249	XFI-0011;XFI-0013;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, server construction, and webhook worker/producer coupling
+cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;F-1217;F-1219;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0013;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, webhook worker/producer coupling, and usage-counter optionality/docs drift
 cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	done	EV-0052;EV-0055		Command package tests pass; startup/test seams reviewed
 cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, CMC identity propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
 cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	done	EV-0052;EV-0055		Command package tests pass; indexer wiring coverage reviewed
@@ -322,7 +322,7 @@ docs/architecture/coins-to-assets-migration.md	docs	docs/architecture	documentat
 docs/architecture/contract-schema-evolution.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/coverage-matrix.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/ecosystem-review-2026-04-23.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/explorer-data-inventory.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/explorer-data-inventory.md	docs	docs/architecture	documentation	in_progress	EV-0095;F-1259	XFI-0051	Reviewed usage-surface product wording; broader architecture inventory pass still open
 docs/architecture/explorer-implementation-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/ha-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/haproxy-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
@@ -781,7 +781,7 @@ docs/operations/wasm-audits/redstone.md	docs	docs/operations	documentation	todo	
 docs/operations/wasm-audits/reflector.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/wasm-audits/soroswap.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/wasm-audits/walker-investigation-2026-05-01.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/reference/api-design.md	docs	docs/reference	documentation	todo			cold audit pending
+docs/reference/api-design.md	docs	docs/reference	documentation	in_progress	EV-0095;F-1259	XFI-0051	Reviewed usage endpoint placeholder drift; broader API-design audit still open
 docs/reference/api/.wrangler/cache/pages.json	docs	docs/reference	fixture_or_config	todo			cold audit pending
 docs/reference/api/README.md	docs	docs/reference	documentation	todo			cold audit pending
 docs/reference/api/_headers	docs	docs/reference	unknown	todo			cold audit pending
@@ -789,7 +789,7 @@ docs/reference/api/_redirects	docs	docs/reference	unknown	todo			cold audit pend
 docs/reference/api/icon.svg	docs	docs/reference	asset	todo			cold audit pending
 docs/reference/api/index.html	docs	docs/reference	unknown	todo			cold audit pending
 docs/reference/api/og.svg	docs	docs/reference	asset	todo			cold audit pending
-docs/reference/api/rates-engine.v1.yaml	docs	docs/reference	config	in_progress	EV-0010,F-1203		Generated artifact drift confirmed by regeneration
+docs/reference/api/rates-engine.v1.yaml	docs	docs/reference	config	in_progress	EV-0010;EV-0095;F-1203;F-1259	XFI-0051	Generated artifact drift and stale usage endpoint contract confirmed
 docs/reference/config/README.md	docs	docs/reference	documentation	in_progress	EV-0083;F-1253	XFI-0045	Reviewed documented Redis ACL username requirement; broader generated config-reference review remains open
 docs/reference/metrics/README.md	docs	docs/reference	documentation	todo			cold audit pending
 docs/review-2026-05-10.md	docs	docs/review-2026-05-10.md	documentation	todo			cold audit pending
@@ -875,7 +875,7 @@ internal/api/streaming/redispub/subscriber_test.go	internal	internal/api/streami
 internal/api/streaming/ring.go	internal	internal/api/streaming	runtime	todo			cold audit pending
 internal/api/streampublish/publisher.go	internal	internal/api/streampublish	runtime	todo			cold audit pending
 internal/api/streampublish/publisher_test.go	internal	internal/api/streampublish	test	todo			cold audit pending
-internal/api/v1/account.go	internal	internal/api/v1	runtime	todo			cold audit pending
+internal/api/v1/account.go	internal	internal/api/v1	runtime	in_progress	EV-0095;F-1259	XFI-0051	Reviewed `/v1/account/usage` live reader path and stale placeholder commentary; broader account handler pass still open
 internal/api/v1/account_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/assets.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/assets_coin_extension.go	internal	internal/api/v1	runtime	todo			cold audit pending
@@ -963,7 +963,7 @@ internal/api/v1/middleware/request_id.go	internal	internal/api/v1	runtime	todo		
 internal/api/v1/middleware/security_headers.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/middleware/trailingslash.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/middleware/trailingslash_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/middleware/usage.go	internal	internal/api/v1	runtime	todo			cold audit pending
+internal/api/v1/middleware/usage.go	internal	internal/api/v1	runtime	done	EV-0094;F-1258	XFI-0050	Reviewed usage middleware nil-handling and authenticated-request coupling
 internal/api/v1/network_stats.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/network_stats_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/observations.go	internal	internal/api/v1	runtime	todo			cold audit pending
@@ -991,7 +991,7 @@ internal/api/v1/price_tip_test.go	internal	internal/api/v1	test	todo			cold audi
 internal/api/v1/sac_wrappers.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/sac_wrappers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/scaled_decimal_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/server.go	internal	internal/api/v1	runtime	in_progress	EV-0012,F-1202		Reviewed route table and middleware stack
+internal/api/v1/server.go	internal	internal/api/v1	runtime	in_progress	EV-0012;EV-0094;EV-0095;F-1202;F-1258;F-1259	XFI-0050;XFI-0051	Reviewed route table, middleware stack, usage optionality wiring, and usage reader contract
 internal/api/v1/server_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/signup.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/signup_test.go	internal	internal/api/v1	test	todo			cold audit pending
@@ -1476,7 +1476,7 @@ internal/supply/textfile.go	internal	internal/supply/textfile.go	runtime	todo			
 internal/supply/textfile_test.go	internal	internal/supply/textfile_test.go	test	todo			cold audit pending
 internal/supply/xlm.go	internal	internal/supply/xlm.go	runtime	todo			cold audit pending
 internal/supply/xlm_test.go	internal	internal/supply/xlm_test.go	test	todo			cold audit pending
-internal/usage/counter.go	internal	internal/usage/counter.go	runtime	done	EV-0084;F-1254	XFI-0046	Reviewed usage Redis key family and ACL/template drift
+internal/usage/counter.go	internal	internal/usage/counter.go	runtime	done	EV-0084;EV-0094;F-1254;F-1258	XFI-0046;XFI-0050	Reviewed usage Redis key family, ACL/template drift, and nil-client runtime coupling
 internal/usage/counter_test.go	internal	internal/usage/counter_test.go	test	todo			cold audit pending
 internal/version/version.go	internal	internal/version/version.go	runtime	todo			cold audit pending
 internal/version/version_test.go	internal	internal/version/version_test.go	test	todo			cold audit pending
@@ -1539,7 +1539,7 @@ migrations/0028_create_fx_quotes.up.sql	migrations	migrations	migration_or_sql	t
 migrations/0029_drop_unused_blend_jsonb_gin_indexes.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0029_drop_unused_blend_jsonb_gin_indexes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/README.md	migrations	migrations	documentation	todo			cold audit pending
-openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;F-1203;F-1256	XFI-0048	Reviewed source spec against generated artifacts and current dashboard key-budget contract drift
+openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;EV-0095;F-1203;F-1256;F-1259	XFI-0048;XFI-0051	Reviewed source spec against generated artifacts, dashboard key-budget contract drift, and stale usage endpoint contract
 pkg/client/asset_detail_test.go	pkg	pkg	test	todo			cold audit pending
 pkg/client/client.go	pkg	pkg	runtime	todo			cold audit pending
 pkg/client/client_test.go	pkg	pkg	test	todo			cold audit pending

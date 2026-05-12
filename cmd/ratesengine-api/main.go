@@ -236,6 +236,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 					"err", err)
 			}
 		}
+	} else if cfg.API.AuthMode == "sep10" {
+		// F-1217 (codex audit-2026-05-12): SEP-10 production
+		// deployments MUST have a replay guard. A captured signed
+		// challenge XDR is otherwise replayable for the
+		// 15-minute window. The Redis-backed guard is the only
+		// implementation today, so a Redis-less binary running
+		// `auth_mode=sep10` is a misconfiguration we fail loud on
+		// at startup rather than serving guard-free.
+		return errors.New("sep10 replay-guard required when auth_mode=sep10: configure storage.redis_addr (see internal/auth/sep10/redisreplay.go)")
 	}
 
 	// Build readiness-check set. Each implements v1.ReadyChecker.
@@ -691,7 +700,18 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// (the rest of the surface keeps serving); they log + leave the
 	// stream endpoint serving 503 implicitly via the Hub falling
 	// silent.
-	if hub != nil {
+	// F-1238 (codex audit-2026-05-12): gate the subscriber on
+	// `rdb != nil`. The Hub is always non-nil because streaming.NewHub
+	// is called unconditionally a few hundred lines above; using
+	// `hub != nil` here meant a Redis-less deployment passed the
+	// gate, then `redispub.NewSubscriber(nil, ...)` returned
+	// "RedisSubscriber is required" and aborted startup. Every
+	// other Redis-backed feature in this file gates on `rdb != nil`;
+	// streaming should too. Without Redis the Hub stays silent —
+	// `/v1/price/stream` serves heartbeats but no closed-bucket
+	// events, matching the documented "Redis optional at API
+	// layer" posture.
+	if rdb != nil && hub != nil {
 		sub, err := redispub.NewSubscriber(rdb, redispub.DefaultChannel, hub, logger.With("component", "stream-sub"))
 		if err != nil {
 			return fmt.Errorf("redispub subscriber: %w", err)

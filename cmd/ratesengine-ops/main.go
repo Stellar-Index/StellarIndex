@@ -3261,8 +3261,18 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 		},
 	)
 	result.scanned = workerScanned
-	// Add the un-counted residue (workerScanned mod progressEvery).
-	totalScanned.add(workerScanned % progressEvery)
+	// Add the un-counted residue. F-1239 (codex audit-2026-05-12):
+	// `-progress-every 0` means "disable progress output"; the
+	// previous unconditional `workerScanned % progressEvery`
+	// panicked on divide-by-zero AFTER the expensive ledger walk
+	// had finished. Either branch: progressEvery == 0 → add the
+	// full workerScanned (nothing was counted in-loop); otherwise
+	// add the residue.
+	if progressEvery == 0 {
+		totalScanned.add(workerScanned)
+	} else {
+		totalScanned.add(workerScanned % progressEvery)
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		errCh <- fmt.Errorf("worker %d [%d,%d]: %w", workerIdx, b.from, b.to, err)
 	}

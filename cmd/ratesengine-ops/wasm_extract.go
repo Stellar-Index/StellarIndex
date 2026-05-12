@@ -192,7 +192,14 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 					return nil
 				},
 			)
-			totalScanned.add(workerScanned % uint64(*progressEvery))
+			// F-1239 (codex audit-2026-05-12): `-progress-every 0`
+			// must mean "disable progress" without panicking on
+			// the residue add post-walk.
+			if *progressEvery == 0 {
+				totalScanned.add(workerScanned)
+			} else {
+				totalScanned.add(workerScanned % uint64(*progressEvery))
+			}
 			if err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- fmt.Errorf("worker %d [%d,%d]: %w", i, b.from, b.to, err)
 			}

@@ -171,7 +171,27 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 	return nil
 }
 
-// ListPendingDeliveries returns up to `limit` due deliveries FIFO.
+// ListPendingDeliveries atomically claims up to `limit` due
+// deliveries FIFO. F-1247 (codex audit-2026-05-12): claim happens
+// in the same statement as the read via UPDATE…RETURNING +
+// `FOR UPDATE SKIP LOCKED`, so two workers running concurrently
+// (horizontal scale or blue/green overlap during deploy) never
+// hand the same row to two HTTP-POST paths.
+//
+// The lease is implemented by pushing `next_attempt_at` 5 minutes
+// into the future as part of the claim. Any worker that subsequently
+// runs the same query won't see the row (its next_attempt_at is now
+// `now() + 5m`). On successful delivery [MarkDelivered] sets
+// `delivered_at`; on failure [RecordAttemptFailed] writes the
+// genuine backoff back into next_attempt_at. If a worker crashes
+// after claiming but before either update, the lease expires after
+// 5 minutes and another worker can pick the row up — that's
+// idempotent because the receiver-side dedupe (event_id header)
+// catches it; and customer-side metrics treat
+// duplicate-post-after-worker-crash as the same class as 5xx-retry.
+//
+// FIFO ordering is preserved via the `ORDER BY next_attempt_at ASC`
+// inside the SELECT subquery.
 func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100
@@ -180,18 +200,30 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 		limit = 1000
 	}
 	const q = `
-		SELECT id, webhook_id, event_type, payload, attempt_count,
-		       COALESCE(next_attempt_at, '0001-01-01 00:00:00+00'::timestamptz),
-		       COALESCE(delivered_at,    '0001-01-01 00:00:00+00'::timestamptz),
-		       COALESCE(last_error, ''),
-		       COALESCE(last_response_status, 0),
-		       created_at
-		  FROM webhook_deliveries
-		 WHERE delivered_at IS NULL
-		   AND next_attempt_at IS NOT NULL
-		   AND next_attempt_at <= now()
-		 ORDER BY next_attempt_at ASC
-		 LIMIT $1
+		WITH claimed AS (
+		    SELECT id
+		      FROM webhook_deliveries
+		     WHERE delivered_at IS NULL
+		       AND next_attempt_at IS NOT NULL
+		       AND next_attempt_at <= now()
+		     ORDER BY next_attempt_at ASC
+		     LIMIT $1
+		     FOR UPDATE SKIP LOCKED
+		)
+		UPDATE webhook_deliveries
+		   SET next_attempt_at = now() + interval '5 minutes'
+		  FROM claimed
+		 WHERE webhook_deliveries.id = claimed.id
+		RETURNING webhook_deliveries.id,
+		          webhook_deliveries.webhook_id,
+		          webhook_deliveries.event_type,
+		          webhook_deliveries.payload,
+		          webhook_deliveries.attempt_count,
+		          COALESCE(webhook_deliveries.next_attempt_at, '0001-01-01 00:00:00+00'::timestamptz),
+		          COALESCE(webhook_deliveries.delivered_at,    '0001-01-01 00:00:00+00'::timestamptz),
+		          COALESCE(webhook_deliveries.last_error, ''),
+		          COALESCE(webhook_deliveries.last_response_status, 0),
+		          webhook_deliveries.created_at
 	`
 	rows, err := c.s.db.QueryContext(ctx, q, limit)
 	if err != nil {

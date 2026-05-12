@@ -566,8 +566,17 @@ Each was a "close by Week 4 design review" item; all settled:
    `stellar.toml`'s `image` field surfaces as `asset.image_url`
    on `/v1/assets/{id}` after SEP-1 verification. We don't
    re-host issuer images.
-4. **Webhook callbacks?** Not in v1. Customers who want push
-   use SSE.
+4. **Webhook callbacks?** Shipped (F-1270, F-1246 codex
+   audit-2026-05-12 update). Authenticated dashboard users
+   register endpoints via `/v1/dashboard/webhooks` and receive
+   HMAC-SHA-256-signed POST callbacks for `incident.sev1`,
+   `incident.resolved`, `anomaly.freeze`, `divergence.firing`.
+   The delivery worker (`internal/customerwebhook/worker.go`)
+   handles exponential-backoff retries on 5xx/network errors,
+   and the SSRF-guarded transport rejects internal destinations
+   at dial time (F-1245). SSE remains the recommended path for
+   continuous-stream / low-latency use cases; webhooks are the
+   pull-into-existing-incident-pipeline complement.
 5. **gRPC?** No. The serving footprint is HTTP-native; no
    partner has asked, and adding a binary protocol earns no
    measurable win on top of the SSE + REST shape.

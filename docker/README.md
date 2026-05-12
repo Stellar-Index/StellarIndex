@@ -31,7 +31,14 @@ issue or PR restoring the `containers:` job in
 - **Builder stage** uses `golang:1.25-alpine` and runs the same
   `go build -trimpath -buildvcs=true -ldflags=...` invocation the
   release workflow does so the locally-built image and the
-  CI-released one are byte-equivalent at the binary level.
+  CI-released one are byte-equivalent at the binary level. The
+  Go major.minor must match `go.mod`'s `go` directive — F-1240
+  (codex audit-2026-05-12) caught a previous drift where the
+  Dockerfiles used `1.26-alpine` while `go.mod` and CI both used
+  `1.25.x`, producing binaries that were not byte-identical to
+  the release-channel artifacts. When `go.mod` bumps the `go`
+  directive, update every Dockerfile in this directory in the
+  same PR.
 - **Runtime stage** uses `gcr.io/distroless/static-debian12:nonroot`
   — no shell, no package manager, runs as uid 65532. CA certs are
   baked in (needed for outbound HTTPS to CEX/FX vendors).

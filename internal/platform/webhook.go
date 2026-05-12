@@ -41,12 +41,31 @@ const (
 // registers to receive event notifications. Stripe-shape:
 // signed deliveries (HMAC-SHA-256 of payload), exponential
 // retry over 72h.
+//
+// F-1244 (codex audit-2026-05-12): the persisted signing-key
+// field is misnamed `SecretHash` for historical reasons. Despite
+// the name, the value is the LITERAL HMAC key — the delivery
+// worker calls `hmac.New(sha256.New, wh.SecretHash)` directly.
+// A hash-only design isn't possible without changing the wire
+// protocol (the receiver needs the same shared secret to verify).
+// At-rest protection is the Postgres `customer_webhooks` row's
+// standard column-encryption posture; the DB column rename is
+// tracked separately as a follow-up.
+//
+// Customer surface: the plaintext key is returned exactly once
+// from `POST /v1/dashboard/webhooks` at creation time and never
+// served again. Re-rotation requires deleting + recreating the
+// webhook so the customer gets a fresh visible key.
 type CustomerWebhook struct {
-	ID         uuid.UUID
-	AccountID  uuid.UUID
-	Name       string
-	URL        string
-	SecretHash []byte // sha256 of the signing secret; secret itself shown to customer once at creation
+	ID        uuid.UUID
+	AccountID uuid.UUID
+	Name      string
+	URL       string
+	// SecretHash carries the HMAC signing key bytes (NOT a hash —
+	// see struct doc above). Renamed-but-not-yet-migrated; kept
+	// as `SecretHash` to avoid a Postgres column rename in the
+	// same change-set that introduces the truthful comment.
+	SecretHash []byte
 	Events     []string
 	Enabled    bool
 	CreatedAt  time.Time

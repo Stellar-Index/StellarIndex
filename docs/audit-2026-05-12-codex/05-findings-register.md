@@ -33,7 +33,7 @@ Cold findings only. No prior finding is imported into this register.
 | F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | GitHub reports `main.protected=false`; branch protection/rulesets are unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions allows all third-party actions without SHA pinning while workflows use tag-pinned actions | GitHub Actions repository policy; `.github/workflows/*.yml` | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | Hosted Actions policy has `allowed_actions=all` and `sha_pinning_required=false`; workflows invoke many external actions by mutable version tags, including deployment and release paths. |
-| F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; R1-0012 | open | api/security | Current source has a Redis replay guard, but `auth_mode=sep10` does not require Redis or a guard; guardless deployments preserve replayable signed challenges. R1 currently has SEP-10 disabled. |
+| F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
 | F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails and non-atomic duplicate checks | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028 | open | api/security/billing | Attackers can script unique emails, missing tracker deployments, or concurrent same-email races to mint many Starter keys without email ownership proof or billing gate. |
 | F-1219 | high | Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053 | open | billing/platform/api | Current source has Postgres Stripe event dedupe/audit wiring, but the webhook still mutates only Redis keys by `client_reference_id`; subscriptions, accounts, and Postgres dashboard keys are not upgraded. |
 | F-1220 | high | Tagged deploys can restart schema-dependent binaries without shipping or applying matching migrations | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; R1-0013 | open | release/ops/db | The production deploy path downloads and swaps binaries only; migration sync/apply is an initial bring-up/manual step, and there is no schema-compatibility readiness gate. |
@@ -54,15 +54,15 @@ Cold findings only. No prior finding is imported into this register.
 | F-1235 | medium | External CEX stream parser errors are skipped without the decode-error metrics promised by runbooks | Binance/Kraken/Bitstamp/Coinbase streamers; external metrics; decode-error runbook | XFI-0027; EV-0046 | open | external/observability | Vendor frame/schema drift can drop live trades while `SourceDecodeErrorsTotal` stays clean. |
 | F-1236 | high | Supply snapshots can be stamped at a fresh ledger while using stale component observations | Supply refreshers; supply observer storage; asset supply API/market-cap fields | XFI-0028; EV-0047 | open | supply/data-quality | Snapshot ledger is the max ingestion cursor, but component readers use latest-at-or-before rows without freshness checks. |
 | F-1237 | medium | CoinMarketCap polling ignores verified CMC IDs and can bind ambiguous tickers to the wrong asset | Verified currency catalogue; CMC poller; external aggregator observations | XFI-0029; EV-0048 | open | external/identity | The poller queries CMC by ticker and takes the first duplicate-ticker result even though the catalogue stores numeric CMC IDs. |
-| F-1238 | medium | Redis-less API deployments fail startup because closed-bucket stream subscriber is gated on Hub, not Redis | API startup; Redis optionality; closed-bucket SSE stream | XFI-0030; EV-0054 | open | api/streaming/ops | API wiring says Redis is optional, but `redispub.NewSubscriber(nil, ...)` aborts startup whenever Redis is deliberately absent. |
+| F-1238 | medium | Redis-less API deployments fail startup because closed-bucket stream subscriber is gated on Hub, not Redis | API startup; Redis optionality; closed-bucket SSE stream | XFI-0030; EV-0054; EV-0096 | fixed | api/streaming/ops | Current workspace now gates the Redis pub/sub subscriber on `rdb != nil && hub != nil`, so Redis-less API startup no longer aborts on subscriber construction. |
 | F-1239 | medium | WASM history and extraction ops tools panic at completion when progress output is disabled | `ratesengine-ops` WASM audit/extraction commands; Soroban coverage evidence | XFI-0031; EV-0055 | open | ops/data-quality | `-progress-every 0` suppresses in-loop progress but completion still computes modulo by zero after the ledger walk. |
 | F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | open | docker/release | All Dockerfiles use `golang:1.26-alpine`; CI/release use `go.mod` `1.25.10`, and Docker docs still claim `golang:1.25-alpine` and release-equivalent binaries. |
 | F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | open | db/docs/ops | The README claims to be the current migration inventory and says to update it on every new migration, but it omits fourteen live migration families that materially change schema and operational expectations. |
 | F-1242 | medium | The live contribution-history sink persists rows with `volume_usd=NULL` even though the schema reserves that field for source-transparency UX | Aggregator contribution sink; contribution schema/storage; future source-breakdown API/UI | XFI-0034; EV-0060 | open | aggregate/storage/product | The binary writes contribution rows today, but the adapter never forwards USD volume into the durable row shape, so historical source-level USD contribution data is already missing. |
 | F-1243 | high | Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062 | open | storage/assets/data-quality | The dedupe cache exits before the upsert that should update first/last seen ledgers and increment observations, so a long-running ingest/backfill process leaves registry metadata stale until restart. |
 | F-1244 | high | Dashboard webhook signing secrets are persisted as live HMAC keys while docs and type names claim hash-only / never-persisted semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068 | open | security/platform/webhooks | A database read of `customer_webhooks.secret_hash` yields the actual signing key bytes the worker uses, contrary to the published secret-handling contract. |
-| F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069 | open | security/platform/webhooks | A customer-controlled webhook destination can target private/internal HTTPS hosts or redirect chains; no private-address, DNS-rebinding, redirect, or credential guards exist. |
-| F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072 | open | docs/api/product | Product/design guidance now contradicts the implemented callback feature and can mislead integrators or reviewers about the actual push model. |
+| F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069; EV-0096 | fixed | security/platform/webhooks | Current workspace now validates internal/private destinations at registration, re-resolves before delivery, and disables redirect following in the worker client. |
+| F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072; EV-0096 | fixed | docs/api/product | `docs/reference/api-design.md` now states webhook callbacks shipped and explains how they relate to SSE. |
 | F-1247 | high | Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt | API worker startup; webhook queue store; multi-region / multi-process delivery semantics | XFI-0039; EV-0073 | open | platform/webhooks/ops | The current worker is only correct under a single-worker assumption that conflicts with replicated API deployment and the planned R2/R3 rollout. |
 | F-1248 | medium | The documented ten-webhook-per-account limit is enforced with a raceable pre-check, so concurrent creates can exceed the cap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074 | open | platform/webhooks | The ceiling holds only for serial creates; parallel requests can all pass the handler pre-check before any insert lands. |
 | F-1249 | high | Customer webhook callbacks are exposed and operated as a shipped feature, but no production code enqueues any delivery events | Customer webhook event model; queue writer; dashboard/API docs; operational runbooks | XFI-0041; EV-0076 | open | platform/webhooks/product | The worker can drain rows and the API lets customers subscribe, yet no incident/anomaly/divergence producer ever calls `EnqueueDelivery`, so the feature cannot deliver real callbacks. |
@@ -74,6 +74,8 @@ Cold findings only. No prior finding is imported into this register.
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can create orphan accounts and return a 500 because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087 | open | platform/auth/data-quality | Token consumption is atomic per token, not per email. Two valid links for one new address can both enter provisioning, persist two account rows, and let the losing user insert fail on `users.email`, leaving a suffixed account without an owner. |
 | F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | open | dashboard/docs/product | Free users are told the default is 1000/min and every user can submit 100000/min, but current backend persists Free keys at 60/min and other tiers at smaller caps unless the tier allows more. |
 | F-1257 | medium | The 25-active-key/account dashboard quota is enforced with a raceable pre-check, so concurrent creates can exceed the advertised cap | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092 | open | platform/keys | The handler counts current active keys before insert, but the store and schema never enforce the ceiling atomically; parallel creates can all pass under the cap together. |
+| F-1258 | high | Redis-less API deployments still wire a non-nil usage middleware around a nil Redis client, so authenticated requests can panic instead of degrading cleanly | API startup wiring; usage middleware; usage counter | XFI-0050; EV-0094 | open | api/ops/runtime | The API advertises Redis as optional, but `usage.New(rdb)` is unconditional and the middleware dereferences its nil client once authenticated traffic arrives. |
+| F-1259 | medium | `/v1/account/usage` docs and generated references still call the endpoint always-empty even though current runtime wiring can return real Redis-backed daily counts | Account usage handler; OpenAPI/reference docs; product architecture docs | XFI-0051; EV-0095 | open | docs/api/product | Current code wires a usage reader and handler path for real rows, while several authoritative docs/spec outputs still describe a stub-only contract. |
 
 ## Finding Template
 
@@ -1479,3 +1481,59 @@ Observed: `HandleCreate` calls `checkQuota`, which lists all account keys and co
 Impact: coordinated or accidental concurrent create requests can leave an account with more active dashboard keys than the product promises. That weakens the anti-sprawl ceiling operators rely on for customer-key hygiene and makes later cleanup/reporting less trustworthy.
 
 Remediation direction: enforce the cap atomically at the persistence boundary. Use a transaction with the appropriate account-scoped lock/check, or move the count/create operation into a store method that serializes per-account create semantics. Add a concurrent create test that starts below the threshold and proves persisted active keys never exceed 25.
+
+### F-1258. Redis-less API deployments still wire a non-nil usage middleware around a nil Redis client, so authenticated requests can panic instead of degrading cleanly
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-api/main.go`
+- `internal/api/v1/middleware/usage.go`
+- `internal/usage/counter.go`
+- `internal/api/v1/server.go`
+
+Evidence:
+
+- `XFI-0050`
+- `EV-0094`
+
+Expected: when API Redis is not configured, optional Redis-backed features should either be omitted cleanly or become explicit no-ops. An authenticated request should not cross into a nil Redis client because startup accepted that deployment mode.
+
+Observed: `redisclient.Build` may return nil and the API still proceeds. Later, `usageCounter := usage.New(rdb)` executes unconditionally and `middleware.UsageTracker(usageCounter, ...)` is always passed into the server. The middleware skips only when the `*usage.Counter` itself is nil, but here it is non-nil with a nil embedded Redis client. Once an authenticated request finishes its handler path, `UsageTracker` calls `counter.Increment`, which dereferences `c.rdb.TxPipeline()` directly.
+
+Impact: a Redis-less API deployment that is otherwise intended to stay online can panic during authenticated traffic while processing best-effort usage metering. That breaks the documented optional-Redis degradation model and turns an observability add-on into a request-path reliability hazard.
+
+Remediation direction: make the optionality real. Either only construct/pass a usage counter when Redis exists, or make `usage.Counter` explicitly nil-safe and have the middleware treat nil-backed counters as disabled. Add an API wiring test for `rdb=nil` that exercises an authenticated request through the full middleware stack without panic.
+
+### F-1259. `/v1/account/usage` docs and generated references still call the endpoint always-empty even though current runtime wiring can return real Redis-backed daily counts
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `cmd/ratesengine-api/main.go`
+- `internal/api/v1/account.go`
+- `internal/api/v1/server.go`
+- `openapi/rates-engine.v1.yaml`
+- `docs/reference/api/rates-engine.v1.yaml`
+- `docs/reference/api-design.md`
+- `docs/reference/api/postman-collection.json`
+- `docs/architecture/explorer-data-inventory.md`
+
+Evidence:
+
+- `XFI-0051`
+- `EV-0095`
+
+Expected: once the usage reader is live in current runtime wiring, customer-facing docs and generated references should describe conditional real data semantics instead of the retired stub contract.
+
+Observed: `ratesengine-api` wires `UsageTracker` and `UsageReader`, and `handleAccountUsage` now reads a trailing 30-day usage window when the reader is present. Yet its own doc comment still says the endpoint always returns `[]`, the OpenAPI summary says "currently empty," the generated reference YAML/Postman artifacts copy that contract, and the API design / explorer inventory docs still call it a placeholder or stub.
+
+Impact: customers and internal reviewers are told a live usage feature is absent, while generated clients and product documentation remain anchored to outdated behavior. That distorts product readiness judgments and makes future audit/review work easier to misread.
+
+Remediation direction: rewrite the usage contract around current conditional semantics: Redis-backed deployments return trailing daily counts, deployments without a reader return an empty list, and `from`/`to` remain reserved if that is still the implementation choice. Regenerate all derived API reference artifacts from the corrected OpenAPI source.

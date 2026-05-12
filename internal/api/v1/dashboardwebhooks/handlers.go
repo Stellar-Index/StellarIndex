@@ -196,10 +196,16 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 	rec := platform.CustomerWebhook{
-		AccountID:  sc.Account.ID,
-		Name:       req.Name,
-		URL:        req.URL,
-		SecretHash: []byte(secret), // worker reads this verbatim as the HMAC key
+		AccountID: sc.Account.ID,
+		Name:      req.Name,
+		URL:       req.URL,
+		// SecretHash is the HMAC signing key, not a hash. See
+		// [platform.CustomerWebhook] doc — the field name is a
+		// historical artefact tracked by F-1244 (codex
+		// audit-2026-05-12). The customer receives the plaintext
+		// `secret` exactly once in the response below and never
+		// again; rotation = delete + recreate.
+		SecretHash: []byte(secret),
 		Events:     req.Events,
 		Enabled:    enabled,
 	}
