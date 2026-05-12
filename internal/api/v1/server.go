@@ -972,6 +972,13 @@ type healthResponse struct {
 	// Checks is populated on /readyz with per-dependency results.
 	// Absent on /healthz.
 	Checks []checkResult `json:"checks,omitempty"`
+	// StatusRoot points consumers at /v1/status for the rich
+	// rollup that covers ingest lag, supply, oracle freshness,
+	// and per-pair SLA latency — F-1210 (codex audit-2026-05-12).
+	// Static "/v1/status" today; surfaced here so a probe
+	// consumer following only /healthz / /readyz can still find
+	// the SLA-truth endpoint without out-of-band knowledge.
+	StatusRoot string `json:"status_root,omitempty"`
 }
 
 type checkResult struct {
@@ -984,10 +991,22 @@ type checkResult struct {
 // handleHealthz is the shallow liveness probe. Returns 200 as long
 // as the process is running + mux is serving. Does NOT touch the
 // database or Redis — those are the readiness probe's job.
+//
+// F-1210 (codex audit-2026-05-12): /healthz and /readyz are
+// deliberately scoped to the serving-plane (process, postgres,
+// redis). They do NOT report ingest lag, supply state, oracle
+// freshness, or per-pair SLA latency. The rich rollup lives at
+// `/v1/status`, which aggregates Prometheus-backed signals. The
+// scoping is intentional: liveness probes (k8s, systemd) must
+// not flap when a backfill stalls or when one source goes silent;
+// those are SLO concerns surfaced separately. The healthz response
+// links to /v1/status so operators using either endpoint find the
+// authoritative view.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, healthResponse{
-		Status: "ok",
-		Uptime: s.Uptime().Truncate(time.Second).String(),
+		Status:     "ok",
+		Uptime:     s.Uptime().Truncate(time.Second).String(),
+		StatusRoot: "/v1/status",
 	}, Flags{})
 }
 
@@ -1028,9 +1047,10 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := healthResponse{
-		Status: "ok",
-		Uptime: s.Uptime().Truncate(time.Second).String(),
-		Checks: results,
+		Status:     "ok",
+		Uptime:     s.Uptime().Truncate(time.Second).String(),
+		Checks:     results,
+		StatusRoot: "/v1/status",
 	}
 	if !allOK {
 		resp.Status = "degraded"

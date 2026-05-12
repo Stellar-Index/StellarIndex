@@ -380,6 +380,14 @@ type ContributionRecord struct {
 	Window        time.Duration
 	ComputedAt    time.Time
 	Contributions []aggregate.SourceContribution
+
+	// USDVolumeTotal is the pre-rewrite, decimals-correct total
+	// USD value of every trade in this window. Computed in
+	// `fetchForTarget` (F-1213) where the original source-pair
+	// decimals are still known. Zero means "not applicable" — the
+	// sink decides whether to persist or stamp NULL. F-1242 (codex
+	// audit-2026-05-12).
+	USDVolumeTotal float64
 }
 
 // DivergenceRefresher is the seam the orchestrator uses to keep the
@@ -620,7 +628,7 @@ func (o *Orchestrator) refreshPairWindow(
 		return fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
 	}
 
-	o.flushContributions(ctx, pair, window, trades)
+	o.flushContributions(ctx, pair, window, trades, usdVolume)
 
 	// Phase 1 anomaly evaluation BEFORE cache write — class-deviation
 	// + source-count threshold (the L2.4 stop-gap). On freeze we
@@ -1107,6 +1115,7 @@ func (o *Orchestrator) flushContributions(
 	pair canonical.Pair,
 	window time.Duration,
 	trades []canonical.Trade,
+	usdVolumeTotal float64,
 ) {
 	if o.cfg.ContributionSink == nil {
 		return
@@ -1116,10 +1125,11 @@ func (o *Orchestrator) flushContributions(
 		return
 	}
 	if err := o.cfg.ContributionSink.RecordContributions(ctx, ContributionRecord{
-		Pair:          pair,
-		Window:        window,
-		ComputedAt:    time.Now().UTC(),
-		Contributions: contributions,
+		Pair:           pair,
+		Window:         window,
+		ComputedAt:     time.Now().UTC(),
+		Contributions:  contributions,
+		USDVolumeTotal: usdVolumeTotal,
 	}); err != nil {
 		o.logger.Debug("contribution sink",
 			"pair", pair.String(), "window", window, "err", err)

@@ -92,7 +92,12 @@ type APIKeyStore interface {
 	// Create inserts. Caller has already hashed the plaintext
 	// and computed the prefix. Returns ErrConflict if the hash
 	// or ID collide (extremely rare; key_id is 8 hex bytes).
-	Create(ctx context.Context, k APIKey) (APIKey, error)
+	// `maxActiveKeysPerAccount` enforces the cap atomically
+	// inside the INSERT statement; zero or negative disables
+	// the cap (operator/staff seeding paths). Returns
+	// [ErrAPIKeyQuotaExceeded] when the cap is met.
+	// F-1257 (codex audit-2026-05-12).
+	Create(ctx context.Context, k APIKey, maxActiveKeysPerAccount int) (APIKey, error)
 
 	// Get by key ID; ErrNotFound if absent.
 	Get(ctx context.Context, id string) (APIKey, error)

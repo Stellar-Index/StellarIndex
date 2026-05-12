@@ -240,7 +240,7 @@ func newStubKeyStore() *stubKeyStore {
 	}
 }
 
-func (s *stubKeyStore) Create(_ context.Context, k platform.APIKey) (platform.APIKey, error) {
+func (s *stubKeyStore) Create(_ context.Context, k platform.APIKey, _ int) (platform.APIKey, error) {
 	return k, nil
 }
 

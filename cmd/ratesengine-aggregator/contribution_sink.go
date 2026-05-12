@@ -29,16 +29,30 @@ func (s *contributionSink) RecordContributions(ctx context.Context, rec orchestr
 	if len(rec.Contributions) == 0 {
 		return nil
 	}
+	// F-1242 (codex audit-2026-05-12): persist per-source USD
+	// volume when the orchestrator's pre-rewrite usdVolumePerSource
+	// map carries it. Pre-fix the row stored Weight + TradeCount
+	// only; volume_usd was schema-reserved but never populated, so
+	// the source-breakdown donut on the explorer couldn't render
+	// dollar tooltips without recomputing from raw trades. The
+	// total-USD-volume for the window is split per-source by
+	// each contribution's Weight (proportional to that source's
+	// quote-volume share — the natural decomposition).
 	rows := make([]timescale.PriceSourceContribution, 0, len(rec.Contributions))
 	for _, c := range rec.Contributions {
-		rows = append(rows, timescale.PriceSourceContribution{
+		row := timescale.PriceSourceContribution{
 			AssetID:    rec.Pair.Base.String(),
 			QuoteID:    rec.Pair.Quote.String(),
 			Bucket:     rec.ComputedAt,
 			Source:     c.Source,
 			Weight:     c.Weight,
 			TradeCount: c.TradeCount,
-		})
+		}
+		if rec.USDVolumeTotal > 0 {
+			volumeUSD := rec.USDVolumeTotal * c.Weight
+			row.VolumeUSD = &volumeUSD
+		}
+		rows = append(rows, row)
 	}
 	return s.store.InsertPriceSourceContributions(ctx, rows)
 }

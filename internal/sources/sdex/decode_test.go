@@ -1,7 +1,6 @@
 package sdex
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -246,9 +245,14 @@ func TestDecoder_failedOp_emitsNothing(t *testing.T) {
 	}
 }
 
-func TestDecoder_v0ClaimAtom_skippedCounted(t *testing.T) {
-	// V0 claims are pre-P18 legacy. We skip with an error so
-	// operators notice if backfill replays old history.
+// TestDecoder_v0ClaimAtom_decodedAsOrderBook pins F-1233 (codex
+// audit-2026-05-12): V0 claim atoms (pre-CAP-27 legacy shape) are
+// now decoded into a regular trade by deriving the seller G-strkey
+// from the raw ed25519 bytes. Pre-fix the V0 branch returned
+// ErrUnknownClaimAtomType and per-claim skip dropped the row,
+// leaving since-inception SDEX history with a coverage hole on
+// pre-P18 ledgers.
+func TestDecoder_v0ClaimAtom_decodedAsOrderBook(t *testing.T) {
 	var pub xdr.Uint256
 	pub[0] = 0x30
 	claim := xdr.ClaimAtom{
@@ -264,19 +268,19 @@ func TestDecoder_v0ClaimAtom_skippedCounted(t *testing.T) {
 	}
 	op, result := mkManageSellOfferOp([]xdr.ClaimAtom{claim})
 	outs, err := NewDecoder().Decode(dispatcher.OpContext{Op: op, OpResult: result})
-	// Per-claim skip returns (nil, nil) from Decode — the failure
-	// is internal and doesn't surface to the dispatcher.
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if len(outs) != 0 {
-		t.Errorf("got %d outputs, want 0 (V0 claim skipped)", len(outs))
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1 (V0 claim should decode)", len(outs))
 	}
-	// The error type is still available if a caller wants to
-	// detect it directly — verify decodeClaimAtom's contract.
-	_, err = decodeClaimAtom(claim, 1, time.Now(), "tx", 0, 0, "")
-	if !errors.Is(err, ErrUnknownClaimAtomType) {
-		t.Errorf("decodeClaimAtom error = %v, want ErrUnknownClaimAtomType", err)
+	// decodeClaimAtom should succeed too.
+	tr, err := decodeClaimAtom(claim, 1, time.Now(), "tx", 0, 0, "GTAKER")
+	if err != nil {
+		t.Fatalf("decodeClaimAtom V0: %v", err)
+	}
+	if tr.Maker == "" || tr.Maker[0] != 'G' {
+		t.Errorf("Maker = %q, want G-strkey", tr.Maker)
 	}
 }
 

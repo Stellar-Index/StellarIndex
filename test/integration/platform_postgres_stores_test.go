@@ -418,7 +418,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 		key.IPAllowlist = []netip.Prefix{prefix}
 
-		out, err := keys.Create(ctx, key)
+		out, err := keys.Create(ctx, key, 25)
 		if err != nil {
 			t.Fatalf("create key: %v", err)
 		}
@@ -508,7 +508,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		// Hash-collision (re-Create same hash) → ErrConflict.
 		dup := key
 		dup.ID = "kid_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
-		_, err = keys.Create(ctx, dup)
+		_, err = keys.Create(ctx, dup, 25)
 		if !errors.Is(err, platform.ErrConflict) {
 			t.Errorf("expected ErrConflict on duplicate hash, got %v", err)
 		}
