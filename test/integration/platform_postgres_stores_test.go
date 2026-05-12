@@ -652,7 +652,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 				string(platform.WebhookEventAnomalyFreeze),
 			},
 			Enabled: true,
-		})
+		}, 10)
 		if err != nil {
 			t.Fatalf("CreateWebhook: %v", err)
 		}

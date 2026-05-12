@@ -35,4 +35,11 @@ var (
 	// account with zero owner-role users — demotion + deletion
 	// both refuse rather than orphan the account.
 	ErrLastOwner = errors.New("platform: cannot remove the last owner")
+
+	// ErrWebhookQuotaExceeded is returned by CreateWebhook when
+	// the per-account cap is already met. The store enforces the
+	// cap atomically (single CTE-gated INSERT) so concurrent
+	// requests at the boundary see this error rather than slip
+	// through a raceable pre-check. F-1248 (codex audit-2026-05-12).
+	ErrWebhookQuotaExceeded = errors.New("platform: webhook quota exceeded")
 )

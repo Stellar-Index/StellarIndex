@@ -31,8 +31,21 @@ func NewWebhookStore(s *Store) *WebhookStore {
 // Compile-time interface conformance.
 var _ platform.WebhookStore = (*WebhookStore)(nil)
 
-// CreateWebhook inserts the registry row.
-func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWebhook) (platform.CustomerWebhook, error) {
+// CreateWebhook inserts the registry row, enforcing the per-account
+// `maxPerAccount` cap atomically. F-1248 (codex audit-2026-05-12):
+// the handler's pre-check (`SELECT … then INSERT`) was raceable —
+// N parallel HandleCreate requests for an account at 9 webhooks
+// could all pass the precheck and each insert one row, taking the
+// account to 9+N. Now the insert is gated by a single statement
+// that uses a CTE to count + conditionally insert, so concurrent
+// callers see at most one row appended past the cap (and the
+// loser receives the same ErrWebhookQuotaExceeded the precheck
+// would have surfaced).
+//
+// `maxPerAccount` is the value passed by the handler
+// (MaxWebhooksPerAccount = 10 at time of writing). Tests can pass
+// a smaller value to drive the race deterministically.
+func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWebhook, maxPerAccount int) (platform.CustomerWebhook, error) {
 	if w.AccountID == uuid.Nil {
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: AccountID is empty")
 	}
@@ -42,18 +55,31 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 	if len(w.Events) == 0 {
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: Events is empty")
 	}
+	if maxPerAccount <= 0 {
+		maxPerAccount = 10
+	}
 	const q = `
+		WITH current_count AS (
+		    SELECT COUNT(*) AS n
+		      FROM customer_webhooks
+		     WHERE account_id = $1
+		)
 		INSERT INTO customer_webhooks
 		    (account_id, name, url, secret_hash, events, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		SELECT $1, $2, $3, $4, $5, $6
+		  FROM current_count
+		 WHERE current_count.n < $7
 		RETURNING id, created_at, updated_at
 	`
 	events := w.Events
 	row := c.s.db.QueryRowContext(ctx, q,
 		w.AccountID, w.Name, w.URL, w.SecretHash,
-		pq.Array(events), w.Enabled,
+		pq.Array(events), w.Enabled, maxPerAccount,
 	)
 	if err := row.Scan(&w.ID, &w.CreatedAt, &w.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return platform.CustomerWebhook{}, platform.ErrWebhookQuotaExceeded
+		}
 		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: %w", err)
 	}
 	return w, nil

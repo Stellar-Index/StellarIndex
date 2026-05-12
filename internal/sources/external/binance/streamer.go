@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 )
 
@@ -171,7 +172,11 @@ func (s *Streamer) runOnce(ctx context.Context, streamURL string, out chan<- can
 			// Single-frame parse errors are non-fatal (e.g. a new
 			// symbol subscribed that isn't in PairMap yet). Count
 			// + continue; dropping the whole stream would be a
-			// gross overreaction to one bad line.
+			// gross overreaction to one bad line. F-1235 (codex
+			// audit-2026-05-12): the count line was previously
+			// missing — operators had no signal on schema drift
+			// despite the runbook claiming decode-error coverage.
+			obs.SourceDecodeErrorsTotal.WithLabelValues("binance").Inc()
 			continue
 		}
 		select {

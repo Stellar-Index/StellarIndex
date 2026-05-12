@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 )
 
@@ -152,6 +153,9 @@ func (s *Streamer) runOnce(ctx context.Context, products []string, out chan<- ca
 			if errors.Is(err, ErrSubscriptionRejected) {
 				return err
 			}
+			// F-1235 (codex audit-2026-05-12): count parse errors
+			// so the decode-error runbook signals on schema drift.
+			obs.SourceDecodeErrorsTotal.WithLabelValues("coinbase").Inc()
 			continue
 		}
 		if !isTrade {

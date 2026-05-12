@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 )
 
@@ -165,6 +166,9 @@ func (s *Streamer) runOnce(ctx context.Context, symbols []string, out chan<- can
 				return err
 			}
 			// Malformed or unknown — skip, stream stays up.
+			// F-1235 (codex audit-2026-05-12): count it so the
+			// decode-error runbook signals on schema drift.
+			obs.SourceDecodeErrorsTotal.WithLabelValues("bitstamp").Inc()
 			continue
 		}
 		if !isTrade {

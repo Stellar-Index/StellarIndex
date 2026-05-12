@@ -195,7 +195,7 @@ Remediation direction: choose the canonical incident source for `web/status`, up
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -350,15 +350,18 @@ Evidence:
 - `XFI-0011`
 - `EV-0027`
 - `EV-0053`
+- `EV-0096`
 - `R1-0012`
 
 Expected: when SEP-10 authentication is enabled, replay protection should be mandatory and fail closed; a signed challenge should be accepted once for its time-bound window.
 
 Observed: current source implements a Redis-backed `ReplayGuard` and wires it when Redis is configured. The same startup path still permits a configured SEP-10 validator without Redis and explicitly leaves it guard-free when Redis is absent; `auth_mode=sep10` does not require a guard. R1 currently returns 503 for SEP-10, so this is a latent source/configuration flaw until SEP-10 is enabled.
 
-Impact: an operator can enable SEP-10 in a Redis-less or mis-scoped deployment and unknowingly preserve replayable signed challenges. If a signed challenge XDR is captured, it can be reused within the challenge window on that guardless deployment to mint additional valid JWTs.
+Impact during the initial pass: an operator could enable SEP-10 in a Redis-less or mis-scoped deployment and unknowingly preserve replayable signed challenges. If a signed challenge XDR was captured, it could be reused within the challenge window on that guardless deployment to mint additional valid JWTs.
 
-Remediation direction: require a replay guard whenever `auth_mode=sep10` or public SEP-10 token issuance is enabled. Treat missing Redis/guard as a startup error or add a Postgres-backed guard fallback; add startup tests for `auth_mode=sep10` with no Redis and token-flow tests proving guardless operation is rejected.
+Current-workspace reconciliation: `cmd/ratesengine-api/main.go` now returns a startup error when `auth_mode=sep10` is configured without Redis, which closes the guard-free deployment mode that made the finding actionable.
+
+Remediation direction: retained for audit history; the current workspace implements the fail-startup branch.
 
 ### F-1218. Public signup can mint immediately usable 1000/min API keys from unverified emails and non-atomic duplicate checks
 
@@ -451,7 +454,7 @@ Remediation direction: make migrations a first-class deploy artifact and pre-bin
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -662,20 +665,23 @@ Evidence:
 
 - `XFI-0030`
 - `EV-0054`
+- `EV-0096`
 
 Expected: Redis-dependent API features should degrade independently when Redis is absent, matching the startup comments and readiness semantics. A Redis-less API should still boot if the operator intentionally omits Redis, with closed-bucket streaming disabled/degraded rather than fatal.
 
 Observed: `cmd/ratesengine-api` creates `hub := streaming.NewHub(0)` unconditionally. Later, it checks `if hub != nil` and calls `redispub.NewSubscriber(rdb, ...)`; `hub` is always non-nil, so a nil Redis client returns `redispub: RedisSubscriber is required` and aborts startup. Other Redis-backed features are correctly gated on `rdb != nil`.
 
-Impact: an operator following the documented "Redis optional at API layer" posture cannot run a Redis-less API. A local, staging, or degraded production deployment that should serve read-only Timescale-backed endpoints instead fails before listening.
+Impact during the initial pass: an operator following the documented "Redis optional at API layer" posture could not run a Redis-less API. A local, staging, or degraded production deployment that should serve read-only Timescale-backed endpoints instead failed before listening.
 
-Remediation direction: gate the Redis pub/sub subscriber on `rdb != nil`, and make the stream endpoint's no-Redis behavior explicit: either no Hub so it returns 503, or Hub-only heartbeats with a degraded metric. Add a startup unit test for `run`/wiring with nil Redis or a small constructor-level test proving subscriber creation is skipped.
+Current-workspace reconciliation: `cmd/ratesengine-api/main.go` now gates the Redis pub/sub subscriber on `rdb != nil && hub != nil`, so Redis-less startup no longer attempts `redispub.NewSubscriber(nil, ...)`.
+
+Remediation direction: retained for audit history; the current workspace implements the Redis gate.
 
 ### F-1228. SSE streams are cut off after 30 seconds by the API server write timeout
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1148,20 +1154,23 @@ Evidence:
 
 - `XFI-0037`
 - `EV-0069`
+- `EV-0096`
 
 Expected: user-configured outbound webhooks should enforce a clear egress policy that prevents access to loopback, link-local, RFC1918, cluster-local, or otherwise internal destinations, including redirects and DNS changes after validation.
 
 Observed: `validateWebhookURL` checks only non-empty, `https://`, and `url.Parse`. Production starts the delivery worker whenever dashboard webhooks are enabled. The worker uses a default `http.Client`, so redirect behavior is unrestricted by this code. The tests cover only plain-HTTP rejection, not private hosts, redirect chains, DNS rebinding, or embedded credentials.
 
-Impact: an authenticated dashboard user can turn the API worker into an outbound network probe or request relay against internal HTTPS services, and redirect handling expands the reachable surface beyond the initially submitted URL. That is a control-plane boundary violation, especially on hosts that can reach internal storage, observability, or admin services already exposed in other findings.
+Impact during the initial pass: an authenticated dashboard user could turn the API worker into an outbound network probe or request relay against internal HTTPS services, and redirect handling expanded the reachable surface beyond the initially submitted URL. That was a control-plane boundary violation, especially on hosts that can reach internal storage, observability, or admin services already exposed in other findings.
 
-Remediation direction: add destination policy enforcement at both registration and send time: reject local/private/reserved IP ranges after DNS resolution, reject userinfo, constrain ports if appropriate, disable or strictly validate redirects, and re-resolve on delivery. Add unit/integration tests for loopback, RFC1918, link-local, redirect-to-private, and DNS-rebinding-style cases.
+Current-workspace reconciliation: webhook create/update validation now rejects credential-bearing and internal/private/reserved destinations; the worker's default transport re-resolves with `ssrfGuardedDialContext`, and redirect following is disabled via `http.ErrUseLastResponse`. Targeted webhook package tests pass after those changes.
+
+Remediation direction: retained for audit history; the current workspace implements the primary SSRF controls.
 
 ### F-1246. API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1175,14 +1184,17 @@ Evidence:
 
 - `XFI-0038`
 - `EV-0072`
+- `EV-0096`
 
 Expected: the API-design reference should match the current product contract after a previously deferred capability ships.
 
 Observed: the design doc's "Open questions — closed" section still says "Webhook callbacks? Not in v1. Customers who want push use SSE." The current API reference, route mounts, delivery worker, and operations runbook all describe a shipped dashboard webhook callback feature.
 
-Impact: integrators, operators, and auditors get contradictory answers about whether push callbacks exist, which complicates product positioning and weakens confidence in docs as a source of truth during security and launch review.
+Impact during the initial pass: integrators, operators, and auditors got contradictory answers about whether push callbacks existed, which complicated product positioning and weakened confidence in docs as a source of truth during security and launch review.
 
-Remediation direction: update the API design reference to reflect the shipped dashboard webhook model, document how it relates to SSE, and make design-reference drift part of the docs-truth checks for features that move from deferred to shipped.
+Current-workspace reconciliation: `docs/reference/api-design.md` now states that webhook callbacks shipped, identifies the event families, mentions the delivery worker, and explains how webhooks complement SSE rather than replacing it.
+
+Remediation direction: retained for audit history; the current workspace fixes the design-reference drift.
 
 ### F-1247. Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt
 

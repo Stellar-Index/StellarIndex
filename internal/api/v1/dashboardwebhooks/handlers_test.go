@@ -34,9 +34,20 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (s *fakeStore) CreateWebhook(_ context.Context, w platform.CustomerWebhook) (platform.CustomerWebhook, error) {
+func (s *fakeStore) CreateWebhook(_ context.Context, w platform.CustomerWebhook, maxPerAccount int) (platform.CustomerWebhook, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if maxPerAccount > 0 {
+		count := 0
+		for _, existing := range s.webhooks {
+			if existing.AccountID == w.AccountID {
+				count++
+			}
+		}
+		if count >= maxPerAccount {
+			return platform.CustomerWebhook{}, platform.ErrWebhookQuotaExceeded
+		}
+	}
 	w.ID = uuid.New()
 	w.CreatedAt = time.Now().UTC()
 	w.UpdatedAt = w.CreatedAt

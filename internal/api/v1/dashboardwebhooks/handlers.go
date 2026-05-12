@@ -179,6 +179,14 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// F-1248 (codex audit-2026-05-12): the handler used to do a
+	// `ListWebhooksForAccount` precheck here before the insert,
+	// which was raceable — N parallel HandleCreate at-the-limit
+	// requests could each pass the precheck. The store now
+	// enforces `maxPerAccount` atomically inside the INSERT, so
+	// the precheck only remains as a fast-path UX nicety: it
+	// surfaces the same 409 message without spending a write
+	// budget. The atomic insert is the actual gate.
 	if status, problem := h.checkQuota(r, sc.Account.ID); problem != "" {
 		writeProblem(w, status, problem, r.URL.Path)
 		return
@@ -209,8 +217,18 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		Events:     req.Events,
 		Enabled:    enabled,
 	}
-	out, err := h.cfg.Webhooks.CreateWebhook(r.Context(), rec)
+	out, err := h.cfg.Webhooks.CreateWebhook(r.Context(), rec, MaxWebhooksPerAccount)
 	if err != nil {
+		// F-1248: race-window loser. The atomic gate inside
+		// CreateWebhook returns ErrWebhookQuotaExceeded when the
+		// account hits the cap between the precheck and the
+		// INSERT.
+		if errors.Is(err, platform.ErrWebhookQuotaExceeded) {
+			writeProblem(w, http.StatusConflict,
+				fmt.Sprintf("account already has %d webhooks (max %d)", MaxWebhooksPerAccount, MaxWebhooksPerAccount),
+				r.URL.Path)
+			return
+		}
 		h.cfg.Logger.Error("create webhook in postgres", "err", err, "account_id", sc.Account.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return

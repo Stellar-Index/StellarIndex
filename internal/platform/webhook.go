@@ -98,8 +98,13 @@ func (d WebhookDelivery) IsTerminal() bool {
 
 // WebhookStore persists [CustomerWebhook] and [WebhookDelivery].
 type WebhookStore interface {
-	// CreateWebhook registers a new outbound endpoint.
-	CreateWebhook(ctx context.Context, w CustomerWebhook) (CustomerWebhook, error)
+	// CreateWebhook registers a new outbound endpoint, enforcing
+	// the per-account `maxPerAccount` cap atomically. Returns
+	// [ErrWebhookQuotaExceeded] when the cap is met — the cap
+	// check + insert happen in a single SQL statement so
+	// concurrent callers can't both pass a pre-check and each
+	// append a row past the cap. F-1248 (codex audit-2026-05-12).
+	CreateWebhook(ctx context.Context, w CustomerWebhook, maxPerAccount int) (CustomerWebhook, error)
 
 	// GetWebhook by ID.
 	GetWebhook(ctx context.Context, id uuid.UUID) (CustomerWebhook, error)

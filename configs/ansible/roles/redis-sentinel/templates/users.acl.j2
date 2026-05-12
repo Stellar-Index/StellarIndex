@@ -50,10 +50,22 @@ user ratesengine on >{{ redis_password }} \
   -@all +@read +@write +@scripting +@pubsub +@connection \
   -@admin -@dangerous \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
-  ~ratelimit:* ~signup-ip:* \
+  ~rl:* ~signup-ip:* ~signup:email:* \
   ~toml:* ~meta:* ~price:* ~apikey:* ~health:* ~oracle:* \
-  ~subscriber:* \
+  ~sub:* ~sep10:seen:* ~usage:* \
+  ~assets:list:* ~markets:list:* \
   &closed-bucket-* &stream-*
+# F-1254 (codex audit-2026-05-12): the previous allow-list named
+# `~ratelimit:*` (code writes `rl:*`) and `~subscriber:*` (code
+# writes `sub:*`), and omitted `~signup:email:*`, `~sep10:seen:*`,
+# `~usage:*`, `~assets:list:*`, `~markets:list:*` entirely. A
+# lockdown-on deployment would have authenticated successfully and
+# then ACL-denied at runtime on rate-limit / signup duplicate /
+# SEP-10 replay / usage accounting / catalogue cache writes. The
+# canonical list is in `internal/cachekeys/keys.go` plus the per-
+# component WithKeyPrefix sites in ratelimit, signup_tracker,
+# sep10/redisreplay, and usage/counter. Update this allow-list
+# in lockstep when a new namespace lands.
 
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}

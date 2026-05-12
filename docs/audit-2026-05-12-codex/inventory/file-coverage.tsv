@@ -31,7 +31,7 @@ cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runt
 cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055,EV-0060	XFI-0034	Reviewed contribution sink adapter and batch forwarding; F-1242 records that live writes omit `volume_usd`.
 cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;F-1213;F-1236	XFI-0009;XFI-0028	Reviewed aggregation, stablecoin/min-volume, Redis/cache, supply refresher, and timers
 cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	done	EV-0052;EV-0055		Command package tests pass; coverage tied to main wiring
-cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;F-1217;F-1219;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0013;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, webhook worker/producer coupling, and usage-counter optionality/docs drift
+cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;EV-0096;F-1217;F-1219;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0013;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, webhook worker/producer coupling, usage-counter optionality/docs drift, and current fixes for SEP-10/stream startup gaps
 cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	done	EV-0052;EV-0055		Command package tests pass; startup/test seams reviewed
 cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, CMC identity propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
 cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	done	EV-0052;EV-0055		Command package tests pass; indexer wiring coverage reviewed
@@ -781,7 +781,7 @@ docs/operations/wasm-audits/redstone.md	docs	docs/operations	documentation	todo	
 docs/operations/wasm-audits/reflector.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/wasm-audits/soroswap.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/wasm-audits/walker-investigation-2026-05-01.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/reference/api-design.md	docs	docs/reference	documentation	in_progress	EV-0095;F-1259	XFI-0051	Reviewed usage endpoint placeholder drift; broader API-design audit still open
+docs/reference/api-design.md	docs	docs/reference	documentation	in_progress	EV-0095;EV-0096;F-1246;F-1259	XFI-0038;XFI-0051	Reviewed usage endpoint placeholder drift and current webhook-design-doc correction; broader API-design audit still open
 docs/reference/api/.wrangler/cache/pages.json	docs	docs/reference	fixture_or_config	todo			cold audit pending
 docs/reference/api/README.md	docs	docs/reference	documentation	todo			cold audit pending
 docs/reference/api/_headers	docs	docs/reference	unknown	todo			cold audit pending
@@ -910,7 +910,7 @@ internal/api/v1/dashboardkeys/doc.go	internal	internal/api/v1	runtime	todo			col
 internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	done	EV-0023;EV-0089;EV-0090;EV-0092;F-1212;F-1256;F-1257	XFI-0008;XFI-0048;XFI-0049	Reviewed create/list/revoke flow, current tier-clamp fix, customer-facing budget-contract drift, and quota concurrency gap
 internal/api/v1/dashboardkeys/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardwebhooks/doc.go	internal	internal/api/v1	runtime	done	EV-0072;EV-0076;F-1246;F-1249	XFI-0038;XFI-0041	Reviewed dashboard webhook contract docs against live worker/store/product seams
-internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, secret handling, SSRF boundary, quota race, and missing producer path
+internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;EV-0096;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, secret handling, current SSRF validation hardening, quota race, and missing producer path
 internal/api/v1/dashboardwebhooks/handlers_test.go	internal	internal/api/v1	test	done	EV-0069;EV-0070;EV-0074;F-1245;F-1248	XFI-0037;XFI-0040	Reviewed current coverage; tests miss private-destination validation and concurrent quota enforcement
 internal/api/v1/diagnostics_cursors.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/diagnostics_cursors_test.go	internal	internal/api/v1	test	todo			cold audit pending
@@ -1089,8 +1089,9 @@ internal/currency/data/seed.yaml	internal	internal/currency/data	config	todo			c
 internal/currency/doc.go	internal	internal/currency/doc.go	runtime	todo			cold audit pending
 internal/currency/verified.go	internal	internal/currency/verified.go	runtime	todo			cold audit pending
 internal/currency/verified_test.go	internal	internal/currency/verified_test.go	test	todo			cold audit pending
-internal/customerwebhook/worker.go	internal	internal/customerwebhook/worker.go	runtime	done	EV-0068;EV-0069;EV-0073;EV-0076;F-1244;F-1245;F-1247;F-1249	XFI-0036;XFI-0037;XFI-0039;XFI-0041	Reviewed HMAC-key storage contract, outbound network boundary, multi-worker duplicate delivery, and producer absence
-internal/customerwebhook/worker_test.go	internal	internal/customerwebhook/worker_test.go	test	done	EV-0069;EV-0070;F-1245	XFI-0037	Reviewed delivery worker coverage; tests do not exercise SSRF redirect/private-host controls
+internal/customerwebhook/ssrf.go	internal	internal/customerwebhook	runtime	done	EV-0096;F-1245	XFI-0037	Reviewed send-time DNS re-resolution, internal-address rejection, and redirect-defence support for webhook delivery
+internal/customerwebhook/worker.go	internal	internal/customerwebhook/worker.go	runtime	done	EV-0068;EV-0069;EV-0073;EV-0076;EV-0096;F-1244;F-1245;F-1247;F-1249	XFI-0036;XFI-0037;XFI-0039;XFI-0041	Reviewed HMAC-key storage contract, outbound network boundary, current SSRF transport hardening, multi-worker duplicate delivery, and producer absence
+internal/customerwebhook/worker_test.go	internal	internal/customerwebhook/worker_test.go	test	done	EV-0069;EV-0070;EV-0096;F-1245	XFI-0037	Reviewed delivery worker coverage and current targeted package pass after SSRF transport hardening
 internal/dispatcher/contract_call_test.go	internal	internal/dispatcher/contract_call_test.go	test	todo			cold audit pending
 internal/dispatcher/contract_event_conv_test.go	internal	internal/dispatcher/contract_event_conv_test.go	test	todo			cold audit pending
 internal/dispatcher/dispatcher.go	internal	internal/dispatcher/dispatcher.go	runtime	todo			cold audit pending
