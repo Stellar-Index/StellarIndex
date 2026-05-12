@@ -48,14 +48,27 @@ const (
 // worker calls `hmac.New(sha256.New, wh.SecretHash)` directly.
 // A hash-only design isn't possible without changing the wire
 // protocol (the receiver needs the same shared secret to verify).
-// At-rest protection is the Postgres `customer_webhooks` row's
-// standard column-encryption posture; the DB column rename is
-// tracked separately as a follow-up.
+//
+// At-rest protection: the bytes are persisted as `bytea` in the
+// `customer_webhooks.secret_hash` column WITHOUT application-
+// layer encryption. Operators rely on the database's own at-rest
+// encryption (Postgres TDE / cloud-provider disk encryption) +
+// the Redis ACL lockdown (F-1254) for defence in depth. The
+// audit (F-1244 codex 2026-05-13) explicitly called out an
+// earlier docstring that claimed a "standard column-encryption
+// posture"; that prose was misleading because no per-row
+// envelope-encryption layer ships in this repo. The current
+// posture is honest: the row IS recoverable by anyone with
+// SELECT on `customer_webhooks`.
 //
 // Customer surface: the plaintext key is returned exactly once
 // from `POST /v1/dashboard/webhooks` at creation time and never
-// served again. Re-rotation requires deleting + recreating the
-// webhook so the customer gets a fresh visible key.
+// served back through any API surface again. Re-rotation
+// requires deleting + recreating the webhook so the customer
+// gets a fresh visible key — there is NO "rotate-in-place"
+// path because every such design either re-exposes the old
+// secret to the operator-side audit log or breaks the
+// "exactly-once visibility" property the audit required.
 type CustomerWebhook struct {
 	ID        uuid.UUID
 	AccountID uuid.UUID
@@ -124,7 +137,24 @@ type WebhookStore interface {
 	UpdateWebhook(ctx context.Context, w CustomerWebhook) error
 
 	// RotateWebhookSecret replaces the signing secret. Returns
-	// the new plaintext (shown once, not stored).
+	// the new plaintext.
+	//
+	// F-1244 (codex audit-2026-05-13): the prior docstring said
+	// "shown once, not stored". That was misleading — like create,
+	// the new secret IS persisted as the canonical
+	// `customer_webhooks.secret_hash` bytea so the delivery
+	// worker can sign future requests. "Shown once" is the
+	// customer-facing visibility property: the plaintext is
+	// returned by the API call exactly once and never served
+	// back through any subsequent read. The recoverability
+	// posture is identical to Create — see the
+	// [CustomerWebhook] struct doc for the at-rest model.
+	//
+	// Note: as of 2026-05-13 the Postgres implementation of
+	// RotateWebhookSecret is intentionally not wired (callers
+	// rotate by deleting + recreating). The interface is kept
+	// in the contract so the v2 dashboard can plug the in-place
+	// rotation path without re-shaping the store boundary.
 	RotateWebhookSecret(ctx context.Context, id uuid.UUID) (newSecret string, err error)
 
 	// DeleteWebhook hard-deletes (cascades to deliveries).

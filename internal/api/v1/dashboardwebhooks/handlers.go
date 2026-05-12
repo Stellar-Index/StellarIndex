@@ -71,9 +71,20 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/dashboard/webhooks/{id}/deliveries", h.HandleListDeliveries)
 }
 
-// webhookDTO is the wire shape the dashboard reads. SecretHash is
-// never serialised — the plaintext is shown to the customer once
-// at create time + never persisted.
+// webhookDTO is the wire shape the dashboard reads.
+//
+// F-1244 (codex audit-2026-05-13): the prior docstring claimed
+// "the plaintext is shown to the customer once at create time +
+// never persisted." That mixed two distinct properties: the
+// plaintext IS persisted as the canonical
+// `customer_webhooks.secret_hash` bytea (the delivery worker
+// needs the same bytes to sign requests). The "shown once"
+// property is API-surface visibility — the plaintext is
+// returned by `POST /v1/dashboard/webhooks` exactly once and
+// never served back through any subsequent read. SecretHash
+// stays out of this DTO so the dashboard can't accidentally
+// re-expose the bytes; rotation happens by delete + recreate.
+// See [platform.CustomerWebhook] for the at-rest model.
 type webhookDTO struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
