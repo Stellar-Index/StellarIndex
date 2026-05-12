@@ -878,22 +878,30 @@ func TestPlatformPostgresStores(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				plaintext := fmt.Sprintf("rek_race_%d_%s", i, uuid.New().String()[:8])
-				hash := sha256.Sum256([]byte(plaintext))
-				// F-1263 (codex audit-2026-05-13): the ID must
-				// satisfy migration 0027's
-				// `api_keys_id_check (id ~ '^kid_[a-f0-9]{12,}$')`.
-				// `uuid.New().String()` includes hyphens, so the
-				// raw `[:12]` slice can include `-` and trip the
-				// check before the advisory-lock assertions run.
-				// Strip hyphens like every other test row in this
-				// file already does.
+				// F-1263 (codex audit-2026-05-13): both `id` and
+				// `key_prefix` have schema CHECK constraints that
+				// the prior fixture violated:
+				//
+				//   - `api_keys_id_check       (id ~ '^kid_[a-f0-9]{12,}$')`
+				//   - `api_keys_key_prefix_check (key_prefix ~ '^rek_[a-f0-9]{8}$')`
+				//
+				// `uuid.New().String()` includes hyphens; the
+				// previous `plaintext := "rek_race_%d_%s"` shape
+				// also tripped the prefix regex. Build hex-only
+				// values that match what the production
+				// `generateKeyID` / `generatePlaintext` emit, so
+				// the test reaches the actual advisory-lock
+				// assertions for F-1257.
+				hexA := strings.ReplaceAll(uuid.New().String(), "-", "")
+				hexB := strings.ReplaceAll(uuid.New().String(), "-", "")
+				plaintext := "rek_" + hexA[:8]
+				hash := sha256.Sum256([]byte(plaintext + fmt.Sprintf("-%d", i)))
 				_, err := keys.Create(ctx, platform.APIKey{
-					ID:              "kid_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
+					ID:              "kid_" + hexB[:12],
 					AccountID:       acct.ID,
 					Name:            fmt.Sprintf("k-%d", i),
 					KeyHash:         hash[:],
-					KeyPrefix:       plaintext[:12],
+					KeyPrefix:       plaintext,
 					Tier:            platform.APIKeyTierAPIKey,
 					RateLimitPerMin: 100,
 					CreatedAt:       time.Now().UTC(),

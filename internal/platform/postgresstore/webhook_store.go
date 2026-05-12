@@ -423,19 +423,21 @@ func scanDeliveryRow(s rowScanner) (platform.WebhookDelivery, error) {
 // RotateWebhookSecret replaces the signing secret. Returns the new
 // plaintext.
 //
-// F-1244 (codex audit-2026-05-13): the prior docstring claimed
-// "shown once to the customer + never stored" and that "caller
-// hashes the secret before passing it in". Both were misleading:
-// the bytes ARE persisted as the canonical
-// `customer_webhooks.secret_hash` (the delivery worker needs
-// them to sign future requests, identical to the create path),
-// and the caller-side "hash before persisting" pattern doesn't
-// exist anywhere — the field name is a historical mis-name and
-// the schema stores the live HMAC key. The "shown once"
-// property is API-surface visibility only: the plaintext is
-// returned by this call exactly once and never served back
-// through any subsequent read. See [platform.CustomerWebhook]
-// for the at-rest model.
+// At-rest model: the bytes ARE persisted as the canonical
+// `customer_webhooks.secret_hash` bytea — the delivery worker
+// reads them back to sign future requests, identical to the
+// create path. The field name is a historical misnomer
+// (originally promised hash-only persistence, the implementation
+// always stored the live HMAC key); see
+// [platform.CustomerWebhook] for the full at-rest discussion
+// including the F-1244 (codex audit-2026-05-13) reconciliation.
+//
+// Customer-facing visibility: the plaintext is returned by this
+// call exactly once and never served back through any
+// subsequent read. That one-time-visibility property is what
+// "shown once" referred to in the prior docstring; it is NOT
+// the same as "never persisted to disk", and the prior
+// conflation of the two was the gap F-1244 closed.
 //
 // Stub: today returns "" + a not-implemented error. Customers
 // rotate by deleting + recreating the webhook (which already
