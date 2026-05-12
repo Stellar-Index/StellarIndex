@@ -106,6 +106,24 @@ against.
 
 ### Added
 
+- **Depeg-scenario test wiring stablecoin late binding ↔ divergence
+  worker (F-1230).** ADR-0026's stablecoin late binding deliberately
+  conceals stablecoin↔fiat drift so XLM/USDC trades flow into the
+  same XLM/USD bucket as XLM/USDT — the divergence worker is the
+  designed safety net that fires `flags.divergence_warning` when
+  the concealed price drifts from external references. The two
+  components had no test wiring them together; nothing would catch
+  a regression that broke either side. New
+  `divergence/depeg_test.go` exercises the round-trip:
+  - **TestStablecoinDepeg_DivergenceWorkerFires** — `aggregate.ProxyTrade`
+    rewrites XLM/USDC → XLM/fiat:USD, the aggregator publishes
+    a price assuming USDC=$1, references show the true XLM/USD
+    after USDC depegged to $0.95, and the worker fires
+    WarningFired=true on the resulting ~5.3% delta.
+  - **TestStablecoinPegHolds_DivergenceWorkerStaysQuiet** — symmetric
+    negative case so a future change can't make the warning fire
+    on the steady state.
+
 - **Guard tests for two CLAUDE.md surprises (F-1242).**
   Locks behaviours that no production test previously asserted:
   - `comet.TestDecodeSwap_DispatchIsByTopicNotContract` proves
