@@ -41,7 +41,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `ratesengine_ingestion_discovery_drops` | `increase(ratesengine_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | P3 | [discovery-drops](runbooks/discovery-drops.md) |
 | `ratesengine_ingestion_insert_errors` | `rate(ratesengine_source_insert_errors_total[5m])` per (source, kind) | > 0.1/s (≈6/min) sustained 5 min | P2 | [insert-errors](runbooks/insert-errors.md) |
 | `ratesengine_external_poller_stale` | `time() - ratesengine_external_poller_last_success_unix` per source | > 1800 s for > 5 min | P2 | [external-poller-stale](runbooks/external-poller-stale.md) |
-| `ratesengine_external_poller_error_rate_high` | `rate(ratesengine_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-stale](runbooks/external-poller-stale.md) |
+| `ratesengine_external_poller_error_rate_high` | `rate(ratesengine_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
 
 Historical note: the former `ratesengine_ingestion_lag_high` alert was retired
 when the repo moved off the legacy orchestrator topology and the live indexer
@@ -57,8 +57,8 @@ signal lands.
 | `ratesengine_timescale_replica_lag` | `pg_replication_lag_seconds` on sync replica | > 5 s for > 2 min | P2 | [replica-lag](runbooks/replica-lag.md) |
 | `ratesengine_timescale_disk_full` | `(node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100` on DB vol | < 10 % | **P1** | [db-disk-full](runbooks/db-disk-full.md) |
 | `ratesengine_timescale_disk_warning` | same | < 20 % | P2 | [db-disk-full](runbooks/db-disk-full.md) |
-| `ratesengine_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | **P1** | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
-| `ratesengine_node_root_disk_warning` | same | < 20 % | P2 | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
+| `ratesengine_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | **P1** | [node-root-disk-full](runbooks/node-root-disk-full.md) |
+| `ratesengine_node_root_disk_warning` | same | < 20 % | P2 | [node-root-disk-warning](runbooks/node-root-disk-warning.md) |
 | (no active alert — surfaced via API log) | `forex: fx_quotes persist failed` log line — runtime symptom of an unapplied schema migration | repeating every ~5 min | P3 | [fx-history-missing](runbooks/fx-history-missing.md) |
 | `ratesengine_timescale_connections_saturated` | `pg_stat_activity_count / pg_settings_max_connections * 100` | > 80 % for > 5 min | P2 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `ratesengine_timescale_lock_table_pressure` | `pg_locks_count / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | P3 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
@@ -115,12 +115,12 @@ for incident-time clarity.
 
 | Name | SLO | Burn rate (× monthly budget) | Severity | Runbook |
 | ---- | --- | ---------------------------- | -------- | ------- |
-| `ratesengine_slo_latency_burn_fast` | 99.9% under 200ms | > 14.4× over 5m AND 1h | **P1** | [api-latency](runbooks/api-latency.md) |
-| `ratesengine_slo_latency_burn_medium` | same | > 6× over 30m AND 6h | **P1** | [api-latency](runbooks/api-latency.md) |
-| `ratesengine_slo_latency_burn_slow` | same | > 1× over 6h AND 24h | P3 | [api-latency](runbooks/api-latency.md) |
-| `ratesengine_slo_availability_burn_fast` | 99.99% non-5xx | > 14.4× over 5m AND 1h | **P1** | [api-5xx](runbooks/api-5xx.md) |
-| `ratesengine_slo_availability_burn_medium` | same | > 6× over 30m AND 6h | **P1** | [api-5xx](runbooks/api-5xx.md) |
-| `ratesengine_slo_availability_burn_slow` | same | > 1× over 6h AND 24h | P3 | [api-5xx](runbooks/api-5xx.md) |
+| `ratesengine_slo_latency_burn_fast` | 99.9% under 200ms | > 14.4× over 5m AND 1h | **P1** | [slo-latency-burn-fast](runbooks/slo-latency-burn-fast.md) |
+| `ratesengine_slo_latency_burn_medium` | same | > 6× over 30m AND 6h | **P1** | [slo-latency-burn-medium](runbooks/slo-latency-burn-medium.md) |
+| `ratesengine_slo_latency_burn_slow` | same | > 1× over 6h AND 24h | P3 | [slo-latency-burn-slow](runbooks/slo-latency-burn-slow.md) |
+| `ratesengine_slo_availability_burn_fast` | 99.99% non-5xx | > 14.4× over 5m AND 1h | **P1** | [slo-availability-burn-fast](runbooks/slo-availability-burn-fast.md) |
+| `ratesengine_slo_availability_burn_medium` | same | > 6× over 30m AND 6h | **P1** | [slo-availability-burn-medium](runbooks/slo-availability-burn-medium.md) |
+| `ratesengine_slo_availability_burn_slow` | same | > 1× over 6h AND 24h | P3 | [slo-availability-burn-slow](runbooks/slo-availability-burn-slow.md) |
 
 ## Stellar / node alerts
 
@@ -185,7 +185,7 @@ override.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `ratesengine_anomaly_freeze_engaged` | `ratesengine_anomaly_freeze_engaged_total` per class | rate > 0 over 5m | P3 | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
-| `ratesengine_anomaly_freeze_sustained` | `ratesengine_anomaly_freeze_engaged_total` per class | rate > 0 sustained 1h+ | **P1** | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
+| `ratesengine_anomaly_freeze_sustained` | `ratesengine_anomaly_freeze_engaged_total` per class | rate > 0 sustained 1h+ | **P1** | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 
 ## Divergence / quality alerts
 
@@ -218,7 +218,7 @@ override.
 | `ratesengine_supply_snapshot_circulating_zero` | `ratesengine_supply_snapshot_circulating_xlm{asset_key="XLM"}` | ≤ 0 for ≥ 5 min | **P2** | [supply-snapshot-circulating-zero](runbooks/supply-snapshot-circulating-zero.md) |
 | `ratesengine_aggregator_supply_refresh_stalled` | `time() - max(timestamp(ratesengine_aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min for ≥ 5 min | **P2** | [supply-refresh-stalled](runbooks/supply-refresh-stalled.md) |
 | `ratesengine_aggregator_supply_refresh_error_dominant` | error-outcome rate / total-rate | > 50% for ≥ 30 min | P3 | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
-| `ratesengine_aggregator_supply_refresh_never_initialized` | `absent_over_time(ratesengine_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | P3 | [supply-snapshot-never-initialized](runbooks/supply-snapshot-never-initialized.md) |
+| `ratesengine_aggregator_supply_refresh_never_initialized` | `absent_over_time(ratesengine_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | P3 | [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |
 
 ## Infra / host alerts
 
