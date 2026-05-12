@@ -112,6 +112,38 @@ Field semantics:
 
 Errors use RFC 9457, not this envelope (§11).
 
+### 4.1 Surface that intentionally bypasses the envelope
+
+The dashboard surface (`/v1/dashboard/keys*`, `/v1/dashboard/account`,
+`/v1/dashboard/audit`, etc.) returns bare JSON without the
+`data`/`as_of`/`flags` wrapper. This is deliberate, not drift:
+
+- **Different audience.** The envelope's flags (`stale`,
+  `divergence_warning`, etc.) describe market-data quality —
+  meaningless for "list of API keys the current session can
+  manage." Wrapping the response in an envelope just for shape
+  symmetry would add boilerplate without information.
+- **Session-scoped data, not market data.** `as_of` for a
+  session-scoped read is always "now"; sources is always empty;
+  there are no triangulation / freeze flags to carry.
+- **Distinct authentication path.** Dashboard endpoints require
+  the session cookie (`re_dash_session`); public API endpoints
+  use API keys or anonymous. Clients of the two surfaces are
+  different products (the dashboard React app vs SDKs / curl).
+
+What dashboard handlers DO preserve from the envelope contract:
+
+- `application/problem+json` errors (RFC 9457) — identical to the
+  public API.
+- `Cache-Control: no-store` on every response — session-scoped
+  data must never land in intermediate caches.
+- `X-Request-Id` correlation header.
+
+F-1235 (audit-2026-05-12) flagged the bare-JSON shape as
+inconsistency. The shape stays bare; the inconsistency is
+documented as intentional here so future contributors don't
+"fix" the perceived drift.
+
 ---
 
 ## 5. Endpoint catalogue
