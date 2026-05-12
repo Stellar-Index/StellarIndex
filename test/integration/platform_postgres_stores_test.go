@@ -7,9 +7,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -768,6 +771,154 @@ func TestPlatformPostgresStores(t *testing.T) {
 		histAfter, _ := webhooks.ListDeliveries(ctx, created.ID, 10)
 		if len(histAfter) != 0 {
 			t.Errorf("expected deliveries cascade-deleted with webhook; got %d", len(histAfter))
+		}
+	})
+
+	// F-1248 (codex audit-2026-05-12): per-account webhook quota
+	// must hold under concurrent CreateWebhook calls. Pre-fix the
+	// unlocked count-CTE allowed two snapshot-readers at n=cap-1
+	// to both insert. The advisory-lock-wrapped transaction now
+	// serialises them — verify here.
+	t.Run("WebhookStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
+		webhooks := postgresstore.NewWebhookStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "RaceCo", Slug: "race-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "race-" + uuid.New().String() + "@h.example",
+			Tier:         platform.TierStarter, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		const (
+			cap_       = 3
+			goroutines = 10
+		)
+		var (
+			wg        sync.WaitGroup
+			ok        int64
+			quotaErrs int64
+			otherErrs int64
+			start     = make(chan struct{})
+			hash      = sha256.Sum256([]byte("seekrit"))
+		)
+		for i := 0; i < goroutines; i++ {
+			wg.Add(1)
+			i := i
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := webhooks.CreateWebhook(ctx, platform.CustomerWebhook{
+					AccountID:  acct.ID,
+					Name:       fmt.Sprintf("hook-%d", i),
+					URL:        fmt.Sprintf("https://hooks.example/%d", i),
+					SecretHash: hash[:],
+					Events:     []string{string(platform.WebhookEventAnomalyFreeze)},
+					Enabled:    true,
+				}, cap_)
+				switch {
+				case err == nil:
+					atomic.AddInt64(&ok, 1)
+				case errors.Is(err, platform.ErrWebhookQuotaExceeded):
+					atomic.AddInt64(&quotaErrs, 1)
+				default:
+					atomic.AddInt64(&otherErrs, 1)
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		if got := atomic.LoadInt64(&ok); got != cap_ {
+			t.Errorf("successful creates = %d, want exactly %d (the cap)", got, cap_)
+		}
+		if got := atomic.LoadInt64(&quotaErrs); got != goroutines-cap_ {
+			t.Errorf("quota-exceeded errors = %d, want %d (cap losers)", got, goroutines-cap_)
+		}
+		if got := atomic.LoadInt64(&otherErrs); got != 0 {
+			t.Errorf("unexpected errors = %d, want 0", got)
+		}
+		listed, err := webhooks.ListWebhooksForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(listed) != cap_ {
+			t.Errorf("persisted rows = %d, want %d (the cap)", len(listed), cap_)
+		}
+	})
+
+	// F-1257 (codex audit-2026-05-12): same shape for the API key
+	// quota. Concurrent Create calls at the cap boundary must end
+	// at exactly the cap, with the losers receiving
+	// ErrAPIKeyQuotaExceeded.
+	t.Run("APIKeyStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
+		keys := postgresstore.NewAPIKeyStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "KeyRaceCo", Slug: "keyrace-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "keyrace-" + uuid.New().String() + "@k.example",
+			Tier:         platform.TierStarter, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		const (
+			cap_       = 4
+			goroutines = 12
+		)
+		var (
+			wg        sync.WaitGroup
+			ok        int64
+			quotaErrs int64
+			otherErrs int64
+			start     = make(chan struct{})
+		)
+		for i := 0; i < goroutines; i++ {
+			wg.Add(1)
+			i := i
+			go func() {
+				defer wg.Done()
+				<-start
+				plaintext := fmt.Sprintf("rek_race_%d_%s", i, uuid.New().String()[:8])
+				hash := sha256.Sum256([]byte(plaintext))
+				_, err := keys.Create(ctx, platform.APIKey{
+					ID:              "kid_" + uuid.New().String()[:12],
+					AccountID:       acct.ID,
+					Name:            fmt.Sprintf("k-%d", i),
+					KeyHash:         hash[:],
+					KeyPrefix:       plaintext[:12],
+					Tier:            platform.APIKeyTierAPIKey,
+					RateLimitPerMin: 100,
+					CreatedAt:       time.Now().UTC(),
+				}, cap_)
+				switch {
+				case err == nil:
+					atomic.AddInt64(&ok, 1)
+				case errors.Is(err, platform.ErrAPIKeyQuotaExceeded):
+					atomic.AddInt64(&quotaErrs, 1)
+				default:
+					atomic.AddInt64(&otherErrs, 1)
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		if got := atomic.LoadInt64(&ok); got != cap_ {
+			t.Errorf("successful creates = %d, want exactly %d (the cap)", got, cap_)
+		}
+		if got := atomic.LoadInt64(&quotaErrs); got != goroutines-cap_ {
+			t.Errorf("quota-exceeded errors = %d, want %d (cap losers)", got, goroutines-cap_)
+		}
+		if got := atomic.LoadInt64(&otherErrs); got != 0 {
+			t.Errorf("unexpected errors = %d, want 0", got)
+		}
+		listed, err := keys.ListForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(listed) != cap_ {
+			t.Errorf("persisted active rows = %d, want %d (the cap)", len(listed), cap_)
 		}
 	})
 }

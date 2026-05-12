@@ -136,76 +136,69 @@ func parseCIDRArray(in pq.StringArray) []netip.Prefix {
 
 // Create inserts a new key. Caller has already hashed the
 // plaintext + computed the prefix. Enforces the per-account
-// `maxActiveKeysPerAccount` cap atomically inside a CTE-gated
-// INSERT so concurrent callers at the cap boundary can't all
-// pass a handler-side precheck and each append a row past the
-// cap. F-1257 (codex audit-2026-05-12): mirrors the same atomic
-// gate pattern as F-1248's webhook quota fix. Returns
-// [platform.ErrAPIKeyQuotaExceeded] when the cap is met.
+// `maxActiveKeysPerAccount` cap atomically. F-1257 (codex audit-
+// 2026-05-12): the prior unlocked count-CTE could let two concurrent
+// callers at the cap-1 boundary each see the same snapshot (n=24)
+// and both insert under MVCC, ending at 26. Now the Create runs
+// inside a transaction guarded by
+// `pg_advisory_xact_lock(hashtext('apikey:'||account_id::text))`,
+// so concurrent calls for the same account serialise through one
+// critical section. The lock keyspace is disjoint from F-1248's
+// `'webhook:'`-prefixed keys so the two quotas don't interfere.
+// Returns [platform.ErrAPIKeyQuotaExceeded] when the cap is met.
 //
 // `maxActiveKeysPerAccount` is passed by the handler
 // (MaxKeysPerAccount = 25 at time of writing). Zero or negative
 // disables the cap (used by ratesengine-ops staff seeding).
 func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKeysPerAccount int) (platform.APIKey, error) {
-	permissionsJSON, err := encodePermissions(k.Permissions)
+	args, err := buildAPIKeyCreateArgs(k)
 	if err != nil {
-		return platform.APIKey{}, fmt.Errorf("encode permissions: %w", err)
+		return platform.APIKey{}, err
+	}
+	q := apiKeyInsertUncapped
+	if maxActiveKeysPerAccount > 0 {
+		q = apiKeyInsertCapped
+		args = append(args, maxActiveKeysPerAccount)
 	}
 
-	const qCapped = `
-		WITH active_count AS (
-		    SELECT COUNT(*) AS n
-		      FROM api_keys
-		     WHERE account_id = $2 AND revoked_at IS NULL
-		)
-		INSERT INTO api_keys (
-			id, account_id, created_by_user_id,
-			name, description,
-			key_hash, key_prefix, tier,
-			rate_limit_per_min, monthly_quota,
-			permissions,
-			ip_allowlist,
-			referer_allowlist,
-			expires_at,
-			usage_alert_threshold_pct
-		)
-		SELECT $1, $2, NULLIF($3::text, '')::uuid,
-		       $4, NULLIF($5, ''),
-		       $6, $7, $8,
-		       $9, NULLIF($10, 0)::bigint,
-		       $11::jsonb,
-		       $12::cidr[],
-		       $13::text[],
-		       $14,
-		       NULLIF($15, 0)
-		  FROM active_count
-		 WHERE active_count.n < $16
-		RETURNING ` + apiKeyColumns
+	// Uncapped path: no quota race to defend against; skip the
+	// advisory lock + tx wrapper.
+	if maxActiveKeysPerAccount <= 0 {
+		row := r.s.db.QueryRowContext(ctx, q, args...)
+		return finalizeAPIKeyCreate(scanAPIKey(row))
+	}
 
-	const qUncapped = `
-		INSERT INTO api_keys (
-			id, account_id, created_by_user_id,
-			name, description,
-			key_hash, key_prefix, tier,
-			rate_limit_per_min, monthly_quota,
-			permissions,
-			ip_allowlist,
-			referer_allowlist,
-			expires_at,
-			usage_alert_threshold_pct
-		)
-		VALUES ($1, $2, NULLIF($3::text, '')::uuid,
-		        $4, NULLIF($5, ''),
-		        $6, $7, $8,
-		        $9, NULLIF($10, 0)::bigint,
-		        $11::jsonb,
-		        $12::cidr[],
-		        $13::text[],
-		        $14,
-		        NULLIF($15, 0))
-		RETURNING ` + apiKeyColumns
+	tx, err := r.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platform.APIKey{}, fmt.Errorf("postgresstore: APIKeyStore.Create: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext('apikey:' || $1::text))`,
+		k.AccountID); err != nil {
+		return platform.APIKey{}, fmt.Errorf("postgresstore: APIKeyStore.Create: advisory lock: %w", err)
+	}
+	row := tx.QueryRowContext(ctx, q, args...)
+	out, err := finalizeAPIKeyCreate(scanAPIKey(row))
+	if err != nil {
+		return platform.APIKey{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return platform.APIKey{}, fmt.Errorf("postgresstore: APIKeyStore.Create: commit: %w", err)
+	}
+	return out, nil
+}
 
-	args := []any{
+// buildAPIKeyCreateArgs marshals the platform.APIKey fields into
+// the positional args the apiKeyInsert* statements expect. Split
+// out of [APIKeyStore.Create] so that function stays under the
+// funlen lint cap.
+func buildAPIKeyCreateArgs(k platform.APIKey) ([]any, error) {
+	permissionsJSON, err := encodePermissions(k.Permissions)
+	if err != nil {
+		return nil, fmt.Errorf("encode permissions: %w", err)
+	}
+	return []any{
 		k.ID, k.AccountID, uuidOrEmpty(k.CreatedByUserID),
 		k.Name, k.Description,
 		k.KeyHash, k.KeyPrefix, string(k.Tier),
@@ -215,27 +208,85 @@ func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKe
 		pq.StringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),
 		k.UsageAlertThresholdPct,
-	}
-	q := qUncapped
-	if maxActiveKeysPerAccount > 0 {
-		q = qCapped
-		args = append(args, maxActiveKeysPerAccount)
-	}
-
-	row := r.s.db.QueryRowContext(ctx, q, args...)
-	out, err := scanAPIKey(row)
-	if err != nil {
-		if maxActiveKeysPerAccount > 0 && errors.Is(err, sql.ErrNoRows) {
-			return platform.APIKey{}, platform.ErrAPIKeyQuotaExceeded
-		}
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
-			return platform.APIKey{}, fmt.Errorf("create api key: %w", platform.ErrConflict)
-		}
-		return platform.APIKey{}, fmt.Errorf("create api key: %w", err)
-	}
-	return out, nil
+	}, nil
 }
+
+// finalizeAPIKeyCreate maps the row-scan result to the public
+// (APIKey, sentinel-error) contract. ErrNoRows → quota exceeded,
+// unique-violation → ErrConflict, anything else → wrapped error.
+func finalizeAPIKeyCreate(out platform.APIKey, err error) (platform.APIKey, error) {
+	if err == nil {
+		return out, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.APIKey{}, platform.ErrAPIKeyQuotaExceeded
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == pgErrUniqueViolation {
+		return platform.APIKey{}, fmt.Errorf("create api key: %w", platform.ErrConflict)
+	}
+	return platform.APIKey{}, fmt.Errorf("create api key: %w", err)
+}
+
+// apiKeyInsertCapped is the gated INSERT used when the caller
+// passes maxActiveKeysPerAccount > 0. Combined with the
+// pg_advisory_xact_lock the per-account quota cannot be
+// exceeded by concurrent callers.
+const apiKeyInsertCapped = `
+	WITH active_count AS (
+	    SELECT COUNT(*) AS n
+	      FROM api_keys
+	     WHERE account_id = $2 AND revoked_at IS NULL
+	)
+	INSERT INTO api_keys (
+		id, account_id, created_by_user_id,
+		name, description,
+		key_hash, key_prefix, tier,
+		rate_limit_per_min, monthly_quota,
+		permissions,
+		ip_allowlist,
+		referer_allowlist,
+		expires_at,
+		usage_alert_threshold_pct
+	)
+	SELECT $1, $2, NULLIF($3::text, '')::uuid,
+	       $4, NULLIF($5, ''),
+	       $6, $7, $8,
+	       $9, NULLIF($10, 0)::bigint,
+	       $11::jsonb,
+	       $12::cidr[],
+	       $13::text[],
+	       $14,
+	       NULLIF($15, 0)
+	  FROM active_count
+	 WHERE active_count.n < $16
+	RETURNING ` + apiKeyColumns
+
+// apiKeyInsertUncapped is the unfenced INSERT path used by
+// staff-seeding callers that bypass the per-account cap (e.g.
+// ratesengine-ops).
+const apiKeyInsertUncapped = `
+	INSERT INTO api_keys (
+		id, account_id, created_by_user_id,
+		name, description,
+		key_hash, key_prefix, tier,
+		rate_limit_per_min, monthly_quota,
+		permissions,
+		ip_allowlist,
+		referer_allowlist,
+		expires_at,
+		usage_alert_threshold_pct
+	)
+	VALUES ($1, $2, NULLIF($3::text, '')::uuid,
+	        $4, NULLIF($5, ''),
+	        $6, $7, $8,
+	        $9, NULLIF($10, 0)::bigint,
+	        $11::jsonb,
+	        $12::cidr[],
+	        $13::text[],
+	        $14,
+	        NULLIF($15, 0))
+	RETURNING ` + apiKeyColumns
 
 func (r *APIKeyStore) Get(ctx context.Context, id string) (platform.APIKey, error) {
 	const q = `SELECT ` + apiKeyColumns + ` FROM api_keys WHERE id = $1`
