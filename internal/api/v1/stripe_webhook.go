@@ -177,6 +177,17 @@ type stripeCheckoutSession struct {
 	CurrentPeriodEnd   int64  `json:"current_period_end"`   // Unix seconds
 	CancelAtPeriodEnd  bool   `json:"cancel_at_period_end"`
 	CanceledAt         int64  `json:"canceled_at"` // Unix seconds; zero = not canceled
+
+	// invoice.paid fields below. Stripe Invoice JSON shape has its
+	// own period_start / period_end window separate from the
+	// subscription's; we reuse `Status` ("paid"/"open") and the
+	// Customer + Subscription string IDs above, plus these two
+	// extra fields for the invoice's own period (which matches
+	// the subscription's current period when this invoice is the
+	// recurring renewal). F-1219 follow-up (codex audit-2026-05-12).
+	PeriodStart int64 `json:"period_start"` // Unix seconds (invoice.paid)
+	PeriodEnd   int64 `json:"period_end"`   // Unix seconds (invoice.paid)
+	Paid        bool  `json:"paid"`         // invoice.paid → true
 }
 
 // handleStripeWebhook serves POST /v1/webhooks/stripe.
@@ -217,6 +228,15 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	switch ev.Type {
 	case "customer.subscription.updated", "customer.subscription.deleted":
 		s.handleStripeSubscriptionEvent(r.Context(), ev)
+		s.markStripeEventProcessed(r.Context(), ev.ID)
+		writeJSON(w, map[string]any{"ok": true, "applied": ev.Type}, Flags{})
+		return
+	case "invoice.paid":
+		// F-1219 final piece (codex audit-2026-05-12): recurring
+		// invoices refresh the subscription's period bounds so
+		// the dashboard surface doesn't drift to the placeholder
+		// +30d window the checkout.session.completed path stamped.
+		s.handleStripeInvoicePaid(r.Context(), ev)
 		s.markStripeEventProcessed(r.Context(), ev.ID)
 		writeJSON(w, map[string]any{"ok": true, "applied": ev.Type}, Flags{})
 		return
@@ -488,6 +508,76 @@ func (s *Server) handleStripeSubscriptionEvent(ctx context.Context, ev stripeEve
 			s.logger.Warn("stripe webhook: tier downgrade-to-free failed",
 				"event_id", ev.ID, "account_id", acct.ID, "err", err)
 		}
+	}
+}
+
+// handleStripeInvoicePaid processes invoice.paid events. Stripe
+// fires this on every successful recurring charge (monthly /
+// annual renewal). We use it to refresh the subscription row's
+// CurrentPeriod{Start,End} so the dashboard's "renews on Feb 15"
+// surface tracks the real billing cadence instead of the +30d
+// placeholder the checkout.session.completed path stamped.
+//
+// Idempotent — Stripe at-least-once delivery means the same
+// invoice.paid arrives multiple times; UpsertSubscription is
+// keyed on stripe_subscription_id and re-applies the same window
+// as a no-op. Best-effort: errors log + count but don't 5xx
+// the webhook. Returns without effect when Platform isn't wired
+// OR when the invoice doesn't reference a subscription
+// (one-shot invoices for credits, manual adjustments, etc.).
+//
+// F-1219 final piece (codex audit-2026-05-12).
+func (s *Server) handleStripeInvoicePaid(ctx context.Context, ev stripeEvent) {
+	if s.stripe == nil || s.stripe.Platform == nil {
+		return
+	}
+	bridge := s.stripe.Platform
+	obj := ev.Data.Object
+	// Subscription-less invoices (credits, manual charges) don't
+	// affect any subscription row. Acknowledge silently.
+	if obj.Subscription == "" {
+		return
+	}
+	if obj.Customer == "" || bridge.Accounts == nil || bridge.Billing == nil {
+		return
+	}
+	acct, err := bridge.Accounts.GetByStripeCustomerID(ctx, obj.Customer)
+	if err != nil {
+		s.logger.Warn("stripe webhook: invoice.paid GetByStripeCustomerID failed",
+			"event_id", ev.ID, "stripe_customer_id", obj.Customer, "err", err)
+		return
+	}
+	// invoice.paid carries the invoice's own period window; the
+	// subscription's current period matches when this invoice is
+	// the recurring renewal (the common case). period_start may
+	// be zero on a fresh invoice for a just-created subscription;
+	// fall through to the wall-clock minus one period gap by
+	// stamping the invoice's stripeNow().
+	start := time.Unix(obj.PeriodStart, 0).UTC()
+	end := time.Unix(obj.PeriodEnd, 0).UTC()
+	if obj.PeriodStart == 0 {
+		start = s.stripeNow()
+	}
+	if obj.PeriodEnd == 0 {
+		// Defensive: an invoice with no period_end is malformed
+		// for our purposes. Log + skip rather than stamp a
+		// nonsense window.
+		s.logger.Warn("stripe webhook: invoice.paid has no period_end",
+			"event_id", ev.ID, "subscription", obj.Subscription)
+		return
+	}
+	tierName := strings.ToLower(strings.TrimSpace(obj.Metadata["tier"]))
+	sub := platform.Subscription{
+		AccountID:            acct.ID,
+		StripeSubscriptionID: obj.Subscription,
+		Plan:                 stripePlanFromTier(tierName),
+		CurrentPeriodStart:   start,
+		CurrentPeriodEnd:     end,
+	}
+	if err := bridge.Billing.UpsertSubscription(ctx, sub); err != nil {
+		s.logger.Warn("stripe webhook: invoice.paid UpsertSubscription failed",
+			"event_id", ev.ID, "account_id", acct.ID,
+			"stripe_subscription_id", obj.Subscription, "err", err)
 	}
 }
 

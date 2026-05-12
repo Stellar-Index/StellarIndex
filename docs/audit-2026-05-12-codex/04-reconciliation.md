@@ -217,11 +217,23 @@ without evidence IDs.
   but the remediation is still partial: SEP41 and XLM freshness producers
   remain absent, and the classic reader intentionally degrades query
   errors back to the zero-value bypass.
+- `CMD-0113` reconciled settled `HEAD=6819e7dc...` plus the next live
+  SEP41 producer attempt. Wave 17 commits the classic storage producer,
+  but the current SEP41 workspace does not build in `./internal/supply`
+  because the fake SEP41 test store no longer satisfies the expanded
+  interface. XLM freshness production is still absent too, so `F-1236`
+  remains open.
+- `CMD-0114` reconciled settled `HEAD=fb0b3073...` plus the next live
+  Stripe webhook workspace. Wave 18 commits the SEP41 freshness producer
+  and restores the targeted supply/timescale/command test set to green,
+  but the new `invoice.paid` Stripe handler remains a dormant side path
+  because production API wiring still never sets `StripeWebhookConfig.Platform`.
+  `F-1219` therefore remains open.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when
   the repository advanced from the original `80c57e...` anchor to
-  current `65197ec0...`; `EV-0078` resolves the first count mismatch,
+  current `fb0b3073...`; `EV-0078` resolves the first count mismatch,
   `EV-0097` preserves the refresh back to `1,870` tracked rows,
   `EV-0101` restores parity after the two committed key-policy files
   increased tracked scope to `1,872`, and the latest inventory refresh
