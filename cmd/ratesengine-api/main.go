@@ -394,7 +394,20 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			// postgres connection as the dedupe store; both target
 			// the platform schema from migration 0027.
 			stripeCfg.Audit = postgresstore.NewAuditStore(pgStore)
-			logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe", "dedupe", "postgres", "audit", "postgres")
+			// F-1219 (codex audit-2026-05-12): wire the platform
+			// bridge so a successful Stripe upgrade also writes
+			// the Subscription row and bumps the account's Tier on
+			// the canonical platform stores. Without this the
+			// dashboard's view of the customer's plan stays at
+			// whatever it was before Stripe (typically Free) even
+			// though the Redis API-key budgets were lifted. Empty
+			// TierMap = the handler's default starter/pro/
+			// business/enterprise mapping.
+			stripeCfg.Platform = &v1.StripePlatformBridge{
+				Accounts: postgresstore.NewAccountStore(pgStore),
+				Billing:  postgresstore.NewBillingStore(pgStore),
+			}
+			logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe", "dedupe", "postgres", "audit", "postgres", "platform", "accounts+billing")
 		} else {
 			logger.Warn("stripe webhook wired without dedupe — Postgres absent",
 				"endpoint", "/v1/webhooks/stripe")

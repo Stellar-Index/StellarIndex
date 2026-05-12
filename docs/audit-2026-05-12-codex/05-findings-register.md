@@ -2,61 +2,50 @@
 
 Cold findings only. No prior finding is imported into this register.
 
-## Closure summary (as of 2026-05-12 end-of-day, post-/loop)
+## Closure summary (verified reconciliation snapshot, 2026-05-12)
 
-The codex audit landed 52 findings (F-1201..F-1259, minus the ones
-the codex agent itself retracted during reconciliation). The
-table below preserves each finding's original status field; the
-per-finding `Current-head reconciliation` notes carry the actual
-close-state. This summary collapses both into a single
-truth-snapshot for any post-audit consumer.
+The register below is authoritative; this summary captures the
+highest-priority items re-verified late in the audit window.
 
-**Closed by code/config + verified live on R1** (51 findings):
+- `F-1223` is fixed on live R1: the deployed Caddyfile now carries the
+  Cloudflare trusted-proxy block, forwards `{client_ip}`, and public
+  `/metrics` returns `404`.
+- `F-1201` is narrower but still open: nftables is active, UFW is
+  inactive, and the reviewed internal-service ports no longer accept
+  public traffic, yet live R1 still explicitly accepts public
+  `11726/tcp`, `stellar-core` listens there, and the live firewall shape
+  diverges from the repo template's captive-core posture.
+- `F-1205` is narrower but still open: `archive-completeness`,
+  `verify-archive-tier-a`, and `supply-snapshot` timers are now installed
+  and enabled on R1, while `sla-probe.timer` remains installed but disabled.
+- `F-1207` is narrower but still open: all three web apps now pin
+  `next@15.5.18`, CI runs `pnpm audit --audit-level high`, Dependabot npm
+  ecosystems exist for the three apps, and each current high-severity audit
+  run reports only one moderate advisory. Hosted GitHub vulnerability and
+  Dependabot alerts remain disabled.
+- `F-1219` is fixed by wave 32 (2026-05-12): `cmd/ratesengine-api/main.go` now
+  sets `stripeCfg.Platform = &v1.StripePlatformBridge{Accounts: …, Billing: …}`,
+  so a successful Stripe upgrade writes the Subscription row + bumps the
+  account's Tier on the canonical platform stores in addition to lifting
+  the Redis API-key budgets.
+- `F-1220` is fixed by wave 32 (2026-05-12): `.github/workflows/deploy.yml`
+  now runs `ansible-galaxy collection install -r configs/ansible/requirements.yml`
+  so `ansible.posix.synchronize` resolves on the deploy runner.
+- `F-1226`, `F-1236`, and `F-1258` remain open after direct source review
+  and targeted tests; recent remediation narrowed them without reaching
+  closure-grade.
 
-  F-1201 firewall · F-1202 route removal · F-1203 explorer types ·
-  F-1204 audit-public-api/llms · F-1208 alert tuning · F-1209 swap
-  mitigation · F-1210 status_root · F-1211 sev-playbook/rollback ·
-  F-1212 tier rate-limit · F-1213 USD volume gate · F-1216 CI
-  SHA-pin gate · F-1217 SEP-10 replay · F-1218 signup race · F-1219
-  Stripe → platform store · F-1220 deploy migration gate · F-1221
-  release docs · F-1222 rollback paths · F-1223 Caddyfile /metrics ·
-  F-1224 real client IP · F-1225 history fallback · F-1226 key
-  policy middleware · F-1227 migrate container · F-1228 SSE write
-  timeout · F-1229 verify-cdn script · F-1231 CI push trigger ·
-  F-1232 USDC peg-self · F-1233 SDEX V0 · F-1234 unknown-symbols
-  metric · F-1235 CEX decode metric · F-1236 supply freshness gate ·
-  F-1237 CMC ID disambig · F-1238 Redis-less startup · F-1239
-  wasm-history panic · F-1240 Docker Go toolchain · F-1241 migration
-  README · F-1242 contribution USD · F-1244 webhook secret naming ·
-  F-1245 SSRF defence · F-1246 api-design doc · F-1247 webhook race ·
-  F-1248 webhook quota race · F-1250 freeze dedupe · F-1251 FX
-  freshness · F-1252 cross-region target · F-1253 Redis ACL
-  username · F-1254 Redis ACL keys · F-1256 rate-limit docs ·
-  F-1257 api-key quota race · F-1258 Redis-less usage · F-1259
-  account/usage docs · F-1260 survivor-set MinUSDVolume gate ·
-  F-1249 incident.sev1/resolved producer · F-1255 SETNX signup
-  email-lock
+Recent waves closed by code (chronological):
 
-**Partially closed** (code + live action shipped; remaining piece
-is operator credential / arch decision):
-
-  - F-1205 — 3 of 4 evidence timers live; sla-probe needs operator-
-    minted `RATESENGINE_PROBE_API_KEY` at Partner/Operator tier
-  - F-1207 — next.js bumped + CI `pnpm audit` gate added; npm/pnpm
-    ecosystems now included in `.github/dependabot.yml` for all three
-    web apps; hosted GitHub Dependabot/vulnerability alerts admin
-    flip remains admin-UI
-
-**Open, gated on admin-UI / operator-decision-only**:
-
-  - F-1206 — launch readiness gate (multi-region R2/R3 + security
-    review + failover chaos; all out-of-loop-scope operator work)
-  - F-1214 — main branch protection (GitHub admin UI)
-  - F-1215 — production env reviewers (GitHub admin UI)
-  - F-1216 (admin half) — allowed-actions selectivity (admin UI;
-    CI gate already shipped)
-  - F-1230 — 1-year prices_1m backfill (6-12h operator-supervised
-    job; runbook + tooling all in place)
+- wave 27 — F-1207 npm/pnpm Dependabot ecosystems + F-1255 Suspend-marker
+  defence-in-depth.
+- wave 28 — F-1260 survivor-set MinUSDVolume gate.
+- wave 29 — F-1249 incident.sev1/resolved operator-triggered producer.
+- wave 30 — F-1255 SETNX-backed signup email lock (full transactional
+  first-login).
+- wave 31 — F-1203 generated explorer API types regen committed.
+- wave 32 — F-1219 Stripe platform bridge wired + F-1220 deploy ansible
+  collection install.
 
 ## Status Values
 
@@ -73,13 +62,13 @@ is operator credential / arch decision):
 
 | ID | Severity | Title | Affected Surface | Evidence | Status | Owner | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| F-1201 | critical | R1 exposes internal storage, observability, and admin services publicly while both nftables and UFW are inactive | R1 host firewall; Ansible archival-node firewall; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; EV-0019 | open | ops/security | External TCP connections succeeded to internal-service ports that repo config says should be default-deny or internal-only. |
+| F-1201 | critical | Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains | R1 host firewall; Ansible archival-node firewall; captive-core / stellar-core listener posture; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; EV-0019; EV-0113 | open | ops/security | Active nftables/default-drop now blocks the reviewed internal-service ports externally, but live R1 still permits `11726/tcp`, `stellar-core` listens publicly there, and `/etc/nftables.conf` diverges from the repo template's captive-core posture. |
 | F-1202 | high | Source API contract and deployed R1 API disagreed for removed `/v1/coins` and `/v1/currencies` surfaces | API route table; R1 deployed binary; generated API artifacts | XFI-0002; EV-0012; EV-0020; EV-0066; R1-0001 | fixed | api/release | Current R1 now returns 404 for all removed legacy routes, matching source. Keep the historical evidence because it existed earlier in the same audit window; the live mismatch itself is no longer open. |
 | F-1203 | high | Generated explorer API types remain stale and local docs verification did not catch it | `web/explorer/src/api/types.ts`; generation/docs CI | XFI-0002; EV-0007; EV-0011; EV-0013; EV-0067 | fixed | api/web/ci | The 362-line diff shrunk across earlier waves as the OpenAPI yaml drove the explorer types regen on each PR; wave 31 (2026-05-12) commits the residual ~55-line regen output (account-usage prose now reflects the live Redis counter from F-1259, and the dashboard-key rate-limit field now documents the tier-clamp from F-1256). Running `pnpm generate:api` is now a no-op on `HEAD`. |
 | F-1204 | medium | Public API audit tooling and machine-facing docs still advertise removed `/v1/coins` and `/v1/currencies` routes | `scripts/dev/audit-public-api.sh`; `web/explorer/public/llms.txt` | XFI-0002; EV-0065; EV-0066 | open | web/api/docs | Live explorer/status and smoke consumers were migrated, but the public audit script still fails 5 checks against current R1 and `llms.txt` still advertises `GET /v1/coins`. |
-| F-1205 | high | R1 is missing SLA, archive-integrity, and supply evidence timers that repo monitoring/runbooks expect | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004 | open | ops | Only smoke and heartbeat timers from Rates Engine are installed; evidence-producing timers are absent. |
+| F-1205 | high | R1 evidence-timer rollout is incomplete because `sla-probe.timer` is still disabled | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004; EV-0113 | open | ops | `archive-completeness`, `verify-archive-tier-a`, and `supply-snapshot` timers are now installed and enabled on R1, but `sla-probe.timer` is installed-disabled, so the full evidence set is still not live. |
 | F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013 | open | release/ops | Cross-region, security-review, failover-chaos, and finalisation blockers remain red. |
-| F-1207 | critical | All three public web apps still pin vulnerable `next@15.0.4`, and hosted dependency-update coverage remains incomplete | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099 | open | web/security | CI now runs `pnpm audit --audit-level high` in each web job, but the vulnerable Next pins remain, Dependabot still omits npm/pnpm ecosystems, and hosted GitHub vulnerability/Dependabot alerts are still disabled. |
+| F-1207 | critical | Hosted GitHub dependency-alert controls remain disabled after the web Next.js remediation wave | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099; EV-0114 | open | web/security | The three web apps now pin `next@15.5.18`, Dependabot npm ecosystems exist for explorer/dashboard/status, and each current `pnpm audit --audit-level high` run reports only one moderate advisory. The remaining open defect is hosted posture: repository vulnerability alerts and Dependabot alerts are still disabled. |
 | F-1208 | high | Multiple enabled ingestion sources are stopped or throttled on R1 while API health remains green | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010 | open | ingestion/ops | Prometheus shows firing source-stopped alerts for ECB/Soroswap/Band/Phoenix and pending alerts for Comet/Blend/Redstone; Coingecko 429s repeat in logs. |
 | F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010 | open | ops | Memory alert is firing at about 95.41%, swap is full, and MinIO has 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | open | api/ops | Health/ready only report process/postgres/redis ok while material ingest, latency, memory, and timer evidence failures are active. |
@@ -91,11 +80,11 @@ is operator credential / arch decision):
 | F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
 | F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails, and Redis-less deployments still skip duplicate protection entirely | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099 | open | api/security/billing | The same-email race is now closed when Redis tracking is wired, but signup still returns usable keys without email ownership proof and tracker-nil deployments still mint duplicates by design. |
-| F-1219 | high | Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112 | open | billing/platform/api | The current workspace adds `invoice.paid` subscription-window refresh on top of prior subscription-event handling, but production wiring still never sets `StripeWebhookConfig.Platform`, the webhook suite still lacks closure-grade bridge/event coverage, and Postgres dashboard-key limits are still not upgraded. |
-| F-1220 | high | Tagged deploy migration handling is still not closure-grade after the new staging path | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; EV-0103; R1-0013 | open | release/ops/db | The shared workspace now stages tag-matched migrations and adds a pre-swap migration task, but the deploy job installs only `ansible-core` while the new task uses `ansible.posix.synchronize`, which is a separate collection. The new path is not yet proven runnable end to end. |
+| F-1219 | high | Stripe paid-upgrade webhook still bypasses platform subscription and dashboard-key sources of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112 | fixed | billing/platform/api | Wave 32 (2026-05-12) sets `stripeCfg.Platform = &v1.StripePlatformBridge{Accounts: …, Billing: …}` in `cmd/ratesengine-api/main.go`, so a successful Stripe upgrade now both lifts the Redis API-key budgets AND writes the Subscription row + bumps the account's Tier through the canonical platform stores. Earlier waves had already wired `invoice.paid` subscription-window refresh and `customer.subscription.{updated,deleted}` handling. |
+| F-1220 | high | Tagged deploy migration handling is still not closure-grade after the new staging path | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; EV-0103; R1-0013 | fixed | release/ops/db | Wave 32 (2026-05-12) adds `ansible-galaxy collection install -r configs/ansible/requirements.yml` to the Install-Ansible step in `.github/workflows/deploy.yml` so `ansible.posix.synchronize` (used by the binary-staging task) resolves. The deploy job now installs the full collection set the playbook references. |
 | F-1221 | medium | Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed | Release workflow; release/deploy docs; Docker image expectations | XFI-0014; EV-0032 | open | docs/release | Operators and self-hosters are told to expect GHCR artifacts that the workflow intentionally no longer produces. |
 | F-1222 | medium | Rollback docs point operators to nonexistent `/opt/ratesengine/release-<tag>` directories instead of actual binary backups | Release process runbook; Ansible deploy backup layout; R1 sidecars | XFI-0014; EV-0032; R1-0013 | open | ops/release | Incident fallback rollback can fail because the documented artifact path is not produced by the current deploy task. |
-| F-1223 | high | R1 runs a stale Caddyfile that exposes `/metrics` publicly and collapses Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014 | open | ops/security | Source Caddy blocks `/metrics` and forwards `{client_ip}` after Cloudflare CIDR validation; R1 forwards `{remote_host}` and public `/metrics` returns HTTP 200 with internal Prometheus metrics. |
+| F-1223 | high | R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014; EV-0113 | fixed | ops/security | Current live R1 Caddy now carries the trusted-proxy/client-IP block, forwards `{client_ip}`, and public `/metrics` returns HTTP 404. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | open | dashboard/security | Login/security audit fields intended for IP/new-country signals parse `r.RemoteAddr` directly instead of the middleware-resolved remote IP. |
 | F-1225 | high | `/v1/history/since-inception` returns empty XLM/USD history while chart and direct USDC history have data | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers | XFI-0017; EV-0035; R1-0015 | open | api/market-data | Since-inception reads only literal `native/fiat:USD`; it lacks the configured USD-pegged stablecoin fallback used by chart/price/VWAP/TWAP/OHLC surfaces. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100 | open | platform/api/security | The current workspace starts wiring IP/referer/permission enforcement, but cache hits still shed the new policy fields and monthly quota plus `TouchUsage` remain unimplemented. |
@@ -183,10 +172,23 @@ Evidence:
 - `R1-0006`
 - `R1-0008`
 - `EV-0019`
+- `EV-0113`
 
 Expected: R1 should run the repo-managed nftables default-deny policy, UFW should be disabled/stopped, and internal services should be loopback-only or restricted to `internal_cidrs`.
 
-Observed: nftables is disabled/inactive with an empty ruleset; UFW is inactive; external TCP connects succeeded to MinIO, MinIO console, Prometheus, Loki, Promtail, node_exporter, Galexie admin, and captive-core port 11726.
+Observed during the initial pass: nftables was disabled/inactive with an
+empty ruleset; UFW was inactive; external TCP connects succeeded to MinIO,
+MinIO console, Prometheus, Loki, Promtail, node_exporter, Galexie admin,
+and captive-core port `11726`.
+
+Current-head reconciliation: live R1 now reports `nftables` active and
+`ufw` inactive. External probes to `9000`, `9001`, `9090`, `3100`,
+`9080`, `9100`, `6061`, and `38563` now time out instead of accepting.
+However `/etc/nftables.conf` explicitly permits
+`{11625,11626,11725,11726}`, `ss -ltnp` shows `stellar-core` listening on
+`0.0.0.0:11726`, and a public probe to `11726/tcp` still succeeds. That
+live firewall shape diverges from the repo template comments stating
+captive cores dial out and do not accept inbound.
 
 Impact: Public exposure of storage, metrics, logs, admin surfaces, and infrastructure fingerprints creates immediate attack surface and data disclosure risk.
 
@@ -212,6 +214,7 @@ Evidence:
 - `EV-0014`
 - `EV-0051`
 - `EV-0099`
+- `EV-0114`
 
 Expected: Public Next.js apps should be on patched versions, with automated pnpm updates and CI advisory gates.
 
@@ -219,7 +222,13 @@ Observed during the initial pass: all three apps pinned `next@15.0.4`; `pnpm aud
 
 Impact: Public explorer/status/dashboard surfaces inherit known RCE/auth-bypass/DoS/cache/XSS classes until upgraded. Dashboard risk is higher because it is account-facing.
 
-Current-head reconciliation: Wave 7 added `pnpm audit --audit-level high` to explorer, dashboard, and status CI jobs, so the missing CI advisory gate is no longer part of the open defect. The package pins remain vulnerable, Dependabot still does not cover npm/pnpm, and hosted GitHub vulnerability/Dependabot alerts remain disabled.
+Current-head reconciliation: the three public apps now pin
+`next@15.5.18`; `.github/dependabot.yml` includes `package-ecosystem: npm`
+entries for `/web/explorer`, `/web/dashboard`, and `/web/status`; and
+current `pnpm audit --audit-level high` runs for all three apps each report
+one moderate advisory rather than any high/critical result. The remaining
+open portion is hosted GitHub control posture: vulnerability alerts and
+Dependabot alerts are still disabled at repository level.
 
 Remediation direction: upgrade `next`/`eslint-config-next` across all web apps to a patched compatible release, regenerate lockfiles, add Dependabot npm entries for each web app, and enable GitHub vulnerability/Dependabot alerts.
 
@@ -581,7 +590,7 @@ Remediation direction: update rollback docs to use the workflow as primary and t
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -596,10 +605,22 @@ Evidence:
 - `XFI-0015`
 - `EV-0033`
 - `R1-0014`
+- `EV-0113`
 
 Expected: R1 should run the reviewed Caddyfile that resolves real client IPs from Cloudflare trusted ranges and blocks `/metrics` on the public API hostname.
 
-Observed: the live Caddyfile lacks the repo's Cloudflare `trusted_proxies`/`client_ip_headers` block, forwards `{remote_host}` as `X-Forwarded-For`, and does not block `/metrics`. External `/metrics` returned HTTP 200 with Go runtime, route-level, cache, stream, and Rates Engine metric names and values.
+Observed during the initial pass: the live Caddyfile lacked the repo's
+Cloudflare `trusted_proxies`/`client_ip_headers` block, forwarded
+`{remote_host}` as `X-Forwarded-For`, and did not block `/metrics`.
+External `/metrics` returned HTTP 200 with Go runtime, route-level, cache,
+stream, and Rates Engine metric names and values.
+
+Current-head reconciliation: live R1 `/etc/caddy/Caddyfile` now declares
+the Cloudflare trusted-proxy CIDRs, uses
+`client_ip_headers CF-Connecting-IP X-Forwarded-For`, forwards
+`X-Real-IP` and `X-Forwarded-For` from `{client_ip}`, and responds `404`
+on `/metrics`. External `curl -skI https://api.ratesengine.net/metrics`
+returns `HTTP/2 404`.
 
 Impact: anonymous clients can scrape internal operational metrics and route counters; behind Cloudflare, per-IP logging/rate limiting sees Cloudflare edge IPs rather than customers, so unrelated users on the same edge can collide in anonymous buckets.
 

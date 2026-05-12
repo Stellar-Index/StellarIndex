@@ -202,6 +202,16 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install 'ansible-core==2.18.*'
+          # F-1220 (codex audit-2026-05-12): the deploy-binary playbook
+          # uses `ansible.posix.synchronize` to stage the new binary
+          # before atomic install. `ansible-core` ships only the
+          # bundled collections; `ansible.posix` lives in Galaxy and
+          # must be installed separately. Without this step the job
+          # used to fail with "couldn't resolve module
+          # ansible.posix.synchronize" right where the deploy expects
+          # to copy the binary up. The requirements.yml file is the
+          # source of truth for ALL collections (posix, community.*).
+          ansible-galaxy collection install -r configs/ansible/requirements.yml
 
       - name: Run deploy playbook
         env:
