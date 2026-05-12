@@ -652,6 +652,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		CORS:         cors,
 		Auth:         authMW,
 		KeyPolicy:    middleware.KeyPolicy(),
+		// F-1226 (codex audit-2026-05-12): monthly-quota enforcer.
+		// Reads month-to-date counters from the same Redis Counter
+		// the UsageTracker writes. Only Postgres-backed Subjects
+		// carry MonthlyQuota; other validators leave it 0 and the
+		// middleware short-circuits per request.
+		MonthlyQuota: middleware.MonthlyQuota(usageCounter, logger.With("component", "monthly-quota")),
 		RateLimit:    rateLimit,
 		UsageTracker: middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
 		// F-1258 (codex audit-2026-05-12): only wire the UsageReader

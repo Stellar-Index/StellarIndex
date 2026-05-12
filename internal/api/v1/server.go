@@ -77,6 +77,7 @@ type Server struct {
 	auth              middleware.Middleware
 	keyPolicy         middleware.Middleware
 	rateLimit         middleware.Middleware
+	monthlyQuota      middleware.Middleware
 	usageTracker      middleware.Middleware
 	usageReader       UsageReader
 	hub               *streaming.Hub
@@ -369,6 +370,14 @@ type Options struct {
 	// blocks a request. Pair with UsageReader to expose the data.
 	UsageTracker middleware.Middleware
 
+	// MonthlyQuota, when non-nil, is inserted BEFORE rate-limit so
+	// a request that exceeds the per-key monthly cap returns 429
+	// without spending a rate-limit token. F-1226 (codex audit-
+	// 2026-05-12). Wire-up: middleware.MonthlyQuota(usageCounter,
+	// …). Skipped when nil — the cap is opt-in per validator (only
+	// Postgres-backed keys carry `Subject.MonthlyQuota`).
+	MonthlyQuota middleware.Middleware
+
 	// UsageReader, when non-nil, backs /v1/account/usage with
 	// real per-day counts. Without it the endpoint stays on its
 	// "empty list with locked wire shape" default.
@@ -552,6 +561,7 @@ func New(opts Options) *Server {
 		auth:               opts.Auth,
 		keyPolicy:          opts.KeyPolicy,
 		rateLimit:          opts.RateLimit,
+		monthlyQuota:       opts.MonthlyQuota,
 		usageTracker:       opts.UsageTracker,
 		usageReader:        opts.UsageReader,
 		hub:                opts.Hub,
@@ -676,6 +686,13 @@ func (s *Server) Handler() http.Handler {
 	// rate-limit token). F-1226 (codex audit-2026-05-12).
 	if s.keyPolicy != nil {
 		stack = append(stack, s.keyPolicy)
+	}
+	// MonthlyQuota runs AFTER auth/key-policy (so the Subject is
+	// on context) but BEFORE rate-limit (so a quota-rejected
+	// request doesn't also spend a per-minute token). F-1226
+	// (codex audit-2026-05-12).
+	if s.monthlyQuota != nil {
+		stack = append(stack, s.monthlyQuota)
 	}
 	if s.rateLimit != nil {
 		stack = append(stack, s.rateLimit)

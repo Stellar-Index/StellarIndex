@@ -142,6 +142,11 @@ type APIKeyRecord struct {
 	// platform.KeyPermissionEntry.
 	AllowPermissions []SubjectPermissionEntry `json:"allow_permissions,omitempty"`
 	DenyPermissions  []SubjectPermissionEntry `json:"deny_permissions,omitempty"`
+
+	// MonthlyQuota — when > 0, the per-key monthly request cap
+	// the runtime quota middleware enforces. Zero (the default)
+	// disables the check. F-1226 (codex audit-2026-05-12).
+	MonthlyQuota int64 `json:"monthly_quota,omitempty"`
 }
 
 // RedisOption configures a [RedisAPIKeyValidator] at construction.

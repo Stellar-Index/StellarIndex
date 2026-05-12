@@ -120,6 +120,18 @@ type Subject struct {
 	// consulted (even when AllowAllPermissions is true).
 	// F-1226 (codex audit-2026-05-12).
 	DenyPermissions []SubjectPermissionEntry
+
+	// MonthlyQuota — when > 0, the [middleware.MonthlyQuota]
+	// enforcer 429s authenticated requests for this Subject once
+	// the calendar-month request count reaches the value. Zero
+	// (the default) disables the check. F-1226 (codex audit-
+	// 2026-05-12): pre-fix the dashboard accepted this field and
+	// `/v1/account/keys` POST persisted it, but no runtime
+	// middleware enforced the cap — paid customers on metered
+	// plans could keep spending indefinitely. Populated by the
+	// Postgres-backed validator (Postgres is the only store that
+	// has this column at time of writing).
+	MonthlyQuota int64
 }
 
 // SubjectPermissionEntry mirrors platform.KeyPermissionEntry so
