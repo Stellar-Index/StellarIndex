@@ -313,7 +313,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"overall\": \"degraded\",\n    \"region\": {\n      \"name\": \"<string>\",\n      \"deployment\": \"<string>\"\n    },\n    \"services\": [\n      {\n        \"name\": \"<string>\",\n        \"status\": \"down\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"name\": \"<string>\",\n        \"status\": \"ok\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"latency\": {\n      \"p50_ms\": \"<number>\",\n      \"p95_ms\": \"<number>\",\n      \"p99_ms\": \"<number>\",\n      \"window_secs\": \"<integer>\"\n    },\n    \"freshness\": {\n      \"last_aggregator_tick\": \"<dateTime>\",\n      \"active_sources\": \"<integer>\",\n      \"total_sources\": \"<integer>\"\n    },\n    \"incidents\": {\n      \"active_count\": \"<integer>\",\n      \"page_count\": \"<integer>\",\n      \"ticket_count\": \"<integer>\",\n      \"informational_count\": \"<integer>\",\n      \"active\": [\n        {\n          \"name\": \"<string>\",\n          \"severity\": \"page\",\n          \"runbook_url\": \"<uri>\"\n        },\n        {\n          \"name\": \"<string>\",\n          \"severity\": \"informational\",\n          \"runbook_url\": \"<uri>\"\n        }\n      ]\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"overall\": \"degraded\",\n    \"region\": {\n      \"name\": \"<string>\",\n      \"deployment\": \"<string>\"\n    },\n    \"services\": [\n      {\n        \"name\": \"<string>\",\n        \"status\": \"ok\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"name\": \"<string>\",\n        \"status\": \"unknown\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"latency\": {\n      \"p50_ms\": \"<number>\",\n      \"p95_ms\": \"<number>\",\n      \"p99_ms\": \"<number>\",\n      \"window_secs\": \"<integer>\"\n    },\n    \"freshness\": {\n      \"last_aggregator_tick\": \"<dateTime>\",\n      \"active_sources\": \"<integer>\",\n      \"total_sources\": \"<integer>\"\n    },\n    \"incidents\": {\n      \"active_count\": \"<integer>\",\n      \"page_count\": \"<integer>\",\n      \"ticket_count\": \"<integer>\",\n      \"informational_count\": \"<integer>\",\n      \"active\": [\n        {\n          \"name\": \"<string>\",\n          \"severity\": \"page\",\n          \"runbook_url\": \"<uri>\"\n        },\n        {\n          \"name\": \"<string>\",\n          \"severity\": \"page\",\n          \"runbook_url\": \"<uri>\"\n        }\n      ]\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             }
@@ -370,7 +370,7 @@
                     "type": "text/plain"
                   },
                   "key": "issuer",
-                  "value": "G3QAKW56HTBTR7X57RVB5BU7H6K77MJTDECOGTCIL3TDSZ2SXE73RIPL"
+                  "value": "GSVVO5E4VXAE33CA6XX4N6ZWBMIB73VM35MWJD7FB3ECK33HXECI4VGZ"
                 },
                 {
                   "disabled": false,
@@ -379,7 +379,7 @@
                     "type": "text/plain"
                   },
                   "key": "network",
-                  "value": "base"
+                  "value": "avalanche"
                 }
               ],
               "variable": []
@@ -431,7 +431,7 @@
                         "type": "text/plain"
                       },
                       "key": "issuer",
-                      "value": "G3QAKW56HTBTR7X57RVB5BU7H6K77MJTDECOGTCIL3TDSZ2SXE73RIPL"
+                      "value": "GSVVO5E4VXAE33CA6XX4N6ZWBMIB73VM35MWJD7FB3ECK33HXECI4VGZ"
                     },
                     {
                       "disabled": false,
@@ -440,7 +440,7 @@
                         "type": "text/plain"
                       },
                       "key": "network",
-                      "value": "base"
+                      "value": "avalanche"
                     }
                   ],
                   "variable": []
@@ -462,7 +462,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"type\": \"classic\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"unreachable\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"admin_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"type\": \"fiat\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"no_match\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"type\": \"fiat\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"not_applicable\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"issuer_exclusion\",\n      \"volume_24h_usd\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"type\": \"fiat\",\n      \"code\": \"<string>\",\n      \"decimals\": \"<integer>\",\n      \"sep1_status\": \"not_applicable\",\n      \"issuer\": \"<string>\",\n      \"contract_id\": \"<string>\",\n      \"home_domain\": \"<string>\",\n      \"name\": \"<string>\",\n      \"description\": \"<string>\",\n      \"image\": \"<string>\",\n      \"org_name\": \"<string>\",\n      \"anchor_asset\": \"<string>\",\n      \"anchor_asset_type\": \"<string>\",\n      \"conditions\": \"<string>\",\n      \"fixed_number\": \"<string>\",\n      \"max_number\": \"<string>\",\n      \"is_unlimited\": \"<boolean>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"supply_basis\": \"override\",\n      \"volume_24h_usd\": \"<string>\",\n      \"unverified_warning\": {\n        \"verified_slug\": \"<string>\",\n        \"verified_asset_id\": \"<string>\",\n        \"verified_name\": \"<string>\",\n        \"note\": \"<string>\",\n        \"verified_issuer\": \"<string>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -502,7 +502,7 @@
                         "type": "text/plain"
                       },
                       "key": "issuer",
-                      "value": "G3QAKW56HTBTR7X57RVB5BU7H6K77MJTDECOGTCIL3TDSZ2SXE73RIPL"
+                      "value": "GSVVO5E4VXAE33CA6XX4N6ZWBMIB73VM35MWJD7FB3ECK33HXECI4VGZ"
                     },
                     {
                       "disabled": false,
@@ -511,7 +511,7 @@
                         "type": "text/plain"
                       },
                       "key": "network",
-                      "value": "base"
+                      "value": "avalanche"
                     }
                   ],
                   "variable": []
@@ -573,7 +573,7 @@
                         "type": "text/plain"
                       },
                       "key": "issuer",
-                      "value": "G3QAKW56HTBTR7X57RVB5BU7H6K77MJTDECOGTCIL3TDSZ2SXE73RIPL"
+                      "value": "GSVVO5E4VXAE33CA6XX4N6ZWBMIB73VM35MWJD7FB3ECK33HXECI4VGZ"
                     },
                     {
                       "disabled": false,
@@ -582,7 +582,7 @@
                         "type": "text/plain"
                       },
                       "key": "network",
-                      "value": "base"
+                      "value": "avalanche"
                     }
                   ],
                   "variable": []
@@ -671,7 +671,7 @@
                         "type": "text/plain"
                       },
                       "key": "issuer",
-                      "value": "G3QAKW56HTBTR7X57RVB5BU7H6K77MJTDECOGTCIL3TDSZ2SXE73RIPL"
+                      "value": "GSVVO5E4VXAE33CA6XX4N6ZWBMIB73VM35MWJD7FB3ECK33HXECI4VGZ"
                     },
                     {
                       "disabled": false,
@@ -680,7 +680,7 @@
                         "type": "text/plain"
                       },
                       "key": "network",
-                      "value": "base"
+                      "value": "avalanche"
                     }
                   ],
                   "variable": []
@@ -742,7 +742,7 @@
                         "type": "text/plain"
                       },
                       "key": "issuer",
-                      "value": "G3QAKW56HTBTR7X57RVB5BU7H6K77MJTDECOGTCIL3TDSZ2SXE73RIPL"
+                      "value": "GSVVO5E4VXAE33CA6XX4N6ZWBMIB73VM35MWJD7FB3ECK33HXECI4VGZ"
                     },
                     {
                       "disabled": false,
@@ -751,7 +751,7 @@
                         "type": "text/plain"
                       },
                       "key": "network",
-                      "value": "base"
+                      "value": "avalanche"
                     }
                   ],
                   "variable": []
@@ -848,7 +848,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"fiat\",\n      \"network_count\": \"<integer>\",\n      \"networks\": [\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"external\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        },\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"indexed\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        }\n      ],\n      \"verified_issuer\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    },\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"crypto\",\n      \"network_count\": \"<integer>\",\n      \"networks\": [\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"indexed\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        },\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"indexed\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        }\n      ],\n      \"verified_issuer\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"stablecoin\",\n      \"network_count\": \"<integer>\",\n      \"networks\": [\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"indexed\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        },\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"external\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        }\n      ],\n      \"verified_issuer\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    },\n    {\n      \"ticker\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"name\": \"<string>\",\n      \"class\": \"crypto\",\n      \"network_count\": \"<integer>\",\n      \"networks\": [\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"indexed\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        },\n        {\n          \"network\": \"<string>\",\n          \"data_quality\": \"external\",\n          \"asset_id\": \"<string>\",\n          \"code\": \"<string>\",\n          \"issuer\": \"<string>\",\n          \"deep_link\": \"<string>\",\n          \"contract\": \"<string>\",\n          \"external_link\": \"<string>\"\n        }\n      ],\n      \"verified_issuer\": \"<string>\",\n      \"coingecko_id\": \"<string>\",\n      \"coinmarketcap_id\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"supply_decimals\": \"<integer>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -982,7 +982,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"type\": \"soroban\",\n    \"code\": \"<string>\",\n    \"decimals\": \"<integer>\",\n    \"sep1_status\": \"verified\",\n    \"issuer\": \"<string>\",\n    \"contract_id\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"name\": \"<string>\",\n    \"description\": \"<string>\",\n    \"image\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"anchor_asset\": \"<string>\",\n    \"anchor_asset_type\": \"<string>\",\n    \"conditions\": \"<string>\",\n    \"fixed_number\": \"<string>\",\n    \"max_number\": \"<string>\",\n    \"is_unlimited\": \"<boolean>\",\n    \"circulating_supply\": \"<string>\",\n    \"total_supply\": \"<string>\",\n    \"max_supply\": \"<string>\",\n    \"price_usd\": \"<string>\",\n    \"market_cap_usd\": \"<string>\",\n    \"fdv_usd\": \"<string>\",\n    \"supply_basis\": \"override\",\n    \"volume_24h_usd\": \"<string>\",\n    \"unverified_warning\": {\n      \"verified_slug\": \"<string>\",\n      \"verified_asset_id\": \"<string>\",\n      \"verified_name\": \"<string>\",\n      \"note\": \"<string>\",\n      \"verified_issuer\": \"<string>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"type\": \"soroban\",\n    \"code\": \"<string>\",\n    \"decimals\": \"<integer>\",\n    \"sep1_status\": \"verified\",\n    \"issuer\": \"<string>\",\n    \"contract_id\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"name\": \"<string>\",\n    \"description\": \"<string>\",\n    \"image\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"anchor_asset\": \"<string>\",\n    \"anchor_asset_type\": \"<string>\",\n    \"conditions\": \"<string>\",\n    \"fixed_number\": \"<string>\",\n    \"max_number\": \"<string>\",\n    \"is_unlimited\": \"<boolean>\",\n    \"circulating_supply\": \"<string>\",\n    \"total_supply\": \"<string>\",\n    \"max_supply\": \"<string>\",\n    \"price_usd\": \"<string>\",\n    \"market_cap_usd\": \"<string>\",\n    \"fdv_usd\": \"<string>\",\n    \"supply_basis\": \"xlm_sdf_reserve_exclusion\",\n    \"volume_24h_usd\": \"<string>\",\n    \"unverified_warning\": {\n      \"verified_slug\": \"<string>\",\n      \"verified_asset_id\": \"<string>\",\n      \"verified_name\": \"<string>\",\n      \"note\": \"<string>\",\n      \"verified_issuer\": \"<string>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -1193,7 +1193,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"ticker\": \"<string>\",\n    \"slug\": \"<string>\",\n    \"name\": \"<string>\",\n    \"class\": \"fiat\",\n    \"network\": \"<string>\",\n    \"data_quality\": \"external\",\n    \"contract\": \"<string>\",\n    \"external_link\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"ticker\": \"<string>\",\n    \"slug\": \"<string>\",\n    \"name\": \"<string>\",\n    \"class\": \"stablecoin\",\n    \"network\": \"<string>\",\n    \"data_quality\": \"external\",\n    \"contract\": \"<string>\",\n    \"external_link\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -2989,7 +2989,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"twap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"twap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -3083,7 +3083,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"twap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"twap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"price_usd\": \"<string>\",\n      \"change_1h_pct\": \"<string>\",\n      \"change_7d_pct\": \"<string>\",\n      \"top_markets\": [\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"base\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        },\n        {\n          \"counterparty\": \"<string>\",\n          \"side\": \"quote\",\n          \"trade_count_24h\": \"<integer>\",\n          \"volume_24h_usd\": \"<string>\"\n        }\n      ],\n      \"price_history_24h\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"price_history_7d\": [\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        },\n        {\n          \"t\": \"<dateTime>\",\n          \"p\": \"<string>\"\n        }\n      ],\n      \"markets_count\": \"<integer>\",\n      \"trade_count_24h\": \"<integer>\",\n      \"ath\": {\n        \"usd\": \"<string>\",\n        \"at\": \"<dateTime>\"\n      },\n      \"issuer_scam_reason\": \"<string>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"market_cap_usd\": \"<string>\",\n      \"fdv_usd\": \"<string>\",\n      \"circulating_supply\": \"<string>\",\n      \"total_supply\": \"<string>\",\n      \"max_supply\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -4877,7 +4877,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     }
                   ],
                   "variable": []
@@ -4930,7 +4930,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "15m"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -5020,7 +5020,7 @@
                     "type": "text/plain"
                   },
                   "key": "granularity",
-                  "value": "15m"
+                  "value": "4h"
                 },
                 {
                   "disabled": false,
@@ -5090,7 +5090,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -5121,7 +5121,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"all\",\n    \"granularity\": \"1d\",\n    \"price_type\": \"vwap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"1w\",\n    \"granularity\": \"4h\",\n    \"price_type\": \"vwap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -5170,7 +5170,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -5250,7 +5250,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "15m"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -9034,7 +9034,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"g_strkey\": \"<string>\",\n  \"home_domain\": \"<string>\",\n  \"org_name\": \"<string>\",\n  \"auth_required\": \"<boolean>\",\n  \"auth_revocable\": \"<boolean>\",\n  \"auth_immutable\": \"<boolean>\",\n  \"auth_clawback\": \"<boolean>\",\n  \"sep1_resolved_at\": \"<dateTime>\",\n  \"sep1_payload\": {\n    \"key_0\": \"string\"\n  },\n  \"creation_ledger\": \"<integer>\",\n  \"assets\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"code\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"first_seen_ledger\": \"<integer>\",\n      \"last_seen_ledger\": \"<integer>\",\n      \"observation_count\": \"<long>\"\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"code\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"first_seen_ledger\": \"<integer>\",\n      \"last_seen_ledger\": \"<integer>\",\n      \"observation_count\": \"<long>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"g_strkey\": \"<string>\",\n  \"home_domain\": \"<string>\",\n  \"org_name\": \"<string>\",\n  \"auth_required\": \"<boolean>\",\n  \"auth_revocable\": \"<boolean>\",\n  \"auth_immutable\": \"<boolean>\",\n  \"auth_clawback\": \"<boolean>\",\n  \"sep1_resolved_at\": \"<dateTime>\",\n  \"sep1_payload\": {\n    \"key_0\": 9895.494723236523,\n    \"key_1\": \"string\"\n  },\n  \"creation_ledger\": \"<integer>\",\n  \"assets\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"code\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"first_seen_ledger\": \"<integer>\",\n      \"last_seen_ledger\": \"<integer>\",\n      \"observation_count\": \"<long>\"\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"code\": \"<string>\",\n      \"slug\": \"<string>\",\n      \"first_seen_ledger\": \"<integer>\",\n      \"last_seen_ledger\": \"<integer>\",\n      \"observation_count\": \"<long>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -9422,7 +9422,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"entity_type\": \"<string>\",\n  \"entity_id\": \"<string>\",\n  \"refreshed_at\": \"<dateTime>\",\n  \"current_value\": \"<number>\",\n  \"h1_value\": \"<number>\",\n  \"h1_delta_pct\": \"<number>\",\n  \"h24_value\": \"<number>\",\n  \"h24_delta_pct\": \"<number>\",\n  \"d7_value\": \"<number>\",\n  \"d7_delta_pct\": \"<number>\",\n  \"d30_value\": \"<number>\",\n  \"d30_delta_pct\": \"<number>\",\n  \"ath_value\": \"<number>\",\n  \"ath_at\": \"<dateTime>\",\n  \"atl_value\": \"<number>\",\n  \"atl_at\": \"<dateTime>\",\n  \"streak_direction\": \"down\",\n  \"streak_days\": \"<integer>\",\n  \"acceleration\": \"decreasing\"\n}",
+                      "body": "{\n  \"entity_type\": \"<string>\",\n  \"entity_id\": \"<string>\",\n  \"refreshed_at\": \"<dateTime>\",\n  \"current_value\": \"<number>\",\n  \"h1_value\": \"<number>\",\n  \"h1_delta_pct\": \"<number>\",\n  \"h24_value\": \"<number>\",\n  \"h24_delta_pct\": \"<number>\",\n  \"d7_value\": \"<number>\",\n  \"d7_delta_pct\": \"<number>\",\n  \"d30_value\": \"<number>\",\n  \"d30_delta_pct\": \"<number>\",\n  \"ath_value\": \"<number>\",\n  \"ath_at\": \"<dateTime>\",\n  \"atl_value\": \"<number>\",\n  \"atl_at\": \"<dateTime>\",\n  \"streak_direction\": \"flat\",\n  \"streak_days\": \"<integer>\",\n  \"acceleration\": \"increasing\"\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -10219,7 +10219,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"incidents\": [\n    {\n      \"slug\": \"<string>\",\n      \"title\": \"<string>\",\n      \"severity\": \"SEV-1\",\n      \"status\": \"identified\",\n      \"started_at\": \"<dateTime>\",\n      \"body_markdown\": \"<string>\",\n      \"resolved_at\": \"<dateTime>\",\n      \"affected_components\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"postmortem\": \"<string>\"\n    },\n    {\n      \"slug\": \"<string>\",\n      \"title\": \"<string>\",\n      \"severity\": \"SEV-2\",\n      \"status\": \"resolved\",\n      \"started_at\": \"<dateTime>\",\n      \"body_markdown\": \"<string>\",\n      \"resolved_at\": \"<dateTime>\",\n      \"affected_components\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"postmortem\": \"<string>\"\n    }\n  ],\n  \"count\": \"<integer>\"\n}",
+              "body": "{\n  \"incidents\": [\n    {\n      \"slug\": \"<string>\",\n      \"title\": \"<string>\",\n      \"severity\": \"SEV-3\",\n      \"status\": \"investigating\",\n      \"started_at\": \"<dateTime>\",\n      \"body_markdown\": \"<string>\",\n      \"resolved_at\": \"<dateTime>\",\n      \"affected_components\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"postmortem\": \"<string>\"\n    },\n    {\n      \"slug\": \"<string>\",\n      \"title\": \"<string>\",\n      \"severity\": \"SEV-2\",\n      \"status\": \"monitoring\",\n      \"started_at\": \"<dateTime>\",\n      \"body_markdown\": \"<string>\",\n      \"resolved_at\": \"<dateTime>\",\n      \"affected_components\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"postmortem\": \"<string>\"\n    }\n  ],\n  \"count\": \"<integer>\"\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -10556,7 +10556,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"authority_sanity\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"authority_sanity\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"exchange\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"subclass\": \"fx\",\n        \"trade_count_24h\": \"<integer>\"\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"exchange\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"subclass\": \"dex\",\n        \"trade_count_24h\": \"<integer>\"\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"authority_sanity\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"exchange\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"exchange\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\"\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"exchange\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"subclass\": \"fx\",\n        \"trade_count_24h\": \"<integer>\"\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -10629,7 +10629,7 @@
                     "type": "text/plain"
                   },
                   "key": "class",
-                  "value": "aggregator"
+                  "value": "exchange"
                 },
                 {
                   "disabled": false,
@@ -10672,7 +10672,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "aggregator"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -10703,7 +10703,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"aggregator\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\"\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"authority_sanity\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"oracle\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"subclass\": \"cex\",\n      \"trade_count_24h\": \"<integer>\"\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"exchange\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -10725,7 +10725,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "aggregator"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -10778,7 +10778,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "aggregator"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -10858,7 +10858,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "aggregator"
+                      "value": "exchange"
                     },
                     {
                       "disabled": false,
@@ -10964,7 +10964,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"key_0\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -11202,7 +11202,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"key_id\": \"<string>\",\n    \"label\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"anonymous\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"key_id\": \"<string>\",\n    \"label\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"partner\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -11426,7 +11426,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": [\n    {\n      \"key_id\": \"<string>\",\n      \"label\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"apikey\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\"\n    },\n    {\n      \"key_id\": \"<string>\",\n      \"label\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"apikey\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": [\n    {\n      \"key_id\": \"<string>\",\n      \"label\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"anonymous\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\"\n    },\n    {\n      \"key_id\": \"<string>\",\n      \"label\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"partner\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -12529,7 +12529,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"keys\": [\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"operator\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"apikey\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"keys\": [\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"partner\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"partner\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -13090,6 +13090,1043 @@
                   "protocolProfileBehavior": {
                     "disableBodyPruning": true
                   }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "webhooks",
+          "description": "",
+          "item": [
+            {
+              "name": "Customer dashboard — list this account's webhooks.",
+              "request": {
+                "name": "Customer dashboard — list this account's webhooks.",
+                "description": {
+                  "content": "Session-gated. Returns every webhook this account has\nregistered to receive incident / anomaly / divergence\ncallbacks, newest first. The signing secret is never\nreturned — only the URL, events, and enabled flag. F-1270.\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "dashboard",
+                    "webhooks"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "GET",
+                "body": {},
+                "auth": null
+              },
+              "response": [
+                {
+                  "name": "Webhook list.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"webhooks\": [\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.resolved\",\n        \"anomaly.freeze\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.resolved\",\n        \"divergence.firing\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No valid session cookie.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            },
+            {
+              "name": "Customer dashboard — register a new webhook.",
+              "request": {
+                "name": "Customer dashboard — register a new webhook.",
+                "description": {
+                  "content": "Session-gated. Returns the signing secret ONCE — store it\nserver-side immediately and use it to HMAC-verify the\nX-RatesEngine-Signature header on inbound POSTs. URL must\nbe https://. Owner / admin / member roles can register;\nviewer + billing 403. Capped at 10 webhooks per account.\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "dashboard",
+                    "webhooks"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "POST",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                  "options": {
+                    "raw": {
+                      "headerFamily": "json",
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": null
+              },
+              "response": [
+                {
+                  "name": "Webhook registered.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Created",
+                  "code": 201,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"webhook\": {\n    \"id\": \"<uuid>\",\n    \"name\": \"<string>\",\n    \"url\": \"<string>\",\n    \"events\": [\n      \"divergence.firing\",\n      \"anomaly.freeze\"\n    ],\n    \"enabled\": \"<boolean>\",\n    \"created_at\": \"<dateTime>\",\n    \"updated_at\": \"<dateTime>\"\n  },\n  \"secret\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Client-supplied parameters didn't validate.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No valid session cookie.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Role can't manage webhooks.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Account at the 10-webhook quota.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Conflict",
+                  "code": 409,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            },
+            {
+              "name": "{id}",
+              "description": "",
+              "item": [
+                {
+                  "name": "Customer dashboard — update a webhook.",
+                  "request": {
+                    "name": "Customer dashboard — update a webhook.",
+                    "description": {
+                      "content": "Session-gated. Patches name / url / events / enabled.\nSecretHash is immutable; rotation lives behind a separate\nendpoint when it ships.\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks",
+                        ":id"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<uuid>",
+                          "key": "id",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) ",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "PATCH",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "Updated.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"id\": \"<uuid>\",\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.sev1\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "No valid session cookie.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Unauthorized",
+                      "code": 401,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Webhook not found.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Not Found",
+                      "code": 404,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                },
+                {
+                  "name": "Customer dashboard — delete a webhook.",
+                  "request": {
+                    "name": "Customer dashboard — delete a webhook.",
+                    "description": {
+                      "content": "Session-gated. Hard-deletes the registry row and cascades\nto webhook_deliveries. Idempotent — 204 on absent.\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "webhooks",
+                        ":id"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<uuid>",
+                          "key": "id",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) ",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "DELETE",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "Deleted.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "No Content",
+                      "code": 204,
+                      "header": [],
+                      "cookie": [],
+                      "_postman_previewlanguage": "text"
+                    },
+                    {
+                      "name": "No valid session cookie.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Unauthorized",
+                      "code": 401,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                },
+                {
+                  "name": "deliveries",
+                  "description": "",
+                  "item": [
+                    {
+                      "name": "Customer dashboard — list recent delivery attempts.",
+                      "request": {
+                        "name": "Customer dashboard — list recent delivery attempts.",
+                        "description": {
+                          "content": "Session-gated. Most-recent first; up to 100 attempts.\nPowers the dashboard's delivery-log panel.\n",
+                          "type": "text/plain"
+                        },
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id",
+                            "deliveries"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id",
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              }
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {},
+                        "auth": null
+                      },
+                      "response": [
+                        {
+                          "name": "Delivery log.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "deliveries"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "OK",
+                          "code": 200,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/json"
+                            }
+                          ],
+                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"divergence.firing\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.sev1\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "No valid session cookie.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "deliveries"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Unauthorized",
+                          "code": 401,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Webhook not found.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "deliveries"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Not Found",
+                          "code": 404,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        }
+                      ],
+                      "event": [],
+                      "protocolProfileBehavior": {
+                        "disableBodyPruning": true
+                      }
+                    }
+                  ]
                 }
               ]
             }
@@ -14188,7 +15225,7 @@
     }
   ],
   "info": {
-    "_postman_id": "1c5ab73b-0b11-4d65-bee7-9294cd27f27d",
+    "_postman_id": "85167ca5-f113-4c20-b964-ef826fc1018c",
     "name": "Rates Engine API",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "description": {
