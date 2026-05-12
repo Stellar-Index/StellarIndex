@@ -1460,8 +1460,8 @@ internal/storage/timescale/supply.go	internal	internal/storage/timescale	runtime
 internal/storage/timescale/supply_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
 internal/storage/timescale/trades.go	internal	internal/storage/timescale	runtime	in_progress	EV-0135;F-1243	XFI-0035	Reviewed registry hook placement after `INSERT ... ON CONFLICT DO NOTHING` and missing rows-affected guard
 internal/storage/timescale/trades_usd_volume_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
-internal/storage/timescale/usd_fx_resolver.go	internal	internal/storage/timescale	runtime	done	EV-0080;EV-0102;F-1251	XFI-0043	Reviewed FX-anchor lookup/freshness semantics; trade-time freshness now lands but option/docs and returned NUMERIC text contract remain inconsistent
-internal/storage/timescale/usd_fx_resolver_test.go	internal	internal/storage/timescale	test	done	EV-0080;EV-0102;F-1251	XFI-0043	Reviewed direct resolver coverage; package tests pass, while the integration contract still catches unresolved FX resolver semantics
+internal/storage/timescale/usd_fx_resolver.go	internal	internal/storage/timescale	runtime	done	EV-0080;EV-0102;EV-0139;F-1251	XFI-0043	Reviewed landed trade-time freshness, NUMERIC text canonicalisation, and explicit freshness sentinel semantics; integration closure is blocked by F-1261
+internal/storage/timescale/usd_fx_resolver_test.go	internal	internal/storage/timescale	test	done	EV-0080;EV-0102;EV-0139;F-1251	XFI-0043	Reviewed direct resolver coverage for trim helpers and freshness sentinels; focused package tests pass
 internal/storage/timescale/usd_volume_quote_spec.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/supply/classic.go	internal	internal/supply/classic.go	runtime	todo			cold audit pending
 internal/supply/classic_test.go	internal	internal/supply/classic_test.go	test	todo			cold audit pending
@@ -1669,7 +1669,7 @@ test/integration/storage_test.go	test	test/integration	test	todo			cold audit pe
 test/integration/supply_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/trades_range_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/trades_usd_volume_test.go	test	test/integration	test	todo			cold audit pending
-test/integration/usd_fx_resolver_test.go	test	test/integration	test	done	EV-0080;EV-0102;F-1251	XFI-0043	Reviewed and re-executed the targeted integration; the historical lookup now succeeds but the test still fails on NUMERIC text-shape drift
+test/integration/usd_fx_resolver_test.go	test	test/integration	test	done	EV-0080;EV-0102;EV-0139;F-1251	XFI-0043	Reviewed the repaired integration expectation; tagged execution still aborts in migration 0030 before the resolver assertion runs
 test/load/README.md	test	test/load	documentation	todo			cold audit pending
 test/load/doc.go	test	test/load	runtime	todo			cold audit pending
 test/load/docker-compose.k6.yaml	test	test/load	config	todo			cold audit pending

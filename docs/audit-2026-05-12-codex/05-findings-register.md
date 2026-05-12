@@ -107,6 +107,13 @@ Recent waves closed by code (chronological):
   semantics), F-1250 (pg_advisory_xact_lock-guarded freeze
   dedupe transaction), F-1252 (verify-cross-region Make target
   exists and works).
+- wave 42 — F-1218 foundation: `auth.SignupVerifier` interface
+  + Redis-backed implementation (Reserve / Consume single-use
+  via GETDEL, `signup:verify:*` ACL namespace, 256-bit
+  crypto/rand tokens via `NewSignupVerifyToken`). 6 verifier
+  tests cover round-trip / TTL / idempotent / collision /
+  empty-input / token uniqueness. F-1218 still open pending
+  the handler + email + validator gate that layer on top.
 
 ## Status Values
 
@@ -140,7 +147,7 @@ Recent waves closed by code (chronological):
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
-| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099; EV-0127 | open | api/security/billing | The Redis-backed same-email race is now closed, and the current main binary does not mint through a Redis-less `signups == nil` path because the account store is nil too and signup returns 503. The remaining high-severity defect is still material: a valid-looking email string yields a usable plaintext Starter key with no ownership proof. |
+| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099; EV-0127 | open | api/security/billing | The Redis-backed same-email race is now closed. Wave 42 (2026-05-12) ships the foundation for the email-ownership-proof flow: new `auth.SignupVerifier` interface + `RedisSignupVerifier` impl (Reserve writes `signup:verify:<sha256(token)>` → keyID with TTL; Consume is GETDEL = single-use atomic), `auth.NewSignupVerifyToken` for crypto/rand 256-bit tokens, `signup:verify:*` added to the Redis ACL allow-list. Tests cover round-trip, TTL expiry, idempotent retry, collision rejection, empty-input rejection, token uniqueness. The remaining slices (signup-handler email send, /v1/signup/verify endpoint, optional validator gate) layer on top of this foundation in subsequent waves. |
 | F-1219 | high | Stripe paid-upgrade webhook still leaves dashboard-created Postgres API keys outside the live upgrade source of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112; EV-0130 | open | billing/platform/api | Wave 32 wires `stripeCfg.Platform = &v1.StripePlatformBridge{Accounts: …, Billing: …}` and the webhook now maintains account tier/subscription windows. The paid-upgrade path still mutates only Redis-backed legacy keys, not existing dashboard-created Postgres API keys; bridge/account/billing failures are logged best-effort after Redis mutation and the current webhook tests still do not closure-prove those platform side effects. |
 | F-1220 | high | Tagged deploy migration handling is still not closure-grade after the new staging path | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; EV-0103; R1-0013 | fixed | release/ops/db | Wave 32 (2026-05-12) adds `ansible-galaxy collection install -r configs/ansible/requirements.yml` to the Install-Ansible step in `.github/workflows/deploy.yml` so `ansible.posix.synchronize` (used by the binary-staging task) resolves. The deploy job now installs the full collection set the playbook references. |
 | F-1221 | medium | Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed | Release workflow; release/deploy docs; Docker image expectations | XFI-0014; EV-0032 | open | docs/release | Operators and self-hosters are told to expect GHCR artifacts that the workflow intentionally no longer produces. |
@@ -173,7 +180,7 @@ Recent waves closed by code (chronological):
 | F-1248 | medium | The documented ten-webhook-per-account limit was raceable; the advisory-lock remediation is not yet closure-proven because migration `0030` aborts the integration bootstrap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074; EV-0098; EV-0121 | needs_evidence | platform/webhooks | Current code wraps `CreateWebhook` in a transaction guarded by `pg_advisory_xact_lock(hashtext('webhook:'||account_id))`, and a concurrent cap test now exists. The test cannot complete yet because `go test -tags=integration ./test/integration -run TestPlatformPostgresStores -count=1` dies in migration `0030` before the quota scenario runs. |
 | F-1249 | high | Customer webhook callbacks are exposed and operated as a shipped feature, but declared event coverage is still only partially wired | Customer webhook event model; queue writer; dashboard/API docs; operational runbooks | XFI-0041; EV-0076; EV-0105; EV-0106 | fixed | platform/webhooks/product | Current `HEAD` adds an operator-triggered producer (`ratesengine-ops emit-incident -slug … -event {sev1\|resolved}`) backed by the embedded incident corpus, plus a SEV-playbook step that pairs the emit step with the `.md` deploy. `anomaly.freeze` + `divergence.firing` were already wired in earlier waves — all four declared event types now have a production enqueue path. |
 | F-1250 | medium | Freeze-event open-row dedupe is raceable, so concurrent same-pair freezes can create multiple still-firing durable rows | Freeze writer; Timescale freeze-event mirror; anomalies timeline/recovery semantics | XFI-0042; EV-0079 | fixed | aggregate/storage/anomaly | `internal/storage/timescale/freeze_events.go::RecordFreeze` runs the check + insert inside a transaction guarded by `pg_advisory_xact_lock(pairKey)` keyed on a stable hash of (asset, quote). Concurrent callers serialise through one critical section so only one open durable row exists per still-firing pair. |
-| F-1251 | high | FX-based `usd_volume` remediation is still incomplete: historical freshness is fixed, but the integration contract and zero-value freshness semantics remain inconsistent | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080; EV-0102 | fixed | storage/indexer/data-quality | Wave 40 (2026-05-12) closes both remaining halves: (1) new `trimNumericText` helper canonicalises Postgres NUMERIC-text returns (e.g. `1.085000000000000000000` → `1.085`) before the resolver returns them, matching what the integration test + downstream consumers expect. (2) `VWAPUSDFXResolverOptions.Freshness` semantics fixed: 0 = inherit 1h default (was already the actual behaviour, docstring lied), negative = disabled (new sentinel; integration test now uses `-1` instead of the previously-misleading `0`), positive = use as-is. Tests cover 10 trim cases + 3 freshness sentinels. |
+| F-1251 | high | FX-based `usd_volume` remediation now has the source fixes, but closure evidence is still blocked by migration `0030` aborting the integration proof | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080; EV-0102; EV-0139 | needs_evidence | storage/indexer/data-quality | Wave 40 (2026-05-12) lands the intended source fixes: `trimNumericText` canonicalises Postgres NUMERIC-text returns and `VWAPUSDFXResolverOptions.Freshness` now uses 0 = default 1h, negative = disabled, positive = explicit. Focused package tests pass. However, `go test -tags=integration ./test/integration -run TestVWAPUSDFXResolver_QueriesPrices1m -count=1` still aborts during migration bootstrap under `F-1261` before the FX assertion executes, so end-to-end closure remains evidence-blocked. |
 | F-1252 | medium | Multi-region cutover instructions invoke a nonexistent `make verify-cross-region` launch check | Cutover runbook; verification script; Makefile command surface | XFI-0044; EV-0082 | fixed | docs/ops/release | `Makefile::verify-cross-region` exists and shells out to `scripts/dev/verify-cross-region.sh`. An operator following the cutover runbook now gets the consistency check the docs promised. |
 | F-1253 | high | Enabling Redis ACL lockdown disables the default user, but the rendered application config never sets `redis_username`, so binaries keep authenticating on the rejected legacy path | Redis Sentinel ACL template; application config template; Redis client builder | XFI-0045; EV-0083; EV-0098 | fixed | ops/security/config | Current Ansible rendering emits the named Redis ACL username when lockdown is enabled, matching the server-side auth contract. |
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
@@ -267,7 +274,7 @@ as intentional. Preserve the external port probe as a release gate.
 
 Severity: `critical`
 
-Status: `open`
+Status: `needs_evidence`
 
 Affected surface:
 
@@ -1642,21 +1649,37 @@ Evidence:
 - `XFI-0043`
 - `EV-0080`
 - `EV-0102`
+- `EV-0139`
 
 Expected: when resolving USD volume for a trade at timestamp `T`, staleness should be evaluated relative to `T` (or another clearly documented trade-time policy), so valid historical/backfilled trades can still inherit a contemporaneous FX/VWAP anchor.
 
 Observed during the initial pass: `VWAPUSDFXResolver.queryDB` correctly found the latest peg VWAP at-or-before the supplied trade timestamp, but `USDPriceAt` rejected it using `r.clock().Sub(observedAt) > freshness`. That compared the row to wall-clock now, not to the trade timestamp. Any trade older than the one-hour default window could therefore lose Phase-2 USD enrichment even when the at-time rate existed. The same file documented `Freshness: 0` as disabling the check, while the constructor interpreted zero as "apply the 1h default"; the integration test relied on the documented disable behavior and failed with `ok=false`.
 
-Current-head reconciliation: `USDPriceAt` now evaluates `at.Sub(observedAt) > freshness`, which fixes the historical/backfill rejection path itself. The exact same targeted integration now reaches a positive lookup and fails later on contract drift instead: the resolver returns `1.08500000000000000000`, while `test/integration/usd_fx_resolver_test.go` and its comment still expect trimmed text `1.085`. The zero-value `Freshness` documentation/constructor contradiction also remains.
+Current-head reconciliation: the source-level remediation is now present.
+`USDPriceAt` evaluates `at.Sub(observedAt) > freshness`, `trimNumericText`
+canonicalises Postgres NUMERIC text before returning it, and
+`VWAPUSDFXResolverOptions.Freshness` now has unambiguous sentinel semantics:
+`0` = default 1h, negative = disabled, positive = explicit override. Focused
+package tests cover the trimming and freshness sentinels.
+
+The remaining gap is evidence-state, not source absence. The closure-grade
+integration case is now written with the repaired expectations, but
+`go test -tags=integration ./test/integration -run TestVWAPUSDFXResolver_QueriesPrices1m -count=1`
+still aborts before the resolver assertion because migration `0030` fails under
+`F-1261` during bootstrap. That leaves the end-to-end FX path unproven on a
+fully migrated integration database.
 
 Impact: historical replay, backfill, and delayed indexing can systematically under-populate `trades.usd_volume` for non-USD quotes covered by the new FX resolver. Downstream 24h volume, ranking, and transparency surfaces then understate coverage exactly where Phase 2 was intended to improve it.
 
 Reproduction or reasoning path:
 
 - `go test -tags=integration ./test/integration -run TestVWAPUSDFXResolver_QueriesPrices1m -count=1`
-- Current result: fails with `USDPriceAt = "1.08500000000000000000", want "1.085"`.
+- Current result: aborts in migration `0030` with Timescale `0A000` before the
+  resolver assertion executes.
 
-Remediation direction: retain the trade-time freshness fix, then settle the remaining API/test contract. Either normalize the returned VWAP text before exposing it or adjust the integration contract/comment to accept stable fixed-scale NUMERIC text. Separately split "unset" from "explicitly disabled" freshness semantics if zero is meant to disable checks. Keep the old-wall-clock / valid-at-trade integration and add a second case proving genuinely stale-at-trade anchors are rejected.
+Remediation direction: retain the landed source fixes, clear `F-1261`, rerun
+the FX integration proof through a fully migrated database, and keep a second
+case proving genuinely stale-at-trade anchors are rejected.
 
 ### F-1252. Multi-region cutover instructions invoke a nonexistent `make verify-cross-region` launch check
 
