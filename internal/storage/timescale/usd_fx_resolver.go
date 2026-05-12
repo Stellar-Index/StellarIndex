@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,10 +79,19 @@ type VWAPUSDFXResolverOptions struct {
 	// a no-op (every USDPriceAt returns ok=false).
 	USDPegs []string
 
-	// Freshness — max staleness for a returned rate. Default 1h.
-	// Set to 0 to disable the freshness check entirely (use only
-	// when the underlying source's per-minute cadence guarantees
-	// near-zero lag; production should always set this).
+	// Freshness — max staleness for a returned rate. Set to a
+	// negative value (e.g. -1) to DISABLE the freshness check
+	// entirely (used by tests + by deployments where the
+	// source's per-minute cadence guarantees near-zero lag). Set
+	// to 0 (the zero value) to inherit the default 1h. Set to a
+	// positive duration to override the default.
+	//
+	// F-1251 (codex audit-2026-05-12): pre-fix the docstring
+	// said "Set to 0 to disable" but the constructor's
+	// `if opts.Freshness == 0 { opts.Freshness = time.Hour }`
+	// silently turned a 0 into the 1h default, so callers who
+	// thought they'd disabled freshness were still enforcing it.
+	// The negative-disable convention removes the ambiguity.
 	Freshness time.Duration
 
 	// CacheTTL bounds the in-memory cache. Default 5 min.
@@ -99,7 +109,13 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 	if store == nil {
 		return nil, errors.New("timescale: VWAPUSDFXResolver: store is required")
 	}
-	if opts.Freshness == 0 {
+	// F-1251: 0 → default 1h; negative → disabled (sentinel 0
+	// inside the resolver so the runtime check below can stay
+	// `freshness > 0`); positive → use as-is.
+	switch {
+	case opts.Freshness < 0:
+		opts.Freshness = 0
+	case opts.Freshness == 0:
 		opts.Freshness = time.Hour
 	}
 	if opts.CacheTTL == 0 {
@@ -158,6 +174,15 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
 		return "", false, nil
 	}
+	// F-1251 (codex audit-2026-05-12): Postgres NUMERIC::text
+	// preserves the column's full scale, so a VWAP that's
+	// arithmetically `1.085` arrives here as
+	// `1.085000000000000000000`. Trim the trailing zeros (and
+	// the lone trailing decimal point) so consumers (the
+	// indexer, integration tests, the API JSON envelope) see
+	// the canonical decimal form. Mathematically equivalent;
+	// just easier to compare + display.
+	rate = trimNumericText(rate)
 	if r.freshness > 0 && at.Sub(observedAt) > r.freshness {
 		// F-1251 (codex audit-2026-05-12): staleness is measured
 		// against the TRADE timestamp `at`, not wall-clock. Pre-
@@ -198,6 +223,24 @@ func (r *VWAPUSDFXResolver) storeCache(key fxCacheKey, entry fxCacheEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cache[key] = entry
+}
+
+// trimNumericText strips trailing zeros from a Postgres NUMERIC
+// text representation. `1.085000` → `1.085`; `1.000000` → `1`;
+// `42` (no decimal) → `42`; `0.000` → `0`. Caller-friendly
+// canonical form so downstream consumers don't need to be
+// scale-aware. F-1251 (codex audit-2026-05-12).
+func trimNumericText(s string) string {
+	if !strings.ContainsRune(s, '.') {
+		return s
+	}
+	// Strip trailing zeros, then strip a lone trailing dot.
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	if s == "" || s == "-" || s == "-0" {
+		return "0"
+	}
+	return s
 }
 
 // queryDB does one prices_1m read for `<asset>/<peg>` for any peg

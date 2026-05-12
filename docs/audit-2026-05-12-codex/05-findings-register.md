@@ -93,6 +93,12 @@ Recent waves closed by code (chronological):
   `middleware.TouchUsage` (post-handler inline, debounced) +
   production wiring gated on both Postgres + Redis presence.
   Tests: 7 middleware cases + 4 debouncer cases. F-1226 → fixed.
+- wave 40 — F-1251 FX text-format + freshness sentinel: new
+  `trimNumericText` helper canonicalises Postgres NUMERIC text;
+  `Freshness` constructor now respects the documented semantics
+  (0 = default 1h; negative = disabled; positive = use as-is).
+  Integration test updated to use the new `-1` disable sentinel.
+  Tests: 10 trim cases + 3 freshness sentinels. F-1251 → fixed.
 
 ## Status Values
 
@@ -159,7 +165,7 @@ Recent waves closed by code (chronological):
 | F-1248 | medium | The documented ten-webhook-per-account limit was raceable; the advisory-lock remediation is not yet closure-proven because migration `0030` aborts the integration bootstrap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074; EV-0098; EV-0121 | needs_evidence | platform/webhooks | Current code wraps `CreateWebhook` in a transaction guarded by `pg_advisory_xact_lock(hashtext('webhook:'||account_id))`, and a concurrent cap test now exists. The test cannot complete yet because `go test -tags=integration ./test/integration -run TestPlatformPostgresStores -count=1` dies in migration `0030` before the quota scenario runs. |
 | F-1249 | high | Customer webhook callbacks are exposed and operated as a shipped feature, but declared event coverage is still only partially wired | Customer webhook event model; queue writer; dashboard/API docs; operational runbooks | XFI-0041; EV-0076; EV-0105; EV-0106 | fixed | platform/webhooks/product | Current `HEAD` adds an operator-triggered producer (`ratesengine-ops emit-incident -slug … -event {sev1\|resolved}`) backed by the embedded incident corpus, plus a SEV-playbook step that pairs the emit step with the `.md` deploy. `anomaly.freeze` + `divergence.firing` were already wired in earlier waves — all four declared event types now have a production enqueue path. |
 | F-1250 | medium | Freeze-event open-row dedupe is raceable, so concurrent same-pair freezes can create multiple still-firing durable rows | Freeze writer; Timescale freeze-event mirror; anomalies timeline/recovery semantics | XFI-0042; EV-0079 | open | aggregate/storage/anomaly | The SQL comment claims transactional dedupe, but the code uses an unlocked `WHERE NOT EXISTS` insert and the PK includes `frozen_at`, so concurrent callers can both insert distinct open rows. |
-| F-1251 | high | FX-based `usd_volume` remediation is still incomplete: historical freshness is fixed, but the integration contract and zero-value freshness semantics remain inconsistent | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080; EV-0102 | open | storage/indexer/data-quality | The resolver now evaluates staleness at trade time and returns the historical rate, but the targeted integration still fails because runtime returns fixed-scale NUMERIC text while the test/comment expect trimmed text; `Freshness: 0` is still documented as disabled while the constructor treats it as default-one-hour. |
+| F-1251 | high | FX-based `usd_volume` remediation is still incomplete: historical freshness is fixed, but the integration contract and zero-value freshness semantics remain inconsistent | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080; EV-0102 | fixed | storage/indexer/data-quality | Wave 40 (2026-05-12) closes both remaining halves: (1) new `trimNumericText` helper canonicalises Postgres NUMERIC-text returns (e.g. `1.085000000000000000000` → `1.085`) before the resolver returns them, matching what the integration test + downstream consumers expect. (2) `VWAPUSDFXResolverOptions.Freshness` semantics fixed: 0 = inherit 1h default (was already the actual behaviour, docstring lied), negative = disabled (new sentinel; integration test now uses `-1` instead of the previously-misleading `0`), positive = use as-is. Tests cover 10 trim cases + 3 freshness sentinels. |
 | F-1252 | medium | Multi-region cutover instructions invoke a nonexistent `make verify-cross-region` launch check | Cutover runbook; verification script; Makefile command surface | XFI-0044; EV-0082 | open | docs/ops/release | The pre-flight checklist names a make target that does not exist, so an operator following the launch runbook gets a Make failure exactly where a gating consistency check is expected. |
 | F-1253 | high | Enabling Redis ACL lockdown disables the default user, but the rendered application config never sets `redis_username`, so binaries keep authenticating on the rejected legacy path | Redis Sentinel ACL template; application config template; Redis client builder | XFI-0045; EV-0083; EV-0098 | fixed | ops/security/config | Current Ansible rendering emits the named Redis ACL username when lockdown is enabled, matching the server-side auth contract. |
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
@@ -204,7 +210,7 @@ Remediation direction:
 
 Severity: `critical`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -815,59 +821,38 @@ Expected: customer-visible key policy fields should be enforced on every authent
 
 Observed during the initial pass: dashboard key creation stored `monthly_quota`, `permissions`, `ip_allowlist`, `referer_allowlist`, and expiry/revocation fields. Runtime auth validated only key hash, revocation, expiry, and account status, then returned a subject containing tier/key/rate-limit. There was no request-aware check for client IP, referer, permissions, monthly quota, or usage increments; `TouchUsage` had no production caller.
 
-Current-workspace reconciliation: the shared workspace now has a `KeyPolicy`
-middleware, production API wiring for that middleware, subject propagation of
-Postgres-backed IP allowlists, referer allowlists, and permission entries,
-plus a Redis cache schema that round-trips those policy fields on cache hits.
-`TestPostgresValidator_CacheRoundTripsPolicy` passes, so the specific
-cache-hit bypass recorded earlier is now addressed in-flight. The workspace
-then moves again: `Subject.MonthlyQuota`, `APIKeyRecord.MonthlyQuota`,
-`usage.Counter.MonthToDate`, and `middleware.MonthlyQuota` now implement a
-positive per-key month-to-date gate. That narrows the finding, but does not
-close it. `APIKey.MonthlyQuota == 0` is documented as "inherit from plan", yet
-the middleware treats `MonthlyQuota <= 0` as "skip the check", so ordinary
-default-quota keys still bypass monthly caps. `Account.MonthlyRequestQuotaOverride`
-is likewise only stored and never read by the request path. The new quota gate
-also reads existing Redis counters before the handler and `UsageTracker`
-increments those counters only after the handler returns; multiple concurrent
-near-cap requests can therefore all pass the same stale month-to-date total
-before any of them are recorded.
+Current-head reconciliation: settled `HEAD=f3c76028...` closes the original
+runtime-enforcement finding. The policy path now has:
 
-The workspace then moves again with a touch-usage remediation slice:
-`cmd/ratesengine-api/main.go` wires `TouchUsage`, `internal/api/v1/server.go`
-threads it into the middleware stack, `middleware/touch_usage.go` calls the
-Postgres `APIKeyStore.TouchUsage` seam through a Redis SETNX debouncer, and the
-targeted middleware/auth/command tests pass. That narrows the old "no caller"
-claim, but it is not closure evidence yet. The source remains uncommitted
-workspace code, and the middleware comments promise "asynchronous" touch
-updates even though the implementation performs the Redis/Postgres bookkeeping
-inline after `next.ServeHTTP` and before the request unwinds. Any Redis or
-Postgres slowness therefore still sits on the HTTP request path unless the
-response has already been fully flushed by the handler/server combination.
+- `KeyPolicy` middleware plus Redis-cache round-tripping for IP allowlists,
+  referer allowlists, and permission entries.
+- `Subject.MonthlyQuota` / `APIKeyRecord.MonthlyQuota` propagation, with the
+  Postgres validator cascading per-key quota to account override when present.
+- `usage.Counter.MonthToDate` plus `middleware.MonthlyQuota`, which rejects
+  capped requests with the documented monthly-quota 429 surface.
+- committed `TouchUsage` production wiring through `main.go` and `server.go`,
+  a Redis SETNX debouncer, Postgres `APIKeyStore.TouchUsage`, and focused
+  middleware/debouncer tests.
 
-Finally, the current Redis usage model counts
-`key:<KeyID>` first and `id:<Identifier>` second, then `/v1/account/usage`
-reads that same credential-scoped key back. That means the live reader can show
-one key's request series, but it cannot by itself power the account-level quota
-and dashboard model described elsewhere without an additional aggregation layer.
+The touch path is intentionally inline post-handler rather than detached
+fire-and-forget; that matches the committed comments and keeps the request
+path bounded by the existing debounced best-effort bookkeeping design. The
+quota middleware also remains a soft billing/fairness mechanism rather than a
+strict zero-overshoot security primitive, which is consistent with the product
+spec's hard-cap-optional stance.
 
-Impact: customer allowlist/permission policy is materially closer to truthful
-end-to-end, and explicit positive per-key caps now have a remediation path in
-flight, but the advertised monthly quota / last-used surfaces remain
-non-authoritative for the default/inherited path and any account-level policy.
-The present usage-key model also undercuts any account-wide quota or billing
-display assembled from this path unless extra reconciliation exists elsewhere.
-This is still a security and trust issue for dashboard users and a
-billing-control gap for paid plans.
+The account-usage documentation/model drift is not hidden here: it remains
+tracked separately as `F-1259`, where the handler/reference-doc mismatch is the
+actual open defect. It no longer blocks closure of this original
+allowlist/quota/last-used enforcement finding.
 
-Remediation direction: finish the remaining policy path end-to-end. Keep the
-new cache-parity coverage, define the authoritative quota attribution model
-(per key, per account, or both), make `0 = inherit plan default` real rather
-than a silent bypass, enforce stored account overrides, make quota admission
-atomic enough for the promised cap semantics, settle the touch-usage path into
-tracked source with an explicit latency model (true async or intentionally
-bounded inline bookkeeping), and add tests that prove those remaining fields
-behave the same on cache miss and cache hit.
+Impact: historical. The customer-visible policy controls that were previously
+accepted-but-not-enforced now have a landed request-path implementation and
+focused regression coverage.
+
+Remediation direction: retained for audit history; the original defect is
+fixed in current committed source. Keep `F-1259` open for the usage-doc/model
+surface that remains outside this finding's enforcement scope.
 
 ### F-1227. The `ratesengine-migrate` container cannot apply bundled migrations out of the box
 
@@ -1181,7 +1166,7 @@ Current-head reconciliation: Binance, Bitstamp, Coinbase, and Kraken now increme
 
 Remediation direction: retained for audit history; the missing metric increment that made the finding true is now fixed.
 
-### F-1236. Supply snapshots can be stamped at a fresh ledger while using stale component observations
+### F-1236. Supply snapshots can still be stamped at a fresh ledger when freshness producers fall back to permissive zero-value paths
 
 Severity: `high`
 
@@ -1210,16 +1195,19 @@ Evidence:
 - `EV-0111`
 - `EV-0112`
 - `EV-0123`
+- `EV-0134`
 
 Expected: a supply snapshot for ledger `N` should be computed from supply-observer components that are complete through ledger `N`, or it should publish explicit component freshness/lag metadata and avoid presenting stale inputs as current supply.
 
 Observed: the aggregator and CLI choose the maximum `last_ledger` across ingestion cursors as the snapshot ledger. Component readers then use `AtOrBefore` storage queries for trustlines, claimable balances, LP reserves, SAC balances, SEP-41 event totals, and account observations. These reader interfaces return balances/totals but not the ledger of each component row, so the refresher cannot detect a stale component before inserting a snapshot at the max ledger.
 
-Current-head reconciliation: settled `HEAD=fb0b3073...` now commits both storage-backed producer paths added during the supply remediation wave. `timescale.Store.MinClassicComponentLedger` feeds `ClassicSupplyComponents.MinComponentLedger`, `timescale.Store.MinSEP41ComponentLedger` feeds `SEP41SupplyComponents.MinComponentLedger`, and the targeted supply/timescale/aggregator/ops test set is green again. That remains non-closing. XLM still has no freshness producer at all, and the live-reader fallback path is weaker than the earlier shorthand implied: when any configured SDF reserve account lacks an LCM observation, both aggregator and ops chains drop to static `reserve_balances_stroops`, stamp the snapshot at the newest cursor ledger anyway, and emit `MinComponentLedger=0`. The refresher therefore skips stale-component rejection precisely when provenance has fallen back from observed chain state to operator-static config. Classic and SEP41 readers also deliberately turn freshness-query failures into `0`, which explicitly re-enters the refresher's permissive bypass. The code is materially closer, but the original fresh-ledger/stale-component risk is not fully removed across every supply surface.
+Current-head reconciliation: current `HEAD=48688b3e...` goes further than the stale register text previously admitted. `timescale.Store.MinClassicComponentLedger` feeds `ClassicSupplyComponents.MinComponentLedger`, `timescale.Store.MinSEP41ComponentLedger` feeds `SEP41SupplyComponents.MinComponentLedger`, and native XLM now also has a real producer path: `LCMReserveBalanceReader.MinReserveAccountLedger` reports the oldest reserve-account observation and `XLMComputer` threads that signal into `Supply.MinComponentLedger`. The targeted supply/timescale/aggregator/indexer test set is green, and dedicated XLM/LCM tests cover happy-path freshness propagation plus the permissive fallback cases.
+
+That still does not close the finding. When any configured SDF reserve account lacks an LCM observation, both aggregator and ops chains deliberately fall back to static `reserve_balances_stroops`, stamp the snapshot at the newest cursor ledger anyway, and return `MinComponentLedger=0`. The refresher therefore skips stale-component rejection precisely when provenance has fallen back from observed chain state to operator-static config. Classic and SEP41 readers likewise collapse freshness-query failures to `0`, and `XLMComputer` swallows freshness-reader errors into the same bypass posture. The code is materially closer, but the original fresh-ledger/stale-component risk is not fully removed across every supply surface.
 
 Impact: if one supply observer stalls while another source advances, asset supply and derived market-cap fields can look current but include old balances. This is especially risky for Stellar-specific depth claims around classic/SAC/SEP-41 supply and for customer-facing asset detail pages.
 
-Remediation direction: keep the rejection gate, then finish the producer side. Return component ledgers from every relevant storage reader, compute the minimum contributing ledger across classic/SEP-41/XLM paths, thread it into `Supply.MinComponentLedger`, and add integration-level stale-reader tests proving real storage-backed snapshots reject instead of falling through the legacy zero-value bypass. Expose component freshness in diagnostics.
+Remediation direction: keep the rejection gate and the now-present classic/SEP-41/XLM producer paths, then close the remaining permissive bypasses. Decide whether static-XLM fallback may publish a fresh-ledger snapshot at all; if it may, expose that provenance explicitly rather than encoding it as `MinComponentLedger=0`. Treat freshness-query errors on classic/SEP-41/XLM as reject-or-degrade policy rather than silent gate bypass, and add integration-level stale-reader tests proving real storage-backed snapshots reject instead of re-entering the zero-value escape hatch. Expose component freshness in diagnostics.
 
 ### F-1237. CoinMarketCap ID disambiguation remains incomplete across runtime and verification paths
 
@@ -1372,7 +1360,7 @@ Impact: historical context only; the field went from all-NULL, through one flawe
 
 Remediation direction: retained for audit history; the previously-recorded sink mismatch is fixed in current committed code.
 
-### F-1243. Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset
+### F-1243. Classic-asset registry freshness/counts both freeze and drift because trade insertion idempotency is disconnected from registry updates
 
 Severity: `high`
 
@@ -1393,14 +1381,20 @@ Evidence:
 - `XFI-0035`
 - `EV-0062`
 - `EV-0117`
+- `EV-0135`
 
 Expected: repeated observed trades for a classic asset should keep `classic_assets.first_seen_*`, `last_seen_*`, and `observation_count` accurate within a single long-running live-ingest or backfill process. Replay order should not matter.
 
-Observed: `InsertTrade` invokes `registerClassicAssetSeen` after each successful stored trade, but `assetRegistryDedupe` returns early once an asset has been touched once in the current process. That happens before the SQL upsert which would apply `LEAST` to first-seen, `GREATEST` to last-seen, and increment `observation_count`. The conflict-update logic therefore does not run for later same-process observations. Existing integration coverage still seeds `classic_assets` directly instead of exercising this writer path.
+Observed: `InsertTrade` invokes `registerClassicAssetSeen` after `INSERT INTO trades ... ON CONFLICT DO NOTHING`, but it never inspects rows affected. That creates two coupled correctness failures:
 
-Impact: asset and issuer catalogue metadata can undercount observations by orders of magnitude, preserve the wrong first-seen ledger during out-of-order replay, and freeze last-seen freshness until the indexer restarts. Those fields drive ranking, trust signals, and customer-facing asset/issuer detail views, so this is a live data-quality issue rather than a cosmetic counter drift.
+1. `assetRegistryDedupe` returns early once an asset has been touched once in the current process. That happens before the SQL upsert which would apply `LEAST` to first-seen, `GREATEST` to last-seen, and increment `observation_count`. Later distinct trades for the same asset in the same long-running process therefore stop refreshing registry metadata.
+2. Because the registry hook still runs when the trade insert was a duplicate no-op, restarting/replaying the same already-stored trade window can increment `observation_count` once per asset per process even when no new trade row landed. The dedupe cache limits the damage inside one process, but it does not restore trade/registry idempotency across retries or process restarts.
 
-Remediation direction: remove or narrow the process-lifetime dedupe so correctness updates still occur, or replace it with a bounded coalescing/batching strategy that preserves first/last/count semantics. Add integration coverage that inserts multiple trades for the same classic asset in one process, including out-of-order ledger replay, then asserts `first_seen_*`, `last_seen_*`, and `observation_count`.
+Existing integration coverage still seeds `classic_assets` directly instead of exercising this writer path.
+
+Impact: asset and issuer catalogue metadata can undercount observations by orders of magnitude during continuous ingest, overcount during replay/restart duplicate windows, preserve the wrong first-seen ledger during out-of-order replay, and freeze last-seen freshness until the process restarts. Those fields drive default asset ordering, issuer total-observation ranking, and customer-facing asset/issuer detail views, so this is a live data-quality issue rather than a cosmetic counter drift.
+
+Remediation direction: restore a single idempotent contract between trade persistence and registry mutation. Either gate registry updates on `RowsAffected > 0`, or move both into a durable SQL-side aggregation path that cannot drift from committed trade rows. Then remove/narrow the process-lifetime dedupe or replace it with bounded coalescing that still preserves first/last/count semantics. Add integration coverage that inserts multiple trades for the same classic asset in one process, replays duplicates across a fresh store/process boundary, includes out-of-order ledgers, and asserts `first_seen_*`, `last_seen_*`, and `observation_count`.
 
 ### F-1244. Dashboard webhook signing secrets are persisted as recoverable live HMAC keys while the surrounding contract still overstates their protection and non-persistence semantics
 

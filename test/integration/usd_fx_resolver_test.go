@@ -55,8 +55,13 @@ func TestVWAPUSDFXResolver_QueriesPrices1m(t *testing.T) {
 
 	// Resolver with USDC's classic asset key on the peg list.
 	resolver, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
-		USDPegs:   []string{"USDC-" + usdcIssuer},
-		Freshness: 0, // disable freshness for deterministic tests
+		USDPegs: []string{"USDC-" + usdcIssuer},
+		// F-1251 (codex audit-2026-05-12): -1 = freshness check
+		// disabled. The previous `0` form was silently overridden
+		// to the 1h default by the constructor, which still happened
+		// to pass for this test (1m gap < 1h) but would fail any
+		// historical-replay test where the trade was older than 1h.
+		Freshness: -1,
 	})
 	if err != nil {
 		t.Fatalf("NewVWAPUSDFXResolver: %v", err)

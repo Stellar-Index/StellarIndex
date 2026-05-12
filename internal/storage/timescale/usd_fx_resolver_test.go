@@ -168,3 +168,62 @@ func TestVWAPUSDFXResolver_MinuteBucketKey(t *testing.T) {
 		})
 	}
 }
+
+// TestTrimNumericText — Postgres NUMERIC::text preserves the
+// column's full scale, so a VWAP arithmetically equal to 1.085
+// arrives as `1.085000000000000000000`. The resolver canonicalises
+// before returning so consumers see the human-friendly form.
+// F-1251 (codex audit-2026-05-12).
+func TestTrimNumericText(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"1.085000", "1.085"},
+		{"1.085000000000000000000", "1.085"},
+		{"1.000000", "1"},
+		{"42", "42"},
+		{"42.0", "42"},
+		{"0.000", "0"},
+		{"0.5", "0.5"},
+		{"100.500", "100.5"},
+		{"-1.500", "-1.5"},
+		{"-0.0", "0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := trimNumericText(tc.in); got != tc.want {
+				t.Errorf("trimNumericText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVWAPUSDFXResolver_FreshnessSentinels — F-1251 sentinel
+// semantics: 0 → default 1h; negative → disabled; positive →
+// use as-is. Pre-fix the docstring claimed "0 = disable" but
+// the constructor silently overrode 0 to 1h.
+func TestVWAPUSDFXResolver_FreshnessSentinels(t *testing.T) {
+	cases := []struct {
+		name string
+		in   time.Duration
+		want time.Duration
+	}{
+		{"zero defaults to 1h", 0, time.Hour},
+		{"negative disables", -1, 0},
+		{"explicit positive used", 30 * time.Minute, 30 * time.Minute},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+				USDPegs:   []string{"USDC-G..."},
+				Freshness: tc.in,
+			})
+			if err != nil {
+				t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+			}
+			if r.freshness != tc.want {
+				t.Errorf("freshness = %v, want %v", r.freshness, tc.want)
+			}
+		})
+	}
+}

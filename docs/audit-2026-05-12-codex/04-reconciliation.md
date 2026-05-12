@@ -281,6 +281,14 @@ without evidence IDs.
   in the current workspace: the new `touch:apikey:*` Redis family is also
   present in the rendered Redis ACL template. That coherence check is useful,
   but both sides are still moving workspace edits rather than landed closure.
+- `CMD-0135` corrects stale `F-1236` wording against current source: native
+  XLM now has a genuine freshness producer, so the open defect is specifically
+  the remaining zero-value escape hatch on static fallback and freshness-query
+  failure paths, not total absence of XLM producer coverage.
+- `CMD-0136` strengthens `F-1243`: the classic-asset registry still freezes
+  same-process freshness/count updates, and the trade insert path can also
+  overcount on duplicate replay because registry mutation is not conditioned
+  on whether `INSERT ... ON CONFLICT DO NOTHING` actually inserted a row.
 - `CMD-0121` preserved `F-1228` as a source/live drift issue: the SSE deadline
   fix exists in code, yet the public R1 stream still terminates around the
   former 30-second cutoff.
