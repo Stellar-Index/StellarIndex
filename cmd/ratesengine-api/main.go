@@ -643,18 +643,25 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// (24h trades-hypertable scan grouped by source) take 5-10s;
 		// the explorer hits these on every /dexes + /exchanges page
 		// load. 60s freshness is plenty for a 24h-trailing aggregate.
-		SourcesStats:       cachedSourcesStats,
-		Lending:            store,
-		Currencies:         newForexAdapter(forexCache),
-		FXHistory:          &fxHistoryReader{store: store},
-		SEP10:              sep10Validator,
-		Hub:                hub,
-		CORS:               cors,
-		Auth:               authMW,
-		KeyPolicy:          middleware.KeyPolicy(),
-		RateLimit:          rateLimit,
-		UsageTracker:       middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
-		UsageReader:        usageReaderAdapter{c: usageCounter},
+		SourcesStats: cachedSourcesStats,
+		Lending:      store,
+		Currencies:   newForexAdapter(forexCache),
+		FXHistory:    &fxHistoryReader{store: store},
+		SEP10:        sep10Validator,
+		Hub:          hub,
+		CORS:         cors,
+		Auth:         authMW,
+		KeyPolicy:    middleware.KeyPolicy(),
+		RateLimit:    rateLimit,
+		UsageTracker: middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
+		// F-1258 (codex audit-2026-05-12): only wire the UsageReader
+		// adapter when the underlying counter is real. Pre-fix we
+		// passed `usageReaderAdapter{c: nil}` even on Redis-less
+		// deployments, which then nil-deref'd on the first
+		// `/v1/account/usage` call. The handler short-circuits on
+		// `usageReader == nil` with an empty list, which is the
+		// correct "Redis absent → no usage data" shape.
+		UsageReader:        usageReaderOrNil(usageCounter),
 		CDNEnabled:         cfg.API.CDNEnabled,
 		StatusBackend:      statusBackend,
 		RegionName:         cfg.Region.ID,
@@ -2198,6 +2205,19 @@ func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string)
 			"auth_mode", authMode,
 			"docs", "https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/pre-launch-hardening.md")
 	}
+}
+
+// usageReaderOrNil returns a v1.UsageReader bound to `c` when
+// `c` is non-nil, and a typed-nil v1.UsageReader otherwise. The
+// `/v1/account/usage` handler treats `UsageReader == nil` as
+// "no usage backend wired" and returns an empty list — the
+// correct degradation when Redis is absent. F-1258 (codex
+// audit-2026-05-12).
+func usageReaderOrNil(c *usage.Counter) v1.UsageReader {
+	if c == nil {
+		return nil
+	}
+	return usageReaderAdapter{c: c}
 }
 
 // usageReaderAdapter bridges *usage.Counter to v1.UsageReader so
