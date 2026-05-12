@@ -206,6 +206,8 @@ override.
 | `ratesengine_aggregator_class_drop_spike` | `rate(ratesengine_aggregator_dropped_trades_total{reason="class"}[10m])` | > 10× baseline (offset 1h) for > 15 min | P3 | [aggregator-class-drop-spike](runbooks/aggregator-class-drop-spike.md) |
 | `ratesengine_aggregator_fx_snap_fallback_dominant` | `rate(ratesengine_aggregator_fx_snap_fallback_total[15m]) / rate(ratesengine_aggregator_triangulations_total{outcome="ok"}[15m])` | > 0.5 for > 30 min | P3 | [aggregator-fx-snap-fallback-dominant](runbooks/aggregator-fx-snap-fallback-dominant.md) |
 | `ratesengine_aggregator_cache_write_errors` | `rate(ratesengine_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | **P1** | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
+| `ratesengine_customer_webhook_delivery_failing` | `rate(ratesengine_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.1/s for ≥ 15 min | P3 | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
+| `ratesengine_customer_webhook_delivery_exhausted` | `rate(ratesengine_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0 for ≥ 1h | informational | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 
 ## Supply alerts
 

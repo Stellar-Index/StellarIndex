@@ -75,6 +75,19 @@ against.
   closed name set, the tailored error path, and the unchanged
   WASM-audit gate.
 
+### Added
+
+- **Customer-webhook delivery alerts + runbook (F-1270 follow-up).**
+  Two new Prometheus alerts wired into both the multi-host and R1
+  rules: `_delivery_failing` (P3) fires when 5xx + network-error
+  attempts exceed 0.1/s for 15+ min (single-customer outage);
+  `_delivery_exhausted` (informational) fires when a delivery hits
+  the 15-attempt retry budget. New `customer-webhook-delivery-failing.md`
+  runbook covers the SQL to identify the failing webhook, the
+  customer-outreach template, and the worker-vs-customer triage
+  tree. Catalogued in `alerts-catalog.md` so operators see them
+  alongside the rest of the API alerts.
+
 ### Tested
 
 - **`internal/usage` package gains unit-test coverage.** The

@@ -150,3 +150,47 @@ groups:
             stringified tuple of all args; one drifted dimension
             (Order, Sources, Limit, …) means a phantom warmed slot.
             Follow the cache-miss-rate-high runbook.
+
+      # Customer-webhook delivery health (F-1270 audit-2026-05-12).
+      # The worker emits one outcome label per attempt; sustained
+      # 5xx + network_error means one customer's endpoint is broken.
+      # Permanent failures (`exhausted`) mean we hit the 15-attempt
+      # retry budget — operator should review the deliveries log
+      # before the customer notices the gap.
+      - alert: ratesengine_customer_webhook_delivery_failing
+        expr: |
+          sum(rate(ratesengine_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+        annotations:
+          summary: "Customer webhook delivery failing at {{ $value | humanize }}/s"
+          description: |
+            The customer-webhook delivery worker has been failing
+            (5xx + network errors) at > 0.1 attempts/s for 15+ min.
+            One customer's endpoint is likely sustained-down.
+            Query `webhook_deliveries` to find the failing webhook:
+            `SELECT webhook_id, COUNT(*) FROM webhook_deliveries
+             WHERE last_response_status >= 500
+               AND created_at > now() - interval '15 min'
+             GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
+
+      - alert: ratesengine_customer_webhook_delivery_exhausted
+        expr: |
+          sum(rate(ratesengine_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])) > 0
+        for: 1h
+        labels:
+          severity: informational
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+        annotations:
+          summary: "Customer webhook deliveries permanently failed (budget exhausted)"
+          description: |
+            A delivery hit the 15-attempt retry budget (72h) and
+            was marked terminally failed. Customer hasn't received
+            the event. Operator should reach out before the
+            customer notices via their own monitoring.
