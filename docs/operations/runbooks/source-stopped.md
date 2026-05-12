@@ -1,6 +1,6 @@
 ---
 title: Runbook — source-stopped
-last_verified: 2026-05-03
+last_verified: 2026-05-12
 status: draft
 severity: P2
 ---
@@ -15,12 +15,22 @@ severity: P2
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | 15–60 min |
-| Impact | One configured source has stopped producing events for 5+ minutes. API clients querying that pair see price staleness creep up. If multiple sources stop, escalate to `all-ingestion-down.md` (P1). |
+| Impact | One configured source has stopped producing events for **30+ minutes**, sustained 15 min. API clients querying that pair see price staleness creep up. If multiple sources stop, escalate to `all-ingestion-down.md` (P1). |
 
 ## Symptoms
 
-- `sum by (source) (rate(ratesengine_source_events_total[5m])) == 0` AND `ratesengine_source_enabled == 1` sustained 5 min.
+- `sum by (source) (rate(ratesengine_source_events_total[30m])) == 0` AND `ratesengine_source_enabled == 1` sustained 15 min.
 - Dashboard: *Ingestion → Events per source* panel shows a flat line for the offending source while other sources are still producing.
+
+The alert window is intentionally wide (30m rate × 15m sustain) to
+suppress false positives on low-volume Soroban / FX sources
+(blend auctions, ECB FX dailies, Band oracle pushes, Comet pool
+swaps, Phoenix off-peak windows) — the natural emission cadence
+on these sources can exceed 5 minutes during quiet hours. Total-
+outage coverage is the separate
+`ratesengine_ingestion_all_sources_stopped` (3-min window, P1) —
+that one stays tight because if no source at all is emitting,
+something is broken across the whole indexer/upstream surface.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -58,8 +68,8 @@ Key signals:
 
 ## Known false-positive patterns
 
-- **Low-volume sources during quiet windows**. Phoenix in particular can genuinely see zero swaps for 5+ minute stretches during off-peak hours. The alert cannot distinguish “idle” from “stuck” on its own; once the source emits any event the alert clears. If this fires repeatedly during known-quiet windows, extend the `for:` window or suppress per-source paging for that venue.
-- **Immediately post-deploy**. A restart briefly shows zero events while the source boots. The alert's 5 min window gives enough headroom, but very slow bootstraps (stellar-core catchup) can trip it.
+- **Low-volume sources during quiet windows**. Phoenix, Blend, Comet, Band, and ECB can each go genuinely silent for stretches of 10–25 minutes. The 30m-rate × 15m-sustain window is calibrated to wait past those quiet stretches before paging. Repeat false positives now mean either the venue's natural cadence has slowed beyond 30m (consider extending further) OR the source is genuinely stuck — investigate.
+- **Immediately post-deploy**. A restart briefly shows zero events while the source boots. The 15-min sustain gives ample headroom for normal restarts including stellar-core catchup.
 
 ## Related
 
@@ -73,3 +83,6 @@ Key signals:
 - 2026-04-23 — initial draft.
 - 2026-04-30 — rpc-probe URL points at a public stellar-rpc; r1
   doesn't run its own (removed 2026-04-23).
+- 2026-05-12 — alert window widened to 30m rate × 15m sustain to
+  suppress false positives on low-volume sources (blend, band,
+  ecb, comet, phoenix). F-1212b.

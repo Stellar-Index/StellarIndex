@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **`ratesengine_ingestion_source_stopped` alert window widened
+  to 30m × 15m (F-1212b).** The pre-existing 5-min window
+  produced routine false positives on low-volume Soroban / FX
+  sources (blend auctions, ECB FX dailies, Band oracle pushes,
+  Comet pool swaps, Phoenix off-peak windows). On R1 this
+  manifested as 5 simultaneous ticket-tier alerts at any given
+  time; operators learned to ignore the family. The new window
+  waits past the natural quiet-window cadence for these sources;
+  total-outage coverage stays tight via the separate 3-min
+  `ratesengine_ingestion_all_sources_stopped` (P1). Rule updated
+  in both `deploy/monitoring/rules/ingestion.yml` and
+  `configs/prometheus/rules.r1/ingestion.yml`. Runbook + alerts
+  catalog updated to reflect the new threshold and rationale.
+
 ### Added
 
 - **Freeze EventSink LKG VWAP + recovery worker (F-1228 + F-1229).**
