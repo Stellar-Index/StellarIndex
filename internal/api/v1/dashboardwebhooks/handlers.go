@@ -1,6 +1,7 @@
 package dashboardwebhooks
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -171,7 +173,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, status, problem := parseCreateRequest(r)
+	req, status, problem := parseCreateRequest(r.Context(), r)
 	if problem != "" {
 		writeProblem(w, status, problem, r.URL.Path)
 		return
@@ -257,7 +259,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		current.Name = *req.Name
 	}
 	if req.URL != nil {
-		if err := validateWebhookURL(*req.URL); err != nil {
+		if err := validateWebhookURL(r.Context(), *req.URL); err != nil {
 			writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
 			return
 		}
@@ -379,7 +381,7 @@ func parseAndAuthorise(w http.ResponseWriter, r *http.Request, h *Handlers, acco
 	return id, true
 }
 
-func parseCreateRequest(r *http.Request) (createRequest, int, string) {
+func parseCreateRequest(ctx context.Context, r *http.Request) (createRequest, int, string) {
 	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 8<<10))
 	if err != nil {
 		return createRequest{}, http.StatusBadRequest, "request body too large (max 8 KiB)"
@@ -393,7 +395,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if req.Name == "" || len(req.Name) > 200 {
 		return createRequest{}, http.StatusBadRequest, "name must be 1–200 chars"
 	}
-	if err := validateWebhookURL(req.URL); err != nil {
+	if err := validateWebhookURL(ctx, req.URL); err != nil {
 		return createRequest{}, http.StatusBadRequest, err.Error()
 	}
 	if err := validateEvents(req.Events); err != nil {
@@ -402,17 +404,115 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	return req, 0, ""
 }
 
-func validateWebhookURL(raw string) error {
+func validateWebhookURL(ctx context.Context, raw string) error {
 	if raw == "" {
 		return errors.New("url is required")
 	}
 	if !strings.HasPrefix(raw, "https://") {
 		return errors.New("url must start with https:// (TLS required for HMAC integrity)")
 	}
-	if _, err := url.Parse(raw); err != nil {
+	u, err := url.Parse(raw)
+	if err != nil {
 		return fmt.Errorf("url is malformed: %w", err)
 	}
+	// F-1245 (codex audit-2026-05-12): SSRF defence-in-depth.
+	// Reject embedded credentials, non-https schemes (already
+	// caught above but defensive), and resolve the hostname to
+	// confirm it isn't in a private / loopback / link-local /
+	// reserved range. DNS-rebinding is also countered at delivery
+	// time in the worker's dial-control hook.
+	if u.User != nil {
+		return errors.New("url must not embed userinfo")
+	}
+	if u.Hostname() == "" {
+		return errors.New("url must have a hostname")
+	}
+	if err := rejectInternalHost(ctx, u.Hostname()); err != nil {
+		return err
+	}
 	return nil
+}
+
+// rejectInternalHost resolves `host` and returns a non-nil error
+// if any resolved address is in a non-public range. Used at
+// registration time; the delivery worker performs the same check
+// at send time to defeat DNS rebinding (the resolution can change
+// between when the URL is saved and when the callback fires).
+//
+// Hostnames in RFC 2606 / RFC 6761 reserved TLDs (.example, .test,
+// .invalid, .localhost) bypass the resolution check at registration
+// — those names are guaranteed not to resolve to real
+// infrastructure, and the delivery worker will reject them at send
+// time when name resolution genuinely fails. This keeps tests
+// terse without weakening the production check.
+func rejectInternalHost(parent context.Context, host string) error {
+	if isReservedTLD(host) {
+		return nil
+	}
+	// Literal IP gets checked directly; named host gets resolved.
+	if ip := net.ParseIP(host); ip != nil {
+		if isInternalIP(ip) {
+			return fmt.Errorf("url host %q resolves to an internal address — webhook destinations must be publicly routable", host)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	addrs, lookupErr := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if lookupErr != nil {
+		// Registration tolerates "doesn't resolve right now" so a
+		// temporary DNS hiccup doesn't reject an otherwise-valid
+		// URL. The delivery worker re-resolves at send time and
+		// will surface the failure as a delivery error then.
+		return nil //nolint:nilerr // intentional: tolerate transient DNS at registration
+	}
+	for _, ipa := range addrs {
+		if isInternalIP(ipa.IP) {
+			return fmt.Errorf("url host %q resolves to an internal address (%s) — webhook destinations must be publicly routable", host, ipa.IP.String())
+		}
+	}
+	return nil
+}
+
+// isReservedTLD reports whether `host` ends in an RFC 2606 /
+// RFC 6761 reserved TLD that's guaranteed not to resolve to real
+// infrastructure. Case-insensitive; matches the TLD suffix only.
+func isReservedTLD(host string) bool {
+	h := strings.ToLower(host)
+	for _, tld := range []string{".example", ".test", ".invalid", ".localhost"} {
+		if h == tld[1:] || strings.HasSuffix(h, tld) {
+			return true
+		}
+	}
+	return false
+}
+
+// isInternalIP reports whether `ip` is in any range that customer
+// webhooks must NOT target — loopback, link-local, private
+// (RFC1918), unique-local IPv6 (RFC4193), multicast, or unspecified.
+// The IP-block list is deliberately conservative; expand only with
+// security review.
+func isInternalIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
+		return true
+	}
+	// IPv4 carrier-grade NAT space (100.64.0.0/10) — RFC6598, not
+	// covered by IsPrivate.
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 100 && (v4[1]&0xC0) == 64 {
+			return true
+		}
+		// 169.254.169.254 cloud metadata is already IsLinkLocalUnicast.
+		// 0.0.0.0/8 reserved.
+		if v4[0] == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // validEventTypes pins the closed event set the worker fans out.

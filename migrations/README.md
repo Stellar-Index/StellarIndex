@@ -78,14 +78,25 @@ migration lands.
 | 0013 | [`0013_create_lp_reserve_observations.up.sql`](0013_create_lp_reserve_observations.up.sql) | `lp_reserve_observations` hypertable per ADR-0022 — backs Algorithm 2: Σ LP-reserve component |
 | 0014 | [`0014_create_sac_balance_observations.up.sql`](0014_create_sac_balance_observations.up.sql) | `sac_balance_observations` hypertable per ADR-0022 — backs Algorithm 2: Σ SAC-wrapped contract balance component |
 | 0015 | [`0015_create_sep41_supply_events.up.sql`](0015_create_sep41_supply_events.up.sql) | `sep41_supply_events` hypertable per ADR-0023 — backs Algorithm 3 SEP-41 supply: Σ mint − Σ burn − Σ clawback per contract |
+| 0016 | [`0016_create_anomaly_freezes.up.sql`](0016_create_anomaly_freezes.up.sql) | `anomaly_freezes` table — durable record of anomaly-freeze decisions per ADR-0019 |
+| 0017 | [`0017_create_archive_completeness.up.sql`](0017_create_archive_completeness.up.sql) | `archive_completeness` tables backing the dual-archive completeness daemon per ADR-0017 |
+| 0018 | [`0018_create_external_poller_state.up.sql`](0018_create_external_poller_state.up.sql) | `external_poller_state` table — persists last-success / last-error per external poller for restart-safe resume |
+| 0019 | [`0019_create_market_observations.up.sql`](0019_create_market_observations.up.sql) | `market_observations` — per-pair / per-source observation log for divergence and `flags.single_source` provenance |
+| 0020 | [`0020_create_supply_state.up.sql`](0020_create_supply_state.up.sql) | `supply_state` rollup populated by the aggregator from the per-class hypertables; backs F2 fields without recomputing on every read |
+| 0021 | [`0021_create_change_summary.up.sql`](0021_create_change_summary.up.sql) | `change_summary_5m` hypertable — multi-window delta strip data backing every "+12.3% / -4.1%" surface on the explorer |
+| 0022 | [`0022_create_incidents.up.sql`](0022_create_incidents.up.sql) | `incidents` + `incident_components` — public-facing SEV register backing `/v1/incidents` and `/v1/incidents.atom` |
+| 0023 | [`0023_create_redstone_extras.up.sql`](0023_create_redstone_extras.up.sql) | Redstone-specific feed-id resolution table — bridges WritePrices events to operator-named feeds per redstone discovery note |
+| 0024 | [`0024_create_divergence_runs.up.sql`](0024_create_divergence_runs.up.sql) | `divergence_runs` table — one row per CoinGecko / CMC / Chainlink-HTTP cross-check execution; backs the divergence dashboards |
+| 0025 | [`0025_create_routers_and_attribution.up.sql`](0025_create_routers_and_attribution.up.sql) | Soroswap router + attribution tables — tracks which router contract emitted each multi-hop swap so attribution is per-router |
+| 0026 | [`0026_create_source_contributions_and_sdex_offers.up.sql`](0026_create_source_contributions_and_sdex_offers.up.sql) | `source_contributions` + `sdex_offers` — per-source weight history and per-offer SDEX state for the deep-SDEX feed |
+| 0027 | [`0027_platform_v1_schema.up.sql`](0027_platform_v1_schema.up.sql) | Platform v1 schema — accounts / users / sessions / API keys / Stripe subscriptions / dashboard webhook store, the dashboard's authority surface |
+| 0028 | [`0028_create_fx_quotes.up.sql`](0028_create_fx_quotes.up.sql) | `fx_quotes` hypertable — long-form persisted ECB / exchangerates / polygon-forex FX history backing `/v1/chart` fiat:fiat past 7d |
+| 0029 | [`0029_drop_unused_blend_jsonb_gin_indexes.up.sql`](0029_drop_unused_blend_jsonb_gin_indexes.up.sql) | Drops two unused JSONB GIN indexes on `blend_auctions` — the auction query path uses btree on the typed columns |
 
-**Pending future work** (not yet numbered, takes the next free
-slot when it lands): a materialised `asset_catalogue` +
-`market_catalogue` populated incrementally by the indexer. Today
-`internal/storage/timescale/{assets,markets}.go` does on-query
-DISTINCT scans across `trades`, which works at current scale but
-won't at millions-of-rows scale. See those packages' performance
-notes for the call site.
+F-1241 (codex audit-2026-05-12): the table previously stopped at
+0015, leaving 0016..0029 (14 migrations) undocumented even though
+they shipped. Future migrations: continue adding one row per
+`.up.sql` landed on `main`.
 
 ## References
 

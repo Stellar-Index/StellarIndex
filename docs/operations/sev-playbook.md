@@ -176,16 +176,22 @@ Decision tree:
 ### 5.1 Status page
 
 Public status page lives at `https://status.ratesengine.net` —
-hosted as a static site separate from the API so it survives
-any outage that takes down our infrastructure (which is exactly
-when customers need it). The cstate scaffold is committed at
-[`deploy/status-page/cstate/`](../../deploy/status-page/cstate/);
-provisioning at the public domain is gated on L4.11 (launch
-readiness).
+hosted as a static Next.js export at
+[`web/status/`](../../web/status/), deployed to Cloudflare Pages
+on every push to `main`. Lives separately from the API so it
+survives any outage that takes down our infrastructure (which is
+exactly when customers need it). F-1211 (codex audit-2026-05-12):
+the prior cstate / Upptime scaffolds were removed in favour of
+this custom Next.js app — older references in
+[`status-page-setup.md`](status-page-setup.md) and
+[`rollback.md`](rollback.md) describe the obsolete pipeline.
 
 **Source of truth:**
-[`deploy/status-page/`](../../deploy/status-page/) — site
-config + component list + incident template.
+[`web/status/`](../../web/status/) — site source + component list
++ incident composition lives in this repo. Posting an incident
+happens by editing the `src/data/incidents/` JSON files and
+pushing to `main` (the Cloudflare Pages deploy is automatic on
+push).
 
 **How to post:**
 [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md)
@@ -193,7 +199,7 @@ config + component list + incident template.
 the cadence (hourly / daily), the safe-to-publish detail level,
 and the workstation-down fallback path.
 
-Status-page states (per cstate's component model):
+Status-page states (modelled after Atlassian Statuspage):
 - **Operational** — green; no active incident.
 - **Degraded performance** — SEV-2 or equivalent partial outage.
 - **Partial outage** — major subsystem down but some API surface

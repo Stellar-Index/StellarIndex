@@ -100,13 +100,15 @@ without evidence IDs.
 
 ### 2026-05-12 Execution Reconciliation
 
-- Cold execution evidence now spans `CMD-0007` through `CMD-0091`,
-  `EV-0005` through `EV-0088`, `R1-0001` through `R1-0018`, and
-  `XFI-0001` through `XFI-0047`.
-- Findings `F-1201` through `F-1255` remain evidence-backed and are
-  mapped to remediation rows `R-1201` through `R-1253`; `F-1202` is
+- Cold execution evidence now spans `CMD-0007` through `CMD-0095`,
+  `EV-0005` through `EV-0093`, `R1-0001` through `R1-0018`, and
+  `XFI-0001` through `XFI-0049`.
+- Findings `F-1201` through `F-1257` remain evidence-backed and are
+  mapped to remediation rows `R-1201` through `R-1255`; `F-1202` and
+  `F-1212` are
   now marked `fixed` because R1 caught up to the route removal during
-  the audit window.
+  the audit window and current dashboard-key code clamps persisted
+  customer budgets by tier.
 - Live R1 checks covered process state, timers, firewall/listeners,
   external reachability, host capacity, Prometheus alerts, config
   snippets, Caddy drift, API/history/SSE behavior, and stablecoin
@@ -132,12 +134,14 @@ without evidence IDs.
   freeze-event open-row dedupe, a verified failing integration path in
   FX-derived `usd_volume` freshness handling, a Redis ACL lockdown seam
   where both the username handoff and the actual key-pattern allow-list
-  are out of sync with current binaries, and a dashboard first-login
+  are out of sync with current binaries, a dashboard first-login
   provisioning race that can strand orphan accounts when multiple valid
-  callbacks land for one new email.
-- `CMD-0091` reran `./scripts/ci/lint-docs.sh`, rechecked tracked-vs-
+  callbacks land for one new email, and two dashboard-key follow-ons:
+  stale customer-facing/UI/OpenAPI budget semantics after the security
+  fix, plus a still-raceable 25-active-key/account quota.
+- `CMD-0095` reran `./scripts/ci/lint-docs.sh`, rechecked tracked-vs-
   inventory row parity, and recorded the latest TSV roll-up after the
-  auth provisioning pass.
+  dashboard-key pass.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when
@@ -147,4 +151,4 @@ without evidence IDs.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=95`, `in_progress=39`, `todo=1735`.
+  `done=97`, `in_progress=38`, `todo=1734`.

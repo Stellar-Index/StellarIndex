@@ -21,6 +21,16 @@ history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
 # Password is replaced at runtime by RATESENGINE_POSTGRES_DSN env.
 postgres_dsn       = "postgres://{{ postgres_user_ratesengine }}@127.0.0.1:5432/{{ postgres_db_ratesengine }}?sslmode=disable"
 redis_addr         = "127.0.0.1:6379"
+{% if redis_acl_lockdown | default(false) %}
+# F-1253 (codex audit-2026-05-12): when ACL lockdown is on, the
+# `default` user is disabled at the server, so the client MUST
+# authenticate as the operator-declared ratesengine ACL user.
+# Without this line the binary tries to auth as `default` and
+# every Redis call fails after lockdown enables, taking down
+# rate-limiting / signup abuse / SEP-10 replay / freeze markers /
+# aggregator cache simultaneously.
+redis_username     = "{{ redis_acl_username | default('ratesengine') }}"
+{% endif %}
 s3_endpoint        = "http://127.0.0.1:9000"
 s3_region          = "{{ region_id }}"
 s3_bucket_archive  = "galexie-archive"

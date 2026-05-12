@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/notify"
 	"github.com/RatesEngine/rates-engine/internal/platform"
 )
@@ -376,11 +377,21 @@ func looksLikeEmail(s string) bool {
 }
 
 func clientIP(r *http.Request) net.IP {
-	// X-Forwarded-For is consulted only when the immediate
-	// peer is in trusted_proxy_cidrs (handled by middleware
-	// earlier in the chain); by the time we land here the
-	// canonical client IP is already in r.RemoteAddr if
-	// trusted, or the original socket peer otherwise.
+	// F-1224 (codex audit-2026-05-12): use the trusted-proxy-
+	// resolved IP from `middleware.RemoteIP` rather than parsing
+	// r.RemoteAddr directly. Behind Caddy / Cloudflare, the
+	// socket peer is the local proxy; the real client IP is in
+	// X-Forwarded-For, and the middleware decides whether to
+	// honour it based on the `trusted_proxy_cidrs` config.
+	//
+	// Falls back to the socket peer when middleware.RemoteIP
+	// returns empty (well-formed requests always carry one;
+	// the empty case is left to upstream policy).
+	if resolved := middleware.RemoteIP(r); resolved != "" {
+		if ip := net.ParseIP(resolved); ip != nil {
+			return ip
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return nil

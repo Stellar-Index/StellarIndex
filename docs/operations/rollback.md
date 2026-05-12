@@ -160,22 +160,33 @@ genuinely safe — the private repo is untouched.
 
 ### E. Status page misbehaving
 
-Symptoms: Upptime is reporting components "down" when
-production is fine, or vice versa.
+Symptoms: the public page at `status.ratesengine.net` shows
+components down when production is fine, or vice versa.
 
 Lowest-stakes rollback. The status page is a derived view; it
-doesn't affect production traffic. Either fix the
-`.upptimerc.yml` (e.g. probe URL was wrong, expected status
-codes mismatched) and let the next probe cycle correct it, or
-manually edit the issue Upptime created and resolve it.
+doesn't affect production traffic. F-1211 (codex audit-2026-05-12):
+the page is a static Next.js export at [`web/status/`](../../web/status/)
+deployed to Cloudflare Pages on push to `main`. Earlier docs
+mentioned an Upptime / GitHub-Pages pipeline that no longer
+exists.
 
-If the status page is fundamentally broken and can't be
-corrected within the SEV-2 detection window:
+Two paths:
+
+1. **Edit + push** (preferred). Edit the incident JSON under
+   `web/status/src/data/incidents/` or the component states in
+   `components.json`, commit, push. Cloudflare Pages redeploys in
+   ~2 minutes.
+2. **Revert** if the page itself broke. `git revert <bad-sha>` on
+   `main` and push — the previous-known-good build redeploys.
+
+If the page is fundamentally broken and can't be corrected within
+the SEV-2 detection window:
 
 ```sh
-# DNS revert — point status. directly at GitHub Pages of a
-# known-good prior commit, or to a temporary maintenance page.
-# Cloudflare → DNS → status → (pause proxy + edit target).
+# DNS revert — point status. at a previous Cloudflare Pages
+# deployment by re-promoting an earlier successful build via the
+# Pages dashboard, or aim status.ratesengine.net at a temporary
+# maintenance page hosted elsewhere.
 ```
 
 ## Post-rollback
