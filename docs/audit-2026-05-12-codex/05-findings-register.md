@@ -56,6 +56,9 @@ Recent waves closed by code (chronological):
   trips IP/Referer/permission fields so the cache-hit Subject is
   policy-identical to the cache-miss Subject (monthly quota +
   TouchUsage still open).
+- wave 35 — F-1248 + F-1257 per-account quota race closed via
+  `pg_advisory_xact_lock` wrapping the count + insert; concurrent
+  integration tests prove the caps hold exactly.
 
 ## Status Values
 
@@ -99,7 +102,7 @@ Recent waves closed by code (chronological):
 | F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118 | open | platform/api/security | Wave 34 (2026-05-12) ships the cache-hit policy parity: `APIKeyRecord` now carries `IPAllowlist`/`RefererAllowlist`/`PermissionsAll`/`AllowPermissions`/`DenyPermissions` and `PostgresAPIKeyValidator.cacheStore` / `cacheLookup` round-trip them; regression test `TestPostgresValidator_CacheRoundTripsPolicy` proves cache-hit Subject is policy-identical to cache-miss Subject. Monthly quota enforcement plus production `TouchUsage`/last-used updates remain the still-open halves. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | open | docker/db | Runtime image copies only the binary while the binary defaults to a missing `migrations` directory. |
-| F-1228 | high | SSE streams are cut off after 30 seconds by the API server write timeout | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016 | open | api/streaming/ops | R1 tip stream closes at elapsed 30s despite 5s events and 15s heartbeats. |
+| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119 | open | api/streaming/ops | Current source has the `ResponseController` write-deadline fix, yet an R1-origin HTTP/1.1 public probe still stops after frames through roughly the first 30 seconds instead of surviving the 65-second client ceiling. |
 | F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | open | ops/api | Script uses `base=` where handlers require `asset=` and expects `no-store` while SSE sets `no-cache`. |
 | F-1230 | high | R1 `since-inception` history for core XLM/USDC starts on 2026-05-03, not one year or inception | Historical API; backfill; R1 data depth | XFI-0022; EV-0040; R1-0017 | open | data/backfill/api | Direct XLM/Circle-USDC daily history has only nine buckets. |
 | F-1231 | high | Canonical CI is PR-only while `main` is unprotected, so direct pushes can bypass full verification | GitHub CI triggers; branch protection; release governance | XFI-0023; EV-0041; EV-0025; EV-0099 | fixed | repo-admin/ci | Current `ci.yml` now runs on pushes to `main`, closing the direct-main verification bypass even though branch protection itself remains open under `F-1214`. |
@@ -119,7 +122,7 @@ Recent waves closed by code (chronological):
 | F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069; EV-0096 | fixed | security/platform/webhooks | Current workspace now validates internal/private destinations at registration, re-resolves before delivery, and disables redirect following in the worker client. |
 | F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072; EV-0096 | fixed | docs/api/product | `docs/reference/api-design.md` now states webhook callbacks shipped and explains how they relate to SSE. |
 | F-1247 | high | Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt | API worker startup; webhook queue store; multi-region / multi-process delivery semantics | XFI-0039; EV-0073; EV-0098 | fixed | platform/webhooks/ops | Current `HEAD` claims due rows with `FOR UPDATE SKIP LOCKED` plus a lease before network I/O, closing the duplicate-worker race. |
-| F-1248 | medium | The documented ten-webhook-per-account limit is enforced with a raceable pre-check, so concurrent creates can exceed the cap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074; EV-0098 | open | platform/webhooks | The new store-level CTE narrows the old race but still performs an unlocked snapshot count, so concurrent below-cap creates can still both insert. |
+| F-1248 | medium | The documented ten-webhook-per-account limit is enforced with a raceable pre-check, so concurrent creates can exceed the cap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074; EV-0098 | fixed | platform/webhooks | Wave 35 (2026-05-12) wraps `CreateWebhook` in a transaction guarded by `pg_advisory_xact_lock(hashtext('webhook:'||account_id))` so concurrent callers for the same account serialise through one critical section. Integration test `WebhookStore/Concurrent_QuotaCap_Holds` launches 10 goroutines against a cap of 3 and asserts exactly 3 succeed + 7 return `ErrWebhookQuotaExceeded`. |
 | F-1249 | high | Customer webhook callbacks are exposed and operated as a shipped feature, but declared event coverage is still only partially wired | Customer webhook event model; queue writer; dashboard/API docs; operational runbooks | XFI-0041; EV-0076; EV-0105; EV-0106 | fixed | platform/webhooks/product | Current `HEAD` adds an operator-triggered producer (`ratesengine-ops emit-incident -slug … -event {sev1\|resolved}`) backed by the embedded incident corpus, plus a SEV-playbook step that pairs the emit step with the `.md` deploy. `anomaly.freeze` + `divergence.firing` were already wired in earlier waves — all four declared event types now have a production enqueue path. |
 | F-1250 | medium | Freeze-event open-row dedupe is raceable, so concurrent same-pair freezes can create multiple still-firing durable rows | Freeze writer; Timescale freeze-event mirror; anomalies timeline/recovery semantics | XFI-0042; EV-0079 | open | aggregate/storage/anomaly | The SQL comment claims transactional dedupe, but the code uses an unlocked `WHERE NOT EXISTS` insert and the PK includes `frozen_at`, so concurrent callers can both insert distinct open rows. |
 | F-1251 | high | FX-based `usd_volume` remediation is still incomplete: historical freshness is fixed, but the integration contract and zero-value freshness semantics remain inconsistent | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080; EV-0102 | open | storage/indexer/data-quality | The resolver now evaluates staleness at trade time and returns the historical rate, but the targeted integration still fails because runtime returns fixed-scale NUMERIC text while the test/comment expect trimmed text; `Freshness: 0` is still documented as disabled while the constructor treats it as default-one-hour. |
@@ -128,7 +131,7 @@ Recent waves closed by code (chronological):
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | fixed | platform/auth/data-quality | Current `HEAD` adds a Redis-SETNX-backed `EmailLocker` seam wired through `dashboardauth.Config`. The losing callback short-circuits before `Account.Create`, polls briefly for the winner's user, and never inserts a speculative-account row. Redis-less deployments fall back to the Suspend-on-conflict path as defence in depth. Tests: in-memory locker preempts loser (no speculative Account row created) + miniredis adapter (acquire/release round-trip + TTL expiry). `signup:lock:*` added to the Redis ACL allow-list. |
 | F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | open | dashboard/docs/product | Free users are told the default is 1000/min and every user can submit 100000/min, but current backend persists Free keys at 60/min and other tiers at smaller caps unless the tier allows more. |
-| F-1257 | medium | The attempted 25-active-key/account quota fix still uses a raceable unlocked count CTE | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103 | open | platform/keys | The workspace moved quota handling into `APIKeyStore.Create`, but the new `WITH active_count ... INSERT ... WHERE n < max` has the same MVCC snapshot race already preserved for webhooks under `F-1248`. |
+| F-1257 | medium | The attempted 25-active-key/account quota fix still uses a raceable unlocked count CTE | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103 | fixed | platform/keys | Wave 35 (2026-05-12) wraps `APIKeyStore.Create` in a transaction guarded by `pg_advisory_xact_lock(hashtext('apikey:'||account_id))` (disjoint keyspace from F-1248). Uncapped-callers skip the lock since there's no quota race to defend against. Integration test `APIKeyStore/Concurrent_QuotaCap_Holds` launches 12 goroutines against a cap of 4 and asserts exactly 4 succeed + 8 return `ErrAPIKeyQuotaExceeded`. |
 | F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | fixed | api/ops/runtime | Wave 33 (2026-05-12) replaces the unconditional `UsageReader: usageReaderAdapter{c: usageCounter}` with `UsageReader: usageReaderOrNil(usageCounter)`. The helper returns a typed-nil v1.UsageReader when the counter is nil; the `/v1/account/usage` handler already short-circuits on `usageReader == nil` with an empty list, so Redis-less deployments degrade cleanly instead of nil-deref'ing on `Read`. |
 | F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs | XFI-0051; EV-0095; EV-0103 | open | docs/api/product | The source OpenAPI text now describes live Redis-backed usage, but generated reference YAML, Postman, API-design docs, architecture inventory, and the handler comment remain stale; the new source text also incorrectly says Redis absence is reflected on `/v1/healthz` checks. |
 | F-1260 | high | `aggregate.min_usd_volume` still evaluates discarded pre-filter volume, so thin survivor windows can publish above a manipulation floor they do not actually meet | Aggregator stablecoin/USD-volume path; class/outlier filtering; VWAP publish gate | XFI-0052; EV-0105 | fixed | aggregate/market-data | Current `HEAD` recomputes USD volume across the post-class/post-outlier survivor slice via [survivorUSDVolume] before invoking [dropForMinUSDVolume], with regression test `class filter gutted window: drops despite pre-filter clearing threshold`. |
@@ -848,11 +851,11 @@ Current-workspace reconciliation: `cmd/ratesengine-api/main.go` now gates the Re
 
 Remediation direction: retained for audit history; the current workspace implements the Redis gate.
 
-### F-1228. SSE streams are cut off after 30 seconds by the API server write timeout
+### F-1228. Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff
 
 Severity: `high`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -869,14 +872,30 @@ Evidence:
 - `XFI-0020`
 - `EV-0038`
 - `R1-0016`
+- `EV-0119`
 
 Expected: `/v1/price/stream`, `/v1/price/tip/stream`, and `/v1/observations/stream` should support long-lived SSE clients, with heartbeats preventing idle proxy closure and reconnect/resume handling real network breaks.
 
-Observed: the API `http.Server` sets `WriteTimeout: 30 * time.Second`. Go applies that as a response-write timeout reset when a new request's headers are read, not as a heartbeat-aware per-frame deadline. R1 loopback testing confirmed `/v1/price/tip/stream` emits events through 25 seconds and then closes at elapsed 30 seconds.
+Observed during the initial pass: the API `http.Server` set
+`WriteTimeout: 30 * time.Second`. Go applied that as a response-write timeout
+reset when a new request's headers were read, not as a heartbeat-aware
+per-frame deadline. R1 loopback testing confirmed
+`/v1/price/tip/stream` emitted events through 25 seconds and then closed at
+elapsed 30 seconds.
+
+Current-head reconciliation: source now clears the SSE request write deadline
+through `http.ResponseController.SetWriteDeadline(time.Time{})`, while keeping
+the global write timeout for ordinary handlers. Targeted API/binary tests pass.
+Live R1 still does not verify closed: an HTTP/1.1 public probe started from R1
+emitted frames through roughly the first 30 seconds and then ended before the
+next expected 5-second frame despite the client allowing 65 seconds.
 
 Impact: real-time streaming is not actually long-lived. Browser/EventSource and curl clients reconnect every 30 seconds, increasing churn and load; customer demos that instruct a 60-second run fail; CoinGecko/CMC parity for streaming or trade-tape style experiences is weaker than the API contract suggests.
 
-Remediation direction: remove the global write timeout for the API server or route streaming endpoints through a server/listener with no absolute `WriteTimeout`; if write deadlines are required, manage them per write with `http.ResponseController` and tests that keep a stream open beyond the timeout horizon.
+Remediation direction: deploy or otherwise reconcile the live API runtime so
+the already-implemented `ResponseController` path is active end-to-end, then
+repeat a >60s public stream probe and keep it open past the former 30-second
+cutoff.
 
 ### F-1229. CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header
 

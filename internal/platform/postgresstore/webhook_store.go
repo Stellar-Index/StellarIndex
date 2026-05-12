@@ -36,11 +36,18 @@ var _ platform.WebhookStore = (*WebhookStore)(nil)
 // the handler's pre-check (`SELECT … then INSERT`) was raceable —
 // N parallel HandleCreate requests for an account at 9 webhooks
 // could all pass the precheck and each insert one row, taking the
-// account to 9+N. Now the insert is gated by a single statement
-// that uses a CTE to count + conditionally insert, so concurrent
-// callers see at most one row appended past the cap (and the
-// loser receives the same ErrWebhookQuotaExceeded the precheck
-// would have surfaced).
+// account to 9+N.
+//
+// Closure shape: the create runs inside a transaction guarded by
+// `pg_advisory_xact_lock(hashtext('webhook:'||account_id))`. The
+// advisory lock serialises every concurrent caller for the same
+// account through one critical section, so the count + insert
+// observes a stable view: at most ONE statement appends a row at
+// a time, and the loser's count-CTE sees the winner's INSERT and
+// short-circuits via WHERE n < $7. The lock auto-releases at
+// COMMIT/ROLLBACK so a crashing client can't strand it. Keyed
+// by account_id, so two different accounts creating concurrently
+// don't serialise against each other.
 //
 // `maxPerAccount` is the value passed by the handler
 // (MaxWebhooksPerAccount = 10 at time of writing). Tests can pass
@@ -58,6 +65,22 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 	if maxPerAccount <= 0 {
 		maxPerAccount = 10
 	}
+	tx, err := c.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// F-1248 (codex audit-2026-05-12): per-account advisory lock
+	// inside the transaction. `hashtext` deterministically maps
+	// 'webhook:'||account_id::text → int4 which pg_advisory_xact_lock
+	// accepts as int8 via Postgres's implicit widening.
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext('webhook:' || $1::text))`,
+		w.AccountID); err != nil {
+		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: advisory lock: %w", err)
+	}
+
 	const q = `
 		WITH current_count AS (
 		    SELECT COUNT(*) AS n
@@ -72,7 +95,7 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 		RETURNING id, created_at, updated_at
 	`
 	events := w.Events
-	row := c.s.db.QueryRowContext(ctx, q,
+	row := tx.QueryRowContext(ctx, q,
 		w.AccountID, w.Name, w.URL, w.SecretHash,
 		pq.Array(events), w.Enabled, maxPerAccount,
 	)
@@ -81,6 +104,9 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 			return platform.CustomerWebhook{}, platform.ErrWebhookQuotaExceeded
 		}
 		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: commit: %w", err)
 	}
 	return w, nil
 }
