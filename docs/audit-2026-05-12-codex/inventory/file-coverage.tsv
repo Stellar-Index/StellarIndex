@@ -911,7 +911,7 @@ internal/api/v1/dashboardauth/handlers_test.go	internal	internal/api/v1	test	tod
 internal/api/v1/dashboardauth/middleware.go	internal	internal/api/v1	runtime	done	EV-0087		Reviewed dashboard session resolution/touch middleware during auth slice pass
 internal/api/v1/dashboardauth/signup_lock_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardkeys/doc.go	internal	internal/api/v1	runtime	todo			cold audit pending
-internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	done	EV-0023;EV-0089;EV-0090;EV-0092;EV-0103;EV-0148;F-1212;F-1256;F-1257;F-1262	XFI-0008;XFI-0048;XFI-0049;XFI-0054	Reviewed create/list/revoke flow, current tier-clamp fix, customer-facing budget-contract drift, advisory-lock quota path, and the omitted-referer default create failure exposed in the real Postgres path
+internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	done	EV-0023;EV-0089;EV-0090;EV-0092;EV-0103;EV-0148;EV-0150;F-1212;F-1256;F-1257;F-1262	XFI-0008;XFI-0048;XFI-0049;XFI-0054	Reviewed create/list/revoke flow, current tier-clamp fix, now-reconciled dashboard/OpenAPI rate-budget copy, advisory-lock quota path, and the omitted-referer default create failure exposed in the real Postgres path
 internal/api/v1/dashboardkeys/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardwebhooks/doc.go	internal	internal/api/v1	runtime	done	EV-0072;EV-0076;F-1246;F-1249	XFI-0038;XFI-0041	Reviewed dashboard webhook contract docs against live worker/store/product seams
 internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;EV-0096;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, secret handling, current SSRF validation hardening, quota race, and missing producer path
@@ -1182,7 +1182,7 @@ internal/pipeline/processor_test.go	internal	internal/pipeline/processor_test.go
 internal/pipeline/sink.go	internal	internal/pipeline/sink.go	runtime	todo			cold audit pending
 internal/pipeline/sink_test.go	internal	internal/pipeline/sink_test.go	test	todo			cold audit pending
 internal/pipeline/soroswap_registry.go	internal	internal/pipeline/soroswap_registry.go	runtime	todo			cold audit pending
-internal/platform/account.go	internal	internal/platform/account.go	runtime	done	EV-0089;EV-0090;EV-0126;F-1212;F-1226;F-1256	XFI-0008;XFI-0018;XFI-0048	Reviewed billing-tier key-budget ladder, inert monthly quota override field, and its docs/UI contract
+internal/platform/account.go	internal	internal/platform/account.go	runtime	done	EV-0089;EV-0090;EV-0126;EV-0150;F-1212;F-1226;F-1256	XFI-0008;XFI-0018;XFI-0048	Reviewed billing-tier key-budget ladder, inert monthly quota override field, and the now-reconciled dashboard/OpenAPI tier-clamp contract
 internal/platform/apikey.go	internal	internal/platform/apikey.go	runtime	in_progress	EV-0126;F-1226	XFI-0018	Reviewed API-key quota/last-used contract fields and store interface expectations; broader platform-key model pass still open
 internal/platform/apikey_test.go	internal	internal/platform/apikey_test.go	test	todo			cold audit pending
 internal/platform/audit.go	internal	internal/platform/audit.go	runtime	todo			cold audit pending
@@ -1435,7 +1435,8 @@ internal/storage/timescale/account_observations.go	internal	internal/storage/tim
 internal/storage/timescale/account_observations_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
 internal/storage/timescale/aggregates.go	internal	internal/storage/timescale	runtime	in_progress	EV-0140;F-1225;F-1230	XFI-0017;XFI-0022	Reviewed historical CAGG reader role in since-inception fallback and live backfill-depth findings
 internal/storage/timescale/aggregates_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
-internal/storage/timescale/asset_registry.go	internal	internal/storage/timescale	runtime	in_progress	EV-0135;F-1243	XFI-0035	Reviewed process-lifetime registry dedupe and its interaction with first/last/count maintenance
+internal/storage/timescale/asset_registry.go	internal	internal/storage/timescale	runtime	in_progress	EV-0135;EV-0149;F-1243	XFI-0035	Reviewed the wave-47 TTL registry-dedupe fix plus the still-open duplicate-replay/idempotency half of F-1243
+internal/storage/timescale/asset_registry_test.go	internal	internal/storage/timescale	test	done	EV-0149;EV-0151;F-1243	XFI-0035	Reviewed wave-47 TTL-cache regression coverage for classic-asset registry freshness/count recovery
 internal/storage/timescale/assets.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/baseline.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/blend_auctions.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
@@ -1466,7 +1467,7 @@ internal/storage/timescale/sources_stats.go	internal	internal/storage/timescale	
 internal/storage/timescale/store.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/supply.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/supply_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
-internal/storage/timescale/trades.go	internal	internal/storage/timescale	runtime	in_progress	EV-0135;F-1243	XFI-0035	Reviewed registry hook placement after `INSERT ... ON CONFLICT DO NOTHING` and missing rows-affected guard
+internal/storage/timescale/trades.go	internal	internal/storage/timescale	runtime	in_progress	EV-0135;EV-0149;F-1243	XFI-0035	Reviewed registry hook placement after `INSERT ... ON CONFLICT DO NOTHING` and the still-missing rows-affected guard after wave 47
 internal/storage/timescale/trades_usd_volume_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
 internal/storage/timescale/usd_fx_resolver.go	internal	internal/storage/timescale	runtime	done	EV-0080;EV-0102;EV-0139;F-1251	XFI-0043	Reviewed landed trade-time freshness, NUMERIC text canonicalisation, and explicit freshness sentinel semantics; integration closure is blocked by F-1261
 internal/storage/timescale/usd_fx_resolver_test.go	internal	internal/storage/timescale	test	done	EV-0080;EV-0102;EV-0139;F-1251	XFI-0043	Reviewed direct resolver coverage for trim helpers and freshness sentinels; focused package tests pass
@@ -1565,7 +1566,7 @@ migrations/0029_drop_unused_blend_jsonb_gin_indexes.up.sql	migrations	migrations
 migrations/0030_asset_supply_history_unique_constraint.down.sql	migrations	migrations	migration_or_sql	in_progress	EV-0137;F-1261	XFI-0053	Reviewed rollback shape while rechecking the broken compressed-hypertable migration pair
 migrations/0030_asset_supply_history_unique_constraint.up.sql	migrations	migrations	migration_or_sql	done	EV-0120;EV-0137;EV-0147;F-1261	XFI-0053	Reviewed the former compressed-hypertable failure and the landed decompress/disable-DDL/restore-compression remediation; migration round-trip now passes
 migrations/README.md	migrations	migrations	documentation	in_progress	EV-0120;F-1261	XFI-0053	Reviewed the 0030 entry; wording still claims a constraint path that does not match the executable SQL
-openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;EV-0095;EV-0103;F-1203;F-1256;F-1259	XFI-0048;XFI-0051	Reviewed source spec against generated artifacts, dashboard key-budget contract drift, partially revised usage docs, and incorrect healthz checks wording
+openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;EV-0095;EV-0103;EV-0150;F-1203;F-1256;F-1259	XFI-0048;XFI-0051	Reviewed source spec against generated artifacts, now-reconciled dashboard key-budget tier-clamp prose, partially revised usage docs, and incorrect healthz checks wording
 pkg/client/asset_detail_test.go	pkg	pkg	test	todo			cold audit pending
 pkg/client/client.go	pkg	pkg	runtime	todo			cold audit pending
 pkg/client/client_test.go	pkg	pkg	test	todo			cold audit pending
@@ -1705,7 +1706,7 @@ web/dashboard/pnpm-lock.yaml	web	web/dashboard	config	todo			cold audit pending
 web/dashboard/postcss.config.mjs	web	web/dashboard	config	todo			cold audit pending
 web/dashboard/src/app/admin/page.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/app/globals.css	web	web/dashboard	unknown	todo			cold audit pending
-web/dashboard/src/app/keys/page.tsx	web	web/dashboard	frontend	in_progress	EV-0023;EV-0090;F-1212;F-1256	XFI-0008;XFI-0048	Backend abuse path is fixed, but current form copy/max still overstates effective persisted limits for lower tiers
+web/dashboard/src/app/keys/page.tsx	web	web/dashboard	frontend	in_progress	EV-0023;EV-0090;EV-0150;F-1212;F-1256	XFI-0008;XFI-0048	Reviewed the tier-clamp UI reconciliation from wave 48; broader dashboard key-page audit remains open
 web/dashboard/src/app/layout.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/app/page.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/app/settings/page.tsx	web	web/dashboard	frontend	todo			cold audit pending

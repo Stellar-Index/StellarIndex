@@ -338,7 +338,7 @@ Decimals and resolution exposed via `/v1/oracle/decimals` and
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET | `/v1/account/me` | API key holder info + quota status. |
-| GET | `/v1/account/usage?from=&to=` | Usage-summary placeholder; currently returns `[]` until the counter store lands. |
+| GET | `/v1/account/usage?from=&to=` | Per-day request counts for the authenticated key over the trailing 30 days. Backed by the Redis usage counter the rate-limit middleware writes. Returns `[]` only when the counter isn't wired (Redis-less deployment); the absence is reflected on `/v1/readyz` under `checks`. F-1259 (codex audit-2026-05-12). |
 | POST | `/v1/account/keys` | Create a new API key (rotate). |
 
 Self-service signup flow lives at `https://ratesengine.net/signup`;

@@ -129,13 +129,13 @@ Recent waves closed by code (chronological):
   aren't lied to. 3 new tests cover happy path / no-emailer
   degradation / send-error non-fatal. F-1218 still open pending
   the optional validator-gate (wave 45).
-- wave 45 — F-1218 closes (closed-by-code). `EmailVerifiedAt`
-  threaded through `APIKeyRecord` + `Subject`. New
-  `RedisAPIKeyStore.MarkEmailVerified` flips the flag (verify
-  handler calls it after Consume). New `middleware.RequireEmailVerified`
-  gate 403s unverified `signup-`-prefixed keys when operator
-  opts in via `[api].signup_require_email_verification` (default
-  off). Tests: 5 gate cases + 4 marker cases. F-1218 → fixed.
+- wave 45 — F-1218 implementation lands, but the launch-risk finding
+  remains open. `EmailVerifiedAt` is threaded through `APIKeyRecord`
+  + `Subject`; `RedisAPIKeyStore.MarkEmailVerified` flips the flag;
+  and `middleware.RequireEmailVerified` can 403 unverified
+  `signup-`-prefixed keys. The hardening switch is still opt-in via
+  `[api].signup_require_email_verification` and defaults off, which
+  preserves the public-default abuse posture recorded in the register.
 - wave 46 — F-1261 migration 0030 compressed-hypertable bootstrap:
   rewrite both up + down to decompress chunks + disable compression
   before the DROP INDEX / ADD CONSTRAINT DDL and restore the 0005
@@ -143,13 +143,13 @@ Recent waves closed by code (chronological):
   `0004_relax_trades_ledger_for_offchain` pattern. Fresh
   integration bootstrap unblocked; README entry updated to
   describe the new path. F-1261 → fixed.
-- wave 47 — F-1243 classic-asset registry freshness: replace the
-  process-lifetime `sync.Map[asset_id]struct{}` cache with a
-  TTL-based variant (60s window). The classic_assets row's
-  `last_seen_*` + `observation_count` now advance under sustained
-  trading instead of freezing at first observation. Gate logic
-  extracted to `shouldSkipAssetRegistryUpsert` for unit-testable
-  TTL semantics. 6 new tests. F-1243 → fixed.
+- wave 47 — F-1243 classic-asset registry freshness is narrowed, not
+  closed. The process-lifetime `sync.Map[asset_id]struct{}` cache is
+  replaced with a TTL-based variant (60s window), so same-process
+  freshness/count updates no longer freeze forever. Gate logic moves
+  into `shouldSkipAssetRegistryUpsert` and gains six focused tests.
+  The duplicate-replay/idempotency half remains open because registry
+  mutation is still not conditioned on a newly inserted trade row.
 - wave 48 — F-1256 dashboard rate-limit form copy: the OpenAPI
   schema already documented the tier-clamp (wave 31); this wave
   updates the dashboard's `keys/page.tsx` form hint to match —
@@ -159,6 +159,12 @@ Recent waves closed by code (chronological):
   instead of the misleading "Default for free tier is 1000."
   F-1256 → fixed (UI + OpenAPI now both describe the actual
   persisted semantics).
+- wave 49 — F-1259 usage-docs reconciliation: source OpenAPI
+  corrects the `/healthz`→`/readyz` mistake; account handler
+  doc-block rewritten to describe live counter behaviour;
+  api-design.md + explorer-data-inventory.md route descriptions
+  updated; generated reference YAML + Postman collection
+  regenerated via `make docs`. F-1259 → fixed.
 
 ## Status Values
 
@@ -230,10 +236,10 @@ Recent waves closed by code (chronological):
 | F-1253 | high | Enabling Redis ACL lockdown disables the default user, but the rendered application config never sets `redis_username`, so binaries keep authenticating on the rejected legacy path | Redis Sentinel ACL template; application config template; Redis client builder | XFI-0045; EV-0083; EV-0098 | fixed | ops/security/config | Current Ansible rendering emits the named Redis ACL username when lockdown is enabled, matching the server-side auth contract. |
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | fixed | platform/auth/data-quality | Current `HEAD` adds a Redis-SETNX-backed `EmailLocker` seam wired through `dashboardauth.Config`. The losing callback short-circuits before `Account.Create`, polls briefly for the winner's user, and never inserts a speculative-account row. Redis-less deployments fall back to the Suspend-on-conflict path as defence in depth. Tests: in-memory locker preempts loser (no speculative Account row created) + miniredis adapter (acquire/release round-trip + TTL expiry). `signup:lock:*` added to the Redis ACL allow-list. |
-| F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | fixed | dashboard/docs/product | OpenAPI's `rate_limit_per_min` description was rewritten in wave 31 to enumerate the per-tier clamp ladder (Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000). Wave 48 (2026-05-13) brings the dashboard form hint in line: `web/dashboard/src/app/keys/page.tsx` now reads "Capped to your account tier — Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000. Higher values silently clamp to the tier ceiling on save." Both surfaces now describe the actual persisted semantics. |
+| F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090; EV-0150 | fixed | dashboard/docs/product | OpenAPI's `rate_limit_per_min` description was rewritten in wave 31 to enumerate the per-tier clamp ladder (Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000). Wave 48 on 2026-05-12 brings the dashboard form hint in line: `web/dashboard/src/app/keys/page.tsx` now reads "Capped to your account tier - Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000. Higher values silently clamp to the tier ceiling on save." Both surfaces now describe the actual persisted semantics. |
 | F-1257 | medium | The 25-active-key/account quota remediation now uses an advisory lock, but closure is still evidence-blocked by a separate Postgres key-create failure | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103; EV-0121; EV-0148 | needs_evidence | platform/keys | Current code wraps capped `APIKeyStore.Create` calls in `pg_advisory_xact_lock(hashtext('apikey:'||account_id))` with a dedicated concurrent cap test. Wave 46 clears the old migration block, but that proof now fails earlier on `F-1262` because omitted `referer_allowlist` values become SQL NULL against a NOT NULL schema column. |
 | F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | fixed | api/ops/runtime | Wave 33 (2026-05-12) replaces the unconditional `UsageReader: usageReaderAdapter{c: usageCounter}` with `UsageReader: usageReaderOrNil(usageCounter)`. The helper returns a typed-nil v1.UsageReader when the counter is nil; the `/v1/account/usage` handler already short-circuits on `usageReader == nil` with an empty list, so Redis-less deployments degrade cleanly instead of nil-deref'ing on `Read`. |
-| F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs | XFI-0051; EV-0095; EV-0103 | open | docs/api/product | The source OpenAPI text now describes live Redis-backed usage, but generated reference YAML, Postman, API-design docs, architecture inventory, and the handler comment remain stale; the new source text also incorrectly says Redis absence is reflected on `/v1/healthz` checks. |
+| F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs | XFI-0051; EV-0095; EV-0103 | fixed | docs/api/product | Wave 49 (2026-05-13) reconciles every surface the audit listed: source OpenAPI corrects the `/v1/healthz`→`/v1/readyz` mistake (per-dependency `checks` field is `/readyz`-only); `internal/api/v1/account.go::handleAccountUsage` doc-block rewritten to describe the live Redis counter behaviour + readyz fall-back semantics; `docs/reference/api-design.md` route-table entry replaces "placeholder" with the live-counter description; `docs/architecture/explorer-data-inventory.md` "currently stub" phrasing replaced; `docs/reference/api/rates-engine.v1.yaml` + Postman collection regenerated via `make docs` so the published references match the source. |
 | F-1260 | high | `aggregate.min_usd_volume` still evaluates discarded pre-filter volume, so thin survivor windows can publish above a manipulation floor they do not actually meet | Aggregator stablecoin/USD-volume path; class/outlier filtering; VWAP publish gate | XFI-0052; EV-0105 | fixed | aggregate/market-data | Current `HEAD` recomputes USD volume across the post-class/post-outlier survivor slice via [survivorUSDVolume] before invoking [dropForMinUSDVolume], with regression test `class filter gutted window: drops despite pre-filter clearing threshold`. |
 | F-1261 | high | Migration `0030_asset_supply_history_unique_constraint` could not apply while `asset_supply_history` compression was enabled | `migrations/0030_asset_supply_history_unique_constraint.up.sql`; `migrations/0005_create_asset_supply_history.up.sql`; migration runner; R1 schema state | XFI-0053; EV-0120; EV-0137; EV-0147 | fixed | db/release/ops | Wave 46 on 2026-05-12 rewrites the up migration to decompress chunks, disable compression around the constraint swap, then restore the original 0005 compression settings. Fresh migration round-trip now succeeds, and the former Timescale `0A000` bootstrap failure no longer reproduces on current head. |
 | F-1262 | high | Dashboard/Postgres API-key creation can 500 when optional `referer_allowlist` is omitted because nil slices are inserted as SQL NULL into a NOT NULL array column | Dashboard key create handler; platform APIKey store; Postgres schema; dashboard client defaults | XFI-0054; EV-0148 | open | platform/keys/db | The unblocked platform-store integration now reaches API-key create logic and every zero-value create fails with `referer_allowlist` NOT NULL violations. Handler/web client defaults make omission normal, `pq.StringArray(nil)` preserves NULL, and the fake-store handler tests miss the real SQL path. |

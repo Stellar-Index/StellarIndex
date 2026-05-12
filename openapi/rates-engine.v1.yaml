@@ -1919,7 +1919,9 @@ paths:
         whenever Redis is reachable. Deployments without Redis
         (e.g. local dev with `-no-redis`) still return an empty
         envelope — the absence of the counter is reflected on
-        /v1/healthz under `checks`.
+        /v1/readyz under `checks` (NOT `/v1/healthz` — the
+        per-dependency `checks` field is `/readyz`-only; the
+        `/healthz` liveness probe stays minimal by design).
       security:
         - APIKeyAuth: []
       parameters:
