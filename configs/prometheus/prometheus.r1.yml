@@ -19,12 +19,19 @@ alerting:
         - targets:
             - localhost:9093
 
-# Rule files — start empty; operator opts in by symlinking files
-# from /etc/prometheus/rules.d/. The repo's deploy/monitoring/rules/
-# files were written for a multi-host shape and may need adjustment
-# before applying single-node.
+# Rule files. Operator deploys configs/prometheus/rules.r1/*.yml to
+# /etc/prometheus/rules.r1/ (one ansible task — rsync or ansible.builtin.copy
+# with the whole directory). Every file in this directory has a runbook
+# at docs/operations/runbooks/ and is referenced from
+# docs/operations/alerts-catalog.md; F-1219 (audit-2026-05-12) wants
+# the full set loaded on R1 so we don't have silent-rule families.
+#
+# F-1222 (audit-2026-05-12) explains the R1 (hyphenated) vs multi-host
+# (underscored) job-label divergence; this glob picks up the R1
+# overlay copies in configs/prometheus/rules.r1/ which use the
+# hyphenated names matching the scrape jobs above.
 rule_files:
-  - /etc/prometheus/rules.d/*.yml
+  - /etc/prometheus/rules.r1/*.yml
 
 scrape_configs:
   - job_name: prometheus
@@ -75,3 +82,75 @@ scrape_configs:
         labels:
           host: r1
     scrape_timeout: 5s
+
+  # ─── F-1220 (audit-2026-05-12) scrape-job coverage ─────────────
+  # Multi-host parity for R1's single-host shape. The corresponding
+  # rule files in configs/prometheus/rules.r1/ reference the metrics
+  # these exporters emit (cache.yml, infra.yml, storage.yml). Each
+  # job has a one-line comment naming the runbook that triages the
+  # corresponding alert family.
+
+  # redis_exporter — port 9121, installed by configs/ansible/roles/
+  # redis-sentinel/tasks/07-monitoring.yml (a redis_exporter unit
+  # runs alongside redis-server). Feeds cache.yml + the
+  # redis-writes-blocked + cache-miss-rate-high alert families.
+  - job_name: redis_exporter
+    static_configs:
+      - targets: [localhost:9121]
+        labels:
+          host: r1
+          service: redis
+
+  # Alertmanager self-scrape — port 9093, the same target prometheus
+  # already alerts TO. Self-scraping lets us alert on alertmanager
+  # being down (alertmanager-bad-config + meta runbook family).
+  # Required by the deadmansswitch heartbeat (configs/alertmanager/
+  # alertmanager.r1.yml).
+  - job_name: alertmanager
+    static_configs:
+      - targets: [localhost:9093]
+        labels:
+          host: r1
+
+  # postgres_exporter — port 9187 is the convention. NOT installed
+  # by ansible today; once an operator adds the role + service, this
+  # scrape job consumes its metrics for storage.yml's pg_* alerts.
+  # Listed here as a placeholder so the operator doesn't also need
+  # to edit the scrape config when adding the exporter.
+  - job_name: postgres_exporter
+    static_configs:
+      - targets: [localhost:9187]
+        labels:
+          host: r1
+          service: postgres
+    # Don't page on this being absent — it's known-pending until the
+    # operator deploys the exporter. The metric absence alert fires
+    # via meta.yml when it matters.
+    honor_labels: true
+
+  # pgbackrest_exporter — port 9854 is the upstream default. NOT
+  # installed by ansible today; placeholder slot so the existing
+  # backup-related alerts have a target name to bind to.
+  - job_name: pgbackrest_exporter
+    static_configs:
+      - targets: [localhost:9854]
+        labels:
+          host: r1
+          service: pgbackrest
+
+  # MinIO cluster metrics — Bearer-token auth (per the bucket-level
+  # `mc admin prometheus generate` output), so the operator wires
+  # the bearer token via a bearer_token_file rendered by ansible.
+  # Path differs from /metrics (the v2 path).
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: [localhost:9000]
+        labels:
+          host: r1
+          service: minio
+    # Bearer token rendered by ansible into /etc/prometheus/minio.token
+    # — operator step. Until that file exists this job 401s; the
+    # absence-of-series surfaces via meta.yml and the operator gets
+    # a clear "wire the token" signal.
+    bearer_token_file: /etc/prometheus/minio.token
