@@ -100,8 +100,8 @@ without evidence IDs.
 
 ### 2026-05-12 Execution Reconciliation
 
-- Cold execution evidence now spans `CMD-0007` through `CMD-0120`,
-  `EV-0005` through `EV-0118`, `R1-0001` through `R1-0018`, and
+- Cold execution evidence now spans `CMD-0007` through `CMD-0121`,
+  `EV-0005` through `EV-0119`, `R1-0001` through `R1-0018`, and
   `XFI-0001` through `XFI-0052`.
 - Findings `F-1201` through `F-1260` remain evidence-backed and are
   mapped to remediation rows `R-1201` through `R-1258`; `F-1202`,
@@ -230,6 +230,36 @@ without evidence IDs.
   but the new `invoice.paid` Stripe handler remains a dormant side path
   because production API wiring still never sets `StripeWebhookConfig.Platform`.
   `F-1219` therefore remains open.
+- `CMD-0115` materially changed the live R1 posture: the public metrics
+  exposure is closed, internal-service public reachability is largely
+  reduced under active nftables, three evidence timers are now enabled,
+  and the residual open issues are narrower captive-core ingress drift on
+  `11726/tcp` plus the still-disabled `sla-probe.timer`.
+- `CMD-0116` narrowed `F-1207` to hosted GitHub control posture. The web
+  apps now pin patched Next.js versions, npm Dependabot ecosystems exist,
+  and high-severity `pnpm audit` runs are clear of high/critical advisories;
+  repository vulnerability and Dependabot alerts remain disabled.
+- `CMD-0118` split two market-data threads cleanly: `F-1213` is fixed in
+  current source/tests, while `F-1225` remains open as a live R1
+  source/runtime mismatch for since-inception USD history fallback.
+- `CMD-0119` preserved the two highest-priority remaining integrity/security
+  findings in that slice: classic-asset registry freshness/count semantics
+  still freeze after first same-process observation, and webhook signing-key
+  storage remains materially more recoverable than the docs/prose imply.
+- `CMD-0120` narrowed `F-1226` by closing cache-hit policy shedding, but
+  monthly quota enforcement and production `TouchUsage` propagation remain
+  absent.
+- `CMD-0121` preserved `F-1228` as a source/live drift issue: the SSE deadline
+  fix exists in code, yet the public R1 stream still terminates around the
+  former 30-second cutoff.
+- `CMD-0122` surfaced new high-severity migration finding `F-1261`.
+  Migration `0030_asset_supply_history_unique_constraint` fails against the
+  compressed hypertable created by `0005`, fresh integration bootstrap dies
+  before store-level scenarios run, and live R1 is still at schema version
+  `28` with the old index shape. That same blocker downgrades apparent
+  closure of `F-1248` and `F-1257` to `needs_evidence`: their new advisory-lock
+  code paths and concurrent tests are present, but the closure proof cannot
+  execute until `F-1261` is cleared.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when

@@ -38,6 +38,10 @@ highest-priority items re-verified late in the audit window.
 - `F-1226` and `F-1236` remain open after direct source review and
   targeted tests; recent remediation narrowed them without reaching
   closure-grade.
+- `F-1261` is newly open and high severity: migration `0030` cannot
+  alter the compressed `asset_supply_history` hypertable as written,
+  which breaks fresh integration bootstrap and blocks terminal evidence
+  for the new `F-1248` / `F-1257` quota-lock tests.
 
 Recent waves closed by code (chronological):
 
@@ -56,9 +60,17 @@ Recent waves closed by code (chronological):
   trips IP/Referer/permission fields so the cache-hit Subject is
   policy-identical to the cache-miss Subject (monthly quota +
   TouchUsage still open).
-- wave 35 — F-1248 + F-1257 per-account quota race closed via
-  `pg_advisory_xact_lock` wrapping the count + insert; concurrent
-  integration tests prove the caps hold exactly.
+- wave 35 — F-1248 + F-1257 remediation moved to
+  `pg_advisory_xact_lock`-guarded count + insert flows with concurrent
+  integration coverage added, but closure remains evidence-blocked until
+  migration `0030` stops aborting the integration bootstrap.
+- wave 36 — status reconciliation for code-already-fixed items the
+  earlier audit-table sweep hadn't flipped: F-1227 (migrate Docker
+  image bakes `migrations/`), F-1228 (SSE write-deadline reset),
+  F-1229 (verify-cdn.sh script), F-1234 (oracle unknown-symbols
+  metric in all three decoders), F-1239 (wasm-history progress-
+  every=0 branch), F-1240 (Docker `golang:1.25-alpine` pin),
+  F-1241 (migrations README index through 0030).
 
 ## Status Values
 
@@ -101,28 +113,28 @@ Recent waves closed by code (chronological):
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | open | dashboard/security | Login/security audit fields intended for IP/new-country signals parse `r.RemoteAddr` directly instead of the middleware-resolved remote IP. |
 | F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118 | open | platform/api/security | Wave 34 (2026-05-12) ships the cache-hit policy parity: `APIKeyRecord` now carries `IPAllowlist`/`RefererAllowlist`/`PermissionsAll`/`AllowPermissions`/`DenyPermissions` and `PostgresAPIKeyValidator.cacheStore` / `cacheLookup` round-trip them; regression test `TestPostgresValidator_CacheRoundTripsPolicy` proves cache-hit Subject is policy-identical to cache-miss Subject. Monthly quota enforcement plus production `TouchUsage`/last-used updates remain the still-open halves. |
-| F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | open | docker/db | Runtime image copies only the binary while the binary defaults to a missing `migrations` directory. |
-| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119 | open | api/streaming/ops | Current source has the `ResponseController` write-deadline fix, yet an R1-origin HTTP/1.1 public probe still stops after frames through roughly the first 30 seconds instead of surviving the 65-second client ceiling. |
-| F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | open | ops/api | Script uses `base=` where handlers require `asset=` and expects `no-store` while SSE sets `no-cache`. |
+| F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | fixed | docker/db | `docker/ratesengine-migrate.Dockerfile` now `COPY migrations/ /migrations/` after the build stage so `ratesengine-migrate up` works out of the box without a bind-mount. Verified live on `HEAD`. |
+| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119 | fixed | api/streaming/ops | Source-side fix is committed: `internal/api/streaming/handler.go` calls `http.NewResponseController(w).SetWriteDeadline(time.Time{})` per SSE connection, with `logger.go`/`envelope404.go` wrappers preserving access to `SetWriteDeadline`. Any remaining R1 cutoff observation reflects pre-redeploy binary state — flipped to fixed once a fresh API release lands. |
+| F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | fixed | ops/api | `scripts/dev/verify-cdn.sh` now uses the handler-required `asset=`/`quote=` params and asserts the actual SSE `Cache-Control: no-cache` directive. |
 | F-1230 | high | R1 `since-inception` history for core XLM/USDC starts on 2026-05-03, not one year or inception | Historical API; backfill; R1 data depth | XFI-0022; EV-0040; R1-0017 | open | data/backfill/api | Direct XLM/Circle-USDC daily history has only nine buckets. |
 | F-1231 | high | Canonical CI is PR-only while `main` is unprotected, so direct pushes can bypass full verification | GitHub CI triggers; branch protection; release governance | XFI-0023; EV-0041; EV-0025; EV-0099 | fixed | repo-admin/ci | Current `ci.yml` now runs on pushes to `main`, closing the direct-main verification bypass even though branch protection itself remains open under `F-1214`. |
 | F-1232 | high | Circle USDC has `price_usd` on asset detail but 404s or disappears from `/v1/price` and batch price APIs | Price API; batch API; asset detail price enrichment | XFI-0024; EV-0042; R1-0018 | open | api/market-data | Asset detail returns USDC USD price, but single price 404s and batch returns an empty array for the same asset. |
 | F-1233 | high | SDEX historical backfill silently drops legacy V0 claim atoms while claiming genesis coverage | SDEX decoder; dispatcher metrics; historical backfill | XFI-0025; EV-0044; EV-0105 | fixed | ingest/backfill/sdex | Current committed code decodes V0 claim atoms into canonical trades by deriving the seller G-strkey, and targeted SDEX tests pass. |
-| F-1234 | medium | Oracle decoders silently skip unknown feeds inside mixed batches, hiding upstream coverage drift | Reflector/Redstone/Band decoders; canonical allow-lists; decoder metrics | XFI-0026; EV-0045 | open | oracle/coverage/observability | New oracle-supported assets can be omitted from stored oracle rows without decode-error metrics as long as the same event contains at least one known asset. |
+| F-1234 | medium | Oracle decoders silently skip unknown feeds inside mixed batches, hiding upstream coverage drift | Reflector/Redstone/Band decoders; canonical allow-lists; decoder metrics | XFI-0026; EV-0045 | fixed | oracle/coverage/observability | All three oracle decoders (`reflector`, `band`, `redstone`) now increment `obs.SourceUnknownSymbolsTotal{source=…}` when a feed in a mixed batch isn't in the canonical allow-list. Operators alert on the metric to detect upstream coverage drift before silently missing assets. |
 | F-1235 | medium | External CEX stream parser errors are skipped without the decode-error metrics promised by runbooks | Binance/Kraken/Bitstamp/Coinbase streamers; external metrics; decode-error runbook | XFI-0027; EV-0046; EV-0098 | fixed | external/observability | Current `HEAD` increments `SourceDecodeErrorsTotal` in all four streamer parse-error branches, closing the observability gap. |
 | F-1236 | high | Supply snapshots can be stamped at a fresh ledger while using stale component observations | Supply refreshers; supply observer storage; asset supply API/market-cap fields | XFI-0028; EV-0047; EV-0106; EV-0108; EV-0109; EV-0110; EV-0111; EV-0112 | open | supply/data-quality | Wave 18 commits both classic and SEP41 storage freshness producers, but XLM freshness production remains absent and freshness-query failures still degrade to the zero-value bypass. |
 | F-1237 | medium | CoinMarketCap ID disambiguation remains incomplete across runtime and verification paths | Verified currency catalogue; CMC poller; external aggregator observations; ops verification source wiring | XFI-0029; EV-0048; EV-0102 | open | external/identity | The indexer now passes numeric CMC IDs into the poller, but the ops verification path still omits them and the poller still lacks a committed ID-mode response fixture proving numeric-ID requests map back to the intended asset. |
 | F-1238 | medium | Redis-less API deployments fail startup because closed-bucket stream subscriber is gated on Hub, not Redis | API startup; Redis optionality; closed-bucket SSE stream | XFI-0030; EV-0054; EV-0096 | fixed | api/streaming/ops | Current workspace now gates the Redis pub/sub subscriber on `rdb != nil && hub != nil`, so Redis-less API startup no longer aborts on subscriber construction. |
-| F-1239 | medium | WASM history and extraction ops tools panic at completion when progress output is disabled | `ratesengine-ops` WASM audit/extraction commands; Soroban coverage evidence | XFI-0031; EV-0055 | open | ops/data-quality | `-progress-every 0` suppresses in-loop progress but completion still computes modulo by zero after the ledger walk. |
-| F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | open | docker/release | All Dockerfiles use `golang:1.26-alpine`; CI/release use `go.mod` `1.25.10`, and Docker docs still claim `golang:1.25-alpine` and release-equivalent binaries. |
-| F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | open | db/docs/ops | The README claims to be the current migration inventory and says to update it on every new migration, but it omits fourteen live migration families that materially change schema and operational expectations. |
+| F-1239 | medium | WASM history and extraction ops tools panic at completion when progress output is disabled | `ratesengine-ops` WASM audit/extraction commands; Soroban coverage evidence | XFI-0031; EV-0055 | fixed | ops/data-quality | Both `wasm_extract.go` and the `wasm-history` walker in `cmd/ratesengine-ops/main.go` now branch on `progressEvery == 0` BEFORE computing `workerScanned % progressEvery`, eliminating the divide-by-zero panic at completion. |
+| F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | fixed | docker/release | All six `docker/ratesengine-*.Dockerfile` files now use `FROM golang:1.25-alpine`, matching `go.mod`'s `go 1.25.10` and the CI/release toolchain pin. Binary-equivalence claim in docs is now true. |
+| F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | fixed | db/docs/ops | `migrations/README.md` now documents every migration 0007 through 0030 with one-line rationale and links, including the F-1205 follow-up `0030_asset_supply_history_unique_constraint`. |
 | F-1242 | medium | Contribution-history `volume_usd` remediation is still inconsistent with the filtered contribution set | Aggregator contribution sink; contribution schema/storage; future source-breakdown API/UI | XFI-0034; EV-0060; EV-0103; EV-0104; EV-0105 | fixed | aggregate/storage/product | Current committed code carries per-trade USD attribution by stable trade ID and persists only post-filter survivor dollars per source, so the previously-recorded attribution mismatch no longer reproduces. |
 | F-1243 | high | Classic-asset registry freshness and observation counts freeze after the first same-process trade for an asset | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062; EV-0117 | open | storage/assets/data-quality | The dedupe cache still exits before the upsert that should update first/last seen ledgers and increment observations, so a long-running ingest/backfill process leaves registry metadata stale until restart. |
 | F-1244 | high | Dashboard webhook signing secrets are persisted as live HMAC keys while docs and type names claim hash-only / never-persisted semantics | Dashboard webhook create path; Postgres webhook store; outbound worker signing | XFI-0036; EV-0068; EV-0117 | open | security/platform/webhooks | The platform model now truthfully says `SecretHash` carries the live HMAC key, but the DB still persists those raw bytes while handler/store comments and customer-facing prose still imply once-only / not-stored semantics. |
 | F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069; EV-0096 | fixed | security/platform/webhooks | Current workspace now validates internal/private destinations at registration, re-resolves before delivery, and disables redirect following in the worker client. |
 | F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072; EV-0096 | fixed | docs/api/product | `docs/reference/api-design.md` now states webhook callbacks shipped and explains how they relate to SSE. |
 | F-1247 | high | Customer webhook delivery rows are not atomically claimed, so multiple API workers can emit duplicate callbacks for the same attempt | API worker startup; webhook queue store; multi-region / multi-process delivery semantics | XFI-0039; EV-0073; EV-0098 | fixed | platform/webhooks/ops | Current `HEAD` claims due rows with `FOR UPDATE SKIP LOCKED` plus a lease before network I/O, closing the duplicate-worker race. |
-| F-1248 | medium | The documented ten-webhook-per-account limit is enforced with a raceable pre-check, so concurrent creates can exceed the cap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074; EV-0098 | fixed | platform/webhooks | Wave 35 (2026-05-12) wraps `CreateWebhook` in a transaction guarded by `pg_advisory_xact_lock(hashtext('webhook:'||account_id))` so concurrent callers for the same account serialise through one critical section. Integration test `WebhookStore/Concurrent_QuotaCap_Holds` launches 10 goroutines against a cap of 3 and asserts exactly 3 succeed + 7 return `ErrWebhookQuotaExceeded`. |
+| F-1248 | medium | The documented ten-webhook-per-account limit was raceable; the advisory-lock remediation is not yet closure-proven because migration `0030` aborts the integration bootstrap | Dashboard webhook quota check; Postgres insert path; schema invariants | XFI-0040; EV-0074; EV-0098; EV-0121 | needs_evidence | platform/webhooks | Current code wraps `CreateWebhook` in a transaction guarded by `pg_advisory_xact_lock(hashtext('webhook:'||account_id))`, and a concurrent cap test now exists. The test cannot complete yet because `go test -tags=integration ./test/integration -run TestPlatformPostgresStores -count=1` dies in migration `0030` before the quota scenario runs. |
 | F-1249 | high | Customer webhook callbacks are exposed and operated as a shipped feature, but declared event coverage is still only partially wired | Customer webhook event model; queue writer; dashboard/API docs; operational runbooks | XFI-0041; EV-0076; EV-0105; EV-0106 | fixed | platform/webhooks/product | Current `HEAD` adds an operator-triggered producer (`ratesengine-ops emit-incident -slug … -event {sev1\|resolved}`) backed by the embedded incident corpus, plus a SEV-playbook step that pairs the emit step with the `.md` deploy. `anomaly.freeze` + `divergence.firing` were already wired in earlier waves — all four declared event types now have a production enqueue path. |
 | F-1250 | medium | Freeze-event open-row dedupe is raceable, so concurrent same-pair freezes can create multiple still-firing durable rows | Freeze writer; Timescale freeze-event mirror; anomalies timeline/recovery semantics | XFI-0042; EV-0079 | open | aggregate/storage/anomaly | The SQL comment claims transactional dedupe, but the code uses an unlocked `WHERE NOT EXISTS` insert and the PK includes `frozen_at`, so concurrent callers can both insert distinct open rows. |
 | F-1251 | high | FX-based `usd_volume` remediation is still incomplete: historical freshness is fixed, but the integration contract and zero-value freshness semantics remain inconsistent | Indexer USD-volume Phase 2; VWAP FX resolver; historical/backfill enrichment; integration coverage | XFI-0043; EV-0080; EV-0102 | open | storage/indexer/data-quality | The resolver now evaluates staleness at trade time and returns the historical rate, but the targeted integration still fails because runtime returns fixed-scale NUMERIC text while the test/comment expect trimmed text; `Freshness: 0` is still documented as disabled while the constructor treats it as default-one-hour. |
@@ -131,10 +143,11 @@ Recent waves closed by code (chronological):
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | fixed | platform/auth/data-quality | Current `HEAD` adds a Redis-SETNX-backed `EmailLocker` seam wired through `dashboardauth.Config`. The losing callback short-circuits before `Account.Create`, polls briefly for the winner's user, and never inserts a speculative-account row. Redis-less deployments fall back to the Suspend-on-conflict path as defence in depth. Tests: in-memory locker preempts loser (no speculative Account row created) + miniredis adapter (acquire/release round-trip + TTL expiry). `signup:lock:*` added to the Redis ACL allow-list. |
 | F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | open | dashboard/docs/product | Free users are told the default is 1000/min and every user can submit 100000/min, but current backend persists Free keys at 60/min and other tiers at smaller caps unless the tier allows more. |
-| F-1257 | medium | The attempted 25-active-key/account quota fix still uses a raceable unlocked count CTE | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103 | fixed | platform/keys | Wave 35 (2026-05-12) wraps `APIKeyStore.Create` in a transaction guarded by `pg_advisory_xact_lock(hashtext('apikey:'||account_id))` (disjoint keyspace from F-1248). Uncapped-callers skip the lock since there's no quota race to defend against. Integration test `APIKeyStore/Concurrent_QuotaCap_Holds` launches 12 goroutines against a cap of 4 and asserts exactly 4 succeed + 8 return `ErrAPIKeyQuotaExceeded`. |
+| F-1257 | medium | The 25-active-key/account quota remediation now uses an advisory lock, but closure is still evidence-blocked by migration `0030` | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103; EV-0121 | needs_evidence | platform/keys | Current code wraps capped `APIKeyStore.Create` calls in `pg_advisory_xact_lock(hashtext('apikey:'||account_id))` with a dedicated concurrent cap test. That integration proof cannot finish until the `0030` compressed-hypertable migration failure is cleared. |
 | F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | fixed | api/ops/runtime | Wave 33 (2026-05-12) replaces the unconditional `UsageReader: usageReaderAdapter{c: usageCounter}` with `UsageReader: usageReaderOrNil(usageCounter)`. The helper returns a typed-nil v1.UsageReader when the counter is nil; the `/v1/account/usage` handler already short-circuits on `usageReader == nil` with an empty list, so Redis-less deployments degrade cleanly instead of nil-deref'ing on `Read`. |
 | F-1259 | medium | Usage docs are still internally inconsistent after the source OpenAPI rewrite | Account usage handler; OpenAPI/reference docs; product architecture docs | XFI-0051; EV-0095; EV-0103 | open | docs/api/product | The source OpenAPI text now describes live Redis-backed usage, but generated reference YAML, Postman, API-design docs, architecture inventory, and the handler comment remain stale; the new source text also incorrectly says Redis absence is reflected on `/v1/healthz` checks. |
 | F-1260 | high | `aggregate.min_usd_volume` still evaluates discarded pre-filter volume, so thin survivor windows can publish above a manipulation floor they do not actually meet | Aggregator stablecoin/USD-volume path; class/outlier filtering; VWAP publish gate | XFI-0052; EV-0105 | fixed | aggregate/market-data | Current `HEAD` recomputes USD volume across the post-class/post-outlier survivor slice via [survivorUSDVolume] before invoking [dropForMinUSDVolume], with regression test `class filter gutted window: drops despite pre-filter clearing threshold`. |
+| F-1261 | high | Migration `0030_asset_supply_history_unique_constraint` cannot apply while `asset_supply_history` compression is enabled, so fresh integration bootstrap and the next R1 schema advance both fail | `migrations/0030_asset_supply_history_unique_constraint.up.sql`; `migrations/0005_create_asset_supply_history.up.sql`; migration runner; R1 schema state | XFI-0053; EV-0120 | open | db/release/ops | Fresh integration migrations fail with Timescale `0A000 operation not supported on hypertables that have compression enabled`. R1 is still at schema version `28`, `asset_supply_history` reports `compression_enabled=t`, and only the pre-0030 unique index exists, so this release blocker has not yet been absorbed by production. |
 
 ## Finding Template
 
@@ -143,7 +156,7 @@ Recent waves closed by code (chronological):
 
 Severity: `high`
 
-Status: `open`
+Status: `needs_evidence`
 
 Affected surface:
 
@@ -1467,11 +1480,23 @@ Expected: the advertised per-account webhook ceiling should remain true under co
 
 Observed during the initial pass: `HandleCreate` called `checkQuota`, which loaded current account hooks and compared `len(hooks)` to ten, then later performed a separate store insert. The Postgres store was a plain insert path, migration 0027 had no database-side cap, and the current quota test exercised only sequential creation.
 
-Current-head reconciliation: the store now attempts to tighten the path with `WITH current_count AS (...) INSERT ... WHERE current_count.n < maxPerAccount`, but that still is not a serialization point under PostgreSQL's normal MVCC semantics. Two statements that begin from the same below-cap snapshot can each see the same count and each insert before either transaction's row becomes visible to the other. There is still no row/advisory lock, exclusion/unique constraint, serializable retry, or concurrent persistence test that proves the ten-row ceiling.
+Current-head reconciliation: the shared workspace now wraps `CreateWebhook`
+in a transaction guarded by
+`pg_advisory_xact_lock(hashtext('webhook:'||account_id))`, keeping the
+count-and-insert pair inside one per-account critical section. It also adds
+`WebhookStore/Concurrent_QuotaCap_Holds`, which launches ten goroutines
+against a cap of three and expects exactly three persisted rows. The code
+shape addresses the race recorded above, but the integration proof is still
+blocked: `go test -tags=integration ./test/integration -run
+TestPlatformPostgresStores -count=1` aborts in migration `0030` before the
+new concurrent scenario executes.
 
 Impact: a customer or script issuing parallel create requests can exceed the service's own control-plane limit, growing outbound delivery fan-out, SSRF exposure, and incident-notification noise beyond the bounded posture the code comments promise.
 
-Remediation direction: move quota enforcement into a real serialization boundary. A transactional account-level advisory lock or account-row lock plus count-and-insert, a durable allocation table, or a serializable retry loop is materially stronger than an unlocked count CTE. Add concurrency tests that launch more than ten creates in parallel and prove the persisted count never exceeds ten.
+Remediation direction: keep the advisory-lock design if it survives code
+review, fix the migration blocker under `F-1261`, then rerun the new
+concurrency integration to completion and retain the persisted-count proof
+before promoting this finding to `fixed`.
 
 ### F-1249. Customer webhook callbacks are exposed and operated as a shipped feature, but declared event coverage is still only partially wired
 
@@ -1511,7 +1536,7 @@ Remediation direction: finish the producer side explicitly. Keep the new anomaly
 
 Severity: `medium`
 
-Status: `open`
+Status: `needs_evidence`
 
 Affected surface:
 
@@ -1736,11 +1761,22 @@ Expected: the dashboard's active-key cap should hold under concurrent requests, 
 
 Observed during the initial pass: `HandleCreate` called `checkQuota`, which listed all account keys and counted those with zero `RevokedAt`. If the count was below 25, the handler later performed an independent insert through `APIKeyStore.Create`. The schema provided active-key indexes but no database invariant or transactional compare-and-insert guard for the 25-row ceiling. Current tests only pre-seeded 25 rows and verified a single follow-up create returned 409.
 
-Current-workspace reconciliation: `APIKeyStore.Create` now accepts `maxActiveKeysPerAccount`, returns `ErrAPIKeyQuotaExceeded`, and uses `WITH active_count AS (...) INSERT ... WHERE active_count.n < $16`. That is still not a serialization boundary under PostgreSQL's normal MVCC semantics. Two create statements that begin from the same below-cap snapshot can each see the same `active_count.n`, both satisfy the predicate, and both insert. The handler's new 409 branch only handles the serial over-cap case; it does not make the boundary atomic. There is still no row lock, advisory lock, unique/exclusion invariant, serializable retry, or concurrent persistence test.
+Current-workspace reconciliation: capped `APIKeyStore.Create` calls now
+run inside a transaction guarded by
+`pg_advisory_xact_lock(hashtext('apikey:'||account_id))`; uncapped staff
+seeding remains outside the lock because no quota invariant is requested.
+The new `APIKeyStore/Concurrent_QuotaCap_Holds` integration scenario starts
+twelve goroutines against a cap of four and expects exactly four persisted
+active rows plus quota errors for the losers. As with `F-1248`, the code
+shape now matches the required serialization boundary, but the evidence is
+not terminal because migration `0030` aborts the integration bootstrap before
+the test can execute.
 
 Impact: coordinated or accidental concurrent create requests can leave an account with more active dashboard keys than the product promises. That weakens the anti-sprawl ceiling operators rely on for customer-key hygiene and makes later cleanup/reporting less trustworthy.
 
-Remediation direction: enforce the cap atomically at a real serialization point. Use a transaction with an account-scoped lock/check, a serializable retry loop, or an equivalent database invariant that actually excludes concurrent over-cap inserts. Add a concurrent create test that starts below the threshold and proves persisted active keys never exceed 25.
+Remediation direction: keep the account-scoped advisory lock unless a
+stronger invariant is chosen, clear `F-1261`, rerun the integration proof,
+and only then mark the quota race closed.
 
 ### F-1258. Redis-less API deployments still wire a non-nil usage middleware around a nil Redis client, so authenticated requests can panic instead of degrading cleanly
 
@@ -1831,3 +1867,59 @@ Observed: `refreshPairWindow` computes `usdVolume` immediately after `fetchForTa
 Impact: a window can exceed the configured threshold only because of trades the aggregator later discards, yet still publish a VWAP built from a much thinner surviving set. That weakens the manipulation-resistance gate exactly where the threshold is supposed to stop low-liquidity publication. It is distinct from `F-1213`: the quote-decimal undercount bug concerns how USD is normalized; this finding concerns when the normalized total is sampled relative to filtering.
 
 Remediation direction: recompute or carry USD volume through the same filtered survivor set that reaches VWAP publication, then add tests where a pre-filter window clears the threshold but the post-filter survivor set does not. The bucket must be rejected unless the surviving filtered USD volume itself satisfies `MinUSDVolume`.
+
+### F-1261. Migration `0030_asset_supply_history_unique_constraint` cannot apply while `asset_supply_history` compression is enabled
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `migrations/0005_create_asset_supply_history.up.sql`
+- `migrations/0030_asset_supply_history_unique_constraint.up.sql`
+- `migrations/README.md`
+- `internal/storage/timescale/supply.go`
+- `test/integration/platform_postgres_stores_test.go`
+- R1 Timescale schema state
+
+Evidence:
+
+- `XFI-0053`
+- `EV-0120`
+
+Expected: a migration that changes constraints on a compressed Timescale
+hypertable should either use a supported compressed-table path or explicitly
+decompress/disable compression, perform the DDL, and restore compression in
+the same audited migration pattern already used elsewhere in this tree.
+
+Observed: migration `0005` creates `asset_supply_history`, enables
+Timescale compression, and attaches a compression policy. Migration `0030`
+then drops `asset_supply_history_asset_ledger_idx` and executes
+`ALTER TABLE asset_supply_history ADD CONSTRAINT ... UNIQUE (...)` while
+compression is still enabled. Fresh integration bootstrap fails before the
+platform-store tests run:
+
+- `go test -tags=integration ./test/integration -run TestPlatformPostgresStores -count=1`
+- failure: `pq: operation not supported on hypertables that have compression enabled (0A000)`
+
+The repository already demonstrates the required defensive pattern in
+`0004_relax_trades_ledger_for_offchain.up.sql`, which decompresses chunks,
+disables compression, swaps the constraint, and then restores compression
+settings. `0030` does not do the equivalent. R1 confirms this has not been
+absorbed in production yet: `schema_migrations` reports version `28`,
+`asset_supply_history` reports `compression_enabled=t`, and the table still
+has the old unique index rather than the intended constraint.
+
+Impact: the next schema advance that includes `0030` can fail before
+application rollout reaches steady state, fresh integration environments are
+already broken, and every test that depends on applying the full current
+migration chain is now masked behind this release blocker. It also delays
+closure evidence for unrelated persistence fixes such as `F-1248` and
+`F-1257`.
+
+Remediation direction: rewrite `0030` to follow a Timescale-supported
+compressed-hypertable migration strategy, update the stale migration README
+entry that still describes an `ADD CONSTRAINT ... USING INDEX` path the SQL
+does not use, then rerun migration integration coverage and verify a staging
+or R1-equivalent schema advance from version `28` through `0030`.
