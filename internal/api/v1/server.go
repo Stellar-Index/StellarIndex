@@ -44,55 +44,56 @@ type ReadyChecker interface {
 //
 // Thread-safe.
 type Server struct {
-	logger            *slog.Logger
-	checks            []ReadyChecker
-	assets            AssetReader
-	prices            PriceReader
-	history           HistoryReader
-	markets           MarketsReader
-	oracle            OracleReader
-	meta              MetadataResolver
-	accounts          AccountStore
-	signups           SignupTracker
-	signupIPThrottle  SignupIPThrottle
-	signupVerifier    SignupVerifier
-	stripe            *StripeWebhookConfig
-	divergence        DivergenceLooker
-	freeze            FrozenLooker
-	supply            SupplyLooker
-	volume            VolumeReader
-	change24h         Change24hReader
-	changesum         ChangeSummaryReader
-	coins             CoinsReader
-	issuers           IssuersReader
-	cursors           CursorsReader
-	networkStats      NetworkStatsReader
-	sourcesStats      SourcesStatsReader
-	lending           LendingReader
-	currencies        CurrenciesReader
-	fxHistory         FXHistoryReader
-	sessionPeeker     SessionPeeker
-	incidents         []incidents.Incident
-	sep10             auth.SEP10Validator
-	cors              middleware.Middleware
-	auth              middleware.Middleware
-	keyPolicy         middleware.Middleware
-	rateLimit         middleware.Middleware
-	monthlyQuota      middleware.Middleware
-	touchUsage        middleware.Middleware
-	usageTracker      middleware.Middleware
-	usageReader       UsageReader
-	hub               *streaming.Hub
-	confidence        ConfidenceLooker
-	triangulated      TriangulatedPriceLooker
-	cdnEnabled        bool
-	statusBackend     StatusBackend
-	regionName        string
-	regionDeployment  string
-	dashboardAuth     DashboardAuthMounter
-	dashboardKeys     DashboardAuthMounter
-	dashboardWebhooks DashboardAuthMounter
-	sessionAuth       middleware.Middleware
+	logger              *slog.Logger
+	checks              []ReadyChecker
+	assets              AssetReader
+	prices              PriceReader
+	history             HistoryReader
+	markets             MarketsReader
+	oracle              OracleReader
+	meta                MetadataResolver
+	accounts            AccountStore
+	signups             SignupTracker
+	signupIPThrottle    SignupIPThrottle
+	signupVerifier      SignupVerifier
+	signupVerifyEmailer SignupVerifyEmailer
+	stripe              *StripeWebhookConfig
+	divergence          DivergenceLooker
+	freeze              FrozenLooker
+	supply              SupplyLooker
+	volume              VolumeReader
+	change24h           Change24hReader
+	changesum           ChangeSummaryReader
+	coins               CoinsReader
+	issuers             IssuersReader
+	cursors             CursorsReader
+	networkStats        NetworkStatsReader
+	sourcesStats        SourcesStatsReader
+	lending             LendingReader
+	currencies          CurrenciesReader
+	fxHistory           FXHistoryReader
+	sessionPeeker       SessionPeeker
+	incidents           []incidents.Incident
+	sep10               auth.SEP10Validator
+	cors                middleware.Middleware
+	auth                middleware.Middleware
+	keyPolicy           middleware.Middleware
+	rateLimit           middleware.Middleware
+	monthlyQuota        middleware.Middleware
+	touchUsage          middleware.Middleware
+	usageTracker        middleware.Middleware
+	usageReader         UsageReader
+	hub                 *streaming.Hub
+	confidence          ConfidenceLooker
+	triangulated        TriangulatedPriceLooker
+	cdnEnabled          bool
+	statusBackend       StatusBackend
+	regionName          string
+	regionDeployment    string
+	dashboardAuth       DashboardAuthMounter
+	dashboardKeys       DashboardAuthMounter
+	dashboardWebhooks   DashboardAuthMounter
+	sessionAuth         middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +
@@ -219,6 +220,16 @@ type Options struct {
 	// it returns 503 with a clear "verification not configured"
 	// message so customers don't get the silent-no-op surprise.
 	SignupVerifier SignupVerifier
+
+	// SignupVerifyEmailer, when non-nil + paired with a non-nil
+	// `SignupVerifier`, makes the signup handler issue a token,
+	// Reserve it, and email the click-through verify URL.
+	// F-1218 wave 44 (codex audit-2026-05-12). Nil keeps the
+	// signup-handler response shape unchanged (no email sent,
+	// `email_verification_sent: false` on the wire); the
+	// verifier endpoint stays a no-op until wave 44 is wired
+	// end-to-end.
+	SignupVerifyEmailer SignupVerifyEmailer
 
 	// Stripe, when non-nil, backs POST /v1/webhooks/stripe (paid-
 	// tier upgrade webhook). Nil makes the endpoint return 503 so
@@ -551,61 +562,62 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:             logger,
-		checks:             opts.ReadyChecks,
-		assets:             opts.Assets,
-		prices:             opts.Prices,
-		history:            opts.History,
-		markets:            opts.Markets,
-		oracle:             opts.Oracle,
-		meta:               opts.Meta,
-		accounts:           opts.Accounts,
-		signups:            opts.Signups,
-		signupIPThrottle:   opts.SignupIPThrottle,
-		signupVerifier:     opts.SignupVerifier,
-		stripe:             opts.Stripe,
-		divergence:         opts.Divergence,
-		freeze:             opts.Freeze,
-		supply:             opts.Supply,
-		volume:             opts.Volume,
-		change24h:          opts.Change24h,
-		changesum:          opts.ChangeSummary,
-		coins:              opts.Coins,
-		issuers:            opts.Issuers,
-		cursors:            opts.Cursors,
-		networkStats:       opts.NetworkStats,
-		sourcesStats:       opts.SourcesStats,
-		lending:            opts.Lending,
-		currencies:         opts.Currencies,
-		fxHistory:          opts.FXHistory,
-		sessionPeeker:      opts.SessionPeeker,
-		sep10:              opts.SEP10,
-		cors:               opts.CORS,
-		auth:               opts.Auth,
-		keyPolicy:          opts.KeyPolicy,
-		rateLimit:          opts.RateLimit,
-		monthlyQuota:       opts.MonthlyQuota,
-		touchUsage:         opts.TouchUsage,
-		usageTracker:       opts.UsageTracker,
-		usageReader:        opts.UsageReader,
-		hub:                opts.Hub,
-		confidence:         opts.Confidence,
-		triangulated:       opts.Triangulated,
-		cdnEnabled:         opts.CDNEnabled,
-		statusBackend:      opts.StatusBackend,
-		regionName:         valueOr(opts.RegionName, "unknown"),
-		regionDeployment:   valueOr(opts.RegionDeployment, "production"),
-		dashboardAuth:      opts.DashboardAuth,
-		dashboardKeys:      opts.DashboardKeys,
-		dashboardWebhooks:  opts.DashboardWebhooks,
-		sessionAuth:        opts.SessionAuth,
-		verifiedCurrencies: opts.VerifiedCurrencies,
-		globalPrice:        opts.GlobalPrice,
-		globalPriceOpts:    globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		sacWrappers:        opts.SACWrappers,
-		usdPeggedClassics:  opts.USDPeggedClassics,
-		mux:                http.NewServeMux(),
-		started:            time.Now().UTC(),
+		logger:              logger,
+		checks:              opts.ReadyChecks,
+		assets:              opts.Assets,
+		prices:              opts.Prices,
+		history:             opts.History,
+		markets:             opts.Markets,
+		oracle:              opts.Oracle,
+		meta:                opts.Meta,
+		accounts:            opts.Accounts,
+		signups:             opts.Signups,
+		signupIPThrottle:    opts.SignupIPThrottle,
+		signupVerifier:      opts.SignupVerifier,
+		signupVerifyEmailer: opts.SignupVerifyEmailer,
+		stripe:              opts.Stripe,
+		divergence:          opts.Divergence,
+		freeze:              opts.Freeze,
+		supply:              opts.Supply,
+		volume:              opts.Volume,
+		change24h:           opts.Change24h,
+		changesum:           opts.ChangeSummary,
+		coins:               opts.Coins,
+		issuers:             opts.Issuers,
+		cursors:             opts.Cursors,
+		networkStats:        opts.NetworkStats,
+		sourcesStats:        opts.SourcesStats,
+		lending:             opts.Lending,
+		currencies:          opts.Currencies,
+		fxHistory:           opts.FXHistory,
+		sessionPeeker:       opts.SessionPeeker,
+		sep10:               opts.SEP10,
+		cors:                opts.CORS,
+		auth:                opts.Auth,
+		keyPolicy:           opts.KeyPolicy,
+		rateLimit:           opts.RateLimit,
+		monthlyQuota:        opts.MonthlyQuota,
+		touchUsage:          opts.TouchUsage,
+		usageTracker:        opts.UsageTracker,
+		usageReader:         opts.UsageReader,
+		hub:                 opts.Hub,
+		confidence:          opts.Confidence,
+		triangulated:        opts.Triangulated,
+		cdnEnabled:          opts.CDNEnabled,
+		statusBackend:       opts.StatusBackend,
+		regionName:          valueOr(opts.RegionName, "unknown"),
+		regionDeployment:    valueOr(opts.RegionDeployment, "production"),
+		dashboardAuth:       opts.DashboardAuth,
+		dashboardKeys:       opts.DashboardKeys,
+		dashboardWebhooks:   opts.DashboardWebhooks,
+		sessionAuth:         opts.SessionAuth,
+		verifiedCurrencies:  opts.VerifiedCurrencies,
+		globalPrice:         opts.GlobalPrice,
+		globalPriceOpts:     globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
+		sacWrappers:         opts.SACWrappers,
+		usdPeggedClassics:   opts.USDPeggedClassics,
+		mux:                 http.NewServeMux(),
+		started:             time.Now().UTC(),
 	}
 	// Load + cache the embedded incident corpus once at startup;
 	// the data is small (a few markdown files) and ships with the

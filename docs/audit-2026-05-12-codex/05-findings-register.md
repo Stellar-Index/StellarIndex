@@ -119,6 +119,16 @@ Recent waves closed by code (chronological):
   handler tests. F-1218 still open pending the signup-handler
   token-issue + email step (wave 44 candidate) and the optional
   validator gate (wave 45 candidate).
+- wave 44 — F-1218 producer side: signup handler now Reserves
+  a fresh `auth.NewSignupVerifyToken` against the new keyID,
+  builds the absolute verify URL (scheme/Host + X-Forwarded-Proto
+  override), and emails it via the new `SignupVerifyEmailer`
+  adapter. Wire response gains `email_verification_sent` bool.
+  Production wiring reuses the dashboard sender + emailFrom;
+  NoopSender is recognised and surfaces as `false` so customers
+  aren't lied to. 3 new tests cover happy path / no-emailer
+  degradation / send-error non-fatal. F-1218 still open pending
+  the optional validator-gate (wave 45).
 
 ## Status Values
 
@@ -152,7 +162,7 @@ Recent waves closed by code (chronological):
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
-| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099; EV-0127 | open | api/security/billing | The Redis-backed same-email race is now closed. Wave 42 (2026-05-12) shipped the verifier foundation (`auth.SignupVerifier` interface + `RedisSignupVerifier` impl). Wave 43 (2026-05-12) shipped the consumer endpoint: `GET /v1/signup/verify?token=…`, with `v1.SignupVerifier` boundary type, `Server.SignupVerifier` option, mux registration, OpenAPI surface (200 / 400 / 404 / 503 with Problem-JSON), and 6 handler tests (happy path + single-use, unknown token, missing token, no verifier configured, store error, special-char tokens). Production wiring in `cmd/ratesengine-api/main.go` enables it whenever Redis is reachable. The two remaining slices: (1) signup-handler issues a token + sends the verification email, (2) optional validator gate that rejects unverified keys. Until both ship, the endpoint is a no-op (no tokens are ever Reserved). |
+| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails | `/v1/signup`; signup tracker; API key store; signup UI/OpenAPI | XFI-0012; EV-0028; EV-0099; EV-0127 | open | api/security/billing | The Redis-backed same-email race is now closed. Wave 42 shipped the verifier foundation. Wave 43 shipped the `GET /v1/signup/verify` endpoint. Wave 44 (2026-05-12) wires the producer side: signup handler now generates a crypto/rand token via `auth.NewSignupVerifyToken`, Reserves it against the freshly-minted keyID, builds the absolute verify URL from the request's scheme/Host (with X-Forwarded-Proto override), and emails it via the new `v1.SignupVerifyEmailer` adapter (production `signupVerifyEmailerAdapter` wraps `notify.Sender` + reuses the dashboard's `EmailFrom`). Wire response gains `email_verification_sent: bool`. 3 new tests cover happy path, no-emailer degradation, send-error non-fatal. The only remaining slice is the OPTIONAL validator gate (operator opt-in via config) that rejects unverified keys with 403 — once that ships in wave 45, F-1218 closes. |
 | F-1219 | high | Stripe paid-upgrade webhook still leaves dashboard-created Postgres API keys outside the live upgrade source of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112; EV-0130 | open | billing/platform/api | Wave 32 wires `stripeCfg.Platform = &v1.StripePlatformBridge{Accounts: …, Billing: …}` and the webhook now maintains account tier/subscription windows. The paid-upgrade path still mutates only Redis-backed legacy keys, not existing dashboard-created Postgres API keys; bridge/account/billing failures are logged best-effort after Redis mutation and the current webhook tests still do not closure-prove those platform side effects. |
 | F-1220 | high | Tagged deploy migration handling is still not closure-grade after the new staging path | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; EV-0103; R1-0013 | fixed | release/ops/db | Wave 32 (2026-05-12) adds `ansible-galaxy collection install -r configs/ansible/requirements.yml` to the Install-Ansible step in `.github/workflows/deploy.yml` so `ansible.posix.synchronize` (used by the binary-staging task) resolves. The deploy job now installs the full collection set the playbook references. |
 | F-1221 | medium | Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed | Release workflow; release/deploy docs; Docker image expectations | XFI-0014; EV-0032 | open | docs/release | Operators and self-hosters are told to expect GHCR artifacts that the workflow intentionally no longer produces. |
@@ -162,7 +172,7 @@ Recent waves closed by code (chronological):
 | F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118; EV-0126; EV-0128; EV-0132 | fixed | platform/api/security | Wave 34 ships cache-hit policy parity. Wave 38 ships runtime monthly-quota enforcement (cascaded `Subject.MonthlyQuota` + `usage.Counter.MonthToDate` + `middleware.MonthlyQuota` → 429). Wave 39 (2026-05-12) commits the TouchUsage half: `auth.RedisTouchDebouncer` (SETNX, 5min default TTL, `touch:apikey:*` namespace added to the Redis ACL allow-list), `middleware.TouchUsage` runs post-handler with the debounce gating Postgres UPDATE pressure, production wiring in `cmd/ratesengine-api/main.go` only enables the path when both Postgres + Redis are present. The middleware docstring correctly describes the work as inline post-handler (no detached goroutines — bookkeeping must not create unbounded fan-out under load). Tests: 7 middleware cases + 4 debouncer cases. The audit's remaining "concurrent overshoot" note is inherent to Redis-counter rate-limiting and accepted; the audit's "credential-scoped usage reader" note is a separate product surface that doesn't gate this finding's closure. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | fixed | docker/db | `docker/ratesengine-migrate.Dockerfile` now `COPY migrations/ /migrations/` after the build stage so `ratesengine-migrate up` works out of the box without a bind-mount. Verified live on `HEAD`. |
-| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119 | fixed | api/streaming/ops | Source-side fix is committed: `internal/api/streaming/handler.go` calls `http.NewResponseController(w).SetWriteDeadline(time.Time{})` per SSE connection, with `logger.go`/`envelope404.go` wrappers preserving access to `SetWriteDeadline`. Any remaining R1 cutoff observation reflects pre-redeploy binary state — flipped to fixed once a fresh API release lands. |
+| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119; R1-0020; EV-0141 | open | api/streaming/ops | Source-side fix is committed: `internal/api/streaming/handler.go` calls `http.NewResponseController(w).SetWriteDeadline(time.Time{})` per SSE connection, with `logger.go`/`envelope404.go` wrappers preserving access to `SetWriteDeadline`. Current live R1 still closes the loopback tip stream at exactly 30.0 seconds under a 68-second client ceiling, so deployed runtime closure is not yet proven. |
 | F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | fixed | ops/api | `scripts/dev/verify-cdn.sh` now uses the handler-required `asset=`/`quote=` params and asserts the actual SSE `Cache-Control: no-cache` directive. |
 | F-1230 | high | R1 `since-inception` history for core XLM/USDC starts on 2026-05-03, not one year or inception | Historical API; backfill; R1 data depth | XFI-0022; EV-0040; R1-0017 | open | data/backfill/api | Direct XLM/Circle-USDC daily history has only nine buckets. |
 | F-1231 | high | Canonical CI is PR-only while `main` is unprotected, so direct pushes can bypass full verification | GitHub CI triggers; branch protection; release governance | XFI-0023; EV-0041; EV-0025; EV-0099 | fixed | repo-admin/ci | Current `ci.yml` now runs on pushes to `main`, closing the direct-main verification bypass even though branch protection itself remains open under `F-1214`. |
@@ -783,6 +793,8 @@ Evidence:
 - `EV-0035`
 - `R1-0015`
 - `EV-0116`
+- `R1-0019`
+- `EV-0140`
 
 Expected: historical USD price surfaces should agree on the declared Stellar USD proxy policy, or return an explicit unsupported/fallback-missing signal.
 
@@ -796,7 +808,8 @@ while the chart endpoint returned XLM/USD daily points and direct
 Current-head reconciliation: source now calls
 `historySinceInceptionStablecoinFallback` when the literal `fiat:USD`
 series is empty, and `TestHistorySinceInception_StablecoinFallback` pins the
-behavior. Live R1 still reproduces the user-visible defect: the public
+behavior. Live R1 still reproduces the user-visible defect on the current
+deployment: the public
 `native/fiat:USD` since-inception call returns zero points, while direct
 Circle-USDC history returns nine populated daily rows. `/etc/ratesengine.toml`
 shows `enable_stablecoin_fiat_proxy = true` plus the Circle USDC classic peg,
@@ -953,6 +966,8 @@ Evidence:
 - `EV-0038`
 - `R1-0016`
 - `EV-0119`
+- `R1-0020`
+- `EV-0141`
 
 Expected: `/v1/price/stream`, `/v1/price/tip/stream`, and `/v1/observations/stream` should support long-lived SSE clients, with heartbeats preventing idle proxy closure and reconnect/resume handling real network breaks.
 
@@ -966,9 +981,9 @@ elapsed 30 seconds.
 Current-head reconciliation: source now clears the SSE request write deadline
 through `http.ResponseController.SetWriteDeadline(time.Time{})`, while keeping
 the global write timeout for ordinary handlers. Targeted API/binary tests pass.
-Live R1 still does not verify closed: an HTTP/1.1 public probe started from R1
-emitted frames through roughly the first 30 seconds and then ended before the
-next expected 5-second frame despite the client allowing 65 seconds.
+Live R1 still does not verify closed: a refreshed loopback probe on R1 emitted
+the initial frame plus a 15-second keepalive and then terminated at exactly
+30.0 seconds under a 68-second client ceiling.
 
 Impact: real-time streaming is not actually long-lived. Browser/EventSource and curl clients reconnect every 30 seconds, increasing churn and load; customer demos that instruct a 60-second run fail; CoinGecko/CMC parity for streaming or trade-tape style experiences is weaker than the API contract suggests.
 

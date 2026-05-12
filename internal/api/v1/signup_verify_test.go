@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
 	"github.com/RatesEngine/rates-engine/internal/auth"
@@ -44,6 +45,26 @@ func (f *fakeSignupVerifier) Consume(_ context.Context, token string) (string, e
 	}
 	delete(f.tokens, token) // single-use
 	return keyID, nil
+}
+
+// Reserve mirrors auth.RedisSignupVerifier.Reserve for tests
+// that exercise the wave-44 token-issue side of the flow.
+// `ttl` is honoured by the production impl but ignored here
+// (the in-memory fake doesn't expire entries between calls).
+func (f *fakeSignupVerifier) Reserve(_ context.Context, token, keyID string, _ time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	if existing, ok := f.tokens[token]; ok {
+		if existing == keyID {
+			return nil
+		}
+		return auth.ErrSignupVerifyReserved
+	}
+	f.tokens[token] = keyID
+	return nil
 }
 
 func newSignupVerifyTestServer(t *testing.T, verifier v1.SignupVerifier) *httptest.Server {
@@ -177,6 +198,173 @@ func TestSignupVerify_TokenWithSpecialChars(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// fakeSignupVerifyEmailer records every send so the F-1218
+// wave-44 signup integration tests can assert that the
+// signup-handler actually emails the verify URL.
+type fakeSignupVerifyEmailer struct {
+	mu      sync.Mutex
+	sends   []sentEmail
+	sendErr error
+}
+
+type sentEmail struct {
+	to        string
+	verifyURL string
+}
+
+func (f *fakeSignupVerifyEmailer) SendSignupVerification(_ context.Context, toEmail, verifyURL string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sends = append(f.sends, sentEmail{to: toEmail, verifyURL: verifyURL})
+	return nil
+}
+
+// TestSignup_IssuesVerificationToken_WhenWired — F-1218 wave
+// 44: when BOTH a SignupVerifier and a SignupVerifyEmailer
+// are configured, POST /v1/signup must (1) Reserve a token
+// against the new keyID, (2) email the verify URL, (3) set
+// `email_verification_sent: true` on the wire.
+func TestSignup_IssuesVerificationToken_WhenWired(t *testing.T) {
+	store := &fakeAccountStore{
+		rec: auth.APIKeyRecord{
+			KeyID:           "kid_verify",
+			Identifier:      "signup-aaaaaaaaaaaaaaaa",
+			Tier:            auth.TierAPIKey,
+			RateLimitPerMin: 1000,
+			CreatedAt:       time.Now().UTC(),
+		},
+		plain: "rek_plain",
+	}
+	signups := newFakeSignupTracker()
+	verifier := newFakeSignupVerifier(nil)
+	emailer := &fakeSignupVerifyEmailer{}
+
+	srv := v1.New(v1.Options{
+		Auth:                fakeAuthMiddleware(auth.Subject{}),
+		Accounts:            store,
+		Signups:             signups,
+		SignupVerifier:      verifier,
+		SignupVerifyEmailer: emailer,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp := postSignup(t, ts, `{"email":"verify@example.com"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.SignupResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Data.EmailVerificationSent {
+		t.Errorf("EmailVerificationSent = false, want true (verifier + emailer both wired)")
+	}
+	emailer.mu.Lock()
+	defer emailer.mu.Unlock()
+	if len(emailer.sends) != 1 {
+		t.Fatalf("sends = %d, want 1", len(emailer.sends))
+	}
+	if emailer.sends[0].to != "verify@example.com" {
+		t.Errorf("To = %q, want verify@example.com", emailer.sends[0].to)
+	}
+	if !strings.Contains(emailer.sends[0].verifyURL, "/v1/signup/verify?token=") {
+		t.Errorf("verifyURL = %q, missing /v1/signup/verify?token= path", emailer.sends[0].verifyURL)
+	}
+	// The Reserved token must round-trip through Consume.
+	verifier.mu.Lock()
+	if len(verifier.tokens) != 1 {
+		t.Errorf("Reserved tokens = %d, want 1", len(verifier.tokens))
+	}
+	verifier.mu.Unlock()
+}
+
+// TestSignup_SkipsVerificationWhenEmailerMissing — wave 44
+// degradation: verifier wired but no emailer → email_verification_sent
+// must be false (operator hasn't fully turned on the flow), and the
+// signup still returns the key.
+func TestSignup_SkipsVerificationWhenEmailerMissing(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_noemail", Tier: auth.TierAPIKey},
+		plain: "rek_p",
+	}
+	signups := newFakeSignupTracker()
+	verifier := newFakeSignupVerifier(nil)
+	// Emailer intentionally nil.
+
+	srv := v1.New(v1.Options{
+		Auth:           fakeAuthMiddleware(auth.Subject{}),
+		Accounts:       store,
+		Signups:        signups,
+		SignupVerifier: verifier,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp := postSignup(t, ts, `{"email":"a@b.example"}`)
+	defer resp.Body.Close()
+	var body struct {
+		Data v1.SignupResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Data.EmailVerificationSent {
+		t.Errorf("EmailVerificationSent = true, want false (no emailer)")
+	}
+	verifier.mu.Lock()
+	defer verifier.mu.Unlock()
+	if len(verifier.tokens) != 0 {
+		t.Errorf("Reserved tokens = %d, want 0 (no emailer → skip Reserve too)", len(verifier.tokens))
+	}
+}
+
+// TestSignup_SendErrorIsNonFatal — wave 44 best-effort: if
+// SendSignupVerification fails, the signup still returns 200
+// with the key + email_verification_sent: false. The customer
+// gets their key; an alert fires on the operator side via the
+// WARN log path.
+func TestSignup_SendErrorIsNonFatal(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_senderr", Tier: auth.TierAPIKey},
+		plain: "rek_p",
+	}
+	signups := newFakeSignupTracker()
+	verifier := newFakeSignupVerifier(nil)
+	emailer := &fakeSignupVerifyEmailer{sendErr: errors.New("resend timeout")}
+
+	srv := v1.New(v1.Options{
+		Auth:                fakeAuthMiddleware(auth.Subject{}),
+		Accounts:            store,
+		Signups:             signups,
+		SignupVerifier:      verifier,
+		SignupVerifyEmailer: emailer,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp := postSignup(t, ts, `{"email":"err@example.com"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 (send error must not fail signup)", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.SignupResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Data.EmailVerificationSent {
+		t.Errorf("EmailVerificationSent = true, want false (send failed)")
 	}
 }
 

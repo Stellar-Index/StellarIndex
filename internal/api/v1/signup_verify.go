@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/auth"
 )
@@ -20,7 +21,25 @@ import (
 // Production wiring: `auth.RedisSignupVerifier` (SETNX +
 // GETDEL on `signup:verify:<sha256(token)>`).
 type SignupVerifier interface {
+	Reserve(ctx context.Context, token, keyID string, ttl time.Duration) error
 	Consume(ctx context.Context, token string) (string, error)
+}
+
+// SignupVerifyEmailer is the v1 boundary for sending the
+// verification email on POST /v1/signup. Production wiring is
+// a thin adapter around `notify.Sender` (Resend in production,
+// NoopSender in dev). Kept narrow so the v1 package doesn't
+// drag the full notify surface onto its public API.
+//
+// `verifyURL` is the absolute click-through URL the customer
+// sees in the email — `https://api.example.com/v1/signup/verify
+// ?token=<plaintext>`. The handler builds it from the request's
+// scheme + Host so deployments don't have to plumb a separate
+// base URL config; nil-safe in the handler so a Sender-less
+// deployment skips the send and returns the response with
+// `email_sent: false`.
+type SignupVerifyEmailer interface {
+	SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error
 }
 
 // SignupVerifyResult is the wire shape for `GET /v1/signup/

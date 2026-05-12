@@ -631,26 +631,27 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// scan ~24h of the trades hypertable on every hit (5-10s
 		// each); the explorer hits them on every page load. 30s
 		// freshness is plenty for trade-volume aggregates.
-		Markets:          cachedMarketsReader,
-		Oracle:           oracleReader,
-		Meta:             sep1Cache,
-		Accounts:         accountStore,
-		Signups:          signupTracker,
-		SignupIPThrottle: signupIPThrottle,
-		SignupVerifier:   signupVerifier,
-		Stripe:           stripeCfg,
-		Divergence:       divergenceLooker,
-		Confidence:       redisConfidenceLooker{rdb: rdb},
-		Triangulated:     redisTriangulatedLooker{rdb: rdb},
-		Freeze:           freezeLooker,
-		Supply:           storeSupplyLooker{s: store},
-		Volume:           storeVolumeReader{s: store},
-		Change24h:        storeChange24hReader{s: store, pegs: usdPegs},
-		ChangeSummary:    store,
-		Coins:            cachedCoinsReader,
-		Issuers:          store,
-		Cursors:          store,
-		NetworkStats:     store,
+		Markets:             cachedMarketsReader,
+		Oracle:              oracleReader,
+		Meta:                sep1Cache,
+		Accounts:            accountStore,
+		Signups:             signupTracker,
+		SignupIPThrottle:    signupIPThrottle,
+		SignupVerifier:      signupVerifier,
+		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom),
+		Stripe:              stripeCfg,
+		Divergence:          divergenceLooker,
+		Confidence:          redisConfidenceLooker{rdb: rdb},
+		Triangulated:        redisTriangulatedLooker{rdb: rdb},
+		Freeze:              freezeLooker,
+		Supply:              storeSupplyLooker{s: store},
+		Volume:              storeVolumeReader{s: store},
+		Change24h:           storeChange24hReader{s: store, pegs: usdPegs},
+		ChangeSummary:       store,
+		Coins:               cachedCoinsReader,
+		Issuers:             store,
+		Cursors:             store,
+		NetworkStats:        store,
 		// Wrap with a 60s TTL cache. The underlying SQL aggregations
 		// (24h trades-hypertable scan grouped by source) take 5-10s;
 		// the explorer hits these on every /dexes + /exchanges page
@@ -951,6 +952,12 @@ type dashboardBundle struct {
 	keysStore    platform.APIKeyStore
 	accounts     platform.AccountStore
 	pgValidator  *auth.PostgresAPIKeyValidator
+	// sender + emailFrom are exported so the public-API signup
+	// flow (F-1218 wave 44) can re-use the same Resend / Noop
+	// transport the dashboard auth flow uses, without having to
+	// build a second sender at the top level.
+	sender    notify.Sender
+	emailFrom string
 }
 
 // buildDashboardBundle wires the customer-dashboard magic-link
@@ -1076,6 +1083,8 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		keysStore:    keysStore,
 		accounts:     accounts,
 		pgValidator:  pgValidator,
+		sender:       sender,
+		emailFrom:    cfg.EmailFrom,
 	}, nil
 }
 
@@ -2231,6 +2240,75 @@ func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string)
 			"auth_mode", authMode,
 			"docs", "https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/pre-launch-hardening.md")
 	}
+}
+
+// signupVerifyEmailerAdapter bridges the v1.SignupVerifyEmailer
+// interface to the underlying notify.Sender + an EmailFrom
+// address. F-1218 wave 44 (codex audit-2026-05-12).
+//
+// The plaintext email body (English-only at v1) tells the
+// customer the link is single-use and expires in 24h, mirroring
+// the dashboard magic-link copy. HTML body included so spam
+// filters don't down-rank the message; text body is the
+// authoritative content for screen readers and plaintext
+// clients.
+type signupVerifyEmailerAdapter struct {
+	sender notify.Sender
+	from   string
+}
+
+func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error {
+	if a == nil || a.sender == nil {
+		return errors.New("signupVerifyEmailer: not configured")
+	}
+	subject := "Confirm your Rates Engine signup"
+	textBody := "Welcome to the Rates Engine API.\n\n" +
+		"Click the link below to confirm your email address. The\n" +
+		"link is single-use and expires in 24 hours.\n\n" +
+		verifyURL + "\n\n" +
+		"You can use the API key returned in the signup response\n" +
+		"immediately. Confirmation flips a `email_verified=true`\n" +
+		"flag on the key so the dashboard can surface it as a\n" +
+		"verified account.\n\n" +
+		"If you didn't sign up, you can safely ignore this email.\n"
+	htmlBody := "<p>Welcome to the Rates Engine API.</p>" +
+		"<p>Click the link below to confirm your email address. " +
+		"The link is single-use and expires in 24 hours.</p>" +
+		`<p><a href="` + verifyURL + `">` + verifyURL + `</a></p>` +
+		"<p>You can use the API key returned in the signup response " +
+		"immediately. Confirmation flips an <code>email_verified=true</code> " +
+		"flag on the key so the dashboard can surface it as a verified account.</p>" +
+		"<p>If you didn't sign up, you can safely ignore this email.</p>"
+	msg := notify.Message{
+		From:    a.from,
+		To:      []string{toEmail},
+		Subject: subject,
+		HTML:    htmlBody,
+		Text:    textBody,
+		Tags: map[string]string{
+			"flow":   "signup-verify",
+			"source": "ratesengine-api",
+		},
+	}
+	return a.sender.Send(ctx, msg)
+}
+
+// signupVerifyEmailerOrNil returns the v1.SignupVerifyEmailer
+// when both a real sender and a non-empty EmailFrom are wired;
+// otherwise nil so the signup handler skips the email send and
+// reports `email_verification_sent: false` on the wire.
+func signupVerifyEmailerOrNil(sender notify.Sender, from string) v1.SignupVerifyEmailer {
+	if sender == nil || from == "" {
+		return nil
+	}
+	if _, isNoop := sender.(*notify.NoopSender); isNoop {
+		// NoopSender accepts everything but drops the message —
+		// surfacing it as "wired" would falsely promise the
+		// customer an email. Treat as nil so the wire shape
+		// honestly says `email_verification_sent: false`.
+		return nil
+	}
+	return &signupVerifyEmailerAdapter{sender: sender, from: from}
 }
 
 // touchUsageMiddlewareOrNil returns the wired TouchUsage

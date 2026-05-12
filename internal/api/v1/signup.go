@@ -88,6 +88,14 @@ type SignupResult struct {
 	Label           string `json:"label,omitempty"`
 	Tier            string `json:"tier"`
 	RateLimitPerMin int    `json:"rate_limit_per_min"`
+
+	// EmailVerificationSent is true when the deployment is wired
+	// with both a SignupVerifier and a SignupVerifyEmailer (F-1218
+	// wave 44). Customers see this field as the cue to expect the
+	// verification email; legacy / Redis-less / Sender-less
+	// deployments report `false` and the wire shape is
+	// backwards-compatible for clients that ignore the field.
+	EmailVerificationSent bool `json:"email_verification_sent"`
 }
 
 // signupBodyMaxBytes caps the request body size at 4 KiB. Email +
@@ -208,16 +216,89 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 10. Reply with plaintext (shown ONCE) + audit record.
+	// 10. F-1218 wave 44 (codex audit-2026-05-12): issue an
+	//     email-ownership-proof token and send the verification
+	//     email. Best-effort: the key is already minted and the
+	//     plaintext is about to be returned to the customer; a
+	//     verifier or sender failure here logs at warn and drops
+	//     `email_verification_sent: false` on the wire. The full
+	//     close (validator gate that rejects unverified keys)
+	//     ships in wave 45 behind a config flag.
+	emailSent := s.issueSignupVerification(r, rec.KeyID, req.Email)
+
+	// 11. Reply with plaintext (shown ONCE) + audit record.
 	writeJSON(w, SignupResult{
-		Plaintext:       plaintext,
-		KeyID:           rec.KeyID,
-		KeyPrefix:       rec.KeyPrefix,
-		Identifier:      rec.Identifier,
-		Label:           rec.Label,
-		Tier:            string(rec.Tier),
-		RateLimitPerMin: rec.RateLimitPerMin,
+		Plaintext:             plaintext,
+		KeyID:                 rec.KeyID,
+		KeyPrefix:             rec.KeyPrefix,
+		Identifier:            rec.Identifier,
+		Label:                 rec.Label,
+		Tier:                  string(rec.Tier),
+		RateLimitPerMin:       rec.RateLimitPerMin,
+		EmailVerificationSent: emailSent,
 	}, Flags{})
+}
+
+// issueSignupVerification reserves a fresh token against the
+// just-minted keyID and emails the click-through verify link
+// to the signup-supplied address. Returns true when both legs
+// succeed. Either leg failing — verifier nil, emailer nil,
+// token-gen err, Reserve err, Send err — returns false; the
+// signup-handler caller treats `false` as the cue to set
+// `email_verification_sent: false` on the wire (the customer
+// can still use the key today; a future validator-gate wave
+// will start enforcing).
+//
+// All failure paths log at warn so operators see drift; none
+// short-circuit the customer's signup response (the audit's
+// remediation is to MAKE the proof available, not to take
+// signup down when the email infra is unhealthy).
+func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string) bool {
+	if s.signupVerifier == nil || s.signupVerifyEmailer == nil {
+		return false
+	}
+	token, err := auth.NewSignupVerifyToken()
+	if err != nil {
+		s.logger.Warn("signup verification: token generation failed",
+			"err", err, "key_id", keyID)
+		return false
+	}
+	if err := s.signupVerifier.Reserve(r.Context(), token, keyID, auth.DefaultSignupVerifyTTL); err != nil {
+		s.logger.Warn("signup verification: token reservation failed",
+			"err", err, "key_id", keyID)
+		return false
+	}
+	verifyURL := buildSignupVerifyURL(r, token)
+	if err := s.signupVerifyEmailer.SendSignupVerification(r.Context(), toEmail, verifyURL); err != nil {
+		s.logger.Warn("signup verification: send failed",
+			"err", err, "key_id", keyID, "to", toEmail)
+		return false
+	}
+	return true
+}
+
+// buildSignupVerifyURL constructs the absolute click-through
+// URL the customer sees in the verification email. Built from
+// the request's scheme + Host so deployments don't have to
+// plumb a separate base URL config — the same scheme the
+// customer used for /v1/signup will work for the verify GET.
+//
+// Defence-in-depth: scheme defaults to `https` when TLS isn't
+// terminated by Caddy upstream (in which case `r.TLS` is nil
+// even though the public traffic is TLS). Production deployments
+// always front through Caddy so this is the typical case;
+// `http://` URLs only surface in `localhost` dev.
+func buildSignupVerifyURL(r *http.Request, plaintextToken string) string {
+	scheme := "https"
+	if r.TLS == nil && (r.Host == "localhost" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost:")) {
+		scheme = "http"
+	}
+	// X-Forwarded-Proto from Caddy / Cloudflare wins when present
+	// — that's the source of truth for the original-request scheme.
+	if xfp := r.Header.Get("X-Forwarded-Proto"); xfp == "http" || xfp == "https" {
+		scheme = xfp
+	}
+	return scheme + "://" + r.Host + "/v1/signup/verify?token=" + plaintextToken
 }
 
 // signupIPThrottleOK runs the F-1232 per-IP signup throttle check.
