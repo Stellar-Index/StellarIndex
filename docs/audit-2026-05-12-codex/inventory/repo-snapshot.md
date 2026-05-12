@@ -2,11 +2,11 @@
 
 | Item | Value |
 | --- | --- |
-| Generated At | `2026-05-12T19:41:30Z` |
+| Generated At | `2026-05-12T19:46:05Z` |
 | Commit | `fb0b3073671501ba38a4930047eae9f2928dbc33` |
 | Branch | `main` |
 | Tracked Files | `1875` |
-| Dirty Files After Plan Creation | `9` |
+| Dirty Files After Plan Creation | `10` |
 
 ## Dirty Worktree
 
@@ -18,4 +18,5 @@
 - `docs/audit-2026-05-12-codex/evidence/cross-file-interactions.md`
 - `docs/audit-2026-05-12-codex/evidence/log.md`
 - `docs/audit-2026-05-12-codex/inventory/repo-snapshot.md`
+- `docs/operations/r1-deployment-state.md`
 - `internal/api/v1/stripe_webhook.go`

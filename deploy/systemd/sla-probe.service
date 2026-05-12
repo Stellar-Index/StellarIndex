@@ -53,7 +53,12 @@ EnvironmentFile=-/etc/default/sla-probe
 Environment=BASE_URL=https://api.ratesengine.net/v1
 Environment=DURATION=30s
 Environment=CONCURRENCY=4
-Environment=PAIRS=-pair native,fiat:USD
+# F-1205 (codex audit-2026-05-12): the value MUST be quoted —
+# systemd's Environment= parser splits on whitespace UNLESS the
+# value is in quotes, so the unquoted form was being parsed as
+# two assignments (`PAIRS=-pair` plus a stray `native,fiat:USD`),
+# leaving the probe to fail with `flag needs an argument: -pair`.
+Environment="PAIRS=-pair native,fiat:USD"
 Environment=REPORT_FORMAT=json
 Environment=TEXTFILE_OUTPUT=
 Environment=EXTRA_FLAGS=

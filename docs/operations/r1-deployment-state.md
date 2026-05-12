@@ -601,6 +601,48 @@ header chain (`client_ip_headers CF-Connecting-IP, X-Forwarded-For`)
 that F-1224 ships against — F-1224's app-side fix is now end-to-
 end live since Caddy is propagating real IPs.
 
+### 2026-05-12 F-1205 evidence timers installed
+
+The audit flagged R1 as missing every supply / SLA / archive
+evidence-producing systemd timer that the in-repo `deploy/systemd/`
+directory ships. Heartbeat + smoke timers were running but
+neither sla-probe nor supply-snapshot nor archive-completeness
+nor verify-archive-tier-a were installed.
+
+Roll:
+
+  - `scp deploy/systemd/{sla-probe,archive-completeness,supply-snapshot,verify-archive-tier-a}.{service,timer}` → `/etc/systemd/system/`
+  - Created `/var/lib/node_exporter/textfile_collector/` (missing).
+  - Drop-in override at `/etc/systemd/system/<svc>.service.d/override.conf`
+    setting `User=root` since the in-repo `User=ratesengine` user
+    doesn't exist on R1 yet (every existing ratesengine-* daemon
+    runs as root; consistent posture for the oneshot units until
+    we cut over to a dedicated user).
+  - `systemctl daemon-reload && systemctl enable --now <timer>`.
+
+Post-roll `systemctl list-timers --all` shows all four scheduled:
+
+  - `sla-probe.timer` — every 15 min
+  - `archive-completeness.timer` — every 4 h
+  - `supply-snapshot.timer` — daily
+  - `verify-archive-tier-a.timer` — weekly
+
+**Known follow-up content fixes** (timer plumbing is now live;
+the probe content needs operator-side adjustment to be useful):
+
+  - sla-probe currently hits the removed `/v1/coins` endpoint
+    and 100%-errors that surface — needs the unit's PAIRS / the
+    in-binary endpoint list updated to drop coins/currencies.
+  - sla-probe has no `RATESENGINE_PROBE_API_KEY` configured so
+    it hits the 60/min anonymous limit on every endpoint; needs
+    a vault-minted load-test key in `/etc/default/sla-probe`.
+    Without it the verdict is permanently "fail" with
+    availability=1.x% on the rate-limited endpoints.
+  - In-repo `sla-probe.service` had an unquoted
+    `Environment=PAIRS=-pair native,fiat:USD` that systemd
+    parsed as two assignments — fixed in same wave (now
+    `Environment="PAIRS=..."`).
+
 ### 2026-05-12 alert-state snapshot post-Caddy roll
 
 Firing alerts (14 total):
