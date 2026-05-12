@@ -627,20 +627,41 @@ Post-roll `systemctl list-timers --all` shows all four scheduled:
   - `supply-snapshot.timer` — daily
   - `verify-archive-tier-a.timer` — weekly
 
-**Known follow-up content fixes** (timer plumbing is now live;
-the probe content needs operator-side adjustment to be useful):
+**Per-timer test-fire results** (initial post-install probe):
 
-  - sla-probe currently hits the removed `/v1/coins` endpoint
-    and 100%-errors that surface — needs the unit's PAIRS / the
-    in-binary endpoint list updated to drop coins/currencies.
-  - sla-probe has no `RATESENGINE_PROBE_API_KEY` configured so
-    it hits the 60/min anonymous limit on every endpoint; needs
-    a vault-minted load-test key in `/etc/default/sla-probe`.
-    Without it the verdict is permanently "fail" with
-    availability=1.x% on the rate-limited endpoints.
+  - **`verify-archive-tier-a.timer`** — ✅ active. Test-fire
+    verified the binary reads 10k ledgers/sec out of the galexie
+    archive. Self-contained: no API key + no operator flags
+    needed. Stays enabled; fires weekly.
+  - **`supply-snapshot.timer`** — ⚠️ disabled until follow-up.
+    `ratesengine-ops supply snapshot` fails with `there is no
+    unique or exclusion constraint matching the ON CONFLICT
+    specification` against the live Timescale hypertable —
+    `asset_supply_history_asset_ledger_idx` is a UNIQUE INDEX
+    (not a CONSTRAINT), and ON CONFLICT column-inference can't
+    see it on the hypertable in our PG/Timescale version.
+    Workaround paths: convert the UNIQUE INDEX → ALTER TABLE
+    ADD CONSTRAINT in a follow-up migration, or use ON CONFLICT
+    ON CONSTRAINT (which requires the constraint form). Either
+    way needs careful schema work to avoid breaking idempotency.
+  - **`archive-completeness.timer`** — ⚠️ disabled until
+    follow-up. `ratesengine-ops archive-completeness` requires
+    `-to <ledger>` which the service unit doesn't supply.
+    Fix: update the ExecStart to compute a sensible upper bound
+    (e.g. most-recent indexed ledger) OR `/etc/default/archive-
+    completeness` with a rolling `TO_LEDGER` value.
+  - **`sla-probe.timer`** — ⚠️ disabled until follow-up.
+    Binary updated to v0.5.0-rc.49-r1-patch (in-binary endpoint
+    list now uses `/assets` not `/coins`). But still incompatible
+    with anon-tier load — even concurrency=2 / 10s / BASE_URL=
+    localhost saturates the 1000/min rate-limit budget so
+    availability falls to <1% on every authenticated endpoint.
+    Needs a vault-minted `RATESENGINE_PROBE_API_KEY` in
+    `/etc/default/sla-probe` at Partner / Operator tier budget
+    before re-enabling.
   - In-repo `sla-probe.service` had an unquoted
     `Environment=PAIRS=-pair native,fiat:USD` that systemd
-    parsed as two assignments — fixed in same wave (now
+    parsed as two assignments — fixed in this wave (now
     `Environment="PAIRS=..."`).
 
 ### 2026-05-12 alert-state snapshot post-Caddy roll
