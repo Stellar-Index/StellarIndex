@@ -2250,6 +2250,159 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /dashboard/webhooks:
+    get:
+      tags: [dashboard]
+      summary: Customer dashboard — list this account's webhooks.
+      description: |
+        Session-gated. Returns every webhook this account has
+        registered to receive incident / anomaly / divergence
+        callbacks, newest first. The signing secret is never
+        returned — only the URL, events, and enabled flag. F-1270.
+      responses:
+        "200":
+          description: Webhook list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks:
+                    type: array
+                    items: { $ref: "#/components/schemas/DashboardWebhook" }
+                required: [webhooks]
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
+      tags: [dashboard]
+      summary: Customer dashboard — register a new webhook.
+      description: |
+        Session-gated. Returns the signing secret ONCE — store it
+        server-side immediately and use it to HMAC-verify the
+        X-RatesEngine-Signature header on inbound POSTs. URL must
+        be https://. Owner / admin / member roles can register;
+        viewer + billing 403. Capped at 10 webhooks per account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateWebhookRequest" }
+      responses:
+        "201":
+          description: Webhook registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateWebhookResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: Role can't manage webhooks.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: Account at the 10-webhook quota.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/webhooks/{id}:
+    patch:
+      tags: [dashboard]
+      summary: Customer dashboard — update a webhook.
+      description: |
+        Session-gated. Patches name / url / events / enabled.
+        SecretHash is immutable; rotation lives behind a separate
+        endpoint when it ships.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateWebhookRequest" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardWebhook" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Webhook not found.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    delete:
+      tags: [dashboard]
+      summary: Customer dashboard — delete a webhook.
+      description: |
+        Session-gated. Hard-deletes the registry row and cascades
+        to webhook_deliveries. Idempotent — 204 on absent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/webhooks/{id}/deliveries:
+    get:
+      tags: [dashboard]
+      summary: Customer dashboard — list recent delivery attempts.
+      description: |
+        Session-gated. Most-recent first; up to 100 attempts.
+        Powers the dashboard's delivery-log panel.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Delivery log.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deliveries:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookDeliveryDTO" }
+                required: [deliveries]
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Webhook not found.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /auth/login:
     post:
       tags: [auth]
@@ -2714,6 +2867,94 @@ components:
             manager.
         key: { $ref: "#/components/schemas/DashboardKey" }
       required: [plaintext, key]
+
+    DashboardWebhook:
+      type: object
+      description: |
+        Customer-registered webhook endpoint backing the
+        /v1/dashboard/webhooks surface. SecretHash is intentionally
+        omitted — the plaintext signing secret is returned ONCE at
+        create time + never again.
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string, description: "Operator-friendly label, 1–200 chars." }
+        url:        { type: string, description: "HTTPS endpoint. Worker POSTs JSON with HMAC-SHA-256 signature in X-RatesEngine-Signature." }
+        events:
+          type: array
+          description: |
+            Closed enum of event types the customer subscribed to.
+          items:
+            type: string
+            enum:
+              - incident.sev1
+              - incident.resolved
+              - anomaly.freeze
+              - divergence.firing
+        enabled:    { type: boolean, description: "When false, worker skips deliveries (silently terminates pending rows)." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, name, url, events, enabled, created_at, updated_at]
+
+    CreateWebhookRequest:
+      type: object
+      properties:
+        name:    { type: string, minLength: 1, maxLength: 200 }
+        url:     { type: string, description: "Must start with https://." }
+        events:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing]
+        enabled:
+          type: boolean
+          description: "Defaults true when absent."
+      required: [name, url, events]
+
+    CreateWebhookResponse:
+      type: object
+      properties:
+        webhook: { $ref: "#/components/schemas/DashboardWebhook" }
+        secret:
+          type: string
+          description: |
+            HMAC-SHA-256 signing key plaintext. Returned exactly
+            once. Store server-side + use it to verify the
+            X-RatesEngine-Signature header on inbound webhook
+            POSTs. Format: `wsec_<64 hex chars>`.
+      required: [webhook, secret]
+
+    UpdateWebhookRequest:
+      type: object
+      description: |
+        PATCH body — any subset of fields. Omitted fields keep
+        their current value.
+      properties:
+        name:    { type: string, minLength: 1, maxLength: 200 }
+        url:     { type: string }
+        events:
+          type: array
+          items:
+            type: string
+            enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing]
+        enabled: { type: boolean }
+
+    WebhookDeliveryDTO:
+      type: object
+      description: |
+        One delivery attempt against a customer webhook. The
+        worker fans out one row per (webhook, event); a single
+        attempt records its status + retry plan here.
+      properties:
+        id:                   { type: string, format: uuid }
+        event_type:           { type: string, enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing] }
+        attempt_count:        { type: integer, minimum: 0 }
+        next_attempt_at:      { type: string, format: date-time, nullable: true, description: "When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted)." }
+        delivered_at:         { type: string, format: date-time, nullable: true }
+        last_error:           { type: string, nullable: true }
+        last_response_status: { type: integer, nullable: true, description: "HTTP status of the most-recent attempt." }
+        created_at:           { type: string, format: date-time }
+      required: [id, event_type, attempt_count, created_at]
 
     # Base envelope pieces
     Flags:

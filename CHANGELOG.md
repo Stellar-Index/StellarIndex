@@ -169,6 +169,22 @@ against.
 
 ### Added
 
+- **Customer-facing dashboard webhook CRUD handlers (F-1270
+  complete).** New `internal/api/v1/dashboardwebhooks` package
+  mounts five routes: GET/POST/PATCH/DELETE
+  `/v1/dashboard/webhooks` + GET
+  `/v1/dashboard/webhooks/{id}/deliveries`. Session-gated,
+  role-gated (Owner/Admin/Member create; Viewer/Billing 403),
+  cross-account 404 (no existence-leak), 10-per-account quota,
+  HTTPS-only URLs, closed-set event validation, secret returned
+  ONCE on create. OpenAPI spec adds 5 paths + 5 schemas;
+  postman + api docs regenerated. 8 unit tests cover happy
+  path, 401, 403, malformed URL, unknown event, quota, list
+  scoping, cross-account delete. Wired into the v1 server via
+  the same `DashboardAuthMounter` pattern as keys, and into
+  main.go's `buildDashboardBundle` so the handlers come up
+  whenever Postgres is reachable.
+
 - **Customer-webhook delivery worker (F-1270 close-out).**
   New `internal/customerwebhook` package drains the queue the
   store wrote in the prior commit: poll-loop drains

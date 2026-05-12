@@ -64,6 +64,7 @@ import (
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/dashboardauth"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/dashboardkeys"
+	"github.com/RatesEngine/rates-engine/internal/api/v1/dashboardwebhooks"
 	"github.com/RatesEngine/rates-engine/internal/api/v1/middleware"
 	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/auth/sep10"
@@ -630,6 +631,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		RegionDeployment:   "production",
 		DashboardAuth:      nilOrMounter(dashboardBundle.auth),
 		DashboardKeys:      nilOrMounter(dashboardBundle.keys),
+		DashboardWebhooks:  nilOrMounter(dashboardBundle.webhooks),
 		SessionAuth:        dashboardBundle.middleware,
 		SessionPeeker:      sessionPeekerAdapter{},
 		SACWrappers:        cfg.Supply.SACWrappers,
@@ -850,6 +852,7 @@ func nilOrMounter[T v1.DashboardAuthMounter](h T) v1.DashboardAuthMounter {
 type dashboardBundle struct {
 	auth        *dashboardauth.Handlers
 	keys        *dashboardkeys.Handlers
+	webhooks    *dashboardwebhooks.Handlers
 	middleware  middleware.Middleware
 	keysStore   platform.APIKeyStore
 	accounts    platform.AccountStore
@@ -937,6 +940,18 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	if err != nil {
 		return dashboardBundle{}, fmt.Errorf("dashboard keys handlers: %w", err)
 	}
+
+	// F-1270: dashboard webhook handlers atop the same Postgres
+	// store the delivery worker reads. Operators wire the worker
+	// separately via internal/customerwebhook.New (own systemd
+	// unit or alongside the API binary — both shapes work).
+	webhooksH, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
+		Webhooks: postgresstore.NewWebhookStore(postgresstore.New(db)),
+		Logger:   logger.With("component", "dashboard-webhooks"),
+	})
+	if err != nil {
+		return dashboardBundle{}, fmt.Errorf("dashboard webhooks handlers: %w", err)
+	}
 	logger.Info("dashboard wired",
 		"base_url", cfg.BaseURL,
 		"magic_link_ttl_minutes", cfg.MagicLinkTTLMinutes,
@@ -949,6 +964,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	return dashboardBundle{
 		auth:        authH,
 		keys:        keysH,
+		webhooks:    webhooksH,
 		middleware:  middleware.Middleware(dashboardauth.Middleware(&authCfg)),
 		keysStore:   keysStore,
 		accounts:    accounts,

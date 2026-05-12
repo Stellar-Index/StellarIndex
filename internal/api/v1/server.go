@@ -44,50 +44,51 @@ type ReadyChecker interface {
 //
 // Thread-safe.
 type Server struct {
-	logger           *slog.Logger
-	checks           []ReadyChecker
-	assets           AssetReader
-	prices           PriceReader
-	history          HistoryReader
-	markets          MarketsReader
-	oracle           OracleReader
-	meta             MetadataResolver
-	accounts         AccountStore
-	signups          SignupTracker
-	signupIPThrottle SignupIPThrottle
-	stripe           *StripeWebhookConfig
-	divergence       DivergenceLooker
-	freeze           FrozenLooker
-	supply           SupplyLooker
-	volume           VolumeReader
-	change24h        Change24hReader
-	changesum        ChangeSummaryReader
-	coins            CoinsReader
-	issuers          IssuersReader
-	cursors          CursorsReader
-	networkStats     NetworkStatsReader
-	sourcesStats     SourcesStatsReader
-	lending          LendingReader
-	currencies       CurrenciesReader
-	fxHistory        FXHistoryReader
-	sessionPeeker    SessionPeeker
-	incidents        []incidents.Incident
-	sep10            auth.SEP10Validator
-	cors             middleware.Middleware
-	auth             middleware.Middleware
-	rateLimit        middleware.Middleware
-	usageTracker     middleware.Middleware
-	usageReader      UsageReader
-	hub              *streaming.Hub
-	confidence       ConfidenceLooker
-	triangulated     TriangulatedPriceLooker
-	cdnEnabled       bool
-	statusBackend    StatusBackend
-	regionName       string
-	regionDeployment string
-	dashboardAuth    DashboardAuthMounter
-	dashboardKeys    DashboardAuthMounter
-	sessionAuth      middleware.Middleware
+	logger            *slog.Logger
+	checks            []ReadyChecker
+	assets            AssetReader
+	prices            PriceReader
+	history           HistoryReader
+	markets           MarketsReader
+	oracle            OracleReader
+	meta              MetadataResolver
+	accounts          AccountStore
+	signups           SignupTracker
+	signupIPThrottle  SignupIPThrottle
+	stripe            *StripeWebhookConfig
+	divergence        DivergenceLooker
+	freeze            FrozenLooker
+	supply            SupplyLooker
+	volume            VolumeReader
+	change24h         Change24hReader
+	changesum         ChangeSummaryReader
+	coins             CoinsReader
+	issuers           IssuersReader
+	cursors           CursorsReader
+	networkStats      NetworkStatsReader
+	sourcesStats      SourcesStatsReader
+	lending           LendingReader
+	currencies        CurrenciesReader
+	fxHistory         FXHistoryReader
+	sessionPeeker     SessionPeeker
+	incidents         []incidents.Incident
+	sep10             auth.SEP10Validator
+	cors              middleware.Middleware
+	auth              middleware.Middleware
+	rateLimit         middleware.Middleware
+	usageTracker      middleware.Middleware
+	usageReader       UsageReader
+	hub               *streaming.Hub
+	confidence        ConfidenceLooker
+	triangulated      TriangulatedPriceLooker
+	cdnEnabled        bool
+	statusBackend     StatusBackend
+	regionName        string
+	regionDeployment  string
+	dashboardAuth     DashboardAuthMounter
+	dashboardKeys     DashboardAuthMounter
+	dashboardWebhooks DashboardAuthMounter
+	sessionAuth       middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +
@@ -431,6 +432,15 @@ type Options struct {
 	// reachable.
 	DashboardKeys DashboardAuthMounter
 
+	// DashboardWebhooks, when non-nil, mounts the dashboard's
+	// customer-webhook CRUD surface (GET / POST / PATCH / DELETE
+	// /v1/dashboard/webhooks + GET /v1/dashboard/webhooks/{id}/deliveries).
+	// Backed by `internal/platform/postgresstore.WebhookStore`; the
+	// delivery worker that drains the queue runs in
+	// `internal/customerwebhook` and is orthogonal to these
+	// handlers. F-1270 (audit-2026-05-12).
+	DashboardWebhooks DashboardAuthMounter
+
 	// SACWrappers is the operator-config map of SAC C-strkey →
 	// "CODE-ISSUER" classic asset key. Backs /v1/sac-wrappers,
 	// the read-only resolution endpoint the explorer's AssetLabel
@@ -540,6 +550,7 @@ func New(opts Options) *Server {
 		regionDeployment:   valueOr(opts.RegionDeployment, "production"),
 		dashboardAuth:      opts.DashboardAuth,
 		dashboardKeys:      opts.DashboardKeys,
+		dashboardWebhooks:  opts.DashboardWebhooks,
 		sessionAuth:        opts.SessionAuth,
 		verifiedCurrencies: opts.VerifiedCurrencies,
 		globalPrice:        opts.GlobalPrice,
@@ -886,6 +897,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// only when main.go wired Postgres for the platform stores.
 	if s.dashboardKeys != nil {
 		s.dashboardKeys.Mount(s.mux)
+	}
+	// Dashboard webhook-management routes (F-1270). Same
+	// session-cookie + Postgres-wiring gate as dashboardKeys above.
+	if s.dashboardWebhooks != nil {
+		s.dashboardWebhooks.Mount(s.mux)
 	}
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
