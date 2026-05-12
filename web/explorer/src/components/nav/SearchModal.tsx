@@ -101,15 +101,23 @@ export function SearchModal() {
   // for the session. Used so typing "EUR" / "JPY" / "BRL" jumps
   // straight to /currencies/<ticker> instead of falling through
   // to the seeded protocol list.
+  //
+  // F-1201 migration (audit-2026-05-12): pre-rc.48 this called
+  // /v1/currencies; rc.48 removed that route. /v1/assets/verified
+  // returns the verified catalogue with class ∈ {crypto, stablecoin,
+  // fiat}; filter to fiat client-side so the search index keeps
+  // its "ISO ticker → currencies/<t>" affordance.
   const currencies = useQuery<CurrencyEntry[]>({
-    queryKey: ['/v1/currencies', 'searchindex'],
+    queryKey: ['/v1/assets/verified', 'searchindex-fiat'],
     enabled: open,
     staleTime: 60 * 60 * 1000,
     queryFn: async () => {
-      const env = await apiGet<{ data: { currencies?: CurrencyEntry[] } }>(
-        '/v1/currencies',
-      );
-      return env.data?.currencies ?? [];
+      const env = await apiGet<{
+        data: Array<{ ticker: string; name: string; class: string }>;
+      }>('/v1/assets/verified');
+      return (env.data ?? [])
+        .filter((row) => row.class === 'fiat')
+        .map((row) => ({ ticker: row.ticker, name: row.name }));
     },
   });
 

@@ -10,27 +10,42 @@ const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ ticker: string }>;
 
+// Wire shape of /v1/assets/{ticker} for a fiat catalogue entry —
+// returns GlobalAssetView when the ticker resolves to a verified
+// currency. F-1201 migrated this from /v1/currencies/{ticker}.
+interface GlobalAssetView {
+  ticker: string;
+  slug: string;
+  name: string;
+  class: string; // crypto | stablecoin | fiat
+  price_usd?: string | null; // "1 unit of asset = X USD" (decimal string)
+}
+
 interface CurrencyDetail {
   ticker: string;
   name: string;
-  rate_usd: number;
-  inverse_usd: number;
-  change_24h_pct?: number | null;
-  change_7d_pct?: number | null;
-  history_7d?: { date: string; rate_usd: number; inverse_usd: number }[];
+  rate_usd: number; // 1 USD = X local (= 1 / price_usd)
+  inverse_usd: number; // 1 local = X USD (= price_usd)
 }
 
 const FALLBACK = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY'];
 
 export async function generateStaticParams() {
   if (isCIStub) return FALLBACK.map((ticker) => ({ ticker }));
+  // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
+  // F-1201 audit-2026-05-12). Filter to class=fiat to keep the
+  // pre-rendered set focused on FX-rate widget consumers.
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/currencies`, {
+    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: { currencies?: { ticker: string }[] } };
-    const tickers = env.data?.currencies?.map((c) => c.ticker) ?? [];
+    const env = (await res.json()) as {
+      data: Array<{ ticker: string; class: string }>;
+    };
+    const tickers = (env.data ?? [])
+      .filter((row) => row.class === 'fiat')
+      .map((row) => row.ticker);
     if (tickers.length === 0) return FALLBACK.map((t) => ({ ticker: t }));
     return tickers.map((ticker) => ({ ticker }));
   } catch {
@@ -49,14 +64,31 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
+  // Migrated from /v1/currencies/{ticker} → /v1/assets/{ticker}.
+  // The catalogue dispatcher resolves an ISO ticker (EUR, GBP, …)
+  // via LookupByTicker and returns the cross-chain GlobalAssetView
+  // shape; we project that into the CurrencyDetail shape this
+  // widget renders. Sparkline + 24h/7d change come from a future
+  // /v1/chart hookup (deliberately omitted for now to keep this
+  // widget rendering after rc.48 — better a static price than a
+  // 404).
   try {
     const res = await fetch(
-      `${API_BASE_URL}/v1/currencies/${encodeURIComponent(ticker.toUpperCase())}`,
+      `${API_BASE_URL}/v1/assets/${encodeURIComponent(ticker.toUpperCase())}`,
       { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
     );
     if (!res.ok) return null;
-    const env = (await res.json()) as { data: CurrencyDetail };
-    return env.data ?? null;
+    const env = (await res.json()) as { data: GlobalAssetView };
+    const view = env.data;
+    if (!view || view.class !== 'fiat') return null;
+    const priceUSD = view.price_usd ? Number(view.price_usd) : 0;
+    if (!(priceUSD > 0)) return null;
+    return {
+      ticker: view.ticker,
+      name: view.name,
+      rate_usd: 1 / priceUSD, // 1 USD = X local
+      inverse_usd: priceUSD,  // 1 local = X USD
+    };
   } catch {
     return null;
   }
@@ -83,19 +115,14 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   }
 
   const priceUSD = cur.inverse_usd > 0 ? cur.inverse_usd : null;
-  const series = cur.history_7d ?? [];
-  // Prefer the API-computed 7d change (consistent with the rest of
-  // the explorer) and fall back to deriving from history when the
-  // upstream omits it.
-  let change7d: number | null = cur.change_7d_pct ?? null;
-  if (change7d == null && series.length >= 2) {
-    const first = series[0].inverse_usd;
-    const last = series[series.length - 1].inverse_usd;
-    if (first > 0 && last > 0) {
-      change7d = ((last - first) / first) * 100;
-    }
-  }
-  const change24h: number | null = cur.change_24h_pct ?? null;
+  // F-1201 migration: 24h / 7d change + sparkline points need a
+  // separate /v1/chart hookup against the new global-view surface
+  // (the inline `history_7d` field on the old /v1/currencies/{ticker}
+  // shape no longer exists). Tracked outside the audit; widget
+  // degrades to a clean price-only render in the meantime.
+  const series: Array<{ date: string; inverse_usd: number }> = [];
+  const change7d: number | null = null;
+  const change24h: number | null = null;
 
   return (
     <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900 dark:bg-slate-900 dark:text-slate-100">

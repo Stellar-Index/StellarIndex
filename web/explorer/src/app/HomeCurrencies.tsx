@@ -14,22 +14,55 @@ interface CurrencyRow {
   change_24h_pct?: number;
 }
 
-const FEATURED = ['EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD'];
+// Names hardcoded — fiat ISO 4217 ticker → English name is stable
+// and the 6-tile home strip doesn't justify an extra round-trip
+// to /v1/assets/verified for the human-readable label.
+const FEATURED: Array<{ ticker: string; name: string }> = [
+  { ticker: 'EUR', name: 'Euro' },
+  { ticker: 'GBP', name: 'British Pound' },
+  { ticker: 'JPY', name: 'Japanese Yen' },
+  { ticker: 'CHF', name: 'Swiss Franc' },
+  { ticker: 'CAD', name: 'Canadian Dollar' },
+  { ticker: 'AUD', name: 'Australian Dollar' },
+];
 
 /**
  * HomeCurrencies — strip of major-currency cards on the home page.
- * Surfaces the /currencies route by showing live USD-base rates for
- * a handful of majors, each clickable through to the per-currency
- * converter page.
+ *
+ * Migration history (F-1201 audit-2026-05-12): pre-rc.48 this
+ * called /v1/currencies (the single bulk endpoint that returned
+ * every catalogue currency's ticker + name + rate_usd +
+ * change_24h_pct). rc.48 removed that route as part of the
+ * /v1/coins + /v1/currencies → /v1/assets consolidation. The
+ * home strip now uses /v1/price/batch to get the 6 featured rates
+ * in one round-trip against fiat:USD; names are hardcoded above.
+ * change_24h_pct is intentionally dropped from the home strip —
+ * the per-currency detail page (/v1/assets/{slug}) carries it
+ * when consumers want it.
  */
 export function HomeCurrencies() {
   const q = useQuery<Record<string, CurrencyRow>>({
-    queryKey: ['/v1/currencies', 'home-strip'],
+    queryKey: ['/v1/price/batch', 'home-currencies'],
     queryFn: async () => {
-      const env = await apiGet<{ data: { currencies?: CurrencyRow[] } }>('/v1/currencies', {});
+      const assetIds = FEATURED.map((f) => `fiat:${f.ticker}`).join(',');
+      const env = await apiGet<{
+        data: Array<{ asset_id: string; price: string | null }>;
+      }>(`/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`, {});
       const map: Record<string, CurrencyRow> = {};
-      for (const c of env.data?.currencies ?? []) {
-        map[c.ticker] = c;
+      // /v1/price/batch returns "price of asset in quote", i.e.
+      // 1 EUR = X USD. That's exactly the rate_usd field shape
+      // the home strip already displays — no inversion needed.
+      for (const row of env.data ?? []) {
+        const ticker = row.asset_id.replace(/^fiat:/, '');
+        const featured = FEATURED.find((f) => f.ticker === ticker);
+        if (!featured || !row.price) continue;
+        const rate = Number(row.price);
+        if (!(rate > 0)) continue;
+        map[ticker] = {
+          ticker,
+          name: featured.name,
+          rate_usd: rate,
+        };
       }
       return map;
     },
@@ -76,7 +109,7 @@ export function HomeCurrencies() {
         </div>
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {FEATURED.map((t) => {
+        {FEATURED.map(({ ticker: t }) => {
           const row = q.data?.[t];
           return (
             <Link

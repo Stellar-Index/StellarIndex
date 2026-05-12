@@ -15,6 +15,34 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Explorer migrated off `/v1/currencies` (F-1201 — pre-flip
+  blocker).** rc.48 removed the `/v1/coins` + `/v1/currencies`
+  HTTP surface. The explorer had eight files still making live
+  calls against `/v1/currencies` — every one would 404 the
+  moment rc.48 deploys to R1. Migrated:
+  - `HomeCurrencies.tsx` → `/v1/price/batch?asset_ids=fiat:EUR,…&quote=fiat:USD`
+    (single RT, names hardcoded for the 6-tile home strip).
+  - `sitemap.ts` → `/v1/assets/verified` filtered to `class=fiat`.
+  - `HomeTryAPI.tsx` → updated example paths to `/v1/assets/verified`
+    + `/v1/assets/euro`.
+  - `embed/currency/[ticker]/page.tsx` → `/v1/assets/{ticker}`
+    (GlobalAssetView). Sparkline + 24h/7d change degrade
+    gracefully to a price-only widget; chart hookup is a follow-up.
+  - `AssetConverter.tsx` → `/v1/price/batch` for the FX rate table
+    (inverts so the converter's `rate_usd = 1 USD = N target`
+    contract stays unchanged).
+  - `convert/[from]/[to]/ConvertPair.tsx` → `/v1/price/batch`
+    for the live from→to rate (one pair vs the old cross_rates
+    bulk).
+  - `convert/[from]/[to]/page.tsx` → `/v1/assets/{from}` for
+    identity + `/v1/price/batch` for the singleton cross-rate.
+  - `SearchModal.tsx` → `/v1/assets/verified` filtered to fiat
+    for the ticker→/currencies/X affordance.
+  Zero remaining live calls to the removed routes. Typecheck +
+  lint + build all green.
+
 ### Changed
 
 - **Multi-region tooling now handles single-region operation

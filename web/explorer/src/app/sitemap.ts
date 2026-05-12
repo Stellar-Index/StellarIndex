@@ -287,15 +287,23 @@ async function fetchMarketPairs(): Promise<string[]> {
 }
 
 async function fetchCurrencyTickers(): Promise<string[]> {
+  // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
+  // F-1201 audit-2026-05-12). The new endpoint returns the full
+  // verified-currency catalogue with `class` ∈ {crypto, stablecoin,
+  // fiat}; filter to fiat client-side so the sitemap only includes
+  // the fiat tickers (which is what the per-currency converter
+  // pages cover).
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/currencies`, {
+    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const env = (await res.json()) as {
-      data: { currencies?: { ticker: string }[] };
+      data: Array<{ ticker: string; class: string }>;
     };
-    return (env.data?.currencies ?? []).map((c) => c.ticker);
+    return (env.data ?? [])
+      .filter((row) => row.class === 'fiat')
+      .map((row) => row.ticker);
   } catch {
     return [];
   }

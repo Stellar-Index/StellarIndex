@@ -65,12 +65,12 @@ const EXAMPLES: Example[] = [
     path: '/v1/sources?include=stats',
   },
   {
-    label: 'World currency rates (USD-base)',
-    path: '/v1/currencies',
+    label: 'World verified currencies (catalogue)',
+    path: '/v1/assets/verified',
   },
   {
-    label: 'EUR currency detail with cross-rates',
-    path: '/v1/currencies/EUR',
+    label: 'EUR cross-chain identity + Stellar network detail',
+    path: '/v1/assets/euro',
   },
   {
     label: 'Latest oracle streams (Reflector / Redstone / Band)',

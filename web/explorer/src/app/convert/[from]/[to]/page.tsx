@@ -31,32 +31,41 @@ const SNIPPET_AMOUNTS = [1, 10, 100, 1000, 10000];
 
 type Params = Promise<{ from: string; to: string }>;
 
+// Local projection of the per-(from, to) data the SSR shell needs.
+// Pre-F-1201 this carried a full cross_rates map (from→every ticker)
+// from /v1/currencies/{from}; post-F-1201 we fetch one pair via
+// /v1/price/batch and synthesize a {to: rate} singleton map so the
+// existing render path stays unchanged.
 interface CurrencyDetail {
   ticker: string;
   name: string;
-  rate_usd: number;
-  inverse_usd: number;
-  cross_rates: Record<string, number>;
+  rate_usd: number; // 1 USD = N {from}
+  inverse_usd: number; // 1 {from} = N USD
+  cross_rates: Record<string, number>; // {to: 1 {from} = N {to}}
   published_at?: string;
   source?: string;
 }
 
-interface CurrencyListEntry {
+interface VerifiedCurrencyEntry {
   ticker: string;
   name?: string;
+  class: string;
 }
 
 async function fetchTickers(): Promise<string[]> {
   if (isCIStub) return FALLBACK_TICKERS;
+  // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
+  // F-1201 audit-2026-05-12). Filter to class=fiat client-side.
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/currencies`, {
+    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as {
-      data: { currencies?: CurrencyListEntry[] };
-    };
-    const tickers = env.data?.currencies?.map((c) => c.ticker).filter(Boolean) ?? [];
+    const env = (await res.json()) as { data: VerifiedCurrencyEntry[] };
+    const tickers = (env.data ?? [])
+      .filter((row) => row.class === 'fiat')
+      .map((row) => row.ticker)
+      .filter(Boolean);
     return tickers.length > 0 ? tickers : FALLBACK_TICKERS;
   } catch {
     return FALLBACK_TICKERS;
@@ -106,15 +115,58 @@ export async function generateStaticParams() {
   return out;
 }
 
-async function fetchDetail(from: string): Promise<CurrencyDetail | null> {
+// fetchDetail returns the SSR snapshot the converter shell needs:
+// the {from} currency's identity (ticker / name) + the from→to
+// rate via cross_rates[to].
+//
+// F-1201 migration: pre-rc.48 a single /v1/currencies/{from} call
+// returned every cross-rate at once; rc.48 removed that route.
+// We now hit two endpoints in parallel:
+//
+//   1. /v1/assets/{from} for the identity (ticker, name)
+//   2. /v1/price/batch?asset_ids=fiat:{to}&quote=fiat:{from} for
+//      the singleton from→to rate
+//
+// The cross_rates map carries just the one entry (key = `to`)
+// rather than every ticker the pre-rc.48 endpoint returned. The
+// SSR shell only ever reads cross_rates[to], so the surface area
+// is unchanged.
+async function fetchDetail(from: string, to: string): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/currencies/${from.toUpperCase()}`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: CurrencyDetail };
-    return env.data ?? null;
+    const [identityRes, priceRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/v1/assets/${from.toUpperCase()}`, {
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      }),
+      fetch(
+        `${API_BASE_URL}/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${to.toUpperCase()}`)}&quote=${encodeURIComponent(`fiat:${from.toUpperCase()}`)}`,
+        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      ),
+    ]);
+    if (!identityRes.ok || !priceRes.ok) return null;
+    const identityEnv = (await identityRes.json()) as {
+      data: { ticker: string; name: string; price_usd?: string | null };
+    };
+    const priceEnv = (await priceRes.json()) as {
+      data: Array<{ asset_id: string; price: string | null }>;
+    };
+    const v = identityEnv.data;
+    if (!v) return null;
+    const fromUSD = v.price_usd ? Number(v.price_usd) : 0;
+    if (!(fromUSD > 0)) return null;
+    const toRateRow = (priceEnv.data ?? []).find(
+      (r) => r.asset_id === `fiat:${to.toUpperCase()}`,
+    );
+    const fromToRate = toRateRow?.price ? Number(toRateRow.price) : 0;
+    return {
+      ticker: v.ticker,
+      name: v.name,
+      // rate_usd: 1 USD = N {from}  →  inverse of fromUSD (which
+      // is 1 {from} = N USD)
+      rate_usd: 1 / fromUSD,
+      inverse_usd: fromUSD,
+      cross_rates: fromToRate > 0 ? { [to.toUpperCase()]: fromToRate } : {},
+    };
   } catch {
     return null;
   }
@@ -124,7 +176,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const { from, to } = await params;
   const f = from.toUpperCase();
   const t = to.toUpperCase();
-  const detail = await fetchDetail(f);
+  const detail = await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t];
   const ratePart = rate != null
     ? ` 1 ${f} = ${formatRateForMeta(rate)} ${t}.`
@@ -152,7 +204,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
   const f = from.toUpperCase();
   const t = to.toUpperCase();
 
-  const detail = await fetchDetail(f);
+  const detail = await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t] ?? null;
   const inverse = rate != null && rate > 0 ? 1 / rate : null;
 

@@ -42,14 +42,36 @@ export function AssetConverter({
   const [showAll, setShowAll] = useState(false);
 
   // Pull the forex snapshot to power non-USD targets. Stale data is
-  // fine — the snapshot refreshes hourly, and a stale FX leg on a
-  // crypto-asset converter is dominated by the crypto's own
+  // fine — the snapshot refreshes every 5 min, and a stale FX leg
+  // on a crypto-asset converter is dominated by the crypto's own
   // volatility anyway.
+  //
+  // F-1201 migration: pre-rc.48 this called /v1/currencies (single
+  // bulk endpoint with `rate_usd` already in the "1 USD = N target"
+  // shape this converter expects). rc.48 removed that route; we
+  // now use /v1/price/batch which returns "1 unit of asset = X
+  // USD" and invert at the boundary. Names are missing from the
+  // batch response — we don't render them in this converter so
+  // that's fine.
   const fx = useQuery<CurrencyRow[]>({
-    queryKey: ['/v1/currencies', 'forAssetConverter'],
+    queryKey: ['/v1/price/batch', 'forAssetConverter'],
     queryFn: async () => {
-      const env = await apiGet<{ data: { currencies?: CurrencyRow[] } }>('/v1/currencies', {});
-      return env.data?.currencies ?? [];
+      const assetIds = FEATURED.filter((t) => t !== 'USD')
+        .map((t) => `fiat:${t}`)
+        .join(',');
+      const env = await apiGet<{
+        data: Array<{ asset_id: string; price: string | null }>;
+      }>(`/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`, {});
+      const rows: CurrencyRow[] = [];
+      for (const row of env.data ?? []) {
+        const ticker = row.asset_id.replace(/^fiat:/, '');
+        const priceUSD = row.price ? Number(row.price) : 0;
+        if (!(priceUSD > 0)) continue;
+        // /v1/price/batch returns 1 ticker = X USD; the converter
+        // expects rate_usd in the "1 USD = N target" form. Invert.
+        rows.push({ ticker, name: ticker, rate_usd: 1 / priceUSD });
+      }
+      return rows;
     },
     refetchInterval: 5 * 60_000,
   });
