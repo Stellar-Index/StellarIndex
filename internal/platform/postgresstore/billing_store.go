@@ -15,14 +15,14 @@ import (
 // BillingStore implements [platform.BillingStore] against the
 // `subscriptions` + `stripe_event_log` tables in migration 0027.
 //
-// F-1227 (audit-2026-05-12): the Stripe webhook handler needs the
-// `AppendStripeEvent` / `MarkStripeEventProcessed` /
-// `MarkStripeEventFailed` triple wired so a delayed Stripe
-// re-delivery doesn't silently re-upgrade after a manual
-// downgrade. Subscription mirror methods (UpsertSubscription /
-// GetActiveSubscriptionForAccount) are stubbed for v1 and will
-// land alongside the customer-facing /v1/account/subscription
-// surface (F-1231).
+// F-1227 + F-1231 (audit-2026-05-12): Stripe-event dedupe trio
+// (`AppendStripeEvent` / `MarkStripeEventProcessed` /
+// `MarkStripeEventFailed`) plus the subscription mirror surface
+// (`UpsertSubscription` / `GetActiveSubscriptionForAccount`).
+// Webhook handler wiring is in `internal/api/v1/stripe_webhook.go`;
+// the customer-facing /v1/account/subscription read path on top of
+// `GetActiveSubscriptionForAccount` is a separate small piece of
+// work tracked outside the 2026-05-12 audit.
 type BillingStore struct{ s *Store }
 
 // NewBillingStore returns the Postgres-backed implementation.
