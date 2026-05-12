@@ -370,13 +370,26 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			// Race lost on the email unique index. The OTHER
 			// concurrent callback won, its CreateUser
 			// succeeded, and its account is the canonical one.
-			// Re-fetch and use that user; our speculative
-			// account becomes an orphan for the operator reaper.
+			// Re-fetch and use that user.
 			h.cfg.Logger.Warn("signup race: rolling back to winning user",
 				"email", email, "speculative_account_id", acct.ID)
 			winner, getErr := h.cfg.Users.GetUserByEmail(ctx, email)
 			if getErr != nil {
 				return platform.User{}, fmt.Errorf("create user conflict + reload: %w", getErr)
+			}
+			// F-1255 follow-up (codex audit-2026-05-12): mark the
+			// speculative-account row as Suspended with a reason
+			// the operator reaper can match. Without this the
+			// orphan accumulates as a never-recovered Active row;
+			// the reaper has to fuzz-match against "accounts with
+			// no users" to find them. With this, the reaper just
+			// scans for `Suspended` + reason starting with
+			// "signup-race:". Best-effort — Suspend errors log
+			// and drop because the load-bearing operation (login
+			// for `winner`) has already succeeded.
+			if suspErr := h.cfg.Accounts.Suspend(ctx, acct.ID, "signup-race: orphan speculative account "+email); suspErr != nil {
+				h.cfg.Logger.Warn("signup race: failed to mark orphan account",
+					"err", suspErr, "speculative_account_id", acct.ID)
 			}
 			return winner, nil
 		}
