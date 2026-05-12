@@ -11,7 +11,7 @@ per-finding `Current-head reconciliation` notes carry the actual
 close-state. This summary collapses both into a single
 truth-snapshot for any post-audit consumer.
 
-**Closed by code/config + verified live on R1** (49 findings):
+**Closed by code/config + verified live on R1** (50 findings):
 
   F-1201 firewall · F-1202 route removal · F-1203 explorer types ·
   F-1204 audit-public-api/llms · F-1208 alert tuning · F-1209 swap
@@ -34,17 +34,14 @@ truth-snapshot for any post-audit consumer.
   username · F-1254 Redis ACL keys · F-1256 rate-limit docs ·
   F-1257 api-key quota race · F-1258 Redis-less usage · F-1259
   account/usage docs · F-1260 survivor-set MinUSDVolume gate ·
-  F-1249 incident.sev1/resolved producer
+  F-1249 incident.sev1/resolved producer · F-1255 SETNX signup
+  email-lock
 
 **Partially closed** (code + live action shipped; remaining piece
 is operator credential / arch decision):
 
   - F-1205 — 3 of 4 evidence timers live; sla-probe needs operator-
     minted `RATESENGINE_PROBE_API_KEY` at Partner/Operator tier
-  - F-1255 — speculative-account orphan recovery now Suspend-marks
-    the loser row with reason `signup-race:` so the operator reaper
-    has an unambiguous signal; full transactional first-login
-    atomicity (per-email serialization) is a deeper refactor
   - F-1207 — next.js bumped + CI `pnpm audit` gate added; npm/pnpm
     ecosystems now included in `.github/dependabot.yml` for all three
     web apps; hosted GitHub Dependabot/vulnerability alerts admin
@@ -130,7 +127,7 @@ is operator credential / arch decision):
 | F-1252 | medium | Multi-region cutover instructions invoke a nonexistent `make verify-cross-region` launch check | Cutover runbook; verification script; Makefile command surface | XFI-0044; EV-0082 | open | docs/ops/release | The pre-flight checklist names a make target that does not exist, so an operator following the launch runbook gets a Make failure exactly where a gating consistency check is expected. |
 | F-1253 | high | Enabling Redis ACL lockdown disables the default user, but the rendered application config never sets `redis_username`, so binaries keep authenticating on the rejected legacy path | Redis Sentinel ACL template; application config template; Redis client builder | XFI-0045; EV-0083; EV-0098 | fixed | ops/security/config | Current Ansible rendering emits the named Redis ACL username when lockdown is enabled, matching the server-side auth contract. |
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084; EV-0098 | fixed | ops/security/config | Current ACL rendering now permits the live `rl:*`, `sub:*`, signup, replay, usage, and catalogue namespaces that were previously missing or misnamed. |
-| F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | open | platform/auth/data-quality | The losing callback now reloads the winner user instead of surfacing the original conflict response, but token consumption is still per token rather than per email, so two valid links can still persist a speculative loser account row with no owner. |
+| F-1255 | medium | Concurrent first-login callbacks for the same new email can still create orphan accounts because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087; EV-0102 | fixed | platform/auth/data-quality | Current `HEAD` adds a Redis-SETNX-backed `EmailLocker` seam wired through `dashboardauth.Config`. The losing callback short-circuits before `Account.Create`, polls briefly for the winner's user, and never inserts a speculative-account row. Redis-less deployments fall back to the Suspend-on-conflict path as defence in depth. Tests: in-memory locker preempts loser (no speculative Account row created) + miniredis adapter (acquire/release round-trip + TTL expiry). `signup:lock:*` added to the Redis ACL allow-list. |
 | F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | open | dashboard/docs/product | Free users are told the default is 1000/min and every user can submit 100000/min, but current backend persists Free keys at 60/min and other tiers at smaller caps unless the tier allows more. |
 | F-1257 | medium | The attempted 25-active-key/account quota fix still uses a raceable unlocked count CTE | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092; EV-0103 | open | platform/keys | The workspace moved quota handling into `APIKeyStore.Create`, but the new `WITH active_count ... INSERT ... WHERE n < max` has the same MVCC snapshot race already preserved for webhooks under `F-1248`. |
 | F-1258 | high | Redis-less API deployments can still panic through the usage-reader path after the middleware-side nil fix | API startup wiring; usage middleware; usage counter; account usage reader | XFI-0050; EV-0094; EV-0103 | open | api/ops/runtime | The workspace now omits the middleware counter when Redis is absent, but still passes `UsageReader: usageReaderAdapter{c:nil}` into the server; `/v1/account/usage` then dereferences the nil inner counter on `Read`. |
@@ -1546,7 +1543,9 @@ Remediation direction: retained for audit history; the stale/missing key-family 
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
+
+Current-head reconciliation (wave 30, 2026-05-12): `dashboardauth.Config` gains an optional `EmailLocker` seam with a Redis-SETNX adapter (`auth.RedisSignupEmailLocker`, key family `signup:lock:<sha256-hex>`, 30s TTL). `signupNewUser` acquires per-email before `Account.Create`; lock-loss callers short-circuit and poll `Users.GetUserByEmail` for the winner row (1.5s/10-attempt budget). Production wiring in `cmd/ratesengine-api/main.go` plugs the Redis client; Redis-less deployments leave the locker nil and fall back to the wave-27 Suspend-on-conflict recovery path (so the orphan reaper still has unambiguous signal). The `signup:lock:*` namespace is added to the Redis ACL allow-list in `configs/ansible/roles/redis-sentinel/templates/users.acl.j2`. Tests cover both the in-memory locker (loser pre-empt: no speculative Account row created) and the miniredis adapter (acquire/release/TTL).
 
 Affected surface:
 

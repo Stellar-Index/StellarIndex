@@ -963,6 +963,15 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		CookieSecure:     cfg.CookieSecure,
 		CookieDomain:     cfg.CookieDomain,
 	}
+	// F-1255 (codex audit-2026-05-12): per-email signup lock. Redis-
+	// backed SETNX serialises first-login provisioning so two
+	// callback callers for the same just-verified email can't both
+	// create speculative Account rows. Redis-less deployments leave
+	// the locker nil and fall back to the Suspend-on-conflict
+	// recovery path (still safe; the orphan row gets reaped).
+	if rdb != nil {
+		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
+	}
 	authH, err := dashboardauth.NewHandlers(authCfg)
 	if err != nil {
 		return dashboardBundle{}, fmt.Errorf("dashboard auth handlers: %w", err)
