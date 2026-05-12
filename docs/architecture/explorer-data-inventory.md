@@ -685,7 +685,7 @@ Publishing = git commit + push. CI rebuilds the site.
 |---|---|---|
 | **Sign-in** | SEP-10 challenge → token (Freighter / Albedo / Lobstr wallets) | `GET /v1/auth/sep10/challenge` + `POST /v1/auth/sep10/token` |
 | **Account info** | account_id, tier, rate limit, member-since | `GET /v1/account/me` |
-| **Usage chart** | Requests/day, 429 count | `GET /v1/account/usage` (currently stub) |
+| **Usage chart** | Requests/day, 429 count | `GET /v1/account/usage` (live trailing-30-day counters from the Redis-backed `usage.Counter` the rate-limit middleware writes; 429 attribution lands when the rate-limit middleware emits a separate counter). F-1259 (codex audit-2026-05-12). |
 | **API keys** | List with label, created-at, last-used; create/revoke | `GET /v1/account/keys` (list missing) + `POST` (works) + `DELETE` (missing) |
 
 ### §7.25 Universal search (`/search`)

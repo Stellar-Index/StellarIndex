@@ -329,6 +329,13 @@ without evidence IDs.
 - `CMD-0147` settles the moving-workspace phase: wave 45 is now committed at
   `HEAD=93594529...`, but `F-1218` remains open because the new gate defaults
   off and live R1 has no explicit enabling config line.
+- `CMD-0151` reconciles `F-1256` after wave 48: the dashboard key form and
+  OpenAPI now describe the same tier-clamped persisted budget semantics, so
+  the cross-file docs/product finding is genuinely fixed.
+- `CMD-0152` restores audit-control parity after wave 47/48 tracked-scope
+  growth. The Codex TSV now matches the current non-audit tree at `1,897`
+  rows, the roll-up is `done=111`, `in_progress=87`, `todo=1699`, and docs
+  lint passes on the current moving workspace.
 - `CMD-0122` surfaced new high-severity migration finding `F-1261`.
   Migration `0030_asset_supply_history_unique_constraint` fails against the
   compressed hypertable created by `0005`, fresh integration bootstrap dies
@@ -357,9 +364,11 @@ without evidence IDs.
   and migration-0030 files entered scope, `EV-0131` advances the same
   control to `1,884` rows after the monthly-quota middleware became tracked,
   and `EV-0136` restores parity at `1,888` rows after committed wave 39 added
-  the touch-usage middleware/debouncer pair plus tests.
+  the touch-usage middleware/debouncer pair plus tests. `EV-0151` advances
+  that same control to `1,897` rows after wave 47/48 scope growth and the
+  missing `asset_registry_test.go` ledger row was added.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=109`, `in_progress=72`, `todo=1707`, with tracked-file parity
-  restored at `1888` rows and preserved through `CMD-0137`.
+  `done=111`, `in_progress=87`, `todo=1699`, with tracked-file parity
+  restored at `1897` rows and preserved through `CMD-0152`.

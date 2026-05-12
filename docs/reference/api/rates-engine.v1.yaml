@@ -1904,12 +1904,24 @@ paths:
   /account/usage:
     get:
       tags: [account]
-      summary: Usage-summary placeholder (currently empty).
+      summary: Daily request counters for the authenticated key.
       description: |
-        Placeholder self-service surface. The handler currently
-        returns an empty list while the backing counter store is not
-        implemented yet; `from` / `to` are reserved for the future
-        implementation and are ignored today.
+        Returns per-day request counts for the authenticated caller
+        over the last 31 days (or the `from`/`to` window when
+        supplied). Counts are incremented by the usage middleware on
+        every successful (non-rate-limited, non-policy-denied)
+        request and persisted in Redis under the `usage:<subject>:
+        <YYYY-MM-DD>` key family.
+
+        F-1259 (codex audit-2026-05-12) — the previous "placeholder,
+        returns empty list" wording reflected the pre-launch state;
+        the counter is now wired in `cmd/ratesengine-api/main.go`
+        whenever Redis is reachable. Deployments without Redis
+        (e.g. local dev with `-no-redis`) still return an empty
+        envelope — the absence of the counter is reflected on
+        /v1/readyz under `checks` (NOT `/v1/healthz` — the
+        per-dependency `checks` field is `/readyz`-only; the
+        `/healthz` liveness probe stays minimal by design).
       security:
         - APIKeyAuth: []
       parameters:
@@ -2150,6 +2162,70 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "503":
           description: AccountStore not configured (Redis unavailable).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /signup/verify:
+    get:
+      tags: [account]
+      summary: Confirm email ownership for a signup-issued API key.
+      description: |
+        F-1218 (codex audit-2026-05-12): closes the email-
+        ownership-proof loop on `POST /v1/signup`. The signup
+        handler issues a single-use token and emails it to the
+        submitted address; this endpoint consumes the token from
+        the click-through link.
+
+        Single-use semantics via Redis GETDEL — the second
+        click on the link returns 404, the same shape as a
+        forged or expired token. Token TTL defaults to 24h to
+        match the dashboard magic-link convention.
+
+        Subsequent waves layer:
+          1. The email-send step on POST /v1/signup that
+             populates the verifier with the issued token.
+          2. An optional validator gate (operator opt-in via
+             config) that rejects unverified keys with 403.
+
+        Today this endpoint just consumes the token; the
+        success path returns the key_id so the customer's
+        dashboard / CLI can correlate the verified key.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+          description: The plaintext token from the verification email.
+      responses:
+        "200":
+          description: Token consumed; email ownership confirmed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          verified: { type: boolean }
+                          key_id:   { type: string }
+                          detail:   { type: string }
+                        required: [verified]
+        "400":
+          description: Missing `?token=` query parameter.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Unknown / consumed / expired token.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: SignupVerifier not configured (Redis unavailable).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -2833,7 +2909,21 @@ components:
           type: integer
           minimum: 1
           maximum: 100000
-          description: Default 1000.
+          description: |
+            Requested per-minute rate-limit budget for this key.
+            **Silently clamped to the account's tier ceiling** —
+            see `platform.Tier.MaxRateLimitPerMin` in code:
+
+              - Free:       60/min  (key parity with anon-tier)
+              - Starter:    1000/min
+              - Pro:        10000/min
+              - Business:   60000/min
+              - Enterprise: 100000/min
+
+            A request of 100000 on a Free account persists 60.
+            The `maximum: 100000` in this schema is the hard ceiling
+            for any tier; the effective cap is whichever is lower.
+            F-1256 (codex audit-2026-05-12).
         monthly_quota:
           type: integer
           format: int64

@@ -199,22 +199,31 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountUsage serves GET /v1/account/usage.
 //
-// **Placeholder for launch.** The endpoint always returns an empty
-// `[]` for authenticated callers — the per-day usage rollup is not
-// yet implemented. The rate-limit middleware records request counts
-// in Redis, but nothing aggregates them into the daily UsageRow
-// shape. The wire contract (envelope shape, UsageRow fields) is
-// locked so SDK consumers can integrate against it, but the data is
-// always empty until the rollup worker ships.
+// Returns per-day request counts for the authenticated caller over
+// the trailing 30 days. The usage middleware (`middleware.UsageTracker`)
+// increments per-day counters in Redis on every successful request;
+// this handler reads them back via the [UsageReader] seam.
 //
-// Day-1 contract: callers SHOULD treat an empty array as "no usage
-// reported," not as "no usage in the queried window." Operators
-// reading their own usage today must inspect Redis counters
-// directly.
+// F-1259 (codex audit-2026-05-12): the prior "placeholder" doc-block
+// described the pre-launch stub shape; the live runtime now wires
+// `UsageReader: usageReaderOrNil(usageCounter)` whenever Redis is
+// reachable, and the handler short-circuits to the empty-list wire
+// shape only when the reader is nil (Redis-less deployment) or the
+// subject derivation can't pick a stable counter key.
 //
-// Anonymous callers receive 401. The `?from=` / `?to=` query params
-// are reserved in the OpenAPI spec but ignored — every successful
-// response is `[]` regardless of range.
+// Subject keying matches `middleware.UsageTracker`'s
+// `usageKeyForSubject` so the writer + reader stay in lock-step
+// (`key:<KeyID>` for API-key callers; `id:<Identifier>` when KeyID
+// is empty). Anonymous callers receive 401. The `?from=` / `?to=`
+// query params are reserved in the OpenAPI spec but ignored — every
+// successful response is the trailing 30-day window today; full
+// from/to honouring lands when an operator surface needs it.
+//
+// Redis-absent posture: the handler returns `[]` in the wire-shape
+// envelope (200 OK with an empty data array). Callers that
+// distinguish "no usage reported" from "usage backend not wired"
+// can probe `/v1/readyz` (NOT `/healthz` — the per-dependency
+// `checks` field is `/readyz`-only).
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
