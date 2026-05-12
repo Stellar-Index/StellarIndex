@@ -9,7 +9,13 @@ groups:
     rules:
 
       - alert: ratesengine_prometheus_scrape_failing
-        expr: up{job=~"api|indexer|aggregator|postgres|redis|minio|node"} == 0
+        # F-1222 (audit-2026-05-12): job names match the multi-host
+        # ansible role's scrape config in
+        # configs/ansible/roles/prometheus/templates/prometheus.yml.j2
+        # (`ratesengine_api`, `ratesengine_aggregator`, etc — with
+        # underscores). R1's single-host shape uses hyphenated names
+        # and tracks them in configs/prometheus/rules.r1/meta.yml.
+        expr: up{job=~"ratesengine_api|ratesengine_indexer|ratesengine_aggregator|postgres_exporter|redis_exporter|minio|node_exporter"} == 0
         for: 2m
         labels:
           severity: informational

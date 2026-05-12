@@ -104,3 +104,37 @@ groups:
             an existing aggregator/oracle source unexpectedly
             increased volume.
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+
+      # F-1253 (audit-2026-05-12): explicit alert on aggregator
+      # cache-write-error rate. The May-10 SEV-2 (root-FS full →
+      # Redis BGSAVE blocked → every Set returned MISCONF for ~9h)
+      # surfaced only as customer 404s on rewritten pairs because
+      # `flags.stale` was not flipped (the aggregator was running,
+      # just unable to publish). The post-mortem
+      # `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
+      # explicitly recommends "alert on aggregator WARN rate (not
+      # just service-up status)" — this is the metric realisation:
+      # the new ratesengine_aggregator_vwap_cache_write_errors_total
+      # counter (internal/obs/metrics.go) increments on every
+      # cache Set failure, and any sustained non-zero rate is an
+      # operator-page-worthy signal because it means the customer
+      # surface is silently degraded.
+      - alert: ratesengine_aggregator_cache_write_errors
+        expr: |
+          sum(rate(ratesengine_aggregator_vwap_cache_write_errors_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: aggregator
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+        annotations:
+          summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
+          description: |
+            VWAP cache writes are erroring; rewritten / triangulated /
+            stablecoin-proxy pairs on /v1/price are about to start
+            returning 404 (or already are). Most common cause: Redis
+            BGSAVE is failing because the root FS is full
+            (stop-writes-on-bgsave-error=yes default — May-10 SEV-2
+            class). Recovery: free disk → BGSAVE → cache rebuilds.
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md

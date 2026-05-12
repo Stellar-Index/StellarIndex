@@ -8,11 +8,24 @@ groups:
     interval: 30s
     rules:
 
+      # F-1212b (audit-2026-05-12): the 5-minute rate window was
+      # too short for low-volume Soroban / FX contracts. R1 saw
+      # routine false-positive firings for `band`, `blend`,
+      # `comet`, `ecb`, `phoenix` — all of which legitimately
+      # emit events sporadically (auctions, oracle pushes, FX
+      # dailies). The runbook `source-stopped.md:60-62` explicitly
+      # acknowledges "Low-volume sources during quiet windows …
+      # can genuinely see zero swaps for 5+ minute stretches" and
+      # recommends extending the window. Total-outage coverage is
+      # still the 3-minute `ratesengine_ingestion_all_sources_stopped`
+      # alert below — that one stays tight because if no source
+      # at all emits, something is broken across the whole
+      # indexer/upstream surface.
       - alert: ratesengine_ingestion_source_stopped
         expr: |
-          sum by (source) (rate(ratesengine_source_events_total[5m])) == 0
+          sum by (source) (rate(ratesengine_source_events_total[30m])) == 0
           and on (source) ratesengine_source_enabled == 1
-        for: 5m
+        for: 15m
         labels:
           severity: ticket
           team: ratesengine
@@ -21,8 +34,10 @@ groups:
         annotations:
           summary: "Source {{ $labels.source }} has stopped ingesting"
           description: |
-            No events from source {{ $labels.source }} in the last 5 minutes,
-            but it's configured as enabled in ingestion.enabled_sources.
+            No events from source {{ $labels.source }} in the last 30 minutes,
+            sustained for ≥ 15 min — well beyond the natural quiet-window
+            cadence for even our slowest-cadence sources. The source is
+            configured as enabled in ingestion.enabled_sources.
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: ratesengine_ingestion_all_sources_stopped

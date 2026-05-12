@@ -7,7 +7,7 @@ groups:
     rules:
 
       - alert: ratesengine_api_down
-        expr: sum(up{job="api"}) == 0
+        expr: sum(up{job="ratesengine_api"}) == 0
         for: 60s
         labels:
           severity: page
@@ -24,7 +24,7 @@ groups:
       - alert: ratesengine_api_latency_p95_high
         expr: |
           histogram_quantile(0.95,
-            sum by (le) (rate(http_request_duration_seconds_bucket{job="api"}[5m]))
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine_api"}[5m]))
           ) > 0.5
         for: 2m
         labels:
@@ -42,7 +42,7 @@ groups:
       - alert: ratesengine_api_latency_p99_high
         expr: |
           histogram_quantile(0.99,
-            sum by (le) (rate(http_request_duration_seconds_bucket{job="api"}[5m]))
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine_api"}[5m]))
           ) > 2
         for: 2m
         labels:
@@ -59,8 +59,8 @@ groups:
 
       - alert: ratesengine_api_error_rate_high
         expr: |
-          sum(rate(http_requests_total{job="api",status=~"5.."}[5m]))
-            / sum(rate(http_requests_total{job="api"}[5m])) > 0.01
+          sum(rate(http_requests_total{job="ratesengine_api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="ratesengine_api"}[5m])) > 0.01
         for: 2m
         labels:
           severity: ticket
@@ -75,8 +75,8 @@ groups:
 
       - alert: ratesengine_api_error_rate_critical
         expr: |
-          sum(rate(http_requests_total{job="api",status=~"5.."}[5m]))
-            / sum(rate(http_requests_total{job="api"}[5m])) > 0.05
+          sum(rate(http_requests_total{job="ratesengine_api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="ratesengine_api"}[5m])) > 0.05
         for: 2m
         labels:
           severity: page

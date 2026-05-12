@@ -8,11 +8,17 @@ groups:
     interval: 30s
     rules:
 
+      # F-1212b (audit-2026-05-12): 5-minute window false-positives
+      # routinely on low-volume Soroban / FX sources (band, blend,
+      # comet, ecb, phoenix). Total-outage detection is the
+      # `_all_sources_stopped` alert below at 3 min — that one
+      # stays tight; this one widens to give bursty sources their
+      # natural breathing room.
       - alert: ratesengine_ingestion_source_stopped
         expr: |
-          sum by (source) (rate(ratesengine_source_events_total[5m])) == 0
+          sum by (source) (rate(ratesengine_source_events_total[30m])) == 0
           and on (source) ratesengine_source_enabled == 1
-        for: 5m
+        for: 15m
         labels:
           severity: ticket
           team: ratesengine
@@ -21,8 +27,10 @@ groups:
         annotations:
           summary: "Source {{ $labels.source }} has stopped ingesting"
           description: |
-            No events from source {{ $labels.source }} in the last 5 minutes,
-            but it's configured as enabled in ingestion.enabled_sources.
+            No events from source {{ $labels.source }} in the last 30 minutes,
+            sustained for ≥ 15 min — well beyond the natural quiet-window
+            cadence for even our slowest-cadence sources. The source is
+            configured as enabled in ingestion.enabled_sources.
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: ratesengine_ingestion_all_sources_stopped

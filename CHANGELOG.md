@@ -15,7 +15,80 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`ratesengine_aggregator_vwap_cache_write_errors_total` metric**
+  + paired `ratesengine_aggregator_cache_write_errors` page-tier
+  alert. The May-10 SEV-2 (Redis BGSAVE blocked by full root FS for
+  ~9 h → every cache `Set` returned MISCONF → `/v1/price` 404'd on
+  every rewritten / triangulated / stablecoin-proxy pair) had **no
+  upstream signal** in monitoring — `flags.stale` did not flip
+  because the aggregator process was alive and ticking, just unable
+  to publish. The post-mortem (`internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`)
+  explicitly recommended "alert on aggregator WARN rate (not just
+  service-up status)" — this counter realises that recommendation
+  as the cleanest signal: any non-zero `rate(...[5m])` for ≥ 2 min
+  pages. Increments at the single cache-write failure point in
+  `internal/aggregate/orchestrator/orchestrator.go:653`. Closes
+  audit-2026-05-12 F-1253; supports F-1254 (`flags.stale` semantic
+  bug — separate fix).
+
 ### Fixed
+
+- **R1 alert blackout closed: 9 alert families wired up, textfile
+  evidence chain repaired (F-1219 + F-1220 + F-1221 + F-1252).**
+  Pre-change R1 loaded only 6 of 18 rule families
+  (`aggregator/api/infra/ingestion/meta/slo`); every alert in
+  `anomaly`, `divergence`, `external-pollers`, `supply`,
+  `supply-snapshot`, `supply-refresh`, `archive-completeness`,
+  `verify-archive`, `sla-probe` was permanently silent. The
+  SLA-evidence chain specifically was broken end-to-end: the probe
+  binary supports `-textfile-output` (`cmd/ratesengine-sla-probe/textfile.go:190
+  writeTextfileAtomic`) but the R1 wrapper at
+  `configs/healthchecks/sla-probe.sh` never set it, the
+  textfile-collector dir didn't exist, and `node_exporter` ran
+  without `--collector.textfile`. Three changes close the chain:
+  - `configs/ansible/roles/archival-node/tasks/10-observability.yml`
+    now provisions `/var/lib/node_exporter/textfile_collector/`
+    and adds `--collector.textfile` + `--collector.textfile.directory`
+    to the node_exporter systemd unit.
+  - `configs/healthchecks/sla-probe.sh` now defaults
+    `SLA_PROBE_TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom`
+    and passes `-textfile-output $value` conditionally (preserves
+    the opt-out for operators that set the env var blank).
+  - `configs/prometheus/rules.r1/` gains 9 rule files copied
+    verbatim from `deploy/monitoring/rules/` (none of them had
+    job-label refs requiring single-host adaptation). README
+    table updated; rules `cache.yml` / `storage.yml` / `stellar.yml`
+    stay excluded with a clear note (`redis_exporter` +
+    `postgres_exporter` + `stellar-core-prometheus-exporter` are
+    not on R1).
+
+- **Source-stopped alert false-positive class on low-volume
+  Soroban contracts (F-1212b).** `ratesengine_ingestion_source_stopped`
+  used a 5-min rate window which routinely false-fired on
+  `band`, `blend`, `comet`, `ecb`, `phoenix` (legitimate 5+-minute
+  gaps during quiet trading windows — the source-stopped runbook
+  itself acknowledges this at line 60). Widened to a 30-min rate
+  window + 15-min `for:` in both `deploy/monitoring/rules/ingestion.yml`
+  and `configs/prometheus/rules.r1/ingestion.yml`. Total-outage
+  coverage stays tight via the separate `_all_sources_stopped`
+  alert at 3 min — that one continues to catch the
+  upstream-broke-across-the-fleet case.
+
+- **Multi-host alert rule job labels (F-1222).**
+  `deploy/monitoring/rules/api.yml` / `aggregator.yml` /
+  `ingestion.yml` / `slo.yml` / `meta.yml` referenced `job="api"`
+  / `"aggregator"` / `"indexer"` but the multi-host ansible
+  prometheus role's scrape config uses `ratesengine_api` /
+  `ratesengine_aggregator` / `ratesengine_indexer` (underscores).
+  Rules would never have evaluated true on a multi-host deploy.
+  Renamed the canonical multi-host labels to match the scrape
+  config; `meta.yml`'s scrape-failing regex updated to the actual
+  exporter job names (`postgres_exporter`, `redis_exporter`,
+  `node_exporter`, `minio`). R1's `configs/prometheus/rules.r1/`
+  copies already used the correct hyphenated R1 names and are
+  unaffected.
 
 - **rc.48 dead-route cleanup follow-up.** rc.48 removed the
   `/v1/coins` + `/v1/currencies` HTTP surface but left several

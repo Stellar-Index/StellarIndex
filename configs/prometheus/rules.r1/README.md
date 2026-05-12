@@ -7,29 +7,46 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 |-------------|---------|------------|
 | `api.yml` | `api.yml` | `job="api"` → `job="ratesengine-api"` |
 | `aggregator.yml` | `aggregator.yml` | `job="aggregator"` → `job="ratesengine-aggregator"` |
-| `ingestion.yml` | `ingestion.yml` | `job="indexer"` → `job="ratesengine-indexer"` |
+| `ingestion.yml` | `ingestion.yml` | `job="indexer"` → `job="ratesengine-indexer"`. Source-stopped window widened to 30 min rate / 15 min for (F-1212b — see file header for rationale). |
 | `infra.yml` | `infra.yml` | `job="node"` → `job="node_exporter"` |
 | `meta.yml` | `meta.yml` | scrape regex narrowed to R1 jobs |
 | `slo.yml` | `slo.yml` | `job="api"` → `job="ratesengine-api"` |
+| `anomaly.yml` | `anomaly.yml` | as-is (no job-label refs) |
+| `divergence.yml` | `divergence.yml` | as-is |
+| `external-pollers.yml` | `external-pollers.yml` | as-is |
+| `supply.yml` | `supply.yml` | as-is |
+| `supply-snapshot.yml` | `supply-snapshot.yml` | as-is |
+| `supply-refresh.yml` | `supply-refresh.yml` | as-is |
+| `archive-completeness.yml` | `archive-completeness.yml` | requires node_exporter `--collector.textfile` + `/var/lib/node_exporter/textfile_collector/` (provisioned by the archival-node role's `10-observability.yml` task). |
+| `verify-archive.yml` | `verify-archive.yml` | requires node_exporter `--collector.systemd` (already on). |
+| `sla-probe.yml` | `sla-probe.yml` | requires textfile_collector + `-textfile-output` arg on the probe binary (wired in `configs/healthchecks/sla-probe.sh`). |
 
-The remaining files in `deploy/monitoring/rules/` are intentionally
-NOT shipped here:
+The remaining files in `deploy/monitoring/rules/` are still
+intentionally NOT shipped here:
 
 - `cache.yml` / `storage.yml` — assume `redis_exporter` /
   `postgres_exporter` (not deployed on R1) and reference HA labels
-  (`role="master"`, `role="primary"`, replication metrics).
-- `archive-completeness.yml` / `verify-archive.yml` — assume the
-  `archivecompleteness` / `verify-archive` daemons; not running on
-  R1 yet.
-- `divergence.yml` / `anomaly.yml` / `supply*.yml` / `stellar.yml` —
-  reference metrics that the current binaries don't all emit;
-  skipped to avoid alerts that quietly never fire.
-- `sla-probe.yml` — `ratesengine-sla-probe` is a one-shot CLI on
-  R1, not a scraped service.
+  (`role="master"`, `role="primary"`, replication metrics). When
+  those exporters land in the archival-node role, copy these
+  files over and add the corresponding scrape jobs to
+  `prometheus.r1.yml`.
+- `stellar.yml` — references `stellar-core-prometheus-exporter`,
+  which is only installed when `run_stellar_core` is true (post
+  Phase-3 Tier-1 validator rollout per ADR-0004). Stays inert
+  until then.
 
 Each file added here is a strict subset of the multi-host rule set;
 adding a previously-skipped file is a deliberate operator action,
 not a default.
+
+**Recent additions (rc.49):** anomaly / divergence / external-pollers
+/ supply / supply-snapshot / supply-refresh / archive-completeness /
+verify-archive / sla-probe — wired up to close audit-2026-05-12
+findings F-1219 + F-1220 + F-1221 + F-1252. The SLA-evidence chain
+(probe writes textfile → node_exporter `--collector.textfile` reads
+it → Prometheus scrapes → sla-probe rules → alertmanager) is now
+end-to-end after the ansible role provisions the collector dir
+and the wrapper script defaults `SLA_PROBE_TEXTFILE_OUTPUT`.
 
 ## Apply to R1
 
