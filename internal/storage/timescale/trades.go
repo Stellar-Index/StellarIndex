@@ -32,11 +32,12 @@ const externalUSDVolumeDecimals = 8
 // propagate so the caller can surface them in metrics; the trade
 // still inserts, just with `usd_volume` left NULL.
 //
-// Production wiring (deferred to a follow-up PR): a goroutine in
-// the indexer that polls `prices_1m` for `<asset>/<USD>` per
-// configured asset, caches the latest closed VWAP in memory, and
-// expires entries older than a freshness ceiling. The interface
-// stays this narrow so test fakes don't need a live DB.
+// Production wiring (F-1268 audit-2026-05-12 — landed):
+// [VWAPUSDFXResolver] queries `prices_1m` for `<asset>/<peg>`
+// per configured peg, caches per-(asset, 1-minute bucket), and
+// expires entries past a freshness ceiling. Wired in
+// `cmd/ratesengine-indexer/main.go` whenever the operator's
+// `[trades].usd_pegged_classic_assets` list is non-empty.
 //
 // Concurrency: the resolver is invoked from the trade-insert
 // hot path, possibly across many goroutines for high-fanout
