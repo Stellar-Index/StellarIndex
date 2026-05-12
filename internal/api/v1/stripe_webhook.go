@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/auth"
+	"github.com/RatesEngine/rates-engine/internal/platform"
 )
 
 // StripeKeyManager is the v1 boundary for the Stripe webhook
@@ -23,6 +24,22 @@ import (
 type StripeKeyManager interface {
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
+}
+
+// StripeEventStore is the dedupe-row seam used by the Stripe
+// webhook handler. Methods are a strict subset of the
+// [platform.BillingStore] interface — only the three Stripe-event
+// methods. The handler accepts this narrower interface so a
+// future deployment without a full BillingStore (e.g. tests, or
+// a billing-disabled replica) can wire just the dedupe path.
+//
+// F-1227 (audit-2026-05-12): without this seam wired, Stripe's
+// at-least-once delivery means a late-arriving duplicate event
+// can re-upgrade a customer who was just manually downgraded.
+type StripeEventStore interface {
+	AppendStripeEvent(ctx context.Context, e platform.StripeEvent) error
+	MarkStripeEventProcessed(ctx context.Context, stripeEventID string) error
+	MarkStripeEventFailed(ctx context.Context, stripeEventID string, err string) error
 }
 
 // StripeWebhookConfig wires the handler. SigningSecret is the
@@ -36,9 +53,16 @@ type StripeKeyManager interface {
 // identifier + lift their rate-limit). Production wiring is
 // [auth.RedisAPIKeyStore] which provides both methods on
 // [StripeKeyManager].
+//
+// Events, when non-nil, dedupes inbound events by stripe_event_id
+// so retries are idempotent + a manual downgrade isn't silently
+// re-upgraded by a delayed-redelivery of the original event.
+// Nil = no dedupe (legacy behaviour); the handler logs a warning
+// at startup so operators know.
 type StripeWebhookConfig struct {
 	SigningSecret string
 	Manager       StripeKeyManager
+	Events        StripeEventStore
 	// Now is overridable for tests; defaults to time.Now.
 	Now func() time.Time
 	// MaxAge is the maximum Stripe-Signature timestamp drift accepted
@@ -103,12 +127,18 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.stripeDedupeOK(w, r, ev) {
+		return
+	}
 
 	// Only react to checkout.session.completed today. Other event
 	// types acknowledge with 200 so Stripe stops retrying.
 	if ev.Type != "checkout.session.completed" {
 		s.logger.Info("stripe webhook: ignored event type",
 			"type", ev.Type, "event_id", ev.ID)
+		// Mark the dedupe row as processed so a retry of this
+		// (intentionally-ignored) type doesn't re-trigger.
+		s.markStripeEventProcessed(r.Context(), ev.ID)
 		writeJSON(w, map[string]any{"ok": true, "ignored": ev.Type}, Flags{})
 		return
 	}
@@ -117,6 +147,9 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if session.PaymentStatus != "paid" {
 		s.logger.Info("stripe webhook: checkout.session.completed but payment_status != paid",
 			"event_id", ev.ID, "session_id", session.ID, "payment_status", session.PaymentStatus)
+		// Mark processed — an unpaid session is a terminal verdict
+		// for this event, not a retry candidate.
+		s.markStripeEventProcessed(r.Context(), ev.ID)
 		writeJSON(w, map[string]any{"ok": true, "ignored": "unpaid"}, Flags{})
 		return
 	}
@@ -180,30 +213,29 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 			"email", session.CustomerEmail)
 		// Acknowledge — there's nothing to upgrade. Operator triages
 		// out-of-band (refund? ask customer to sign up?). Refusing
-		// would just trigger Stripe retries.
+		// would just trigger Stripe retries. Mark processed so a
+		// retry of THIS event doesn't keep firing the no-keys log
+		// line — operators reconcile from the warning, not the
+		// retry stream.
+		s.markStripeEventProcessed(r.Context(), ev.ID)
 		writeJSON(w, map[string]any{"ok": true, "upgraded": 0, "note": "no keys for identifier"}, Flags{})
 		return
 	}
 
-	upgraded := 0
-	for _, k := range keys {
-		if _, err := s.stripe.Manager.UpdateRateLimit(r.Context(), k.KeyID, rateLimit); err != nil {
-			s.logger.Error("stripe webhook: upgrade failed for one key",
-				"err", err, "key_id", k.KeyID, "identifier", identifier, "event_id", ev.ID)
-			// Continue with the others — partial success is better
-			// than failing the whole webhook (which would trigger
-			// Stripe retries that attempt the same upgrades again,
-			// some of which already succeeded). Operator sees the
-			// per-key error in the log and reconciles out-of-band.
-			continue
-		}
-		upgraded++
-	}
+	upgraded := s.upgradeAllKeys(r.Context(), keys, rateLimit, identifier, ev.ID)
 
 	s.logger.Info("stripe webhook: customer upgraded",
 		"identifier", identifier, "event_id", ev.ID,
 		"tier", tierName, "rate_limit_per_min", rateLimit,
 		"keys_total", len(keys), "keys_upgraded", upgraded)
+
+	// F-1227: mark the dedupe row processed so a delayed
+	// re-delivery of the same event doesn't re-run the upgrade
+	// after a manual operator-side downgrade. Best-effort —
+	// the upgrade itself is idempotent for the same target
+	// rate-limit, so a missed mark just means the next retry
+	// re-applies the same value.
+	s.markStripeEventProcessed(r.Context(), ev.ID)
 
 	writeJSON(w, map[string]any{
 		"ok":                 true,
@@ -276,6 +308,116 @@ func (s *Server) parseStripeWebhook(w http.ResponseWriter, r *http.Request) (str
 		return stripeEvent{}, false
 	}
 	return ev, true
+}
+
+// upgradeAllKeys runs the per-key UpdateRateLimit loop and
+// returns the count of successful upgrades. Per-key errors are
+// logged + counted but don't fail the loop — partial success is
+// better than triggering Stripe retries that re-attempt already-
+// successful upgrades. When NO upgrade succeeds and at least one
+// failed, marks the dedupe row with the first error so operators
+// can find chronically-stuck events via
+// `SELECT * FROM stripe_event_log WHERE error IS NOT NULL`.
+// Extracted from handleStripeWebhook to keep that function under
+// the gocognit threshold.
+func (s *Server) upgradeAllKeys(
+	ctx context.Context,
+	keys []auth.APIKeyRecord,
+	rateLimit int,
+	identifier, eventID string,
+) int {
+	upgraded := 0
+	var firstErr error
+	for _, k := range keys {
+		if _, err := s.stripe.Manager.UpdateRateLimit(ctx, k.KeyID, rateLimit); err != nil {
+			s.logger.Error("stripe webhook: upgrade failed for one key",
+				"err", err, "key_id", k.KeyID, "identifier", identifier, "event_id", eventID)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("UpdateRateLimit %s: %w", k.KeyID, err)
+			}
+			continue
+		}
+		upgraded++
+	}
+	if upgraded == 0 && firstErr != nil {
+		s.markStripeEventFailed(ctx, eventID, firstErr.Error())
+	}
+	return upgraded
+}
+
+// stripeDedupeOK runs the F-1227 dedupe check. Returns true when
+// the handler should continue with side effects, false when it
+// already wrote the response (duplicate-ack or 500). Extracted
+// from handleStripeWebhook to keep that function under the
+// gocognit threshold.
+//
+// Behaviour matrix:
+//
+//	Events == nil           → ok=true (legacy no-dedupe path)
+//	AppendStripeEvent: nil  → ok=true (first delivery; row claimed)
+//	  ↳ ErrAlreadyProcessed → ok=false (write 200 dup-ack)
+//	  ↳ other error         → ok=false (write 500; Stripe retries)
+func (s *Server) stripeDedupeOK(w http.ResponseWriter, r *http.Request, ev stripeEvent) bool {
+	if s.stripe == nil || s.stripe.Events == nil {
+		return true
+	}
+	err := s.stripe.Events.AppendStripeEvent(r.Context(), platform.StripeEvent{
+		StripeEventID: ev.ID,
+		Type:          ev.Type,
+		ReceivedAt:    s.stripeNow(),
+		// Payload deliberately omitted — the row is for dedupe,
+		// not audit replay; the full payload lives in the Stripe
+		// dashboard.
+	})
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, platform.ErrAlreadyProcessed) {
+		s.logger.Info("stripe webhook: duplicate event acked",
+			"event_id", ev.ID, "type", ev.Type)
+		writeJSON(w, map[string]any{
+			"ok":        true,
+			"duplicate": true,
+			"event_id":  ev.ID,
+		}, Flags{})
+		return false
+	}
+	s.logger.Error("stripe webhook: AppendStripeEvent failed",
+		"err", err, "event_id", ev.ID)
+	writeProblem(w, r,
+		"https://api.ratesengine.net/errors/internal",
+		"Internal error", http.StatusInternalServerError,
+		"could not record event for dedupe; Stripe will retry")
+	return false
+}
+
+// markStripeEventProcessed bumps processed_at on the dedupe row.
+// Best-effort: a failure here just means a later retry will see
+// the row with processed_at=zero and re-attempt the work — which
+// the upgrade path is already idempotent against. We log loudly
+// so operators can spot a chronic dedupe-store failure.
+func (s *Server) markStripeEventProcessed(ctx context.Context, eventID string) {
+	if s.stripe == nil || s.stripe.Events == nil || eventID == "" {
+		return
+	}
+	if err := s.stripe.Events.MarkStripeEventProcessed(ctx, eventID); err != nil {
+		s.logger.Warn("stripe webhook: MarkStripeEventProcessed failed (best-effort)",
+			"err", err, "event_id", eventID)
+	}
+}
+
+// markStripeEventFailed records the error on the dedupe row so
+// operators can see why this event keeps re-processing without
+// completing. Best-effort like markStripeEventProcessed — the
+// next retry will hit the same code path either way.
+func (s *Server) markStripeEventFailed(ctx context.Context, eventID, msg string) {
+	if s.stripe == nil || s.stripe.Events == nil || eventID == "" {
+		return
+	}
+	if err := s.stripe.Events.MarkStripeEventFailed(ctx, eventID, msg); err != nil {
+		s.logger.Warn("stripe webhook: MarkStripeEventFailed failed (best-effort)",
+			"err", err, "event_id", eventID)
+	}
 }
 
 // stripeNow returns the configured clock or time.Now.

@@ -352,7 +352,20 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			SigningSecret: cfg.API.Stripe.SigningSecret,
 			Manager:       auth.NewRedisAPIKeyStore(rdb),
 		}
-		logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe")
+		// F-1227: wire the Postgres-backed BillingStore for inbound
+		// event dedupe whenever Postgres is available. Without this,
+		// Stripe at-least-once delivery means a delayed re-delivery
+		// of an event silently re-runs the upgrade after a manual
+		// downgrade. Skipped when Postgres is absent (rare; the API
+		// usually has Postgres), in which case the legacy "rely on
+		// idempotent UpdateRateLimit" path stays.
+		if pgDB := store.DB(); pgDB != nil {
+			stripeCfg.Events = postgresstore.NewBillingStore(postgresstore.New(pgDB))
+			logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe", "dedupe", "postgres")
+		} else {
+			logger.Warn("stripe webhook wired without dedupe — Postgres absent",
+				"endpoint", "/v1/webhooks/stripe")
+		}
 	} else if cfg.API.Stripe.SigningSecret != "" {
 		logger.Warn("stripe webhook signing_secret set but Redis is not configured — endpoint will 503")
 	}

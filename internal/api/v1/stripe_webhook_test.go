@@ -16,7 +16,55 @@ import (
 
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
 	"github.com/RatesEngine/rates-engine/internal/auth"
+	"github.com/RatesEngine/rates-engine/internal/platform"
 )
+
+// fakeStripeEventStore is the test double for [v1.StripeEventStore].
+// In-memory map dedupes by stripe_event_id; matches the
+// AppendStripeEvent / MarkStripeEventProcessed / MarkStripeEventFailed
+// contract from internal/platform/billing.go.
+type fakeStripeEventStore struct {
+	mu     sync.Mutex
+	events map[string]platform.StripeEvent // event_id → row
+}
+
+func newFakeStripeEventStore() *fakeStripeEventStore {
+	return &fakeStripeEventStore{events: map[string]platform.StripeEvent{}}
+}
+
+func (f *fakeStripeEventStore) AppendStripeEvent(_ context.Context, e platform.StripeEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.events[e.StripeEventID]; exists {
+		return platform.ErrAlreadyProcessed
+	}
+	f.events[e.StripeEventID] = e
+	return nil
+}
+
+func (f *fakeStripeEventStore) MarkStripeEventProcessed(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.events[id]
+	if !ok {
+		return nil // best-effort; prod ignores missing rows
+	}
+	row.ProcessedAt = time.Now()
+	f.events[id] = row
+	return nil
+}
+
+func (f *fakeStripeEventStore) MarkStripeEventFailed(_ context.Context, id, msg string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.events[id]
+	if !ok {
+		return nil
+	}
+	row.Error = msg
+	f.events[id] = row
+	return nil
+}
 
 // fakeStripeManager is the test double for [v1.StripeKeyManager].
 // Records every UpdateRateLimit call so assertions can confirm the
@@ -66,11 +114,21 @@ func stripeSign(t *testing.T, body, secret string, ts time.Time) string {
 
 func newStripeTestServer(t *testing.T, mgr v1.StripeKeyManager, now time.Time) *httptest.Server {
 	t.Helper()
+	return newStripeTestServerWithEvents(t, mgr, nil, now)
+}
+
+// newStripeTestServerWithEvents builds the test server with a
+// configurable [v1.StripeEventStore] for the dedupe path. Pass
+// nil for the events store to keep the legacy "no dedupe"
+// behaviour the existing tests rely on.
+func newStripeTestServerWithEvents(t *testing.T, mgr v1.StripeKeyManager, events v1.StripeEventStore, now time.Time) *httptest.Server {
+	t.Helper()
 	srv := v1.New(v1.Options{
 		Auth: fakeAuthMiddleware(auth.Subject{}), // anonymous
 		Stripe: &v1.StripeWebhookConfig{
 			SigningSecret: testStripeSecret,
 			Manager:       mgr,
+			Events:        events,
 			Now:           func() time.Time { return now },
 			MaxAge:        5 * time.Minute,
 		},
@@ -305,3 +363,75 @@ func TestStripeWebhook_PartialUpgradeFailure(t *testing.T) {
 		t.Errorf("status = %d, want 200 (partial-upgrade is reported, not failed)", resp.StatusCode)
 	}
 }
+
+// TestStripeWebhook_Dedupe_DuplicateEventDoesntReupgrade pins the
+// F-1227 fix (audit-2026-05-12): Stripe at-least-once delivery
+// means the same checkout.session.completed event can land hours
+// later. Without dedupe, a manual operator-side downgrade in the
+// gap silently re-upgrades the customer. With the BillingStore
+// wired, the second post finds the dedupe row already populated
+// and acks 200 without re-running the upgrade work.
+func TestStripeWebhook_Dedupe_DuplicateEventDoesntReupgrade(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &fakeStripeManager{
+		keys: map[string][]auth.APIKeyRecord{
+			"signup-dup": {{KeyID: "kid_dup", Identifier: "signup-dup", Tier: auth.TierAPIKey, RateLimitPerMin: 1000}},
+		},
+	}
+	events := newFakeStripeEventStore()
+	ts := newStripeTestServerWithEvents(t, mgr, events, now)
+	body := `{"id":"evt_dup","type":"checkout.session.completed","data":{"object":{"id":"cs_dup","client_reference_id":"signup-dup","payment_status":"paid","metadata":{"tier":"pro"}}}}`
+	sig := stripeSign(t, body, testStripeSecret, now)
+
+	// First delivery: upgrade fires, dedupe row marked processed.
+	resp1 := postStripe(t, ts, body, sig)
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("first post: status = %d, want 200", resp1.StatusCode)
+	}
+	if got := len(mgr.updates); got != 1 {
+		t.Fatalf("first post: updates = %d, want 1", got)
+	}
+
+	// Second delivery (Stripe retry / late re-delivery): handler
+	// must short-circuit at the dedupe check and NOT re-run the
+	// upgrade. Crucially, this is the case where the customer was
+	// manually downgraded between deliveries — no re-upgrade.
+	resp2 := postStripe(t, ts, body, sig)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("second post: status = %d, want 200 (dup ack)", resp2.StatusCode)
+	}
+	if got := len(mgr.updates); got != 1 {
+		t.Errorf("second post: updates = %d, want 1 (dedupe must skip upgrade)", got)
+	}
+}
+
+// TestStripeWebhook_Dedupe_NoEventsStore_FallsBack confirms the
+// nil-Events-store path still upgrades (legacy behaviour for
+// deployments without Postgres).
+func TestStripeWebhook_Dedupe_NoEventsStore_FallsBack(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &fakeStripeManager{
+		keys: map[string][]auth.APIKeyRecord{
+			"signup-nodb": {{KeyID: "kid_nodb", Identifier: "signup-nodb", Tier: auth.TierAPIKey, RateLimitPerMin: 1000}},
+		},
+	}
+	ts := newStripeTestServerWithEvents(t, mgr, nil /* no events store */, now)
+	body := `{"id":"evt_nodb","type":"checkout.session.completed","data":{"object":{"id":"cs_nodb","client_reference_id":"signup-nodb","payment_status":"paid","metadata":{"tier":"pro"}}}}`
+	sig := stripeSign(t, body, testStripeSecret, now)
+
+	resp := postStripe(t, ts, body, sig)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := len(mgr.updates); got != 1 {
+		t.Errorf("updates = %d, want 1 (legacy path must still upgrade)", got)
+	}
+}
+
+// errorsIsCompileGuard keeps the errors import live for future
+// expansion (currently only the legacy-failure tests use it; the
+// dedupe tests use sync via the fake store).
+var _ = errors.New
