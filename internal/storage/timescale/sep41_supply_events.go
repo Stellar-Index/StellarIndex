@@ -172,6 +172,25 @@ func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string
 	return SEP41KindTotals{Mint: mint, Burn: burn, Clawback: clawback}, nil
 }
 
+// MinSEP41ComponentLedger returns MAX(ledger) of sep41_supply_events
+// rows for `contractID` at-or-before `asOfLedger`. There's only one
+// component-feeding table for SEP-41 supply (event sums), so the
+// "min across components" semantics reduce to just the table's max.
+// Zero when the contract has no events yet — gate-skip signal.
+// F-1236 (codex audit-2026-05-12).
+func (s *Store) MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error) {
+	const q = `
+		SELECT COALESCE(MAX(ledger), 0)
+		  FROM sep41_supply_events
+		 WHERE contract_id = $1 AND ledger <= $2
+	`
+	var ledger uint32
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&ledger); err != nil {
+		return 0, fmt.Errorf("timescale: MinSEP41ComponentLedger %s@%d: %w", contractID, asOfLedger, err)
+	}
+	return ledger, nil
+}
+
 func parseSEP41Numeric(raw, label string) (*big.Int, error) {
 	v, ok := new(big.Int).SetString(raw, 10)
 	if !ok {

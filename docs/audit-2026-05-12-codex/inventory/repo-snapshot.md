@@ -2,11 +2,11 @@
 
 | Item | Value |
 | --- | --- |
-| Generated At | `2026-05-12T19:28:42Z` |
+| Generated At | `2026-05-12T19:34:03Z` |
 | Commit | `65197ec06823af9d4588e0ce555f3f74594c6311` |
 | Branch | `main` |
 | Tracked Files | `1875` |
-| Dirty Files After Plan Creation | `8` |
+| Dirty Files After Plan Creation | `13` |
 
 ## Dirty Worktree
 
@@ -18,3 +18,8 @@
 - `docs/audit-2026-05-12-codex/evidence/cross-file-interactions.md`
 - `docs/audit-2026-05-12-codex/evidence/log.md`
 - `docs/audit-2026-05-12-codex/inventory/repo-snapshot.md`
+- `docs/audit-2026-05-12-codex/inventory/area-counts.md`
+- `docs/audit-2026-05-12-codex/inventory/file-coverage.tsv`
+- `internal/storage/timescale/classic_supply_observations.go`
+- `internal/supply/storage_classic_reader.go`
+- `internal/supply/storage_classic_reader_test.go`

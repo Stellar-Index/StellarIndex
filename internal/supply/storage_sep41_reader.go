@@ -24,6 +24,14 @@ import (
 type SEP41SupplyStore interface {
 	SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error)
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
+
+	// MinSEP41ComponentLedger returns MAX(ledger) of the sole
+	// SEP-41 component table (sep41_supply_events) for the
+	// contract. F-1236 (codex audit-2026-05-12) — feeds the
+	// Refresher's stale-component freshness gate. Zero = no
+	// observations yet (gate-skip signal). Optional: returning
+	// (0, nil) preserves legacy permissive behaviour.
+	MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error)
 }
 
 // SEP41KindTotals mirrors the timescale.SEP41KindTotals shape
@@ -94,6 +102,14 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: locked-contracts sum for %s: %w", contractID, err)
 	}
 
+	// F-1236 (codex audit-2026-05-12): per-component freshness.
+	// Non-fatal on query error — preserve legacy permissive
+	// posture by stamping zero.
+	minLedger, err := r.store.MinSEP41ComponentLedger(ctx, contractID, ledger)
+	if err != nil {
+		minLedger = 0
+	}
+
 	return SEP41SupplyComponents{
 		MintTotal:              totals.Mint,
 		BurnTotal:              totals.Burn,
@@ -101,6 +117,7 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		AdminBalance:           big.NewInt(0),
 		LockedAccountBalances:  lockedAccounts,
 		LockedContractBalances: lockedContracts,
+		MinComponentLedger:     minLedger,
 	}, nil
 }
 

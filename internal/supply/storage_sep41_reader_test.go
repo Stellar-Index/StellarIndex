@@ -36,6 +36,11 @@ func (f *fakeSEP41Store) SACBalanceForContractAtOrBefore(_ context.Context, hold
 	return big.NewInt(0), nil
 }
 
+// MinSEP41ComponentLedger — fake returns 0 (gate-skip) by default.
+func (f *fakeSEP41Store) MinSEP41ComponentLedger(_ context.Context, _ string, _ uint32) (uint32, error) {
+	return 0, nil
+}
+
 const tContract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
 
 func mustSorobanAsset(t *testing.T, contractID string) canonical.Asset {

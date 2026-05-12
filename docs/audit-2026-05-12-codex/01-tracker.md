@@ -48,7 +48,7 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | W06 | Canonical identity, asset semantics, and numeric safety | todo | code refs, tests |
 | W07 | Ledger ingest, transport, backfill, and dispatch | in_progress | EV-0040, EV-0044, EV-0080, EV-0102 |
 | W08 | Stellar DEX and Soroban source decoders | in_progress | EV-0044 |
-| W09 | Stellar account, supply, and balance observers | in_progress | EV-0047, EV-0106, EV-0108, EV-0109 |
+| W09 | Stellar account, supply, and balance observers | in_progress | EV-0047, EV-0106, EV-0108, EV-0109, EV-0110 |
 | W10 | Oracle and reference-price source decoders | in_progress | EV-0045 |
 | W11 | External market-data source fleet | in_progress | EV-0046, EV-0098, EV-0102 |
 | W12 | Storage, migrations, and query correctness | in_progress | EV-0017, EV-0058, EV-0059, EV-0060, EV-0062, EV-0079, EV-0080, EV-0086, EV-0092, EV-0102, EV-0103, EV-0104, EV-0105, EV-0106 |

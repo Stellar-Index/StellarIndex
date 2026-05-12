@@ -211,6 +211,12 @@ without evidence IDs.
   readers still never populate `MinComponentLedger`; the refresher gate
   can only reject stale snapshots when an upstream reader finally emits
   a non-zero freshness signal.
+- `CMD-0112` reviewed the next live `F-1236` workspace slice. Classic
+  supply now has an uncommitted `MinClassicComponentLedger` query and
+  reader plumbing, and the targeted supply/timescale/command tests pass,
+  but the remediation is still partial: SEP41 and XLM freshness producers
+  remain absent, and the classic reader intentionally degrades query
+  errors back to the zero-value bypass.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when

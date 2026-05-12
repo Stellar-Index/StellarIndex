@@ -52,7 +52,7 @@ Cold findings only. No prior finding is imported into this register.
 | F-1233 | high | SDEX historical backfill silently drops legacy V0 claim atoms while claiming genesis coverage | SDEX decoder; dispatcher metrics; historical backfill | XFI-0025; EV-0044; EV-0105 | fixed | ingest/backfill/sdex | Current committed code decodes V0 claim atoms into canonical trades by deriving the seller G-strkey, and targeted SDEX tests pass. |
 | F-1234 | medium | Oracle decoders silently skip unknown feeds inside mixed batches, hiding upstream coverage drift | Reflector/Redstone/Band decoders; canonical allow-lists; decoder metrics | XFI-0026; EV-0045 | open | oracle/coverage/observability | New oracle-supported assets can be omitted from stored oracle rows without decode-error metrics as long as the same event contains at least one known asset. |
 | F-1235 | medium | External CEX stream parser errors are skipped without the decode-error metrics promised by runbooks | Binance/Kraken/Bitstamp/Coinbase streamers; external metrics; decode-error runbook | XFI-0027; EV-0046; EV-0098 | fixed | external/observability | Current `HEAD` increments `SourceDecodeErrorsTotal` in all four streamer parse-error branches, closing the observability gap. |
-| F-1236 | high | Supply snapshots can be stamped at a fresh ledger while using stale component observations | Supply refreshers; supply observer storage; asset supply API/market-cap fields | XFI-0028; EV-0047; EV-0106; EV-0108; EV-0109 | open | supply/data-quality | Wave 16 commits classic/SEP41 `MinComponentLedger` threading, but production storage readers still never populate that field, so the stale-component gate remains dormant on real snapshots. |
+| F-1236 | high | Supply snapshots can be stamped at a fresh ledger while using stale component observations | Supply refreshers; supply observer storage; asset supply API/market-cap fields | XFI-0028; EV-0047; EV-0106; EV-0108; EV-0109; EV-0110 | open | supply/data-quality | Wave 16 commits classic/SEP41 `MinComponentLedger` threading, and the current workspace starts a classic-storage producer path, but SEP41/XLM freshness producers remain absent and classic query errors still fall back to the zero-value bypass. |
 | F-1237 | medium | CoinMarketCap ID disambiguation remains incomplete across runtime and verification paths | Verified currency catalogue; CMC poller; external aggregator observations; ops verification source wiring | XFI-0029; EV-0048; EV-0102 | open | external/identity | The indexer now passes numeric CMC IDs into the poller, but the ops verification path still omits them and the poller still lacks a committed ID-mode response fixture proving numeric-ID requests map back to the intended asset. |
 | F-1238 | medium | Redis-less API deployments fail startup because closed-bucket stream subscriber is gated on Hub, not Redis | API startup; Redis optionality; closed-bucket SSE stream | XFI-0030; EV-0054; EV-0096 | fixed | api/streaming/ops | Current workspace now gates the Redis pub/sub subscriber on `rdb != nil && hub != nil`, so Redis-less API startup no longer aborts on subscriber construction. |
 | F-1239 | medium | WASM history and extraction ops tools panic at completion when progress output is disabled | `ratesengine-ops` WASM audit/extraction commands; Soroban coverage evidence | XFI-0031; EV-0055 | open | ops/data-quality | `-progress-every 0` suppresses in-loop progress but completion still computes modulo by zero after the ledger walk. |
@@ -405,7 +405,7 @@ Remediation direction: route signup through the magic-link/dashboard account flo
 
 Severity: `high`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -961,12 +961,13 @@ Evidence:
 - `EV-0106`
 - `EV-0108`
 - `EV-0109`
+- `EV-0110`
 
 Expected: a supply snapshot for ledger `N` should be computed from supply-observer components that are complete through ledger `N`, or it should publish explicit component freshness/lag metadata and avoid presenting stale inputs as current supply.
 
 Observed: the aggregator and CLI choose the maximum `last_ledger` across ingestion cursors as the snapshot ledger. Component readers then use `AtOrBefore` storage queries for trustlines, claimable balances, LP reserves, SAC balances, SEP-41 event totals, and account observations. These reader interfaces return balances/totals but not the ledger of each component row, so the refresher cannot detect a stale component before inserting a snapshot at the max ledger.
 
-Current-head reconciliation: settled `HEAD=65197ec0...` now commits both halves of the consumer-side scaffolding: `Supply.MinComponentLedger`, a configurable refresher threshold, rejection tests for stale/non-stale/legacy-zero snapshots, and classic/SEP41 computer threading from `comps.MinComponentLedger` into the emitted `Supply`. That remains non-closing. Repo-wide search shows production storage readers still return `ClassicSupplyComponents` and `SEP41SupplyComponents` without any component-ledger population, so real snapshots still reach the refresher with `MinComponentLedger == 0`, which explicitly disables the new gate. The current code therefore proves the rejector and value conduit exist, not that production freshness signals exist.
+Current-head reconciliation: settled `HEAD=65197ec0...` now commits both halves of the consumer-side scaffolding: `Supply.MinComponentLedger`, a configurable refresher threshold, rejection tests for stale/non-stale/legacy-zero snapshots, and classic/SEP41 computer threading from `comps.MinComponentLedger` into the emitted `Supply`. The current workspace advances one producer path by adding `timescale.Store.MinClassicComponentLedger`, extending `ClassicSupplyStore`, and filling `ClassicSupplyComponents.MinComponentLedger` from that query. That remains non-closing. Repo-wide search still finds no SEP41 or XLM freshness producer, and the classic reader deliberately turns `MinClassicComponentLedger` query failures into `0`, which explicitly disables the gate for that snapshot. The code is now materially closer, but the original fresh-ledger/stale-component risk is not fully removed across supply surfaces.
 
 Impact: if one supply observer stalls while another source advances, asset supply and derived market-cap fields can look current but include old balances. This is especially risky for Stellar-specific depth claims around classic/SAC/SEP-41 supply and for customer-facing asset detail pages.
 

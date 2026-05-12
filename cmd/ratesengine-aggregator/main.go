@@ -813,6 +813,10 @@ func (a supplyAggregatorSEP41Store) SACBalanceForContractAtOrBefore(ctx context.
 	return a.s.SACBalanceForContractAtOrBefore(ctx, holder, assetKey, asOfLedger)
 }
 
+func (a supplyAggregatorSEP41Store) MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error) {
+	return a.s.MinSEP41ComponentLedger(ctx, contractID, asOfLedger)
+}
+
 // runBaselineRefresh ticks the baseline refresher on
 // [baselineRefreshCadence], emitting per-outcome Prometheus counters
 // for each cycle. Returns on rootCtx cancellation.
