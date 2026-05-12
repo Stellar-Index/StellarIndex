@@ -51,6 +51,57 @@ against.
 
 ### Fixed
 
+- **Postgres `max_locks_per_transaction = 256` codified (F-1251).**
+  The 2026-05-06 SEV-3 (`internal/incidents/data/2026-05-06-postgres-lock-table-full.md`)
+  hit `out of shared memory (53200)` when the per-tx lock table
+  saturated under concurrent ingest from many sources. The
+  operator bumped this knob to 256 by hand on R1; un-codified, a
+  from-scratch R1 rebuild or R2/R3 cutover would inherit the
+  Postgres default of 64 and re-experience the same incident
+  class. Now templated by `archival-node/templates/postgresql.conf.j2`
+  with default `postgres_max_locks_per_transaction: 256` (4×
+  headroom; 51,200-entry lock table at the current 200-connection
+  limit). Paired with new `ratesengine_timescale_lock_table_pressure`
+  Prometheus alert at 70% saturation so the next bump is
+  forecast not forced — depends on `postgres_exporter` (not yet
+  scraped on R1; rule lights up when the exporter lands).
+
+- **`web/status/wrangler.toml` added (F-1245).** Mirrors the
+  explorer + dashboard wrangler.toml shape so Cloudflare Pages
+  git-integration deploy works without manual project setup.
+
+- **`web/explorer/src/app/oracles/OraclesView.tsx` ESLint
+  `react-hooks/exhaustive-deps` warning fixed (F-1258).**
+  `streamRows` was a fresh `[]` on every render when
+  `streams.data` was undefined, causing the downstream `useMemo`
+  to recompute every tick. Wrapped in its own `useMemo` for
+  referential stability.
+
+- **`internal/sources/comet/adapter_test.go`: pin
+  topic-vs-contract-id contract (F-1242).** New
+  `TestDecoder_Decode_NoContractIDDiscrimination` makes the
+  CLAUDE.md surprise-list claim ("Comet decoder matches by
+  topic, not contract address") executable. Any future change
+  adding a contract-id allow-list at the decoder layer (instead
+  of downstream filtering) MUST flip the assertion.
+
+- **F-1228 + F-1229 acknowledged but deferred to a separate
+  refactor.** `freeze_events.frozen_value` always written as 0
+  + `MarkRecovered` has zero callers. The structural fix
+  (extend `freeze.EventSink.RecordFreeze` to accept the LKG
+  VWAP, plus wire a recovery worker that calls MarkRecovered
+  on Redis-marker TTL expiry) touches the EventSink interface
+  used by 3 packages + tests. Both medium-severity, neither
+  blocks the public flip.
+
+### Investigated, no code change
+
+- **N-1262 ADR-0012 missing from disk** — turns out to be an
+  intentional reservation, documented in `docs/adr/README.md:56`:
+  "0012 | *Planned* | Quorum-set composition (referenced by
+  multi-region-topology) | —". Per the ADR README's
+  "gaps allowed when reserved" rule. F-1262 closed as `invalid`.
+
 - **`flags.stale` semantic bug fixed (F-1254).**
   `internal/api/v1/price.go` reset `stale = false` after falling
   through to `priceFallback` (last-trade / stablecoin proxy /

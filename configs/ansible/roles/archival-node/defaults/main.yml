@@ -143,6 +143,14 @@ postgres_maintenance_work_mem: "1GB"
 postgres_wal_compression: "zstd"
 postgres_max_connections: 200
 
+# Per-tx lock table sizing — see postgresql.conf.j2 for context.
+# 256 was the value the operator set by hand on R1 during the
+# 2026-05-06 SEV-3 ("Postgres lock-table-full"), giving 4× headroom
+# over the Postgres default of 64. Lock table size is
+# `max_locks_per_transaction × max_connections` = 256 × 200 = 51,200
+# entries. F-1251 (audit-2026-05-12).
+postgres_max_locks_per_transaction: 256
+
 postgres_db_core:        "stellar_core"
 postgres_user_core:      "stellar_core"
 # postgres_pass_core ← set in ansible-vault secrets file

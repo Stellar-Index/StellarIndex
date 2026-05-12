@@ -56,7 +56,12 @@ export function OraclesView() {
   });
 
   const oracles = sources.data ?? [];
-  const streamRows = streams.data ?? [];
+  // Memoise the `streams.data ?? []` defaulting so the perSourceCounts
+  // useMemo dep array stays referentially stable across renders. Without
+  // this, `streamRows` is a fresh `[]` literal on every render when
+  // streams.data is undefined, making the downstream useMemo recompute
+  // every tick. F-1258 (audit-2026-05-12).
+  const streamRows = useMemo(() => streams.data ?? [], [streams.data]);
 
   const perSourceCounts = useMemo(() => {
     const map: Record<string, { streams: number; latestTs: string }> = {};
