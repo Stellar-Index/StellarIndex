@@ -17,6 +17,27 @@ against.
 
 ### Added
 
+- **Stripe webhook event dedupe (F-1227).** New
+  `internal/platform/postgresstore.BillingStore` implements the
+  `AppendStripeEvent` / `MarkStripeEventProcessed` /
+  `MarkStripeEventFailed` triple from
+  `internal/platform/billing.go` against the `stripe_event_log`
+  table from migration 0027. The webhook handler now claims a
+  dedupe slot with `INSERT INTO stripe_event_log` BEFORE running
+  any side effects; `ErrAlreadyProcessed` (Postgres
+  `23505 unique_violation`) signals "we've already done this work"
+  and acks 200 immediately without re-running the upgrade. Stripe
+  at-least-once delivery means the same event can land hours
+  later — without this guard, a manual operator-side downgrade
+  between original delivery and redelivery silently re-upgrades
+  the customer. Wired in `cmd/ratesengine-api/main.go` to the same
+  `*sql.DB` the timescale store uses; falls open to the legacy
+  "rely on idempotent UpdateRateLimit" path when Postgres is
+  absent. Two new unit tests pin the contract
+  (duplicate-doesn't-reupgrade + nil-events-store-falls-back).
+  `UpsertSubscription` + `GetActiveSubscriptionForAccount` stubbed
+  pending Phase-2 / F-1231.
+
 - **SEP-10 challenge-replay defence (F-1224).** Added a
   `sep10.ReplayGuard` interface + `sep10.RedisReplayGuard` Redis-
   backed implementation. After a challenge XDR clears
