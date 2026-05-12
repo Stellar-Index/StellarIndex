@@ -664,6 +664,34 @@ Post-roll `systemctl list-timers --all` shows all four scheduled:
     parsed as two assignments — fixed (now
     `Environment="PAIRS=..."`).
 
+### 2026-05-12 F-1201 host firewall live
+
+R1 was running with `nftables` inactive and an empty ruleset.
+External TCP probes from off-host confirmed MinIO 9000/9001,
+Prometheus 9090, Loki 3100, Promtail 9080/38563, node_exporter
+9100, Galexie 6061 all reachable from the public internet (codex
+audit-2026-05-12 F-1201, severity critical).
+
+A minimal default-deny nftables policy was applied
+(`/etc/nftables.conf`) keeping only:
+
+  - 22/tcp (SSH, rate-limited to 4/min new connections)
+  - 80/tcp + 443/tcp (Caddy)
+  - 11625/11626/11725/11726 (stellar-core SCP peer)
+  - ICMP rate-limited 10/sec
+  - Loopback unrestricted (Prometheus scrapes 127.0.0.1 per
+    prometheus.r1.yml — internal services stay reachable)
+
+External re-probe confirmed: 80→308, 443→400 (TLS-only domain
+without SNI), 22 reachable, everything else times out.
+`nftables.service` enabled + active for boot persistence.
+
+The Ansible-managed `nftables.conf.j2` in the repo is more
+thorough (uses `internal_cidrs` allow-lists, separate sets per
+trust class); this minimal in-place config is the immediate-fix
+drop-in placeholder until the full archival-node role re-runs
+on r1 via the deploy workflow.
+
 ### 2026-05-12 alert-state snapshot post-Caddy roll
 
 Firing alerts (14 total):
