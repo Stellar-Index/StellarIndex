@@ -15,6 +15,13 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.49] — 2026-05-12
+
+audit-2026-05-12 remediation pass — 27 audit findings closed in
+code/docs/config, 14 more verified already-resolved, plus the
+pre-flip blocker F-1201 explorer migration that unblocks the
+rc.48 deploy to R1.
+
 ### Fixed
 
 - **Explorer migrated off `/v1/currencies` (F-1201 — pre-flip
