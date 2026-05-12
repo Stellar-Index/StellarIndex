@@ -907,7 +907,7 @@ internal/api/v1/dashboardauth/handlers.go	internal	internal/api/v1	runtime	done	
 internal/api/v1/dashboardauth/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardauth/middleware.go	internal	internal/api/v1	runtime	done	EV-0087		Reviewed dashboard session resolution/touch middleware during auth slice pass
 internal/api/v1/dashboardkeys/doc.go	internal	internal/api/v1	runtime	todo			cold audit pending
-internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	in_progress	EV-0023,F-1212	XFI-0008	Customer-controlled key rate limit accepted up to 100000/min
+internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	done	EV-0023;EV-0089;EV-0090;EV-0092;F-1212;F-1256;F-1257	XFI-0008;XFI-0048;XFI-0049	Reviewed create/list/revoke flow, current tier-clamp fix, customer-facing budget-contract drift, and quota concurrency gap
 internal/api/v1/dashboardkeys/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardwebhooks/doc.go	internal	internal/api/v1	runtime	done	EV-0072;EV-0076;F-1246;F-1249	XFI-0038;XFI-0041	Reviewed dashboard webhook contract docs against live worker/store/product seams
 internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, secret handling, SSRF boundary, quota race, and missing producer path
@@ -1158,7 +1158,7 @@ internal/pipeline/processor_test.go	internal	internal/pipeline/processor_test.go
 internal/pipeline/sink.go	internal	internal/pipeline/sink.go	runtime	todo			cold audit pending
 internal/pipeline/sink_test.go	internal	internal/pipeline/sink_test.go	test	todo			cold audit pending
 internal/pipeline/soroswap_registry.go	internal	internal/pipeline/soroswap_registry.go	runtime	todo			cold audit pending
-internal/platform/account.go	internal	internal/platform/account.go	runtime	todo			cold audit pending
+internal/platform/account.go	internal	internal/platform/account.go	runtime	done	EV-0089;EV-0090;F-1212;F-1256	XFI-0008;XFI-0048	Reviewed billing-tier key-budget ladder used by dashboard clamp and its docs/UI contract
 internal/platform/apikey.go	internal	internal/platform/apikey.go	runtime	todo			cold audit pending
 internal/platform/apikey_test.go	internal	internal/platform/apikey_test.go	test	todo			cold audit pending
 internal/platform/audit.go	internal	internal/platform/audit.go	runtime	todo			cold audit pending
@@ -1167,7 +1167,7 @@ internal/platform/doc.go	internal	internal/platform/doc.go	runtime	todo			cold a
 internal/platform/errors.go	internal	internal/platform/errors.go	runtime	todo			cold audit pending
 internal/platform/errors_test.go	internal	internal/platform/errors_test.go	test	todo			cold audit pending
 internal/platform/postgresstore/account_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0086;F-1255	XFI-0047	Reviewed account creation conflict handling in first-login race path
-internal/platform/postgresstore/apikey_store.go	internal	internal/platform/postgresstore	runtime	in_progress	EV-0023,F-1212	XFI-0008	Persists dashboard-supplied key budget fields
+internal/platform/postgresstore/apikey_store.go	internal	internal/platform/postgresstore	runtime	in_progress	EV-0023;EV-0089;EV-0092;F-1212;F-1257	XFI-0008;XFI-0049	Reviewed persisted dashboard key budget path and non-atomic active-key quota coupling; broader API-key store audit still open
 internal/platform/postgresstore/audit_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/billing_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/doc.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
@@ -1533,13 +1533,13 @@ migrations/0025_create_routers_and_attribution.up.sql	migrations	migrations	migr
 migrations/0026_create_source_contributions_and_sdex_offers.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0026_create_source_contributions_and_sdex_offers.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0027_platform_v1_schema.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
-migrations/0027_platform_v1_schema.up.sql	migrations	migrations	migration_or_sql	in_progress	EV-0086;F-1255	XFI-0047	Reviewed account/user uniqueness constraints relevant to first-login provisioning; full migration pass still open
+migrations/0027_platform_v1_schema.up.sql	migrations	migrations	migration_or_sql	in_progress	EV-0086;EV-0092;F-1255;F-1257	XFI-0047;XFI-0049	Reviewed account/user uniqueness constraints and active-key quota schema gap; full migration pass still open
 migrations/0028_create_fx_quotes.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0028_create_fx_quotes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0029_drop_unused_blend_jsonb_gin_indexes.down.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/0029_drop_unused_blend_jsonb_gin_indexes.up.sql	migrations	migrations	migration_or_sql	todo			cold audit pending
 migrations/README.md	migrations	migrations	documentation	todo			cold audit pending
-openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010,EV-0011,F-1203		Reviewed source spec against generated artifacts
+openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;F-1203;F-1256	XFI-0048	Reviewed source spec against generated artifacts and current dashboard key-budget contract drift
 pkg/client/asset_detail_test.go	pkg	pkg	test	todo			cold audit pending
 pkg/client/client.go	pkg	pkg	runtime	todo			cold audit pending
 pkg/client/client_test.go	pkg	pkg	test	todo			cold audit pending
@@ -1678,7 +1678,7 @@ web/dashboard/pnpm-lock.yaml	web	web/dashboard	config	todo			cold audit pending
 web/dashboard/postcss.config.mjs	web	web/dashboard	config	todo			cold audit pending
 web/dashboard/src/app/admin/page.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/app/globals.css	web	web/dashboard	unknown	todo			cold audit pending
-web/dashboard/src/app/keys/page.tsx	web	web/dashboard	frontend	in_progress	EV-0023,F-1212	XFI-0008	UI exposes raw rate_limit_per_min input up to 100000/min
+web/dashboard/src/app/keys/page.tsx	web	web/dashboard	frontend	in_progress	EV-0023;EV-0090;F-1212;F-1256	XFI-0008;XFI-0048	Backend abuse path is fixed, but current form copy/max still overstates effective persisted limits for lower tiers
 web/dashboard/src/app/layout.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/app/page.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/app/settings/page.tsx	web	web/dashboard	frontend	todo			cold audit pending

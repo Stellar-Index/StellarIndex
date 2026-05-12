@@ -105,7 +105,21 @@ func New(store DeliveryStore, opts Options) *Worker {
 		opts.MaxAttempts = 15
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = &http.Client{Timeout: 10 * time.Second}
+		// F-1245 (codex audit-2026-05-12): SSRF defence at delivery
+		// time. The dial hook re-resolves the host on every send so
+		// DNS rebinding between registration and delivery is
+		// caught here. Redirects are disabled via CheckRedirect to
+		// stop a 302 from a public host pointing at an internal
+		// destination from being followed automatically.
+		opts.HTTPClient = &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext: ssrfGuardedDialContext,
+			},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()

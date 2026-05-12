@@ -236,6 +236,46 @@ func TestHandleCreate_RejectsHTTPURL(t *testing.T) {
 	}
 }
 
+// TestHandleCreate_RejectsSSRFTargets pins F-1245 (codex
+// audit-2026-05-12): webhook URLs that point at internal /
+// loopback / link-local / private / CGN / cloud-metadata
+// destinations must be rejected at registration. Userinfo-
+// embedded URLs are also rejected so an attacker can't disguise
+// credentials in the URL itself.
+func TestHandleCreate_RejectsSSRFTargets(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"loopback IPv4 literal", "https://127.0.0.1/hook"},
+		{"loopback IPv6 literal", "https://[::1]/hook"},
+		{"RFC1918 10/8", "https://10.0.0.1/hook"},
+		{"RFC1918 192.168", "https://192.168.1.1/hook"},
+		{"RFC1918 172.16", "https://172.16.0.1/hook"},
+		{"link-local", "https://169.254.169.254/latest/meta-data/"},
+		{"unspecified", "https://0.0.0.0/hook"},
+		{"CGN 100.64", "https://100.64.0.1/hook"},
+		{"userinfo embedded", "https://user:pass@example.com/hook"},
+		{"empty hostname", "https:///hook"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, sc := newTestRig(t)
+			req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
+				Name:   "ssrf-probe",
+				URL:    tc.url,
+				Events: []string{string(platform.WebhookEventIncidentSEV1)},
+			}, sc)
+			w := httptest.NewRecorder()
+			h.HandleCreate(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d (body=%s), want 400 for SSRF target %q",
+					w.Code, w.Body.String(), tc.url)
+			}
+		})
+	}
+}
+
 func TestHandleCreate_RejectsUnknownEventType(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{

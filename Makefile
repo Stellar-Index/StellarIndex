@@ -220,6 +220,16 @@ monitoring-check: ## Validate Prometheus rule files with promtool
 verify: ## Sequential local quality gate (fmt, vet, lint, docs, test) — run before every push
 	@./scripts/dev/verify.sh
 
+.PHONY: verify-cross-region
+verify-cross-region: ## Cross-region byte-identical-VWAP consistency check (ADR-0015 §verification)
+	@# F-1252 (codex audit-2026-05-12): docs/operations/multi-region-cutover.md
+	@# Stage 5 pre-flight calls `make verify-cross-region`. The
+	@# script existed at scripts/dev/verify-cross-region.sh but
+	@# the Make target was missing; an operator running the
+	@# documented step got a make-target-not-found error at the
+	@# moment they needed a clean cross-region check.
+	@./scripts/dev/verify-cross-region.sh
+
 .PHONY: audit
 audit: ## Dependency vulnerability audit (govulncheck)
 	@$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)

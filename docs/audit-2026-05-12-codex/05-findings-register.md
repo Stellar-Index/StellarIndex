@@ -28,7 +28,7 @@ Cold findings only. No prior finding is imported into this register.
 | F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010 | open | ops | Memory alert is firing at about 95.41%, swap is full, and MinIO has 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | open | api/ops | Health/ready only report process/postgres/redis ok while material ingest, latency, memory, and timer evidence failures are active. |
 | F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021 | open | ops/comms/web | During a SEV, the binding runbook tells operators to edit absent `deploy/status-page/cstate/**` files or use Upptime issues, while the repo ships `web/status` as a custom Next.js static export. |
-| F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023 | open | dashboard/billing/api | The customer-controlled key create request sets `rate_limit_per_min`, and the runtime honors that value without deriving or capping it from account tier, subscription, or billing status. |
+| F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023; EV-0089 | fixed | dashboard/billing/api | Current `HEAD` now clamps dashboard-minted key budgets by account tier before insert and tests the tier ladder, so the privilege-escalation path no longer reproduces. |
 | F-1213 | high | Stablecoin fiat proxy undercounts Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011 | open | aggregate/market-data | Classic/SAC USDC quotes are 7-decimal, but `windowUSDVolume` always divides quote amounts by 1e8 for fiat-USD windows; R1 currently avoids false drops only by setting `min_usd_volume=0`, disabling the threshold. |
 | F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | GitHub reports `main.protected=false`; branch protection/rulesets are unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
@@ -72,6 +72,8 @@ Cold findings only. No prior finding is imported into this register.
 | F-1253 | high | Enabling Redis ACL lockdown disables the default user, but the rendered application config never sets `redis_username`, so binaries keep authenticating on the rejected legacy path | Redis Sentinel ACL template; application config template; Redis client builder | XFI-0045; EV-0083 | open | ops/security/config | The hardening flag can break Redis-backed API, aggregator, and indexer behavior at the moment operators flip it because the Ansible-owned app TOML omits the required ACL username. |
 | F-1254 | high | Redis ACL lockdown allows stale or wrong key families, so hardened deployments still deny active runtime namespaces after the username handoff is fixed | Redis Sentinel ACL template; Redis namespace builders; API/auth/cache runtime wiring | XFI-0046; EV-0084 | open | ops/security/config | The allow-list uses `ratelimit:*`/`subscriber:*` while code writes `rl:*`/`sub:*`, and it omits several live namespaces entirely: `signup:email:*`, `sep10:seen:*`, `usage:*`, `assets:list:*`, and `markets:list:*`. |
 | F-1255 | medium | Concurrent first-login callbacks for the same new email can create orphan accounts and return a 500 because provisioning is not atomic per email | Dashboard magic-link callback; account/user stores; platform schema uniqueness | XFI-0047; EV-0086; EV-0087 | open | platform/auth/data-quality | Token consumption is atomic per token, not per email. Two valid links for one new address can both enter provisioning, persist two account rows, and let the losing user insert fail on `users.email`, leaving a suffixed account without an owner. |
+| F-1256 | medium | Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier | Dashboard key form; create-key API schema; tier-cap implementation | XFI-0048; EV-0090 | open | dashboard/docs/product | Free users are told the default is 1000/min and every user can submit 100000/min, but current backend persists Free keys at 60/min and other tiers at smaller caps unless the tier allows more. |
+| F-1257 | medium | The 25-active-key/account dashboard quota is enforced with a raceable pre-check, so concurrent creates can exceed the advertised cap | Dashboard key quota check; Postgres insert path; platform schema | XFI-0049; EV-0092 | open | platform/keys | The handler counts current active keys before insert, but the store and schema never enforce the ceiling atomically; parallel creates can all pass under the cap together. |
 
 ## Finding Template
 
@@ -80,7 +82,7 @@ Cold findings only. No prior finding is imported into this register.
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -205,14 +207,15 @@ Evidence:
 
 - `XFI-0008`
 - `EV-0023`
+- `EV-0089`
 
 Expected: key rate limits should be derived from account tier/subscription or an operator-approved override, not from a free-form customer dashboard input.
 
-Observed: the dashboard UI submits `rate_limit_per_min`; the handler accepts any positive value up to 100,000 for owner/admin/member sessions; the Postgres auth validator copies that value into the authenticated subject; the rate-limit middleware uses it as the effective per-key budget.
+Observed during the initial pass: the dashboard UI submitted `rate_limit_per_min`; the handler accepted any positive value up to 100,000 for owner/admin/member sessions; the Postgres auth validator copied that value into the authenticated subject; the rate-limit middleware used it as the effective per-key budget.
 
-Impact: a free or unbilled account can mint a key with 100x the default public paid-key budget, bypassing planned billing gates and creating an abuse/capacity risk.
+Current-head reconciliation: `dashboardkeys.HandleCreate` now clamps the requested budget through `platform.Tier.MaxRateLimitPerMin` before persistence, and `TestHandleCreate_TierClampsRateLimit` covers the tier ladder. The security bypass itself no longer reproduces on current `HEAD`; the remaining customer-facing copy/spec drift is tracked separately as `F-1256`.
 
-Remediation direction: remove customer control over raw rate-limit values, derive limits server-side from account tier and verified subscription state, require staff/operator permission for explicit overrides, and add tests proving free accounts cannot mint elevated-budget keys.
+Remediation direction: retained for audit history. The backend clamp and regression tests now close this finding's abuse path; residual dashboard/OpenAPI messaging cleanup lives under `F-1256`.
 
 ### F-1213. Stablecoin fiat proxy undercounts Stellar USD volume by 10x in the min-volume manipulation gate
 
@@ -1424,3 +1427,55 @@ Observed: multiple magic links can exist for the same unregistered email. Each c
 Impact: first login can return an internal error for one of two legitimate concurrent clicks, and the database accumulates orphan free-tier accounts that do not correspond to an actual user. That pollutes customer/account reporting and makes later cleanup or billing migration harder than it should be.
 
 Remediation direction: move new-user provisioning behind one transactional/idempotent persistence boundary keyed by normalized email. Acceptable shapes include a single transaction that creates-or-loads the user/account pair, or a retry-on-unique-email path that discards the speculative account and reloads the winner. Add an integration test that consumes two distinct same-email tokens concurrently and asserts one logical account/user result with no orphan account rows.
+
+### F-1256. Dashboard key-rate UI and OpenAPI still promise generic 1000/100000 limits even though the backend now silently clamps by account tier
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `web/dashboard/src/app/keys/page.tsx`
+- `openapi/rates-engine.v1.yaml`
+- `internal/api/v1/dashboardkeys/handlers.go`
+- `internal/platform/account.go`
+
+Evidence:
+
+- `XFI-0048`
+- `EV-0090`
+
+Expected: the dashboard and published API contract should describe the actual persisted key-budget semantics customers observe after creation, including the current tier-specific caps.
+
+Observed: the backend now clamps dashboard-created key budgets by tier, but the dashboard form still labels the free-tier default as `1000`, exposes a generic `max={100000}` numeric field to every user, and sends that value unchanged. OpenAPI says `rate_limit_per_min` has `Default 1000` and `maximum: 100000`, without describing the server-side tier clamp. A Free customer can therefore submit a value that the product surface implies is normal, then receive a created key whose persisted budget is silently reduced to 60/min.
+
+Impact: the fixed security boundary is now paired with a product-contract mismatch. Customers and support can disagree about what was requested versus what was stored, and API consumers generated from the published schema have no way to infer that the backend may materially downgrade the submitted value by tier.
+
+Remediation direction: make one truth surface win. Either remove the customer-controlled raw input and render the effective tier budget directly, or keep the input but explain exact clamping semantics in both UI and OpenAPI, including the per-tier ceiling and whether the response returns the effective persisted value. Add UI/spec tests that pin the Free-tier copy to the backend cap ladder.
+
+### F-1257. The 25-active-key/account dashboard quota is enforced with a raceable pre-check, so concurrent creates can exceed the advertised cap
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `internal/api/v1/dashboardkeys/handlers.go`
+- `internal/api/v1/dashboardkeys/handlers_test.go`
+- `internal/platform/postgresstore/apikey_store.go`
+- `migrations/0027_platform_v1_schema.up.sql`
+
+Evidence:
+
+- `XFI-0049`
+- `EV-0092`
+
+Expected: the dashboard's active-key cap should hold under concurrent requests, not only under serial UX flows.
+
+Observed: `HandleCreate` calls `checkQuota`, which lists all account keys and counts those with zero `RevokedAt`. If the count is below 25, the handler later performs an independent insert through `APIKeyStore.Create`. The schema provides active-key indexes but no database invariant or transactional compare-and-insert guard for the 25-row ceiling. Current tests only pre-seed 25 rows and verify a single follow-up create returns 409.
+
+Impact: coordinated or accidental concurrent create requests can leave an account with more active dashboard keys than the product promises. That weakens the anti-sprawl ceiling operators rely on for customer-key hygiene and makes later cleanup/reporting less trustworthy.
+
+Remediation direction: enforce the cap atomically at the persistence boundary. Use a transaction with the appropriate account-scoped lock/check, or move the count/create operation into a store method that serializes per-account create semantics. Add a concurrent create test that starts below the threshold and proves persisted active keys never exceed 25.

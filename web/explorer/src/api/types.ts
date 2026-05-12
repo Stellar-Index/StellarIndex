@@ -261,10 +261,11 @@ export interface paths {
                     limit?: components["parameters"]["Limit"];
                     /**
                      * @description Filter the listing to assets minted by the supplied
-                     *     issuer G-strkey. Sourced from the same ListCoinsExt path
-                     *     `/v1/coins?issuer=` uses; rows include the full coin-
-                     *     overlay shape (price_usd / volume_24h_usd / change_*_pct
-                     *     / etc) when a CoinsReader is wired.
+                     *     issuer G-strkey. Sourced from the same ListCoinsExt
+                     *     path the legacy issuer-scoped listing used; rows
+                     *     include the full coin-overlay shape (price_usd /
+                     *     volume_24h_usd / change_*_pct / etc) when a
+                     *     CoinsReader is wired.
                      */
                     issuer?: string;
                     /**
@@ -2559,7 +2560,7 @@ export interface paths {
         /**
          * Consolidated home-page aggregate stats.
          * @description Single-call replacement for the home network-strip's
-         *     previous fan-out across `/v1/markets`, `/v1/coins`,
+         *     previous fan-out across `/v1/markets`, `/v1/assets`,
          *     `/v1/sources`, and `/v1/diagnostics/cursors`. Returns
          *     total trailing-24h USD volume, count of pairs that
          *     recorded volume in 24h, total `classic_assets` row count,
@@ -3664,6 +3665,279 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer dashboard — list this account's webhooks.
+         * @description Session-gated. Returns every webhook this account has
+         *     registered to receive incident / anomaly / divergence
+         *     callbacks, newest first. The signing secret is never
+         *     returned — only the URL, events, and enabled flag. F-1270.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Webhook list. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            webhooks: components["schemas"]["DashboardWebhook"][];
+                        };
+                    };
+                };
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Customer dashboard — register a new webhook.
+         * @description Session-gated. Returns the signing secret ONCE — store it
+         *     server-side immediately and use it to HMAC-verify the
+         *     X-RatesEngine-Signature header on inbound POSTs. URL must
+         *     be https://. Owner / admin / member roles can register;
+         *     viewer + billing 403. Capped at 10 webhooks per account.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateWebhookRequest"];
+                };
+            };
+            responses: {
+                /** @description Webhook registered. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CreateWebhookResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Role can't manage webhooks. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Account at the 10-webhook quota. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Customer dashboard — delete a webhook.
+         * @description Session-gated. Hard-deletes the registry row and cascades
+         *     to webhook_deliveries. Idempotent — 204 on absent.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Customer dashboard — update a webhook.
+         * @description Session-gated. Patches name / url / events / enabled.
+         *     SecretHash is immutable; rotation lives behind a separate
+         *     endpoint when it ships.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateWebhookRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardWebhook"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Webhook not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer dashboard — list recent delivery attempts.
+         * @description Session-gated. Most-recent first; up to 100 attempts.
+         *     Powers the dashboard's delivery-log panel.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Delivery log. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            deliveries: components["schemas"]["WebhookDeliveryDTO"][];
+                        };
+                    };
+                };
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Webhook not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -4026,6 +4300,80 @@ export interface components {
             key: components["schemas"]["DashboardKey"];
         };
         /**
+         * @description Customer-registered webhook endpoint backing the
+         *     /v1/dashboard/webhooks surface. SecretHash is intentionally
+         *     omitted — the plaintext signing secret is returned ONCE at
+         *     create time + never again.
+         */
+        DashboardWebhook: {
+            /** Format: uuid */
+            id: string;
+            /** @description Operator-friendly label, 1–200 chars. */
+            name: string;
+            /** @description HTTPS endpoint. Worker POSTs JSON with HMAC-SHA-256 signature in X-RatesEngine-Signature. */
+            url: string;
+            /** @description Closed enum of event types the customer subscribed to. */
+            events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing")[];
+            /** @description When false, worker skips deliveries (silently terminates pending rows). */
+            enabled: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CreateWebhookRequest: {
+            name: string;
+            /** @description Must start with https://. */
+            url: string;
+            events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing")[];
+            /** @description Defaults true when absent. */
+            enabled?: boolean;
+        };
+        CreateWebhookResponse: {
+            webhook: components["schemas"]["DashboardWebhook"];
+            /**
+             * @description HMAC-SHA-256 signing key plaintext. Returned exactly
+             *     once. Store server-side + use it to verify the
+             *     X-RatesEngine-Signature header on inbound webhook
+             *     POSTs. Format: `wsec_<64 hex chars>`.
+             */
+            secret: string;
+        };
+        /**
+         * @description PATCH body — any subset of fields. Omitted fields keep
+         *     their current value.
+         */
+        UpdateWebhookRequest: {
+            name?: string;
+            url?: string;
+            events?: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing")[];
+            enabled?: boolean;
+        };
+        /**
+         * @description One delivery attempt against a customer webhook. The
+         *     worker fans out one row per (webhook, event); a single
+         *     attempt records its status + retry plan here.
+         */
+        WebhookDeliveryDTO: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            event_type: "incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing";
+            attempt_count: number;
+            /**
+             * Format: date-time
+             * @description When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted).
+             */
+            next_attempt_at?: string | null;
+            /** Format: date-time */
+            delivered_at?: string | null;
+            last_error?: string | null;
+            /** @description HTTP status of the most-recent attempt. */
+            last_response_status?: number | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
          * @description Advisory quality markers. See docs/architecture/ha-plan.md §9
          *     and ADR-0019 (anomaly detection / freeze policy).
          *
@@ -4242,6 +4590,8 @@ export interface components {
             total_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration. */
             max_supply?: string | null;
+            /** @description Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived. */
+            price_usd?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable. */
             market_cap_usd?: string | null;
             /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable. */
@@ -5010,7 +5360,7 @@ export interface components {
                  *       "title": "Rate limit exceeded",
                  *       "status": 429,
                  *       "detail": "anonymous tier limited to 60 requests per minute; retry in 23 seconds",
-                 *       "instance": "/v1/coins",
+                 *       "instance": "/v1/assets",
                  *       "request_id": "feb6615b1a38211b4835c0fefcd94ede"
                  *     }
                  */
