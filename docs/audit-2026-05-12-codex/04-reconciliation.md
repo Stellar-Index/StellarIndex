@@ -289,6 +289,18 @@ without evidence IDs.
   same-process freshness/count updates, and the trade insert path can also
   overcount on duplicate replay because registry mutation is not conditioned
   on whether `INSERT ... ON CONFLICT DO NOTHING` actually inserted a row.
+- `CMD-0138` re-runs the migration/bootstrap proof on current head and
+  confirms `F-1261` is still live: Timescale rejects `0030` with `0A000`,
+  so the platform-store integration remains blocked before it can prove the
+  webhook/API-key advisory-lock quota remediations.
+- `CMD-0139` rechecks `F-1244` on current source and leaves it open unchanged:
+  the persisted webhook signing-key model and the surrounding prose still
+  disagree in security-significant ways even though the focused package tests
+  remain green.
+- `CMD-0140` reconciles `F-1251` against current source and evidence state:
+  the FX resolver fixes are landed, but the migration `0030` blocker prevents
+  the tagged DB-backed integration proof from running, so the finding belongs
+  in `needs_evidence` rather than `fixed`.
 - `CMD-0121` preserved `F-1228` as a source/live drift issue: the SSE deadline
   fix exists in code, yet the public R1 stream still terminates around the
   former 30-second cutoff.
@@ -317,10 +329,12 @@ without evidence IDs.
   `EV-0101` restores parity after the two committed key-policy files
   increased tracked scope to `1,872`, `EV-0122` restores parity again at
   `1,882` tracked non-audit rows after the incident-emitter, signup-locker,
-  and migration-0030 files entered scope, and `EV-0131` advances the same
-  control to `1,884` rows after the monthly-quota middleware became tracked.
+  and migration-0030 files entered scope, `EV-0131` advances the same
+  control to `1,884` rows after the monthly-quota middleware became tracked,
+  and `EV-0136` restores parity at `1,888` rows after committed wave 39 added
+  the touch-usage middleware/debouncer pair plus tests.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=105`, `in_progress=67`, `todo=1712`, with tracked-file parity
-  restored at `1884` rows and preserved through `CMD-0132`.
+  `done=109`, `in_progress=72`, `todo=1707`, with tracked-file parity
+  restored at `1888` rows and preserved through `CMD-0137`.
