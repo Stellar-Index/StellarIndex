@@ -103,17 +103,105 @@ func (b *BillingStore) MarkStripeEventFailed(ctx context.Context, stripeEventID,
 	return nil
 }
 
-// UpsertSubscription is the Phase-2 surface that mirrors Stripe
-// subscription state into the local `subscriptions` table.
-// Stubbed today — F-1231 (audit-2026-05-12) tracks the full
-// implementation; until then the webhook handler only updates
-// per-key rate limits via UpdateRateLimit.
+// UpsertSubscription mirrors Stripe subscription state into the
+// local `subscriptions` table. Idempotent on stripe_subscription_id:
+// re-running the same webhook (Stripe at-least-once delivery)
+// updates period boundaries + cancel flags without creating
+// duplicate rows. F-1231 (audit-2026-05-12).
+//
+// Wire-up at the Stripe webhook layer requires resolving the
+// session's stripe_customer_id → accounts.id (via the unique
+// `accounts_stripe_customer_idx`); the per-account UPSERT below
+// is the store-layer half of that work.
 func (b *BillingStore) UpsertSubscription(ctx context.Context, sub platform.Subscription) error {
-	return errors.New("postgresstore: UpsertSubscription not yet implemented (F-1231)")
+	if sub.AccountID == uuid.Nil {
+		return errors.New("postgresstore: UpsertSubscription: AccountID is empty")
+	}
+	if sub.StripeSubscriptionID == "" {
+		return errors.New("postgresstore: UpsertSubscription: StripeSubscriptionID is empty")
+	}
+	if sub.Plan == "" {
+		return errors.New("postgresstore: UpsertSubscription: Plan is empty")
+	}
+	const q = `
+		INSERT INTO subscriptions (
+		    account_id, stripe_subscription_id, plan,
+		    current_period_start, current_period_end,
+		    cancel_at_period_end, canceled_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+		    plan                 = EXCLUDED.plan,
+		    current_period_start = EXCLUDED.current_period_start,
+		    current_period_end   = EXCLUDED.current_period_end,
+		    cancel_at_period_end = EXCLUDED.cancel_at_period_end,
+		    canceled_at          = EXCLUDED.canceled_at,
+		    updated_at           = now()
+	`
+	var canceledAt any
+	if !sub.CanceledAt.IsZero() {
+		canceledAt = sub.CanceledAt
+	}
+	if _, err := b.s.db.ExecContext(ctx, q,
+		sub.AccountID,
+		sub.StripeSubscriptionID,
+		string(sub.Plan),
+		sub.CurrentPeriodStart,
+		sub.CurrentPeriodEnd,
+		sub.CancelAtPeriodEnd,
+		canceledAt,
+	); err != nil {
+		return fmt.Errorf("postgresstore: UpsertSubscription %s: %w", sub.StripeSubscriptionID, err)
+	}
+	return nil
 }
 
-// GetActiveSubscriptionForAccount paired stub with
-// UpsertSubscription — see F-1231.
+// GetActiveSubscriptionForAccount returns the row whose
+// current_period_end is in the future for the given account.
+// Returns [platform.ErrNotFound] when the account has no active
+// subscription (Free tier OR fully cancelled). F-1231.
+//
+// "Active" matches [platform.Subscription.IsActive]: not canceled
+// AND current_period_end > now(). If multiple rows match (a brief
+// upgrade-window race), the most-recently-updated row wins.
 func (b *BillingStore) GetActiveSubscriptionForAccount(ctx context.Context, accountID uuid.UUID) (platform.Subscription, error) {
-	return platform.Subscription{}, sql.ErrNoRows
+	const q = `
+		SELECT id, account_id, stripe_subscription_id, plan,
+		       current_period_start, current_period_end,
+		       cancel_at_period_end, canceled_at,
+		       created_at, updated_at
+		  FROM subscriptions
+		 WHERE account_id = $1
+		   AND current_period_end > now()
+		   AND (canceled_at IS NULL OR canceled_at > now())
+		 ORDER BY updated_at DESC
+		 LIMIT 1
+	`
+	var (
+		sub        platform.Subscription
+		plan       string
+		canceledAt sql.NullTime
+	)
+	err := b.s.db.QueryRowContext(ctx, q, accountID).Scan(
+		&sub.ID,
+		&sub.AccountID,
+		&sub.StripeSubscriptionID,
+		&plan,
+		&sub.CurrentPeriodStart,
+		&sub.CurrentPeriodEnd,
+		&sub.CancelAtPeriodEnd,
+		&canceledAt,
+		&sub.CreatedAt,
+		&sub.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.Subscription{}, platform.ErrNotFound
+	}
+	if err != nil {
+		return platform.Subscription{}, fmt.Errorf("postgresstore: GetActiveSubscriptionForAccount %s: %w", accountID, err)
+	}
+	sub.Plan = platform.SubscriptionPlan(plan)
+	if canceledAt.Valid {
+		sub.CanceledAt = canceledAt.Time
+	}
+	return sub, nil
 }

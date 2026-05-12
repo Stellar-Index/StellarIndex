@@ -518,4 +518,112 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
+
+	t.Run("BillingStore/Subscription/UpsertAndGetActive", func(t *testing.T) {
+		billing := postgresstore.NewBillingStore(store)
+
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name:         "Subbed Co",
+			Slug:         "subbed-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "billing-" + uuid.New().String() + "@s.example",
+			Tier:         platform.TierStarter,
+			Status:       platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+
+		// 1. No active subscription → ErrNotFound.
+		if _, err := billing.GetActiveSubscriptionForAccount(ctx, acct.ID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("expected ErrNotFound on fresh account, got %v", err)
+		}
+
+		// 2. Insert a Pro subscription with a future period end.
+		now := time.Now().UTC()
+		stripeSubID := "sub_test_" + uuid.New().String()[:12]
+		err = billing.UpsertSubscription(ctx, platform.Subscription{
+			AccountID:            acct.ID,
+			StripeSubscriptionID: stripeSubID,
+			Plan:                 platform.PlanPro,
+			CurrentPeriodStart:   now.Add(-24 * time.Hour),
+			CurrentPeriodEnd:     now.Add(29 * 24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("UpsertSubscription (insert): %v", err)
+		}
+
+		// 3. GetActiveSubscriptionForAccount now succeeds + carries
+		//    the right plan / period.
+		got, err := billing.GetActiveSubscriptionForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("GetActiveSubscriptionForAccount: %v", err)
+		}
+		if got.Plan != platform.PlanPro {
+			t.Errorf("Plan = %q, want %q", got.Plan, platform.PlanPro)
+		}
+		if got.StripeSubscriptionID != stripeSubID {
+			t.Errorf("StripeSubscriptionID = %q, want %q", got.StripeSubscriptionID, stripeSubID)
+		}
+		if !got.IsActive(now) {
+			t.Error("IsActive = false on a future-period subscription")
+		}
+
+		// 4. Idempotent re-upsert with the SAME stripe_subscription_id
+		//    must update the plan without creating a duplicate row.
+		err = billing.UpsertSubscription(ctx, platform.Subscription{
+			AccountID:            acct.ID,
+			StripeSubscriptionID: stripeSubID,
+			Plan:                 platform.PlanBusiness, // upgraded
+			CurrentPeriodStart:   now,
+			CurrentPeriodEnd:     now.Add(30 * 24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("UpsertSubscription (update): %v", err)
+		}
+		got, err = billing.GetActiveSubscriptionForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("GetActiveSubscriptionForAccount (after upgrade): %v", err)
+		}
+		if got.Plan != platform.PlanBusiness {
+			t.Errorf("Plan after upgrade = %q, want %q", got.Plan, platform.PlanBusiness)
+		}
+
+		// 5. Expired subscription (period_end in the past) is NOT
+		//    active — even without canceled_at set.
+		expiredID := "sub_expired_" + uuid.New().String()[:12]
+		expiredAcct, err := accounts.Create(ctx, platform.Account{
+			Name:         "Expired Co",
+			Slug:         "expired-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "exp-" + uuid.New().String() + "@s.example",
+			Tier:         platform.TierFree,
+			Status:       platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create expired-test account: %v", err)
+		}
+		err = billing.UpsertSubscription(ctx, platform.Subscription{
+			AccountID:            expiredAcct.ID,
+			StripeSubscriptionID: expiredID,
+			Plan:                 platform.PlanPro,
+			CurrentPeriodStart:   now.Add(-60 * 24 * time.Hour),
+			CurrentPeriodEnd:     now.Add(-30 * 24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("UpsertSubscription (expired): %v", err)
+		}
+		if _, err := billing.GetActiveSubscriptionForAccount(ctx, expiredAcct.ID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("expired subscription should not surface as active: err = %v", err)
+		}
+
+		// 6. Validation: empty AccountID is rejected.
+		err = billing.UpsertSubscription(ctx, platform.Subscription{
+			StripeSubscriptionID: "sub_no_account",
+			Plan:                 platform.PlanPro,
+			CurrentPeriodStart:   now,
+			CurrentPeriodEnd:     now.Add(time.Hour),
+		})
+		if err == nil || !strings.Contains(err.Error(), "AccountID") {
+			t.Errorf("expected AccountID-required error, got %v", err)
+		}
+	})
 }

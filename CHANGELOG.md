@@ -115,6 +115,21 @@ against.
 
 ### Added
 
+- **`postgresstore.BillingStore` subscription mirror (F-1231).**
+  `UpsertSubscription` and `GetActiveSubscriptionForAccount`,
+  previously stubbed, now hit the `subscriptions` table from
+  migration 0027. UPSERT is idempotent on `stripe_subscription_id`
+  so a re-delivered webhook updates plan + period without
+  duplicating rows. `GetActiveSubscriptionForAccount` enforces
+  both the period-end and canceled-at semantics from
+  `platform.Subscription.IsActive`. The Stripe webhook handler
+  wire-up (which would need to resolve `stripe_customer_id` →
+  `account_id` + extract subscription IDs from the event
+  payload) is the next layer; this commit lands the store half
+  so the data path is end-to-end-ready. New integration
+  subtest `BillingStore/Subscription/UpsertAndGetActive` covers
+  insert / idempotent update / expired / validation paths.
+
 - **Stripe webhook tier-upgrade audit log (F-1240).** New
   `internal/platform/postgresstore.AuditStore` implements the
   `platform.AuditStore` interface against the `audit_log` table
