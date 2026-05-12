@@ -17,6 +17,14 @@ against.
 
 ### Fixed
 
+- **API reference doc drift after rc.48 (F-1246).** Regenerated
+  `docs/reference/api/rates-engine.v1.yaml` to match the current
+  OpenAPI source — three residual `/v1/coins` references in the
+  generated file (an `?issuer=` description, the home-page
+  summary, and an error-envelope `instance` example) lingered
+  after rc.48 removed the route. Pure regen; OpenAPI source was
+  already clean.
+
 - **Postman collection drift (F-1247).** `make docs-postman` now
   writes to the customer-facing canonical at
   `examples/postman/rates-engine.postman_collection.json` —
