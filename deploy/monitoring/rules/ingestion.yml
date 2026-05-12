@@ -14,10 +14,26 @@ groups:
       # `_all_sources_stopped` alert below at 3 min — that one
       # stays tight; this one widens to give bursty sources their
       # natural breathing room.
+      # F-1208 (codex audit-2026-05-12): per-source-class windows.
+      # See configs/prometheus/rules.r1/ingestion.yml for the
+      # rationale + the matching R1 overlay.
       - alert: ratesengine_ingestion_source_stopped
         expr: |
           sum by (source) (rate(ratesengine_source_events_total[30m])) == 0
           and on (source) ratesengine_source_enabled == 1
+          and on (source) (
+            label_replace(vector(1), "source", "binance",       "", "") or
+            label_replace(vector(1), "source", "bitstamp",      "", "") or
+            label_replace(vector(1), "source", "coinbase",      "", "") or
+            label_replace(vector(1), "source", "kraken",        "", "") or
+            label_replace(vector(1), "source", "sdex",          "", "") or
+            label_replace(vector(1), "source", "aquarius",      "", "") or
+            label_replace(vector(1), "source", "reflector-dex", "", "") or
+            label_replace(vector(1), "source", "reflector-cex", "", "") or
+            label_replace(vector(1), "source", "reflector-fx",  "", "") or
+            label_replace(vector(1), "source", "redstone",      "", "") or
+            label_replace(vector(1), "source", "coingecko",     "", "")
+          )
         for: 15m
         labels:
           severity: ticket
@@ -28,9 +44,54 @@ groups:
           summary: "Source {{ $labels.source }} has stopped ingesting"
           description: |
             No events from source {{ $labels.source }} in the last 30 minutes,
-            sustained for ≥ 15 min — well beyond the natural quiet-window
-            cadence for even our slowest-cadence sources. The source is
-            configured as enabled in ingestion.enabled_sources.
+            sustained for ≥ 15 min. The source is configured
+            as enabled in ingestion.enabled_sources.
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+
+      - alert: ratesengine_ingestion_source_stopped_low_volume_dex
+        expr: |
+          sum by (source) (rate(ratesengine_source_events_total[6h])) == 0
+          and on (source) ratesengine_source_enabled == 1
+          and on (source) (
+            label_replace(vector(1), "source", "comet",    "", "") or
+            label_replace(vector(1), "source", "phoenix",  "", "") or
+            label_replace(vector(1), "source", "soroswap", "", "") or
+            label_replace(vector(1), "source", "blend",    "", "")
+          )
+        for: 30m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+        annotations:
+          summary: "Low-volume Soroban DEX {{ $labels.source }} silent 6+ hours"
+          description: |
+            For low-volume Soroban DEXes this is unusual but not
+            necessarily an outage — check the contract on
+            stellar.expert before paging the indexer team.
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+
+      - alert: ratesengine_ingestion_source_stopped_daily_publisher
+        expr: |
+          sum by (source) (rate(ratesengine_source_events_total[30h])) == 0
+          and on (source) ratesengine_source_enabled == 1
+          and on (source) (
+            label_replace(vector(1), "source", "ecb",  "", "") or
+            label_replace(vector(1), "source", "band", "", "")
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+        annotations:
+          summary: "Daily publisher {{ $labels.source }} silent 30+ hours"
+          description: |
+            ECB publishes daily; Band publishes on relayer push
+            (also roughly daily). 30h gives a one-day buffer plus
+            ample slack for upstream cadence variation.
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: ratesengine_ingestion_all_sources_stopped
