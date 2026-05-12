@@ -169,6 +169,21 @@ against.
 
 ### Added
 
+- **Customer-webhook delivery worker (F-1270 close-out).**
+  New `internal/customerwebhook` package drains the queue the
+  store wrote in the prior commit: poll-loop drains
+  ListPendingDeliveries, HMAC-SHA-256 signs the payload,
+  POSTs to the customer URL with `X-RatesEngine-Signature` +
+  `X-RatesEngine-Event` + `X-RatesEngine-Delivery-Id` headers,
+  marks delivered on 2xx, schedules retry on 5xx/network
+  (exponential backoff 30s → 1h cap, 15-attempt budget),
+  terminates on 4xx / disabled-webhook / missing-webhook /
+  malformed-URL. New
+  `ratesengine_customer_webhook_delivery_attempts_total`
+  counter labelled by 10 outcomes; documented in metrics ref
+  with two alert recipes. 5 unit tests cover the happy path,
+  5xx-retry, 4xx-terminal, disabled-webhook, missing-webhook.
+
 - **`postgresstore.WebhookStore` customer-webhook data plane
   (F-1270 partial).** Implements the existing
   `platform.WebhookStore` interface against the

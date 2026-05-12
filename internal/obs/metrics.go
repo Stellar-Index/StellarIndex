@@ -59,6 +59,7 @@ func init() {
 		AggregatorStreamPublishTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
+		CustomerWebhookDeliveryAttemptsTotal,
 		AggregatorDroppedTradesTotal,
 		AggregatorDroppedWindowsTotal,
 
@@ -548,6 +549,36 @@ var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_api_stream_subscribe_total",
 		Help: "Closed-bucket Redis pub/sub messages processed by the API subscriber, labelled by outcome.",
+	},
+	[]string{"outcome"},
+)
+
+// CustomerWebhookDeliveryAttemptsTotal — outcome of every
+// customer-webhook delivery attempt, labelled by:
+//
+//   - delivered      — 2xx response, MarkDelivered succeeded
+//   - server_error   — 5xx response, scheduled for retry
+//   - client_error   — 4xx response, terminally failed
+//   - exhausted      — retry budget hit, terminally failed
+//   - network_error  — TCP/TLS/timeout error, scheduled for retry
+//   - webhook_missing — GetWebhook returned ErrNotFound mid-flight
+//   - disabled       — webhook.Enabled=false, silently terminated
+//   - build_error    — http.NewRequestWithContext failed (malformed URL)
+//   - list_error     — ListPendingDeliveries failed (db transport)
+//   - mark_error     — Mark{Delivered,AttemptFailed} failed
+//
+// Operators alert on:
+//
+//	rate(...{outcome="server_error"}[5m]) > 0.1
+//	  — one customer's URL is sustained-failing, raise a ticket
+//	rate(...{outcome="exhausted"}[1h]) > 0
+//	  — a delivery permanently failed, drag the deliveries table
+//
+// F-1270 (audit-2026-05-12).
+var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_customer_webhook_delivery_attempts_total",
+		Help: "Customer-webhook delivery attempts, labelled by outcome.",
 	},
 	[]string{"outcome"},
 )

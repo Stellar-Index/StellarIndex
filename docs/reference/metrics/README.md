@@ -359,6 +359,36 @@ traffic in production (the silent failure mode of
 `RATESENGINE_ALLOWED_ORIGINS=*` slipping into prod with
 credentialed auth_mode). F-1244.
 
+### `ratesengine_customer_webhook_delivery_attempts_total`
+
+Counter, label `outcome` (`delivered` / `server_error` /
+`client_error` / `exhausted` / `network_error` / `webhook_missing` /
+`disabled` / `build_error` / `list_error` / `mark_error`).
+
+Per-attempt outcome of the customer-webhook delivery worker
+(`internal/customerwebhook`). `delivered` = 2xx response;
+`server_error` = 5xx (scheduled for retry); `client_error` =
+4xx (terminally failed — the customer's URL is broken);
+`exhausted` = retry budget hit; `network_error` = TCP/TLS/timeout
+(retry); `webhook_missing` = registry row deleted mid-flight
+(terminal); `disabled` = `webhook.Enabled=false` (terminal);
+`build_error` = malformed URL (terminal); `list_error` /
+`mark_error` = db transport failure on the queue surface
+(transient).
+
+Operator alerts:
+
+```
+rate(...{outcome="server_error"}[5m]) > 0.1
+  # one customer's URL is sustained-failing — open a ticket
+
+rate(...{outcome="exhausted"}[1h]) > 0
+  # a delivery permanently failed after 15 retries — drag the
+  # deliveries log
+```
+
+F-1270 (audit-2026-05-12).
+
 ### `ratesengine_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).
