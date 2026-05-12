@@ -56,10 +56,9 @@ F-1269, F-1272, F-1273, F-1275.
 after F-1212b deploy), F-1213, F-1252, F-1265, F-1266, F-1267.
 
 **Still open, substantive future scope:** F-1268 (FX-anchor
-phase 2). The customer-facing CRUD handlers for
-`/v1/account/webhooks` (built atop the F-1270 store + worker
-landed this session) are a wire-shape follow-up — the data
-plane is end-to-end-ready.
+phase 2). All other substantive items are closed: F-1270 ships
+end-to-end (schema → store → delivery worker → public
+`/v1/dashboard/webhooks*` API + 14 tests across the path).
 
 The table below is preserved with original wording for historical
 audit-trail integrity. The disposition column reflects each
