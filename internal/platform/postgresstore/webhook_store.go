@@ -114,6 +114,38 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 	return out, nil
 }
 
+// ListWebhooksSubscribedTo returns every enabled webhook subscribed
+// to `eventType` across all accounts. The fan-out service iterates
+// the result and calls EnqueueDelivery for each. The events column
+// is a text[] in Postgres; ANY($1) is the membership predicate.
+// F-1249 (codex audit-2026-05-12).
+func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
+	const q = `
+		SELECT id, account_id, name, url, secret_hash, events, enabled,
+		       created_at, updated_at
+		  FROM customer_webhooks
+		 WHERE enabled = TRUE
+		   AND $1 = ANY(events)
+	`
+	rows, err := c.s.db.QueryContext(ctx, q, string(eventType))
+	if err != nil {
+		return nil, fmt.Errorf("postgresstore: ListWebhooksSubscribedTo: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []platform.CustomerWebhook
+	for rows.Next() {
+		w, err := scanWebhookRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgresstore: ListWebhooksSubscribedTo rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetWebhook returns one row by ID. ErrNotFound when absent.
 func (c *WebhookStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
 	const q = `

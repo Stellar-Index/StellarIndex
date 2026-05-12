@@ -42,8 +42,8 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | --- | --- | --- | --- |
 | W01 | Snapshot, repository hygiene, and ownership | in_progress | EV-0015, EV-0018 |
 | W02 | Architecture, ADRs, and negative space | todo | code-to-doc trace |
-| W03 | Build, toolchain, reproducibility, and release | in_progress | EV-0013, EV-0009, EV-0031, EV-0032, EV-0037, EV-0041, EV-0099, EV-0103 |
-| W04 | Dependency, provenance, and supply chain | in_progress | EV-0014, EV-0015, EV-0025, EV-0026, EV-0099 |
+| W03 | Build, toolchain, reproducibility, and release | in_progress | EV-0013, EV-0009, EV-0031, EV-0032, EV-0037, EV-0041, EV-0099, EV-0103, EV-0104 |
+| W04 | Dependency, provenance, and supply chain | in_progress | EV-0014, EV-0015, EV-0025, EV-0026, EV-0099, EV-0104 |
 | W05 | Configuration and secret boundaries | in_progress | EV-0022, EV-0024, EV-0033, EV-0083, EV-0084, EV-0098 |
 | W06 | Canonical identity, asset semantics, and numeric safety | todo | code refs, tests |
 | W07 | Ledger ingest, transport, backfill, and dispatch | in_progress | EV-0040, EV-0044, EV-0080, EV-0102 |
@@ -51,7 +51,7 @@ Snapshot anchor: `80c57e38eeee729ec2d879d54286419206cee864`
 | W09 | Stellar account, supply, and balance observers | in_progress | EV-0047 |
 | W10 | Oracle and reference-price source decoders | in_progress | EV-0045 |
 | W11 | External market-data source fleet | in_progress | EV-0046, EV-0098, EV-0102 |
-| W12 | Storage, migrations, and query correctness | in_progress | EV-0017, EV-0058, EV-0059, EV-0060, EV-0062, EV-0079, EV-0080, EV-0086, EV-0092, EV-0102, EV-0103 |
+| W12 | Storage, migrations, and query correctness | in_progress | EV-0017, EV-0058, EV-0059, EV-0060, EV-0062, EV-0079, EV-0080, EV-0086, EV-0092, EV-0102, EV-0103, EV-0104 |
 | W13 | Redis, cache keys, streaming pub/sub, and freshness | in_progress | EV-0038, EV-0039, EV-0084, EV-0094 |
 | W14 | Aggregation, baselines, anomaly, freeze, and confidence | in_progress | EV-0024, EV-0079 |
 | W15 | API runtime, middleware, contracts, and client SDK | in_progress | EV-0010, EV-0011, EV-0012, EV-0068, EV-0069, EV-0076, EV-0086, EV-0089, EV-0090, EV-0092, EV-0094, EV-0095, EV-0096, EV-0098, EV-0099, EV-0100, EV-0102, EV-0103 |

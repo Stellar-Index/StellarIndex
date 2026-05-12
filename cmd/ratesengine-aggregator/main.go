@@ -82,8 +82,11 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/api/streaming/redispub"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/customerwebhook"
 	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/platform"
+	"github.com/RatesEngine/rates-engine/internal/platform/postgresstore"
 	"github.com/RatesEngine/rates-engine/internal/storage/redisclient"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 	"github.com/RatesEngine/rates-engine/internal/supply"
@@ -223,7 +226,37 @@ func run(cfgPath string, dryRun bool) error {
 		// row, so refreshing the Redis TTL doesn't create duplicates.
 		// See migrations/0018_create_freeze_events.up.sql + Phase 2
 		// of docs/architecture/explorer-implementation-plan.md.
-		sink := timescale.NewFreezeEventSink(store)
+		sinkOpts := []timescale.FreezeEventSinkOption{}
+		// F-1249 (codex audit-2026-05-12): customer-webhook fan-out
+		// for `anomaly.freeze`. The aggregator owns the freeze
+		// signal; the API binary owns the delivery worker. Both
+		// share the same Postgres so the fan-out producer here just
+		// inserts pending rows that the API-side worker drains.
+		// Wired only when the platform v1 schema is available
+		// (migration 0027 applied); skipped silently in dev/no-
+		// platform deployments.
+		webhookStore := postgresstore.NewWebhookStore(postgresstore.New(store.DB()))
+		fanout := customerwebhook.NewFanout(webhookStore, logger.With("component", "webhook-fanout"))
+		if fanout != nil {
+			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(
+				func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
+					payload := customerwebhook.MarshalPayload(logger, map[string]any{
+						"event":        string(platform.WebhookEventAnomalyFreeze),
+						"asset":        asset.String(),
+						"quote":        quote.String(),
+						"frozen_value": frozenValue,
+						"reason":       string(decision.Reason),
+						"at":           time.Now().UTC().Format(time.RFC3339Nano),
+					})
+					if payload == nil {
+						return
+					}
+					fanout.Publish(ctx, platform.WebhookEventAnomalyFreeze, payload)
+				},
+			))
+			logger.Info("freeze events: customer-webhook fan-out wired")
+		}
+		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
 		opts := []freeze.WriterOption{
 			freeze.WithEventSink(sink),
 		}

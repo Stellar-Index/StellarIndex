@@ -178,6 +178,12 @@ without evidence IDs.
   Redis-less usage reader can still nil-deref on `/v1/account/usage`,
   and usage docs remain internally inconsistent despite source OpenAPI
   edits.
+- `CMD-0106` reviewed the follow-on CI action-pinning lint and the
+  revised contribution-volume implementation. The new PR-diff lint
+  narrows `F-1216` but still reports twelve existing mutable third-party
+  action tags; the contribution rewrite now carries per-trade USD
+  attribution through the filter chain and should be re-checked for
+  `F-1242` once that workspace settles.
 - Closure caveat: the TSV remains the per-file coverage control. Rows
   with `todo` still require terminal file-level review before claiming
   literal every-file closure. `EV-0063` documented the scope drift when
