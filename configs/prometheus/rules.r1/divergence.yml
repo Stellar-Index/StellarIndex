@@ -1,0 +1,95 @@
+---
+# Price-quality alerts — cross-source divergence detection +
+# oracle-staleness. These are "data correctness" signals, not
+# infrastructure — but they escalate as P2 when the numbers are bad.
+
+groups:
+  - name: ratesengine.divergence
+    interval: 60s
+    rules:
+
+      - alert: ratesengine_price_divergence_warning
+        expr: |
+          abs(ratesengine_our_price - ratesengine_reference_price)
+            / ratesengine_reference_price > 0.05
+        for: 2m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-divergence.md
+        annotations:
+          summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference"
+          description: |
+            Our aggregated price for {{ $labels.asset }} differs from reference
+            ({{ $labels.reference_source }}) by > 5 % sustained 2 min.
+            Normal during rapid market moves; investigate if sustained.
+
+      - alert: ratesengine_price_divergence_critical
+        expr: |
+          abs(ratesengine_our_price - ratesengine_reference_price)
+            / ratesengine_reference_price > 0.10
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-divergence.md
+        annotations:
+          summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference (critical)"
+          description: |
+            Divergence > 10 % from reference sustained 2 min. This is usually
+            a bad ingest (wrong decimals, stale source contributing) rather
+            than a real market move.
+
+      - alert: ratesengine_oracle_stale
+        expr: |
+          (time() - ratesengine_oracle_last_update_unix)
+            > 10 * ratesengine_oracle_resolution_seconds
+        for: 2m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/oracle-stale.md
+        annotations:
+          summary: "Oracle {{ $labels.source }} stale for {{ $labels.asset }}"
+          description: |
+            {{ $labels.source }} hasn't published a price for {{ $labels.asset }}
+            in > 10× its resolution. May be legitimate (oracle paused) or a
+            signal of oracle failure — check the oracle's own status page.
+
+      # Aggregator's divergence-cache refresh loop — `refresh_error`
+      # outcome dominates the success rate. CoinGecko / Chainlink
+      # unreachable, marshal failure, or Redis cache write failing.
+      # Sustained means `flags.divergence_warning` goes stale across
+      # the API surface (the cache TTL is 5 min — we have a few-tick
+      # grace window before consumers see staleness).
+      #
+      # Threshold: `refresh_error` rate exceeds `ok` rate AND total
+      # rate is non-zero (avoids firing during cold start when both
+      # rates are 0). 30-min sustained is the trigger — shorter
+      # windows catch transient blips that recover on their own.
+      - alert: ratesengine_divergence_refresh_error_dominant
+        expr: |
+          sum(rate(ratesengine_divergence_refresh_total{outcome="refresh_error"}[5m]))
+            >
+          sum(rate(ratesengine_divergence_refresh_total{outcome="ok"}[5m]))
+          and
+          sum(rate(ratesengine_divergence_refresh_total{outcome=~"refresh_error|ok"}[5m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: divergence
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
+        annotations:
+          summary: "Divergence-cache refresh failing more often than succeeding (P3)"
+          description: |
+            More refresh_error outcomes than ok over the last 5 min for
+            30+ min sustained. CoinGecko / Chainlink RPC reachability is
+            the usual cause; the API's `flags.divergence_warning` stops
+            updating and goes stale once the 5-min cache TTL elapses.
+            Check the upstream reference's status, then the aggregator's
+            `divergence refresher wired` startup log line for which
+            references are configured.

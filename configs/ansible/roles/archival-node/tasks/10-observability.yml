@@ -28,6 +28,22 @@
     create_home: false
     state: present
 
+# Textfile-collector landing dir. cmd/ratesengine-sla-probe writes
+# its prom file here; cmd/ratesengine-ops verify-archive +
+# archive-completeness + supply-snapshot write here too. Without
+# this dir + the matching --collector.textfile flag below, every
+# alert in deploy/monitoring/rules/{sla-probe,archive-completeness,
+# supply-snapshot,verify-archive}.yml is permanently silent —
+# this is exactly what the 2026-05-12 audit's F-1219 + F-1221
+# documented as the SLA-evidence-chain gap.
+- name: Ensure node_exporter textfile-collector dir
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: ratesengine
+    group: ratesengine
+    mode: "0775"
+
 - name: Install node_exporter systemd unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/node_exporter.service
@@ -45,7 +61,9 @@
       ExecStart=/usr/local/bin/node_exporter \
         --web.listen-address=0.0.0.0:{{ node_exporter_port }} \
         --collector.systemd \
-        --collector.processes
+        --collector.processes \
+        --collector.textfile \
+        --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
       Restart=on-failure
       RestartSec=5s
 

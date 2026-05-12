@@ -651,6 +651,14 @@ func (o *Orchestrator) refreshPairWindow(
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
 	if err := o.cache.Set(ctx, key, value, ttl).Err(); err != nil {
+		// Bump the error counter so operators can alert on
+		// `rate(...vwap_cache_write_errors_total[5m]) > 0`. Without
+		// this counter, the May-10 incident class (Redis BGSAVE
+		// blocked → every Set returns MISCONF → /v1/price 404 on
+		// every cached pair) is invisible to monitoring until the
+		// downstream symptoms (404 rate spike, customer report)
+		// surface much later.
+		obs.AggregatorVWAPCacheWriteErrorsTotal.Inc()
 		return fmt.Errorf("redis set %s: %w", key, err)
 	}
 

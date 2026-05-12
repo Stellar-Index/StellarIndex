@@ -23,10 +23,29 @@ DURATION="${SLA_PROBE_DURATION:-30s}"
 CONCURRENCY="${SLA_PROBE_CONCURRENCY:-2}"
 PAIR="${SLA_PROBE_PAIR:-native,fiat:USD}"
 URL="${HEALTHCHECKS_URL_SLA_PROBE:-}"
+# TEXTFILE_OUTPUT — path under node_exporter's textfile_collector
+# dir where the probe writes per-endpoint p50/p95/p99 + freshness
+# + verdict metrics. Without this set the alerts in
+# deploy/monitoring/rules/sla-probe.yml have no series to evaluate
+# against — the gap the 2026-05-12 audit caught as F-1221. The
+# archival-node ansible role provisions
+# /var/lib/node_exporter/textfile_collector/ + sets the
+# --collector.textfile flag on node_exporter; we default-on here
+# so a fresh-from-ansible host gets the SLA-evidence chain wired
+# automatically. Set to empty to disable the metric emission.
+TEXTFILE_OUTPUT="${SLA_PROBE_TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/sla_probe.prom}"
 
 if [ ! -x "$PROBE_BIN" ]; then
   echo "sla-probe: $PROBE_BIN not found or not executable" >&2
   exit 0
+fi
+
+# Build the textfile-output arg conditionally — the binary's flag
+# parser rejects empty -textfile-output, so we omit the flag
+# entirely when TEXTFILE_OUTPUT is intentionally blank.
+TEXTFILE_FLAG=()
+if [ -n "$TEXTFILE_OUTPUT" ]; then
+  TEXTFILE_FLAG=(-textfile-output "$TEXTFILE_OUTPUT")
 fi
 
 # Run the probe. JSON report on stdout; pass=0, fail=1 on exit.
@@ -36,7 +55,8 @@ OUT="$(
     -duration "$DURATION" \
     -concurrency "$CONCURRENCY" \
     -pair "$PAIR" \
-    -report-format json 2>&1
+    -report-format json \
+    "${TEXTFILE_FLAG[@]}" 2>&1
 )"
 RC=$?
 

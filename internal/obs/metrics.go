@@ -54,6 +54,7 @@ func init() {
 
 		AggregatorTicksTotal,
 		AggregatorVWAPWritesTotal,
+		AggregatorVWAPCacheWriteErrorsTotal,
 		AggregatorEmptyWindowsTotal,
 		AggregatorStreamPublishTotal,
 		APIStreamSubscribeTotal,
@@ -484,6 +485,27 @@ var AggregatorEmptyWindowsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "ratesengine_aggregator_empty_windows_total",
 		Help: "Aggregator (pair, window) refreshes that produced zero eligible trades.",
+	},
+)
+
+// AggregatorVWAPCacheWriteErrorsTotal — count of failed Redis SET
+// attempts during the VWAP cache write step. The orchestrator
+// returns an error and the next tick retries; from the customer
+// surface, sustained failures here mean /v1/price returns 404 on
+// every cached pair (rewritten/triangulated/stablecoin-proxy
+// paths) while the Timescale-direct paths still serve.
+//
+// Surfaces the May-10 incident class
+// (internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md)
+// where Redis BGSAVE failed for ~9h and the only customer signal
+// was 404s on rewritten pairs while flags.stale stayed off
+// (because the aggregator was running, just unable to publish).
+// Operators alert on rate(_total[5m]) > 0 for ≥ 2 m as the
+// upstream-of-stale signal.
+var AggregatorVWAPCacheWriteErrorsTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "ratesengine_aggregator_vwap_cache_write_errors_total",
+		Help: "Aggregator VWAP cache writes that returned a Redis error. Cumulative since process start.",
 	},
 )
 
