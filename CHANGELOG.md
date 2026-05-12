@@ -169,6 +169,21 @@ against.
 
 ### Added
 
+- **R1 TOML supply.watched_* defaults (F-1266).** The
+  `archival-node` ansible role's `ratesengine.toml.j2` template
+  gains a `[supply]` block with sensible launch-day defaults:
+  `watched_classic_assets` populated with the top Stellar-classic
+  verified currencies (USDC / EURC / AQUA / yXLM / VELO / BLND /
+  PHO / KALE) mirroring `internal/currency/data/seed.yaml`. Plus
+  inventory-overridable knobs for `watched_sep41_contracts`,
+  `sdf_reserve_accounts`, and `reserve_balances_stroops`.
+  Pre-F-1266: R1's TOML had no supply block → every F2 field
+  (`market_cap_usd`, `fdv_usd`, `circulating_supply`,
+  `total_supply`, `max_supply`) returned NULL even though the
+  code path is correct. The next `archival-node` role run will
+  flip every one of those fields from NULL to a real value for
+  the 8 watched currencies.
+
 - **Opt-in Redis ACL lockdown template (F-1213).** Closes the
   pre-flip Redis-ACL gap on R1 by codifying a narrow ACL config
   in the redis-sentinel ansible role. New `redis_acl_lockdown`

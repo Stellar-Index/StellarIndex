@@ -98,6 +98,51 @@ live_seam_ledger     = {{ ratesengine_live_seam_ledger | int }}
 "CDIKURWHYS4FFTR5KOQK6MBFZA2K3E26WGBQI6PXBYWZ4XIOPJHDFJKP" = "USDx:GAVH5ZWACAY2PHPUG4FL3LHHJIYIHOFPSIUGM2KHK25CJWXHAV6QKDMN"
 "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV" = "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
 
+# ──────────────────────────────────────────────────────────────────
+# [supply] — supply-pipeline configuration (ADR-0011 / 0022 / 0023).
+# F-1266 (audit-2026-05-12) closes the "every F2 field is NULL on
+# R1" gap by populating the watched lists out-of-the-box. Without
+# this block, watched_classic_assets and watched_sep41_contracts
+# default to [] and the supply observers + supply-snapshot writer
+# produce no rows; the API serves NULL for circulating_supply /
+# total_supply / max_supply / market_cap_usd / fdv_usd.
+#
+# The set below mirrors the top Stellar-classic verified currencies
+# embedded in internal/currency/data/seed.yaml. Operators who want
+# a narrower set override `ratesengine_watched_classic_assets` /
+# `ratesengine_watched_sep41_contracts` in their inventory; the
+# defaults below are a sensible launch-day baseline.
+# ──────────────────────────────────────────────────────────────────
+[supply]
+watched_classic_assets = {{ ratesengine_watched_classic_assets | default([
+  "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+  "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+  "yXLM-GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+  "VELO-GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M",
+  "BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY",
+  "PHO-GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO",
+  "KALE-GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE",
+]) | to_json }}
+
+watched_sep41_contracts = {{ ratesengine_watched_sep41_contracts | default([]) | to_json }}
+
+# SDF reserve accounts whose XLM is excluded from circulating
+# supply per ADR-0011 Algorithm 1. Populate with the operator-
+# verified set; required for non-NULL XLM circulating_supply.
+# Empty list keeps the supply pipeline producing total_supply only.
+sdf_reserve_accounts = {{ ratesengine_sdf_reserve_accounts | default([]) | to_json }}
+
+# Snapshot balances (stroops, decimal string per ADR-0003) for each
+# account in sdf_reserve_accounts. The LCM AccountEntry observer
+# takes over once it's backfilled across the watched set; this
+# table is the cold-start fallback. Empty when sdf_reserve_accounts
+# is empty.
+[supply.reserve_balances_stroops]
+{% for acct, balance in (ratesengine_reserve_balances_stroops | default({})).items() %}
+"{{ acct }}" = "{{ balance }}"
+{% endfor %}
+
 [api]
 listen_addr = "127.0.0.1:3000"
 # Browser origins allowed to make CORS requests against the API.
