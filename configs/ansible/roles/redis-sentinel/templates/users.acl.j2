@@ -50,7 +50,7 @@ user ratesengine on >{{ redis_password }} \
   -@all +@read +@write +@scripting +@pubsub +@connection \
   -@admin -@dangerous \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
-  ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~touch:apikey:* \
+  ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* \
   ~toml:* ~meta:* ~price:* ~apikey:* ~health:* ~oracle:* \
   ~sub:* ~sep10:seen:* ~usage:* \
   ~assets:list:* ~markets:list:* \
@@ -75,6 +75,13 @@ user ratesengine on >{{ redis_password }} \
 # F-1226 wave 39 (codex audit-2026-05-12): `touch:apikey:*` is
 # the SETNX-debounce namespace the api-key TouchUsage middleware
 # uses to gate hot-row UPDATEs on the api_keys table.
+#
+# F-1218 wave 42 (codex audit-2026-05-12): `signup:verify:*` is
+# the email-ownership-proof token namespace. The signup handler
+# Reserves a hashed token after minting; the /v1/signup/verify
+# endpoint Consumes it via GETDEL. Disjoint from `signup:email:`
+# (the F-1218 prior-signup reservation) and `signup:lock:` (the
+# F-1255 per-email serialisation lock).
 
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}
