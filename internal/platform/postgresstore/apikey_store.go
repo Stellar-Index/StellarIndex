@@ -205,7 +205,7 @@ func buildAPIKeyCreateArgs(k platform.APIKey) ([]any, error) {
 		k.RateLimitPerMin, k.MonthlyQuota,
 		permissionsJSON,
 		ipAllowlistArray(k.IPAllowlist),
-		pq.StringArray(k.RefererAllowlist),
+		nonNilStringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),
 		k.UsageAlertThresholdPct,
 	}, nil
@@ -359,7 +359,7 @@ func (r *APIKeyStore) Update(ctx context.Context, k platform.APIKey) error {
 		k.RateLimitPerMin, k.MonthlyQuota,
 		permissionsJSON,
 		ipAllowlistArray(k.IPAllowlist),
-		pq.StringArray(k.RefererAllowlist),
+		nonNilStringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),
 		k.UsageAlertThresholdPct,
 	)
@@ -472,6 +472,27 @@ func (a cidrArray) Value() (driver.Value, error) {
 		parts[i] = p.String()
 	}
 	return "{" + strings.Join(parts, ",") + "}", nil
+}
+
+// nonNilStringArray defends the api_keys insert path against
+// `lib/pq` emitting SQL NULL for a `pq.StringArray(nil)` value.
+// Migration 0027 declares `referer_allowlist text[] NOT NULL
+// DEFAULT '{}'`, so a NULL insert violates the column's
+// NOT NULL constraint with `pq: null value in column
+// "referer_allowlist" violates not-null constraint (23502)`.
+//
+// F-1262 (codex audit-2026-05-13): the dashboard `keys/page.tsx`
+// + the auth.CreateAPIKeyRequest path both leave the optional
+// `referer_allowlist` field nil when callers don't set it, and
+// the prior `pq.StringArray(k.RefererAllowlist)` direct conversion
+// surfaced as a 500 on the default request shape. Wrap the raw
+// slice through this helper at every Postgres-bound `text[]` call
+// site so a nil slice persists as the schema-default empty array.
+func nonNilStringArray(in []string) pq.StringArray {
+	if in == nil {
+		return pq.StringArray{}
+	}
+	return pq.StringArray(in)
 }
 
 // Compile-time interface check.

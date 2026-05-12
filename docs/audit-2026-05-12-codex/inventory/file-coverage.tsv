@@ -324,7 +324,7 @@ docs/architecture/coins-to-assets-migration.md	docs	docs/architecture	documentat
 docs/architecture/contract-schema-evolution.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/coverage-matrix.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/ecosystem-review-2026-04-23.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/explorer-data-inventory.md	docs	docs/architecture	documentation	in_progress	EV-0095;F-1259	XFI-0051	Reviewed usage-surface product wording; broader architecture inventory pass still open
+docs/architecture/explorer-data-inventory.md	docs	docs/architecture	documentation	in_progress	EV-0095;EV-0153;F-1259	XFI-0051	Reviewed the updated live-usage product wording; broader architecture inventory pass still open
 docs/architecture/explorer-implementation-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/ha-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/haproxy-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
@@ -784,7 +784,7 @@ docs/operations/wasm-audits/redstone.md	docs	docs/operations	documentation	todo	
 docs/operations/wasm-audits/reflector.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/wasm-audits/soroswap.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/wasm-audits/walker-investigation-2026-05-01.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/reference/api-design.md	docs	docs/reference	documentation	in_progress	EV-0095;EV-0096;F-1246;F-1259	XFI-0038;XFI-0051	Reviewed usage endpoint placeholder drift and current webhook-design-doc correction; broader API-design audit still open
+docs/reference/api-design.md	docs	docs/reference	documentation	in_progress	EV-0095;EV-0096;EV-0153;F-1246;F-1259	XFI-0038;XFI-0051	Reviewed the updated live-usage contract wording plus the webhook-design-doc correction; broader API-design audit still open
 docs/reference/api/.wrangler/cache/pages.json	docs	docs/reference	fixture_or_config	todo			cold audit pending
 docs/reference/api/README.md	docs	docs/reference	documentation	todo			cold audit pending
 docs/reference/api/_headers	docs	docs/reference	unknown	todo			cold audit pending
@@ -792,7 +792,7 @@ docs/reference/api/_redirects	docs	docs/reference	unknown	todo			cold audit pend
 docs/reference/api/icon.svg	docs	docs/reference	asset	todo			cold audit pending
 docs/reference/api/index.html	docs	docs/reference	unknown	todo			cold audit pending
 docs/reference/api/og.svg	docs	docs/reference	asset	todo			cold audit pending
-docs/reference/api/rates-engine.v1.yaml	docs	docs/reference	config	in_progress	EV-0010;EV-0095;F-1203;F-1259	XFI-0051	Generated artifact drift and stale usage endpoint contract confirmed
+docs/reference/api/rates-engine.v1.yaml	docs	docs/reference	config	in_progress	EV-0010;EV-0095;EV-0153;F-1203;F-1259	XFI-0051	Generated reference YAML now mirrors the corrected usage contract; residual F-1259 drift remains in the separate Postman artifact
 docs/reference/config/README.md	docs	docs/reference	documentation	in_progress	EV-0083;F-1253	XFI-0045	Reviewed documented Redis ACL username requirement; broader generated config-reference review remains open
 docs/reference/metrics/README.md	docs	docs/reference	documentation	todo			cold audit pending
 docs/review-2026-05-10.md	docs	docs/review-2026-05-10.md	documentation	todo			cold audit pending
@@ -878,7 +878,7 @@ internal/api/streaming/redispub/subscriber_test.go	internal	internal/api/streami
 internal/api/streaming/ring.go	internal	internal/api/streaming	runtime	todo			cold audit pending
 internal/api/streampublish/publisher.go	internal	internal/api/streampublish	runtime	todo			cold audit pending
 internal/api/streampublish/publisher_test.go	internal	internal/api/streampublish	test	todo			cold audit pending
-internal/api/v1/account.go	internal	internal/api/v1	runtime	in_progress	EV-0095;EV-0126;F-1226;F-1259	XFI-0018;XFI-0051	Reviewed `/v1/account/usage` live reader path, credential-scoped attribution, and stale placeholder commentary; broader account handler pass still open
+internal/api/v1/account.go	internal	internal/api/v1	runtime	in_progress	EV-0095;EV-0126;EV-0153;F-1226;F-1259	XFI-0018;XFI-0051	Reviewed `/v1/account/usage` live reader path, credential-scoped attribution, and the corrected readiness/commentary prose; broader account handler pass still open
 internal/api/v1/account_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/assets.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/assets_coin_extension.go	internal	internal/api/v1	runtime	todo			cold audit pending
@@ -911,10 +911,10 @@ internal/api/v1/dashboardauth/handlers_test.go	internal	internal/api/v1	test	tod
 internal/api/v1/dashboardauth/middleware.go	internal	internal/api/v1	runtime	done	EV-0087		Reviewed dashboard session resolution/touch middleware during auth slice pass
 internal/api/v1/dashboardauth/signup_lock_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardkeys/doc.go	internal	internal/api/v1	runtime	todo			cold audit pending
-internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	done	EV-0023;EV-0089;EV-0090;EV-0092;EV-0103;EV-0148;EV-0150;F-1212;F-1256;F-1257;F-1262	XFI-0008;XFI-0048;XFI-0049;XFI-0054	Reviewed create/list/revoke flow, current tier-clamp fix, now-reconciled dashboard/OpenAPI rate-budget copy, advisory-lock quota path, and the omitted-referer default create failure exposed in the real Postgres path
+internal/api/v1/dashboardkeys/handlers.go	internal	internal/api/v1	runtime	done	EV-0023;EV-0089;EV-0090;EV-0092;EV-0103;EV-0148;EV-0150;EV-0152;F-1212;F-1256;F-1257;F-1262	XFI-0008;XFI-0048;XFI-0049;XFI-0054	Reviewed create/list/revoke flow, current tier-clamp fix, now-reconciled dashboard/OpenAPI rate-budget copy, advisory-lock quota path, and the omitted-referer default create failure exposed in the real Postgres path
 internal/api/v1/dashboardkeys/handlers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/dashboardwebhooks/doc.go	internal	internal/api/v1	runtime	done	EV-0072;EV-0076;F-1246;F-1249	XFI-0038;XFI-0041	Reviewed dashboard webhook contract docs against live worker/store/product seams
-internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;EV-0096;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, secret handling, current SSRF validation hardening, quota race, and missing producer path
+internal/api/v1/dashboardwebhooks/handlers.go	internal	internal/api/v1	runtime	done	EV-0068;EV-0069;EV-0074;EV-0076;EV-0096;EV-0154;F-1244;F-1245;F-1248;F-1249	XFI-0036;XFI-0037;XFI-0040;XFI-0041	Reviewed create/update/list/delete flows, still-contradictory secret-handling prose, current SSRF validation hardening, quota race, and missing producer path
 internal/api/v1/dashboardwebhooks/handlers_test.go	internal	internal/api/v1	test	done	EV-0069;EV-0070;EV-0074;F-1245;F-1248	XFI-0037;XFI-0040	Reviewed current coverage; tests miss private-destination validation and concurrent quota enforcement
 internal/api/v1/diagnostics_cursors.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/diagnostics_cursors_test.go	internal	internal/api/v1	test	todo			cold audit pending
@@ -1113,7 +1113,7 @@ internal/currency/verified.go	internal	internal/currency/verified.go	runtime	tod
 internal/currency/verified_test.go	internal	internal/currency/verified_test.go	test	todo			cold audit pending
 internal/customerwebhook/fanout.go	internal	internal/customerwebhook	runtime	done	EV-0105;EV-0106;F-1249	XFI-0041	Reviewed shared producer fan-out service for anomaly/divergence callbacks, best-effort enqueue semantics, and the residual incident-event gap
 internal/customerwebhook/ssrf.go	internal	internal/customerwebhook	runtime	done	EV-0096;F-1245	XFI-0037	Reviewed send-time DNS re-resolution, internal-address rejection, and redirect-defence support for webhook delivery
-internal/customerwebhook/worker.go	internal	internal/customerwebhook/worker.go	runtime	done	EV-0068;EV-0069;EV-0073;EV-0076;EV-0096;EV-0105;EV-0106;F-1244;F-1245;F-1247;F-1249	XFI-0036;XFI-0037;XFI-0039;XFI-0041	Reviewed HMAC-key storage contract, outbound network boundary, current SSRF transport hardening, multi-worker duplicate delivery, and remaining incident-only producer absence
+internal/customerwebhook/worker.go	internal	internal/customerwebhook/worker.go	runtime	done	EV-0068;EV-0069;EV-0073;EV-0076;EV-0096;EV-0105;EV-0106;EV-0154;F-1244;F-1245;F-1247;F-1249	XFI-0036;XFI-0037;XFI-0039;XFI-0041	Reviewed HMAC-key storage contract, direct signing from recoverable DB bytes, outbound network boundary, current SSRF transport hardening, multi-worker duplicate delivery, and remaining incident-only producer absence
 internal/customerwebhook/worker_test.go	internal	internal/customerwebhook/worker_test.go	test	done	EV-0069;EV-0070;EV-0096;F-1245	XFI-0037	Reviewed delivery worker coverage and current targeted package pass after SSRF transport hardening
 internal/dispatcher/contract_call_test.go	internal	internal/dispatcher/contract_call_test.go	test	todo			cold audit pending
 internal/dispatcher/contract_event_conv_test.go	internal	internal/dispatcher/contract_event_conv_test.go	test	todo			cold audit pending
@@ -1183,7 +1183,7 @@ internal/pipeline/sink.go	internal	internal/pipeline/sink.go	runtime	todo			cold
 internal/pipeline/sink_test.go	internal	internal/pipeline/sink_test.go	test	todo			cold audit pending
 internal/pipeline/soroswap_registry.go	internal	internal/pipeline/soroswap_registry.go	runtime	todo			cold audit pending
 internal/platform/account.go	internal	internal/platform/account.go	runtime	done	EV-0089;EV-0090;EV-0126;EV-0150;F-1212;F-1226;F-1256	XFI-0008;XFI-0018;XFI-0048	Reviewed billing-tier key-budget ladder, inert monthly quota override field, and the now-reconciled dashboard/OpenAPI tier-clamp contract
-internal/platform/apikey.go	internal	internal/platform/apikey.go	runtime	in_progress	EV-0126;F-1226	XFI-0018	Reviewed API-key quota/last-used contract fields and store interface expectations; broader platform-key model pass still open
+internal/platform/apikey.go	internal	internal/platform/apikey.go	runtime	in_progress	EV-0126;EV-0152;F-1226;F-1262	XFI-0018;XFI-0054	Reviewed API-key quota/last-used contract fields, referer allowlist zero-value semantics, and store interface expectations; broader platform-key model pass still open
 internal/platform/apikey_test.go	internal	internal/platform/apikey_test.go	test	todo			cold audit pending
 internal/platform/audit.go	internal	internal/platform/audit.go	runtime	todo			cold audit pending
 internal/platform/billing.go	internal	internal/platform/billing.go	runtime	todo			cold audit pending
@@ -1191,18 +1191,18 @@ internal/platform/doc.go	internal	internal/platform/doc.go	runtime	todo			cold a
 internal/platform/errors.go	internal	internal/platform/errors.go	runtime	todo			cold audit pending
 internal/platform/errors_test.go	internal	internal/platform/errors_test.go	test	todo			cold audit pending
 internal/platform/postgresstore/account_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0086;EV-0126;F-1226;F-1255	XFI-0018;XFI-0047	Reviewed account creation conflict handling in first-login race path plus persisted monthly quota override field with no request-path consumer
-internal/platform/postgresstore/apikey_store.go	internal	internal/platform/postgresstore	runtime	in_progress	EV-0023;EV-0089;EV-0092;EV-0103;EV-0121;EV-0126;EV-0148;F-1212;F-1226;F-1257;F-1262	XFI-0008;XFI-0018;XFI-0049;XFI-0054	Reviewed persisted dashboard key budget path, monthly quota/TouchUsage surfaces, capped-create advisory-lock transaction, and the nil referer-allowlist SQL NULL defect that now blocks quota proof
+internal/platform/postgresstore/apikey_store.go	internal	internal/platform/postgresstore	runtime	in_progress	EV-0023;EV-0089;EV-0092;EV-0103;EV-0121;EV-0126;EV-0148;EV-0152;F-1212;F-1226;F-1257;F-1262	XFI-0008;XFI-0018;XFI-0049;XFI-0054	Reviewed persisted dashboard key budget path, monthly quota/TouchUsage surfaces, capped-create advisory-lock transaction, and the nil referer-allowlist SQL NULL defect shared by create plus editable-field update
 internal/platform/postgresstore/audit_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/billing_store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/doc.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/store.go	internal	internal/platform/postgresstore	runtime	todo			cold audit pending
 internal/platform/postgresstore/token_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed magic-link token atomicity and its per-token rather than per-email boundary
 internal/platform/postgresstore/user_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed user/session store behavior and email uniqueness boundary in first-login race
-internal/platform/postgresstore/webhook_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0068;EV-0073;EV-0074;EV-0076;EV-0098;EV-0121;F-1244;F-1247;F-1248;F-1249	XFI-0036;XFI-0039;XFI-0040;XFI-0041	Reviewed CRUD/store queue semantics, plaintext-equivalent signing-key storage, fixed delivery claiming, complete producer coverage, and the new advisory-lock quota remediation whose integration proof is blocked by F-1261
+internal/platform/postgresstore/webhook_store.go	internal	internal/platform/postgresstore	runtime	done	EV-0068;EV-0073;EV-0074;EV-0076;EV-0098;EV-0121;EV-0154;F-1244;F-1247;F-1248;F-1249	XFI-0036;XFI-0039;XFI-0040;XFI-0041	Reviewed CRUD/store queue semantics, direct plaintext-equivalent signing-key persistence, fixed delivery claiming, complete producer coverage, and the advisory-lock quota remediation whose integration proof was separately reconciled
 internal/platform/token.go	internal	internal/platform/token.go	runtime	done	EV-0086;F-1255	XFI-0047	Reviewed token lifecycle contract for magic-link provisioning
 internal/platform/usage.go	internal	internal/platform/usage.go	runtime	todo			cold audit pending
 internal/platform/user.go	internal	internal/platform/user.go	runtime	done	EV-0086;EV-0087;F-1255	XFI-0047	Reviewed user/session domain contract for auth provisioning flow
-internal/platform/webhook.go	internal	internal/platform/webhook.go	runtime	done	EV-0068;EV-0076;F-1244;F-1249	XFI-0036;XFI-0041	Reviewed webhook domain model and interface contract against implemented storage and absent event fan-out
+internal/platform/webhook.go	internal	internal/platform/webhook.go	runtime	done	EV-0068;EV-0076;EV-0154;F-1244;F-1249	XFI-0036;XFI-0041	Reviewed webhook domain model, still-false column-encryption posture claim, and rotation contract drift against implemented storage
 internal/ratelimit/bucket.go	internal	internal/ratelimit/bucket.go	runtime	done	EV-0084;F-1254	XFI-0046	Reviewed rate-limit Redis key family and ACL/template drift
 internal/ratelimit/bucket_edges_test.go	internal	internal/ratelimit/bucket_edges_test.go	test	todo			cold audit pending
 internal/ratelimit/bucket_test.go	internal	internal/ratelimit/bucket_test.go	test	todo			cold audit pending
@@ -1566,7 +1566,7 @@ migrations/0029_drop_unused_blend_jsonb_gin_indexes.up.sql	migrations	migrations
 migrations/0030_asset_supply_history_unique_constraint.down.sql	migrations	migrations	migration_or_sql	in_progress	EV-0137;F-1261	XFI-0053	Reviewed rollback shape while rechecking the broken compressed-hypertable migration pair
 migrations/0030_asset_supply_history_unique_constraint.up.sql	migrations	migrations	migration_or_sql	done	EV-0120;EV-0137;EV-0147;F-1261	XFI-0053	Reviewed the former compressed-hypertable failure and the landed decompress/disable-DDL/restore-compression remediation; migration round-trip now passes
 migrations/README.md	migrations	migrations	documentation	in_progress	EV-0120;F-1261	XFI-0053	Reviewed the 0030 entry; wording still claims a constraint path that does not match the executable SQL
-openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;EV-0095;EV-0103;EV-0150;F-1203;F-1256;F-1259	XFI-0048;XFI-0051	Reviewed source spec against generated artifacts, now-reconciled dashboard key-budget tier-clamp prose, partially revised usage docs, and incorrect healthz checks wording
+openapi/rates-engine.v1.yaml	openapi	openapi	config	in_progress	EV-0010;EV-0011;EV-0090;EV-0095;EV-0103;EV-0150;EV-0153;EV-0154;F-1203;F-1244;F-1256;F-1259	XFI-0036;XFI-0048;XFI-0051	Reviewed source spec against generated artifacts, still-ambiguous webhook-secret customer prose, now-reconciled dashboard key-budget tier-clamp prose, and corrected `/v1/account/usage` `/readyz` wording; residual F-1259 drift remains in Postman output
 pkg/client/asset_detail_test.go	pkg	pkg	test	todo			cold audit pending
 pkg/client/client.go	pkg	pkg	runtime	todo			cold audit pending
 pkg/client/client_test.go	pkg	pkg	test	todo			cold audit pending
@@ -1672,7 +1672,7 @@ test/integration/fx_quote_at_or_before_test.go	test	test/integration	test	todo		
 test/integration/issuers_coins_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/ledgerstream_to_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/migrations_test.go	test	test/integration	test	todo			cold audit pending
-test/integration/platform_postgres_stores_test.go	test	test/integration	test	in_progress	EV-0120;EV-0121;EV-0137;EV-0147;EV-0148;F-1248;F-1257;F-1261;F-1262	XFI-0040;XFI-0049;XFI-0053;XFI-0054	Reviewed concurrent quota scenarios after migration bootstrap recovered: webhook proof passes, API-key proof now fails earlier on referer_allowlist NULL handling
+test/integration/platform_postgres_stores_test.go	test	test/integration	test	in_progress	EV-0120;EV-0121;EV-0137;EV-0147;EV-0148;EV-0152;F-1248;F-1257;F-1261;F-1262	XFI-0040;XFI-0049;XFI-0053;XFI-0054	Reviewed concurrent quota scenarios after migration bootstrap recovered: webhook proof passes, API-key proof still fails on current head at referer_allowlist NULL handling
 test/integration/sep41_supply_storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/storage_test.go	test	test/integration	test	todo			cold audit pending
 test/integration/supply_storage_test.go	test	test/integration	test	todo			cold audit pending
@@ -1714,7 +1714,7 @@ web/dashboard/src/app/signin/page.tsx	web	web/dashboard	frontend	todo			cold aud
 web/dashboard/src/app/usage/page.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/components/AppShell.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/components/AuthedRoute.tsx	web	web/dashboard	frontend	todo			cold audit pending
-web/dashboard/src/lib/api.ts	web	web/dashboard	frontend	in_progress	EV-0148;F-1262	XFI-0054	Reviewed optional referer_allowlist request shape that can omit the field on normal dashboard key-create calls; broader dashboard API client audit remains open
+web/dashboard/src/lib/api.ts	web	web/dashboard	frontend	in_progress	EV-0148;EV-0152;F-1262	XFI-0054	Reviewed optional referer_allowlist request shape that can omit the field on normal dashboard key-create calls; broader dashboard API client audit remains open
 web/dashboard/src/lib/auth.tsx	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/src/lib/cn.ts	web	web/dashboard	frontend	todo			cold audit pending
 web/dashboard/tailwind.config.ts	web	web/dashboard	frontend	todo			cold audit pending
