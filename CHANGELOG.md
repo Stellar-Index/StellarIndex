@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Documented
+
+- **Dashboard surface bypasses the v1 envelope on purpose (F-1235).**
+  `/v1/dashboard/keys*` handlers write bare JSON rather than the
+  `data` / `as_of` / `flags` envelope used by market-data
+  endpoints. Documented the rationale in
+  `docs/reference/api-design.md §4.1`: different audience
+  (dashboard React app, not SDK), session-scoped data (no
+  market-quality flags to carry), distinct auth path (session
+  cookie vs API key). Future contributors won't "fix" the
+  perceived drift. RFC 9457 problem responses, Cache-Control: no-
+  store, and X-Request-Id correlation are preserved.
+
 ### Fixed
 
 - **API reference doc drift after rc.48 (F-1246).** Regenerated
