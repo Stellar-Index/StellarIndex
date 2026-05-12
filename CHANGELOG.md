@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`classic_assets.first_seen_*` ordering bug under chunked
+  backfill (F-1239).** The ON CONFLICT clause in
+  `registerClassicAssetSeen` previously updated only `last_seen_*`
+  (GREATEST) and `observation_count` — leaving `first_seen_*`
+  pinned to whichever ledger first hit the row, regardless of
+  actual chronology. Out-of-order parallel backfill (chunked
+  ranges processed in parallel) could leave `first_seen_ledger`
+  higher than the asset's true first observation. Fix: also
+  update `first_seen_*` with `LEAST(existing, incoming)`. Idempotent
+  for forward ingest (incoming is always ≥ existing → no-op).
+
 ### Removed
 
 - **Unused GIN indexes on `blend_auctions.bid` / `.lot` (F-1238).**
