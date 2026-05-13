@@ -422,6 +422,38 @@ for the policy chain that drives them.
 Every alert references a runbook at `docs/operations/runbooks/<alert-name>.md`.
 If it doesn't, that's a CI failure.
 
+### "Add a new Prometheus metric"
+
+1. Declare the metric in `internal/obs/metrics.go` (one of the
+   typed `*Vec` variables near the bottom) and register it in
+   the `init()` block.
+2. Wire it at the point of observation. For goroutine workers
+   doing IO, the established pattern is paired:
+   - `*Total{outcome}` counter for outcomes (per-attempt count).
+   - `*DurationSeconds{outcome}` histogram for latency.
+   Operators chart `outcome="ok"` p95/p99 separately from
+   failure outcomes to detect "endpoint slow" vs "endpoint
+   failing" independently. The wave-88/89/90/91 series
+   (`customer_webhook_delivery`, `divergence_refresh`,
+   `aggregator_supply_refresh`, `anomaly_freeze_recovery_sweep`)
+   are the canonical examples.
+3. Document in `docs/reference/metrics/README.md` with a
+   when-to-look-at-this prose block.
+4. If the metric warrants alerting, add a rule to BOTH
+   `deploy/monitoring/rules/<area>.yml` (multi-host) and
+   `configs/prometheus/rules.r1/<area>.yml` (R1 overlay). CI's
+   `monitoring-rules` job validates both directories with
+   promtool (wave 96); the wave-82 lint catches sibling-file
+   presence and the wave-78 template-presence lint catches
+   missing runbook structure.
+5. Write a regression test in the worker's test file using
+   `obstest.HistogramSampleCount` (`internal/obstest/`,
+   wave 100) — the helper exists because
+   `HistogramVec.WithLabelValues(...)` returns a
+   `prometheus.Observer` not a Collector, so the official
+   `testutil.CollectAndCount` can't act on per-label children
+   directly.
+
 ### "Change the OpenAPI spec"
 
 1. Edit `openapi/rates-engine.v1.yaml`.
