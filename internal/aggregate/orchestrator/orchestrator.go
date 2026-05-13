@@ -609,6 +609,15 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 // "no writes yet" branch falls back to `now` so a fresh aggregator
 // shows ~0 staleness on the first tick and then climbs if it never
 // produces a write, which matches the alert intent).
+//
+// F-1308 (codex audit-2026-05-13): the gauge label has to match the
+// canonical asset_id the customer queries with. `/v1/price?asset=native`
+// goes through the priceFallback path for XLM because the aggregator's
+// configured pair is `crypto:XLM/fiat:USD` (matching the oracle source's
+// global-ticker form) — the public surface and the internal pair-key
+// disagree. Emit under BOTH forms when the pair maps to a known alias
+// pair (the same translation list `internal/api/v1/changes.go::
+// aliasEntityIDs` already documents).
 func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 	for _, pair := range o.cfg.Pairs {
 		asset := pair.Base.String()
@@ -619,9 +628,20 @@ func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 			last = now
 			o.lastWriteAt[asset] = last
 		}
-		obs.PriceStalenessSeconds.WithLabelValues(asset).Set(
-			now.Sub(last).Seconds(),
-		)
+		stale := now.Sub(last).Seconds()
+		obs.PriceStalenessSeconds.WithLabelValues(asset).Set(stale)
+		// XLM appears in two canonical forms across the codebase:
+		// `native` (per-network) and `crypto:XLM` (global ticker).
+		// Customers query with `native` via /v1/price; oracles
+		// publish `crypto:XLM`. Mirror the metric under both forms
+		// so the api_price_stale alert evaluator sees whichever
+		// label the customer's /v1/price query path uses.
+		switch asset {
+		case "crypto:XLM":
+			obs.PriceStalenessSeconds.WithLabelValues("native").Set(stale)
+		case "native":
+			obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM").Set(stale)
+		}
 	}
 }
 

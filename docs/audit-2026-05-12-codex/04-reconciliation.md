@@ -897,3 +897,90 @@ without evidence IDs.
   `done=186 / in_progress=133 / todo=1607`, tracked-file parity
   `1926 / 1926`, docs lint green, and no finding-status mismatches between
   the register table and detailed sections.
+- `CMD-0286` closes `F-1228`: refreshed loopback and public R1
+  `/v1/price/tip/stream?asset=native&quote=fiat:USD` probes stayed open until
+  the audit client's 68-second timeout while emitting frames and keepalives, so
+  the former server-side reset around 30 seconds no longer reproduces.
+- `CMD-0287` closes `F-1306`: live R1 aggregator metrics and Prometheus now
+  expose bounded `ratesengine_price_staleness_seconds` series for
+  `crypto:BTC`, `crypto:ETH`, `crypto:XLM`, and `native`, and the alert
+  threshold query is empty because current values are `0`, not because the
+  metric is absent.
+- `CMD-0288` restores audit-control parity after the live SSE and
+  price-staleness metric closures:
+  findings `98 fixed / 9 open`, XFI `91 fixed / 8 open`, remediation
+  `93 fixed / 12 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0289` closes `F-1225`: live R1 `native/fiat:USD`
+  since-inception history now returns the same 10 daily buckets as the direct
+  native/Circle-USDC query, from `2026-05-03` through `2026-05-12`, so the
+  earlier empty-series runtime drift no longer reproduces.
+- `CMD-0290` restores audit-control parity after closing `F-1225` across the
+  detailed finding, XFI, and remediation ledgers:
+  findings `99 fixed / 8 open`, XFI `92 fixed / 7 open`, remediation
+  `94 fixed / 11 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0291` refreshes the live R1 SLA/capacity/status picture:
+  `F-1305` remains open because the SLA probe still reports
+  `ratesengine_sla_probe_unit_failed=1`, price freshness is `83.196s`, and SLA
+  alerts are pending; `F-1209` remains open because memory is firing around
+  `96.65%`, swap remains heavily used, and MinIO remains `78%` full.
+- `CMD-0292` restores audit-control parity after adding missing detailed
+  register sections for early launch/capacity findings and refreshing R1
+  evidence:
+  findings `99 fixed / 8 open`, XFI `92 fixed / 7 open`, remediation
+  `94 fixed / 11 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0293` adds `F-1308`: the price-staleness metric producer now exists,
+  but it is not truthful for the customer-visible stale path. R1 served
+  `native/fiat:USD` with `flags.stale=true` while aggregator metrics and
+  Prometheus both reported `ratesengine_price_staleness_seconds{asset="native"}
+  0`.
+- `CMD-0294` restores audit-control parity after registering the
+  price-staleness metric truth finding:
+  findings `99 fixed / 9 open`, XFI `92 fixed / 8 open`, remediation
+  `94 fixed / 12 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0295` refreshes launch/GitHub posture: `verify-launch-ready` still
+  fails L4.14-L4.17, L5.6, and L5.8; vulnerability alerts and Dependabot
+  alerts remain disabled; `main.protected=false`; the latest `main` commit is
+  unsigned; production environments still have empty protection rules; and
+  Actions still allows all actions with SHA pinning disabled.
+- `CMD-0296` restores audit-control parity after the launch/GitHub refresh:
+  findings `99 fixed / 9 open`, XFI `92 fixed / 8 open`, remediation
+  `94 fixed / 12 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0297` refreshes `F-1230`: R1 historical depth has improved from the
+  earlier nine May buckets to 84 daily buckets from `2026-02-12` through
+  `2026-05-12`, but still misses the one-year/inception target and has a gap
+  from `2026-04-26` to `2026-05-03`.
+- `CMD-0298` restores audit-control parity after the historical-depth refresh:
+  findings `99 fixed / 9 open`, XFI `92 fixed / 8 open`, remediation
+  `94 fixed / 12 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0299` adds `F-1309`: the SLA freshness runbook's quick-diagnosis
+  commands point at `sla-probe.service` and Redis `price:native:fiat:USD`,
+  while R1's active path is `ratesengine-sla-probe.service`/timer and the
+  populated cache keys are `vwap:native:fiat:USD:{300,3600,86400}`.
+- `CMD-0300` restores audit-control parity after the SLA runbook finding:
+  findings `99 fixed / 10 open`, XFI `92 fixed / 9 open`, remediation
+  `94 fixed / 13 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0301` records the moving-workspace/live recheck for `F-1308`: a local
+  source patch now mirrors `crypto:XLM` and `native` labels and
+  `go test ./internal/aggregate/orchestrator` passes, but live R1 still
+  reports `ratesengine_price_staleness_seconds{asset="native"} 0`, so the
+  finding remains open until deployed runtime truth matches the API stale
+  path.
+- `CMD-0302` restores audit-control parity after the `F-1308` recheck:
+  findings `99 fixed / 10 open`, XFI `92 fixed / 9 open`, remediation
+  `94 fixed / 13 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
