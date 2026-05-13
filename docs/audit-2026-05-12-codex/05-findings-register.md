@@ -8,9 +8,9 @@ The register below is authoritative; this summary captures the
 highest-priority items as of the wave-115 reconciliation recheck. Status counts
 at this snapshot:
 
-- **Findings register**: 64 fixed / 22 open (86 total).
-- **XFI cross-file table**: 60 fixed / 18 open (78 total).
-- **Remediation plan**: 62 fixed / 22 open (84 total — multi-finding
+- **Findings register**: 64 fixed / 23 open (87 total).
+- **XFI cross-file table**: 60 fixed / 19 open (79 total).
+- **Remediation plan**: 62 fixed / 23 open (85 total — multi-finding
   R-rows split the count; the open remediation rows resolve to
   the current finding set plus mixed multi-finding operator rows).
 
@@ -52,7 +52,9 @@ after the drill command itself was repaired.
 pass adds `F-1285` for unauthenticated upstream binary downloads in the Loki,
 Promtail, Prometheus, and Alertmanager install paths, and `F-1286` for Loki's
 systemd credential mapping that relies on shell-style variable expansion that
-systemd does not perform. The same pass also confirms `F-1265`, `F-1270`,
+systemd does not perform. The same pass adds `F-1287` for Prometheus and
+Alertmanager loopback binds being targeted through private IPs in the generated
+alerting/self-scrape config. The same pass also confirms `F-1265`, `F-1270`,
 `F-1271`, `F-1266`, and `F-1272` are source-closed on the current workspace.
 Final code closures since the prior summary include:
 
@@ -495,6 +497,7 @@ Recent waves closed by code (chronological):
 | F-1284 | medium | HAProxy and HA docs still describe `/v1/readyz` as Redis-critical after the API changed Redis readiness to degraded-but-serving | `configs/ansible/roles/haproxy/defaults/main.yml`; `configs/ansible/roles/haproxy/templates/haproxy.cfg.j2`; `configs/ansible/roles/haproxy/README.md`; `docs/architecture/ha-plan.md`; `internal/api/v1/server.go`; `cmd/ratesengine-api/main.go` | XFI-0076; EV-0227 | fixed | ops/docs/haproxy/api | Runtime now keeps HAProxy backends in service during Redis-only failures, but HAProxy defaults/template comments, the HAProxy README, and the HA plan still say `/v1/readyz` requires Redis or routes only when Redis is reachable. |
 | F-1285 | high | Loki, Promtail, Prometheus, and Alertmanager roles download upstream release archives without enforced checksums | `configs/ansible/roles/loki/tasks/{server-02-install.yml,agent-01-install.yml}`; `configs/ansible/roles/prometheus/tasks/02-install.yml`; role defaults/READMEs | XFI-0077; EV-0231 | fixed | ops/security/supply-chain | Loki and Promtail use `get_url` without any checksum, while Prometheus and Alertmanager use optional `prometheus_sha256 | default(omit)` / `alertmanager_sha256 | default(omit)` with no default or README requirement. A clean documented HA monitoring deployment therefore installs unauthenticated upstream binaries. |
 | F-1286 | high | Loki's systemd unit maps MinIO credentials through literal `${...}` strings that systemd does not expand | `configs/ansible/roles/loki/templates/loki.service.j2`; `configs/ansible/roles/loki/templates/loki-config.yaml.j2`; `configs/ansible/roles/loki/defaults/main.yml`; `configs/ansible/roles/loki/README.md`; systemd execution environment semantics | XFI-0078; EV-0232 | fixed | ops/deployment/loki | The service sets `AWS_ACCESS_KEY_ID=${RATESENGINE_S3_ACCESS_KEY}` and `AWS_SECRET_ACCESS_KEY=${RATESENGINE_S3_SECRET_KEY}` before `EnvironmentFile=-/etc/default/loki`, but systemd `Environment=` does not perform `$` expansion. Loki can start with literal credential values and fail S3 chunk writes despite the README telling operators to provide the existing env-var pair. |
+| F-1287 | high | Prometheus and Alertmanager bind to loopback while the generated config targets private IPs for self-scrape and alert delivery | `configs/ansible/roles/prometheus/defaults/main.yml`; `configs/ansible/roles/prometheus/templates/prometheus.service.j2`; `configs/ansible/roles/prometheus/templates/alertmanager.service.j2`; `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`; `configs/ansible/roles/prometheus/README.md` | XFI-0079; EV-0234 | open | ops/observability/alerting | Defaults bind `prometheus_listen` and `alertmanager_listen` to `127.0.0.1`, but the rendered Prometheus config sends alertmanager traffic and self-scrapes to `{{ ansible_host }}:9090/9093` for every prom host. A default deployment can therefore fail to scrape the monitoring pair and fail to deliver alerts to Alertmanager. |
 
 ## Finding Template
 
@@ -3185,3 +3188,30 @@ Observed: the service template sets `Environment=AWS_ACCESS_KEY_ID=${RATESENGINE
 Impact: high. Loki can start with syntactically present but wrong S3 credentials, then fail chunk writes to MinIO. That breaks log retention/queryability exactly when operators need the logging plane for launch and incident response.
 
 Remediation direction: make `/etc/default/loki` define `AWS_ACCESS_KEY_ID=` and `AWS_SECRET_ACCESS_KEY=` directly, or template those AWS variables from vaulted values. Remove the pseudo-indirection from `Environment=`, update the README to document the real file/variable contract, and add a rendered-unit smoke check that proves systemd sees non-literal AWS credential env names before service start.
+
+### F-1287. Prometheus and Alertmanager bind to loopback while the generated config targets private IPs for self-scrape and alert delivery
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/prometheus/defaults/main.yml`
+- `configs/ansible/roles/prometheus/templates/prometheus.service.j2`
+- `configs/ansible/roles/prometheus/templates/alertmanager.service.j2`
+- `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`
+- `configs/ansible/roles/prometheus/README.md`
+
+Evidence:
+
+- `XFI-0079`
+- `EV-0234`
+
+Expected: the generated Prometheus config should target addresses that the rendered Prometheus and Alertmanager services actually listen on. If the services are loopback-only, self-scrape and alert delivery should use local loopback for local services and a deliberately exposed/listening internal address for peer services, or the role should fail until operators choose a coherent topology.
+
+Observed: defaults set `prometheus_listen: "127.0.0.1:9090"` and `alertmanager_listen: "127.0.0.1:9093"`. The systemd templates pass those values directly as `--web.listen-address` and `--web.listen-address` for Alertmanager. But `prometheus.yml.j2` renders alertmanager targets as `{{ hostvars[h].ansible_host }}:9093` and self-scrape targets as `{{ hostvars[h].ansible_host }}:9090` / `{{ hostvars[h].ansible_host }}:9093` for every host in `prometheus_pair`.
+
+Impact: high. A default two-host monitoring deployment can start both daemons but fail to scrape the pair and fail to submit alerts to Alertmanager, because the clients connect to private IPs while the servers listen only on loopback. That is launch-critical: alert fanout, deadmansswitch confidence, and the HA monitoring proof can be false-positive green at the role level but nonfunctional at runtime.
+
+Remediation direction: choose one explicit model and make all files match it. Either bind Prometheus and Alertmanager HTTP listeners to the internal host IPs and rely on nftables/private CIDR controls, or keep UI loopback-only and add separate internal listener/proxy endpoints for peer/self traffic. Add preflight/render tests that reject `127.0.0.1` listener defaults when `prometheus.yml` targets `ansible_host`, and update README access/security prose accordingly.
