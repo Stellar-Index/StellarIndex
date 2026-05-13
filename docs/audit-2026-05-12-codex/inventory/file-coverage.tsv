@@ -93,7 +93,7 @@ configs/ansible/roles/archival-node/tasks/06-stellar-core.yml	configs	configs/an
 configs/ansible/roles/archival-node/tasks/07-galexie.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/08-stellar-rpc.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/09-minio.yml	configs	configs/ansible	config	done	F-1291	XFI-0083	Reviewed MinIO and mc install tasks for checksum/version enforcement
-configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184;EV-0273;EV-0286;F-1266;F-1291;F-1300;F-1307	XFI-0058;XFI-0083;XFI-0092;XFI-0099	Reviewed against README claim, node_exporter checksum path, textfile collector ownership/flags, and live R1 drift where node_exporter lacks the textfile collector; promtail-to-Loki wiring remains explicit TODO
+configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184;EV-0273;EV-0286;EV-0287;F-1266;F-1291;F-1300;F-1307	XFI-0058;XFI-0083;XFI-0092;XFI-0099	Reviewed against README claim, node_exporter checksum path, textfile collector ownership/flags, and live R1 textfile-collector drift/closure; promtail-to-Loki wiring remains explicit TODO
 configs/ansible/roles/archival-node/tasks/11-firewall.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201		Reviewed nftables/UFW service contract
 configs/ansible/roles/archival-node/tasks/12-hardening.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/13-healthcheck.yml	configs	configs/ansible	config	todo			cold audit pending
@@ -234,7 +234,7 @@ configs/prometheus/rules.r1/external-pollers.yml	configs	configs/prometheus	conf
 configs/prometheus/rules.r1/infra.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/ingestion.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/meta.yml	configs	configs/prometheus	config	todo			cold audit pending
-configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	in_progress	EV-0280;EV-0286;F-1305;F-1307	XFI-0097;XFI-0099	Partially reviewed SLA probe R1 alert rules against live textfile and Prometheus scrape-chain evidence; rules are present but no SLA probe series reach Prometheus
+configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	in_progress	EV-0280;EV-0286;EV-0287;F-1305;F-1307	XFI-0097;XFI-0099	Partially reviewed SLA probe R1 alert rules against live textfile and Prometheus scrape-chain evidence; series now reach Prometheus but current verdict remains failing
 configs/prometheus/rules.r1/slo.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/stellar.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/storage.yml	configs	configs/prometheus	config	todo			cold audit pending
@@ -263,7 +263,7 @@ deploy/monitoring/rules/external-pollers.yml	deploy	deploy/monitoring	config	tod
 deploy/monitoring/rules/infra.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/ingestion.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/meta.yml	deploy	deploy/monitoring	config	todo			cold audit pending
-deploy/monitoring/rules/sla-probe.yml	deploy	deploy/monitoring	config	in_progress	EV-0267;EV-0280;EV-0286;F-1300;F-1305;F-1307	XFI-0092;XFI-0097;XFI-0099	Partially reviewed as the Prometheus consumer of SLA probe textfile metrics, the live failing R1 SLA proof verdict, and the missing node_exporter textfile scrape chain
+deploy/monitoring/rules/sla-probe.yml	deploy	deploy/monitoring	config	in_progress	EV-0267;EV-0280;EV-0286;EV-0287;F-1300;F-1305;F-1307	XFI-0092;XFI-0097;XFI-0099	Partially reviewed as the Prometheus consumer of SLA probe textfile metrics, the live failing R1 SLA proof verdict, and node_exporter textfile scrape-chain closure
 deploy/monitoring/rules/slo.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/stellar.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/storage.yml	deploy	deploy/monitoring	config	todo			cold audit pending
@@ -618,7 +618,7 @@ docs/operations/runbooks/oracle-stale.md	docs	docs/operations	documentation	todo
 docs/operations/runbooks/orphan-events.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/pg-conns-saturated.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/price-divergence.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/price-stale.md	docs	docs/operations	documentation	done	EV-0282;F-1306	XFI-0098	Reviewed runbook diagnosis commands against source/R1 and found they depend on nonexistent `ratesengine_price_staleness_seconds` series
+docs/operations/runbooks/price-stale.md	docs	docs/operations	documentation	done	EV-0282;EV-0287;F-1306	XFI-0098	Reviewed runbook diagnosis commands against source/R1; source now has a producer, but live R1 still lacks the `ratesengine_price_staleness_seconds` series
 docs/operations/runbooks/prometheus-tsdb-corruption.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/redis-master-down.md	docs	docs/operations	documentation	in_progress	EV-0196;EV-0198;EV-0214;F-1271;F-1275	XFI-0063;XFI-0067	Auth assumptions now match source, but the maintained degraded-serving claim conflicts with HAProxy `/readyz` routing during Redis loss
 docs/operations/runbooks/redis-memory.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -871,7 +871,7 @@ internal/aggregate/orchestrator/confidence.go	internal	internal/aggregate/orches
 internal/aggregate/orchestrator/confidence_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
 internal/aggregate/orchestrator/divergence_refresh.go	internal	internal/aggregate/orchestrator	runtime	todo			cold audit pending
 internal/aggregate/orchestrator/divergence_refresh_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
-internal/aggregate/orchestrator/orchestrator.go	internal	internal/aggregate/orchestrator	runtime	in_progress	EV-0103;F-1242	XFI-0034	Reviewed contribution-volume flow across filter stages; broader orchestrator pass still open
+internal/aggregate/orchestrator/orchestrator.go	internal	internal/aggregate/orchestrator	runtime	in_progress	EV-0103;EV-0287;F-1242;F-1306	XFI-0034;XFI-0098	Reviewed contribution-volume flow across filter stages and the new source-side bounded PriceStalenessSeconds producer; broader orchestrator pass still open
 internal/aggregate/orchestrator/orchestrator_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
 internal/aggregate/orchestrator/phase2_freeze.go	internal	internal/aggregate/orchestrator	runtime	todo			cold audit pending
 internal/aggregate/orchestrator/phase2_freeze_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
@@ -1016,7 +1016,7 @@ internal/api/v1/oracle_sep40_test.go	internal	internal/api/v1	test	todo			cold a
 internal/api/v1/oracle_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/pairs.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/pairs_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/price.go	internal	internal/api/v1	runtime	in_progress	EV-0282;F-1306	XFI-0098	Partially reviewed price response/staleness path; handler intentionally avoids emitting PriceStalenessSeconds, leaving the documented alert without a producer
+internal/api/v1/price.go	internal	internal/api/v1	runtime	in_progress	EV-0282;EV-0287;F-1306	XFI-0098	Partially reviewed price response/staleness path; handler intentionally avoids high-cardinality emission while the aggregator now owns bounded source-side emission
 internal/api/v1/price_batch_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/price_stream.go	internal	internal/api/v1	runtime	in_progress	EV-0141;F-1228	XFI-0020	Reviewed shared SSE runtime dependency while reconciling the live R1 cutoff; endpoint-specific stream audit remains open
 internal/api/v1/price_stream_test.go	internal	internal/api/v1	test	todo			cold audit pending
@@ -1196,7 +1196,7 @@ internal/obs/doc.go	internal	internal/obs/doc.go	runtime	todo			cold audit pendi
 internal/obs/http_middleware.go	internal	internal/obs/http_middleware.go	runtime	todo			cold audit pending
 internal/obs/log.go	internal	internal/obs/log.go	runtime	todo			cold audit pending
 internal/obs/log_test.go	internal	internal/obs/log_test.go	test	todo			cold audit pending
-internal/obs/metrics.go	internal	internal/obs/metrics.go	runtime	in_progress	EV-0215;EV-0229;EV-0282;F-1276;F-1306	XFI-0068;XFI-0098	Rechecked API metric-source commentary and PriceStalenessSeconds registration; the gauge is defined but has no runtime producer outside test warmup
+internal/obs/metrics.go	internal	internal/obs/metrics.go	runtime	in_progress	EV-0215;EV-0229;EV-0282;EV-0287;F-1276;F-1306	XFI-0068;XFI-0098	Rechecked API metric-source commentary and PriceStalenessSeconds registration; source now has an aggregator-side bounded producer, but live R1 still lacks the series
 internal/obs/metrics_test.go	internal	internal/obs/metrics_test.go	test	todo			cold audit pending
 internal/obs/middleware_unit_test.go	internal	internal/obs/middleware_unit_test.go	test	todo			cold audit pending
 internal/obstest/histogram.go	internal	internal/obstest/histogram.go	test	done	EV-0191		Reviewed newly tracked Prometheus histogram test helper; dependency-light utility package, no new finding from this pass
