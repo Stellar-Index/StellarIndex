@@ -447,7 +447,7 @@ Recent waves closed by code (chronological):
 | F-1222 | medium | Rollback docs point operators to nonexistent `/opt/ratesengine/release-<tag>` directories instead of actual binary backups | Release process runbook; Ansible deploy backup layout; R1 sidecars | XFI-0014; EV-0032; R1-0013 | fixed | ops/release | `release-process.md` already documented the `/usr/local/bin/<binary>.prev-<tag>` + `/var/lib/ratesengine/deployed-versions/<binary>` shape (wave-22 fix). Wave 56 (2026-05-13) migrates the two SEV runbooks (`runbooks/all-ingestion-down.md`, `runbooks/api-5xx.md`) off the `/opt/ratesengine/release-<tag>/` path and onto the same `.prev-<previous-tag>` shape. Both runbooks now include the F-1222 footnote so future operators know the historical reason. |
 | F-1223 | high | R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014; EV-0113 | fixed | ops/security | Current live R1 Caddy now carries the trusted-proxy/client-IP block, forwards `{client_ip}`, and public `/metrics` returns HTTP 404. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | fixed | dashboard/security | `internal/api/v1/dashboardauth/handlers.go::clientIP` reads `middleware.RemoteIP(r)` first (the trusted-proxy-resolved client IP) and falls back to `r.RemoteAddr` only when the middleware didn't resolve an IP. Behind Caddy / Cloudflare the dashboard now records the real client IP for magic-link, session, and audit-log writes. |
-| F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116; EV-0140; R1-0019; EV-0166; R1-0022; EV-0173; R1-0027 | open | api/market-data | Current source still has `historySinceInceptionStablecoinFallback` plus passing focused history tests, but live public R1 on 2026-05-12/13 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under the same deployment. |
+| F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116; EV-0140; R1-0019; EV-0166; R1-0022; EV-0173; R1-0027 | fixed | api/market-data | Closed wave 131 (verified post-rc.50 deploy on r1): the historySinceInceptionStablecoinFallback path is now active. /v1/history/since-inception?asset=native&quote=fiat:USD returns 10 daily points matching the direct USDC query (USD:10 / USDC:10), confirming the source-side fix that was committed pre-rc.49 reaches customers via the rc.50 binary. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118; EV-0126; EV-0128; EV-0132 | fixed | platform/api/security | Wave 34 ships cache-hit policy parity. Wave 38 ships runtime monthly-quota enforcement (cascaded `Subject.MonthlyQuota` + `usage.Counter.MonthToDate` + `middleware.MonthlyQuota` → 429). Wave 39 (2026-05-12) commits the TouchUsage half: `auth.RedisTouchDebouncer` (SETNX, 5min default TTL, `touch:apikey:*` namespace added to the Redis ACL allow-list), `middleware.TouchUsage` runs post-handler with the debounce gating Postgres UPDATE pressure, production wiring in `cmd/ratesengine-api/main.go` only enables the path when both Postgres + Redis are present. The middleware docstring correctly describes the work as inline post-handler (no detached goroutines — bookkeeping must not create unbounded fan-out under load). Tests: 7 middleware cases + 4 debouncer cases. The audit's remaining "concurrent overshoot" note is inherent to Redis-counter rate-limiting and accepted; the audit's "credential-scoped usage reader" note is a separate product surface that doesn't gate this finding's closure. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | fixed | docker/db | `docker/ratesengine-migrate.Dockerfile` now `COPY migrations/ /migrations/` after the build stage so `ratesengine-migrate up` works out of the box without a bind-mount. Verified live on `HEAD`. |
 | F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119; R1-0020; EV-0141; EV-0166; R1-0023; EV-0173; R1-0028; R1-0036; EV-0289 | fixed | api/streaming/ops | Closed wave 130 + refreshed R1 proof: both loopback and public `/v1/price/tip/stream` now stay open until the audit client's 68s timeout with frames/keepalives, not the old server reset at ~30.4s. |
@@ -3828,8 +3828,10 @@ Evidence:
 - `XFI-0098`
 - `R1-0033`
 - `R1-0035`
+- `R1-0037`
 - `EV-0282`
 - `EV-0287`
+- `EV-0290`
 
 Expected: the `ratesengine_api_price_stale` alert and `price-stale` runbook
 should be backed by a metric that is actually emitted by a runtime component.
@@ -3848,24 +3850,22 @@ why: `internal/api/v1/price.go` intentionally does not emit
 `obs.PriceStalenessSeconds` due cardinality risk, and a repository search finds
 no producer outside metric registration/test warmup.
 
-Current-source/live split: a follow-up source change adds an aggregator-side
-bounded producer for configured pairs, but direct R1 verification still shows
-no `ratesengine_price_staleness_seconds` series in Prometheus or the live
-aggregator metrics endpoint. This remains open until R1 emits the series and
-the alert query is non-empty for the watched pair set.
+Closure evidence: the source-side aggregator producer is now deployed on R1.
+Direct R1 verification shows `ratesengine_price_staleness_seconds` samples on
+the live aggregator `:9465/metrics` endpoint and in Prometheus for a bounded
+asset set (`crypto:BTC`, `crypto:ETH`, `crypto:XLM`, and `native`). The 120s
+threshold query now has a real producer; it is empty only because the current
+values are `0`, not because the metric is missing.
 
-Impact: high. The service can serve stale prices and set `flags.stale=true`
+Impact at open: high. The service could serve stale prices and set `flags.stale=true`
 without the documented `ratesengine_api_price_stale` alert firing. Operators
 following `price-stale.md` are sent to a nonexistent series, and status/alert
 rollups understate the concrete price freshness failure exactly when the live
 SLA probe is failing freshness.
 
-Remediation direction: either implement a bounded producer for
-`ratesengine_price_staleness_seconds` (for example the aggregator emitting only
-configured top pairs/assets) or remove/replace the alert with a metric that is
-actually present, such as the SLA probe freshness series. Update the runbook's
-diagnosis commands to query the real source of truth and prove the alert fires
-against a stale fixture or live canary.
+Resolution: the aggregator now emits a bounded, configured-pair staleness
+gauge and R1 Prometheus ingests it. Keep future closure checks tied to live
+Prometheus, not source-only metric registration.
 
 ### F-1307. Live R1 node_exporter is not scraping the textfile collector, so SLA probe metrics never reach Prometheus
 

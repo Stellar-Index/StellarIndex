@@ -618,7 +618,7 @@ docs/operations/runbooks/oracle-stale.md	docs	docs/operations	documentation	todo
 docs/operations/runbooks/orphan-events.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/pg-conns-saturated.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/price-divergence.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/price-stale.md	docs	docs/operations	documentation	done	EV-0282;EV-0287;F-1306	XFI-0098	Reviewed runbook diagnosis commands against source/R1; source now has a producer, but live R1 still lacks the `ratesengine_price_staleness_seconds` series
+docs/operations/runbooks/price-stale.md	docs	docs/operations	documentation	done	EV-0282;EV-0287;EV-0290;F-1306	XFI-0098	Reviewed runbook diagnosis commands against source/R1; live R1 now exposes the bounded `ratesengine_price_staleness_seconds` series the runbook queries
 docs/operations/runbooks/prometheus-tsdb-corruption.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/redis-master-down.md	docs	docs/operations	documentation	in_progress	EV-0196;EV-0198;EV-0214;F-1271;F-1275	XFI-0063;XFI-0067	Auth assumptions now match source, but the maintained degraded-serving claim conflicts with HAProxy `/readyz` routing during Redis loss
 docs/operations/runbooks/redis-memory.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -871,7 +871,7 @@ internal/aggregate/orchestrator/confidence.go	internal	internal/aggregate/orches
 internal/aggregate/orchestrator/confidence_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
 internal/aggregate/orchestrator/divergence_refresh.go	internal	internal/aggregate/orchestrator	runtime	todo			cold audit pending
 internal/aggregate/orchestrator/divergence_refresh_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
-internal/aggregate/orchestrator/orchestrator.go	internal	internal/aggregate/orchestrator	runtime	in_progress	EV-0103;EV-0287;F-1242;F-1306	XFI-0034;XFI-0098	Reviewed contribution-volume flow across filter stages and the new source-side bounded PriceStalenessSeconds producer; broader orchestrator pass still open
+internal/aggregate/orchestrator/orchestrator.go	internal	internal/aggregate/orchestrator	runtime	in_progress	EV-0103;EV-0287;EV-0290;F-1242;F-1306	XFI-0034;XFI-0098	Reviewed contribution-volume flow across filter stages and the bounded PriceStalenessSeconds producer now verified live on R1; broader orchestrator pass still open
 internal/aggregate/orchestrator/orchestrator_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
 internal/aggregate/orchestrator/phase2_freeze.go	internal	internal/aggregate/orchestrator	runtime	todo			cold audit pending
 internal/aggregate/orchestrator/phase2_freeze_test.go	internal	internal/aggregate/orchestrator	test	todo			cold audit pending
@@ -1196,7 +1196,7 @@ internal/obs/doc.go	internal	internal/obs/doc.go	runtime	todo			cold audit pendi
 internal/obs/http_middleware.go	internal	internal/obs/http_middleware.go	runtime	todo			cold audit pending
 internal/obs/log.go	internal	internal/obs/log.go	runtime	todo			cold audit pending
 internal/obs/log_test.go	internal	internal/obs/log_test.go	test	todo			cold audit pending
-internal/obs/metrics.go	internal	internal/obs/metrics.go	runtime	in_progress	EV-0215;EV-0229;EV-0282;EV-0287;F-1276;F-1306	XFI-0068;XFI-0098	Rechecked API metric-source commentary and PriceStalenessSeconds registration; source now has an aggregator-side bounded producer, but live R1 still lacks the series
+internal/obs/metrics.go	internal	internal/obs/metrics.go	runtime	in_progress	EV-0215;EV-0229;EV-0282;EV-0287;EV-0290;F-1276;F-1306	XFI-0068;XFI-0098	Rechecked API metric-source commentary and PriceStalenessSeconds registration; live R1 now exposes the aggregator-side bounded series
 internal/obs/metrics_test.go	internal	internal/obs/metrics_test.go	test	todo			cold audit pending
 internal/obs/middleware_unit_test.go	internal	internal/obs/middleware_unit_test.go	test	todo			cold audit pending
 internal/obstest/histogram.go	internal	internal/obstest/histogram.go	test	done	EV-0191		Reviewed newly tracked Prometheus histogram test helper; dependency-light utility package, no new finding from this pass
