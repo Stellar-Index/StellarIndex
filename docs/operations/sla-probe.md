@@ -10,7 +10,7 @@ Operational companion to the executable SLA-evidence CLI shipped in
 #283 (`cmd/ratesengine-sla-probe`). This doc covers:
 
 - What the probe is + why it runs continuously
-- Daily cron via `deploy/systemd/sla-probe.{service,timer}`
+- Daily cron via `configs/healthchecks/ratesengine-sla-probe.{service,timer}`
 - The RFP-stated SLA targets the probe verifies against
 - Textfile-collector integration + the four shipped alerts
 
@@ -41,12 +41,12 @@ rate budget.
 ## Operator wiring
 
 ```sh
-sudo cp deploy/systemd/sla-probe.{service,timer} /etc/systemd/system/
+sudo cp configs/healthchecks/ratesengine-sla-probe.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now sla-probe.timer
+sudo systemctl enable --now ratesengine-sla-probe.timer
 ```
 
-Override defaults via `/etc/default/sla-probe`:
+Override defaults via `/etc/default/ratesengine-healthchecks`:
 
 ```sh
 BASE_URL=https://api.ratesengine.net/v1     # default
@@ -67,7 +67,7 @@ non-`/healthz` endpoint reads as `availability < 0.1 %` and the
 verdict comes back `fail` for reasons unrelated to actual SLA
 compliance. Mint a load-test API key from the operator vault (same
 class as `RATESENGINE_LOAD_API_KEY` for the k6 weekly) and set it
-in `/etc/default/sla-probe` before enabling the timer. The probe
+in `/etc/default/ratesengine-healthchecks` before enabling the timer. The probe
 sends it as `Authorization: Bearer <key>` on every request — the
 key never appears on the systemd unit's command line.
 
@@ -81,7 +81,7 @@ chart, price, and oracle-latest surfaces for that pair.
 Each run logs its JSON report to the systemd journal:
 
 ```sh
-sudo journalctl -u sla-probe.service -n 100 --output=cat | jq .
+sudo journalctl -u ratesengine-sla-probe.service -n 100 --output=cat | jq .
 ```
 
 Key fields:
@@ -120,7 +120,7 @@ Key fields:
 
 A `verdict` of `fail` carries the reasons in `failed_reasons` —
 e.g. `["price: p95=215.3ms > target 200.0ms"]`. The unit also
-exits non-zero, so `systemctl is-failed sla-probe.service`
+exits non-zero, so `systemctl is-failed ratesengine-sla-probe.service`
 reports the breach.
 
 ## Pre-flight: spot-check from the operator's laptop
@@ -147,7 +147,7 @@ run so node_exporter can scrape per-endpoint p50/p95/p99 latency,
 availability, freshness, and a pass/fail gauge. Operator wiring:
 
 ```sh
-# /etc/default/sla-probe
+# /etc/default/ratesengine-healthchecks
 TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom
 ```
 
