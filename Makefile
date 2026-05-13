@@ -214,12 +214,20 @@ verify-launch-ready-single-region: ## verify-launch-ready against the project's 
 		-skip-ids L4.14,L4.15,L4.16,L4.17,L5.6,L5.8
 
 .PHONY: monitoring-check
-monitoring-check: ## Validate Prometheus rule files with promtool
+monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + R1 overlay)
 	@if ! command -v promtool >/dev/null 2>&1; then \
 	  echo "promtool not found — install via 'brew install prometheus' or the Prometheus GH release"; \
 	  exit 1; \
 	fi
+	@# Validates BOTH the multi-host rule files and the R1 single-host
+	@# overlay. Pre-wave-96 only the multi-host files were checked,
+	@# which left R1-overlay edits silently shippable with broken
+	@# PromQL or YAML — the wave-82 lint catches sibling-file
+	@# presence + the wave-96 promtool extension catches sibling-file
+	@# CONTENT validity. Every alert rule in either tree is now
+	@# CI-validated before merge.
 	@promtool check rules deploy/monitoring/rules/*.yml
+	@promtool check rules configs/prometheus/rules.r1/*.yml
 
 .PHONY: verify
 verify: ## Sequential local quality gate (fmt, vet, lint, docs, test) — run before every push

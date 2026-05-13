@@ -149,10 +149,13 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
-    # Validates deploy/monitoring/rules/*.yml with promtool. Catches
-    # YAML syntax errors, broken PromQL, and undefined recording-rule
-    # references at PR time rather than at Prometheus reload on a
-    # production node.
+    # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
+    # configs/prometheus/rules.r1/*.yml (R1 single-host overlay)
+    # with promtool. Catches YAML syntax errors, broken PromQL, and
+    # undefined recording-rule references at PR time rather than at
+    # Prometheus reload on a production node. Pre-wave-96 only the
+    # multi-host files were validated; the R1 overlay shipped
+    # unchecked.
     env:
       PROM_VERSION: "2.55.1"
     steps:
