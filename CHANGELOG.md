@@ -18,6 +18,13 @@ against.
 ### Added
 
 - Regression test
+  `TestRefreshDivergenceAll_DurationMetricRecorded` pins the
+  wave-89 divergence-refresh latency-histogram wiring end-to-end.
+  Same shape as the wave-92 customer-webhook test; reuses the
+  `histogramSampleCount` helper pattern (re-implemented locally
+  in the orchestrator package since cross-package test helpers
+  aren't worth the import-cycle risk for a 20-line helper).
+- Regression test
   `TestWorker_DeliveryDurationMetricRecorded` pins the wave-88
   customer-webhook latency-histogram wiring end-to-end —
   asserts a successful delivery produces a sample on

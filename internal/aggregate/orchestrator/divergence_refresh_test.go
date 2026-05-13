@@ -9,8 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	io_prom_dto "github.com/prometheus/client_model/go"
+
 	"github.com/RatesEngine/rates-engine/internal/cachekeys"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 )
 
 // captureRefresher records every RefreshPair call. Configurable
@@ -202,4 +206,68 @@ func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T)
 	if len(capR.calls) != 2 {
 		t.Fatalf("RefreshPair calls: got %d, want 2 (one error, one ok)", len(capR.calls))
 	}
+}
+
+// TestRefreshDivergenceAll_DurationMetricRecorded pins the
+// wave-89 (2026-05-13) latency-histogram wiring: a successful
+// per-pair refresh advances
+// `ratesengine_divergence_refresh_duration_seconds{outcome="ok"}`.
+// Same shape as wave 92's customer-webhook test — guards against
+// a future refactor silently dropping the timing call.
+func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
+	t.Parallel()
+	rdb, _ := newTestRedis(t)
+	pair := pairXLMUSD(t)
+	windows := []time.Duration{5 * time.Minute}
+
+	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
+	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+		t.Fatalf("seed redis: %v", err)
+	}
+
+	capR := &captureRefresher{}
+	o := New(nil, rdb, Config{
+		Pairs:               []canonical.Pair{pair},
+		Windows:             windows,
+		DivergenceRefresher: capR,
+		Logger:              silentLogger(),
+	})
+
+	before := histogramSampleCount(t, obs.DivergenceRefreshDurationSeconds, "ok")
+	o.refreshDivergenceAll(context.Background(), time.Now().UTC())
+	after := histogramSampleCount(t, obs.DivergenceRefreshDurationSeconds, "ok")
+
+	if after <= before {
+		t.Errorf("divergence refresh duration histogram did not advance: before=%d after=%d", before, after)
+	}
+}
+
+// histogramSampleCount returns the sample count of the histogram
+// series with the given outcome label. Required because
+// `vec.WithLabelValues(...)` returns a prometheus.Observer (not
+// Collector) so testutil.CollectAndCount can't act on the per-
+// label child directly. Sums across every series whose label-set
+// matches the requested outcome — equivalent to what the wire-
+// format `_count` suffix exposes per-series. Mirrors the helper
+// in `internal/customerwebhook/worker_test.go` (wave 92).
+func histogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, outcome string) uint64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 16)
+	go func() {
+		vec.Collect(ch)
+		close(ch)
+	}()
+	var total uint64
+	for m := range ch {
+		var dto io_prom_dto.Metric
+		if err := m.Write(&dto); err != nil {
+			t.Fatalf("histogram Write: %v", err)
+		}
+		for _, l := range dto.GetLabel() {
+			if l.GetName() == "outcome" && l.GetValue() == outcome {
+				total += dto.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return total
 }
