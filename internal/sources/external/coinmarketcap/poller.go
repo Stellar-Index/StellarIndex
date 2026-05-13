@@ -236,7 +236,18 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		// project (verified 2026-04-24 for XLM/BTC/ETH/USDC/USDT
 		// — CMC sorts by rank).
 		coin := coins[0]
+		// F-1237 (codex audit-2026-05-13): when the request used
+		// `id=<numeric>`, CMC keys the response map by the
+		// numeric ID string ("512", "1") rather than the ticker
+		// ("XLM", "BTC"). Resolve back to the canonical asset
+		// via `coin.Symbol` (always the upstream ticker) instead
+		// of the response map key. Falls back to the map key
+		// for the symbol-mode path so the existing tests stay
+		// green.
 		ticker := strings.ToUpper(sym)
+		if _, ok := cryptoAssets[ticker]; !ok && coin.Symbol != "" {
+			ticker = strings.ToUpper(coin.Symbol)
+		}
 		cryptoAsset, ok := cryptoAssets[ticker]
 		if !ok {
 			continue

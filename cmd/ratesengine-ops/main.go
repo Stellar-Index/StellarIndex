@@ -47,6 +47,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
+	"github.com/RatesEngine/rates-engine/internal/currency"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/ledgerstream"
 	"github.com/RatesEngine/rates-engine/internal/sources/aquarius"
@@ -1610,6 +1611,17 @@ func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []
 		p, err := externalcoinmarketcap.NewPoller(cfg.CoinMarketCap.APIKey)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("coinmarketcap: %w", err)
+		}
+		// F-1237 (codex audit-2026-05-13): mirror the
+		// indexer/aggregator wiring — bind the verified-currency
+		// catalogue's CMC IDs so the poller queries by
+		// `id=<numeric>` instead of the ambiguous `symbol=`
+		// path. Without this the verify-external run uses the
+		// ambiguous symbol path and an operator auditing CMC
+		// drift sees stale-shape data even when the indexer is
+		// on the safe path.
+		if cat, catErr := currency.LoadEmbedded(); catErr == nil {
+			p.CMCIDs = cat.CoinMarketCapIDs()
 		}
 		pollers = append(pollers, external.PollerSpec{Poller: p, Pairs: aggPairs})
 		enabled = append(enabled, externalcoinmarketcap.SourceName)
