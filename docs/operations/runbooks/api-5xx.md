@@ -1,6 +1,6 @@
 ---
 title: Runbook — API 5xx rate elevated
-last_verified: 2026-05-03
+last_verified: 2026-05-13
 status: ratified
 severity: P1 at >5% / P2 at >1% / P1 at SLO burn-rate fast
 ---
@@ -220,11 +220,14 @@ the answer is **shed load**, not "add hosts":
 3. **Promote AWS DR if the colo is genuinely capacity-saturated.**
    This is a SEV-1 escalation — the cloud DR pool exists for
    exactly this case but flipping DNS to it is heavyweight; only
-   do it if §1 + §2 don't clear within 10 min. The DR-activation
-   procedure is tracked in `dr-activation.md` (TODO(#0) — runbook
-   in flight); meanwhile, follow the AWS-side warm-standby
-   bring-up notes in [`ha-plan.md`](../../architecture/ha-plan.md)
-   §2.2 ("DR — cloud — AWS primary").
+   do it if §1 + §2 don't clear within 10 min. Follow the
+   end-to-end procedure in
+   [`dr-activation.md`](dr-activation.md) (status: ratified;
+   covers the full SEV-1 cutover from R1 → R2/R3). The AWS-
+   side warm-standby bring-up sequence is the
+   [`ha-plan.md`](../../architecture/ha-plan.md) §2.2
+   ("DR — cloud — AWS primary") reference the dr-activation
+   runbook builds on.
 
 ## Root cause analysis
 

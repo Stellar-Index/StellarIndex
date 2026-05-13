@@ -31,6 +31,16 @@ against.
 
 ### Documentation
 
+- `docs/operations/runbooks/api-5xx.md` Step 3 of "B. Specific
+  endpoint family broken" carried a stale `(TODO(#0) — runbook
+  in flight)` qualifier next to its `dr-activation.md` cross-
+  reference. The runbook actually shipped (status: `ratified`)
+  with the wave-23 incremental work; an operator following step
+  3 in the middle of an incident shouldn't see "runbook in
+  flight" prose against a runbook that's been ratified for ~10
+  days. Updated to a clean cross-reference + reframed
+  ha-plan.md §2.2 as the underlying reference the dr-activation
+  runbook builds on. last_verified bumped to 2026-05-13.
 - Wave-85 hostname-bug sweep widening: a fresh grep on
   `app.ratesengine.net` found three more places where the
   explorer was misattributed to the dashboard's hostname:
