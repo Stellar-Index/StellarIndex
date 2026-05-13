@@ -17,6 +17,21 @@ against.
 
 ### Documentation
 
+- `docs/operations/runbooks/_template.md` refreshed against
+  patterns established across the wave-65, -70, -71, -73, -75
+  runbook series. Removes the long-stale `TODO(#0)` claim that
+  CI enforces every section ("the lint exists for orphans + alert
+  pairing, not for section presence — universally-required is
+  just `## At a glance` + `## Related`"). Adds guidance for: when
+  to use a per-source/per-tier reference matrix instead of a
+  flat triage flow (cross-references the four runbooks that ship
+  the pattern), when to add a `## Why this exists` section
+  (new-metric/seam runbooks like `stripe-platform-sync-errors`),
+  and the wave-75 cross-link discipline (companion runbooks
+  must reciprocate the link). `status` enum extended to include
+  `superseded` (matches the wave-67 status-page-hosting-comparison
+  precedent). `Detected by` field hint nudges authors to name
+  both the multi-host rule file AND the R1 overlay sibling.
 - The `POST /v1/webhooks/stripe` OpenAPI entry now documents the
   inbound observability surface: the
   `ratesengine_stripe_platform_sync_errors_total{operation}`
