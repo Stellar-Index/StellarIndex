@@ -234,10 +234,15 @@ configs/ansible/roles/loki/
 
 ## Edge cases / gotchas
 
-1. **MinIO bucket creation**: the role creates the `loki-chunks`
-   bucket if absent, using the same `mc` client / IAM user
-   pattern as galexie. Need a `loki-writer` IAM policy with
-   PutObject + GetObject on the bucket.
+1. **MinIO bucket pre-creation**: operator creates the
+   `loki-chunks` bucket as a one-shot before the role runs (see
+   `roles/loki/README.md` §"Storage layout"). The role's
+   `server-01-preflight.yml` HEAD-probes
+   `{{ loki_s3_endpoint }}/{{ loki_s3_bucket }}/` and asserts
+   the status is 200 or 403 (bucket exists; 403 = bucket exists
+   but anon can't list, which is expected) — F-1289 fix
+   (codex audit-2026-05-13). Pre-fix the design-note said the
+   role creates the bucket, but no task in the role did so.
 
 2. **Promtail journal access**: requires `Group=systemd-journal`
    on the systemd unit. The role adds the promtail user to the
@@ -249,7 +254,10 @@ configs/ansible/roles/loki/
 
 4. **Disk pressure on the Loki host**: BoltDB index lives
    locally; chunks go to S3 but the index can grow. Preflight
-   asserts ≥ 50 GB free on `/var` to give index room.
+   asserts ≥ `loki_var_min_free_gb` (default 50 GB) free on
+   `/var` via a `df --output=avail -B1` check
+   (`server-01-preflight.yml`) — F-1289 fix (codex
+   audit-2026-05-13).
 
 5. **Loki retention vs S3 lifecycle**: the compactor handles
    retention internally — don't also set a MinIO bucket lifecycle

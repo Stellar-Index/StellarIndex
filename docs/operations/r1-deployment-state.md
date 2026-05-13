@@ -219,7 +219,12 @@ fetched 2026-04-23:
    pipeline (cut-release.sh + release.yml + deploy.yml + Dockerfiles
    from the prior session). v0.0.0-rc.1 cut as the first pipeline
    smoke test; release page at github.com/RatesEngine/rates-engine/
-   releases/tag/v0.0.0-rc.1 with all 12 binaries + SHA256SUMS.
+   releases/tag/v0.0.0-rc.1 with the six binaries (linux/amd64
+   only — arm64 dropped 2026-05-08, GHCR job dropped because no
+   consumer existed) plus SHA256SUMS. The current `cmd/` set is
+   six: ratesengine-{indexer, aggregator, api, ops, migrate,
+   sla-probe} — earlier "12 binaries" prose was stale (F-1221,
+   audit-2026-05-12).
 
    Verified end-to-end on r1:
    - signup → key returned ✓

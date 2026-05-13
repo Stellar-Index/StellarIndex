@@ -55,6 +55,15 @@ haproxy_internal_cidrs:
   - 172.16.0.0/12
   - 192.168.0.0/16
 
+# F-1278 (codex audit-2026-05-13): role renders the COMPLETE
+# /etc/nftables.conf on its dedicated LB hosts. Override these
+# SSH allow-list CIDRs in inventory if your bastion / operator
+# network differs.
+haproxy_allowed_ssh_cidrs:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+
 # ── Monitoring ─────────────────────────────────────────────────
 haproxy_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
 # HAProxy 2.4+ has a built-in Prometheus exporter at /metrics on

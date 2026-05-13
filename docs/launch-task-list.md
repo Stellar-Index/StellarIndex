@@ -334,10 +334,10 @@ FX path is available. Existing Phase 1 path remains the fast lane.
 Next.js 15 static export at [`web/status/`](../web/status/README.md)
 deploying to Cloudflare Pages on every push to `main`. Incidents
 are Markdown files under `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`,
-embedded into the API binary via `go:embed`. Earlier text named
-`cstate` as a candidate; the shipped path is closest in spirit
-but uses Cloudflare Pages + the embedded incident corpus. Operator
-runbook: [`docs/operations/runbooks/sev-status-page-update.md`](operations/runbooks/sev-status-page-update.md).
+embedded into the API binary via `go:embed`. Earlier scaffolds
+were retired in favour of Cloudflare Pages + the embedded
+incident corpus. Operator runbook:
+[`docs/operations/runbooks/sev-status-page-update.md`](operations/runbooks/sev-status-page-update.md).
 
 ### G5. SEV-1 / SEV-2 dry-run (§D, L5.7)
 

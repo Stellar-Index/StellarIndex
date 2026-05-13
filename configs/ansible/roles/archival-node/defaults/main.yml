@@ -404,6 +404,17 @@ minio_version:           "RELEASE.2024-11-07T00-52-20Z"
 minio_port:              9000
 minio_console_port:      9001
 minio_data_path:         "/var/lib/minio"
+# F-1291 (codex audit-2026-05-13): supply-chain checksums for the
+# MinIO server + `mc` client. NOT defaulted here because:
+#   - Both are per-architecture (amd64 vs arm64 differ).
+#   - Both change with every release bump.
+# 09-minio.yml asserts at role-start that these are set + 64 chars.
+# Pull from the matching release's hashes-of-binaries page:
+#   https://dl.min.io/server/minio/release/linux-amd64/sha256sum
+#   https://dl.min.io/client/mc/release/linux-amd64/archive/sha256sum
+# minio_release_sha256: <required; set in inventory>
+# mc_version:           <required; e.g. "RELEASE.2024-11-21T17-21-54Z">
+# mc_release_sha256:    <required; set in inventory>
 # minio_root_user ← vault
 # minio_root_password ← vault
 minio_buckets:
@@ -453,6 +464,12 @@ internal_cidrs:
 # ───── Observability ─────────────────────────────────────────────────
 node_exporter_version:   "1.8.2"
 node_exporter_port:      9100
+# F-1291 (codex audit-2026-05-13): supply-chain checksum for the
+# node_exporter tarball. NOT defaulted here (per-arch + per-release);
+# 10-observability.yml asserts at role-start. Pull from the matching
+# SHA256SUMS line on
+# https://github.com/prometheus/node_exporter/releases/tag/v{{ node_exporter_version }}
+# node_exporter_release_sha256: <required; set in inventory>
 
 core_exporter_port:      9473
 

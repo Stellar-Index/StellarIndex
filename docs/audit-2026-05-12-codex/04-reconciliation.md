@@ -429,6 +429,33 @@ without evidence IDs.
 - `CMD-0189` restores post-rule-overlay control parity: findings `49/19`, XFI
   `44/16`, remediation `46/20`; file coverage now rolls up to `done=126`,
   `in_progress=103`, `todo=1672`; docs lint remains green.
+- `CMD-0190` opens new low-severity `F-1269`: the WASM audit-input README
+  still promises an `_unattributed` bucket that the curated YAML intentionally
+  removed after the 2026-05-01 Reflector-testnet correction.
+- `CMD-0191` falsifies the parallel remediation slice rather than trusting it
+  wholesale. `F-1264`, `F-1265`, `F-1266`, and `F-1267` genuinely close in the
+  workspace; `F-1268` remains open because the R1 rules overlay README still
+  points at `/etc/prometheus/rules.d/` while the active config loads
+  `/etc/prometheus/rules.r1/*.yml`. The same pass also reviewed the newly
+  tracked `internal/obstest/histogram.go` helper and added it to the inventory.
+- `CMD-0192` restores literal control-plane consistency after that recheck:
+  findings `54/15`, XFI `49/12`, remediation `51/16`; file coverage now rolls
+  up to `done=137`, `in_progress=95`, `todo=1670`; tracked-file parity is exact
+  at `1902/1902`; docs lint passes; and the table/detail finding-status
+  mismatch detector returns no rows.
+- `CMD-0193` opens new medium-severity `F-1270`: active Caddy/operator docs
+  contradict ADR-0025 by instructing operators to add Cloudflare edge CIDRs to
+  API `trusted_proxy_cidrs`, even though the implemented architecture pins
+  Cloudflare trust at Caddy and leaves the API trusting only its immediate
+  proxy peer.
+- `CMD-0194` confirms the moving workspace has now genuinely closed
+  `F-1268` and `F-1269`: the R1 rules README points at the loaded
+  `/etc/prometheus/rules.r1/` directory, and the WASM audit README now
+  accurately describes the retired `_unattributed` concept as historical.
+- `CMD-0196` opens high-severity `F-1271`: the Redis Sentinel role/runbook/client
+  stack assumes Sentinel listener authentication, but the rendered
+  `sentinel.conf.j2` only sets `sentinel auth-pass` for master authentication
+  and never configures client-facing Sentinel auth.
 - `CMD-0122` surfaced new high-severity migration finding `F-1261`.
   Migration `0030_asset_supply_history_unique_constraint` fails against the
   compressed hypertable created by `0005`, fresh integration bootstrap dies
@@ -470,3 +497,324 @@ without evidence IDs.
   status across the refreshed TSV. The current inventory roll-up is
   `done=115`, `in_progress=88`, `todo=1698`, with tracked-file parity
   restored at `1901` rows and preserved through `CMD-0169`.
+- `CMD-0197` records the initial Redis exporter ACL-lockdown defect; `CMD-0200`
+  falsifies the first remediation attempt and preserves `F-1272` as open on the
+  default non-lockdown branch.
+- `CMD-0198` closes `F-1270` and `F-1271` on current source after the Caddy trust
+  docs and Sentinel listener-auth render were corrected.
+- `CMD-0199` reopens `F-1266` because the improved Ansible docs now advertise
+  cluster playbooks that are not present in the tracked tree.
+- `CMD-0201` adds `F-1273` for the shipped Sentinel design-note/tabletop drift.
+- `CMD-0202` restores audit-control parity after that tranche:
+  findings `59 fixed / 14 open`, XFI `52 fixed / 13 open`, remediation
+  `54 fixed / 17 open`, file coverage `done=143 / in_progress=99 / todo=1660`,
+  tracked-file parity `1902 / 1902`, docs lint green, and no finding-status
+  mismatches between the register table and detailed sections.
+- `CMD-0203` narrows but preserves `F-1266`: the top-level Ansible README and
+  Redis role README now admit the missing cluster playbooks, while the
+  HAProxy/Loki/Patroni/Prometheus role READMEs still present absent playbooks as
+  runnable commands.
+- `CMD-0204` reopens `F-1265` on the shipped Prometheus role design note, which
+  still documents the retired `critical/warning/info` ladder after the actual
+  configs and operator docs converged.
+- `CMD-0205` restores audit-control parity after those refinements:
+  findings `57 fixed / 16 open`, XFI `51 fixed / 14 open`, remediation
+  `53 fixed / 18 open`, file coverage `done=143 / in_progress=103 / todo=1656`,
+  tracked-file parity `1902 / 1902`, docs lint green, and no finding-status
+  mismatches between the register table and detailed sections.
+- `CMD-0206` closes the residual `F-1265` Prometheus design-note drift after
+  the example routes were updated to `page / ticket / informational`.
+- `CMD-0207` adds `F-1274` for the HAProxy role/design-note references to a
+  missing `api-pod-down` runbook.
+- `CMD-0208` narrows but preserves `F-1273`: the drill command is now
+  authenticated, while the shipped design note still describes future
+  `internal/cachekeys` Sentinel-client work that already landed elsewhere.
+- `CMD-0209` restores audit-control parity after those changes:
+  findings `58 fixed / 16 open`, XFI `52 fixed / 14 open`, remediation
+  `54 fixed / 18 open`, file coverage `done=145 / in_progress=102 / todo=1655`,
+  tracked-file parity `1902 / 1902`, docs lint green, and no finding-status
+  mismatches between the register table and detailed sections.
+- `CMD-0210` closes `F-1266`: the remaining HAProxy/Loki/Patroni role docs now
+  mark absent playbooks as backlog-only, and Prometheus points at tracked
+  `monitoring.yml`.
+- `CMD-0211` closes `F-1272`: exporter username selection now follows the same
+  ACL-lockdown branch that controls ACL-file emission.
+- `CMD-0212` widens but preserves `F-1273`: the Sentinel role README still
+  repeats the already-landed `internal/cachekeys` future-state claim alongside
+  the shipped design note.
+- `CMD-0213` closes `F-1274`: HAProxy docs now redirect to tracked
+  `api-down.md` guidance and record that `api-pod-down.md` was the incorrect
+  historical reference.
+- `CMD-0214` adds high-severity `F-1275`: the shipped HAProxy `/v1/readyz`
+  routing path and API Redis readiness checker can turn a Redis failover into
+  a public routing outage despite maintained fail-open/degraded-serving docs.
+- `CMD-0215` adds `F-1276`: alert/runbook/query docs still publish
+  `job="api"` PromQL even though supported deployments use
+  `ratesengine_api` or `ratesengine-api`.
+- `CMD-0216` adds `F-1277`: `api-down.md` points at nonexistent
+  `internal/api/v1/healthz.go` instead of the live readiness handler in
+  `internal/api/v1/server.go`.
+- `CMD-0217` adds high-severity `F-1278`: the HA-role nftables
+  drop-ins do not compose deterministically with the repo's default-drop
+  firewall baseline and are not real deny policies on their own.
+- `CMD-0218` adds `F-1279`: Patroni writes its firewall drop-in before
+  creating `/etc/nftables.d/`, so a clean-host first run can fail.
+- `CMD-0219` restores audit-control parity after the moving HA/deployment
+  tranche: findings `59 fixed / 20 open`, XFI `55 fixed / 16 open`,
+  remediation `57 fixed / 20 open`, file coverage
+  `done=152 / in_progress=111 / todo=1663`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0220` adds `F-1280`: Patroni's etcd download path defaults to a
+  placeholder checksum that neither defaults nor README document how to replace.
+- `CMD-0221` adds `F-1281`: Patroni's textfile scraper invokes `jq`, but the
+  role never installs or documents that dependency.
+- `CMD-0222` adds `F-1282`: `patroni_pgbackrest_restore_target` is documented
+  but unused, so DR point-in-time restore requests render as immediate restores.
+- `CMD-0223` restores audit-control parity after the Patroni tranche:
+  findings `59 fixed / 23 open`, XFI `55 fixed / 19 open`, remediation
+  `57 fixed / 23 open`, file coverage
+  `done=151 / in_progress=118 / todo=1657`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0224` rechecks the moving HA/Patroni remediation state: `F-1279`,
+  `F-1281`, and `F-1282` now close; `F-1280` narrows to missing README
+  prerequisite/inventory guidance; and `F-1278` remains open because changing
+  the drop-ins to `priority -100` still does not make an early base-chain
+  `accept` final against the later default-drop chain.
+- `CMD-0225` adds `F-1283`: the Timescale primary-down runbook's etcd
+  commands use HTTPS, a stale top-level leader key, and a five-node quorum
+  expectation that do not match the shipped Patroni role's HTTP etcd config,
+  Patroni namespace/scope, and exactly three-node cluster assertion.
+- `CMD-0226` restores audit-control parity after those updates:
+  findings `62 fixed / 21 open`, XFI `58 fixed / 17 open`, remediation
+  `60 fixed / 21 open`, file coverage
+  `done=153 / in_progress=121 / todo=1652`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0227` closes the runtime part of `F-1275`: Redis-only ready-check
+  failure now returns 200/degraded and is regression-tested. The pass adds
+  `F-1284` for the narrower residual docs drift in HAProxy role comments,
+  HAProxy README, and HA plan prose that still describe Redis as
+  readiness-critical.
+- `CMD-0228` restores audit-control parity after that split:
+  findings `63 fixed / 21 open`, XFI `59 fixed / 17 open`, remediation
+  `61 fixed / 21 open`, file coverage
+  `done=152 / in_progress=123 / todo=1651`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0229` closes `F-1277` and narrows `F-1276`: `api-down.md` now points
+  at `internal/api/v1/server.go::handleReadyz`, and maintained API runbooks
+  now use the current selector family; the remaining `F-1276` drift is the
+  stale `job="api"` source comment in `internal/obs/metrics.go`.
+- `CMD-0230` restores audit-control parity after that pass:
+  findings `64 fixed / 20 open`, XFI `60 fixed / 16 open`, remediation
+  `62 fixed / 20 open`, file coverage
+  `done=157 / in_progress=118 / todo=1651`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0231` adds high-severity `F-1285`: Loki and Promtail install upstream
+  release zips without any checksum, while Prometheus and Alertmanager
+  checksums are optional and undocumented.
+- `CMD-0232` adds high-severity `F-1286`: Loki's systemd unit renders S3
+  credentials through literal `${...}` indirection even though systemd does
+  not shell-expand `Environment=` values from `EnvironmentFile`.
+- `CMD-0233` restores audit-control parity after the monitoring-role pass:
+  findings `64 fixed / 22 open`, XFI `60 fixed / 18 open`, remediation
+  `62 fixed / 22 open`, file coverage
+  `done=155 / in_progress=127 / todo=1644`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0234` adds high-severity `F-1287`: Prometheus and Alertmanager bind
+  their HTTP ports to loopback by default, while the generated Prometheus
+  config targets each prom host's private IP for self-scrape and
+  Alertmanager delivery.
+- `CMD-0235` restores audit-control parity after that pass:
+  findings `64 fixed / 23 open`, XFI `60 fixed / 19 open`, remediation
+  `62 fixed / 23 open`, file coverage
+  `done=155 / in_progress=129 / todo=1642`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0236` adds `F-1288`: Prometheus's 20 GB TSDB capacity prerequisite is
+  documented as a preflight assertion, but the implementation explicitly
+  ignores failures from that assertion.
+- `CMD-0237` restores audit-control parity after that pass:
+  findings `64 fixed / 24 open`, XFI `60 fixed / 20 open`, remediation
+  `62 fixed / 24 open`, file coverage
+  `done=155 / in_progress=130 / todo=1641`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0238` closes `F-1286`: the Loki service template no longer renders
+  literal `${RATESENGINE_S3_*}` credential assignments, and the README/defaults
+  now require direct `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` entries in
+  `/etc/default/loki`.
+- `CMD-0239` adds `F-1289`: Loki defaults/docs/design note promise MinIO
+  bucket/access and local capacity preflight coverage, but the server preflight
+  only checks OS, inventory, time sync, and user creation.
+- `CMD-0240` restores audit-control parity after the Loki credential closure
+  and storage-preflight finding:
+  findings `65 fixed / 24 open`, XFI `61 fixed / 20 open`, remediation
+  `63 fixed / 24 open`, file coverage
+  `done=155 / in_progress=132 / todo=1639`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0241` rechecks the moving monitoring-role fixes: `F-1287` and
+  `F-1288` close in source, while `F-1285` narrows to missing checksum
+  variable documentation after all four install tasks gained checksum asserts.
+- `CMD-0242` adds `F-1290`: the Prometheus README still describes loopback-only
+  UI access and a 9094-only firewall after the role moved 9090/9093 to
+  firewall-gated internal network listeners.
+- `CMD-0243` restores audit-control parity after the Prometheus moving-fix
+  reconciliation:
+  findings `67 fixed / 23 open`, XFI `63 fixed / 19 open`, remediation
+  `65 fixed / 23 open`, file coverage
+  `done=161 / in_progress=126 / todo=1639`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0244` adds two adversarial invariant findings: `F-1291` for
+  unauthenticated archival-node MinIO/`mc`/node_exporter executable downloads,
+  and `F-1292` for the active core-lag runbook's Horizon cross-check despite
+  ADR-0001's runbook boundary.
+- `CMD-0245` restores audit-control parity after that pass:
+  findings `67 fixed / 25 open`, XFI `63 fixed / 21 open`, remediation
+  `65 fixed / 25 open`, file coverage
+  `done=164 / in_progress=126 / todo=1636`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0246` rechecks concurrent fixes for the two fresh findings: `F-1292`
+  is source-closed because `core-lag.md` now uses stellar.expert/stellar-rpc
+  instead of Horizon, and `F-1291` narrows because archival-node install tasks
+  now enforce checksums while defaults/operator docs still omit the required
+  digest variables.
+- `CMD-0247` restores audit-control parity after that moving-fix recheck:
+  findings `68 fixed / 24 open`, XFI `64 fixed / 20 open`, remediation
+  `66 fixed / 24 open`, file coverage
+  `done=164 / in_progress=126 / todo=1636`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0248` adds `F-1293` for the Redis Sentinel role's unchecked
+  `redis_exporter` release download and `F-1294` for CI promtool/gitleaks
+  curl-to-tar installers without digest verification.
+- `CMD-0249` restores audit-control parity after that pass:
+  findings `68 fixed / 26 open`, XFI `64 fixed / 22 open`, remediation
+  `66 fixed / 26 open`, file coverage
+  `done=164 / in_progress=126 / todo=1636`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0250` narrows `F-1294` because the promtool installer now verifies a
+  SHA-256 while gitleaks remains unchecked, and adds `F-1295` for the Redis
+  exporter unit rendering the Redis password into a 0644 systemd unit file.
+- `CMD-0251` restores audit-control parity after that pass:
+  findings `68 fixed / 27 open`, XFI `64 fixed / 23 open`, remediation
+  `66 fixed / 27 open`, file coverage
+  `done=164 / in_progress=126 / todo=1636`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0252` rechecks moving fixes for the latest supply-chain findings:
+  `F-1294` closes because both CI tool downloads now verify SHA-256 before
+  extraction, while `F-1293` narrows to missing Redis Sentinel role
+  defaults/README guidance after the task-level `redis_exporter` checksum
+  enforcement landed.
+- `CMD-0253` restores audit-control parity after that moving-fix
+  reconciliation:
+  findings `69 fixed / 26 open`, XFI `65 fixed / 22 open`, remediation
+  `67 fixed / 26 open`, file coverage
+  `done=164 / in_progress=126 / todo=1636`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0254` adds `F-1296`: `release.yml` and `deploy.yml` grant
+  `id-token: write` only for future keyless signing/attestation, and no
+  current step consumes GitHub OIDC. `api-docs.yml` remains the reviewed
+  valid counterexample because GitHub Pages deploy requires the token.
+- `CMD-0255` restores audit-control parity after the workflow OIDC finding:
+  findings `69 fixed / 27 open`, XFI `65 fixed / 23 open`, remediation
+  `67 fixed / 27 open`, file coverage
+  `done=164 / in_progress=126 / todo=1636`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0256` adds `F-1297`: the deploy docs require pinned
+  `<REGION>_SSH_KNOWN_HOSTS`, but `deploy.yml` merely warns when the R1
+  secret is absent and falls back to live `ssh-keyscan`, so the production
+  root-SSH deploy trust anchor is collected during the same run.
+- `CMD-0257` restores audit-control parity after the deploy SSH finding and
+  table-status drift correction:
+  findings `69 fixed / 28 open`, XFI `65 fixed / 24 open`, remediation
+  `67 fixed / 28 open`, file coverage
+  `done=166 / in_progress=127 / todo=1633`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0258` reopens `F-1221`: prior closure checked the fixed
+  `release-process.md` step 4 and `deploy-workflow.md`, but active
+  `CLAUDE.md` still claims arm64 + GHCR release artifacts, the
+  release-process pipeline summary still says amd64 + arm64, and
+  R1 state still references the old 12-binary release shape.
+- `CMD-0259` restores audit-control parity after reopening `F-1221`:
+  findings `68 fixed / 29 open`, XFI `64 fixed / 25 open`, remediation
+  `66 fixed / 29 open`, file coverage
+  `done=166 / in_progress=128 / todo=1632`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0260` adds `F-1298`: `deploy.yml` and `release.yml` interpolate
+  free-form manual inputs directly into `run:` shell scripts before
+  validation, while the static-site deploy workflows mostly use choice
+  inputs or `env:` values and do not show the same shell-source injection
+  shape.
+- `CMD-0261` restores audit-control parity after the workflow input-injection
+  finding:
+  findings `68 fixed / 30 open`, XFI `64 fixed / 26 open`, remediation
+  `66 fixed / 30 open`, file coverage
+  `done=166 / in_progress=128 / todo=1632`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0262` adds `F-1299`: production deploy resolves mutable Ansible
+  tooling at runtime (`ansible-core==2.18.*` plus lower-bound Galaxy
+  collection ranges), so the same repo revision can execute different
+  deploy code without a reviewed dependency diff.
+- `CMD-0263` restores audit-control parity after the mutable deploy-tooling
+  finding:
+  findings `68 fixed / 31 open`, XFI `64 fixed / 27 open`, remediation
+  `66 fixed / 31 open`, file coverage
+  `done=167 / in_progress=128 / todo=1631`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0264` adds `F-1300`: the Healthchecks SLA wrapper defaults to a
+  node_exporter textfile path, but its DynamicUser/ProtectSystem unit lacks
+  a write allowance for that directory, unlike the dedicated
+  `deploy/systemd/sla-probe.service`.
+- `CMD-0265` restores audit-control parity after the Healthchecks SLA
+  sandbox finding:
+  findings `68 fixed / 32 open`, XFI `64 fixed / 28 open`, remediation
+  `66 fixed / 32 open`, file coverage
+  `done=170 / in_progress=131 / todo=1625`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0266` adds `F-1301`: the aggregator-silent P1 runbook tells R1/default
+  single-host operators to inspect `localhost:9464`, but the aggregator code
+  shifts its default listener to `9465` when co-located with the indexer, and
+  R1 Prometheus plus Healthchecks already scrape that shifted endpoint.
+- `CMD-0267` restores audit-control parity after the aggregator metrics-port
+  runbook finding:
+  findings `68 fixed / 33 open`, XFI `64 fixed / 29 open`, remediation
+  `66 fixed / 33 open`, file coverage
+  `done=172 / in_progress=131 / todo=1623`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0268` adds `F-1302`: the Healthchecks smoke wrapper exits `0` before
+  sending `${HEALTHCHECKS_URL_SMOKE}/fail` when the copied `r1-smoke.sh`
+  executable is missing or not executable, so a broken smoke install can
+  silently remove the API-surface evidence path.
+- `CMD-0269` restores audit-control parity after the Healthchecks smoke wrapper
+  finding:
+  findings `68 fixed / 34 open`, XFI `64 fixed / 30 open`, remediation
+  `66 fixed / 34 open`, file coverage
+  `done=175 / in_progress=131 / todo=1620`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
+- `CMD-0270` closes `F-1300`: the current Healthchecks SLA service now grants
+  the node_exporter textfile collector path through `ReadWritePaths` and joins
+  the `ratesengine` group that owns the directory, so the original sandbox
+  write conflict no longer reproduces in source.
+- `CMD-0271` adds `F-1303`: the SLA Healthchecks wrapper exits `0` before
+  sending `${HEALTHCHECKS_URL_SLA_PROBE}/fail` when the probe binary itself is
+  missing or not executable, leaving a binary-deploy break invisible to the
+  external SLA heartbeat.

@@ -85,3 +85,24 @@ redis_internal_cidrs:
 redis_exporter_version: "v1.66.0"
 redis_exporter_listen_port: 9121
 redis_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
+
+# F-1293 (codex audit-2026-05-13): supply-chain checksum for
+# the redis_exporter tarball. Get the SHA-256 from the release
+# notes / signed checksums.txt at
+# https://github.com/oliver006/redis_exporter/releases/tag/{{ redis_exporter_version }}
+# and pin in inventory. Role refuses to install without it.
+redis_exporter_release_sha256: ""
+
+# ── Allowed SSH CIDRs (for whole-host nftables ruleset) ────────
+# F-1278 fix (codex audit-2026-05-13): the redis-sentinel role
+# now renders a COMPLETE /etc/nftables.conf with `policy drop`
+# rather than a drop-in inside a separate `inet redis_filter`
+# table. Drop-ins composed unpredictably with the repo's
+# default-drop base chain — `accept` in one chain at priority
+# -100 does NOT short-circuit a later priority-0 drop in
+# another chain. The role now owns the whole-host firewall on
+# its dedicated hosts. Override these CIDRs in inventory:
+redis_allowed_ssh_cidrs:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16

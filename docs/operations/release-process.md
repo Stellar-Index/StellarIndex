@@ -18,7 +18,9 @@ The pipeline is:
 
 ```
 git tag vX.Y.Z      → release.yml fires
-                    → cross-compiles linux/amd64 + linux/arm64
+                    → cross-compiles linux/amd64
+                      (arm64 dropped 2026-05-08; every region is
+                       amd64; re-add when an arm64 host lands)
                     → uploads binaries + SHA256SUMS to GitHub Releases
                     → operator runs deploy.yml (or manual scp)
 ```

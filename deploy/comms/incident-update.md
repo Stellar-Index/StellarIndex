@@ -6,8 +6,8 @@ fresh "## Update — <UTC timestamp>" subheading. The
 `web/status/` Cloudflare Pages build picks it up on every push
 to `main`; `ratesengine-ops emit-incident --slug <slug>`
 re-fires the customer-webhook fan-out so subscribed customers
-get the new payload too. (F-1211, 2026-05-13: corrects the
-earlier Upptime / GitHub-issue prose — the project never
+get the new payload too. (F-1211, 2026-05-13: prose corrects
+earlier external-issue tracker references — the project never
 adopted that path.) Full authoring procedure:
 `docs/operations/runbooks/sev-status-page-update.md`.
 

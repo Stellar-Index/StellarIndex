@@ -1,55 +1,90 @@
 ---
-# Open the cluster's internal ports to the internal CIDRs only.
-# Pattern matches the archival-node role's nftables idiom.
+# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
+# /etc/nftables.conf for this host. Previously the role wrote a
+# drop-in inside a separate `inet patroni_filter` table with
+# `policy accept`, which composed unpredictably with the repo's
+# default-drop base chain. On HA-dedicated DB hosts the patroni
+# role now owns the whole-host firewall.
 #
-# F-1278 (codex audit-2026-05-13): priority -100 (runs BEFORE
-# the archival-node default-drop chain at priority 0) so accept
-# verdicts in this chain stop the lower-priority drop chain
-# from seeing the packet. Pre-wave-111 this used `priority 0`
-# which is the same priority as the default-drop chain — at
-# equal priority nftables base-chain order is undefined,
-# producing nondeterministic accept-vs-drop outcomes.
+# Postgres + Patroni REST + etcd, internal-only.
 
 - name: ensure nftables installed
   apt:
     name: nftables
     state: present
 
-# F-1279 (codex audit-2026-05-13): the directory-creation task
-# MUST run before the drop-in copy. Pre-wave-111 the directory
-# was created at the end of the file, so a clean Patroni host
-# without a pre-existing /etc/nftables.d/ would fail the first
-# role application at the copy step.
-- name: ensure /etc/nftables.d/ exists
-  file:
-    path: /etc/nftables.d
-    state: directory
-    mode: '0755'
-
-- name: render Patroni nftables drop-in
+- name: render full /etc/nftables.conf (default-drop + postgres + etcd + ssh)
   copy:
-    dest: /etc/nftables.d/40-patroni.conf
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "nft -c -f %s"
     content: |
-      # Managed by ansible (patroni role).
-      # Postgres + Patroni REST + etcd, internal-only.
-      table inet patroni_filter {
-        chain input {
-          type filter hook input priority -100; policy accept;
-      {% for cidr in patroni_internal_cidrs %}
-          ip saddr {{ cidr }} tcp dport { {{ patroni_postgres_port }}, 8008, {{ etcd_client_port }}, {{ etcd_peer_port }} } accept comment "patroni-{{ cidr }}";
+      #!/usr/sbin/nft -f
+      # Managed by ansible (patroni role) — DO NOT EDIT BY HAND.
+      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      flush ruleset
+
+      table inet filter {
+        set internal_v4 {
+          type ipv4_addr
+          flags interval
+          elements = {
+      {% for cidr in patroni_internal_cidrs if ':' not in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
       {% endfor %}
-          ip saddr 127.0.0.1 tcp dport { {{ patroni_postgres_port }}, 8008, {{ etcd_client_port }} } accept comment "patroni-loopback";
-          # Anything not accepted here falls through to the
-          # priority-0 default-drop chain in the archival-node
-          # base template, which drops it (F-1278).
+          }
+        }
+
+        set ssh_allowed_v4 {
+          type ipv4_addr
+          flags interval
+          elements = {
+      {% for cidr in patroni_allowed_ssh_cidrs if ':' not in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
+        chain input {
+          type filter hook input priority filter; policy drop;
+
+          ct state established,related accept
+          ct state invalid drop
+
+          iif lo accept
+
+          ip protocol icmp limit rate 10/second accept
+          ip6 nexthdr ipv6-icmp limit rate 10/second accept
+
+          tcp dport 22 ip saddr @ssh_allowed_v4 ct state new limit rate 30/minute accept comment "ssh"
+
+          # Postgres + Patroni REST + etcd, internal-only.
+          tcp dport { {{ patroni_postgres_port }}, 8008, {{ etcd_client_port }}, {{ etcd_peer_port }} } ip saddr @internal_v4 accept comment "patroni-internal"
+          tcp dport { {{ patroni_postgres_port }}, 8008, {{ etcd_client_port }} } ip saddr 127.0.0.1 accept comment "patroni-loopback"
+
+          limit rate 1/second log prefix "nft-drop: " flags all
+        }
+
+        chain forward {
+          type filter hook forward priority filter; policy drop;
+        }
+
+        chain output {
+          type filter hook output priority filter; policy accept;
         }
       }
-    mode: '0644'
   notify: "firewall rules changed"
 
-- name: ensure nftables loads our drop-in
-  lineinfile:
-    path: /etc/nftables.conf
-    line: 'include "/etc/nftables.d/*.conf"'
-    state: present
+- name: ensure nftables enabled + running
+  systemd:
+    name: nftables
+    state: started
+    enabled: true
+
+- name: remove legacy 40-patroni.conf drop-in (was no-op)
+  file:
+    path: /etc/nftables.d/40-patroni.conf
+    state: absent
   notify: "firewall rules changed"

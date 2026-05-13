@@ -3,22 +3,22 @@ path	top_level	audit_unit	file_kind	status	evidence_refs	cross_refs	notes
 .github/RELEASE_NOTES_TEMPLATE.md	.github	.github/RELEASE_NOTES_TEMPLATE.md	documentation	done	EV-0050;F-1221;F-1222	XFI-0014	Reviewed release-note migration/security prompts; release artifact/doc drift tracked separately
 .github/dependabot.yml	.github	.github/dependabot.yml	config	done	EV-0014;EV-0051;F-1207	XFI-0005	Reviewed dependency coverage; lacks web npm/pnpm ecosystems and hosted alerts are disabled
 .github/workflows/api-audit.yml	.github	.github/workflows	config	done	EV-0041;EV-0050;F-1231	XFI-0023	Reviewed path-limited main-push smoke coverage
-.github/workflows/api-docs.yml	.github	.github/workflows	config	done	EV-0050;F-1203	XFI-0002	Reviewed manual-only generated API docs publish path
-.github/workflows/ci.yml	.github	.github/workflows	config	done	EV-0013;EV-0014;EV-0041;EV-0050;EV-0099;F-1207;F-1231	XFI-0005;XFI-0023	Reviewed CI web/build/security gates, current push-to-main restoration, and added pnpm audit gates; remaining web vulnerability posture tracked separately
-.github/workflows/deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0031;EV-0050;EV-0103;F-1215;F-1216;F-1220	XFI-0010;XFI-0014	Reviewed production deploy workflow, environment approval, action pinning, and the still-unproven tag-matched migration staging path
-.github/workflows/docs-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;F-1215;F-1216	XFI-0010	Reviewed Cloudflare Pages deploy fallback path and environment/action controls
-.github/workflows/explorer-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;F-1215;F-1216	XFI-0010	Reviewed Cloudflare Pages deploy fallback path and environment/action controls
+.github/workflows/api-docs.yml	.github	.github/workflows	config	done	EV-0050;EV-0257;F-1203	XFI-0002;XFI-0088	Reviewed manual-only generated API docs publish path and confirmed its OIDC grant is tied to GitHub Pages deploy
+.github/workflows/ci.yml	.github	.github/workflows	config	done	EV-0013;EV-0014;EV-0041;EV-0050;EV-0099;EV-0250;EV-0252;EV-0255;F-1207;F-1231;F-1294	XFI-0005;XFI-0023;XFI-0086	Reviewed CI web/build/security gates, current push-to-main restoration, pnpm audit gates, and promtool/gitleaks installer integrity; promtool and gitleaks now both verify release archive digests before extraction
+.github/workflows/deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0031;EV-0050;EV-0103;EV-0257;EV-0259;EV-0263;EV-0265;F-1215;F-1216;F-1220;F-1296;F-1297;F-1298;F-1299	XFI-0010;XFI-0014;XFI-0088;XFI-0089;XFI-0090;XFI-0091	Reviewed production deploy workflow, environment approval, action pinning, the still-unproven tag-matched migration staging path, unused OIDC token minting permission, host-key pinning fallback, manual-input shell injection, and mutable Ansible tooling install
+.github/workflows/docs-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;EV-0263;F-1215;F-1216	XFI-0010;XFI-0090	Reviewed Cloudflare Pages deploy fallback path, environment/action controls, and choice-input branch interpolation as a counterexample to deploy/release shell injection
+.github/workflows/explorer-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;EV-0263;F-1215;F-1216	XFI-0010;XFI-0090	Reviewed Cloudflare Pages deploy fallback path, environment/action controls, and env-passed API base URL pattern as a counterexample to deploy/release shell injection
 .github/workflows/k6-weekly.yml	.github	.github/workflows	config	done	EV-0050;F-1206	XFI-0004	Reviewed disabled schedule/manual-only SLA evidence workflow
 .github/workflows/release-validate.yml	.github	.github/workflows	config	done	EV-0037;EV-0050;F-1227	XFI-0019	Reviewed release-validation docker smoke limitation
-.github/workflows/release.yml	.github	.github/workflows	config	done	EV-0026;EV-0032;EV-0050;F-1216;F-1221	XFI-0010;XFI-0014	Reviewed binary-only release path, mutable action tags, and stale GHCR docs mismatch
-.github/workflows/status-page.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;F-1215;F-1216	XFI-0010	Reviewed Cloudflare Pages deploy fallback path and environment/action controls
+.github/workflows/release.yml	.github	.github/workflows	config	done	EV-0026;EV-0032;EV-0050;EV-0257;EV-0261;EV-0263;F-1216;F-1221;F-1296;F-1298	XFI-0010;XFI-0014;XFI-0088;XFI-0090	Reviewed binary-only amd64 release path, mutable action tags, stale GHCR/arm64 docs mismatch, unused OIDC token minting permission, and manual tag-input shell injection
+.github/workflows/status-page.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;EV-0263;F-1215;F-1216	XFI-0010;XFI-0090	Reviewed Cloudflare Pages deploy fallback path, environment/action controls, and env-passed API base URL pattern as a counterexample to deploy/release shell injection
 .gitignore	.gitignore	.gitignore	policy	done	EV-0022;EV-0050		Reviewed secret/runtime/build ignore boundaries
 .gitleaks.toml	.gitleaks.toml	.gitleaks.toml	config	done	EV-0015;EV-0050		Reviewed allowlists and local scan result; no new secret-leak finding
 .golangci.yml	.golangci.yml	.golangci.yml	config	done	EV-0013;EV-0050		Reviewed linter set/exclusions; no standalone finding beyond existing verify gaps
 .spectral.yaml	.spectral.yaml	.spectral.yaml	config	done	EV-0008;EV-0050		Reviewed OpenAPI spectral baseline
 AGENTS.md	AGENTS.md	AGENTS.md	documentation	done	EV-0180			Reviewed agent-facing orientation claims; no new defect beyond separately tracked CLAUDE/F-1211 drift
 CHANGELOG.md	CHANGELOG.md	CHANGELOG.md	documentation	done	EV-0180			Reviewed as historical release log; legacy status-page mentions are archival entries, not current operator instructions
-CLAUDE.md	CLAUDE.md	CLAUDE.md	documentation	in_progress	EV-0178,F-1211	XFI-0007	Status-page repo orientation still names retired cstate scaffold
+CLAUDE.md	CLAUDE.md	CLAUDE.md	documentation	in_progress	EV-0178;EV-0261;F-1211;F-1221	XFI-0007;XFI-0014	Status-page repo orientation still names retired cstate scaffold and release orientation still claims arm64 plus GHCR artifacts
 CODEOWNERS	CODEOWNERS	CODEOWNERS	policy	done	EV-0025;EV-0026;EV-0050;F-1214	XFI-0010	Reviewed ownership policy; hosted branch protection does not enforce it
 CODE_OF_CONDUCT.md	CODE_OF_CONDUCT.md	CODE_OF_CONDUCT.md	documentation	done	EV-0180			Reviewed conduct/reporting policy surface; no additional audit finding
 CONTRIBUTING.md	CONTRIBUTING.md	CONTRIBUTING.md	documentation	done	EV-0026;EV-0050;F-1214;F-1231	XFI-0010;XFI-0023	Reviewed local policy claims against hosted controls
@@ -29,9 +29,9 @@ SECURITY.md	SECURITY.md	SECURITY.md	documentation	done	EV-0050;EV-0051;F-1207		R
 VERSIONS.md	VERSIONS.md	VERSIONS.md	documentation	done	EV-0180	F-1240	XFI-0032	Reviewed pinned-snapshot/tool-version claims against go.mod, Makefile, and CI; no new defect beyond already-closed Go-toolchain skew finding
 cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055		Reviewed storage-neutral adapter boundary for change summaries; no standalone finding
 cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055;EV-0060;EV-0103;F-1242	XFI-0034	Reviewed contribution sink adapter and batch forwarding; current workspace writes `volume_usd` from a still-misaligned pre-filter total.
-cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;EV-0105;EV-0106;EV-0123;EV-0134;EV-0155;F-1213;F-1236;F-1249;F-1260	XFI-0009;XFI-0028;XFI-0041;XFI-0052	Reviewed aggregation, stablecoin/min-volume gating, webhook producer fan-out, Redis/cache, supply refresher wiring, and the native-XLM live-to-static reserve fallback that still bypasses the stale-component gate through `MinComponentLedger=0`
+cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;EV-0105;EV-0106;EV-0123;EV-0134;EV-0155;EV-0269;F-1213;F-1236;F-1249;F-1260;F-1301	XFI-0009;XFI-0028;XFI-0041;XFI-0052;XFI-0093	Reviewed aggregation, stablecoin/min-volume gating, webhook producer fan-out, Redis/cache, supply refresher wiring, the native-XLM live-to-static reserve fallback that still bypasses the stale-component gate through `MinComponentLedger=0`, and the single-host metrics listener shift to 9465
 cmd/ratesengine-aggregator/main_test.go	cmd	cmd/ratesengine-aggregator	test	done	EV-0052;EV-0055		Command package tests pass; coverage tied to main wiring
-cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;EV-0096;EV-0100;EV-0103;EV-0126;EV-0127;EV-0128;EV-0130;EV-0142;EV-0143;EV-0144;EV-0145;EV-0146;F-1217;F-1218;F-1219;F-1226;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259	XFI-0011;XFI-0012;XFI-0013;XFI-0018;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051	Reviewed startup wiring, auth/billing seams, HTTP timeouts, Redis optionality, landed signup store/tracker/verifier/gate coupling, webhook worker/producer coupling, usage-reader nil path, usage/account-attribution drift, current StripePlatformBridge wiring, SEP-10/stream fixes, and partial KeyPolicy production wiring
+cmd/ratesengine-api/main.go	cmd	cmd/ratesengine-api	runtime	done	EV-0038;EV-0053;EV-0054;EV-0055;EV-0069;EV-0073;EV-0076;EV-0094;EV-0095;EV-0096;EV-0100;EV-0103;EV-0126;EV-0127;EV-0128;EV-0130;EV-0142;EV-0143;EV-0144;EV-0145;EV-0146;EV-0214;EV-0227;F-1217;F-1218;F-1219;F-1226;F-1228;F-1238;F-1245;F-1247;F-1249;F-1258;F-1259;F-1275;F-1284	XFI-0011;XFI-0012;XFI-0013;XFI-0018;XFI-0020;XFI-0030;XFI-0037;XFI-0039;XFI-0041;XFI-0050;XFI-0051;XFI-0067;XFI-0076	Rechecked API readiness criticality; Redis-only failure is now non-critical/degraded while HAProxy docs still need reconciliation
 cmd/ratesengine-api/main_test.go	cmd	cmd/ratesengine-api	test	done	EV-0052;EV-0055		Command package tests pass; startup/test seams reviewed
 cmd/ratesengine-indexer/main.go	cmd	cmd/ratesengine-indexer	runtime	done	EV-0048;EV-0055;EV-0080;EV-0102;F-1237;F-1251	XFI-0029;XFI-0043	Reviewed connector wiring, source startup, committed CMC ID propagation, cursor/observer hooks, and FX-derived USD-volume resolver wiring
 cmd/ratesengine-indexer/main_test.go	cmd	cmd/ratesengine-indexer	test	done	EV-0052;EV-0055		Command package tests pass; indexer wiring coverage reviewed
@@ -61,24 +61,24 @@ cmd/ratesengine-ops/verify_archive_chunks_test.go	cmd	cmd/ratesengine-ops	test	d
 cmd/ratesengine-ops/wasm_extract.go	cmd	cmd/ratesengine-ops	runtime	done	EV-0055;F-1239	XFI-0031	Reviewed Galexie WASM extraction worker path; progress-zero panic tracked
 cmd/ratesengine-ops/wasm_extract_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed WASM code extraction change-type tests; missing progress-zero coverage tracked
 cmd/ratesengine-ops/wasm_history_test.go	cmd	cmd/ratesengine-ops	test	done	EV-0052;EV-0055		Reviewed WASM transition/storage/code-upload/merge tests; missing progress-zero coverage tracked
-cmd/ratesengine-sla-probe/main.go	cmd	cmd/ratesengine-sla-probe	runtime	done	EV-0020;EV-0055	XFI-0002	Reviewed endpoint construction, auth header, observed_at freshness, and report verdict logic
+cmd/ratesengine-sla-probe/main.go	cmd	cmd/ratesengine-sla-probe	runtime	done	EV-0020;EV-0055;EV-0267;EV-0274;F-1300;F-1303	XFI-0002;XFI-0092;XFI-0095	Reviewed endpoint construction, auth header, observed_at freshness, report verdict logic, textfile-write fatal exit semantics, and the Healthchecks wrapper's missing-binary boundary
 cmd/ratesengine-sla-probe/main_test.go	cmd	cmd/ratesengine-sla-probe	test	done	EV-0052;EV-0055		Reviewed SLA latency/availability/freshness/static endpoint tests
 cmd/ratesengine-sla-probe/textfile.go	cmd	cmd/ratesengine-sla-probe	runtime	done	EV-0055		Reviewed Prometheus textfile output, pass/fail timestamp behavior, and atomic write
 cmd/ratesengine-sla-probe/textfile_test.go	cmd	cmd/ratesengine-sla-probe	test	done	EV-0052;EV-0055		Reviewed textfile metric ordering/pass/fail/atomic-write tests
 commitlint.config.js	commitlint.config.js	commitlint.config.js	config	done	EV-0050		Reviewed commit style policy config; enforcement depends on broader GitHub controls
-configs/alertmanager/README.md	configs	configs/alertmanager	documentation	in_progress	EV-0182,F-1265	XFI-0057	Migration note still claims Ansible template uses retired severity vocabulary
-configs/alertmanager/alertmanager.r1.yml	configs	configs/alertmanager	config	in_progress	EV-0182,F-1265	XFI-0057	Header comment still claims severity mismatch with Ansible path that no longer exists
+configs/alertmanager/README.md	configs	configs/alertmanager	documentation	done	EV-0182;EV-0191;F-1265	XFI-0057	Reviewed stale severity-migration claim and confirmed current workspace README now matches the shared page/ticket/informational ladder
+configs/alertmanager/alertmanager.r1.yml	configs	configs/alertmanager	config	done	EV-0182;EV-0191;F-1265	XFI-0057	Reviewed stale header-comment claim and confirmed the current comment now matches the Ansible template vocabulary
 configs/alertmanager/apply.sh	configs	configs/alertmanager	script	todo			cold audit pending
-configs/ansible/README.md	configs	configs/ansible	documentation	in_progress	EV-0184,F-1266	XFI-0058	Still says archival-node is the only role and overstates Promtail/Loki wiring
+configs/ansible/README.md	configs	configs/ansible	documentation	done	EV-0184;EV-0191;EV-0199;EV-0203;EV-0265;F-1266;F-1299	XFI-0058;XFI-0091	Reviewed role-inventory/Promtail drift, tracked playbook inventory, and mutable Ansible install guidance
 configs/ansible/ansible.cfg	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/inventory/r1.example.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/inventory/r2.example.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/inventory/r3.example.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/playbooks/archival-node.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/playbooks/deploy-binary.yml	configs	configs/ansible	config	done	EV-0103;F-1220	XFI-0014	Reviewed new pre-binary migration sync/apply flow and its dependency on ansible.posix.synchronize in a workflow that installs ansible-core only
+configs/ansible/playbooks/deploy-binary.yml	configs	configs/ansible	config	done	EV-0103;EV-0259;EV-0265;F-1220;F-1297;F-1299	XFI-0014;XFI-0089;XFI-0091	Reviewed new pre-binary migration sync/apply flow, its dependency on ansible.posix.synchronize, downstream reliance on workflow-provided SSH trust setup, and mutable deploy-tool dependency resolution
 configs/ansible/playbooks/monitoring.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/requirements.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/archival-node/defaults/main.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201		Reviewed firewall intended public/internal ports
+configs/ansible/requirements.yml	configs	configs/ansible	config	done	EV-0265;F-1299	XFI-0091	Reviewed Galaxy collection dependency contract; lower-bound ranges and duplicate community.general create mutable deploy tooling
+configs/ansible/roles/archival-node/defaults/main.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201,F-1291	XFI-0083	Reviewed firewall intended public/internal ports and archival-node executable version pins/checksum gaps
 configs/ansible/roles/archival-node/files/galexie-append.sh	configs	configs/ansible	script	todo			cold audit pending
 configs/ansible/roles/archival-node/files/galexie-archive-fill.sh	configs	configs/ansible	script	todo			cold audit pending
 configs/ansible/roles/archival-node/files/galexie-backfill-status.sh	configs	configs/ansible	script	todo			cold audit pending
@@ -92,8 +92,8 @@ configs/ansible/roles/archival-node/tasks/05-postgres.yml	configs	configs/ansibl
 configs/ansible/roles/archival-node/tasks/06-stellar-core.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/07-galexie.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/08-stellar-rpc.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/archival-node/tasks/09-minio.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184,F-1266	XFI-0058	Reviewed against README claim; promtail-to-Loki wiring remains explicit TODO
+configs/ansible/roles/archival-node/tasks/09-minio.yml	configs	configs/ansible	config	done	F-1291	XFI-0083	Reviewed MinIO and mc install tasks for checksum/version enforcement
+configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184;EV-0273;F-1266;F-1291;F-1300	XFI-0058;XFI-0083;XFI-0092	Reviewed against README claim, node_exporter checksum path, and textfile collector ownership for the Healthchecks SLA sandbox closure; promtail-to-Loki wiring remains explicit TODO
 configs/ansible/roles/archival-node/tasks/11-firewall.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201		Reviewed nftables/UFW service contract
 configs/ansible/roles/archival-node/tasks/12-hardening.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/13-healthcheck.yml	configs	configs/ansible	config	todo			cold audit pending
@@ -117,8 +117,8 @@ configs/ansible/roles/archival-node/templates/systemd/ratesengine-aggregator.ser
 configs/ansible/roles/archival-node/templates/systemd/ratesengine-indexer.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/systemd/stellar-core.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/systemd/stellar-rpc.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/haproxy/README.md	configs	configs/ansible	documentation	todo			cold audit pending
-configs/ansible/roles/haproxy/defaults/main.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/haproxy/README.md	configs	configs/ansible	documentation	in_progress	EV-0203;EV-0207;EV-0210;EV-0213;EV-0227;F-1266;F-1274;F-1284	XFI-0058;XFI-0066;XFI-0076	Reviewed role-doc playbook/runbook drift and found residual stale Redis-critical readyz wording after runtime fix
+configs/ansible/roles/haproxy/defaults/main.yml	configs	configs/ansible	config	in_progress	EV-0214;EV-0227;F-1275;F-1284	XFI-0067;XFI-0076	Runtime readiness issue is fixed, but default comments still describe Redis as readyz-critical
 configs/ansible/roles/haproxy/handlers/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/haproxy/meta/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/haproxy/tasks/01-preflight.yml	configs	configs/ansible	config	todo			cold audit pending
@@ -126,107 +126,107 @@ configs/ansible/roles/haproxy/tasks/02-install.yml	configs	configs/ansible	confi
 configs/ansible/roles/haproxy/tasks/03-haproxy-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/haproxy/tasks/04-keepalived-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/haproxy/tasks/05-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/haproxy/tasks/06-firewall.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/haproxy/tasks/06-firewall.yml	configs	configs/ansible	config	in_progress	EV-0217;EV-0224;F-1278	XFI-0070	Rechecked HAProxy nftables drop-in after priority -100 remediation; cross-role accept-vs-default-drop composition remains open
 configs/ansible/roles/haproxy/tasks/07-monitoring.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/haproxy/tasks/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/haproxy/templates/haproxy-systemd-override.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/haproxy/templates/haproxy.cfg.j2	configs	configs/ansible	unknown	todo			cold audit pending
+configs/ansible/roles/haproxy/templates/haproxy.cfg.j2	configs	configs/ansible	config	in_progress	EV-0214;EV-0227;F-1275;F-1284	XFI-0067;XFI-0076	Runtime readiness issue is fixed, but template comments still describe Redis as readyz-critical
 configs/ansible/roles/haproxy/templates/keepalived.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/loki/README.md	configs	configs/ansible	documentation	todo			cold audit pending
-configs/ansible/roles/loki/defaults/main.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/loki/README.md	configs	configs/ansible	documentation	in_progress	EV-0203;EV-0210;EV-0231;EV-0232;EV-0238;EV-0239;EV-0241;F-1266;F-1285;F-1286;F-1289	XFI-0058;XFI-0077;XFI-0078;XFI-0081	Reviewed role-doc playbook drift, checksum requirements, S3 credential contract closure, and missing storage preflight enforcement; checksum variables remain undocumented
+configs/ansible/roles/loki/defaults/main.yml	configs	configs/ansible	config	in_progress	EV-0231;EV-0232;EV-0238;EV-0239;EV-0241;F-1285;F-1286;F-1289	XFI-0077;XFI-0078;XFI-0081	Reviewed version pins, S3 credential env-name defaults, documented MinIO bucket preflight promise, and missing checksum variable documentation
 configs/ansible/roles/loki/handlers/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/loki/meta/main.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/loki/tasks/agent-01-install.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/loki/tasks/agent-01-install.yml	configs	configs/ansible	config	done	EV-0231;EV-0241;F-1285	XFI-0077	Reviewed Promtail upstream download path; task now asserts and uses promtail_release_sha256
 configs/ansible/roles/loki/tasks/agent-02-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/loki/tasks/agent-03-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/loki/tasks/main.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/loki/tasks/server-01-preflight.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/loki/tasks/server-02-install.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/loki/tasks/server-01-preflight.yml	configs	configs/ansible	config	in_progress	EV-0239;F-1289	XFI-0081	Reviewed server preflight; it omits documented MinIO bucket/access and local capacity checks
+configs/ansible/roles/loki/tasks/server-02-install.yml	configs	configs/ansible	config	done	EV-0231;EV-0241;F-1285	XFI-0077	Reviewed Loki upstream download path; task now asserts and uses loki_release_sha256
 configs/ansible/roles/loki/tasks/server-03-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/loki/tasks/server-04-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/loki/tasks/server-05-firewall.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/loki/templates/loki-config.yaml.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/loki/templates/loki.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
+configs/ansible/roles/loki/tasks/server-05-firewall.yml	configs	configs/ansible	config	in_progress	EV-0217;EV-0224;F-1278	XFI-0070	Rechecked Loki nftables drop-in after priority -100 remediation; cross-role accept-vs-default-drop composition remains open
+configs/ansible/roles/loki/templates/loki-config.yaml.j2	configs	configs/ansible	config	in_progress	EV-0232;F-1286	XFI-0078	Reviewed S3 storage comments and credential expectations against the systemd unit
+configs/ansible/roles/loki/templates/loki.service.j2	configs	configs/ansible	config	in_progress	EV-0232;F-1286	XFI-0078	Reviewed systemd environment rendering; unit relies on non-existent shell-style expansion for S3 credentials
 configs/ansible/roles/loki/templates/promtail-config.yaml.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/loki/templates/promtail.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/patroni/README.md	configs	configs/ansible	documentation	todo			cold audit pending
-configs/ansible/roles/patroni/defaults/main.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/patroni/README.md	configs	configs/ansible	documentation	in_progress	EV-0203;EV-0210;EV-0220;EV-0221;EV-0222;EV-0224;F-1266;F-1280;F-1281;F-1282	XFI-0058;XFI-0072;XFI-0073;XFI-0074	Rechecked Patroni README after remediation; playbook/jq/restore-target drift is closed, but required etcd checksum guidance is still missing
+configs/ansible/roles/patroni/defaults/main.yml	configs	configs/ansible	config	in_progress	EV-0220;EV-0222;EV-0224;F-1280;F-1282	XFI-0072;XFI-0074	Rechecked Patroni defaults; restore target is now wired and checksum requirement is commented, while README guidance remains incomplete
 configs/ansible/roles/patroni/handlers/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/patroni/meta/main.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/01-preflight.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/02-etcd-install.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/patroni/tasks/01-preflight.yml	configs	configs/ansible	config	in_progress	EV-0225;F-1283	XFI-0075	Reviewed three-node cluster assertion against Timescale primary-down runbook five-node quorum text
+configs/ansible/roles/patroni/tasks/02-etcd-install.yml	configs	configs/ansible	config	in_progress	EV-0220;EV-0224;F-1280	XFI-0072	Rechecked etcd install path; preflight assertion replaces placeholder fallback, leaving README guidance open
 configs/ansible/roles/patroni/tasks/03-etcd-configure.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/04-etcd-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/05-patroni-install.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/patroni/tasks/04-etcd-systemd.yml	configs	configs/ansible	config	in_progress	EV-0225;F-1283	XFI-0075	Reviewed etcd health command endpoint scheme against Timescale primary-down runbook
+configs/ansible/roles/patroni/tasks/05-patroni-install.yml	configs	configs/ansible	config	done	EV-0221;EV-0224;F-1281	XFI-0073	Rechecked package install list; jq is now installed before the textfile scraper
 configs/ansible/roles/patroni/tasks/06-patroni-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/patroni/tasks/07-patroni-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml	configs	configs/ansible	config	done	EV-0222;EV-0224;F-1282	XFI-0074	Rechecked pgBackRest restore command; target validation and flag rendering now close the finding
 configs/ansible/roles/patroni/tasks/09-patroni-join.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/10-firewall.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/tasks/11-monitoring.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/patroni/tasks/10-firewall.yml	configs	configs/ansible	config	in_progress	EV-0217;EV-0218;EV-0224;F-1278;F-1279	XFI-0070;XFI-0071	Rechecked Patroni firewall; parent-directory ordering is fixed, but cross-role nftables composition remains open
+configs/ansible/roles/patroni/tasks/11-monitoring.yml	configs	configs/ansible	config	in_progress	EV-0221;F-1281	XFI-0073	Reviewed Patroni textfile scraper and logged the undeclared jq runtime dependency
 configs/ansible/roles/patroni/tasks/main.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/patroni/templates/etcd.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
+configs/ansible/roles/patroni/templates/etcd.conf.j2	configs	configs/ansible	config	in_progress	EV-0225;F-1283	XFI-0075	Reviewed rendered HTTP etcd endpoint scheme against Timescale primary-down runbook HTTPS examples
 configs/ansible/roles/patroni/templates/etcd.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/patroni/templates/patroni.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/patroni/templates/patroni.yml.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/prometheus/README.md	configs	configs/ansible	documentation	in_progress	EV-0184,F-1265	XFI-0057	Still documents retired critical/warning/info severity vocabulary
-configs/ansible/roles/prometheus/defaults/main.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/patroni/templates/patroni.yml.j2	configs	configs/ansible	config	in_progress	EV-0225;F-1283	XFI-0075	Reviewed Patroni namespace/scope against runbook stale leader-key path
+configs/ansible/roles/prometheus/README.md	configs	configs/ansible	documentation	in_progress	EV-0184;EV-0191;EV-0203;EV-0210;EV-0231;EV-0234;EV-0236;EV-0241;EV-0242;EV-0269;F-1265;F-1266;F-1285;F-1287;F-1288;F-1290;F-1301	XFI-0057;XFI-0058;XFI-0077;XFI-0079;XFI-0080;XFI-0082;XFI-0093	Reviewed severity wording, playbook-doc drift, monitoring binary checksums, bind-target closure, TSDB disk prerequisite closure, residual README network-boundary drift, and the missing single-host aggregator 9465 caveat in the scrape-port table
+configs/ansible/roles/prometheus/defaults/main.yml	configs	configs/ansible	config	in_progress	EV-0231;EV-0234;EV-0236;EV-0241;EV-0242;F-1285;F-1287;F-1288;F-1290	XFI-0077;XFI-0079;XFI-0080;XFI-0082	Reviewed version pins, listen-address defaults, retention defaults, and checksum documentation; runtime bind and disk-preflight gaps are source-closed, but docs still lag listener/firewall posture
 configs/ansible/roles/prometheus/handlers/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/prometheus/meta/main.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/prometheus/tasks/01-preflight.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/prometheus/tasks/02-install.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/prometheus/tasks/01-preflight.yml	configs	configs/ansible	config	done	EV-0236;EV-0241;F-1288	XFI-0080	Reviewed TSDB disk-space assert; task now blocks using df output against the documented 20 GB threshold
+configs/ansible/roles/prometheus/tasks/02-install.yml	configs	configs/ansible	config	done	EV-0231;EV-0241;F-1285	XFI-0077	Reviewed Prometheus and Alertmanager upstream downloads; tasks now assert and use required checksum variables
 configs/ansible/roles/prometheus/tasks/03-prometheus-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/prometheus/tasks/04-alertmanager-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/prometheus/tasks/05-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/prometheus/tasks/06-firewall.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/prometheus/tasks/06-firewall.yml	configs	configs/ansible	config	in_progress	EV-0217;EV-0224;EV-0241;EV-0242;F-1278;F-1287;F-1290	XFI-0070;XFI-0079;XFI-0082	Rechecked Prometheus nftables drop-in after priority -100 remediation; it now opens 9090/9093/9094 to internal CIDRs, while broader nftables composition remains open and README wording lags
 configs/ansible/roles/prometheus/tasks/07-monitoring.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/prometheus/tasks/main.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/prometheus/templates/alertmanager.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
+configs/ansible/roles/prometheus/templates/alertmanager.service.j2	configs	configs/ansible	config	done	EV-0234;EV-0241;F-1287	XFI-0079	Reviewed Alertmanager bind flags against generated Prometheus alertmanager targets; bind-target mismatch is source-closed
 configs/ansible/roles/prometheus/templates/alertmanager.yml.j2	configs	configs/ansible	config	done	EV-0182,F-1265	XFI-0057	Reviewed actual template severity ladder; matches page/ticket/informational contract
-configs/ansible/roles/prometheus/templates/prometheus.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/prometheus/templates/prometheus.yml.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/redis-sentinel/README.md	configs	configs/ansible	documentation	done	EV-0184			Reviewed against current Sentinel-aware config/runtime surfaces; no new defect
-configs/ansible/roles/redis-sentinel/defaults/main.yml	configs	configs/ansible	config	done	EV-0083;F-1253	XFI-0045	Reviewed ACL-lockdown toggle semantics and rollout coupling
+configs/ansible/roles/prometheus/templates/prometheus.service.j2	configs	configs/ansible	config	done	EV-0234;EV-0241;F-1287	XFI-0079	Reviewed Prometheus bind flags against generated self-scrape targets; bind-target mismatch is source-closed
+configs/ansible/roles/prometheus/templates/prometheus.yml.j2	configs	configs/ansible	config	in_progress	EV-0197;EV-0200;EV-0215;EV-0234;EV-0241;EV-0249;EV-0253;F-1272;F-1276;F-1287;F-1293;F-1295	XFI-0064;XFI-0068;XFI-0079;XFI-0085;XFI-0087	Reviewed as the Redis metrics consumer, API job-label source, and generated self-scrape/alertmanager target topology; bind-target mismatch is source-closed
+configs/ansible/roles/redis-sentinel/README.md	configs	configs/ansible	documentation	in_progress	EV-0184;EV-0196;EV-0197;EV-0198;EV-0199;EV-0200;EV-0203;EV-0212;EV-0249;EV-0255;F-1266;F-1271;F-1272;F-1273;F-1293	XFI-0058;XFI-0063;XFI-0064;XFI-0065;XFI-0085	Playbook/auth drift is source-closed, but the role README still describes the already-landed FailoverClient path as future `internal/cachekeys` work and omits redis_exporter checksum guidance
+configs/ansible/roles/redis-sentinel/defaults/main.yml	configs	configs/ansible	config	done	EV-0083;EV-0200;EV-0211;EV-0249;EV-0253;EV-0255;F-1253;F-1272;F-1293;F-1295	XFI-0045;XFI-0064;XFI-0085;XFI-0087	Reviewed ACL-lockdown toggle semantics, rollout coupling, exporter auth branch selection, redis_exporter version/checksum contract, and exporter secret boundary; checksum enforcement is in code but the required digest variable remains undocumented here
 configs/ansible/roles/redis-sentinel/handlers/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/meta/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/tasks/01-preflight.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/tasks/02-install.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/redis-sentinel/tasks/03-redis-configure.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/redis-sentinel/tasks/03-redis-configure.yml	configs	configs/ansible	config	in_progress	EV-0200;F-1272	XFI-0064	ACL-file render is lockdown-gated, which makes the unconditional exporter ACL user selection invalid on the default path
 configs/ansible/roles/redis-sentinel/tasks/04-sentinel-configure.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/tasks/05-systemd.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/redis-sentinel/tasks/06-firewall.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/redis-sentinel/tasks/06-firewall.yml	configs	configs/ansible	config	in_progress	EV-0217;EV-0224;F-1278	XFI-0070	Rechecked Redis Sentinel nftables drop-in after priority -100 remediation; cross-role accept-vs-default-drop composition remains open
+configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml	configs	configs/ansible	config	done	EV-0197;EV-0200;EV-0211;EV-0249;EV-0253;EV-0255;F-1272;F-1293;F-1295	XFI-0064;XFI-0085;XFI-0087	Reviewed exporter systemd render, named-user auth branch selection, now-checked redis_exporter release download, and remaining inline Redis password exposure
 configs/ansible/roles/redis-sentinel/tasks/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/redis-sentinel/templates/redis-systemd-override.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/redis-sentinel/templates/redis.conf.j2	configs	configs/ansible	unknown	done	EV-0083;F-1253	XFI-0045	Reviewed Redis server-side ACL-file activation path
-configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/redis-sentinel/templates/users.acl.j2	configs	configs/ansible	unknown	done	EV-0083;EV-0084;EV-0098;F-1253;F-1254	XFI-0045;XFI-0046	Reviewed default-user shutdown, named application ACL user contract, prior ACL drift, and current keyspace allow-list fix
-configs/ansible/tasks/deploy-one-binary.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/audit/README.md	configs	configs/audit	documentation	in_progress	EV-0190;F-1269	XFI-0061	Reviewed README/YAML schema drift; remains open under F-1269
+configs/ansible/roles/redis-sentinel/templates/redis.conf.j2	configs	configs/ansible	unknown	done	EV-0083;EV-0200;EV-0211;F-1253;F-1272	XFI-0045;XFI-0064	Reviewed Redis server-side ACL-file activation path and confirmed it now stays aligned with exporter username selection
+configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2	configs	configs/ansible	config	done	EV-0196;EV-0198;F-1271	XFI-0063	Reviewed Sentinel listener-auth drift and confirmed current render now emits requirepass while preserving sentinel auth-pass
+configs/ansible/roles/redis-sentinel/templates/users.acl.j2	configs	configs/ansible	unknown	done	EV-0083;EV-0084;EV-0098;EV-0197;EV-0200;EV-0211;F-1253;F-1254;F-1272	XFI-0045;XFI-0046;XFI-0064	Reviewed default-user shutdown, named application ACL user contract, prior ACL drift, current keyspace allow-list fix, and the closed exporter ACL coupling
+configs/ansible/tasks/deploy-one-binary.yml	configs	configs/ansible	config	done	EV-0259;EV-0265;F-1297;F-1299	XFI-0089;XFI-0091	Reviewed binary swap, rollback, health-probe, backup-pruning path, and dependency on mutable deploy-time Ansible modules
+configs/audit/README.md	configs	configs/audit	documentation	done	EV-0190;EV-0194;F-1269	XFI-0061	Reviewed README/YAML schema drift and confirmed current README now matches the eight-source live schema while documenting the removed historical bucket
 configs/audit/wasm-walk-contracts.yaml	configs	configs/audit	config	done	EV-0190;F-1269	XFI-0061	Reviewed curated eight-source YAML shape and the 2026-05-01 removal note for prior misclassified leftovers
-configs/caddy/Caddyfile.api	configs	configs/caddy	unknown	todo			cold audit pending
-configs/caddy/README.md	configs	configs/caddy	documentation	todo			cold audit pending
+configs/caddy/Caddyfile.api	configs	configs/caddy	config	done	EV-0193		Reviewed current Cloudflare/Caddy trust-boundary implementation surface; no new defect in the Caddyfile itself from this pass
+configs/caddy/README.md	configs	configs/caddy	documentation	done	EV-0193;EV-0198;F-1270	XFI-0062	Reviewed trust-boundary drift and confirmed current prose now keeps Cloudflare CIDRs at Caddy per ADR-0025
 configs/example.toml	configs	configs/example.toml	config	in_progress	EV-0083;F-1253	XFI-0045	Reviewed Redis ACL username omission in example config; broader config-surface review remains open
-configs/healthchecks/README.md	configs	configs/healthchecks	documentation	in_progress	EV-0186,F-1267	XFI-0059	Still says create four checks despite current five-URL env/timer surface
-configs/healthchecks/heartbeat.sh	configs	configs/healthchecks	script	todo			cold audit pending
-configs/healthchecks/install.sh	configs	configs/healthchecks	script	in_progress	EV-0186,F-1267	XFI-0059	Placeholder comment still says four Healthchecks URLs while emitting five
-configs/healthchecks/ratesengine-heartbeat@.service	configs	configs/healthchecks	unknown	todo			cold audit pending
-configs/healthchecks/ratesengine-heartbeat@.timer	configs	configs/healthchecks	unknown	todo			cold audit pending
-configs/healthchecks/ratesengine-sla-probe.service	configs	configs/healthchecks	unknown	todo			cold audit pending
-configs/healthchecks/ratesengine-sla-probe.timer	configs	configs/healthchecks	unknown	todo			cold audit pending
-configs/healthchecks/ratesengine-smoke.service	configs	configs/healthchecks	unknown	todo			cold audit pending
-configs/healthchecks/ratesengine-smoke.timer	configs	configs/healthchecks	unknown	todo			cold audit pending
-configs/healthchecks/sla-probe.sh	configs	configs/healthchecks	script	todo			cold audit pending
-configs/healthchecks/smoke.sh	configs	configs/healthchecks	script	todo			cold audit pending
-configs/loki/README.md	configs	configs/loki	documentation	in_progress	EV-0181,F-1264	XFI-0056	Still claims public reachability under no-firewall posture after nftables default-drop rollout
+configs/healthchecks/README.md	configs	configs/healthchecks	documentation	done	EV-0186;EV-0191;EV-0271;F-1267;F-1302	XFI-0059;XFI-0094	Reviewed check-count drift, confirmed the current README documents five external checks including SLA probe, and compared the smoke-failure contract against wrapper behavior
+configs/healthchecks/heartbeat.sh	configs	configs/healthchecks	script	done	EV-0269;F-1301	XFI-0093	Reviewed service-to-port mapping for indexer, aggregator, and API against R1 Prometheus and the aggregator runbook drift
+configs/healthchecks/install.sh	configs	configs/healthchecks	script	done	EV-0186;EV-0191;EV-0271;EV-0274;F-1267;F-1302;F-1303	XFI-0059;XFI-0094;XFI-0095	Reviewed installer comment drift, confirmed the current script now enumerates all five Healthchecks URLs, traced the copied `r1-smoke.sh` executable contract into the smoke wrapper, and confirmed the SLA probe binary lives outside the installer boundary
+configs/healthchecks/ratesengine-heartbeat@.service	configs	configs/healthchecks	config	done	EV-0274	XFI-0094;XFI-0095	Reviewed heartbeat service sandbox, root-loaded EnvironmentFile behavior, and ExecStart wrapper boundary
+configs/healthchecks/ratesengine-heartbeat@.timer	configs	configs/healthchecks	config	done	EV-0274	XFI-0094;XFI-0095	Reviewed heartbeat timer cadence and template service linkage
+configs/healthchecks/ratesengine-sla-probe.service	configs	configs/healthchecks	config	done	EV-0267;EV-0273;EV-0274;F-1300;F-1303	XFI-0092;XFI-0095	Reviewed SLA Healthchecks systemd sandbox; current source grants textfile ReadWritePaths/SupplementaryGroups, while the wrapper still fails open when the probe binary is missing
+configs/healthchecks/ratesengine-sla-probe.timer	configs	configs/healthchecks	config	done	EV-0274;F-1303	XFI-0095	Reviewed SLA timer cadence and service linkage for the external SLA proof path
+configs/healthchecks/ratesengine-smoke.service	configs	configs/healthchecks	config	done	EV-0271;F-1302	XFI-0094	Reviewed smoke service sandbox and ExecStart path against wrapper failure semantics
+configs/healthchecks/ratesengine-smoke.timer	configs	configs/healthchecks	config	done	EV-0271;F-1302	XFI-0094	Reviewed smoke timer cadence and service linkage for the API-surface evidence path
+configs/healthchecks/sla-probe.sh	configs	configs/healthchecks	script	done	EV-0267;EV-0273;EV-0274;F-1300;F-1303	XFI-0092;XFI-0095	Reviewed SLA wrapper; current service sandbox now permits default textfile output, but the wrapper still exits successfully before `/fail` when the probe binary is missing
+configs/healthchecks/smoke.sh	configs	configs/healthchecks	script	done	EV-0271;F-1302	XFI-0094	Reviewed wrapper execution, Healthchecks success/fail reporting, and missing-script failure mode
+configs/loki/README.md	configs	configs/loki	documentation	done	EV-0181;EV-0191;F-1264	XFI-0056	Reviewed pre-firewall exposure drift and confirmed current Loki access docs now match blocked-ingress reality
 configs/loki/loki.r1.yml	configs	configs/loki	config	todo			cold audit pending
 configs/loki/promtail.r1.yml	configs	configs/loki	config	todo			cold audit pending
-configs/prometheus/README.md	configs	configs/prometheus	documentation	in_progress	EV-0181,F-1264	XFI-0056	Still claims public reachability under no-firewall posture after nftables default-drop rollout
-configs/prometheus/prometheus.r1.yml	configs	configs/prometheus	config	in_progress	EV-0188,F-1268	XFI-0060	Rule include path remains `/etc/prometheus/rules.r1/*.yml`
-configs/prometheus/rules.r1/README.md	configs	configs/prometheus	documentation	in_progress	EV-0188,F-1268	XFI-0060	Apply instructions still copy into unloaded `/etc/prometheus/rules.d/`
+configs/prometheus/README.md	configs	configs/prometheus	documentation	done	EV-0181;EV-0191;F-1264	XFI-0056	Reviewed pre-firewall exposure drift and confirmed current Prometheus/Alertmanager access docs now match blocked-ingress reality
+configs/prometheus/prometheus.r1.yml	configs	configs/prometheus	config	done	EV-0188;EV-0194;EV-0215;EV-0269;F-1268;F-1276;F-1301	XFI-0060;XFI-0068;XFI-0093	Reviewed active rule include path, the real R1 API job-label family used by alert rules, and the R1 aggregator scrape target on 9465
+configs/prometheus/rules.r1/README.md	configs	configs/prometheus	documentation	done	EV-0188;EV-0194;F-1268	XFI-0060	Reviewed stale copy-target drift and confirmed current README now deploys into `/etc/prometheus/rules.r1/`
 configs/prometheus/rules.r1/aggregator.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/anomaly.yml	configs	configs/prometheus	config	todo			cold audit pending
-configs/prometheus/rules.r1/api.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/api.yml	configs	configs/prometheus	config	done	EV-0215;F-1276	XFI-0068	Reviewed as the real R1 API alert selector source (`ratesengine-api`)
 configs/prometheus/rules.r1/archive-completeness.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/cache.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/divergence.yml	configs	configs/prometheus	config	todo			cold audit pending
@@ -255,7 +255,7 @@ deploy/docker-compose/init/00-timescale-extension.sql	deploy	deploy/docker-compo
 deploy/monitoring/README.md	deploy	deploy/monitoring	documentation	done	EV-0182			Reviewed alert-rule routing/docs context while reconciling Alertmanager severity-vocabulary drift
 deploy/monitoring/rules/aggregator.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/anomaly.yml	deploy	deploy/monitoring	config	todo			cold audit pending
-deploy/monitoring/rules/api.yml	deploy	deploy/monitoring	config	todo			cold audit pending
+deploy/monitoring/rules/api.yml	deploy	deploy/monitoring	config	done	EV-0215;F-1276	XFI-0068	Reviewed as the real multi-host API alert selector source (`ratesengine_api`)
 deploy/monitoring/rules/archive-completeness.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/cache.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/divergence.yml	deploy	deploy/monitoring	config	todo			cold audit pending
@@ -263,7 +263,7 @@ deploy/monitoring/rules/external-pollers.yml	deploy	deploy/monitoring	config	tod
 deploy/monitoring/rules/infra.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/ingestion.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/meta.yml	deploy	deploy/monitoring	config	todo			cold audit pending
-deploy/monitoring/rules/sla-probe.yml	deploy	deploy/monitoring	config	todo			cold audit pending
+deploy/monitoring/rules/sla-probe.yml	deploy	deploy/monitoring	config	in_progress	EV-0267;F-1300	XFI-0092	Partially reviewed as the Prometheus consumer of SLA probe textfile metrics
 deploy/monitoring/rules/slo.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/stellar.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/storage.yml	deploy	deploy/monitoring	config	todo			cold audit pending
@@ -277,7 +277,7 @@ deploy/systemd/archive-completeness.timer	deploy	deploy/systemd	unknown	in_progr
 deploy/systemd/ratesengine-aggregator.service	deploy	deploy/systemd	unknown	todo			cold audit pending
 deploy/systemd/ratesengine-api.service	deploy	deploy/systemd	unknown	todo			cold audit pending
 deploy/systemd/ratesengine-indexer.service	deploy	deploy/systemd	unknown	todo			cold audit pending
-deploy/systemd/sla-probe.service	deploy	deploy/systemd	unknown	todo			cold audit pending
+deploy/systemd/sla-probe.service	deploy	deploy/systemd	config	done	EV-0267;EV-0273;F-1300	XFI-0092	Reviewed as the working textfile-output counterexample: grants ReadWritePaths for node_exporter textfile collector
 deploy/systemd/sla-probe.timer	deploy	deploy/systemd	unknown	in_progress	XFI-0003,F-1205		Expected timer absent on R1
 deploy/systemd/supply-snapshot.service	deploy	deploy/systemd	unknown	todo			cold audit pending
 deploy/systemd/supply-snapshot.timer	deploy	deploy/systemd	unknown	in_progress	XFI-0003,F-1205		Expected timer absent on R1
@@ -290,7 +290,7 @@ docker/ratesengine-indexer.Dockerfile	docker	docker	deploy	done	EV-0057;F-1240	X
 docker/ratesengine-migrate.Dockerfile	docker	docker	deploy	done	EV-0037;EV-0057;F-1227;F-1240	XFI-0019;XFI-0032	Reviewed builder/runtime image shape, missing migrations packaging, and Go toolchain drift
 docker/ratesengine-ops.Dockerfile	docker	docker	deploy	done	EV-0055;EV-0057;F-1239;F-1240	XFI-0031;XFI-0032	Reviewed builder/runtime image shape, ops binary packaging, and Go toolchain drift
 docker/ratesengine-sla-probe.Dockerfile	docker	docker	deploy	done	EV-0057;F-1240	XFI-0032	Reviewed builder/runtime image shape, nonroot user, no listening port, and Go toolchain drift
-docs/adr/0001-horizon-deprecated.md	docs	docs/adr	documentation	todo			cold audit pending
+docs/adr/0001-horizon-deprecated.md	docs	docs/adr	documentation	done	F-1292	XFI-0084	Reviewed no-Horizon operational invariant against active runbooks
 docs/adr/0002-minio-s3-compat-storage.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0003-i128-no-truncation.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0004-tier1-validator-aspiration.md	docs	docs/adr	documentation	todo			cold audit pending
@@ -314,7 +314,7 @@ docs/adr/0021-account-entry-observer.md	docs	docs/adr	documentation	todo			cold 
 docs/adr/0022-classic-supply-observers.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0023-sep41-supply-observer.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/0024-redis-ha-via-sentinel.md	docs	docs/adr	documentation	todo			cold audit pending
-docs/adr/0025-caddy-cloudflare-trusted-proxy.md	docs	docs/adr	documentation	todo			cold audit pending
+docs/adr/0025-caddy-cloudflare-trusted-proxy.md	docs	docs/adr	documentation	done	EV-0193		Reviewed ADR source-of-truth trust boundary for Cloudflare -> Caddy -> API topology
 docs/adr/0026-stablecoin-fiat-proxy-late-binding.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/README.md	docs	docs/adr	documentation	todo			cold audit pending
 docs/adr/_template.md	docs	docs/adr	documentation	todo			cold audit pending
@@ -326,8 +326,8 @@ docs/architecture/coverage-matrix.md	docs	docs/architecture	documentation	todo		
 docs/architecture/ecosystem-review-2026-04-23.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/explorer-data-inventory.md	docs	docs/architecture	documentation	in_progress	EV-0095;EV-0153;F-1259	XFI-0051	Reviewed the updated live-usage product wording; broader architecture inventory pass still open
 docs/architecture/explorer-implementation-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/ha-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/haproxy-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/ha-plan.md	docs	docs/architecture	documentation	in_progress	EV-0214;EV-0227;F-1275;F-1284	XFI-0067;XFI-0076	Rechecked HA readiness matrix; runtime Redis routing is fixed, but HA plan still describes Redis as readyz-critical
+docs/architecture/haproxy-ansible-role-design-note.md	docs	docs/architecture	documentation	done	EV-0207;EV-0213;F-1274	XFI-0066	Reviewed the runbook-reference drift and confirmed the design note now redirects to tracked `api-down.md`
 docs/architecture/infrastructure/archival-node-spec.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/infrastructure/existing-k8s-assessment.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/infrastructure/hosting-options.md	docs	docs/architecture	documentation	todo			cold audit pending
@@ -336,14 +336,14 @@ docs/architecture/infrastructure/validator-rollout.md	docs	docs/architecture	doc
 docs/architecture/ingest-pipeline.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/k6-load-tests-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/launch-readiness-backlog.md	docs	docs/architecture	documentation	in_progress	EV-0178,F-1211	XFI-0007	Launch-readiness row still prescribes retired Upptime status-page flow
-docs/architecture/loki-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/loki-ansible-role-design-note.md	docs	docs/architecture	documentation	in_progress	EV-0239;F-1289	XFI-0081	Reviewed shipped design-note storage promises against role preflight; bucket creation/assertion and 50 GB local capacity checks are not implemented
 docs/architecture/multi-network-assets-migration.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/oracle-manipulation-defense.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/patroni-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/patroni-ansible-role-design-note.md	docs	docs/architecture	documentation	in_progress	EV-0222;EV-0224;EV-0225;F-1282;F-1283	XFI-0074;XFI-0075	Rechecked restore-target prose and DCS topology; restore target is wired, but runbook DCS examples drift from role shape
 docs/architecture/platform-spec.md	docs	docs/architecture	documentation	in_progress	EV-0161;EV-0163;F-1244	XFI-0036	Reviewed webhook-secret protection claims; wave-54 rewrite now distinguishes planned TOTP sealed boxes from recoverable plain-`bytea` webhook signing keys, closing the F-1244 spec drift
-docs/architecture/prometheus-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/prometheus-ansible-role-design-note.md	docs	docs/architecture	documentation	done	EV-0204;EV-0206;F-1265	XFI-0057	Reviewed residual severity-ladder drift and confirmed the current design note now matches page/ticket/informational
 docs/architecture/r2-r3-bringup.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/redis-sentinel-ansible-role-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/redis-sentinel-ansible-role-design-note.md	docs	docs/architecture	documentation	in_progress	EV-0196;EV-0198;EV-0201;EV-0208;EV-0212;F-1271;F-1273	XFI-0063;XFI-0065	Listener-auth source drift closed, but the shipped design note still describes the Sentinel client as future `internal/cachekeys` work
 docs/architecture/repo-hygiene-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/semver-policy.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/status-page-hosting-comparison.md	docs	docs/architecture	documentation	done	EV-0180,F-1211	XFI-0007	Reviewed as explicitly superseded historical decision record pointing at the shipped web/status path
@@ -384,6 +384,30 @@ docs/audit-2026-05-02/inventory/area-counts.md	docs	docs/audit-2026-05-02	docume
 docs/audit-2026-05-02/inventory/file-coverage.tsv	docs	docs/audit-2026-05-02	unknown	todo			cold audit pending
 docs/audit-2026-05-02/inventory/generate.sh	docs	docs/audit-2026-05-02	script	todo			cold audit pending
 docs/audit-2026-05-02/inventory/repo-snapshot.md	docs	docs/audit-2026-05-02	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/00-plan.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/01-tracker.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/02-protocol.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/03-journeys.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/04-reconciliation.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/05-findings-register.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/06-exclusions-register.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/07-remediation-plan.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/08-competitive-parity-matrix.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/09-stellar-depth-matrix.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/10-adversarial-attack-tree.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/11-r1-live-probe-protocol.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/12-claude-plan-delta.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/README.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/evidence/README.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/evidence/commands.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/evidence/cross-file-interactions.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/evidence/log.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/evidence/r1-runtime.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/inventory/README.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/inventory/area-counts.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
+docs/audit-2026-05-12-codex/inventory/file-coverage.tsv	docs	docs/audit-2026-05-12-codex	unknown	todo			cold audit pending
+docs/audit-2026-05-12-codex/inventory/generate.sh	docs	docs/audit-2026-05-12-codex	script	todo			cold audit pending
+docs/audit-2026-05-12-codex/inventory/repo-snapshot.md	docs	docs/audit-2026-05-12-codex	documentation	todo			cold audit pending
 docs/audit-2026-05-12/00-plan.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
 docs/audit-2026-05-12/01-tracker.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
 docs/audit-2026-05-12/02-protocol.md	docs	docs/audit-2026-05-12	documentation	todo			cold audit pending
@@ -508,7 +532,7 @@ docs/discovery/rfp-requirements-matrix.md	docs	docs/discovery	documentation	todo
 docs/freighter-rfp.md	docs	docs/freighter-rfp.md	documentation	todo			cold audit pending
 docs/getting-started.md	docs	docs/getting-started.md	documentation	todo			cold audit pending
 docs/launch-task-list.md	docs	docs/launch-task-list.md	documentation	in_progress	EV-0178,F-1211	XFI-0007	Launch task acceptance still permits cstate despite shipped web/status path
-docs/operations/alerts-catalog.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/alerts-catalog.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked API alert row; current selector family is corrected
 docs/operations/archival-node-bringup.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/archive-completeness.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/backfill-procedure.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -516,14 +540,14 @@ docs/operations/cdn-setup.md	docs	docs/operations	documentation	todo			cold audi
 docs/operations/cf-pages-setup.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/chaos-wave1-runbook.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/customer-demo-script.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/deploy-workflow.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/deploy-workflow.md	docs	docs/operations	documentation	done	EV-0259;F-1297	XFI-0089	Reviewed deploy workflow operator contract; host-key pinning is documented as required but the workflow falls back to live ssh-keyscan
 docs/operations/drills/2026-04-sev1-timescale-failover.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/2026-04-sev2-soroswap-decode-regression.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/README.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/_template.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/scenarios/sev1-anomaly-freeze-stuck.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/scenarios/sev1-timescale-primary-failover.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/drills/scenarios/sev2-redis-sentinel-failover.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/drills/scenarios/sev2-redis-sentinel-failover.md	docs	docs/operations	documentation	done	EV-0196;EV-0198;EV-0201;EV-0208;F-1271;F-1273	XFI-0063;XFI-0065	Reviewed post-remediation drill command and confirmed it now uses authenticated Sentinel CLI syntax
 docs/operations/drills/scenarios/sev2-source-decoder-regression.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/explorer-deployment.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/galexie-backfill.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -535,26 +559,26 @@ docs/operations/multi-region-cutover.md	docs	docs/operations	documentation	done	
 docs/operations/perf-todo.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/post-launch-queries.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/postmortems/_template.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/pre-launch-hardening.md	docs	docs/operations	documentation	in_progress	EV-0186,F-1267	XFI-0059	Healthchecks setup snippet still omits the SLA probe URL
+docs/operations/pre-launch-hardening.md	docs	docs/operations	documentation	done	EV-0186;EV-0191;EV-0193;EV-0198;F-1267;F-1270	XFI-0059;XFI-0062	Reviewed Healthchecks and Cloudflare/Caddy trust-boundary drift; current prose matches the verified contracts
 docs/operations/public-flip.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/r1-deployment-state.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/r1-deployment-state.md	docs	docs/operations	documentation	in_progress	EV-0259;EV-0261;F-1221;F-1297	XFI-0014;XFI-0089	Partially reviewed for release/deploy state; stale 12-binary release note and region secret contract recorded
 docs/operations/r2-deployment-state.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/r3-deployment-state.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/release-process.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/release-process.md	docs	docs/operations	documentation	in_progress	EV-0261;F-1221	XFI-0014	Release-process step 4 is binary-only, but the top pipeline summary still says linux/amd64 plus linux/arm64
 docs/operations/rollback.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/_template.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/aggregator-class-drop-spike.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/aggregator-outlier-storm.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/aggregator-silent.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/aggregator-silent.md	docs	docs/operations	documentation	done	EV-0269;F-1301	XFI-0093	Reviewed P1 aggregator-silent diagnosis flow against actual aggregator listener shift, R1 Prometheus targets, and Healthchecks heartbeat ports
 docs/operations/runbooks/aggregator-supply-refresh-never-initialized.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/alertmanager-bad-config.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/all-ingestion-down.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/anomaly-freeze-engaged.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/anomaly-freeze-sustained.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/api-5xx.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/api-down.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/api-latency.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/api-5xx.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked incident query examples; selector drift is closed in this runbook
+docs/operations/runbooks/api-down.md	docs	docs/operations	documentation	done	EV-0214;EV-0215;EV-0216;EV-0229;F-1275;F-1276;F-1277	XFI-0067;XFI-0068;XFI-0069	Rechecked readiness semantics, selector examples, and source breadcrumbs; API-down docs are now aligned
+docs/operations/runbooks/api-latency.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked incident query example; selector drift is closed in this runbook
 docs/operations/runbooks/archive-completeness-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/archive-divergence.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/archive-files-missing.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -565,7 +589,7 @@ docs/operations/runbooks/bootstrap-archival-node.md	docs	docs/operations	documen
 docs/operations/runbooks/cache-miss-rate-high.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/cagg-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/compression-lag.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/core-lag.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/core-lag.md	docs	docs/operations	documentation	done	F-1292	XFI-0084	Reviewed core-lag diagnostic steps against ADR-0001 no-Horizon runbook boundary
 docs/operations/runbooks/core-peers.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/cursor-stuck.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/customer-webhook-delivery-failing.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -596,7 +620,7 @@ docs/operations/runbooks/pg-conns-saturated.md	docs	docs/operations	documentatio
 docs/operations/runbooks/price-divergence.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/price-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/prometheus-tsdb-corruption.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/redis-master-down.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/redis-master-down.md	docs	docs/operations	documentation	in_progress	EV-0196;EV-0198;EV-0214;F-1271;F-1275	XFI-0063;XFI-0067	Auth assumptions now match source, but the maintained degraded-serving claim conflicts with HAProxy `/readyz` routing during Redis loss
 docs/operations/runbooks/redis-memory.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/redis-replication.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/redis-write-blocked-disk-full.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -605,8 +629,8 @@ docs/operations/runbooks/rpc-lag.md	docs	docs/operations	documentation	todo			co
 docs/operations/runbooks/scrape-failing.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/sev-status-page-update.md	docs	docs/operations	documentation	in_progress	EV-0021,F-1211	XFI-0007	Binding SEV runbook points to removed cstate files
 docs/operations/runbooks/sla-probe-freshness-breach.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/sla-probe-p95-breach.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/sla-probe-p95-breach.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked incident query example; selector drift is closed in this runbook
+docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	in_progress	EV-0267;F-1300	XFI-0092	Partially reviewed as the runbook consumer of the missing sla_probe.prom failure mode
 docs/operations/runbooks/sla-probe-unit-failed.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/slo-availability-burn-fast.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/slo-availability-burn-medium.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -623,14 +647,14 @@ docs/operations/runbooks/supply-snapshot-circulating-zero.md	docs	docs/operation
 docs/operations/runbooks/supply-snapshot-never-initialized.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/supply-snapshot-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/supply-snapshot-unit-failed.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/runbooks/timescale-primary-down.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/runbooks/timescale-primary-down.md	docs	docs/operations	documentation	in_progress	EV-0225;F-1283	XFI-0075	Reviewed etcd incident-diagnosis commands against shipped Patroni role and logged protocol/quorum/key drift
 docs/operations/runbooks/verify-archive-run-stale.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/verify-archive-unit-failed.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/zfs-degraded.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sac-wrappers-and-usd-volume.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sep1-resolution.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sev-playbook.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/sla-probe.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/sla-probe.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0274;F-1300;F-1303	XFI-0092;XFI-0095	Partially reviewed for SLA textfile-output contract, systemd wiring, and Healthchecks missing-binary failure mode
 docs/operations/sla-proof-procedure.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sla-proof-template.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/status-page-setup.md	docs	docs/operations	documentation	in_progress	EV-0021,F-1211	XFI-0007	Setup doc still selects Upptime/GitHub Pages despite web/status implementation
@@ -1004,8 +1028,8 @@ internal/api/v1/price_tip_test.go	internal	internal/api/v1	test	todo			cold audi
 internal/api/v1/sac_wrappers.go	internal	internal/api/v1	runtime	todo			cold audit pending
 internal/api/v1/sac_wrappers_test.go	internal	internal/api/v1	test	todo			cold audit pending
 internal/api/v1/scaled_decimal_test.go	internal	internal/api/v1	test	todo			cold audit pending
-internal/api/v1/server.go	internal	internal/api/v1	runtime	in_progress	EV-0012;EV-0094;EV-0095;EV-0100;EV-0103;EV-0128;EV-0143;EV-0144;EV-0145;EV-0146;F-1202;F-1218;F-1226;F-1258;F-1259	XFI-0012;XFI-0018;XFI-0050;XFI-0051	Reviewed route table, middleware stack, usage optionality wiring, usage reader contract, health/status split wording, partial KeyPolicy integration, monthly-quota stack insertion, and landed signup verified-state gate insertion
-internal/api/v1/server_test.go	internal	internal/api/v1	test	todo			cold audit pending
+internal/api/v1/server.go	internal	internal/api/v1	runtime	in_progress	EV-0012;EV-0094;EV-0095;EV-0100;EV-0103;EV-0128;EV-0143;EV-0144;EV-0145;EV-0146;EV-0214;EV-0216;EV-0227;EV-0229;F-1202;F-1218;F-1226;F-1258;F-1259;F-1275;F-1277;F-1284	XFI-0012;XFI-0018;XFI-0050;XFI-0051;XFI-0067;XFI-0069;XFI-0076	Rechecked `/readyz`; critical/non-critical split closes Redis routing outage and API-down now points at this handler
+internal/api/v1/server_test.go	internal	internal/api/v1	test	in_progress	EV-0227;F-1275;F-1284	XFI-0067;XFI-0076	Reviewed readyz regression coverage for Redis-only degraded response
 internal/api/v1/signup.go	internal	internal/api/v1	runtime	in_progress	EV-0028;EV-0099;EV-0127;EV-0143;F-1218	XFI-0012	Reviewed unverified plaintext-key minting, Redis-backed reservation fix, wave-44 token/email producer, and the narrowed current-main 503 posture for Redis-less signup; broader signup/API audit still open
 internal/api/v1/signup_test.go	internal	internal/api/v1	test	in_progress	EV-0028;EV-0099;EV-0143;F-1218	XFI-0012	Reviewed current duplicate-signup test posture plus the producer-side verification test additions; broader signup test audit still open
 internal/api/v1/signup_verify.go	internal	internal/api/v1	runtime	in_progress	EV-0143;EV-0144;EV-0145;EV-0146;F-1218	XFI-0012	Reviewed token-consume success path, verified-state marker call, and the settled opt-in access-control coupling
@@ -1172,9 +1196,10 @@ internal/obs/doc.go	internal	internal/obs/doc.go	runtime	todo			cold audit pendi
 internal/obs/http_middleware.go	internal	internal/obs/http_middleware.go	runtime	todo			cold audit pending
 internal/obs/log.go	internal	internal/obs/log.go	runtime	todo			cold audit pending
 internal/obs/log_test.go	internal	internal/obs/log_test.go	test	todo			cold audit pending
-internal/obs/metrics.go	internal	internal/obs/metrics.go	runtime	todo			cold audit pending
+internal/obs/metrics.go	internal	internal/obs/metrics.go	runtime	in_progress	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked API metric-source commentary; stale `job=\"api\"` comment remains the narrowed F-1276 scope
 internal/obs/metrics_test.go	internal	internal/obs/metrics_test.go	test	todo			cold audit pending
 internal/obs/middleware_unit_test.go	internal	internal/obs/middleware_unit_test.go	test	todo			cold audit pending
+internal/obstest/histogram.go	internal	internal/obstest/histogram.go	test	done	EV-0191		Reviewed newly tracked Prometheus histogram test helper; dependency-light utility package, no new finding from this pass
 internal/pipeline/datastore.go	internal	internal/pipeline/datastore.go	runtime	todo			cold audit pending
 internal/pipeline/dispatcher.go	internal	internal/pipeline/dispatcher.go	runtime	todo			cold audit pending
 internal/pipeline/dispatcher_test.go	internal	internal/pipeline/dispatcher_test.go	test	todo			cold audit pending
@@ -1431,7 +1456,7 @@ internal/stellarrpc/invoke.go	internal	internal/stellarrpc/invoke.go	runtime	tod
 internal/stellarrpc/invoke_test.go	internal	internal/stellarrpc/invoke_test.go	test	todo			cold audit pending
 internal/stellarrpc/options_test.go	internal	internal/stellarrpc/options_test.go	test	todo			cold audit pending
 internal/stellarrpc/types.go	internal	internal/stellarrpc/types.go	runtime	todo			cold audit pending
-internal/storage/redisclient/redisclient.go	internal	internal/storage/redisclient	runtime	done	EV-0083;F-1253	XFI-0045	Reviewed Redis client username propagation for single-node and Sentinel modes
+internal/storage/redisclient/redisclient.go	internal	internal/storage/redisclient	runtime	done	EV-0083;EV-0196;EV-0198;F-1253;F-1271	XFI-0045;XFI-0063	Reviewed Redis client username propagation and SentinelPassword usage; current Sentinel render now matches the authenticated client contract
 internal/storage/redisclient/redisclient_test.go	internal	internal/storage/redisclient	test	todo			cold audit pending
 internal/storage/timescale/account_observations.go	internal	internal/storage/timescale	runtime	todo			cold audit pending
 internal/storage/timescale/account_observations_test.go	internal	internal/storage/timescale	test	todo			cold audit pending
@@ -1597,7 +1622,7 @@ scripts/dev/decode-scval/main.go	scripts	scripts	runtime	todo			cold audit pendi
 scripts/dev/docs-api.sh	scripts	scripts	script	in_progress	EV-0010,F-1203		Regeneration changed API reference
 scripts/dev/docs-postman.sh	scripts	scripts	script	todo			cold audit pending
 scripts/dev/encode-topics/main.go	scripts	scripts	runtime	todo			cold audit pending
-scripts/dev/r1-smoke.sh	scripts	scripts	script	in_progress	EV-0020,F-1204		Smoke script still expects removed legacy endpoints
+scripts/dev/r1-smoke.sh	scripts	scripts	script	in_progress	EV-0020;EV-0271;F-1204;F-1302	XFI-0094	Reviewed as the copied executable target for Healthchecks smoke; remaining full route/assertion audit continues separately from the missing-script wrapper failure
 scripts/dev/verify-cdn.sh	scripts	scripts	script	todo			cold audit pending
 scripts/dev/verify-cross-region.sh	scripts	scripts	script	done	EV-0082;F-1252	XFI-0044	Reviewed implemented consistency-check path against operational docs
 scripts/dev/verify.sh	scripts	scripts	script	todo			cold audit pending

@@ -128,6 +128,13 @@
 # redis_exporter doesn't expose "who Sentinel currently believes
 # the primary is" cleanly. Emit a small per-host gauge that ops
 # dashboards can use to see failover events at a glance.
+# F-1295 follow-up (codex audit-2026-05-13): the sentinel-state
+# scraper script previously inlined `{{ redis_password }}` directly
+# into a world-readable (0755) /usr/local/bin/ script. The script
+# now reads the password from /etc/default/redis_exporter (0600
+# root-only) and the systemd unit sets ProtectSystem=strict +
+# DynamicUser-style restrictions — same secret-hygiene contract as
+# the redis_exporter unit.
 - name: install sentinel-state textfile scraper
   copy:
     dest: /usr/local/bin/redis-sentinel-textfile-scraper
@@ -141,8 +148,16 @@
       TMP="$(mktemp "${OUT}.XXXXXX")"
       trap 'rm -f "$TMP"' EXIT
 
+      # REDIS_PASSWORD is provided by the systemd unit's
+      # EnvironmentFile=/etc/default/redis_exporter (mode 0600).
+      # Empty/unset => script aborts; never inline the secret.
+      if [ -z "${REDIS_PASSWORD:-}" ]; then
+        echo "redis-sentinel-textfile-scraper: REDIS_PASSWORD empty" >&2
+        exit 1
+      fi
+
       PRIMARY=$(redis-cli -h 127.0.0.1 -p {{ redis_sentinel_port }} \
-        -a "{{ redis_password }}" --no-auth-warning \
+        -a "$REDIS_PASSWORD" --no-auth-warning \
         SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }} 2>/dev/null \
         | head -1 || echo "unknown")
       MY_HOST="{{ ansible_host }}"
@@ -164,6 +179,10 @@
       Description=Redis Sentinel → Prometheus textfile scraper
       [Service]
       Type=oneshot
+      # F-1295 follow-up: pull REDIS_PASSWORD from the 0600 env-file
+      # rather than inlining into the script. Leading '-' allows the
+      # service to fail-fast inside the script if the file is absent.
+      EnvironmentFile=-/etc/default/redis_exporter
       ExecStart=/usr/local/bin/redis-sentinel-textfile-scraper
 
 - name: install sentinel-state scraper timer
