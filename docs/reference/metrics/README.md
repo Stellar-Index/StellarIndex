@@ -662,6 +662,41 @@ dashboards can distinguish "mismatch fired and the run aborted at
 second X" from "chunk aborted for an unrelated reason (canceled
 context)".
 
+### `ratesengine_customer_webhook_delivery_duration_seconds`
+
+Histogram, label `outcome` (`delivered` / `server_error` /
+`client_error` / `network_error` / `build_error`).
+
+Latency of the outbound HTTP POST inside the customer-webhook
+delivery worker (`internal/customerwebhook/worker.go`). Pairs with
+the `_attempts_total` counter — that one tells you how often
+attempts happen + whether they succeed; this one tells you how
+long they take.
+
+The standard `http_request_duration_seconds` histogram covers the
+INBOUND HTTP handler surface but not goroutine workers, so this
+metric closes the corresponding gap for the OUTBOUND delivery
+path. Includes body-drain time (the worker io.Copy(io.Discard,
+resp.Body) so the connection can be reused).
+
+Operators chart p95/p99 latency separately per outcome to isolate:
+
+- `delivered` p99 climbing → a customer's endpoint is slow.
+  Customer-side problem; we keep delivering, just slower.
+- `server_error` p99 high → the customer's endpoint takes long
+  AND returns 5xx; usually the same endpoint failing harder
+  rather than two distinct problems.
+- `network_error` p99 → connect or TLS handshake stalling. Often
+  upstream DNS / network blip rather than the customer.
+- `build_error` recorded as 0 (no HTTP roundtrip happened) so the
+  bucket still populates in dashboards.
+
+Buckets span 10 ms → 60 s (the worker's per-request context
+timeout). No alert wired today; the existing
+`ratesengine_customer_webhook_delivery_failing` covers the
+failing-rate signal, latency degradation surfaces in the
+dashboard.
+
 ### `ratesengine_stripe_platform_sync_errors_total`
 
 Counter, label `operation` (`get_account` / `upsert_subscription` /
@@ -685,6 +720,12 @@ per-key rate-limit lift failure.
 
 ## Changelog
 
+- 2026-05-13 — added customer-webhook delivery latency
+  histogram (`ratesengine_customer_webhook_delivery_duration_seconds`).
+  Pairs with the existing `_attempts_total` counter to give
+  operators per-outcome p95/p99 latency on the OUTBOUND
+  webhook surface (the standard `http_request_duration_seconds`
+  covers inbound only).
 - 2026-05-13 — added Stripe platform-bridge error counter
   (`ratesengine_stripe_platform_sync_errors_total`) covering the
   five platform-store side-effect failure sites in the Stripe

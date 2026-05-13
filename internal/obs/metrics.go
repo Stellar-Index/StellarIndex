@@ -82,6 +82,8 @@ func init() {
 		VerifyArchiveMismatchesTotal,
 
 		StripePlatformSyncErrorsTotal,
+
+		CustomerWebhookDeliveryDurationSeconds,
 	)
 }
 
@@ -603,6 +605,31 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_customer_webhook_delivery_attempts_total",
 		Help: "Customer-webhook delivery attempts, labelled by outcome.",
+	},
+	[]string{"outcome"},
+)
+
+// CustomerWebhookDeliveryDurationSeconds — latency histogram for
+// the outbound HTTP POST inside the customer-webhook delivery
+// worker (parallel to the inbound Stripe webhook's free
+// `http_request_duration_seconds` from the API HTTP middleware;
+// the OUTBOUND worker is a goroutine, not an HTTP handler, so the
+// standard histogram doesn't cover it).
+//
+// Labelled by outcome (same enum as the attempts counter) so
+// operators can chart p95/p99 latency separately for `delivered`
+// (the happy path) vs `server_error`/`client_error` (which often
+// run hot or slow when a customer's endpoint is misbehaving).
+//
+// Buckets span 10 ms → 60 s — covers fast LANs (≤ 20 ms),
+// typical TLS-terminated webhook endpoints (~100-500 ms), and
+// the worst-case 60 s context timeout the delivery worker
+// enforces before treating a request as a network_error.
+var CustomerWebhookDeliveryDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "ratesengine_customer_webhook_delivery_duration_seconds",
+		Help:    "Customer-webhook outbound HTTP POST latency, labelled by outcome (delivered|server_error|client_error|network_error|build_error). Body-drain time is included.",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 	},
 	[]string{"outcome"},
 )

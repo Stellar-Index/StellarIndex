@@ -221,6 +221,11 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		_ = w.store.MarkAttemptFailed(ctx, d.ID,
 			fmt.Sprintf("build request: %v", err), 0, time.Time{})
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("build_error").Inc()
+		// Build error: no HTTP roundtrip happened. Record a
+		// near-zero duration so the histogram still has a sample
+		// at this label and operators see the build_error bucket
+		// populate rather than disappear.
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("build_error").Observe(0)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -228,17 +233,28 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	req.Header.Set("X-RatesEngine-Signature", "sha256="+signature)
 	req.Header.Set("X-RatesEngine-Delivery-Id", d.ID.String())
 
+	// Time the HTTP roundtrip + body drain. Recorded against the
+	// outcome label so operators can chart p95/p99 latency
+	// separately for delivered vs failure paths — a customer
+	// endpoint that's slow but eventually 200s shows up in the
+	// `delivered` bucket; a customer endpoint that's slow AND
+	// 500s shows up in the `server_error` bucket. Helps isolate
+	// "their endpoint is slow" from "we have a delivery problem".
+	start := time.Now()
 	resp, err := w.opts.HTTPClient.Do(req)
 	if err != nil {
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("network_error").Observe(time.Since(start).Seconds())
 		w.handleFailure(ctx, d, 0, fmt.Sprintf("POST %s: %v", wh.URL, err), "network_error")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// Drain the body so the connection can be reused.
 	_, _ = io.Copy(io.Discard, resp.Body)
+	elapsed := time.Since(start).Seconds()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("delivered").Observe(elapsed)
 		if err := w.store.MarkDelivered(ctx, d.ID, resp.StatusCode); err != nil {
 			w.opts.Logger.Warn("customer-webhook: MarkDelivered failed",
 				"err", err, "delivery_id", d.ID)
@@ -252,10 +268,12 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		// 4xx is the customer's responsibility (auth, bad URL,
 		// validation). Don't retry — they need to fix it.
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("client_error").Observe(elapsed)
 		w.handleFailure(ctx, d, resp.StatusCode,
 			fmt.Sprintf("HTTP %d (4xx terminal)", resp.StatusCode), "client_error")
 	default:
 		// 5xx + 3xx → transient, retry with backoff.
+		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("server_error").Observe(elapsed)
 		w.handleFailure(ctx, d, resp.StatusCode,
 			fmt.Sprintf("HTTP %d (transient)", resp.StatusCode), "server_error")
 	}
