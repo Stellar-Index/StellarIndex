@@ -1638,6 +1638,20 @@ paths:
                     type: string
                     format: date-time
                     description: When the backfill_coverage snapshot was last refreshed.
+                  cagg_coverage:
+                    type: object
+                    description: |
+                      MIN/MAX bucket of `prices_1h`, the canonical
+                      "long-lived" continuous aggregate. Real
+                      source-of-truth for "do we have historical
+                      OHLC since genesis?" — raw trades have a 90-day
+                      retention but the hourly+ CAGGs are retained
+                      forever (migration 0002).
+                    required: [bucket_count]
+                    properties:
+                      earliest_bucket: { type: string, format: date-time }
+                      latest_bucket:   { type: string, format: date-time }
+                      bucket_count:    { type: integer, format: int64 }
                   fx_backfill:
                     type: object
                     required: [total_quotes, currencies_count]

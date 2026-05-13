@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Backfill auto-refreshes the long-lived CAGGs (`prices_1h` /
+  `prices_4h` / `prices_1d` / `prices_1w` / `prices_1mo`) at the
+  end of every chunk.** Without this, historical inserts get
+  dropped by the 90-day raw-trades retention policy before the
+  CAGG policy refresher's natural cadence picks them up — which
+  is what happened to the May 6-11 2026 SDEX backfill (cursors
+  hit `last_ledger == range_end` for every range, ~80M trades
+  inserted, retention dropped them within 24h, no CAGG
+  materialisation, ~5d of wall-clock work lost; trades
+  `MIN(ledger)` for `sdex` collapsed back to 61,191,617).
+
+  Backfill tool changes:
+    - New `-refresh-caggs` flag (default `true`). After each
+      chunk's trade-insert loop, derives the actual ts range from
+      the inserted rows (`Store.LedgerRangeToTimeRange`) and
+      force-refreshes every long-lived CAGG over that window
+      (`Store.RefreshContinuousAggregate`).
+    - Per-view soft-fail so one wedged CAGG doesn't block the
+      others.
+    - Procedure doc rewritten — manual `CALL refresh_continuous_
+      aggregate` step removed (now automatic).
+
+  Diagnostics endpoint additions:
+    - `cagg_coverage` field reports `prices_1h` MIN/MAX bucket +
+      row count — the real source-of-truth answer to "do we have
+      historical OHLC since genesis?" (raw `trades` only spans
+      the last 90 days; hourly+ CAGGs are retained forever).
+
 ### Added
 
 - **Backfill coverage on `/v1/diagnostics/ingestion` + status page.**

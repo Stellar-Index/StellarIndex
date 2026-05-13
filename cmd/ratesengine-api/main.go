@@ -2805,3 +2805,11 @@ func (r *fxHistoryReader) ListFXHistory(ctx context.Context, ticker string, from
 func (r *fxHistoryReader) FXCoverageStats(ctx context.Context) (timescale.FXCoverage, error) {
 	return r.store.FXCoverageStats(ctx)
 }
+
+// CAGGCoverageStats delegates so the wrapper satisfies
+// v1.CAGGCoverageReader too. Same pattern — without the delegate,
+// the prices_1h coverage section on /v1/diagnostics/ingestion
+// renders empty.
+func (r *fxHistoryReader) CAGGCoverageStats(ctx context.Context) (timescale.CAGGCoverage, error) {
+	return r.store.CAGGCoverageStats(ctx)
+}

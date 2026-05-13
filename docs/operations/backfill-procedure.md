@@ -27,10 +27,41 @@ indexer would have produced.
   flag-overridden) source set.
 - Writes one trade row per decoded event into the trades
   hypertable.
-- Lets the price-aggregate CAGGs (1m / 15m / 1h / 4h / 1d / 1w /
-  1mo per migration 0002) auto-materialise on the inserted rows.
+- **Force-refreshes the long-lived CAGGs (`prices_1h` /
+  `prices_4h` / `prices_1d` / `prices_1w` / `prices_1mo`) over
+  each chunk's timestamp range as soon as the chunk's trade-
+  insert loop completes** — this is mandatory for historical
+  inserts, see "Why" below. Disable with `-refresh-caggs=false`
+  only when debugging a specific CAGG-refresh failure.
 - Maintains its own cursor row (`source="backfill"`) so a crash
   doesn't pollute the indexer's resume position.
+
+### Why auto-refresh matters (the May 2026 SDEX incident)
+
+The first SDEX historical backfill (~80M trades, ledgers
+6,307,178 → 50,457,423) ran May 6-11 2026 and **completed every
+cursor range** — yet a week later the trades hypertable
+`MIN(ledger)` for `sdex` was 61,191,617. Every backfilled trade
+was lost.
+
+Root cause: the 90-day retention policy on raw `trades`
+(migration 0001) runs daily and drops chunks whose `range_end >
+90d ago`. Historical inserts carry `ts` values from 2017-2024 —
+those chunks are *immediately* eligible for drop. The CAGG policy
+refresher runs every 30 min but only rolls forward; it doesn't
+auto-backfill historical buckets when old trades are inserted. So:
+
+  T0   : backfill inserts ~80M trades with ts = 2017-2024
+  T+24h: daily retention drops every backfilled chunk
+  T+30m: CAGG refresher's next tick finds no data to roll up
+  ...    : 80M trades and ~5d of wall-clock work, gone
+
+The fix landed 2026-05-13 (`feat(ops): auto-refresh CAGGs in
+backfill`): the backfill tool now calls
+`refresh_continuous_aggregate` over each chunk's actual ts range
+immediately after the insert loop, **before** the next retention
+cycle. Aggregates persist; the raw trades age out 90 days later
+as designed.
 
 **Doesn't:**
 - Tail live ledgers — exits at `-to`.
@@ -315,18 +346,22 @@ wall-clock on a single R1 box at `-parallel 4`.
    done
    ```
 
-5. **Refresh the CAGGs.** Backfill writes trades directly;
-   prices_1m / prices_15m / prices_1h auto-materialise on next
-   refresh tick, but for a 1-year catch-up the timer's natural
-   cadence would take days. Force-refresh once the trade-insert
-   loop is done:
+5. **(Automatic since 2026-05-13.)** Backfill auto-refreshes the
+   long-lived CAGGs at the end of each chunk — no manual step
+   needed. If you're running on an older binary that lacks
+   `-refresh-caggs`, append this after the trade-insert loop:
 
    ```sh
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1m',  NULL, NULL);"
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_15m', NULL, NULL);"
    psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1h',  NULL, NULL);"
+   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_4h',  NULL, NULL);"
    psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1d',  NULL, NULL);"
+   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1w',  NULL, NULL);"
+   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1mo', NULL, NULL);"
    ```
+
+   `prices_1m` / `prices_15m` have 30-day retention by design
+   (migration 0002), so refreshing them for historical ranges
+   is wasted work.
 
 6. **Verify.** `/v1/chart?asset=native&quote=fiat:USD&timeframe=1y`
    should return a non-truncated point set; spot-check earliest

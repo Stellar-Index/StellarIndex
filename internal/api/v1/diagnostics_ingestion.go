@@ -27,6 +27,13 @@ type SupplyCoverageReader interface {
 	SupplyCoverageStats(ctx context.Context) (timescale.SupplyCoverage, error)
 }
 
+// CAGGCoverageReader is the seam the ingestion diagnostics reads
+// prices_1h coverage stats through. timescale.Store satisfies it
+// via CAGGCoverageStats.
+type CAGGCoverageReader interface {
+	CAGGCoverageStats(ctx context.Context) (timescale.CAGGCoverage, error)
+}
+
 // IngestionDiagnostics is the wire shape for
 // /v1/diagnostics/ingestion. One snapshot of the region's ingest
 // state — region label, version, ledger tip, per-decoder backfill,
@@ -50,10 +57,27 @@ type IngestionDiagnostics struct {
 	// backfill that would fill it isn't progressing.
 	BackfillCoverage   []BackfillCoverageRow `json:"backfill_coverage"`
 	BackfillCoverageAt string                `json:"backfill_coverage_as_of,omitempty"`
-	FXBackfill         FXBackfillState       `json:"fx_backfill"`
-	MarketCap          MarketCapState        `json:"market_cap"`
-	Supply             SupplyStateView       `json:"supply"`
-	Sources            []SourceHealthRow     `json:"sources"`
+	// CAGGCoverage is the time range of prices_1h — the canonical
+	// "long-lived" continuous aggregate. The raw trades hypertable
+	// has a 90-day retention so its MIN(ledger) only reports the
+	// recent window; prices_1h is retained forever (migration 0002)
+	// so its MIN(bucket) is the real "do we have historical OHLC
+	// since genesis?" answer. Powers /v1/chart and the since-
+	// inception history endpoint.
+	CAGGCoverage CAGGCoverageView  `json:"cagg_coverage"`
+	FXBackfill   FXBackfillState   `json:"fx_backfill"`
+	MarketCap    MarketCapState    `json:"market_cap"`
+	Supply       SupplyStateView   `json:"supply"`
+	Sources      []SourceHealthRow `json:"sources"`
+}
+
+// CAGGCoverageView is the wire shape of the prices_1h coverage
+// summary. EarliestBucket / LatestBucket are RFC3339; empty
+// strings when the CAGG has not been materialised yet.
+type CAGGCoverageView struct {
+	EarliestBucket string `json:"earliest_bucket,omitempty"`
+	LatestBucket   string `json:"latest_bucket,omitempty"`
+	BucketCount    int64  `json:"bucket_count"`
 }
 
 // BackfillCoverageRow is the per-source coverage projection.
@@ -256,6 +280,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	s.fillIngestionFXCoverage(ctx, &out)
 	s.fillIngestionSupplyCoverage(ctx, &out)
 	s.fillIngestionBackfillCoverage(&out)
+	s.fillIngestionCAGGCoverage(ctx, &out)
 	out.MarketCap = projectMarketCapState(s.marketCaps)
 
 	w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
@@ -322,6 +347,31 @@ func (s *Server) fillIngestionFXCoverage(ctx context.Context, out *IngestionDiag
 	}
 	if !cov.LatestQuote.IsZero() {
 		out.FXBackfill.LatestQuote = cov.LatestQuote.Format("2006-01-02")
+	}
+}
+
+// fillIngestionCAGGCoverage reads prices_1h's MIN/MAX bucket — the
+// real "do we have historical aggregates" answer (the raw trades
+// table only retains 90 days, but prices_1h is retained forever).
+// Type-asserts through fxHistory since timescale.Store satisfies
+// every reader interface; the assertion gracefully no-ops on test
+// fakes that don't implement CAGGCoverageReader.
+func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDiagnostics) {
+	reader, ok := s.fxHistory.(CAGGCoverageReader)
+	if !ok || reader == nil {
+		return
+	}
+	cov, err := reader.CAGGCoverageStats(ctx)
+	if err != nil {
+		s.logger.Warn("diagnostics/ingestion: cagg_coverage", "err", err)
+		return
+	}
+	out.CAGGCoverage = CAGGCoverageView{BucketCount: cov.BucketCount}
+	if !cov.EarliestBucket.IsZero() {
+		out.CAGGCoverage.EarliestBucket = cov.EarliestBucket.UTC().Format(time.RFC3339)
+	}
+	if !cov.LatestBucket.IsZero() {
+		out.CAGGCoverage.LatestBucket = cov.LatestBucket.UTC().Format(time.RFC3339)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
@@ -64,6 +65,15 @@ type backfillOpts struct {
 	dryRun   bool
 	resume   bool // when true, look up the prior cursor and skip already-processed ledgers
 	parallel int  // number of concurrent chunks to run; 1 = sequential (default)
+	// refreshCAGGs controls the post-chunk continuous-aggregate
+	// materialisation call. Defaults to true. Pre-2026-05-13
+	// backfills did not refresh CAGGs and consequently lost their
+	// data to the 90-day raw-trades retention before the policy
+	// refresher's natural cadence picked the inserts up. Operators
+	// should leave this on; the only legitimate reason to disable
+	// is debugging a refresh failure where re-running the
+	// underlying chunk is the desired recovery path.
+	refreshCAGGs bool
 }
 
 // chunkRange is one sub-range of a parallel backfill: [from, to]
@@ -289,6 +299,66 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		"to", chunk.to,
 		"ledgers", chunk.to-chunk.from+1,
 	)
+
+	// Force-materialise the long-lived CAGGs over the chunk's
+	// timestamp range. Without this, historical inserts get dropped
+	// by the 90-day retention policy on the raw trades table BEFORE
+	// the policy refresher's natural cadence picks them up — which
+	// is what happened to the May 2026 SDEX backfill (cursors
+	// completed, trades inserted, retention dropped them within 24h,
+	// no CAGG materialisation, ~80M trades of work lost).
+	//
+	// We refresh prices_1h / 4h / 1d / 1w / 1mo (the no-retention
+	// CAGGs per migration 0002). prices_1m and prices_15m have
+	// 30-day retention by design, so refreshing them for historical
+	// ranges would just be wasted work.
+	if opts.refreshCAGGs {
+		if err := refreshCAGGsForChunk(ctx, logger, store, chunk); err != nil {
+			return fmt.Errorf("post-chunk CAGG refresh: %w", err)
+		}
+	} else {
+		logger.Warn("skipping CAGG refresh (-refresh-caggs=false)",
+			"impact", "historical inserts will be dropped by 90-day retention before CAGG policy materialises them",
+		)
+	}
+	return nil
+}
+
+// refreshCAGGsForChunk derives the ts range covered by the just-
+// inserted trades and force-refreshes every long-lived CAGG over
+// that range. Idempotent — re-refreshing an already-materialised
+// range is a no-op. Soft-degrades on individual view failures so
+// one wedged CAGG doesn't leave the others un-materialised.
+func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store *timescale.Store, chunk chunkRange) error {
+	tsFrom, tsTo, err := store.LedgerRangeToTimeRange(ctx, chunk.from, chunk.to)
+	if err != nil {
+		// No trades inserted in the chunk — nothing to refresh.
+		// The dispatcher dropped every event (e.g. all sources
+		// were disabled, or the range had no on-chain activity
+		// matching any decoder).
+		if errors.Is(err, timescale.ErrNotFound) {
+			logger.Info("no trades in chunk — skipping CAGG refresh",
+				"from", chunk.from, "to", chunk.to)
+			return nil
+		}
+		return fmt.Errorf("derive ts range: %w", err)
+	}
+	logger.Info("refreshing CAGGs for chunk",
+		"from", chunk.from, "to", chunk.to,
+		"ts_from", tsFrom.UTC().Format(time.RFC3339),
+		"ts_to", tsTo.UTC().Format(time.RFC3339),
+	)
+	for _, view := range timescale.CAGGsLiveForever {
+		if err := store.RefreshContinuousAggregate(ctx, view, tsFrom, tsTo); err != nil {
+			logger.Error("CAGG refresh failed",
+				"view", view, "err", err)
+			// Don't abort the chunk — log and continue. An
+			// operator can re-refresh manually via psql; the
+			// trade rows are still in the hypertable until next
+			// retention run, so a same-day re-attempt works.
+			continue
+		}
+	}
 	return nil
 }
 
@@ -318,6 +388,15 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 			"On a fresh range with no prior cursor, behaves the same as without "+
 			"-resume. Idempotent: re-runs over already-processed ledgers are a "+
 			"no-op via the trades hypertable's unique index.")
+	refreshCAGGs := fs.Bool("refresh-caggs", true,
+		"force-refresh the long-lived continuous aggregates "+
+			"(prices_1h / 4h / 1d / 1w / 1mo) over each chunk's "+
+			"timestamp range immediately after the trade-insert loop "+
+			"completes. Required for historical backfills — without "+
+			"this, the 90-day raw-trades retention will drop the just-"+
+			"inserted chunks before the policy refresher's natural "+
+			"cadence materialises them. Disable only when debugging a "+
+			"specific refresh failure.")
 	parallel := fs.Int("parallel", 1,
 		"number of concurrent chunks (default 1 = sequential). The range is "+
 			"split into N contiguous, non-overlapping sub-ranges; each chunk "+
@@ -370,14 +449,15 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	}
 
 	opts = backfillOpts{
-		cfgPath:  *cfgPath,
-		from:     uint32(*from),
-		to:       uint32(*to),
-		sources:  sources,
-		bucket:   bucket,
-		dryRun:   *dryRun,
-		resume:   *resume,
-		parallel: *parallel,
+		cfgPath:      *cfgPath,
+		from:         uint32(*from),
+		to:           uint32(*to),
+		sources:      sources,
+		bucket:       bucket,
+		dryRun:       *dryRun,
+		resume:       *resume,
+		parallel:     *parallel,
+		refreshCAGGs: *refreshCAGGs,
 	}
 	return opts, cfg, nil
 }

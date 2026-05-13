@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -79,6 +80,120 @@ type SupplyCoverage struct {
 	SEP41Assets    int
 	LastSnapshotAt time.Time
 	LatestLedger   int64
+}
+
+// LedgerRangeToTimeRange returns the MIN/MAX(ts) of trades whose
+// ledger falls in [fromLedger, toLedger]. Used by the backfill
+// tool to translate a ledger-range chunk into the timestamp range
+// needed for CAGG materialisation. Returns ErrNotFound when no
+// trades exist in the range — caller treats that as "nothing to
+// refresh" rather than an error.
+//
+// O(log N) via the trades_source_ledger_idx index plus a per-chunk
+// scan; sub-second on a populated hypertable.
+func (s *Store) LedgerRangeToTimeRange(ctx context.Context, fromLedger, toLedger uint32) (time.Time, time.Time, error) {
+	const q = `SELECT MIN(ts), MAX(ts) FROM trades WHERE ledger BETWEEN $1 AND $2`
+	var minTs, maxTs sql.NullTime
+	if err := s.db.QueryRowContext(ctx, q, fromLedger, toLedger).Scan(&minTs, &maxTs); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !minTs.Valid || !maxTs.Valid {
+		return time.Time{}, time.Time{}, ErrNotFound
+	}
+	return minTs.Time, maxTs.Time, nil
+}
+
+// allowedCAGGViews is the strict allow-list of view names accepted
+// by RefreshContinuousAggregate. Required because we string-format
+// the view name into the SQL — the procedure's first arg is REGCLASS
+// and pgx doesn't placeholder it. Allow-list keeps SQL injection
+// off the table even though callers are internal.
+var allowedCAGGViews = map[string]bool{
+	"prices_1m":  true,
+	"prices_15m": true,
+	"prices_1h":  true,
+	"prices_4h":  true,
+	"prices_1d":  true,
+	"prices_1w":  true,
+	"prices_1mo": true,
+}
+
+// CAGGsLiveForever is the set of price aggregates with no retention
+// policy — these are the ones the backfill tool refreshes after
+// each chunk. The minute-grain CAGGs (1m/15m) have a 30-day
+// retention by design (per migration 0002), so refreshing historical
+// buckets there is wasted work.
+var CAGGsLiveForever = []string{
+	"prices_1h", "prices_4h", "prices_1d", "prices_1w", "prices_1mo",
+}
+
+// RefreshContinuousAggregate force-materialises a continuous
+// aggregate over the given time window. Calls Timescale's
+// `refresh_continuous_aggregate(view, from, to)` procedure, which
+// blocks until the materialisation completes.
+//
+// Required after backfill runs because the policy refresher only
+// rolls forward — historical inserts (ts < now()-policy_window)
+// don't trigger materialisation, and the 90-day retention on raw
+// trades drops chunks before the policy's natural cadence picks
+// them up. The backfill tool calls this at the end of each chunk
+// to make CAGG materialisation atomic with the trade insert.
+//
+// Idempotent: refreshing an already-materialised range is a no-op.
+// Fail-loud on unknown view name (defends against typo-driven
+// SQL injection through the view-name string format).
+func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error {
+	if !allowedCAGGViews[viewName] {
+		return fmt.Errorf("timescale: RefreshContinuousAggregate: unknown view %q", viewName)
+	}
+	// CALL refresh_continuous_aggregate(view, $1, $2). The first
+	// arg is REGCLASS in Timescale's signature, which pgx can't
+	// placeholder; concatenating from the allow-list is safe.
+	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1, $2)`, viewName)
+	_, err := s.db.ExecContext(ctx, q, from, to)
+	if err != nil {
+		return fmt.Errorf("timescale: RefreshContinuousAggregate(%s): %w", viewName, err)
+	}
+	return nil
+}
+
+// CAGGCoverage describes the time range and row count of the
+// hourly-or-larger continuous aggregate (prices_1h is canonical).
+// This is the source-of-truth "do we have historical aggregates"
+// answer — raw trades have a 90-day retention but the hourly+
+// CAGGs are retained forever (migration 0002), so a healthy
+// since-genesis backfill leaves a wide CAGGCoverage even though
+// the raw trades table only spans the last 90 days.
+type CAGGCoverage struct {
+	EarliestBucket time.Time
+	LatestBucket   time.Time
+	BucketCount    int64
+}
+
+// CAGGCoverageStats returns the earliest + latest buckets in
+// prices_1h. Sub-second under the (base_asset, quote_asset, bucket)
+// index. Empty when the CAGG has not yet been materialised at all
+// (cold-start before any aggregator tick).
+func (s *Store) CAGGCoverageStats(ctx context.Context) (CAGGCoverage, error) {
+	const q = `SELECT MIN(bucket), MAX(bucket), COUNT(*) FROM prices_1h`
+	var (
+		minB, maxB sql.NullTime
+		count      int64
+	)
+	if err := s.db.QueryRowContext(ctx, q).Scan(&minB, &maxB, &count); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CAGGCoverage{}, nil
+		}
+		return CAGGCoverage{}, err
+	}
+	out := CAGGCoverage{BucketCount: count}
+	if minB.Valid {
+		out.EarliestBucket = minB.Time
+	}
+	if maxB.Valid {
+		out.LatestBucket = maxB.Time
+	}
+	return out, nil
 }
 
 // BackfillCoverage is one row of the per-source coverage summary —
