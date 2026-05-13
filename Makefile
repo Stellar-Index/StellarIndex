@@ -208,6 +208,11 @@ verify-launch-ready: ## Single-pane status check on the launch-readiness backlog
 verify-launch-ready-all: ## verify-launch-ready with full per-row listing
 	@$(GO) run ./scripts/ci/verify-launch-ready -all
 
+.PHONY: verify-launch-ready-single-region
+verify-launch-ready-single-region: ## verify-launch-ready against the project's "live-in-development on R1" posture (skips R2/R3 + chaos + external-security rows)
+	@$(GO) run ./scripts/ci/verify-launch-ready \
+		-skip-ids L4.14,L4.15,L4.16,L4.17,L5.6,L5.8
+
 .PHONY: monitoring-check
 monitoring-check: ## Validate Prometheus rule files with promtool
 	@if ! command -v promtool >/dev/null 2>&1; then \

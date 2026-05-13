@@ -1,6 +1,6 @@
 ---
 title: Launch readiness backlog
-last_verified: 2026-05-03
+last_verified: 2026-05-13
 status: living document
 ---
 
@@ -195,6 +195,29 @@ before production cutover. Two consequences:
 
 The deferrals in the post-launch table above are the only carve-outs;
 each has a justification that the operator has explicitly accepted.
+
+### Two readiness gates: multi-region (default) vs single-region
+
+The repo ships two `verify-launch-ready` invocations matching two
+genuinely different operator postures:
+
+- **`make verify-launch-ready`** — multi-region gate. The
+  default, used by CI. Gates on every L1-L5 row including L4.14-17
+  (R2/R3 + DNS + Patroni) and L5.6 / L5.8 (external security
+  review + region-failover chaos). Goes green only when the full
+  multi-region surface is operator-validated.
+- **`make verify-launch-ready-single-region`** — R1-only subset
+  gate added 2026-05-13 to match the project's "live-in-development
+  on R1, no consumer traffic yet" posture. Skips L4.14-17 + L5.6 +
+  L5.8 (the rows that can only land via the multi-day multi-region
+  bringup + the external auditor) and goes green against the rest.
+  Useful for confirming "the single-region engineering surface is
+  ready for the operator to deploy a binary" without conflating
+  that with "the multi-region surface is ready."
+
+Both gates parse the same backlog table; the only difference is
+which row IDs participate in the verdict. A row's per-line status
+is unchanged in either mode.
 
 ---
 

@@ -34,8 +34,19 @@
 //	go run ./scripts/ci/verify-launch-ready
 //	go run ./scripts/ci/verify-launch-ready -all   # list every row
 //	go run ./scripts/ci/verify-launch-ready -path docs/.../backlog.md
+//	go run ./scripts/ci/verify-launch-ready -skip-ids L4.14,L4.15  # skip
 //
-// Wire into Makefile via `make verify-launch-ready`.
+// `-skip-ids` accepts a comma-separated list of row IDs whose
+// status is treated as ✅ for gating purposes (the row is still
+// listed in the report with its true status, but does not block
+// the engineering-ready verdict). The `make verify-launch-ready-
+// single-region` target preset bakes in the multi-region skip
+// list — useful for the project's current "live-in-development on
+// R1, no consumer traffic yet" posture where the R2/R3 + chaos
+// rows are deferred future scope rather than launch blockers.
+//
+// Wire into Makefile via `make verify-launch-ready` (multi-region
+// gate) or `make verify-launch-ready-single-region` (R1-only gate).
 package main
 
 import (
@@ -64,6 +75,8 @@ func main() {
 	path := flag.String("path", "docs/architecture/launch-readiness-backlog.md",
 		"Path to the launch-readiness backlog markdown file.")
 	listAll := flag.Bool("all", false, "List every row regardless of tier.")
+	skipIDs := flag.String("skip-ids", "",
+		"Comma-separated list of row IDs whose status to ignore for gating (e.g. 'L4.14,L4.15'). The row still prints with its real status; only the verdict changes.")
 	flag.Parse()
 
 	rows, err := parseFile(*path)
@@ -77,12 +90,32 @@ func main() {
 		os.Exit(2)
 	}
 
-	report(rows, *listAll)
+	skip := parseSkipIDs(*skipIDs)
+	report(rows, *listAll, skip)
 
-	if !engineeringReady(rows) {
+	if !engineeringReadyWithSkip(rows, skip) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// parseSkipIDs turns a comma-separated flag value into a set.
+// Whitespace around commas is tolerated. Empty input returns nil
+// (no skips), which collapses to the legacy gate behaviour.
+func parseSkipIDs(s string) map[string]struct{} {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	out := map[string]struct{}{}
+	for _, id := range strings.Split(s, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	return out
 }
 
 // parseFile reads the backlog and returns one Row per matched table line.
@@ -190,7 +223,19 @@ func readyOpsValidation(s string) bool {
 // engineeringReady returns true iff every L1-L5 row is in a ready
 // state. L6 is operator-action-only on launch day; L7 is deferred.
 func engineeringReady(rows []Row) bool {
+	return engineeringReadyWithSkip(rows, nil)
+}
+
+// engineeringReadyWithSkip is the [engineeringReady] variant that
+// treats every row whose ID appears in `skip` as ready regardless
+// of its true status. Used by the `-skip-ids` flag (and the
+// `make verify-launch-ready-single-region` Makefile preset) to
+// gate against a subset that matches today's project posture.
+func engineeringReadyWithSkip(rows []Row, skip map[string]struct{}) bool {
 	for _, r := range rows {
+		if _, skipped := skip[r.ID]; skipped {
+			continue
+		}
 		switch r.Surface {
 		case "L1", "L2", "L3":
 			if !readyEngineering(r.Status) {
@@ -226,34 +271,48 @@ func surfaceLabel(s string) string {
 	return s
 }
 
-func report(rows []Row, listAll bool) {
+func report(rows []Row, listAll bool, skip map[string]struct{}) {
 	bySurface := groupBySurface(rows)
 
 	fmt.Println(bold("Rates Engine — Launch Readiness Check"))
 	fmt.Println(strings.Repeat("=", 40))
-	fmt.Println()
-
-	for _, sf := range []string{"L1", "L2", "L3", "L4", "L5", "L6", "L7"} {
-		printSurfaceLine(sf, bySurface[sf])
+	if len(skip) > 0 {
+		fmt.Printf("(skipping %d row(s) for gating: %s)\n",
+			len(skip), strings.Join(sortedKeys(skip), ", "))
 	}
 	fmt.Println()
 
-	if blockers := collectBlockers(rows); len(blockers) > 0 {
+	for _, sf := range []string{"L1", "L2", "L3", "L4", "L5", "L6", "L7"} {
+		printSurfaceLine(sf, bySurface[sf], skip)
+	}
+	fmt.Println()
+
+	if blockers := collectBlockersWithSkip(rows, skip); len(blockers) > 0 {
 		printRows(bold("Blocking rows (engineering not ready):"), blockers)
 	}
 	if listAll {
 		printRows(bold("All rows:"), rows)
 	}
-	printVerdict(rows)
+	printVerdict(rows, skip)
+}
+
+// sortedKeys returns the keys of a string set in deterministic order.
+func sortedKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // printSurfaceLine emits one summary line for a single surface.
-func printSurfaceLine(sf string, group []Row) {
+func printSurfaceLine(sf string, group []Row, skip map[string]struct{}) {
 	if len(group) == 0 {
 		return
 	}
 	counts := countByStatus(group)
-	ready, blockingShape := surfaceReadiness(sf, group)
+	ready, blockingShape := surfaceReadinessWithSkip(sf, group, skip)
 	marker := surfaceMarker(sf, ready)
 
 	fmt.Printf("%s%s %-25s %d/%d %s",
@@ -288,9 +347,12 @@ func groupBySurface(rows []Row) map[string][]Row {
 	return out
 }
 
-func collectBlockers(rows []Row) []Row {
+func collectBlockersWithSkip(rows []Row, skip map[string]struct{}) []Row {
 	var blockers []Row
 	for _, r := range rows {
+		if _, skipped := skip[r.ID]; skipped {
+			continue
+		}
 		switch r.Surface {
 		case "L1", "L2", "L3":
 			if !readyEngineering(r.Status) {
@@ -316,9 +378,13 @@ func printRows(header string, rows []Row) {
 	fmt.Println()
 }
 
-func printVerdict(rows []Row) {
-	if engineeringReady(rows) {
-		fmt.Println(green(bold("✓ Engineering surface ready — pending operator cutover.")))
+func printVerdict(rows []Row, skip map[string]struct{}) {
+	if engineeringReadyWithSkip(rows, skip) {
+		if len(skip) > 0 {
+			fmt.Println(green(bold("✓ Engineering surface ready (subset gate) — pending operator cutover.")))
+		} else {
+			fmt.Println(green(bold("✓ Engineering surface ready — pending operator cutover.")))
+		}
 		return
 	}
 	fmt.Println(red(bold("✗ Engineering surface NOT ready — see blocking rows above.")))
@@ -351,15 +417,28 @@ func compactCounts(c map[string]int) string {
 // surfaceReadiness reports whether all rows in this surface meet
 // their tier's readiness bar, plus a short reason if not.
 func surfaceReadiness(surface string, rows []Row) (bool, string) {
+	return surfaceReadinessWithSkip(surface, rows, nil)
+}
+
+// surfaceReadinessWithSkip is the [surfaceReadiness] variant that
+// honours `-skip-ids`: skipped rows do not contribute to the
+// surface's readiness verdict.
+func surfaceReadinessWithSkip(surface string, rows []Row, skip map[string]struct{}) (bool, string) {
 	switch surface {
 	case "L1", "L2", "L3":
 		for _, r := range rows {
+			if _, skipped := skip[r.ID]; skipped {
+				continue
+			}
 			if !readyEngineering(r.Status) {
 				return false, fmt.Sprintf("%s is %s (must be ✅ or ⚠)", r.ID, r.Status)
 			}
 		}
 	case "L4", "L5":
 		for _, r := range rows {
+			if _, skipped := skip[r.ID]; skipped {
+				continue
+			}
 			if !readyOpsValidation(r.Status) {
 				return false, fmt.Sprintf("%s is %s (must be ✅, ⚠, or 🟡)", r.ID, r.Status)
 			}

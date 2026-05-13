@@ -46,7 +46,12 @@ or admin-UI action — no further code change pending):
   `ratesengine-ops mint-key` and dropped at
   `/etc/default/ratesengine` so the timer can start.
 - `F-1206` — operator (multi-day): R2 + R3 deploy + failover-chaos
-  drill before the launch-readiness gate goes green.
+  drill before the **multi-region** launch-readiness gate goes green.
+  Wave 68 (2026-05-13) added a `make verify-launch-ready-single-region`
+  preset that skips L4.14-17 + L5.6 + L5.8 — the rows that gate on
+  the deferred multi-region surface — and goes green against today's
+  R1-only posture. Multi-region gate (`make verify-launch-ready`)
+  remains red, correctly, until the operator work lands.
 - `F-1207` (hosted half) — repo-admin UI: enable GitHub
   Vulnerability Alerts + Dependabot Alerts in repo Settings.
   Code-side npm/pnpm ecosystems already wired.
