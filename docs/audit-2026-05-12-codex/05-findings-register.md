@@ -481,8 +481,8 @@ Recent waves closed by code (chronological):
 | F-1273 | medium | Redis Sentinel reference docs still retain pre-shipped architecture claims even after the drill command was corrected to the authenticated listener contract | `docs/architecture/redis-sentinel-ansible-role-design-note.md`; `configs/ansible/roles/redis-sentinel/README.md`; `docs/operations/drills/scenarios/sev2-redis-sentinel-failover.md`; `configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2`; `internal/storage/redisclient/redisclient.go` | XFI-0065; EV-0201; EV-0208; EV-0212 | fixed | ops/docs/redis | The drill command now includes `-a "$REDIS_PASSWORD"`, but both the shipped design note and the role README still say the Sentinel client belongs in future `internal/cachekeys` work even though `internal/storage/redisclient` is already live. |
 | F-1274 | medium | The shipped HAProxy role still points operators at an `api-pod-down` runbook that does not exist anywhere in the tracked tree | `configs/ansible/roles/haproxy/README.md`; `docs/architecture/haproxy-ansible-role-design-note.md`; `docs/operations/runbooks/` | XFI-0066; EV-0207; EV-0213 | fixed | ops/docs/haproxy | Current workspace HAProxy docs no longer claim a missing `api-pod-down.md` companion runbook; they explicitly redirect to `api-down.md` and record that the older reference was wrong. |
 | F-1275 | high | HAProxy drains every API backend on Redis unavailability because it routes on `/v1/readyz`, while `/v1/readyz` fails Redis checks even though the documented Redis outage contract promises degraded-but-serving behavior | HAProxy health-check path; API readiness checker set; Redis outage/runbook contract; HA failure matrix | XFI-0067; EV-0214; EV-0227 | fixed | api/ops/availability/redis | Current source makes Redis a non-critical ready check: Redis-only failure returns HTTP 200 with body status `degraded`, and a regression test pins the HAProxy contract. Residual HAProxy/HA documentation drift is split into `F-1284`. |
-| F-1276 | medium | API alert/runbook examples still use the retired generic Prometheus selector `job="api"` even though current source uses `ratesengine_api` for multi-host HA and `ratesengine-api` on R1 | API alert catalog; API down/5xx/latency/SLA runbooks; metrics source comment; current Prometheus scrape/rule shapes | XFI-0068; EV-0215 | fixed | ops/docs/monitoring | Operators following the current docs paste queries that do not match either supported job-label family, which weakens incident diagnosis and keeps the alert catalog inconsistent with the rules it claims to mirror. |
-| F-1277 | low | The `api-down` runbook cites a nonexistent `internal/api/v1/healthz.go` implementation file instead of the actual readiness handler location | `docs/operations/runbooks/api-down.md`; `internal/api/v1/server.go` | XFI-0069; EV-0216 | fixed | ops/docs/api | The single source citation in the runbook points at a path that is not tracked, which makes the operator breadcrumb fail during an incident or audit follow-up. |
+| F-1276 | medium | API alert/runbook examples still use the retired generic Prometheus selector `job="api"` even though current source uses `ratesengine_api` for multi-host HA and `ratesengine-api` on R1 | API alert catalog; API down/5xx/latency/SLA runbooks; metrics source comment; current Prometheus scrape/rule shapes | XFI-0068; EV-0215; EV-0229 | fixed | ops/docs/monitoring | Operator docs now use the current regex selector family, but `internal/obs/metrics.go` still says alert rules reference `job="api"`, so the finding narrows to source-comment drift. |
+| F-1277 | low | The `api-down` runbook cites a nonexistent `internal/api/v1/healthz.go` implementation file instead of the actual readiness handler location | `docs/operations/runbooks/api-down.md`; `internal/api/v1/server.go` | XFI-0069; EV-0216; EV-0229 | fixed | ops/docs/api | Current `api-down.md` points at `internal/api/v1/server.go::handleReadyz` and explicitly records that the earlier `healthz.go` reference was corrected. |
 | F-1278 | high | The HA-role nftables "drop-ins" are not a sound allow-list composition: by themselves they accept everything, and alongside the repo's default-drop chain their accept chains still cannot reliably open the intended ports | HAProxy, Redis Sentinel, Patroni, Prometheus, and Loki firewall tasks; archival-node default-drop template; HA role design notes/operator claims | XFI-0070; EV-0217; EV-0224 | fixed | ops/security/firewall | The first remediation wave changed the HA drop-ins from `priority 0` to `priority -100`, but that still does not close the finding: nftables `accept` in an earlier base chain is not final, so the later priority-0 default-drop chain can still drop the same packet. The current comments therefore document an incorrect fix. |
 | F-1279 | medium | Patroni's firewall task writes `/etc/nftables.d/40-patroni.conf` before it ensures `/etc/nftables.d/` exists | `configs/ansible/roles/patroni/tasks/10-firewall.yml` | XFI-0071; EV-0218; EV-0224 | fixed | ops/deployment/patroni | Current source creates `/etc/nftables.d/` before writing `40-patroni.conf`, so the clean-host ordering failure no longer reproduces. |
 | F-1280 | high | Patroni's etcd install task defaults to a placeholder checksum, so the role is not runnable from its documented defaults/inventory model | `configs/ansible/roles/patroni/tasks/02-etcd-install.yml`; `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/README.md` | XFI-0072; EV-0220; EV-0224 | fixed | ops/deployment/patroni | The source now preflight-fails if `etcd_release_sha256` is missing or placeholder-valued and defaults comment the variable, but the role README still omits the required checksum from its prerequisites/inventory model. The finding narrows to documentation/first-run operator guidance. |
@@ -2901,20 +2901,21 @@ Evidence:
 
 - `XFI-0068`
 - `EV-0215`
+- `EV-0229`
 
 Expected: maintained incident docs and metric-source comments should use selectors that match at least one real supported deployment shape, or state the required deployment-specific substitution explicitly.
 
-Observed: the canonical multi-host HA scrape config uses `job="ratesengine_api"` and the R1 Prometheus config uses `job="ratesengine-api"`. The two API rule files match those real families. But the alert catalog still records `ratesengine_api_down` as `up{job="api"}`, `api-down.md` repeats `up{job="api"}` in symptoms, root cause, verification, and RCA sections, `api-5xx.md` and `api-latency.md` ship copy-paste PromQL with `job="api"`, `sla-probe-p95-breach.md` does the same, and `internal/obs/metrics.go` still says alert rules reference `job="api"`.
+Observed: the canonical multi-host HA scrape config uses `job="ratesengine_api"` and the R1 Prometheus config uses `job="ratesengine-api"`. The two API rule files match those real families. Current operator docs now largely follow that shape: the alert catalog uses `job=~"ratesengine[_-]api"`, `api-down.md` uses the same regex selector, and the API 5xx / latency / SLA probe runbooks now use real deployment selectors or route through the corrected docs. The remaining stale surface is `internal/obs/metrics.go`, whose source comment still says alert rules reference `http_requests_total{status=~"5..", job="api"}`.
 
-Impact: medium. The alert itself fires because the rule files are correct, but responders copying maintained docs get empty or misleading Prometheus queries in both supported deployment shapes. That slows diagnosis, especially in exactly the API outage/latency incidents these runbooks are supposed to accelerate.
+Impact: medium. The highest-risk operator copy/paste paths are now repaired, but the stale source comment can still mislead future metric/rule edits back toward a selector family that no supported deployment uses.
 
-Remediation direction: update each maintained query/example to the deployment-specific selector families already documented elsewhere, or present both selectors where the doc is intentionally cross-environment. Keep the metric-source comment aligned with real rule/query usage.
+Remediation direction: update the `internal/obs/metrics.go` comment to the current selector family or remove the stale selector example entirely.
 
 ### F-1277. The `api-down` runbook points readers at a readiness file that does not exist
 
 Severity: `low`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -2925,14 +2926,15 @@ Evidence:
 
 - `XFI-0069`
 - `EV-0216`
+- `EV-0229`
 
 Expected: a runbook breadcrumb into source should resolve to the implementation file it cites.
 
-Observed: `docs/operations/runbooks/api-down.md` says `/v1/readyz` is implemented in `internal/api/v1/healthz.go`, but that path is not tracked in the repo. The readiness handler and surrounding health contract live in `internal/api/v1/server.go`.
+Observed: this is now source-closed. `api-down.md` points at `internal/api/v1/server.go::handleReadyz` and explicitly records that the earlier nonexistent `internal/api/v1/healthz.go` breadcrumb was corrected.
 
-Impact: low. This does not change runtime behavior, but it breaks the exact source breadcrumb an operator or auditor would follow while debugging readiness semantics in an outage.
+Impact: fixed. The operator breadcrumb now resolves to the tracked implementation file.
 
-Remediation direction: update the runbook citation to the real handler location or remove the stale file reference entirely.
+Remediation direction: none beyond keeping source breadcrumbs tied to tracked files during future runbook edits.
 
 ### F-1278. The HA-role nftables drop-ins do not compose safely with the repo's firewall model
 
