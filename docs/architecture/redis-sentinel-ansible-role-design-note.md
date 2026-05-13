@@ -1,6 +1,6 @@
 ---
 title: Redis Sentinel ansible role — design note
-last_verified: 2026-05-02
+last_verified: 2026-05-13
 status: shipped (Task #72 / #79 — configs/ansible/roles/redis-sentinel)
 related:
   - docs/architecture/ha-plan.md §3.4 (Redis cluster topology)
@@ -9,6 +9,24 @@ related:
 ---
 
 # Redis Sentinel ansible role — design note
+
+> **Shipped — this doc is the pre-shipping design conversation.**
+> The role at `configs/ansible/roles/redis-sentinel/` is now
+> live, plus the Sentinel-aware client at
+> [`internal/storage/redisclient/`](../../internal/storage/redisclient/redisclient.go)
+> (NOT in `internal/cachekeys/` as the doc body still suggests
+> in places — the connection-factory work landed in its own
+> package). For shipped-state references see:
+>
+> - Live ACL + listener-auth posture: F-1271 (wave 106)
+>   added `requirepass` to `sentinel.conf.j2`; F-1272 (wave 106/107)
+>   added the `redis_exporter` ACL user gated on
+>   `redis_acl_lockdown`.
+> - Body sections below describing "future work" or "PR shape"
+>   are preserved as the original design record. The actual
+>   commit landed differently in places — defer to the source
+>   tree when prose conflicts. F-1273 (2026-05-13) tracked the
+>   residual prose drift in this doc.
 
 **Working draft on local-only branch
 `design/redis-sentinel-ansible-role-design-note`. Bootstraps the

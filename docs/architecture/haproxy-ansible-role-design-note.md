@@ -1,12 +1,12 @@
 ---
 title: HAProxy ansible role — design note
-last_verified: 2026-05-02
+last_verified: 2026-05-13
 status: shipped (Task #72 / #82 — configs/ansible/roles/haproxy)
 related:
   - docs/architecture/ha-plan.md §3.1 (api-tier topology)
   - docs/architecture/patroni-ansible-role-design-note.md (sister role)
   - docs/architecture/redis-sentinel-ansible-role-design-note.md (sister role)
-  - docs/operations/runbooks/api-pod-down.md (the runbook this role makes work)
+  - docs/operations/runbooks/api-down.md (SEV-1; nearest neighbour. The HAProxy-specific single-pod-eject scenario is partial degradation, not SEV-1 — add a §"single-pod-ejected" section to api-down.md when multi-pod HAProxy topology lands; the earlier related-link named a nonexistent `api-pod-down.md`, F-1274 2026-05-13)
 ---
 
 # HAProxy ansible role — design note
@@ -281,10 +281,13 @@ Pattern matches the Patroni and Redis-Sentinel roles for consistency.
 
 ## Once HAProxy lands, what changes elsewhere
 
-`docs/operations/runbooks/api-pod-down.md` (file may not yet
-exist; create alongside if missing): mitigation steps shift from
-"wait for the operator to remove the pod from DNS" to "wait for
-HAProxy's 15s health-check window."
+Runbook coverage: `docs/operations/runbooks/api-down.md` covers
+the SEV-1 case. The HAProxy-specific single-pod-eject scenario
+(HAProxy's 15-second health-check window flips one backend OUT
+while others keep serving) is partial degradation rather than
+SEV-1 — add a §"single-pod-ejected" section to `api-down.md`
+when multi-pod HAProxy topology lands. F-1274 (2026-05-13)
+corrected an earlier reference to a nonexistent `api-pod-down.md`.
 
 Coverage matrix #11–#16 row narrows by one: HAProxy goes from
 "only `archival-node` exists today" to "Patroni + Redis Sentinel
