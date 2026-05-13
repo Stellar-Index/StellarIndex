@@ -119,9 +119,20 @@ Key fields:
 ```
 
 A `verdict` of `fail` carries the reasons in `failed_reasons` —
-e.g. `["price: p95=215.3ms > target 200.0ms"]`. The unit also
-exits non-zero, so `systemctl is-failed ratesengine-sla-probe.service`
-reports the breach.
+e.g. `["price: p95=215.3ms > target 200.0ms"]`. The Healthchecks
+wrapper at `/opt/ratesengine/healthchecks/sla-probe.sh` reports the
+breach through three channels (F-1313, codex audit-2026-05-13):
+1. POSTs the full JSON report body to `${HEALTHCHECKS_URL_SLA_PROBE}/fail`.
+2. Writes `ratesengine_sla_probe_unit_failed 1` to the textfile-collector,
+   which Prometheus surfaces as the `ratesengine_sla_probe_unit_failed_alert`.
+3. The probe binary's stdout JSON lands in journald (`journalctl -u
+   ratesengine-sla-probe.service`).
+
+The wrapper itself **exits 0** even on probe failure so the timer's
+"completed successfully" path stays clean for systemd; the breach is
+detected via Healthchecks/Prometheus/journald, not systemd unit state.
+`systemctl is-failed` will NOT report the breach — use the three channels
+above.
 
 ## Pre-flight: spot-check from the operator's laptop
 

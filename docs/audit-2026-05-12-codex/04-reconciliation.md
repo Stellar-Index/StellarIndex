@@ -1075,3 +1075,22 @@ without evidence IDs.
   `99 fixed / 13 open`, file coverage
   `done=193 / in_progress=131 / todo=1602`, docs lint green, and no
   finding-status mismatches between the register table and detailed sections.
+- `CMD-0322` performs a third-pass closure falsification against current
+  runtime/source truth and reopens or narrows four premature closures:
+  `F-1201` remains open because public `11726/tcp` still accepts; `F-1305`
+  remains open because the keyed, concurrency-1 SLA probe still writes
+  `unit_failed=1` with `issuers` availability below the 99.9% target;
+  `F-1311` narrows from p95/p99 spikes to the still-firing latency SLO burn;
+  and `F-1313` narrows to the remaining coverage-matrix, R1 deployment-state,
+  and service-failure-semantics documentation drift.
+- `CMD-0323` closes `F-1216` after hosted and source evidence align:
+  Actions policy is selected-only with `sha_pinning_required=true`, and the
+  reviewed third-party workflow action calls are pinned to commit SHAs. The
+  broader governance interaction stays open for unprotected `main` and
+  unprotected deployment environments under `F-1214` and `F-1215`.
+- `CMD-0324` restores audit-control parity after the falsification/reclosure
+  pass: findings `104 fixed / 10 open`, XFI `97 fixed / 9 open`,
+  remediation `102 fixed / 10 open`, file coverage
+  `done=193 / in_progress=131 / todo=1602`, tracked-file parity exact at
+  `1926`, docs lint green, and no finding-status mismatches between the
+  register table and detailed sections.
