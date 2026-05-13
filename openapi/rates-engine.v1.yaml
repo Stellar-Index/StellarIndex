@@ -1540,6 +1540,118 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /diagnostics/ingestion:
+    get:
+      tags: [meta]
+      summary: Per-region ingestion snapshot — ledger tip, backfill, FX, supply, sources.
+      description: |
+        One snapshot of the region's ingest state, composed from
+        the cursors table, network_stats CAGG, fx_quotes hypertable,
+        asset_supply_history, the in-memory market-cap cache, and
+        the static source registry. Designed as the single fetch
+        the public status page makes for its "Ingestion · <region>"
+        panel — so the page renders the whole panel without scraping
+        five separate endpoints.
+
+        Sections:
+          - `region`         — name + deployment (r1/production today).
+          - `version`        — what binary is running here.
+          - `ledger`         — live tip, lag, 24h volume, indexed assets/markets.
+          - `backfill`       — per-decoder ranges in progress, oldest lag.
+          - `fx_backfill`    — fx_quotes coverage (earliest/latest, total quotes).
+          - `market_cap`     — CoinGecko cache age + entries.
+          - `supply`         — counts per asset domain + most recent observation.
+          - `sources`        — every source in the registry joined with
+                               its trailing-24h trades/volume/markets.
+
+        Cache: `public, max-age=15`. The underlying readers change
+        on second-scale (cursor updates, supply ticks); 15s smooths
+        a refreshing status page without hiding degradation.
+      responses:
+        "200":
+          description: Snapshot of the region's ingest state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [region, version, ledger, backfill, fx_backfill, market_cap, supply, sources]
+                properties:
+                  region:
+                    type: object
+                    required: [name, deployment]
+                    properties:
+                      name:       { type: string, example: "r1" }
+                      deployment: { type: string, example: "production" }
+                  version:
+                    type: object
+                    required: [version, build_date, commit, dirty, go_version]
+                    properties:
+                      version:    { type: string, example: "v0.5.0-rc.50" }
+                      build_date: { type: string, example: "2026-05-13T18:21:59Z" }
+                      commit:     { type: string, example: "539333827c1a25d3ecfdcda67aa9c9a6f30cf6d3" }
+                      dirty:      { type: string, example: "false" }
+                      go_version: { type: string, example: "go1.25.10" }
+                  ledger:
+                    type: object
+                    required: [latest_ledger, lag_seconds, markets_count_24h, assets_indexed]
+                    properties:
+                      latest_ledger:     { type: integer, format: int64 }
+                      lag_seconds:       { type: integer, format: int64 }
+                      volume_24h_usd:    { type: string, description: "Decimal string per ADR-0003." }
+                      markets_count_24h: { type: integer, format: int64 }
+                      assets_indexed:    { type: integer, format: int64 }
+                  backfill:
+                    type: array
+                    items:
+                      type: object
+                      required: [decoder, ranges_total, ranges_active, oldest_lag_seconds, newest_ledger]
+                      properties:
+                        decoder:            { type: string, example: "sdex,soroswap" }
+                        ranges_total:       { type: integer }
+                        ranges_active:      { type: integer, description: "Ranges with last_ledger < range_end." }
+                        oldest_updated_at:  { type: string, format: date-time }
+                        oldest_lag_seconds: { type: integer, format: int64 }
+                        newest_ledger:      { type: integer, format: int64 }
+                  fx_backfill:
+                    type: object
+                    required: [total_quotes, currencies_count]
+                    properties:
+                      earliest_quote:   { type: string, example: "1999-01-04" }
+                      latest_quote:     { type: string, example: "2026-05-13" }
+                      total_quotes:     { type: integer, format: int64 }
+                      currencies_count: { type: integer }
+                  market_cap:
+                    type: object
+                    required: [entries_count]
+                    properties:
+                      entries_count:     { type: integer }
+                      oldest_fetched_at: { type: string, format: date-time }
+                      newest_fetched_at: { type: string, format: date-time }
+                  supply:
+                    type: object
+                    required: [classic_assets_with_supply, sep41_assets_with_supply]
+                    properties:
+                      classic_assets_with_supply: { type: integer }
+                      sep41_assets_with_supply:   { type: integer }
+                      last_snapshot_at:           { type: string, format: date-time }
+                      latest_ledger:              { type: integer, format: int64 }
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, markets_count_24h]
+                      properties:
+                        name:              { type: string, example: "binance" }
+                        class:             { type: string, example: "exchange" }
+                        subclass:          { type: string, example: "cex" }
+                        include_in_vwap:   { type: boolean }
+                        backfill_safe:     { type: boolean }
+                        trade_count_24h:   { type: integer, format: int64 }
+                        volume_24h_usd:    { type: string }
+                        markets_count_24h: { type: integer, format: int64 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /incidents:
     get:
       tags: [meta]
