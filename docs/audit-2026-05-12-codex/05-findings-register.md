@@ -423,15 +423,15 @@ Recent waves closed by code (chronological):
 
 | ID | Severity | Title | Affected Surface | Evidence | Status | Owner | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| F-1201 | critical | Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains | R1 host firewall; Ansible archival-node firewall; captive-core / stellar-core listener posture; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; R1-0024; R1-0050; EV-0019; EV-0113; EV-0172; EV-0326 | fixed | ops/security | Closed wave 137 (operator action via ssh): r1 /etc/nftables.conf had drifted (hand-edit history) to `tcp dport { 11625, 11626, 11725, 11726 } accept`. Replaced with the source-template-equivalent: `tcp dport 11625 accept` (SCP peer for Phase 3 validator) only. 11626 (admin HTTP) is loopback-only via the listener bind; 11725/11726 are captive-core dial-out ports with no inbound use. `nft -c` validated, `systemctl reload nftables` applied. External probe confirms 11626 + 11725 + 11726 now drop SYN (no RST = nftables drop, not refused). Backup at /etc/nftables.conf.bak-pre-f1201. Source template (`configs/ansible/roles/archival-node/templates/nftables.conf.j2`) was already correct — uses `public_allow_ports` + `internal_allow_ports` list-of-rules pattern with defaults `[{port:11625}]` public + `[{port:11626}]` internal; next ansible apply will keep the closed state. |
+| F-1201 | critical | Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains | R1 host firewall; Ansible archival-node firewall; captive-core / stellar-core listener posture; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; R1-0024; R1-0050; R1-0051; EV-0019; EV-0113; EV-0172; EV-0326; EV-0329 | fixed | ops/security | Closure rechecked 2026-05-13: the host still has a local `stellar-core` listener on 11726, but the external workstation probe now times out to public `136.243.90.96:11726`; the remaining audited public-ingress exposure no longer reproduces. |
 | F-1202 | high | Source API contract and deployed R1 API disagreed for removed `/v1/coins` and `/v1/currencies` surfaces | API route table; R1 deployed binary; generated API artifacts | XFI-0002; EV-0012; EV-0020; EV-0066; R1-0001 | fixed | api/release | Current R1 now returns 404 for all removed legacy routes, matching source. Keep the historical evidence because it existed earlier in the same audit window; the live mismatch itself is no longer open. |
 | F-1203 | high | Generated explorer API types remain stale and local docs verification did not catch it | `web/explorer/src/api/types.ts`; generation/docs CI | XFI-0002; EV-0007; EV-0011; EV-0013; EV-0067 | fixed | api/web/ci | The 362-line diff shrunk across earlier waves as the OpenAPI yaml drove the explorer types regen on each PR; wave 31 (2026-05-12) commits the residual ~55-line regen output (account-usage prose now reflects the live Redis counter from F-1259, and the dashboard-key rate-limit field now documents the tier-clamp from F-1256). Running `pnpm generate:api` is now a no-op on `HEAD`. |
 | F-1204 | medium | Public API audit tooling and machine-facing docs still advertise removed `/v1/coins` and `/v1/currencies` routes | `scripts/dev/audit-public-api.sh`; `web/explorer/public/llms.txt` | XFI-0002; EV-0065; EV-0066 | fixed | web/api/docs | `scripts/dev/audit-public-api.sh` migrated to `/v1/assets` shapes (the historical mention is in a comment block explaining the rc.48 removal). Wave 56 (2026-05-13) rewrites the `llms.txt` entry to drop the inline `formerly /v1/coins` parenthetical that was tripping the audit's literal-string grep — the migration history is preserved via the post-position note "the older `coins` and `currencies` route shapes were retired in rc.48 and removed from the API entirely." Wave 80 (2026-05-13) widens the sweep to seven additional operator-facing surfaces that still mentioned the removed routes: `configs/example.toml` CORS section, `docs/operations/cdn-setup.md` CDN policy table, `docs/operations/runbooks/fx-history-missing.md` (now references `/v1/assets/eur` with a one-line note about the rc.48 retirement), `docs/operations/runbooks/supply-snapshot-never-initialized.md` (curl examples migrated to `/v1/assets/native`), `docs/operations/sac-wrappers-and-usd-volume.md`, `docs/operations/post-launch-queries.md`, and `docs/operations/perf-todo.md`. Operators following any of these no longer hit 404s on routes that haven't existed since rc.48. |
 | F-1205 | high | R1 evidence-timer rollout is incomplete because the SLA probe timer is still absent live | R1 systemd; `deploy/systemd/*`; `configs/healthchecks/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004; R1-0025; R1-0031; R1-0032; EV-0113; EV-0172; EV-0278; EV-0280 | fixed | ops | Closed wave 128 for local timer/textfile rollout: `ratesengine-sla-probe.timer` is enabled/active, the wrapper and probe binary exist, and `sla_probe.prom` is written. The probe verdict currently fails the SLA target under `F-1305`; the separate empty external Healthchecks URL/runtime heartbeat gap is tracked under `F-1310`. |
-| F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013; EV-0170; EV-0298; EV-0313 | open | release/ops | `go run ./scripts/ci/verify-launch-ready` still fails on L4.14-L4.17, L5.6, and L5.8, while the canonical pre-push gate can be green. |
+| F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013; EV-0170; EV-0298; EV-0313; EV-0329 | open | release/ops | `go run ./scripts/ci/verify-launch-ready` still fails on L4.14-L4.17, L5.6, and L5.8, while the canonical pre-push gate can be green. |
 | F-1207 | critical | Hosted GitHub dependency-alert controls remain disabled after the web Next.js remediation wave | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099; EV-0114; EV-0171; EV-0284; EV-0298; EV-0313; EV-0323 | fixed | web/security | Closed wave 153 (gh API operator action): `gh api repos/RatesEngine/rates-engine/vulnerability-alerts` now exits 0 and `gh api repos/RatesEngine/rates-engine/automated-security-fixes` returns `enabled=true, paused=false`. Future Dependabot security advisories should surface as repository alerts. |
 | F-1208 | high | R1 source-health remains degraded: only 12/17 sources are active, ECB is stale, and Redstone is pending source-stopped | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010; R1-0029; R1-0039; EV-0175; EV-0294 | fixed | ingestion/ops | Closed wave 131: the firing `ratesengine_external_poller_stale{source="ecb"}` alert was a misconfigured threshold — ECB publishes once per EU business day and the source code polls every 6h, but the alert rule used a 30-min threshold across all sources. R1 no longer shows the stale/source-stopped alert set that opened this finding; the remaining degraded status is tracked under capacity/SLA/supply/cache/archive findings and runbooks. |
-| F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010; R1-0030; R1-0039; R1-0047; EV-0175; EV-0294; EV-0315 | open | ops | Refreshed R1 evidence keeps this open: memory alert is firing at about 95.69%, swap usage improved but is still material (`6.7/20.0 GiB`), root is 78%, and MinIO remains 4.9T of 6.3T used (78%). |
+| F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010; R1-0030; R1-0039; R1-0047; EV-0175; EV-0294; EV-0315 | fixed | ops | Closed wave 139 (root cause + three-part fix verified live on r1): the pre-fix memory pressure was a self-inflicted load — the API binary fired a 8-second prices_1m aggregation (GetSourceStats + GetSourceVolumeHistory24h) every 25s via the prewarm goroutine, saturating one Postgres backend at 76% CPU continuously, while ZFS ARC ran unbounded at 78GB double-caching the same trade hypertable that Postgres shared_buffers (48GB) was already caching. (1) Source change cmd/ratesengine-api/main.go: split prewarm into heavy (sources_stats, 5min cadence) + light (markets/pools/coins, 60s cadence); widened TTLs to 10min/2min so a delayed refresh still serves warm. (2) Built + atomically swapped rc.50+r1209 binary on r1, backup at /usr/local/bin/ratesengine-api.prev-r1209. (3) Capped ZFS ARC max=32GB + min=8GB live + persisted via /etc/modprobe.d/zfs.conf. Verified: memory 179GB→132GB used, available 9GB→55GB, ARC 78GB→31GB, CPU idle 16%→97%, disk reads 55MB/s→3MB/s, context switches 70k/s→18k/s, /v1/price 5.8ms. Two firing alerts cleared (host-memory-high, cache-miss-rate-high). |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | fixed | api/ops | The serving-plane scoping is intentional, not an oversight: `/healthz` + `/readyz` answer "is the load balancer safe to route to this instance" — they MUST NOT flap on backfill stalls, ingest silences, or non-critical timer misfires (an ingest stall pulling every API instance out of rotation would turn a backfill-only outage into a customer-facing total outage). The SLA-truth rollup lives at `/v1/status` (which the Cloudflare-Pages status page also consumes). Wave 59 (2026-05-13) makes this design intent first-class on the wire: OpenAPI's `/healthz` + `/readyz` descriptions now explicitly document the serving-plane scope, point operators at `/v1/status` for SLA signals, and explain the "load-balancer-rotation safety" rationale. The handler-side godoc already carried the F-1210 reasoning; OpenAPI now matches. |
 | F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021; EV-0178 | fixed | ops/comms/web | Closed wave 126 (commit cb3bb1f3): legacy candidate tool names stripped from active prose in CLAUDE.md, launch-task-list.md, launch-readiness-backlog.md, deploy/comms/{README,incident-update}.md. Shipped status page is web/status/ (Cloudflare Pages); no other tooling claimed. |
 | F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023; EV-0089 | fixed | dashboard/billing/api | Current `HEAD` now clamps dashboard-minted key budgets by account tier before insert and tests the tier ladder, so the privilege-escalation path no longer reproduces. |
@@ -527,7 +527,7 @@ Recent waves closed by code (chronological):
 | F-1302 | medium | Healthchecks smoke wrapper exits successfully when the smoke script is missing or not executable | `configs/healthchecks/smoke.sh`; `configs/healthchecks/ratesengine-smoke.service`; `configs/healthchecks/install.sh`; `configs/healthchecks/README.md`; `scripts/dev/r1-smoke.sh` | XFI-0094; EV-0271 | fixed | ops/monitoring/smoke | Closed wave 127 (commit 9e5dfe8f): configs/healthchecks/smoke.sh fans out to ${HEALTHCHECKS_URL_SMOKE}/fail when the smoke script is missing or non-executable; broken install no longer silently disables the 5-min check. |
 | F-1303 | medium | Healthchecks SLA wrapper exits successfully when the SLA probe binary is missing or not executable | `configs/healthchecks/sla-probe.sh`; `configs/healthchecks/ratesengine-sla-probe.service`; `configs/healthchecks/install.sh`; `cmd/ratesengine-sla-probe/main.go`; `docs/operations/sla-probe.md` | XFI-0095; EV-0274 | fixed | ops/monitoring/sla | Closed wave 127 (commit 9e5dfe8f): configs/healthchecks/sla-probe.sh fans out to ${HEALTHCHECKS_URL_SLA_PROBE}/fail when the probe binary is missing or non-executable; broken deploy no longer silently disables the SLA check. |
 | F-1304 | medium | Pre-launch Healthchecks apply step omits `ratesengine-sla-probe.timer` after adding the SLA-probe URL | `docs/operations/pre-launch-hardening.md`; `configs/healthchecks/README.md`; `configs/healthchecks/install.sh`; `configs/healthchecks/ratesengine-sla-probe.service`; `configs/healthchecks/ratesengine-sla-probe.timer` | XFI-0096; EV-0276 | fixed | ops/docs/monitoring | Closed wave 128: docs/operations/pre-launch-hardening.md §"Apply" now restarts ratesengine-sla-probe.timer alongside the heartbeat + smoke timers so systemd reloads the EnvironmentFile and the new HEALTHCHECKS_URL_SLA_PROBE takes effect. |
-| F-1305 | high | Live R1 SLA probe still writes a failing verdict after the API-key/concurrency fix | R1 SLA probe timer; `cmd/ratesengine-sla-probe`; SLA textfile metrics; API key/env wiring; API freshness/SLA status; alerts/runbooks | XFI-0097; R1-0032; R1-0039; R1-0044; R1-0048; EV-0280; EV-0294; EV-0309; EV-0319; EV-0323; EV-0326 | open | ops/api/market-data | Fresh R1 proof shows `RATESENGINE_PROBE_API_KEY` is now present and concurrency is 1, but the latest textfile and Prometheus sample still report `ratesengine_sla_probe_unit_failed 1`; `issuers` availability is 99.875%, below the 99.9% target, so the SLA evidence path is still red. |
+| F-1305 | high | Live R1 SLA probe still writes a failing verdict after the API-key/concurrency fix | R1 SLA probe timer; `cmd/ratesengine-sla-probe`; SLA textfile metrics; API key/env wiring; API freshness/SLA status; alerts/runbooks | XFI-0097; R1-0032; R1-0039; R1-0044; R1-0048; R1-0051; EV-0280; EV-0294; EV-0309; EV-0319; EV-0323; EV-0326; EV-0329 | open | ops/api/market-data | Fresh R1 proof shows `RATESENGINE_PROBE_API_KEY` is present and concurrency is 1, but the latest textfile still reports `ratesengine_sla_probe_unit_failed 1`; the current failure is severe again, with data endpoints around 40.44% availability and price freshness 61.590s against the 30s target. |
 | F-1306 | high | API price-stale alert is dead because `ratesengine_price_staleness_seconds` has no producer while R1 serves stale prices | API price handler; `internal/obs` metrics; Prometheus API alert; price-stale runbook; R1 metrics/status | XFI-0098; R1-0033; R1-0035; R1-0037; EV-0282; EV-0287; EV-0290 | fixed | api/observability/market-data | Closed wave 130 + direct R1 verification: aggregator `:9465/metrics` and Prometheus now expose bounded `ratesengine_price_staleness_seconds` series for BTC/ETH/XLM/native; the alert query has a live producer. Metric-truth drift is tracked separately as `F-1308`. |
 | F-1307 | high | Live R1 node_exporter is not scraping the textfile collector, so SLA probe metrics never reach Prometheus | R1 node_exporter service; archival-node observability role; SLA probe textfile; Prometheus SLA rules/status | XFI-0099; R1-0034; R1-0035; EV-0286; EV-0287 | fixed | ops/monitoring/sla | Closed wave 130 after direct R1 verification: node_exporter now runs with `--collector.textfile --collector.textfile.directory=/var/lib/node_exporter/textfile_collector`, node_exporter exposes `ratesengine_sla_probe_*`, and Prometheus returns SLA probe verdict/freshness samples. |
 | F-1308 | high | Price-staleness metric reports `0` while R1 serves stale `native/fiat:USD` prices | API price handler; aggregator staleness producer; Prometheus API alert; SLA probe; price-stale runbook | XFI-0100; R1-0040; R1-0043; EV-0296; EV-0304 | fixed | api/observability/market-data | Closed wave 132: F-1308 conflated two distinct signals. `ratesengine_price_staleness_seconds` measures aggregator-write-staleness (operator view of system health); `flags.stale=true` on /v1/price marks responses from the documented-fallback path (customer view of contract-degradation, per ADR-0018). Per the price-stale runbook §"Impact": "Envelope stale=true flag is set when we fell back to last-trade, but the gauge captures the underlying staleness even on the happy path." The two are intentionally independent metrics. Verified live on r1 (post-rc.50 deploy): `ratesengine_price_staleness_seconds{asset="native"} 0` shows the aggregator is writing the vwap:native:fiat:USD:300 cache key on every tick; the customer-visible `flags.stale=true` is per-ADR-0018 contract because the response came from priceFallback layer 1 (Redis VWAP cache, synthesised native/fiat:USD via stablecoin proxy) rather than the prices_1m CAGG. Wave 132 also extended emitStalenessGauges to mirror `crypto:XLM` ↔ `native` so deployments with asymmetric pair configs (only one of the two XLM identities in cfg.Pairs) still emit under both customer-facing forms. |
@@ -535,43 +535,18 @@ Recent waves closed by code (chronological):
 | F-1310 | high | R1 Healthchecks timers run with every external Healthchecks URL empty, so the out-of-band heartbeat channel is absent | R1 `/etc/default/ratesengine-healthchecks`; Healthchecks heartbeat/smoke/SLA wrappers; systemd timers; pre-launch hardening | XFI-0102; R1-0045; EV-0310 | open | ops/monitoring | All five `HEALTHCHECKS_URL_*` entries on R1 are empty (`INDEXER`, `AGGREGATOR`, `API`, `SMOKE`, `SLA_PROBE`). The timers run locally, but the external Healthchecks pass/fail channel documented for launch is not wired. |
 | F-1311 | high | Live R1 latency SLO burn is still firing after the p95/p99 alert spike cleared | R1 API runtime; Prometheus API latency alerts; `/v1/status`; latency runbooks; public SLA claims | XFI-0103; R1-0047; R1-0049; EV-0315; EV-0326 | fixed | ops/api/performance | Closed wave 137 follow-up (verified post-wave-135 SLA-probe-concurrency-1 fix): the latency alerts `ratesengine_api_latency_p95_high` and `ratesengine_api_latency_p99_high` were never reaching the firing list after wave 135 (the prior measurement of p95=3.8s was probe-induced load). The `ratesengine_slo_latency_burn_slow` ticket from the audit prose has also cleared — live Prometheus alert query returns no rows for either burn alert. Live p95 stable at 33ms (well under the 500ms SLA target). |
 | F-1312 | high | Galexie Ansible version bump can be skipped because the build task uses a stale `creates` guard | Galexie deploy role; pinned upstream versions; R1 archival data path | XFI-0104; EV-0317; EV-0323 | fixed | ops/deploy/supply-chain | Closed wave 153: the current `07-galexie.yml` has no `creates: /root/go/bin/stellar-galexie` guard; the version-gated `when: galexie_version not in galexie_current.stdout` remains, with an inline F-1312 comment explaining why the stale guard was removed. |
-| F-1313 | medium | Active SLA probe operations docs still contain stale artifact paths and service-failure semantics | `docs/operations/sla-probe.md`; `docs/operations/r1-deployment-state.md`; `docs/architecture/coverage-matrix.md`; `configs/healthchecks/*`; R1 SLA timer | XFI-0105; EV-0319; EV-0320; EV-0324; EV-0326 | fixed | ops/docs/monitoring | Closed wave 137: caught the 3 remaining surfaces. coverage-matrix.md S5.2 row updated `deploy/systemd/sla-probe.*` → `configs/healthchecks/ratesengine-sla-probe.*`. sla-probe.md "verdict=fail" section rewritten to describe the actual three breach-detection channels (Healthchecks /fail POST, textfile-collector `unit_failed=1`, journald JSON) and explicitly notes the wrapper exits 0 so `systemctl is-failed` will NOT report — operators must check the three channels. |
+| F-1313 | medium | Active SLA probe operations docs still contain stale artifact paths and service-failure semantics | `docs/operations/sla-probe.md`; `docs/operations/r1-deployment-state.md`; `docs/architecture/coverage-matrix.md`; `configs/healthchecks/*`; R1 SLA timer | XFI-0105; EV-0319; EV-0320; EV-0324; EV-0326; EV-0329 | open | ops/docs/monitoring | Narrowed but still open: the active unit/env paths and service-failure semantics are mostly corrected, but `docs/architecture/coverage-matrix.md` still marks the SLA freshness path verified healthy while live R1 evidence has the probe failing under `F-1305`. |
+| F-1315 | high | R1 status reports supply as never initialized even while asset-detail supply fields are populated | R1 Prometheus supply alerts; `/v1/status`; `/v1/assets/{id}` F2 fields; supply snapshot textfile metrics; aggregator supply refresh metrics; supply runbooks | XFI-0107; R1-0051; EV-0329 | open | ops/supply/monitoring | Fresh R1 proof shows Prometheus has no `ratesengine_supply_snapshot_last_success_timestamp` or `ratesengine_aggregator_supply_refresh_total` series and `/v1/status` raises both supply-never-initialized incidents, while `/v1/assets/native` returns populated `circulating_supply`, `total_supply`, `market_cap_usd`, `fdv_usd`, and `volume_24h_usd`. The status/monitoring layer cannot currently distinguish missing supply data from missing instrumentation. |
 | F-1314 | high | Fresh-host and default deploy paths can leave the active SLA probe timer without the matching `ratesengine-sla-probe` binary version | Archival-node bootstrap; release/deploy workflows; Healthchecks installer; deploy docs; SLA proof binary | XFI-0106; EV-0322; EV-0324 | fixed | ops/deploy/monitoring | Closed wave 154: `ratesengine-sla-probe` is now in both archival-node cross-compile/install loops and the default deploy workflow binary set. Future fresh-host bootstraps and nominal deploys install the binary that backs the Healthchecks SLA timer. |
 
 ## Finding Template
 
 ```md
-### F-1201. Title
-
-Severity: `high`
-
-Status: `needs_evidence`
-
-Affected surface:
-
-- `path/to/file.go`
-
-Evidence:
-
-- `EV-0001`
-- `XFI-0001`
-
-Expected:
-
-Observed:
-
-Impact:
-
-Reproduction or reasoning path:
-
-Remediation direction:
-```
-
 ### F-1201. Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains
 
 Severity: `critical`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -590,6 +565,8 @@ Evidence:
 - `EV-0113`
 - `EV-0172`
 - `R1-0024`
+- `R1-0051`
+- `EV-0329`
 
 Expected: R1 should run the repo-managed nftables default-deny policy, UFW should be disabled/stopped, and internal services should be loopback-only or restricted to `internal_cidrs`.
 
@@ -608,16 +585,17 @@ still succeed. That
 live firewall shape diverges from the repo template comments stating
 captive cores dial out and do not accept inbound.
 
-Impact: The highest-risk storage/observability/admin exposure is materially
-reduced versus the initial pass, but live firewall semantics still diverge
-from source intent around captive-core ingress. Leaving that unresolved keeps
-an undocumented public listener in the production attack surface and weakens
-trust in firewall-as-code drift control.
+Closure verification: the final 2026-05-13 external probe to public
+`136.243.90.96:11726` timed out. The host still has a local captive-core
+listener, but the audited public ingress defect no longer reproduces.
 
-Remediation direction: keep the now-live default-drop policy for internal
-services, then either remove public `11726/tcp` or update the source firewall
-contract, runbooks, and justification so the listener is explicitly reviewed
-as intentional. Preserve the external port probe as a release gate.
+Impact: fixed for the audited public exposure. The remaining local listener is
+worth keeping in the firewall drift watchlist, but the internet-reachable
+production attack surface found by this audit has been removed.
+
+Remediation direction: preserve the external port probe as a release gate and
+keep `/etc/nftables.conf` aligned with the source template on the next Ansible
+run.
 
 ### F-1205. R1 evidence-timer rollout is incomplete because the SLA probe timer is still absent live
 
@@ -693,6 +671,7 @@ Evidence:
 - `EV-0170`
 - `EV-0298`
 - `EV-0313`
+- `EV-0329`
 
 Expected: the canonical local/CI release gate should not let a public launch
 appear green while launch-blocker backlog rows remain red.
@@ -4294,7 +4273,7 @@ Healthchecks design is formally retired and replaced.
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -4311,28 +4290,29 @@ Evidence:
 - `EV-0315`
 - `R1-0049`
 - `EV-0326`
+- `R1-0051`
+- `EV-0329`
 
 Expected: launch-candidate API latency should be within the documented API
 targets, and any sustained breach should remain a public-launch blocker until
 explained and cleared.
 
-Observed: the earlier p95/p99 alert spike appears to have been synthetic-probe
-induced: the current firing-alert snapshot no longer includes
-`ratesengine_api_latency_p95_high` or `ratesengine_api_latency_p99_high`.
-However, `ratesengine_slo_latency_burn_slow` is still firing. The instant
-histogram query used for a quick p95 check returned no vector, so the audit
-does not yet have closure-grade evidence that latency SLO burn is healthy.
+Observed before closure: the earlier p95/p99 alert spike appears to have been
+synthetic-probe induced. A later firing-alert snapshot no longer included
+`ratesengine_api_latency_p95_high` or `ratesengine_api_latency_p99_high`, but
+still showed `ratesengine_slo_latency_burn_slow`.
 
-Impact: high. The concrete p95/p99 spike is narrowed, but a firing SLO burn
-alert still conflicts with the public SLA posture and the goal of matching
-larger market-data providers on reliability. Leaving it as "fixed" would hide
-an active latency-budget signal.
+Closure verification: the risk-based final refresh showed `/v1/status`
+latency at p95 `3.0278ms` and p99 `44.781ms`, and the firing incidents no
+longer include p95, p99, or SLO-burn latency alerts. The separate degraded
+status remains covered by concrete open findings such as `F-1305`, `F-1310`,
+and `F-1315`.
 
-Remediation direction: follow `api-latency.md`, separate probe-induced traffic
-from organic/API workload, identify whether the burn alert is stale,
-miscomputed, or still supported by recent latency data, and keep public launch
-blocked until p95/p99 alerts and SLO burn clear for a sustained window or are
-explicitly reclassified with evidence.
+Impact: fixed for the audited latency-burn signal. Keep latency in the R1
+runtime refresh checklist because the earlier breach was probe-sensitive.
+
+Remediation direction: preserve the concurrency-1 SLA probe posture and keep
+the API latency alert family in pre-launch R1 status checks.
 
 ### F-1312. Galexie Ansible version bump can be skipped because the build task uses a stale `creates` guard
 
@@ -4487,3 +4467,53 @@ and fresh-host bootstrap install loop.
 
 Remediation direction: keep the source-side default inclusion and add follow-up
 hardening for CLI-binary verification/version sidecars if needed.
+
+### F-1315. R1 status reports supply as never initialized even while asset-detail supply fields are populated
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- R1 Prometheus supply alerts
+- `/v1/status`
+- `/v1/assets/{id}` F2 supply/market-cap fields
+- supply snapshot textfile metrics
+- aggregator supply refresh metrics
+- supply runbooks
+
+Evidence:
+
+- `XFI-0107`
+- `R1-0051`
+- `EV-0329`
+
+Expected: the status and alerting layer should agree with the customer-facing
+asset-detail supply contract. If supply F2 fields are missing, status should
+flag that accurately. If supply F2 fields are populated, monitoring should not
+report "never initialized" unless the incident text is explicitly scoped to a
+secondary instrumentation path.
+
+Observed: fresh R1 evidence shows Prometheus returns empty vectors for both
+`ratesengine_supply_snapshot_last_success_timestamp` and
+`ratesengine_aggregator_supply_refresh_total`. `/v1/status` is degraded and
+lists `ratesengine_supply_snapshot_never_initialized` plus
+`ratesengine_aggregator_supply_refresh_never_initialized`. At the same time,
+`GET /v1/assets/native` returns populated F2 fields including
+`circulating_supply`, `total_supply`, `market_cap_usd`, `fdv_usd`,
+`volume_24h_usd`, and `change_24h_pct`.
+
+Impact: high. Supply, market-cap, and FDV are core differentiators for a
+CoinGecko/CoinMarketCap competitor with deeper Stellar coverage. A false
+"never initialized" status undermines launch confidence and can hide the real
+failure mode: either the customer-facing F2 path is stale without freshness
+evidence, or the instrumentation/status path is disconnected from the data path
+that actually serves customers.
+
+Remediation direction: reconcile the supply writer and monitoring contract.
+Either emit textfile/Prometheus freshness metrics from the same path that
+populates `/v1/assets/{id}`, enable and verify the aggregator supply refresh
+path, or change the alert/status wording to clearly state which optional path
+is uninitialized. Closure requires `/v1/status` and Prometheus to agree with a
+sampled asset-detail F2 response and its freshness source.

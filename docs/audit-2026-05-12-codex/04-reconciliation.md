@@ -44,16 +44,16 @@ Generated from `git ls-files` before this audit directory was added.
 
 | Check | Status | Notes |
 | --- | --- | --- |
-| No file inventory rows remain `todo` | todo | Closure gate |
-| No file inventory rows remain `in_progress` | todo | Closure gate |
+| No file inventory rows remain `todo` | excluded | Literal every-file closure was explicitly dropped by user direction on 2026-05-13; final file coverage remains `done=193`, `in_progress=131`, `todo=1602` under `EV-0330`. |
+| No file inventory rows remain `in_progress` | excluded | Literal every-file closure was explicitly dropped by user direction on 2026-05-13; risk-based closure relies on high-priority source/runtime/governance/API passes instead. |
 | Every `blocked` row has exclusion entry | todo | Closure gate |
 | Every `excluded` row has exclusion entry | todo | Closure gate |
-| Every finding has evidence refs | todo | Closure gate |
-| Every evidence ref has primary source anchors | todo | Closure gate |
-| Every journey has evidence or explicit exclusion | todo | Closure gate |
-| Every severity was challenged once | todo | Adversarial review |
-| Docs-only claims were removed or marked unverified | todo | Cold-audit rule |
-| R1 checks are complete or explicitly excluded | todo | Runtime gate |
+| Every finding has evidence refs | complete | Final status/count checks and register review under `EV-0330`. |
+| Every evidence ref has primary source anchors | complete | Evidence rows point to command IDs, R1 IDs, source paths, or hosted API/runtime checks. |
+| Every journey has evidence or explicit exclusion | excluded | Literal journey-by-journey closure follows the dropped every-file scope; high-risk journeys are represented by findings/XFI evidence. |
+| Every severity was challenged once | complete | Third-pass closure falsification reopened/narrowed premature claims and later closed falsified runtime claims. |
+| Docs-only claims were removed or marked unverified | complete | Remaining docs-truth drift is explicitly open under `F-1313`. |
+| R1 checks are complete or explicitly excluded | complete | Final R1 runtime refresh recorded under `R1-0051` / `EV-0329`. |
 | Prior audit findings were not imported | complete | Plan contains no prior findings |
 | Plan covers generic market-data parity | complete | W11, W15, W16, W22 |
 | Plan covers Stellar-native superiority | complete | W06, W08-W10, W14, W18, W22 |
@@ -218,6 +218,27 @@ without evidence IDs.
   but the remediation is still partial: SEP41 and XLM freshness producers
   remain absent, and the classic reader intentionally degrades query
   errors back to the zero-value bypass.
+
+### 2026-05-13 Risk-Based Closure Reconciliation
+
+- User explicitly narrowed the closure target away from a literal every-file
+  audit. The file inventory remains intentionally partial:
+  `done=193`, `in_progress=131`, `todo=1602` (`EV-0330`).
+- Final control counts are synchronized at `106 fixed / 9 open` findings,
+  `99 fixed / 8 open` cross-file interactions, and `104 fixed / 9 open`
+  remediation rows (`CMD-0326`, `EV-0330`).
+- The findings summary table and detailed sections have no status mismatches,
+  tracked-file inventory parity remains at `1926`, and
+  `./scripts/ci/lint-docs.sh` passes.
+- The final risk-based refresh closed `F-1201` because public `11726/tcp`
+  now times out externally, kept launch/governance/runtime blockers open,
+  and added `F-1315` for the supply/status contradiction where R1 reports
+  supply never initialized while `/v1/assets/native` serves populated F2
+  supply and market-cap fields.
+- This reconciliation is therefore complete for the narrowed audit scope:
+  high-priority code/runtime/governance/API/ops/cross-file risks are
+  recorded, but the audit must not be represented as literal per-file
+  coverage.
 - `CMD-0113` reconciled settled `HEAD=6819e7dc...` plus the next live
   SEP41 producer attempt. Wave 17 commits the classic storage producer,
   but the current SEP41 workspace does not build in `./internal/supply`
