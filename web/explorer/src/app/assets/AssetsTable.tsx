@@ -3,37 +3,77 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
-import { useCoins, useIssuerLookup, type Coin } from '@/api/hooks';
+import { useAssets, type AssetClassFilter, type Coin } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
- * /assets directory table — the canonical Stellar asset list.
+ * /assets directory table — the CMC/CoinGecko-style global asset
+ * listing, redesigned per the assets-redesign spec.
  *
- * Cursor-paginated against `/v1/coins`. Server emits keyset
- * cursors; we round-trip the active cursor through the URL
- * (`?cursor=…`) so deep links + back-button navigation work
- * without local state drift.
+ * Sourced from `/v1/assets?asset_class=…` (R-018 assets-unification
+ * endgame). Each row:
+ *
+ *   - For catalogue assets (USDC the currency, GBP, BTC, …):
+ *     `asset_id` is the slug; clicking lands on
+ *     `/assets/{slug}` (GlobalAssetView).
+ *   - For classic_assets non-catalogue (USDC-GA5Z..., AQUA-G..., …):
+ *     `asset_id` is the full classic id; clicking lands on
+ *     `/assets/{slug}` (handler dispatches to AssetDetail via
+ *     ticker-or-canonical-id LookupBySlug).
  *
  * Columns are deliberately data-dense and right-aligned for
- * numerics — etherscan / oklink style. Fields the API doesn't
- * yet expose render as `—` rather than placeholder values.
+ * numerics. Issuer is intentionally NOT a column — that's a
+ * Stellar-network-specific concern and belongs on the
+ * `/assets/{slug}/{network}` deep-dive route.
  */
+
 // MARKET_CAP_VOLUME_THRESHOLD_USD — below this 24h USD volume, the
 // market-cap column shows "—" because the price feed underlying it
-// is too thin for the cap to be a confident number. Per user spec:
-// "we probably just wont show a market cap for low volume assets
-// because we wont have the data confidence in doing so".
+// is too thin for the cap to be a confident number.
 const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 
-// NETWORK_OPTIONS — Stellar is the only ingested network today.
-// Future networks plug in here once their indexer wires up; the
-// `?network=` param is honoured but server-side filtering on the
-// /v1/coins endpoint is a follow-up (until then the chip is
-// effectively a UX promise + sets the URL state).
-const NETWORK_OPTIONS = ['all', 'stellar'] as const;
-type NetworkOption = typeof NETWORK_OPTIONS[number];
+// ASSET_CLASS_OPTIONS — surface labels per the redesign spec.
+// "blockchain" is the explorer's name for the catalogue's "crypto"
+// class (CMC's "Cryptocurrencies" tab); the server normalises
+// blockchain→crypto in `normaliseAssetClass`.
+const ASSET_CLASS_OPTIONS: { value: AssetClassFilter; label: string }[] = [
+  { value: 'all', label: 'All Assets' },
+  { value: 'fiat', label: 'Fiat Currency' },
+  { value: 'blockchain', label: 'Blockchain' },
+  { value: 'stablecoin', label: 'Stablecoin' },
+];
+
+// NETWORK_OPTIONS — chains the catalogue knows about plus Stellar
+// (which the indexer is the source of truth for). The Network
+// dropdown only shows when asset_class is "blockchain" or
+// "stablecoin" — fiats have no network and "All" mixes everything.
+const NETWORK_OPTIONS = [
+  { value: 'all', label: 'All networks' },
+  { value: 'stellar', label: 'Stellar' },
+  { value: 'ethereum', label: 'Ethereum' },
+  { value: 'solana', label: 'Solana' },
+  { value: 'polygon', label: 'Polygon' },
+  { value: 'base', label: 'Base' },
+  { value: 'arbitrum', label: 'Arbitrum' },
+  { value: 'tron', label: 'Tron' },
+  { value: 'bitcoin', label: 'Bitcoin' },
+  { value: 'bsc', label: 'BSC' },
+  { value: 'avalanche', label: 'Avalanche' },
+  { value: 'xrpl', label: 'XRPL' },
+];
+
+function parseAssetClass(raw: string | null): AssetClassFilter {
+  switch (raw) {
+    case 'fiat':
+    case 'blockchain':
+    case 'stablecoin':
+      return raw;
+    default:
+      return 'all';
+  }
+}
 
 export function AssetsTable({
   verifiedSlugs = [],
@@ -41,10 +81,7 @@ export function AssetsTable({
   /**
    * Slugs from `/v1/assets/verified` (fetched server-side and
    * passed in). Used to decorate matching rows with a green-check
-   * verified badge so listing readers can spot verified currencies
-   * at a glance. Empty array is the safe default — when the
-   * catalogue endpoint isn't wired or returned nothing, no row
-   * gets the badge.
+   * verified badge. Empty array is the safe default.
    */
   verifiedSlugs?: string[];
 } = {}) {
@@ -53,28 +90,32 @@ export function AssetsTable({
   const verifiedSlugSet = new Set(verifiedSlugs.map((s) => s.toLowerCase()));
   const cursor = params.get('cursor') ?? '';
   const limitParam = params.get('limit');
-  const issuerFilter = params.get('issuer') ?? undefined;
   const queryParam = params.get('q') ?? '';
-  const orderParam = params.get('order') === 'volume_24h_usd_desc'
-    ? 'volume_24h_usd_desc'
-    : 'observation_count_desc';
-  const networkParam = (params.get('network') as NetworkOption | null) ?? 'all';
+  const assetClass = parseAssetClass(params.get('asset_class'));
+  const networkParam = params.get('network') ?? 'all';
 
   const limit = parseLimit(limitParam);
 
-  const { data, isLoading, isError, error } = useCoins(
+  // Network filter is only meaningful for blockchain/stablecoin
+  // classes; the API ignores `network` on fiat and on the "all"
+  // unified listing (catalogue's fiats have empty networks[] and
+  // the unified walk doesn't sub-filter).
+  const networkPassThrough =
+    assetClass === 'blockchain' || assetClass === 'stablecoin'
+      ? networkParam
+      : 'all';
+
+  const { data, isLoading, isError, error } = useAssets(
+    assetClass,
+    networkPassThrough,
     limit,
-    issuerFilter,
     cursor,
     queryParam || undefined,
-    orderParam,
     { sparkline7d: true },
   );
 
   // Local input state, debounced into the URL so the server-side
-  // ?q= filter doesn't refire on every keystroke. 250ms is the
-  // standard "feels live, doesn't thrash" window — see Algolia's
-  // search-as-you-type guidance.
+  // ?q= filter doesn't refire on every keystroke.
   const [q, setQ] = useState(queryParam);
   useEffect(() => {
     const trimmed = q.trim();
@@ -86,9 +127,17 @@ export function AssetsTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  const coins = data?.coins ?? [];
+  const assets = data?.assets ?? [];
 
-  function setQuery(updates: Partial<{ cursor: string; limit: string; issuer: string; q: string; order: string; network: string }>) {
+  function setQuery(
+    updates: Partial<{
+      cursor: string;
+      limit: string;
+      q: string;
+      asset_class: string;
+      network: string;
+    }>,
+  ) {
     const next = new URLSearchParams(params.toString());
     for (const [k, v] of Object.entries(updates)) {
       if (v === '' || v === undefined) next.delete(k);
@@ -110,10 +159,21 @@ export function AssetsTable({
       <FilterBar
         q={q}
         onQChange={setQ}
-        issuerFilter={issuerFilter}
-        onIssuerClear={() => setQuery({ issuer: '', cursor: '' })}
         limit={limit}
         onLimitChange={(v) => setQuery({ limit: String(v), cursor: '' })}
+        assetClass={assetClass}
+        onAssetClassChange={(v) =>
+          setQuery({
+            asset_class: v === 'all' ? '' : v,
+            // Reset cursor when class changes — different phase,
+            // different stream.
+            cursor: '',
+            // Reset network when leaving blockchain/stablecoin.
+            ...(v !== 'blockchain' && v !== 'stablecoin'
+              ? { network: '' }
+              : {}),
+          })
+        }
         network={networkParam}
         onNetworkChange={(v) =>
           setQuery({ network: v === 'all' ? '' : v, cursor: '' })
@@ -126,27 +186,13 @@ export function AssetsTable({
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-500">
               <Th>#</Th>
               <Th>Asset</Th>
-              <Th>Issuer</Th>
+              <Th>Class</Th>
               <Th align="right">Price</Th>
               <Th align="right">1h %</Th>
               <Th align="right">24h %</Th>
               <Th align="right">7d %</Th>
               <Th align="right">Market cap</Th>
-              <Th align="right">
-                <SortHeader
-                  active={orderParam === 'volume_24h_usd_desc'}
-                  label="Volume 24h"
-                  onClick={() =>
-                    setQuery({
-                      order:
-                        orderParam === 'volume_24h_usd_desc'
-                          ? ''
-                          : 'volume_24h_usd_desc',
-                      cursor: '',
-                    })
-                  }
-                />
-              </Th>
+              <Th align="right">Volume 24h</Th>
               <Th align="right">Circulating</Th>
               <Th align="right">7d chart</Th>
             </tr>
@@ -155,17 +201,17 @@ export function AssetsTable({
             {isLoading && (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="py-12 text-center text-sm text-slate-500"
                 >
                   Loading…
                 </td>
               </tr>
             )}
-            {!isLoading && coins.length === 0 && (
+            {!isLoading && assets.length === 0 && (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="py-12 text-center text-sm text-slate-500"
                 >
                   No assets match this filter.
@@ -173,7 +219,7 @@ export function AssetsTable({
               </tr>
             )}
             {!isLoading &&
-              coins.map((coin, idx) => (
+              assets.map((coin, idx) => (
                 <AssetRow
                   key={coin.asset_id}
                   coin={coin}
@@ -197,11 +243,16 @@ export function AssetsTable({
       <p className="text-xs text-slate-500 dark:text-slate-400">
         Live data from{' '}
         <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
-          /v1/assets
+          /v1/assets?asset_class={assetClass}
+          {networkPassThrough !== 'all' ? `&network=${networkPassThrough}` : ''}
         </code>
-        . Price + 24h change + market cap + volume populate from the
-        latest 1-min VWAP, with USD triangulated via XLM when no
-        direct fiat:USD pair exists.
+        . Catalogue rows surface first (market-cap desc — fiats top
+        the chart), then long-tail Stellar-classic rows by 24h
+        volume. Per-asset issuer + on-chain pool detail lives on{' '}
+        <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
+          /assets/&#123;slug&#125;/stellar
+        </code>
+        .
       </p>
     </div>
   );
@@ -210,87 +261,86 @@ export function AssetsTable({
 function FilterBar({
   q,
   onQChange,
-  issuerFilter,
-  onIssuerClear,
   limit,
   onLimitChange,
+  assetClass,
+  onAssetClassChange,
   network,
   onNetworkChange,
 }: {
   q: string;
   onQChange: (v: string) => void;
-  issuerFilter?: string;
-  onIssuerClear: () => void;
   limit: number;
   onLimitChange: (v: number) => void;
-  network: NetworkOption;
-  onNetworkChange: (v: NetworkOption) => void;
+  assetClass: AssetClassFilter;
+  onAssetClassChange: (v: AssetClassFilter) => void;
+  network: string;
+  onNetworkChange: (v: string) => void;
 }) {
+  const showNetwork =
+    assetClass === 'blockchain' || assetClass === 'stablecoin';
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-slate-500">Network:</span>
-        {NETWORK_OPTIONS.map((n) => (
+        <span className="text-slate-500">Asset type:</span>
+        {ASSET_CLASS_OPTIONS.map((opt) => (
           <button
-            key={n}
+            key={opt.value}
             type="button"
-            onClick={() => onNetworkChange(n)}
-            className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
-              network === n
+            onClick={() => onAssetClassChange(opt.value)}
+            className={`rounded-full px-3 py-1 text-xs font-medium tracking-wide ${
+              assetClass === opt.value
                 ? 'bg-brand-600 text-white'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
             }`}
           >
-            {n === 'all' ? 'All networks' : n}
+            {opt.label}
           </button>
         ))}
-        <span className="text-slate-400">·</span>
-        <span className="text-slate-400">
-          Stellar is the only network ingested today; more land as we wire them.
-        </span>
+        {showNetwork && (
+          <>
+            <span className="ml-3 text-slate-500">Network:</span>
+            <select
+              value={network}
+              onChange={(e) => onNetworkChange(e.target.value)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+            >
+              {NETWORK_OPTIONS.map((n) => (
+                <option key={n.value} value={n.value}>
+                  {n.label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
 
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
-            aria-label="Search assets by code, slug, or issuer"
+            aria-label="Search assets by code, slug, or name"
             value={q}
             onChange={(e) => onQChange(e.target.value)}
-            placeholder="Search by code, slug, or issuer…"
+            placeholder="Search by code, slug, or name…"
             className="w-72 rounded-md border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500"
           />
         </div>
-        {issuerFilter && (
-          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 py-1 pl-2.5 pr-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            issuer: <code className="font-mono">{issuerFilter.slice(0, 8)}…{issuerFilter.slice(-4)}</code>
-            <button
-              type="button"
-              onClick={onIssuerClear}
-              className="ml-1 rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700"
-              aria-label="Clear issuer filter"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        )}
+        <label className="flex items-center gap-2 text-xs text-slate-500">
+          <span>Per page</span>
+          <select
+            value={limit}
+            onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+          >
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={500}>500</option>
+          </select>
+        </label>
       </div>
-      <label className="flex items-center gap-2 text-xs text-slate-500">
-        <span>Per page</span>
-        <select
-          value={limit}
-          onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
-          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
-        >
-          <option value={50}>50</option>
-          <option value={100}>100</option>
-          <option value={200}>200</option>
-          <option value={500}>500</option>
-        </select>
-      </label>
-    </div>
     </div>
   );
 }
@@ -308,16 +358,20 @@ function AssetRow({
   const marketCapRaw = parseDec(coin.market_cap_usd);
   const volume = parseDec(coin.volume_24h_usd);
   const supply = parseDec(coin.circulating_supply);
-  const { data: issuerMap } = useIssuerLookup();
-  const knownIssuer = coin.issuer ? issuerMap?.[coin.issuer] : undefined;
   // Suppress market cap when 24h volume is below the confidence
   // threshold — without enough recent trade volume the price
   // underlying the cap is too thin to publish a believable number.
-  // Applies uniformly regardless of how supply was sourced.
+  // Catalogue fiat rows are EXEMPT: their market_cap is computed
+  // from a static M2 × current FX rate; trade volume is meaningless
+  // for fiat-as-money-supply.
   const marketCap =
-    marketCapRaw != null && volume != null && volume >= MARKET_CAP_VOLUME_THRESHOLD_USD
+    coin.class === 'fiat'
       ? marketCapRaw
-      : null;
+      : marketCapRaw != null &&
+          volume != null &&
+          volume >= MARKET_CAP_VOLUME_THRESHOLD_USD
+        ? marketCapRaw
+        : null;
   return (
     <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
       <Td>
@@ -352,27 +406,13 @@ function AssetRow({
               </svg>
             </span>
           )}
-          <span className="text-[11px] text-slate-500">{coin.slug}</span>
+          <span className="text-[11px] text-slate-500">
+            {coin.name ?? coin.slug}
+          </span>
         </Link>
       </Td>
       <Td>
-        {coin.issuer ? (
-          <Link
-            href={`/issuers/${coin.issuer}`}
-            className="text-[11px] text-slate-500 hover:text-brand-600 dark:text-slate-400"
-            title={coin.issuer}
-          >
-            {knownIssuer?.org_name ? (
-              <span>{knownIssuer.org_name}</span>
-            ) : (
-              <span className="font-mono">
-                {coin.issuer.slice(0, 8)}…{coin.issuer.slice(-4)}
-              </span>
-            )}
-          </Link>
-        ) : (
-          <span className="text-xs text-slate-400">native</span>
-        )}
+        <ClassBadge cls={coin.class} />
       </Td>
       <Td align="right">
         {price != null ? (
@@ -423,6 +463,27 @@ function AssetRow({
         <RowSparkline points={coin.price_history_7d} />
       </Td>
     </tr>
+  );
+}
+
+function ClassBadge({ cls }: { cls?: string }) {
+  if (!cls) {
+    return <span className="text-xs text-slate-400">—</span>;
+  }
+  const tone =
+    cls === 'fiat'
+      ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+      : cls === 'stablecoin'
+        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+        : 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300';
+  const label =
+    cls === 'fiat' ? 'Fiat' : cls === 'stablecoin' ? 'Stablecoin' : 'Crypto';
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${tone}`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -480,7 +541,7 @@ function Pagination({
         Previous
       </button>
       <span className="text-xs text-slate-400">
-        {hasPrev || hasNext ? 'Cursor-paginated' : ' '}
+        {hasPrev || hasNext ? 'Cursor-paginated' : ' '}
       </span>
       <button
         type="button"
@@ -492,42 +553,6 @@ function Pagination({
         <ChevronRight className="h-3.5 w-3.5" />
       </button>
     </div>
-  );
-}
-
-// SortHeader is a clickable Th-content that renders a small
-// ↓ marker when its column is the active sort. There's only one
-// sortable column today (Volume 24h) — when more land, this can
-// stay as the same shape, just toggling the matching `order` URL
-// param. The default sort (observation_count_desc) is rendered
-// without a marker because it's not a "user picked this" choice.
-function SortHeader({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex items-center gap-1 hover:text-brand-600 ${
-        active ? 'text-brand-600' : ''
-      }`}
-      title={
-        active
-          ? 'Sorted by 24h USD volume (desc). Click to reset.'
-          : 'Sort by 24h USD volume (desc).'
-      }
-    >
-      {label}
-      <span aria-hidden className="text-[10px]">
-        {active ? '↓' : '↕'}
-      </span>
-    </button>
   );
 }
 
@@ -607,7 +632,6 @@ function parseDec(s: string | null | undefined): number | null {
 function formatPriceSmart(n: number): string {
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
-  // sub-millicent — show in scientific so a 1e-9 doesn't dominate
   if (n > 0) return n.toExponential(3);
   return '0';
 }

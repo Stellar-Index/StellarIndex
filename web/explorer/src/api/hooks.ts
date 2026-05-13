@@ -324,6 +324,18 @@ export type Coin = {
   asset_id: string;
   code: string;
   issuer: string;
+  // type — "classic" | "soroban" | "global" | "external". "global"
+  // identifies catalogue cross-chain rows (USDC the currency, GBP
+  // the fiat) emitted by /v1/assets when asset_class is set or
+  // asset_class=all is in play.
+  type?: string;
+  // class — populated for catalogue-backed rows. "fiat" |
+  // "stablecoin" | "crypto". Absent on classic_assets rows.
+  class?: string;
+  // name — populated for catalogue rows from the verified-currency
+  // catalogue (e.g. "Bitcoin", "US Dollar"). Absent on most
+  // classic_assets rows.
+  name?: string;
   first_seen_ledger: number;
   last_seen_ledger: number;
   observation_count: number;
@@ -377,6 +389,75 @@ type AssetsListEnvelope = {
   data: Coin[];
   pagination?: { next?: string };
 };
+
+export type AssetClassFilter = 'all' | 'fiat' | 'blockchain' | 'stablecoin';
+
+export type AssetsPage = {
+  assets: Coin[];
+  next_cursor: string;
+  limit: number;
+};
+
+/**
+ * useAssets — the CMC/CoinGecko-style global asset directory.
+ *
+ * Backs the redesigned `/assets` page. Hits `/v1/assets` with the
+ * unified-listing query params:
+ *
+ *   - `asset_class=all`        → catalogue (market-cap desc) then
+ *                                classic_assets (volume desc) via
+ *                                phase-prefixed cursor protocol.
+ *   - `asset_class=fiat`       → 19 fiat catalogue rows.
+ *   - `asset_class=stablecoin` → 5 stablecoin catalogue rows.
+ *   - `asset_class=blockchain` → 21 crypto catalogue rows
+ *                                (server-side alias for `crypto`).
+ *
+ * The `network` param can narrow blockchain/stablecoin to a single
+ * chain (e.g. `network=ethereum`). For non-Stellar networks the
+ * server returns catalogue rows projected to that chain via
+ * /v1/assets?network= (handler routes to
+ * handleAssetListExternalNetwork).
+ */
+export function useAssets(
+  assetClass: AssetClassFilter,
+  network: string | undefined,
+  limit: number,
+  cursor: string,
+  q: string | undefined,
+  options?: { sparkline7d?: boolean },
+) {
+  const includeParts: string[] = [];
+  if (options?.sparkline7d) includeParts.push('sparkline7d');
+  const include = includeParts.length > 0 ? includeParts.join(',') : undefined;
+  return useQuery<AssetsPage>({
+    queryKey: [
+      '/v1/assets',
+      'unified',
+      assetClass,
+      network ?? '',
+      limit,
+      cursor,
+      q ?? '',
+      include ?? '',
+    ],
+    queryFn: async () => {
+      const env = await apiGet<AssetsListEnvelope>('/v1/assets', {
+        asset_class: assetClass,
+        ...(network && network !== 'all' ? { network } : {}),
+        limit,
+        ...(cursor ? { cursor } : {}),
+        ...(q ? { q } : {}),
+        ...(include ? { include } : {}),
+      });
+      return {
+        assets: env.data ?? [],
+        next_cursor: env.pagination?.next ?? '',
+        limit,
+      };
+    },
+    placeholderData: (prev) => prev,
+  });
+}
 
 export function useCoins(
   limit = 100,
