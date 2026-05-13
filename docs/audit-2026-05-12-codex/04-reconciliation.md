@@ -994,3 +994,66 @@ without evidence IDs.
   `95 fixed / 12 open`, file coverage
   `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
   finding-status mismatches between the register table and detailed sections.
+- `CMD-0305` closes `F-1309` after verifying the SLA probe runbook family now
+  uses `ratesengine-sla-probe.service` and the real
+  `vwap:native:fiat:USD:{300,3600,86400}` Redis keys.
+- `CMD-0306` refreshes `F-1305`: the live SLA probe is still red, but the
+  failure mode changed from price freshness to unauthenticated availability.
+  Freshness is now `18.236s`, while data endpoints fail availability because
+  R1 lacks `RATESENGINE_PROBE_API_KEY` and the probe hits the anonymous
+  60/minute tier.
+- `CMD-0307` adds `F-1310`: R1 has all five Healthchecks timers running
+  locally, but every `HEALTHCHECKS_URL_*` value is empty, disabling the
+  external Healthchecks pass/fail channel.
+- `CMD-0308` refreshes `F-1230` with the corrected `.data.points` parser:
+  history remains 84 daily buckets from `2026-02-12` through `2026-05-12`,
+  with the same `2026-04-26 -> 2026-05-03` gap.
+- `CMD-0309` restores audit-control parity after the latest R1 runtime
+  refresh:
+  findings `101 fixed / 9 open`, XFI `94 fixed / 8 open`, remediation
+  `96 fixed / 12 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0310` refreshes GitHub/launch controls: `verify-launch-ready` still
+  fails L4.14-L4.17, L5.6, and L5.8; vulnerability and Dependabot alerts are
+  still disabled; `main` remains unprotected with latest commit
+  `e9e57cb2...` unsigned; Actions still allows all actions without required
+  SHA pinning; and production environments still lack protection rules.
+- `CMD-0311` refreshes R1 capacity/status and adds `F-1311`: memory remains
+  high at `95.69%`, root and MinIO are both `78%`, swap remains materially
+  used, `/v1/status` is degraded with 10 active incidents, and API p95/p99
+  latency alerts are firing at `3.812s` / `4.763s`.
+- `CMD-0312` restores audit-control parity after the GitHub and R1
+  latency/capacity refreshes:
+  findings `101 fixed / 10 open`, XFI `94 fixed / 9 open`, remediation
+  `96 fixed / 13 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0313` audits the Galexie Ansible deploy path and adds `F-1312`: a
+  `galexie_version` bump can be skipped because the `go install` task has
+  `creates: /root/go/bin/stellar-galexie`; after any previous build artifact
+  exists, the stale artifact can be copied into `/usr/local/bin/galexie`.
+- `CMD-0314` restores audit-control parity after the Galexie Ansible pass:
+  findings `101 fixed / 11 open`, XFI `94 fixed / 10 open`, remediation
+  `96 fixed / 14 open`, file coverage
+  `done=188 / in_progress=133 / todo=1605`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0315` audits the SLA probe Healthchecks/docs boundary: the active
+  Healthchecks env docs/template omit the required `RATESENGINE_PROBE_API_KEY`
+  from the probe env contract, keeping `F-1305` live, and `docs/operations/sla-probe.md`
+  still points operators at the retired `sla-probe.*` unit/env path, adding
+  `F-1313`.
+- `CMD-0316` expands `F-1313` beyond the single operations guide: the alert
+  catalog, R1 SLA rule comments, stale-probe runbook, and coverage matrix
+  retain retired SLA-probe unit/env paths or stale healthy-verification claims
+  even though the live path is `ratesengine-sla-probe.*` plus
+  `/etc/default/ratesengine-healthchecks`.
+- `CMD-0317` restores audit-control parity after expanding `F-1313`:
+  findings `101 fixed / 12 open`, XFI `94 fixed / 11 open`, remediation
+  `96 fixed / 15 open`, file coverage
+  `done=191 / in_progress=131 / todo=1604`, docs lint green, and no
+  finding-status mismatches between the register table and detailed sections.
+- `CMD-0318` audits the SLA probe release/deploy contract and adds `F-1314`:
+  release publishes `ratesengine-sla-probe` and Healthchecks enables the timer,
+  but fresh-host bootstrap and default tagged deploy omit the binary while the
+  deploy docs describe daemon health checks that do not apply to CLI binaries.

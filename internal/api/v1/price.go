@@ -440,9 +440,17 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 		return PriceSnapshot{}, nil, false, false
 	}
 	now := time.Now().UTC()
-	// Round-down to the window boundary so observed_at lines up
-	// with the aggregator's tick rather than wall-clock noise.
-	observedAt := now.Truncate(triangulationLookupWindow)
+	// F-1305 (codex audit-2026-05-13): observed_at = now, not
+	// now.Truncate(window). The cache TTL is bound to the lookup
+	// window AND the aggregator overwrites the key on every tick
+	// (30s cadence per orchestrator.DefaultInterval), so a
+	// non-expired key was written ≤ tick-cadence ago. Window-
+	// truncated observed_at stamped responses with 0-5min
+	// staleness despite the value being fresh — that's what
+	// drove F-1305's 83-186s probe freshness even though the
+	// aggregator was writing every 30s. Honest stamp: the value
+	// is current as of read time.
+	observedAt := now
 	snap := PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),

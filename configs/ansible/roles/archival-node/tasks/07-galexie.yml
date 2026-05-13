@@ -30,13 +30,24 @@
   # GOPATH/GOCACHE pinned under /root to keep build artefacts off
   # the stellar-core data dataset. go install is idempotent — re-runs
   # with the same version tag are no-ops once the binary exists.
+  #
+  # F-1312 (codex audit-2026-05-13): NO `creates:` guard. The pre-
+  # fix version had `creates: /root/go/bin/stellar-galexie` which
+  # short-circuits the task once ANY binary exists at that path,
+  # even when galexie_version has been bumped — meaning a version
+  # bump in inventory would skip the rebuild and the copy task
+  # below would install the STALE binary into /usr/local/bin. The
+  # `when:` clause on this task already provides the version-gate
+  # idempotency (skips when the installed version string matches
+  # galexie_version); the `creates:` was a redundant + conflicting
+  # second guard. `go install` is itself idempotent at the
+  # module-cache layer, so re-runs at the same version tag are a
+  # no-op even without `creates:`.
   ansible.builtin.command: >-
     go install github.com/stellar/stellar-galexie@{{ galexie_version }}
   environment:
     GOPATH:  /root/go
     GOCACHE: /root/.cache/go-build
-  args:
-    creates: "/root/go/bin/stellar-galexie"
   when: galexie_version not in galexie_current.stdout
   register: galexie_build
   notify: Restart galexie

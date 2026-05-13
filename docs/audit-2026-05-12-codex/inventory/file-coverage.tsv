@@ -5,7 +5,7 @@ path	top_level	audit_unit	file_kind	status	evidence_refs	cross_refs	notes
 .github/workflows/api-audit.yml	.github	.github/workflows	config	done	EV-0041;EV-0050;F-1231	XFI-0023	Reviewed path-limited main-push smoke coverage
 .github/workflows/api-docs.yml	.github	.github/workflows	config	done	EV-0050;EV-0257;F-1203	XFI-0002;XFI-0088	Reviewed manual-only generated API docs publish path and confirmed its OIDC grant is tied to GitHub Pages deploy
 .github/workflows/ci.yml	.github	.github/workflows	config	done	EV-0013;EV-0014;EV-0041;EV-0050;EV-0099;EV-0250;EV-0252;EV-0255;EV-0284;F-1207;F-1231;F-1294	XFI-0005;XFI-0023;XFI-0086	Reviewed CI web/build/security gates, current push-to-main restoration, pnpm audit gates, promtool/gitleaks installer integrity, and refreshed hosted action-policy posture
-.github/workflows/deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0031;EV-0050;EV-0103;EV-0257;EV-0259;EV-0263;EV-0265;EV-0284;F-1215;F-1216;F-1220;F-1296;F-1297;F-1298;F-1299	XFI-0010;XFI-0014;XFI-0088;XFI-0089;XFI-0090;XFI-0091	Reviewed production deploy workflow, environment approval, action pinning, tag-matched migration staging path, OIDC, host-key pinning, manual-input handling, mutable Ansible tooling, and refreshed hosted environment protection posture
+.github/workflows/deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0031;EV-0050;EV-0103;EV-0257;EV-0259;EV-0263;EV-0265;EV-0284;EV-0322;F-1215;F-1216;F-1220;F-1296;F-1297;F-1298;F-1299;F-1314	XFI-0010;XFI-0014;XFI-0088;XFI-0089;XFI-0090;XFI-0091;XFI-0106	Reviewed production deploy workflow, environment approval, action pinning, tag-matched migration staging path, OIDC, host-key pinning, manual-input handling, mutable Ansible tooling, refreshed hosted environment protection posture, and default binary set omission of the SLA probe binary
 .github/workflows/docs-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;EV-0263;F-1215;F-1216	XFI-0010;XFI-0090	Reviewed Cloudflare Pages deploy fallback path, environment/action controls, and choice-input branch interpolation as a counterexample to deploy/release shell injection
 .github/workflows/explorer-deploy.yml	.github	.github/workflows	config	done	EV-0026;EV-0050;EV-0263;F-1215;F-1216	XFI-0010;XFI-0090	Reviewed Cloudflare Pages deploy fallback path, environment/action controls, and env-passed API base URL pattern as a counterexample to deploy/release shell injection
 .github/workflows/k6-weekly.yml	.github	.github/workflows	config	done	EV-0050;F-1206	XFI-0004	Reviewed disabled schedule/manual-only SLA evidence workflow
@@ -26,7 +26,7 @@ LICENSE	LICENSE	LICENSE	policy	done	EV-0180			Reviewed repository license artifa
 Makefile	Makefile	Makefile	unknown	in_progress	EV-0013;EV-0082;F-1206;F-1252	XFI-0044	Reviewed verify/launch-readiness split and absence of the documented `verify-cross-region` target
 README.md	README.md	README.md	documentation	done	EV-0180			Reviewed project-status claims against current launch-readiness posture; no new defect
 SECURITY.md	SECURITY.md	SECURITY.md	documentation	done	EV-0050;EV-0051;F-1207		Reviewed disclosure/dependency-security context; dependency alerts disabled separately tracked
-VERSIONS.md	VERSIONS.md	VERSIONS.md	documentation	done	EV-0180	F-1240	XFI-0032	Reviewed pinned-snapshot/tool-version claims against go.mod, Makefile, and CI; no new defect beyond already-closed Go-toolchain skew finding
+VERSIONS.md	VERSIONS.md	VERSIONS.md	documentation	done	EV-0180;EV-0317	F-1240;F-1312	XFI-0032;XFI-0104	Reviewed pinned-snapshot/tool-version claims against go.mod, Makefile, and CI; later Galexie deploy pass found the Ansible build guard can fail to honor a version bump recorded here
 cmd/ratesengine-aggregator/change_summary.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055		Reviewed storage-neutral adapter boundary for change summaries; no standalone finding
 cmd/ratesengine-aggregator/contribution_sink.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0055;EV-0060;EV-0103;F-1242	XFI-0034	Reviewed contribution sink adapter and batch forwarding; current workspace writes `volume_usd` from a still-misaligned pre-filter total.
 cmd/ratesengine-aggregator/main.go	cmd	cmd/ratesengine-aggregator	runtime	done	EV-0024;EV-0047;EV-0055;EV-0105;EV-0106;EV-0123;EV-0134;EV-0155;EV-0269;F-1213;F-1236;F-1249;F-1260;F-1301	XFI-0009;XFI-0028;XFI-0041;XFI-0052;XFI-0093	Reviewed aggregation, stablecoin/min-volume gating, webhook producer fan-out, Redis/cache, supply refresher wiring, the native-XLM live-to-static reserve fallback that still bypasses the stale-component gate through `MinComponentLedger=0`, and the single-host metrics listener shift to 9465
@@ -78,7 +78,7 @@ configs/ansible/playbooks/archival-node.yml	configs	configs/ansible	config	todo	
 configs/ansible/playbooks/deploy-binary.yml	configs	configs/ansible	config	done	EV-0103;EV-0259;EV-0265;F-1220;F-1297;F-1299	XFI-0014;XFI-0089;XFI-0091	Reviewed new pre-binary migration sync/apply flow, its dependency on ansible.posix.synchronize, downstream reliance on workflow-provided SSH trust setup, and mutable deploy-tool dependency resolution
 configs/ansible/playbooks/monitoring.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/requirements.yml	configs	configs/ansible	config	done	EV-0265;F-1299	XFI-0091	Reviewed Galaxy collection dependency contract; lower-bound ranges and duplicate community.general create mutable deploy tooling
-configs/ansible/roles/archival-node/defaults/main.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201,F-1291	XFI-0083	Reviewed firewall intended public/internal ports and archival-node executable version pins/checksum gaps
+configs/ansible/roles/archival-node/defaults/main.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201,F-1291;EV-0317	XFI-0083;XFI-0104	Reviewed firewall intended public/internal ports and archival-node executable version pins/checksum gaps; Galexie version pin now also tied to F-1312 build-guard drift
 configs/ansible/roles/archival-node/files/galexie-append.sh	configs	configs/ansible	script	todo			cold audit pending
 configs/ansible/roles/archival-node/files/galexie-archive-fill.sh	configs	configs/ansible	script	todo			cold audit pending
 configs/ansible/roles/archival-node/files/galexie-backfill-status.sh	configs	configs/ansible	script	todo			cold audit pending
@@ -90,14 +90,14 @@ configs/ansible/roles/archival-node/tasks/03-zfs.yml	configs	configs/ansible	con
 configs/ansible/roles/archival-node/tasks/04-users.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/05-postgres.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/06-stellar-core.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/archival-node/tasks/07-galexie.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/archival-node/tasks/07-galexie.yml	configs	configs/ansible	config	done	EV-0317	F-1312	XFI-0104	Reviewed Galexie build/install, wrapper/script deployment, credential file mode, and systemd handoff; version bump can be skipped by stale creates guard
 configs/ansible/roles/archival-node/tasks/08-stellar-rpc.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/09-minio.yml	configs	configs/ansible	config	done	F-1291	XFI-0083	Reviewed MinIO and mc install tasks for checksum/version enforcement
 configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184;EV-0273;EV-0286;EV-0287;F-1266;F-1291;F-1300;F-1307	XFI-0058;XFI-0083;XFI-0092;XFI-0099	Reviewed against README claim, node_exporter checksum path, textfile collector ownership/flags, and live R1 textfile-collector drift/closure; promtail-to-Loki wiring remains explicit TODO
 configs/ansible/roles/archival-node/tasks/11-firewall.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201		Reviewed nftables/UFW service contract
 configs/ansible/roles/archival-node/tasks/12-hardening.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/13-healthcheck.yml	configs	configs/ansible	config	todo			cold audit pending
-configs/ansible/roles/archival-node/tasks/14-ratesengine-services.yml	configs	configs/ansible	config	todo			cold audit pending
+configs/ansible/roles/archival-node/tasks/14-ratesengine-services.yml	configs	configs/ansible	config	done	EV-0322;F-1314	XFI-0106	Reviewed fresh-host ratesengine binary build/install loops, migration sync, service unit activation, and Tier-D cron; the loop omits ratesengine-sla-probe even though the active Healthchecks timer depends on it
 configs/ansible/roles/archival-node/tasks/15-log-discipline.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/main.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/galexie.toml.j2	configs	configs/ansible	unknown	todo			cold audit pending
@@ -109,7 +109,7 @@ configs/ansible/roles/archival-node/templates/ratesengine.toml.j2	configs	config
 configs/ansible/roles/archival-node/templates/sshd_config.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/stellar-core.cfg.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/stellar-rpc.cfg.j2	configs	configs/ansible	unknown	todo			cold audit pending
-configs/ansible/roles/archival-node/templates/systemd/galexie.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
+configs/ansible/roles/archival-node/templates/systemd/galexie.service.j2	configs	configs/ansible	unknown	done	EV-0317	F-1312	XFI-0104	Reviewed Galexie service execution path and EnvironmentFile handoff as consumer of the Ansible-installed binary
 configs/ansible/roles/archival-node/templates/systemd/minio.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/systemd/node-healthcheck.service.j2	configs	configs/ansible	unknown	todo			cold audit pending
 configs/ansible/roles/archival-node/templates/systemd/node-healthcheck.timer.j2	configs	configs/ansible	unknown	todo			cold audit pending
@@ -207,16 +207,16 @@ configs/audit/wasm-walk-contracts.yaml	configs	configs/audit	config	done	EV-0190
 configs/caddy/Caddyfile.api	configs	configs/caddy	config	done	EV-0193		Reviewed current Cloudflare/Caddy trust-boundary implementation surface; no new defect in the Caddyfile itself from this pass
 configs/caddy/README.md	configs	configs/caddy	documentation	done	EV-0193;EV-0198;F-1270	XFI-0062	Reviewed trust-boundary drift and confirmed current prose now keeps Cloudflare CIDRs at Caddy per ADR-0025
 configs/example.toml	configs	configs/example.toml	config	in_progress	EV-0083;F-1253	XFI-0045	Reviewed Redis ACL username omission in example config; broader config-surface review remains open
-configs/healthchecks/README.md	configs	configs/healthchecks	documentation	done	EV-0186;EV-0191;EV-0271;EV-0276;F-1267;F-1302;F-1304	XFI-0059;XFI-0094;XFI-0096	Reviewed check-count drift, confirmed the current README documents five external checks including SLA probe, compared the smoke-failure contract against wrapper behavior, and used the restart command as the canonical Healthchecks apply path
+configs/healthchecks/README.md	configs	configs/healthchecks	documentation	done	EV-0186;EV-0191;EV-0271;EV-0276;EV-0319;F-1267;F-1302;F-1304;F-1305	XFI-0059;XFI-0094;XFI-0096;XFI-0097	Reviewed check-count drift, confirmed the current README documents five external checks including SLA probe, compared the smoke-failure contract against wrapper behavior, and used the restart command as the canonical Healthchecks apply path; later pass found it omits required RATESENGINE_PROBE_API_KEY
 configs/healthchecks/heartbeat.sh	configs	configs/healthchecks	script	done	EV-0269;F-1301	XFI-0093	Reviewed service-to-port mapping for indexer, aggregator, and API against R1 Prometheus and the aggregator runbook drift
-configs/healthchecks/install.sh	configs	configs/healthchecks	script	done	EV-0186;EV-0191;EV-0271;EV-0274;EV-0276;F-1267;F-1302;F-1303;F-1304	XFI-0059;XFI-0094;XFI-0095;XFI-0096	Reviewed installer comment drift, confirmed the current script now enumerates all five Healthchecks URLs, traced the copied `r1-smoke.sh` executable contract into the smoke wrapper, confirmed the SLA probe binary lives outside the installer boundary, and used the echoed restart command as the canonical apply path
+configs/healthchecks/install.sh	configs	configs/healthchecks	script	done	EV-0186;EV-0191;EV-0271;EV-0274;EV-0276;EV-0319;EV-0322;F-1267;F-1302;F-1303;F-1304;F-1305;F-1314	XFI-0059;XFI-0094;XFI-0095;XFI-0096;XFI-0097;XFI-0106	Reviewed installer comment drift, confirmed the current script now enumerates all five Healthchecks URLs, traced the copied `r1-smoke.sh` executable contract into the smoke wrapper, confirmed the SLA probe binary lives outside the installer boundary, and used the echoed restart command as the canonical apply path; later passes found the env template omits required RATESENGINE_PROBE_API_KEY and the timer can be enabled without bootstrap/default-deploy installing the probe binary
 configs/healthchecks/ratesengine-heartbeat@.service	configs	configs/healthchecks	config	done	EV-0274	XFI-0094;XFI-0095	Reviewed heartbeat service sandbox, root-loaded EnvironmentFile behavior, and ExecStart wrapper boundary
 configs/healthchecks/ratesengine-heartbeat@.timer	configs	configs/healthchecks	config	done	EV-0274	XFI-0094;XFI-0095	Reviewed heartbeat timer cadence and template service linkage
-configs/healthchecks/ratesengine-sla-probe.service	configs	configs/healthchecks	config	done	EV-0267;EV-0273;EV-0274;EV-0276;F-1300;F-1303;F-1304	XFI-0092;XFI-0095;XFI-0096	Reviewed SLA Healthchecks systemd sandbox; current source grants textfile ReadWritePaths/SupplementaryGroups, while the wrapper still fails open when the probe binary is missing and the pre-launch apply path omits the timer restart
+configs/healthchecks/ratesengine-sla-probe.service	configs	configs/healthchecks	config	done	EV-0267;EV-0273;EV-0274;EV-0276;EV-0319;F-1300;F-1303;F-1304;F-1313	XFI-0092;XFI-0095;XFI-0096;XFI-0105	Reviewed SLA Healthchecks systemd sandbox; current source grants textfile ReadWritePaths/SupplementaryGroups, while the wrapper still fails open when the probe binary is missing and the pre-launch apply path omits the timer restart; later pass mapped active unit/env path against stale ops doc
 configs/healthchecks/ratesengine-sla-probe.timer	configs	configs/healthchecks	config	done	EV-0274;EV-0276;F-1303;F-1304	XFI-0095;XFI-0096	Reviewed SLA timer cadence, service linkage, and the pre-launch hardening restart omission for the external SLA proof path
 configs/healthchecks/ratesengine-smoke.service	configs	configs/healthchecks	config	done	EV-0271;F-1302	XFI-0094	Reviewed smoke service sandbox and ExecStart path against wrapper failure semantics
 configs/healthchecks/ratesengine-smoke.timer	configs	configs/healthchecks	config	done	EV-0271;F-1302	XFI-0094	Reviewed smoke timer cadence and service linkage for the API-surface evidence path
-configs/healthchecks/sla-probe.sh	configs	configs/healthchecks	script	done	EV-0267;EV-0273;EV-0274;F-1300;F-1303	XFI-0092;XFI-0095	Reviewed SLA wrapper; current service sandbox now permits default textfile output, but the wrapper still exits successfully before `/fail` when the probe binary is missing
+configs/healthchecks/sla-probe.sh	configs	configs/healthchecks	script	done	EV-0267;EV-0273;EV-0274;EV-0319;F-1300;F-1303;F-1305;F-1313	XFI-0092;XFI-0095;XFI-0097;XFI-0105	Reviewed SLA wrapper; current service sandbox now permits default textfile output, but the wrapper still exits successfully before `/fail` when the probe binary is missing; later pass tied missing API key and wrapper success semantics to active doc drift
 configs/healthchecks/smoke.sh	configs	configs/healthchecks	script	done	EV-0271;F-1302	XFI-0094	Reviewed wrapper execution, Healthchecks success/fail reporting, and missing-script failure mode
 configs/loki/README.md	configs	configs/loki	documentation	done	EV-0181;EV-0191;F-1264	XFI-0056	Reviewed pre-firewall exposure drift and confirmed current Loki access docs now match blocked-ingress reality
 configs/loki/loki.r1.yml	configs	configs/loki	config	todo			cold audit pending
@@ -234,7 +234,7 @@ configs/prometheus/rules.r1/external-pollers.yml	configs	configs/prometheus	conf
 configs/prometheus/rules.r1/infra.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/ingestion.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/meta.yml	configs	configs/prometheus	config	todo			cold audit pending
-configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	in_progress	EV-0280;EV-0286;EV-0287;F-1305;F-1307	XFI-0097;XFI-0099	Partially reviewed SLA probe R1 alert rules against live textfile and Prometheus scrape-chain evidence; series now reach Prometheus but current verdict remains failing
+configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	done	EV-0280;EV-0286;EV-0287;EV-0320;F-1305;F-1307;F-1313	XFI-0097;XFI-0099;XFI-0105	Reviewed SLA probe R1 alert rules against live textfile and Prometheus scrape-chain evidence; series now reach Prometheus but current verdict remains failing; later pass found the rule comments still cite the retired deploy/systemd timer path
 configs/prometheus/rules.r1/slo.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/stellar.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/storage.yml	configs	configs/prometheus	config	todo			cold audit pending
@@ -322,7 +322,7 @@ docs/architecture/aggregation-plan.md	docs	docs/architecture	documentation	todo	
 docs/architecture/chaos-suite-design-note.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/coins-to-assets-migration.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/contract-schema-evolution.md	docs	docs/architecture	documentation	todo			cold audit pending
-docs/architecture/coverage-matrix.md	docs	docs/architecture	documentation	todo			cold audit pending
+docs/architecture/coverage-matrix.md	docs	docs/architecture	documentation	in_progress	EV-0320;F-1313	XFI-0105	Partially reviewed SLA probe and RFP freshness/latency rows; matrix still cites retired deploy/systemd SLA probe units and contains stale healthy-verification language while live R1 probe remains failing
 docs/architecture/ecosystem-review-2026-04-23.md	docs	docs/architecture	documentation	todo			cold audit pending
 docs/architecture/explorer-data-inventory.md	docs	docs/architecture	documentation	in_progress	EV-0095;EV-0153;F-1259	XFI-0051	Reviewed the updated live-usage product wording; broader architecture inventory pass still open
 docs/architecture/explorer-implementation-plan.md	docs	docs/architecture	documentation	todo			cold audit pending
@@ -532,15 +532,15 @@ docs/discovery/rfp-requirements-matrix.md	docs	docs/discovery	documentation	todo
 docs/freighter-rfp.md	docs	docs/freighter-rfp.md	documentation	todo			cold audit pending
 docs/getting-started.md	docs	docs/getting-started.md	documentation	todo			cold audit pending
 docs/launch-task-list.md	docs	docs/launch-task-list.md	documentation	in_progress	EV-0178,F-1211	XFI-0007	Launch task acceptance still permits cstate despite shipped web/status path
-docs/operations/alerts-catalog.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked API alert row; current selector family is corrected
-docs/operations/archival-node-bringup.md	docs	docs/operations	documentation	todo			cold audit pending
+docs/operations/alerts-catalog.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;EV-0320;F-1276;F-1313	XFI-0068;XFI-0105	Rechecked API alert row; current selector family is corrected; later SLA pass found the catalog still cites the retired deploy/systemd SLA probe timer rather than the active Healthchecks unit
+docs/operations/archival-node-bringup.md	docs	docs/operations	documentation	done	EV-0322;F-1314	XFI-0106	Reviewed fresh-host bootstrap claims against the archival-node role; doc says all five ratesengine binaries are copied, which is stale now that release publishes six and the role omits ratesengine-sla-probe
 docs/operations/archive-completeness.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/backfill-procedure.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/cdn-setup.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/cf-pages-setup.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/chaos-wave1-runbook.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/customer-demo-script.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/deploy-workflow.md	docs	docs/operations	documentation	done	EV-0259;F-1297	XFI-0089	Reviewed deploy workflow operator contract; host-key pinning is documented as required but the workflow falls back to live ssh-keyscan
+docs/operations/deploy-workflow.md	docs	docs/operations	documentation	done	EV-0259;EV-0322;F-1297;F-1314	XFI-0089;XFI-0106	Reviewed deploy workflow operator contract; host-key pinning is documented as required; later pass found the default binary set excludes ratesengine-sla-probe and the per-binary sequence describes daemon restart/health behavior that does not apply to CLI binaries
 docs/operations/drills/2026-04-sev1-timescale-failover.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/2026-04-sev2-soroswap-decode-regression.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/drills/README.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -564,7 +564,7 @@ docs/operations/public-flip.md	docs	docs/operations	documentation	todo			cold au
 docs/operations/r1-deployment-state.md	docs	docs/operations	documentation	in_progress	EV-0259;EV-0261;F-1221;F-1297	XFI-0014;XFI-0089	Partially reviewed for release/deploy state; stale 12-binary release note and region secret contract recorded
 docs/operations/r2-deployment-state.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/r3-deployment-state.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/release-process.md	docs	docs/operations	documentation	in_progress	EV-0261;F-1221	XFI-0014	Release-process step 4 is binary-only, but the top pipeline summary still says linux/amd64 plus linux/arm64
+docs/operations/release-process.md	docs	docs/operations	documentation	in_progress	EV-0261;EV-0322;F-1221;F-1314	XFI-0014;XFI-0106	Release-process step 4 is binary-only, but the top pipeline summary still says linux/amd64 plus linux/arm64; later pass confirmed release publishes ratesengine-sla-probe while the default deploy path omits it
 docs/operations/rollback.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/_template.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/aggregator-class-drop-spike.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -630,7 +630,7 @@ docs/operations/runbooks/scrape-failing.md	docs	docs/operations	documentation	to
 docs/operations/runbooks/sev-status-page-update.md	docs	docs/operations	documentation	in_progress	EV-0021,F-1211	XFI-0007	Binding SEV runbook points to removed cstate files
 docs/operations/runbooks/sla-probe-freshness-breach.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/sla-probe-p95-breach.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked incident query example; selector drift is closed in this runbook
-docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0280;EV-0286;F-1300;F-1305;F-1307	XFI-0092;XFI-0097;XFI-0099	Partially reviewed as the runbook consumer of missing/failing sla_probe.prom and node_exporter textfile collector failure modes
+docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	done	EV-0267;EV-0280;EV-0286;EV-0308;EV-0320;F-1300;F-1305;F-1307;F-1309;F-1313	XFI-0092;XFI-0097;XFI-0099;XFI-0101;XFI-0105	Reviewed as the runbook consumer of missing/failing sla_probe.prom and node_exporter textfile collector failure modes; current unit name was corrected, but a later pass found remaining retired timer/env-file guidance
 docs/operations/runbooks/sla-probe-unit-failed.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/slo-availability-burn-fast.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/slo-availability-burn-medium.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -654,7 +654,7 @@ docs/operations/runbooks/zfs-degraded.md	docs	docs/operations	documentation	todo
 docs/operations/sac-wrappers-and-usd-volume.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sep1-resolution.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sev-playbook.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/sla-probe.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0274;EV-0280;EV-0286;F-1300;F-1303;F-1305;F-1307	XFI-0092;XFI-0095;XFI-0097;XFI-0099	Partially reviewed for SLA textfile-output contract, systemd wiring, Healthchecks missing-binary failure mode, live R1 failing probe verdict, and missing node_exporter textfile scrape chain
+docs/operations/sla-probe.md	docs	docs/operations	documentation	done	EV-0267;EV-0274;EV-0280;EV-0286;EV-0319;F-1300;F-1303;F-1305;F-1307;F-1313	XFI-0092;XFI-0095;XFI-0097;XFI-0099;XFI-0105	Reviewed SLA textfile-output contract, systemd wiring, Healthchecks missing-binary failure mode, live R1 failing probe verdict, missing node_exporter textfile scrape chain, and current stale legacy unit/env documentation drift
 docs/operations/sla-proof-procedure.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sla-proof-template.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/status-page-setup.md	docs	docs/operations	documentation	in_progress	EV-0021,F-1211	XFI-0007	Setup doc still selects Upptime/GitHub Pages despite web/status implementation
