@@ -9,12 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	io_prom_dto "github.com/prometheus/client_model/go"
-
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/obstest"
 	"github.com/RatesEngine/rates-engine/internal/supply"
 )
 
@@ -137,13 +135,13 @@ func TestRunSupplyRefresh_DurationMetricRecorded(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
-	before := histogramSampleCount(t, obs.AggregatorSupplyRefreshDurationSeconds, "ok")
+	before := obstest.HistogramSampleCount(t, obs.AggregatorSupplyRefreshDurationSeconds, "outcome", "ok")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // immediate-first-tick runs; for-loop sees ctx.Done() and returns
 	runSupplyRefresh(ctx, r, time.Hour, "TEST")
 
-	after := histogramSampleCount(t, obs.AggregatorSupplyRefreshDurationSeconds, "ok")
+	after := obstest.HistogramSampleCount(t, obs.AggregatorSupplyRefreshDurationSeconds, "outcome", "ok")
 	if after <= before {
 		t.Errorf("supply refresh duration histogram did not advance: before=%d after=%d", before, after)
 	}
@@ -180,39 +178,3 @@ func (s stubSupplyComputer) Compute(_ context.Context, ledger uint32, observedAt
 type stubSupplyInserter struct{}
 
 func (*stubSupplyInserter) InsertSupply(_ context.Context, _ supply.Supply) error { return nil }
-
-// histogramSampleCount returns the sample count of the histogram
-// series with the given outcome label. Mirrors the helpers in
-// `internal/customerwebhook/worker_test.go` (wave 92),
-// `internal/aggregate/orchestrator/divergence_refresh_test.go`
-// (wave 93), and `internal/aggregate/freeze/recovery_test.go`
-// (wave 94). Required because `vec.WithLabelValues(...)` returns
-// a prometheus.Observer (not Collector) so testutil.CollectAndCount
-// can't act on the per-label child directly.
-//
-// Fourth duplicate of this 20-line helper. Cross-package test
-// helpers aren't worth the import-cycle risk for a small
-// dto.Metric reader; the fourth copy makes the duplication cost
-// obvious enough that the next reader will see it as an
-// intentional choice rather than oversight.
-func histogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, outcome string) uint64 {
-	t.Helper()
-	ch := make(chan prometheus.Metric, 16)
-	go func() {
-		vec.Collect(ch)
-		close(ch)
-	}()
-	var total uint64
-	for m := range ch {
-		var dto io_prom_dto.Metric
-		if err := m.Write(&dto); err != nil {
-			t.Fatalf("histogram Write: %v", err)
-		}
-		for _, l := range dto.GetLabel() {
-			if l.GetName() == "outcome" && l.GetValue() == outcome {
-				total += dto.GetHistogram().GetSampleCount()
-			}
-		}
-	}
-	return total
-}

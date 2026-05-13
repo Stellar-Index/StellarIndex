@@ -14,11 +14,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
-	io_prom_dto "github.com/prometheus/client_model/go"
 
 	"github.com/RatesEngine/rates-engine/internal/customerwebhook"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/obstest"
 	"github.com/RatesEngine/rates-engine/internal/platform"
 )
 
@@ -351,48 +350,17 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 		NextAttemptAt: time.Now().Add(-time.Second),
 	})
 
-	// CollectAndCount on the parent HistogramVec returns the number
-	// of distinct (label-set) series tracked. Before this tick the
-	// `delivered` label may already have one (other tests in the
-	// package observe through the same shared registry); the
-	// stable assertion is that this tick records SOME observation,
-	// which the per-label histogram exposes via its own counter
-	// (`_count` suffix in the wire format). Use the wire-level
-	// inspection: collect the family and look for the
-	// `outcome="delivered"` series's sample-count delta.
-	before := histogramSampleCount(t, obs.CustomerWebhookDeliveryDurationSeconds, "delivered")
+	// Use obstest.HistogramSampleCount because
+	// HistogramVec.WithLabelValues(...) returns a
+	// prometheus.Observer (not Collector) — testutil.CollectAndCount
+	// can't act on the per-label child directly. The helper sums
+	// sample counts across every series matching the (label key,
+	// value) pair, equivalent to the wire-format `_count` suffix.
+	before := obstest.HistogramSampleCount(t, obs.CustomerWebhookDeliveryDurationSeconds, "outcome", "delivered")
 	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
-	after := histogramSampleCount(t, obs.CustomerWebhookDeliveryDurationSeconds, "delivered")
+	after := obstest.HistogramSampleCount(t, obs.CustomerWebhookDeliveryDurationSeconds, "outcome", "delivered")
 
 	if after <= before {
 		t.Errorf("delivery duration histogram did not advance: before=%d after=%d", before, after)
 	}
-}
-
-// histogramSampleCount returns the sample count of the histogram
-// series with the given outcome label. Reads the underlying
-// dto.Metric from the parent vector — the per-label
-// `WithLabelValues(...)` Observer doesn't satisfy
-// prometheus.Collector so testutil.CollectAndCount can't act on
-// it directly.
-func histogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, outcome string) uint64 {
-	t.Helper()
-	ch := make(chan prometheus.Metric, 16)
-	go func() {
-		vec.Collect(ch)
-		close(ch)
-	}()
-	var total uint64
-	for m := range ch {
-		var dto io_prom_dto.Metric
-		if err := m.Write(&dto); err != nil {
-			t.Fatalf("histogram Write: %v", err)
-		}
-		for _, l := range dto.GetLabel() {
-			if l.GetName() == "outcome" && l.GetValue() == outcome {
-				total += dto.GetHistogram().GetSampleCount()
-			}
-		}
-	}
-	return total
 }

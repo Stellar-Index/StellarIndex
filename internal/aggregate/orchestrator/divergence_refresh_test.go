@@ -9,12 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	io_prom_dto "github.com/prometheus/client_model/go"
-
 	"github.com/RatesEngine/rates-engine/internal/cachekeys"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/obstest"
 )
 
 // captureRefresher records every RefreshPair call. Configurable
@@ -233,41 +231,11 @@ func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 		Logger:              silentLogger(),
 	})
 
-	before := histogramSampleCount(t, obs.DivergenceRefreshDurationSeconds, "ok")
+	before := obstest.HistogramSampleCount(t, obs.DivergenceRefreshDurationSeconds, "outcome", "ok")
 	o.refreshDivergenceAll(context.Background(), time.Now().UTC())
-	after := histogramSampleCount(t, obs.DivergenceRefreshDurationSeconds, "ok")
+	after := obstest.HistogramSampleCount(t, obs.DivergenceRefreshDurationSeconds, "outcome", "ok")
 
 	if after <= before {
 		t.Errorf("divergence refresh duration histogram did not advance: before=%d after=%d", before, after)
 	}
-}
-
-// histogramSampleCount returns the sample count of the histogram
-// series with the given outcome label. Required because
-// `vec.WithLabelValues(...)` returns a prometheus.Observer (not
-// Collector) so testutil.CollectAndCount can't act on the per-
-// label child directly. Sums across every series whose label-set
-// matches the requested outcome — equivalent to what the wire-
-// format `_count` suffix exposes per-series. Mirrors the helper
-// in `internal/customerwebhook/worker_test.go` (wave 92).
-func histogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, outcome string) uint64 {
-	t.Helper()
-	ch := make(chan prometheus.Metric, 16)
-	go func() {
-		vec.Collect(ch)
-		close(ch)
-	}()
-	var total uint64
-	for m := range ch {
-		var dto io_prom_dto.Metric
-		if err := m.Write(&dto); err != nil {
-			t.Fatalf("histogram Write: %v", err)
-		}
-		for _, l := range dto.GetLabel() {
-			if l.GetName() == "outcome" && l.GetValue() == outcome {
-				total += dto.GetHistogram().GetSampleCount()
-			}
-		}
-	}
-	return total
 }

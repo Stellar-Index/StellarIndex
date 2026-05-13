@@ -17,6 +17,22 @@ against.
 
 ### Added
 
+- New `internal/obstest` package centralising the
+  `HistogramSampleCount` helper that was duplicated four times
+  across the wave-92/93/94/95 regression-test series. Each
+  duplicate prior to this wave was a 20-line dto.Metric reader
+  required because `prometheus.HistogramVec.WithLabelValues(...)`
+  returns an Observer (not a Collector), so `testutil.CollectAndCount`
+  can't act on the per-label child directly. Each successive
+  wave's commit message escalated the duplication note ("third
+  copy", "fourth copy makes the duplication cost obvious"); at
+  the fourth copy I argued in-line that I'd consolidate "if the
+  cost becomes painful". Wave 100 makes the call. The package
+  depends only on upstream prometheus libraries, so it's
+  import-safe from every test package. Per-test helper bodies
+  removed; tests now import `obstest.HistogramSampleCount` with
+  an explicit `(labelKey, labelValue)` signature that's more
+  general than the original `outcome`-hardcoded shape.
 - Regression test
   `TestRunSupplyRefresh_DurationMetricRecorded` pins the wave-90
   supply-refresh latency-histogram wiring, closing the deferred

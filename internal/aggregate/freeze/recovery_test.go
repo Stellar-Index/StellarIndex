@@ -7,13 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	io_prom_dto "github.com/prometheus/client_model/go"
-
 	"github.com/RatesEngine/rates-engine/internal/aggregate/anomaly"
 	"github.com/RatesEngine/rates-engine/internal/aggregate/freeze"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/obstest"
 )
 
 // fakeOpenLister returns a fixed list of open pairs.
@@ -153,44 +151,13 @@ func TestRecovery_SweepDurationMetricRecorded(t *testing.T) {
 	r := freeze.NewRecovery(rdb, lister, closer, freeze.RecoveryOptions{
 		Interval: 5 * time.Millisecond,
 	})
-	before := histogramSampleCount(t, obs.AnomalyFreezeRecoverySweepDurationSeconds, "ok")
+	before := obstest.HistogramSampleCount(t, obs.AnomalyFreezeRecoverySweepDurationSeconds, "outcome", "ok")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	_ = r.Run(ctx)
-	after := histogramSampleCount(t, obs.AnomalyFreezeRecoverySweepDurationSeconds, "ok")
+	after := obstest.HistogramSampleCount(t, obs.AnomalyFreezeRecoverySweepDurationSeconds, "outcome", "ok")
 
 	if after <= before {
 		t.Errorf("freeze recovery sweep duration histogram did not advance: before=%d after=%d", before, after)
 	}
-}
-
-// histogramSampleCount returns the sample count of the histogram
-// series with the given outcome label. Required because
-// `vec.WithLabelValues(...)` returns a prometheus.Observer (not
-// Collector) so testutil.CollectAndCount can't act on the per-
-// label child directly. Mirrors the helpers in the wave-92
-// customer-webhook test and the wave-93 divergence test —
-// duplicated rather than centralised because cross-package test
-// helpers aren't worth the import-cycle risk for a 20-line
-// dto.Metric reader.
-func histogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, outcome string) uint64 {
-	t.Helper()
-	ch := make(chan prometheus.Metric, 16)
-	go func() {
-		vec.Collect(ch)
-		close(ch)
-	}()
-	var total uint64
-	for m := range ch {
-		var dto io_prom_dto.Metric
-		if err := m.Write(&dto); err != nil {
-			t.Fatalf("histogram Write: %v", err)
-		}
-		for _, l := range dto.GetLabel() {
-			if l.GetName() == "outcome" && l.GetValue() == outcome {
-				total += dto.GetHistogram().GetSampleCount()
-			}
-		}
-	}
-	return total
 }
