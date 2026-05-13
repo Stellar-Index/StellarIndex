@@ -131,14 +131,22 @@ func (r *Recovery) Run(ctx context.Context) error {
 // close the rows whose marker is gone. Errors are logged + counted;
 // never propagated (a failed sweep is recoverable on the next tick).
 func (r *Recovery) tick(ctx context.Context) {
+	// Time the whole sweep — recorded against the outcome label
+	// at every exit point so operators chart per-outcome p95/p99.
+	// Sweep latency scales with open-row count (each row = one
+	// Redis GET + maybe one Postgres MarkRecovered).
+	start := time.Now()
+
 	open, err := r.lister.ListOpen(ctx)
 	if err != nil {
 		r.logger.Warn("list open freezes", "err", err)
 		obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("error").Inc()
+		obs.AnomalyFreezeRecoverySweepDurationSeconds.WithLabelValues("error").Observe(time.Since(start).Seconds())
 		return
 	}
 	if len(open) == 0 {
 		obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("ok").Inc()
+		obs.AnomalyFreezeRecoverySweepDurationSeconds.WithLabelValues("ok").Observe(time.Since(start).Seconds())
 		return
 	}
 	var recovered, stillFiring, errs int
@@ -175,9 +183,10 @@ func (r *Recovery) tick(ctx context.Context) {
 		"recovered", recovered,
 		"still_firing", stillFiring,
 		"errs", errs)
+	outcome := "ok"
 	if errs > 0 {
-		obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("partial").Inc()
-	} else {
-		obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("ok").Inc()
+		outcome = "partial"
 	}
+	obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues(outcome).Inc()
+	obs.AnomalyFreezeRecoverySweepDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 }

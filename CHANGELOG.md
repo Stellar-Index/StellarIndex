@@ -18,6 +18,18 @@ against.
 ### Added
 
 - New observability metric
+  `ratesengine_anomaly_freeze_recovery_sweep_duration_seconds`
+  (Histogram, label `outcome`). Final wave-88/89/90/91 entry in
+  the IO-heavy goroutine-worker latency-histogram series. Pairs
+  with `_sweeps_total`; surfaces Postgres / Redis pressure as a
+  chartable signal before the freeze_events table accumulates
+  open rows the operator UI would show as permanently firing.
+  Sweep latency scales with open-row count (each row = one
+  Redis GET + maybe one Postgres MarkRecovered). Wired in
+  `internal/aggregate/freeze/recovery.go::tick`. Buckets 10 ms →
+  30 s. No alert wired (existing recovery-sweep error counter
+  covers correctness).
+- New observability metric
   `ratesengine_aggregator_supply_refresh_duration_seconds`
   (Histogram, label `outcome`). Same wave-88/89 pattern applied
   to a third worker — the supply.Refresher.Tick goroutine.
