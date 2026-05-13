@@ -627,7 +627,7 @@ Roll:
 
 Post-roll `systemctl list-timers --all` shows all four scheduled:
 
-  - `sla-probe.timer` — every 15 min
+  - `ratesengine-sla-probe.timer` — every 15 min
   - `archive-completeness.timer` — every 4 h
   - `supply-snapshot.timer` — daily
   - `verify-archive-tier-a.timer` — weekly
@@ -658,13 +658,13 @@ Post-roll `systemctl list-timers --all` shows all four scheduled:
     indexer cursor and subtracts 64 ledgers of safety margin,
     writing the value to `/run/archive-completeness.env` which
     the EnvironmentFile pulls in. Fires every 4 h.
-  - **`sla-probe.timer`** — ⚠️ DISABLED. Binary updated on R1 to
+  - **`ratesengine-sla-probe.timer`** — ⚠️ DISABLED. Binary updated on R1 to
     v0.5.0-rc.49-r1-patch (uses `/assets` not `/coins`). Still
     incompatible with anon-tier rate-limits at any reasonable
     load. Needs vault-minted `RATESENGINE_PROBE_API_KEY` at
-    Partner/Operator tier in `/etc/default/sla-probe` before
+    Partner/Operator tier in `/etc/default/ratesengine-healthchecks` before
     re-enabling.
-  - In-repo `sla-probe.service` had an unquoted
+  - In-repo `ratesengine-sla-probe.service` had an unquoted
     `Environment=PAIRS=-pair native,fiat:USD` that systemd
     parsed as two assignments — fixed (now
     `Environment="PAIRS=..."`).

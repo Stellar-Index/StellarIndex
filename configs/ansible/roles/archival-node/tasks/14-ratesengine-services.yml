@@ -16,6 +16,14 @@
 #   - The systemd unit handler restarts only on unit-file change.
 
 - name: Cross-compile ratesengine-* binaries (localhost)
+  # F-1314 (codex audit-2026-05-13): `sla-probe` added to the
+  # bootstrap build/install list. The Healthchecks ratesengine-
+  # sla-probe.{service,timer} units invoke
+  # /usr/local/bin/ratesengine-sla-probe; pre-fix archival-node
+  # bootstrap built indexer/aggregator/api/migrate/ops only, so a
+  # fresh-host apply would enable the timer (via the healthchecks
+  # role) but find no binary under it. Bootstrap is now complete
+  # without an out-of-band ssh side-channel.
   delegate_to: localhost
   ansible.builtin.command:
     chdir: "{{ playbook_dir }}/../../.."
@@ -38,6 +46,7 @@
     - api
     - migrate
     - ops
+    - sla-probe
   changed_when: true   # rebuild every apply; copy step decides if r1 changed
 
 - name: Install ratesengine binaries on r1
@@ -53,6 +62,7 @@
     - api
     - migrate
     - ops
+    - sla-probe
   notify: Restart ratesengine-indexer
 
 # ──── Migrations (versioned schema for trades + oracle_updates + CAGGs) ───

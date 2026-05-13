@@ -28,8 +28,8 @@ severity: P2
 
 ```sh
 # 1. Is the timer scheduled?
-sudo systemctl status sla-probe.timer
-sudo systemctl list-timers sla-probe.timer
+sudo systemctl status ratesengine-sla-probe.timer
+sudo systemctl list-timers ratesengine-sla-probe.timer
 
 # 2. When did the unit last run?
 sudo journalctl -u ratesengine-sla-probe.service --since "2 hours ago" -n 50
@@ -44,10 +44,10 @@ sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq .
 
 ## Typical root causes
 
-1. **Timer disabled** — operator ran `systemctl stop sla-probe.timer`
+1. **Timer disabled** — operator ran `systemctl stop ratesengine-sla-probe.timer`
    for maintenance and forgot to re-enable. `systemctl status` shows
    `inactive`.
-   - Mitigation: `sudo systemctl enable --now sla-probe.timer`.
+   - Mitigation: `sudo systemctl enable --now ratesengine-sla-probe.timer`.
 
 2. **Service unit failing every run** — fires alongside this alert
    in journald.

@@ -1,6 +1,6 @@
 ---
 # SLA-probe alerts. Pair with cmd/ratesengine-sla-probe + the
-# 15-minute systemd timer in deploy/systemd/sla-probe.timer.
+# 15-minute systemd timer in deploy/systemd/ratesengine-sla-probe.timer.
 #
 # Scrape source: node_exporter's textfile_collector reads
 # `/var/lib/node_exporter/textfile_collector/sla_probe.prom`,
