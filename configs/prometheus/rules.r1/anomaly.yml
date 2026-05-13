@@ -63,16 +63,33 @@ groups:
           summary: "Anomaly freeze sustained for 1h+ on class {{ $labels.class }} (P1)"
           description: |
             Freeze decisions for asset class {{ $labels.class }}
-            have been emitted continuously over the last hour. Real
-            market events typically resolve within a few minutes;
-            a 1h+ sustained freeze means either a persistent
-            on-chain anomaly that needs human-in-the-loop review,
-            OR our threshold table is mis-tuned for the affected
-            class and the freeze is firing on legitimate volatility.
-            Either way: customer-facing flags.frozen has been true
-            for 1h+ and the LKG value being served is increasingly
-            stale. Either confirm the manipulation pattern + adjust
-            policy, OR widen the class threshold + reload.
+            have been emitted continuously over the last hour. Three
+            common patterns:
+
+            1. Real market event — typically resolves in minutes.
+            2. Threshold mis-tune — Phase 1 fires on legitimate
+               volatility; widen the class threshold + reload.
+            3. **Cold baseline (Phase 2)** — when historical trades
+               are sparse (e.g. backfill is still mid-run, only
+               7d of prices_1h available), the per-asset baseline's
+               z-score is unstable and Phase 2 false-fires across
+               every pair. Symptom: counter rate increases steadily
+               while flags.frozen never sticks (the per-pair Redis
+               marker is empty even though the counter is climbing).
+               In this case the runbook is to widen the Phase 2
+               z-score floor OR wait for the catch-up backfill to
+               complete (docs/operations/backfill-procedure.md
+               §"RFP F4.2 one-year retention catch-up").
+
+            Triage:
+              - `journalctl -u ratesengine-aggregator | grep "phase2 freeze"`
+                lists the per-pair decisions with confidence + z-score.
+              - `redis-cli KEYS 'freeze:*' | wc -l` — if this is 0
+                while the counter climbs, no marker is being written
+                (writer_wired=false in the log line) → no customer
+                impact, but the alert is still real signal.
+              - `SELECT COUNT(*) FROM freeze_events WHERE recovered_at IS NULL`
+                — durable mirror; should track Redis when both wire.
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
       # Recovery-side health: the freeze recovery worker closes

@@ -84,6 +84,31 @@
     - Reload rsyslog
   tags: [log-discipline, logrotate]
 
+- name: Filter chatty service stdout out of /var/log/syslog
+  ansible.builtin.copy:
+    dest: /etc/rsyslog.d/10-suppress-noisy-units.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node role / 15-log-discipline.yml).
+      # Stops listed systemd-unit stdout from reaching /var/log/syslog
+      # (and the rest of the rsyslog file targets). Messages are still
+      # captured by journald and queryable via `journalctl -u <unit>`.
+      #
+      # Why: Loki single-binary mode at info-or-below logs ~4M
+      # `caller=mock.go msg=Get key=collectors/...` lines per day —
+      # the same poll-loop noise that filled /var/log/syslog to 7 GB
+      # in 4 days on r1 (2026-05-13). The Loki config itself was
+      # also lowered to log_level=warn (configs/ansible/roles/loki/
+      # templates/loki-config.yaml.j2); this filter is the
+      # belt-and-braces guarantee that an accidental log_level
+      # regression doesn't blow the disk again.
+      if $programname == "loki" then stop
+  notify:
+    - Reload rsyslog
+  tags: [log-discipline, rsyslog]
+
 - name: Ensure /etc/systemd/journald.conf.d exists
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d

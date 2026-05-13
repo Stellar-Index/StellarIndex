@@ -110,6 +110,9 @@ interface IngestionSnapshot {
   backfill: Array<{
     decoder: string;
     ranges_total: number;
+    ranges_complete: number;
+    ranges_running: number;
+    ranges_stalled: number;
     ranges_active: number;
     oldest_updated_at?: string;
     oldest_lag_seconds: number;
@@ -1441,8 +1444,15 @@ function BackfillTable({
           <thead className="bg-surface-subtle text-ink-faint">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Decoder</th>
-              <th className="px-3 py-2 text-right font-medium">Ranges</th>
-              <th className="px-3 py-2 text-right font-medium">Active</th>
+              <th className="px-3 py-2 text-right font-medium" title="Backfill chunks where last_ledger == range_end">
+                ✓ done
+              </th>
+              <th className="px-3 py-2 text-right font-medium" title="Incomplete chunks updated within the last 10 minutes — actively progressing">
+                ▶ running
+              </th>
+              <th className="px-3 py-2 text-right font-medium" title="Incomplete chunks not updated for 10+ minutes — needs `ratesengine-ops backfill -resume`">
+                ⚠ stalled
+              </th>
               <th className="px-3 py-2 text-right font-medium">Newest ledger</th>
               <th className="px-3 py-2 text-right font-medium">Oldest lag</th>
             </tr>
@@ -1451,15 +1461,14 @@ function BackfillTable({
             {rows.map((r) => (
               <tr key={r.decoder}>
                 <td className="px-3 py-2 font-mono break-all">{r.decoder}</td>
-                <td className="px-3 py-2 text-right tabular-nums">
-                  {r.ranges_total}
+                <td className="px-3 py-2 text-right tabular-nums text-ok-700">
+                  {r.ranges_complete}
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums">
-                  {r.ranges_active > 0 ? (
-                    <span className="text-warn-700">{r.ranges_active}</span>
-                  ) : (
-                    <span className="text-ok-700">0</span>
-                  )}
+                <td className={`px-3 py-2 text-right tabular-nums ${r.ranges_running > 0 ? 'text-brand-600' : 'text-ink-faint'}`}>
+                  {r.ranges_running}
+                </td>
+                <td className={`px-3 py-2 text-right tabular-nums ${r.ranges_stalled > 0 ? 'text-bad-700 font-semibold' : 'text-ink-faint'}`}>
+                  {r.ranges_stalled}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {r.newest_ledger > 0 ? r.newest_ledger.toLocaleString() : '—'}
