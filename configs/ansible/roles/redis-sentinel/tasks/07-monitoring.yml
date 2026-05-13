@@ -53,6 +53,24 @@
     remote_src: yes
   when: redis_exporter_version | length > 0
 
+# F-1295 (codex audit-2026-05-13): write the Redis password to a
+# 0600 root-only secret file, then have the systemd unit read it
+# via `EnvironmentFile=`. Pre-fix the password was inlined into
+# the world-readable (0644) unit file, so any local user could
+# recover it via `cat /etc/systemd/system/redis_exporter.service`.
+- name: install redis_exporter secret file
+  copy:
+    dest: /etc/default/redis_exporter
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # F-1295: secret env-file for redis_exporter. 0600 root-only.
+      # Sourced via the systemd unit's `EnvironmentFile=`.
+      REDIS_PASSWORD={{ redis_password }}
+  no_log: true
+  when: redis_exporter_version | length > 0
+
 - name: install redis_exporter systemd unit
   copy:
     dest: /etc/systemd/system/redis_exporter.service
@@ -64,7 +82,13 @@
       [Service]
       Type=simple
       User={{ redis_user }}
-      Environment=REDIS_PASSWORD={{ redis_password }}
+      # F-1295 (codex audit-2026-05-13): REDIS_PASSWORD now comes
+      # from the 0600 /etc/default/redis_exporter env-file (root-
+      # only readable). Pre-fix the password was inlined here
+      # via `Environment=REDIS_PASSWORD={{ redis_password }}` —
+      # the unit file is 0644 so any local user could recover the
+      # password.
+      EnvironmentFile=/etc/default/redis_exporter
       {# F-1272 (codex audit-2026-05-13): the exporter user is #}
       {# only meaningful under ACL lockdown — `users.acl.j2` is #}
       {# only rendered when `redis_acl_lockdown` is true. With #}
