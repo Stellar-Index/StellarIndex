@@ -17,6 +17,18 @@ against.
 
 ### Documentation
 
+- Wave-103 reconciler-drift catch-up. The codex reconciler's
+  fresh pass post-wave-102 re-opened XFI-0060, XFI-0061 (its
+  CMD-0191 check appears to have run against an earlier
+  workspace state and observed the pre-wave-102 prose) and
+  failed to flip R-1209 / R-1266 / R-1267 after the underlying
+  findings closed. Verified the wave-102 source-side fixes are
+  still in place (`configs/prometheus/rules.r1/README.md` says
+  `rules.r1/`; `configs/audit/README.md` describes
+  `_unattributed` only as historical context), then flipped the
+  five stale rows. Lesson reinforced: trust the
+  per-row-status grep against the underlying file, not the
+  reconciler's `Failure Modes` prose.
 - Wave-102 audit-doc-rot sweep — closes the new findings the
   reconciler surfaced after my prior wave-98/100 stop ("any
   additional codex findings?" was a real question, not a
