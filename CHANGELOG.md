@@ -17,6 +17,27 @@ against.
 
 ### Added
 
+- New observability metric
+  `ratesengine_customer_webhook_delivery_duration_seconds`
+  (Histogram, label `outcome`). Latency of the outbound HTTP
+  POST inside the customer-webhook delivery worker — closes
+  the equivalent observability gap on the OUTBOUND side that
+  the wave-65 Stripe-bridge metric closed on the INBOUND side.
+  The standard `http_request_duration_seconds` covers the
+  inbound HTTP handler surface but not goroutine workers, so
+  before this metric there was no way to chart per-outcome
+  p95/p99 latency on the outbound delivery path. Wired in
+  `internal/customerwebhook/worker.go::deliverOnce` to time
+  the `HTTPClient.Do(req)` + body-drain. Buckets span 10 ms →
+  60 s (the worker's per-request context timeout).
+  `customer-webhook-delivery-failing.md` runbook Quick
+  diagnosis section gets a new step pointing at the histogram
+  for the "delivered p99 climbing while failing-rate stays
+  green" case (customer endpoint going slow rather than
+  failing). No new alert wired — the existing
+  `ratesengine_customer_webhook_delivery_failing` covers the
+  failing-rate signal; latency degradation surfaces in the
+  dashboard.
 - New CI check: `scripts/ci/lint-docs.sh` now enforces that every
   alert runbook carries `## At a glance` and `## Related` sections
   (the two universally-required sections per the wave-78 template

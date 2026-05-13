@@ -59,6 +59,11 @@ ssh r1 'sudo -u postgres psql ratesengine -c "
 
 # Confirm the worker itself is healthy (other webhooks succeeding):
 ssh r1 'curl -s http://localhost:3000/metrics | grep ratesengine_customer_webhook_delivery_attempts_total | head -10'
+
+# Latency posture (per-outcome p95/p99): if `delivered` p99 is
+# climbing but the failing-rate alert hasn't tripped, a customer
+# endpoint is going slow, not failing — different problem shape.
+ssh r1 'curl -s http://localhost:3000/metrics | grep ratesengine_customer_webhook_delivery_duration_seconds | head -20'
 ```
 
 Decision tree:
