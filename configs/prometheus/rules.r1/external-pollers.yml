@@ -12,15 +12,17 @@ groups:
     rules:
 
       # 30-minute window with zero successful polls is the
-      # canonical "this source is down" signal. Background context:
-      # legitimate poll cadences are 5s (binance, coinbase, kraken)
-      # to 60s (coingecko, ECB-daily — but ECB still polls every
-      # 60s and gets cached responses). Any poller with no success
-      # in 30m is broken (config / auth / network) regardless of
-      # cadence, so a single rule covers the fleet.
+      # canonical "this source is down" signal for the per-minute
+      # fleet (binance, coinbase, kraken, coingecko). ECB is
+      # excluded — it has a 6-hour poll interval because the
+      # source publishes once per EU business day (per
+      # internal/sources/external/ecb/poller.go::DefaultPollInterval),
+      # so the 30m threshold would fire after every successful
+      # poll. ECB gets its own slower threshold in the rule below.
+      # (F-1208, codex audit-2026-05-13.)
       - alert: ratesengine_external_poller_stale
         expr: |
-          (time() - ratesengine_external_poller_last_success_unix) > 1800
+          (time() - ratesengine_external_poller_last_success_unix{source!="ecb"}) > 1800
         for: 5m
         labels:
           severity: ticket
@@ -37,6 +39,27 @@ groups:
             expired. Check the indexer log for the matching
             "poller error" lines and the source's auth_mode startup
             log for the configured tier.
+
+      # ECB-specific staleness — 12h threshold (2x the configured
+      # 6h poll interval) means we only fire when ECB has missed
+      # at least one whole poll cycle. ECB rates are fallback FX,
+      # not primary pricing, so this is informational severity.
+      - alert: ratesengine_external_poller_stale_ecb
+        expr: |
+          (time() - ratesengine_external_poller_last_success_unix{source="ecb"}) > 43200
+        for: 10m
+        labels:
+          severity: informational
+          team: ratesengine
+          component: external-poller
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/external-poller-stale.md
+        annotations:
+          summary: "ECB FX poller has not succeeded in 12+ h (>2x poll interval)"
+          description: |
+            ECB's 6h poll interval skipped at least one whole cycle.
+            Either the rates.xml.zip endpoint is down (rare), the
+            indexer host lost outbound HTTPS to ECB, or the poller
+            goroutine deadlocked.
 
       # Sustained error rate over 15 min — catches the case where
       # the poller is hitting the venue successfully sometimes but
