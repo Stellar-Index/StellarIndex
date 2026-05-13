@@ -214,13 +214,13 @@ verified_currencies:
       - network: avalanche
         external_link: https://snowtrace.io/
 
-  - ticker: MATIC
-    slug: matic
-    name: Polygon
-    description: Native asset of the Polygon (formerly Matic) network.
+  - ticker: POL
+    slug: pol
+    name: Polygon (POL)
+    description: Native asset of the Polygon network. Renamed from MATIC to POL on 2024-09-04 when the Polygon 2.0 migration locked in the new tokenomics. The MATIC ERC-20 still exists on Ethereum mainnet for migration purposes, but every CoinGecko / CoinMarketCap listing now references POL as the canonical token.
     class: crypto
-    coingecko_id: matic-network
-    coinmarketcap_id: 3890
+    coingecko_id: polygon-ecosystem-token
+    coinmarketcap_id: 28321
     networks:
       - network: polygon
         external_link: https://polygonscan.com/
