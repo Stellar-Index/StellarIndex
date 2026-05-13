@@ -21,13 +21,20 @@ longer exist.
 ## Architecture (current)
 
 ```
-web/status/                    ← source (Next.js static export)
+internal/incidents/data/      ← canonical incident corpus
+  _template.md                  ← required frontmatter shape
+  YYYY-MM-DD-<slug>.md          ← one Markdown file per incident
+
+internal/incidents/incidents.go ← go:embed loader the API binary
+                                  bakes the corpus into for /v1/incidents
+
+web/status/                    ← Next.js static-export status page
   src/
-    app/                       ← /, /history, /incidents/[slug]
-    data/
-      components.json          ← canonical component list
-      incidents/               ← one JSON per posted incident
-    lib/                       ← uptime computation + probe wiring
+    app/                       ← /, /incident/[slug]
+    lib/incidents.ts           ← build-time loader that reads the
+                                 same `internal/incidents/data/*.md`
+                                 corpus from the repo root
+
   next.config.mjs              ← output: 'export'
   public/                      ← static assets, favicon, OG image
 
@@ -42,19 +49,22 @@ The page is **independent of the API by construction** — Cloudflare
 Pages is a different provider stack from our Hetzner/AWS/Vultr
 origins, so an origin-side outage cannot take the status page down.
 The page does not call into the API at runtime; it renders from the
-static JSON committed in the repo plus a build-time uptime
-calculation from `src/lib/uptime.ts`.
+embedded incident corpus committed in the repo plus a build-time
+uptime calculation.
 
 ## Posting an incident
 
-1. Create a new file in `web/status/src/data/incidents/` with the
-   schema from the closest recent example. Slug is the URL-visible
-   identifier; updates live in the same file as a chronological
-   array.
-2. Update affected component statuses in `components.json` if the
-   incident is severe enough to change them.
-3. Commit + push to `main`. Cloudflare Pages will deploy the new
-   page within ~2 minutes.
+1. Copy `internal/incidents/data/_template.md` to a new file
+   `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` and fill in
+   the YAML frontmatter (`title`, `severity`, `status`,
+   `started_at`, `affected_components`).
+2. Append the customer-facing body (Identification → Impact →
+   Timeline → What we did) per the template.
+3. Commit + push to `main`. Cloudflare Pages deploys the new
+   page within ~2 minutes; after the API binary is also
+   redeployed, dashboard webhook subscribers receive the
+   `incident.sev1` / `incident.resolved` callbacks via
+   `ratesengine-ops emit-incident` (F-1249, codex audit-2026-05-12).
 
 The binding runbook for SEV-1 / SEV-2 updates is
 [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md).

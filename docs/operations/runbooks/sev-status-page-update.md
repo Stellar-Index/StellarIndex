@@ -1,11 +1,11 @@
 ---
 title: SEV status-page update
-last_verified: 2026-05-03
+last_verified: 2026-05-13
 status: living doc
 related:
   - docs/operations/sev-playbook.md
-  - deploy/status-page/README.md
-  - deploy/status-page/cstate/content/issues/_TEMPLATE.md
+  - internal/incidents/data/_template.md
+  - web/status/
 ---
 
 # SEV status-page update
@@ -14,6 +14,16 @@ The customer-facing companion to the on-call escalation flow.
 Every SEV that meets the visibility threshold below MUST be
 posted to `status.ratesengine.net`; this runbook is the binding
 how-to.
+
+F-1211 (codex audit-2026-05-12): the prior version of this
+runbook pointed at a `deploy/status-page/cstate/...` workflow
+that no longer exists — the status page is now a custom
+Next.js static export at `web/status/`, hosted on Cloudflare
+Pages, that renders incidents from
+`internal/incidents/data/<YYYY-MM-DD>-<slug>.md` files
+embedded into the API binary at build time. This runbook is
+rewritten around that path so a SEV operator following it
+top-to-bottom no longer hits a dead-end.
 
 ## When to post
 
@@ -46,39 +56,56 @@ the escalation timestamp; don't wait for the next hour boundary.
 ### 1 — Open a fresh incident file
 
 ```sh
-cd deploy/status-page/cstate/content/issues
-cp _TEMPLATE.md "$(date -u +%Y-%m-%d)-<slug>.md"
-$EDITOR "$(ls -t *-<slug>.md | head -1)"
+cd internal/incidents/data
+SLUG=pricing-api-stale                     # short lowercase hyphen-separated
+DATE=$(date -u +%Y-%m-%d)
+cp _template.md "${DATE}-${SLUG}.md"
+$EDITOR "${DATE}-${SLUG}.md"
 ```
 
-`<slug>` is a short lowercase hyphen-separated identifier
-(`pricing-api-stale`, `cex-ingest-down`). It appears in the URL
-so make it informative; the title is what the customer reads.
+`<slug>` is what appears in the incident URL
+(`status.ratesengine.net/incident/${DATE}-${SLUG}`) so make it
+informative; the front-matter `title` field is what the customer
+reads on the index page.
 
-### 2 — Fill the front-matter
+### 2 — Fill the YAML frontmatter
 
-Match the template precisely. The five fields the page renders
-from are `title`, `date`, `resolved`, `severity`, `affected`:
+Match the `_template.md` shape precisely. Required fields:
 
 ```yaml
-title: "Pricing API returning stale prices"
-date: 2026-05-02T18:00Z
-resolved: false
-severity: disrupted
-affected:
-  - "Pricing API"
-section: issue
+title: "[SEV-1] Pricing API returning stale prices"
+date: 2026-05-13
+severity: SEV-1
+status: investigating
+started_at: 2026-05-13T18:00:00Z
+resolved_at:                                 # leave empty until resolved
+affected_components:
+  - api
+postmortem:                                  # leave empty until the postmortem is written
 ```
 
-`affected:` values MUST match `name:` strings in
-[`deploy/status-page/cstate/data/systems.yml`](../../../deploy/status-page/cstate/data/systems.yml)
-exactly — the cstate render fails an entry that doesn't.
+`affected_components:` values are operator-defined string
+labels (e.g. `api`, `indexer`, `aggregator`, `storage`) — the
+status page renders them as badges on the incident card. Pick
+the same labels you'd use in Slack so customers and operators
+read the same vocabulary.
+
+`severity` accepts `SEV-1`, `SEV-2`, or `SEV-3` (`incidents.go`
+maps them to display strings).
+
+`status` is one of `investigating`, `identified`, `monitoring`,
+`resolved`. The status page UI renders a colored pill from this
+field.
 
 ### 3 — Write the first update body
 
-Use the template's `## Investigating — <UTC>` heading. One
-short paragraph from the customer's POV — what they're seeing,
-that we're investigating, when the next update lands.
+Use the template's `## Identification` + `## Impact` +
+`## Timeline` shape. The Timeline table is the append-only
+event log customers refresh during the incident — never edit
+prior entries.
+
+Plain English from the customer POV. No jargon, no internal
+component names that aren't already in their integration docs.
 
 > **Bad:** "Aggregator is throwing PgError 53300 'too many
 > connections' on the secondary; primary failover initiated."
@@ -92,73 +119,102 @@ infrastructure detail; don't speculate about cause until the
 "Identified" stage; don't blame upstream providers by name in
 the early updates.
 
-### 4 — Push
+### 4 — Commit + push
 
-`git add` + `git commit` + `git push` against the status-page
-branch / repo per the `deploy/status-page/README.md` hosting
-notes. Cloudflare Pages (or whichever host) rebuilds within
-1–2 min; the update is then live.
+```sh
+git checkout -b sev-${DATE}-${SLUG}
+git add internal/incidents/data/${DATE}-${SLUG}.md
+git commit -m "incident: ${DATE}-${SLUG} (SEV-${N})"
+git push -u origin sev-${DATE}-${SLUG}
+gh pr create --title "incident: ${DATE}-${SLUG}" --body ""
+gh pr merge --squash --auto
+```
 
-CI rebuild status is visible at the host's deploy dashboard;
-if the build fails, the previous version stays up — the static
-contract is preserved.
+The `web/status` Cloudflare Pages deploy fires automatically on
+the merge into `main` and renders the new incident at
+`status.ratesengine.net` within a minute or two. Verify the
+incident lands on the index page before stepping away.
 
-### 5 — Post follow-up updates per cadence
+### 5 — Customer webhook fan-out (optional but expected)
 
-Each update is a NEW heading inside the SAME file. Don't open
-a second file for the same incident. The lifecycle headings:
+After the incident `.md` is merged AND the API binary is
+redeployed (the corpus is `go:embed`-baked into the binary),
+fan out the `incident.sev1` webhook so dashboard subscribers
+get a callback. F-1249 (codex audit-2026-05-12) on R1:
 
-- `## Investigating — <UTC>` — initial post; cause unknown.
-- `## Identified — <UTC>` — cause known; mitigation underway.
-- `## Monitoring — <UTC>` — fix deployed; watching for
-  recurrence.
-- `## Resolved — <UTC>` — back to normal.
+```sh
+ssh root@r1 -- /usr/local/bin/ratesengine-ops emit-incident \
+  -config /etc/ratesengine.toml \
+  -slug ${DATE}-${SLUG} \
+  -event sev1
+```
 
-Customers get a clean timeline they can scroll without us
-needing a ticket-tracker on the public surface.
+When the SEV closes, after the same merge + deploy cycle
+flips the corpus's `status: resolved`:
 
-### 6 — Resolve
+```sh
+ssh root@r1 -- /usr/local/bin/ratesengine-ops emit-incident \
+  -config /etc/ratesengine.toml \
+  -slug ${DATE}-${SLUG} \
+  -event resolved
+```
 
-When the incident clears:
+The command refuses semantically-impossible combinations
+(sev1 on a non-SEV-1 entry, resolved on an investigating
+entry) before any network I/O, so an operator typo can't
+fire the wrong webhook.
 
-1. Add a `## Resolved — <UTC>` body section.
-2. Flip `resolved: true` in the front-matter.
-3. (Optional) Add the post-mortem link or commit-deadline to
-   the resolved-section body.
+## Append updates as the incident progresses
 
-cstate moves the file out of the active incidents list and into
-the history view. Resolved incidents stay visible per the
-default theme retention (~30 days on the index, indefinitely
-deeper-linked).
+For each subsequent update (per the cadence table above):
 
-## What if the operator workstation is down too
+```sh
+$EDITOR internal/incidents/data/${DATE}-${SLUG}.md
+# Append a new row to the Timeline table; flip `status:` if appropriate
+git add ... && git commit -m "incident: ${DATE}-${SLUG} update HH:MM" && \
+  git push && gh pr merge --squash --auto
+```
 
-If you can't reach git from your laptop (e.g. you're on the
-phone with the customer + your VPN died), the on-call playbook
-has a fallback: edit the markdown directly through the host's
-web interface (Cloudflare Pages → repository → edit on GitHub
-in browser → commit). It's slower but works from any device
-with a browser.
+The Cloudflare Pages deploy re-runs and the new row appears
+on the page on the next refresh.
 
-The DNS for `status.ratesengine.net` lives at the registrar
-(Cloudflare) — separate from the API DNS — so the status
-page itself doesn't depend on our infrastructure being
-reachable. That's the whole point.
+## Resolution
 
-## Don't
+When the SEV is closed:
 
-- **Don't** delete an incident file even after resolution.
-  History is part of the trust signal; "incident never happened"
-  reads worse than "incident happened, we recovered cleanly".
-- **Don't** post a new incident for the same root cause that
-  recurred within 24 h — append to the existing file with a
-  fresh `## Recurrence — <UTC>` heading instead.
-- **Don't** blame upstream providers by name in early updates.
-  "Stellar mainnet validator congestion" is fine after you've
-  confirmed it; "AWS US-East is down" is fine after the AWS
-  status page has confirmed it. Speculation backfires.
-- **Don't** post operator-internal events. The page is for
-  customer-visible impact only.
-- **Don't** auto-resolve via a script. A human reads the
-  resolved-state signals and presses the button. Auto-resolve
-  has bitten every status-page-running team that's tried it.
+1. Set `status: resolved` and stamp `resolved_at:` in the
+   frontmatter.
+2. Append the final `## Timeline` row marking `**Resolved.**`.
+3. Fill the `## What we did` section.
+4. Commit + push (same flow as above).
+5. After the deploy lands, fire `emit-incident -event resolved`
+   so dashboard subscribers get the close-out callback.
+6. Postmortem follow-up: when the postmortem lands at
+   `docs/operations/postmortems/${DATE}-${SLUG}.md`, update
+   the incident's frontmatter `postmortem:` field to point at
+   it (the status page renders a "Read the full postmortem"
+   link from that field).
+
+## Workstation-down fallback
+
+If the operator's workstation is unavailable but they can
+reach R1 via SSH, the incident can be drafted directly on the
+host via the deployed binary's writeable copy of the corpus —
+but this WILL be lost on the next deploy because the embedded
+corpus rebuilds from `git`. The drafted file MUST be committed
+upstream within the same hour. There is no "host-only" path
+that survives a deploy; the corpus is the source of truth in
+git, full stop.
+
+## Related
+
+- [`sev-playbook.md`](../sev-playbook.md) — the SEV ladder, on-
+  call rotation, severity definitions.
+- [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md)
+  — the canonical incident frontmatter + body shape.
+- [`web/status/`](../../../web/status/) — the Next.js static-
+  export status-page source (incidents render from
+  `incidents.ts` which build-time-loads the corpus).
+- [`internal/incidents/incidents.go`](../../../internal/incidents/incidents.go)
+  — the `go:embed` loader that bakes the corpus into the API
+  binary for `/v1/incidents`.

@@ -239,6 +239,14 @@ Recent waves closed by code (chronological):
   migrated off the `/opt/ratesengine/release-<tag>/` path
   onto the actual `/usr/local/bin/<binary>.prev-<tag>` shape.
   F-1204 + F-1221 + F-1222 → fixed.
+- wave 57 — F-1211 status-page runbook rewrite:
+  `runbooks/sev-status-page-update.md` rewritten end-to-end
+  around the shipped Markdown-corpus + Cloudflare-Pages
+  workflow (replaces the retired cstate scaffold);
+  `status-page-setup.md` "Posting an incident" section
+  updated to describe the `internal/incidents/data/<DATE>-<slug>.md`
+  shape; `launch-day-checklist.md` Upptime references replaced
+  with Cloudflare-Pages references. F-1211 → fixed.
 
 ## Status Values
 
@@ -265,7 +273,7 @@ Recent waves closed by code (chronological):
 | F-1208 | high | Multiple enabled ingestion sources are stopped or throttled on R1 while API health remains green | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010 | open | ingestion/ops | Prometheus shows firing source-stopped alerts for ECB/Soroswap/Band/Phoenix and pending alerts for Comet/Blend/Redstone; Coingecko 429s repeat in logs. |
 | F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010 | open | ops | Memory alert is firing at about 95.41%, swap is full, and MinIO has 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | open | api/ops | Health/ready only report process/postgres/redis ok while material ingest, latency, memory, and timer evidence failures are active. |
-| F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021 | open | ops/comms/web | During a SEV, the binding runbook tells operators to edit absent `deploy/status-page/cstate/**` files or use Upptime issues, while the repo ships `web/status` as a custom Next.js static export. |
+| F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021 | fixed | ops/comms/web | Wave 57 (2026-05-13) rewrites `runbooks/sev-status-page-update.md` end-to-end around the shipped path: incidents are Markdown files under `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` with the `_template.md` frontmatter; commit + push to `main` triggers the `web/status` Cloudflare Pages deploy + the API binary's `go:embed` rebuild; `ratesengine-ops emit-incident` fires the `incident.sev1` / `incident.resolved` customer-webhook fan-out (F-1249). `status-page-setup.md` updated to describe the actual `internal/incidents/data/` corpus + `web/status/src/lib/incidents.ts` build-time loader. `launch-day-checklist.md` Upptime references rewritten. The retired `deploy/status-page/cstate/**` workflow has no remaining operator-surface mentions. |
 | F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023; EV-0089 | fixed | dashboard/billing/api | Current `HEAD` now clamps dashboard-minted key budgets by account tier before insert and tests the tier ladder, so the privilege-escalation path no longer reproduces. |
 | F-1213 | high | Stablecoin fiat proxy undercounted Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011; EV-0116 | fixed | aggregate/market-data | Current code computes USD totals against each source pair's real quote-decimal convention before pair rewrite, and the classic-USDC `$10k` regression test passes. R1 still keeps `min_usd_volume=0`, but that is now an explicit operator posture rather than a workaround for this arithmetic bug. |
 | F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | GitHub reports `main.protected=false`; branch protection/rulesets are unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
