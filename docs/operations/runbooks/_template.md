@@ -1,7 +1,7 @@
 ---
 title: Runbook — <alert-name>
 last_verified: YYYY-MM-DD
-status: draft | ratified
+status: draft | ratified | superseded
 severity: P1 | P2 | P3
 ---
 
@@ -14,9 +14,31 @@ placeholder sections. Keep it short — a responder woken at 3 AM
 reads this first, so structure and speed matter more than
 completeness.
 
-Every runbook MUST contain each of the sections below. CI check
-fails the PR otherwise (TODO(#0) — add the section check to
-scripts/ci/lint-docs.sh).
+The two universally-required sections are `## At a glance` and
+`## Related` — orphan-runbook lint at scripts/ci/lint-docs.sh
+fails any runbook with no inbound references; "At a glance" is
+the contract every other runbook expects when linking in. The
+remaining sections below are the typical shape, but vary by
+alert class — drop or reshape as needed.
+
+When the alert covers a CLASS of failures that vary by source,
+tier, or operation label, add a per-class reference matrix
+instead of (or alongside) the "Quick diagnosis" section. See
+`decode-errors.md` (per-source decode-regression matrix),
+`source-stopped.md` (per-source cadence reference),
+`external-poller-error-rate-high.md` (vendor-specific 429
+patterns), and `stripe-platform-sync-errors.md`
+(per-`operation` triage paths) for the established pattern.
+
+When the alert is for a NEW metric/seam that didn't exist
+before, add a `## Why this exists` section explaining the
+operator question that motivated wiring it (see
+`stripe-platform-sync-errors.md`).
+
+When this runbook has a companion runbook covering the
+adjacent surface (inbound vs outbound, classic vs Soroban,
+producer vs consumer), cross-link from BOTH sides — wave 75
+caught this drift between the two webhook runbooks.
 -->
 
 ## At a glance
@@ -25,7 +47,7 @@ scripts/ci/lint-docs.sh).
 | ----- | ----- |
 | Alert | `<alert_name>` |
 | Severity | P1 / P2 / P3 |
-| Detected by | Prometheus rule in `deploy/monitoring/rules/<area>.yml` |
+| Detected by | Prometheus rule in `deploy/monitoring/rules/<area>.yml` (and `configs/prometheus/rules.r1/<area>.yml` if R1-overlay applies) |
 | Typical MTTR | X min |
 | Impact | One sentence describing customer impact. |
 
@@ -67,8 +89,11 @@ Each documented here is one less 3 AM page for the next responder.
 
 ## Related
 
-- Postmortems tagged `<alert-name>` — `docs/operations/postmortems/`
-- Upstream docs / ADRs / related runbooks.
+- Implementation file (`internal/<package>/...`).
+- Companion runbook(s) covering adjacent surfaces — name the
+  inbound/outbound or producer/consumer relationship explicitly.
+- Postmortems tagged `<alert-name>` — `docs/operations/postmortems/`.
+- Upstream docs / ADRs.
 
 ## Changelog
 
