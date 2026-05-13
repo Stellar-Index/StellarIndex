@@ -304,6 +304,18 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 // during a bad CF Pages build window — the retry plus the client
 // fallback in the !coin branch make that scenario survivable.
 // 4xx (404 included) returns null on the first try, no retry.
+//
+// Shape discriminator: /v1/assets/{slug} returns TWO different
+// wire shapes (per CLAUDE.md "Things that will surprise you"):
+//   - GlobalAssetView (catalogue slug like "usdc", "us-dollar",
+//     "btc"): keys are ticker/slug/name/class/networks. NO
+//     asset_id, NO code.
+//   - AssetDetail (canonical asset_id like "USDC-GA5Z...",
+//     "native"): keys are asset_id/code/issuer/...
+// fetchCoin only handles the AssetDetail case — when the response
+// is a GlobalAssetView shape, return null so the page routes to
+// VerifiedCurrencyView via the !coin branch. The discriminator is
+// `asset_id` being present + truthy.
 async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   if (isCIStub) return null;
   // Cache-first: one listing call covers up to 500 rows. Per-slug
@@ -328,7 +340,14 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
         return null;
       }
       const env = (await res.json()) as { data: CoinSummary };
-      return env.data ?? null;
+      const data = env.data ?? null;
+      // GlobalAssetView (catalogue slug) discriminator — the
+      // catalogue dispatch response has no asset_id. Treat as
+      // null so the caller renders VerifiedCurrencyView.
+      if (!data || typeof data.asset_id !== 'string' || !data.asset_id) {
+        return null;
+      }
+      return data;
     } catch {
       if (attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1399,9 +1418,21 @@ function VerifiedCurrencyView({
         networks={view.networks ?? []}
         source={asExample(`/v1/assets/${view.slug}`)}
       />
+
       {chartAssetID && (
         <ChartPanel assetID={chartAssetID} />
       )}
+
+      {/* Markets panel — surfaces every market the asset trades on
+          across both Stellar SDEX and CEX feeds. The slug is
+          passed through to /v1/markets?asset=<slug> which the
+          server expands (R-018 phase 2) into every catalogue
+          asset_id form for the slug and unions trade rows. So
+          /assets/USDC shows USDC-GA5Z... (SDEX), and BTC/ETH/XLM
+          tickers show their crypto:<TICKER> CEX pairs from
+          Binance/Coinbase/Kraken/Bitstamp under one panel. */}
+      <MarketsTabPanel assetID={view.slug} />
+
       {slug && (
         <p className="text-xs text-slate-500">
           Slug:{' '}
