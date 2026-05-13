@@ -40,7 +40,12 @@ concurrency:
 
 permissions:
   contents: write          # gh release create + upload assets
-  id-token: write          # future: keyless signing via cosign
+  # F-1296 (codex audit-2026-05-13): `id-token: write` removed.
+  # No step currently consumes the OIDC JWT (keyless signing via
+  # cosign is planned but not wired yet); a compromised step in
+  # this workflow shouldn't be able to mint an OIDC token. Add
+  # it back in the SAME PR that wires cosign signing, with a
+  # clear comment pointing at the consuming step.
 
 jobs:
   # Pin the tag once so every downstream job sees the same value
