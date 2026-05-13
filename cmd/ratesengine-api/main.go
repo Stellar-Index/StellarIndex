@@ -604,14 +604,24 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SEP10:             sep10Validator,
 	}, logger)
 
-	// Hoist cache instances out of the Options literal so a prewarm
-	// goroutine can hammer them on startup + every 25s (just inside
-	// the 30s/60s TTLs) — keeps every cold-cache miss off the user's
+	// Hoist cache instances out of the Options literal so the
+	// prewarm goroutine can hammer them on startup + on per-query-
+	// cost cadences — keeps every cold-cache miss off the user's
 	// path. The first /exchanges or /dexes pageload after a binary
 	// restart now hits a warm cache.
-	cachedSourcesStats := v1.NewCachedSourcesStatsReader(store, 60*time.Second)
-	cachedMarketsReader := v1.NewCachedMarketsReader(marketsReader, 30*time.Second)
-	cachedCoinsReader := v1.NewCachedCoinsReader(store, 30*time.Second)
+	//
+	// R-1209 (2026-05-13): TTLs widened so they stay inside the
+	// prewarm cadence with headroom. sources_stats query takes ~8s
+	// on a 3-month dataset and scales linearly with data depth —
+	// 10min TTL + 5min prewarm cadence means the next refresh
+	// fires well before TTL expiry, and a delayed refresh still
+	// serves a warm entry. Markets/pools/coins are sub-second
+	// individually but the prewarm loop runs 12+ variants per
+	// cycle; 2min TTL + 60s prewarm cadence is the same
+	// double-cushion pattern.
+	cachedSourcesStats := v1.NewCachedSourcesStatsReader(store, 10*time.Minute)
+	cachedMarketsReader := v1.NewCachedMarketsReader(marketsReader, 2*time.Minute)
+	cachedCoinsReader := v1.NewCachedCoinsReader(store, 2*time.Minute)
 	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedCoinsReader)
 
 	usdPegs := parseUSDPeggedClassics(cfg.Trades.USDPeggedClassicAssets, logger)
@@ -2499,10 +2509,24 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 // prewarmCaches keeps the heaviest read caches hot. The
 // /v1/sources?include=stats and /v1/markets / /v1/pools queries
 // run aggregations over the trades hypertable that take 5–10s on
-// a cold path; cache TTLs of 30–60s mean a single user-pageload
-// with no recent neighbours always pays the full cost. Calling
-// the cached readers from this goroutine on a 25s cadence keeps
-// the entry alive continuously.
+// a cold path; cache TTLs of 30s–10min mean a single user-pageload
+// with no recent neighbours always pays the full cost. This
+// goroutine keeps each entry alive on a cadence sized to each
+// query's cost.
+//
+// Two cadences (R-1209, 2026-05-13: pre-fix every 25s cycle ran
+// the 8s source-stats query AND 12 market/pool variants AND a
+// coins refresh — one Postgres backend at 76% CPU continuously
+// as trades grew, with knock-on memory pressure from
+// ZFS-ARC-vs-shared_buffers double-caching the working set):
+//
+//   - **Heavy** (sources_stats + source_volume_history_24h):
+//     5 min cadence, query takes ~8s on a 3-month dataset and
+//     scales linearly with data depth. The 24h-window data has
+//     >5min freshness tolerance, so refresh-every-5min is well
+//     within product semantics.
+//   - **Light** (markets/pools/coins): 60s cadence, queries
+//     individually sub-second under normal load.
 //
 // Errors get logged at debug level — a transient warmup failure
 // is rare and the next cycle retries. Stops on ctx cancel.
@@ -2513,31 +2537,40 @@ func prewarmCaches(
 	markets *v1.CachedMarketsReader,
 	coins *v1.CachedCoinsReader,
 ) {
-	const cadence = 25 * time.Second
-	prewarmOnce(ctx, logger, stats, markets, coins)
-	tick := time.NewTicker(cadence)
-	defer tick.Stop()
+	heavyCadence := 5 * time.Minute
+	lightCadence := 60 * time.Second
+
+	// Fire both immediately on startup so the first user request
+	// after a binary restart hits a warm cache.
+	prewarmHeavy(ctx, logger, stats)
+	prewarmLight(ctx, logger, markets, coins)
+
+	heavyTick := time.NewTicker(heavyCadence)
+	defer heavyTick.Stop()
+	lightTick := time.NewTicker(lightCadence)
+	defer lightTick.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
-			prewarmOnce(ctx, logger, stats, markets, coins)
+		case <-heavyTick.C:
+			prewarmHeavy(ctx, logger, stats)
+		case <-lightTick.C:
+			prewarmLight(ctx, logger, markets, coins)
 		}
 	}
 }
 
-func prewarmOnce(
+func prewarmHeavy(
 	ctx context.Context,
 	logger *slog.Logger,
 	stats *v1.CachedSourcesStatsReader,
-	markets *v1.CachedMarketsReader,
-	coins *v1.CachedCoinsReader,
 ) {
 	// Per-call deadlines stop a slow query from stalling the whole
-	// cycle (a missed cycle is fine — the user's request can still
-	// hit the cached entry).
-	statsCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// cycle. A missed cycle is fine — the cache entry survives at
+	// its TTL and the next cycle retries.
+	statsCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := stats.GetSourceStats(statsCtx); err != nil {
 		logger.Debug("prewarm sources stats failed", "err", err)
@@ -2545,7 +2578,14 @@ func prewarmOnce(
 	if _, err := stats.GetSourceVolumeHistory24h(statsCtx); err != nil {
 		logger.Debug("prewarm sources volume history failed", "err", err)
 	}
+}
 
+func prewarmLight(
+	ctx context.Context,
+	logger *slog.Logger,
+	markets *v1.CachedMarketsReader,
+	coins *v1.CachedCoinsReader,
+) {
 	mkCtx, mkCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer mkCancel()
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
