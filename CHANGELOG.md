@@ -17,6 +17,17 @@ against.
 
 ### Documentation
 
+- The `POST /v1/webhooks/stripe` OpenAPI entry now documents the
+  inbound observability surface: the
+  `ratesengine_stripe_platform_sync_errors_total{operation}`
+  counter, the `ratesengine_stripe_platform_sync_errors` alert,
+  and the `stripe-platform-sync-errors` runbook. Explains that
+  the platform-store side effects (account tier / subscription
+  upsert / per-key Postgres rate-limit lift) are best-effort and
+  do NOT 5xx because Stripe retries against an unhealthy Postgres
+  would just retry-storm — the metric is the right operator
+  signal. Inbound parallel to the wave-76 outbound webhook payload
+  documentation. Generated artifacts regenerated.
 - OpenAPI now documents the JSON body shape of all four customer-
   webhook event types: `IncidentWebhookPayload` (covers
   `incident.sev1` + `incident.resolved`), `AnomalyFreezeWebhookPayload`

@@ -2100,6 +2100,21 @@ paths:
         timestamp drift bounded to 5 minutes. Endpoint returns 503
         when the signing secret is unset (deployments without
         Stripe).
+
+        **Operator observability.** Beyond the Redis-side
+        rate-limit lift (which 5xx-bubbles back to Stripe so the
+        platform retries), the handler also fans out platform-store
+        side effects: account tier update, subscription upsert, and
+        per-key rate-limit lift on dashboard-created Postgres keys
+        (F-1219). Those side effects are best-effort — they do NOT
+        5xx — because Stripe retries against an unhealthy Postgres
+        would just retry-storm. Failures are surfaced via the
+        `ratesengine_stripe_platform_sync_errors_total{operation}`
+        counter; the alert
+        `ratesengine_stripe_platform_sync_errors` (P3 / ticket)
+        fires on any non-zero rate over 15 min. See the runbook
+        at `docs/operations/runbooks/stripe-platform-sync-errors.md`
+        for per-`operation` triage.
       requestBody:
         required: true
         content:
