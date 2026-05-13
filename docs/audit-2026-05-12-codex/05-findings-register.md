@@ -513,6 +513,8 @@ Recent waves closed by code (chronological):
 | F-1288 | medium | Prometheus TSDB disk-space preflight is documented as an assertion but is configured to ignore failures | `configs/ansible/roles/prometheus/tasks/01-preflight.yml`; `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml` | XFI-0080; EV-0236; EV-0241 | fixed | ops/observability/capacity | Current source replaces the ignored mount-fact assertion with a blocking `df --output=avail -B1 /var` check against the documented 20 GB threshold. |
 | F-1289 | medium | Loki storage prerequisites are documented as preflight checks but the server preflight does not verify MinIO bucket/access or `/var` capacity | `configs/ansible/roles/loki/tasks/server-01-preflight.yml`; `configs/ansible/roles/loki/defaults/main.yml`; `configs/ansible/roles/loki/README.md`; `docs/architecture/loki-ansible-role-design-note.md` | XFI-0081; EV-0239 | fixed | ops/observability/logging | Defaults say the role asserts the `loki-chunks` bucket exists at preflight, the README requires 50 GB free on `/var`, and the design note says the role creates/checks the bucket and asserts 50 GB. The actual server preflight checks only OS, inventory groups, time sync, and the Loki user. |
 | F-1290 | medium | Prometheus README still documents loopback-only UI access and a 9094-only firewall after the role moved 9090/9093 to internal network listeners | `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml`; `configs/ansible/roles/prometheus/tasks/06-firewall.yml` | XFI-0082; EV-0242 | fixed | ops/docs/observability/security | Defaults now bind Prometheus and Alertmanager to `0.0.0.0:9090/9093`, and the firewall task opens 9090, 9093, and 9094 to internal CIDRs. The README still labels the UI loopback-only and says `06-firewall.yml` opens only 9094, so operator security/access docs no longer match the role. |
+| F-1291 | high | Archival-node role installs MinIO, `mc`, and node_exporter from upstream URLs without enforced checksums | `configs/ansible/roles/archival-node/tasks/09-minio.yml`; `configs/ansible/roles/archival-node/tasks/10-observability.yml`; `configs/ansible/roles/archival-node/defaults/main.yml`; archival-node bring-up docs | XFI-0083; EV-0244; EV-0247 | open | ops/security/supply-chain | Install tasks now assert and use SHA-256 variables for MinIO, `mc`, and node_exporter, and `mc` now uses a versioned archive URL. The finding narrows to missing defaults/operator documentation for the required `minio_release_sha256`, `mc_version`, `mc_release_sha256`, and `node_exporter_release_sha256` inventory variables. |
+| F-1292 | medium | Active core-lag runbook tells operators to cross-check via Horizon despite ADR-0001 banning Horizon references in runbooks | `docs/operations/runbooks/core-lag.md`; `docs/adr/0001-horizon-deprecated.md`; `README.md`; `CLAUDE.md` | XFI-0084; EV-0245; EV-0247 | fixed | ops/docs/architecture | `core-lag.md` no longer instructs operators to cross-check via Horizon; Step 1 now uses stellar.expert or a public stellar-rpc endpoint and records that the prior Horizon wording was removed for ADR-0001. |
 
 ## Finding Template
 
@@ -3309,3 +3311,57 @@ Observed: defaults now bind `prometheus_listen` to `0.0.0.0:9090` and `alertmana
 Impact: medium. Operators reviewing the role can believe 9090/9093 are socket-level loopback-only when they are actually network listeners protected by firewall policy. That matters especially while `F-1278` keeps the role firewall composition open.
 
 Remediation direction: update the README to describe internal-CIDR listeners plus SSH tunnelling through the firewall as the operator access path, and change the firewall section to list 9090/9093/9094. Cross-link the nftables composition finding until that lower-level policy is fixed.
+
+### F-1291. Archival-node role installs MinIO, `mc`, and node_exporter from upstream URLs without enforced checksums
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/archival-node/tasks/09-minio.yml`
+- `configs/ansible/roles/archival-node/tasks/10-observability.yml`
+- `configs/ansible/roles/archival-node/defaults/main.yml`
+- archival-node bring-up/operator docs
+
+Evidence:
+
+- `XFI-0083`
+- `EV-0244`
+- `EV-0247`
+
+Expected: every Ansible role path that installs upstream root-owned executables should authenticate the exact artifact with a pinned checksum, and the documented inventory/defaults path should tell operators which digest variables to set.
+
+Observed: this narrowed during the moving-workspace recheck. `09-minio.yml` now asserts `minio_release_sha256`, uses `checksum: "sha256:{{ minio_release_sha256 }}"` for the MinIO server binary, asserts `mc_version` and `mc_release_sha256`, and downloads `mc` from the versioned archive path with checksum enforcement. `10-observability.yml` now asserts `node_exporter_release_sha256` and uses it in the node_exporter `get_url` task. The remaining open gap is the documented clean inventory path: `defaults/main.yml` and active archival-node operator docs still do not list or explain the required `minio_release_sha256`, `mc_version`, `mc_release_sha256`, or `node_exporter_release_sha256` variables.
+
+Impact: high until docs/defaults are reconciled. The runtime install tasks now fail fast if the digests are absent, but a clean documented role run can still fail late for operators because the required variables are not discoverable in defaults or the bring-up path.
+
+Remediation direction: add commented required variables and checksum-source guidance for `minio_release_sha256`, `mc_version`, `mc_release_sha256`, and `node_exporter_release_sha256` to defaults/sample inventory/operator docs. Keep the current task-level assertions and checksums.
+
+### F-1292. Active core-lag runbook tells operators to cross-check via Horizon despite ADR-0001 banning Horizon references in runbooks
+
+Severity: `medium`
+
+Status: `fixed`
+
+Affected surface:
+
+- `docs/operations/runbooks/core-lag.md`
+- `docs/adr/0001-horizon-deprecated.md`
+- `README.md`
+- `CLAUDE.md`
+
+Evidence:
+
+- `XFI-0084`
+- `EV-0245`
+- `EV-0247`
+
+Expected: active operational runbooks should preserve ADR-0001's "no Horizon" boundary. If operators need an external network-health comparator, the runbook should use an approved non-Horizon source or explicitly revise the ADR before depending on Horizon in incident response.
+
+Observed: fixed during the moving-workspace recheck. `core-lag.md` no longer tells operators to cross-check via SDF Horizon. Step 1 now points to stellar.expert/explorer or a public stellar-rpc endpoint and explicitly records that the earlier Horizon wording was removed for ADR-0001.
+
+Impact: fixed for the reviewed active runbook path. The remaining `Horizon` text in `core-lag.md` is explanatory correction history, not an operator instruction or command dependency.
+
+Remediation direction: keep future runbook edits on stellar.expert/stellar-rpc or an explicitly approved non-Horizon source; continue the invariant search across active operations docs during closure sweeps.
