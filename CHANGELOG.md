@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- New CI check: `scripts/ci/lint-docs.sh` now enforces that every
+  alert runbook carries `## At a glance` and `## Related` sections
+  (the two universally-required sections per the wave-78 template
+  + wave-81 normalisation). Procedural runbooks excluded via an
+  allow-list mirroring the existing orphan-lint exclusions plus
+  three procedural runbooks (`dr-activation`,
+  `sev-status-page-update`, `operator-unblock-2026-05-08`)
+  flagged as not-alert-shaped during the wave-81 survey. Closes
+  the long-stale `TODO(#0)` claim that was originally in the
+  template — the lint that the template's CI-check claim
+  promised now actually exists.
+
 ### Documentation
 
 - Four alert runbooks normalised to the wave-78 template shape
