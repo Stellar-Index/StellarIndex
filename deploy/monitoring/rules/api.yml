@@ -194,3 +194,32 @@ groups:
             was marked terminally failed. Customer hasn't received
             the event. Operator should reach out before the
             customer notices via their own monitoring.
+
+      # Stripe platform-bridge sync errors (F-1219 follow-up,
+      # 2026-05-13). The Stripe webhook deliberately does NOT 5xx
+      # on platform-store failures — Stripe retries would just keep
+      # applying the same Redis rate-limit without making the
+      # platform-store path any healthier. So this counter is the
+      # operator-visible signal that the bridge is degraded:
+      # customer dashboard / Postgres-backed key state is drifting
+      # from their Stripe billing state.
+      - alert: ratesengine_stripe_platform_sync_errors
+        expr: |
+          sum(rate(ratesengine_stripe_platform_sync_errors_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
+        annotations:
+          summary: "Stripe platform bridge degraded: {{ $value | humanize }} errors/s"
+          description: |
+            One or more Stripe webhook → platform-store side effects
+            are failing. The Redis rate-limit half is unaffected
+            (the customer's API still respects the new tier), but
+            the Postgres-backed dashboard view of their account
+            tier / subscription / per-key budget is drifting.
+            Per-`operation` label isolates the failing layer
+            (get_account / upsert_subscription / account_update /
+            list_keys / key_update). Follow the runbook.

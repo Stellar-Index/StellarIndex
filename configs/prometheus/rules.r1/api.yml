@@ -174,3 +174,27 @@ groups:
           description: |
             A delivery hit the 15-attempt retry budget (72h) and
             was marked terminally failed.
+
+      # Stripe platform-bridge sync errors (F-1219 follow-up,
+      # 2026-05-13). Counter increments per failed platform-store
+      # side effect inside the Stripe webhook path. Webhook
+      # deliberately does NOT 5xx on these (Stripe retries would
+      # not heal Postgres), so this metric is the operator-visible
+      # signal that customer dashboard / Postgres key state is
+      # drifting from Stripe billing state.
+      - alert: ratesengine_stripe_platform_sync_errors
+        expr: |
+          sum(rate(ratesengine_stripe_platform_sync_errors_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
+        annotations:
+          summary: "Stripe platform bridge degraded: {{ $value | humanize }} errors/s"
+          description: |
+            Stripe webhook → platform-store side effects failing.
+            Per-`operation` label isolates the failing layer
+            (get_account / upsert_subscription / account_update /
+            list_keys / key_update). Follow the runbook.
