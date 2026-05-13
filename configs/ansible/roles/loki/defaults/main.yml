@@ -10,6 +10,11 @@ promtail_version: "3.2.0"
 # ── Server (log_aggregator host) ───────────────────────────────
 loki_data_dir: /var/lib/loki
 loki_retention_days: 30
+# F-1289 (codex audit-2026-05-13): preflight asserts at least
+# this many GB free at /var. The role caches chunks locally
+# before flushing to MinIO and keeps the boltdb index on local
+# disk; both share /var by default.
+loki_var_min_free_gb: 50
 # HTTP API listen address — loopback-only by default; the
 # `agent` task pushes to the log_aggregator host's INTERNAL IP
 # (resolved at template-render time), so loopback isn't enough.

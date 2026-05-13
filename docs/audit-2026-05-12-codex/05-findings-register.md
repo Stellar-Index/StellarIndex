@@ -2,19 +2,19 @@
 
 Cold findings only. No prior finding is imported into this register.
 
-## Closure summary (verified reconciliation snapshot, 2026-05-13 wave-117 refresh)
+## Closure summary (verified reconciliation snapshot, 2026-05-13 wave-119 refresh)
 
 The register below is authoritative; this summary captures the
-highest-priority items as of the wave-117 reconciliation recheck. Status counts
+highest-priority items as of the wave-119 reconciliation recheck. Status counts
 at this snapshot:
 
-- **Findings register**: 65 fixed / 24 open (89 total).
-- **XFI cross-file table**: 61 fixed / 20 open (81 total).
-- **Remediation plan**: 63 fixed / 24 open (87 total — multi-finding
+- **Findings register**: 67 fixed / 23 open (90 total).
+- **XFI cross-file table**: 63 fixed / 19 open (82 total).
+- **Remediation plan**: 65 fixed / 23 open (88 total — multi-finding
   R-rows split the count; the open remediation rows resolve to
   the current finding set plus mixed multi-finding operator rows).
 
-All three surfaces are mutually consistent as of wave 117.
+All three surfaces are mutually consistent as of wave 119.
 
 **Latest high-priority state.** Earlier code-actionable findings through
 wave 95 shipped, but the deployment/HA tranche reopened code/config risk:
@@ -61,7 +61,11 @@ preflight being documented as blocking while the task explicitly soft-fails.
 direct `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values in
 `/etc/default/loki`. `F-1289` captures the remaining Loki storage preflight gap:
 the role docs/defaults/design note promise MinIO bucket and local-disk checks
-that `server-01-preflight.yml` does not perform.
+that `server-01-preflight.yml` does not perform. The Prometheus moving-fix
+pass closes `F-1287` and `F-1288` in source, but adds `F-1290` for the residual
+Prometheus README drift that still says the UI is loopback-only and the
+firewall opens only 9094 after the role changed to `0.0.0.0:9090/9093` with
+firewall-gated internal access.
 The same pass also confirms `F-1265`, `F-1270`,
 `F-1271`, `F-1266`, and `F-1272` are source-closed on the current workspace.
 Final code closures since the prior summary include:
@@ -503,11 +507,12 @@ Recent waves closed by code (chronological):
 | F-1282 | medium | Patroni's documented point-in-time pgBackRest restore target is ignored by the actual restore command | `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml`; `configs/ansible/roles/patroni/README.md`; `docs/architecture/patroni-ansible-role-design-note.md` | XFI-0074; EV-0222; EV-0224 | fixed | ops/dr/patroni | Current source validates `latest`, `immediate`, and `time:<timestamp>` target forms and maps them to pgBackRest `--type=default`, `--type=immediate`, or `--type=time --target=...`, so the documented variable now affects the restore command. |
 | F-1283 | medium | Timescale primary-down runbook uses HTTPS etcd endpoints, a five-node quorum threshold, and a stale leader key that do not match the shipped Patroni role | `docs/operations/runbooks/timescale-primary-down.md`; `configs/ansible/roles/patroni/templates/etcd.conf.j2`; `configs/ansible/roles/patroni/templates/patroni.yml.j2`; `configs/ansible/roles/patroni/tasks/04-etcd-systemd.yml`; Patroni design note | XFI-0075; EV-0225 | fixed | ops/docs/patroni | The runbook tells operators to query `https://etcd-*.internal:2379`, `get /ratesengine/leader`, and expect at least 3 of 5 healthy etcd members. The role renders unauthenticated HTTP etcd endpoints, Patroni's namespace is `/service/` with per-cluster scope, and preflight asserts exactly three `postgres_cluster` hosts. |
 | F-1284 | medium | HAProxy and HA docs still describe `/v1/readyz` as Redis-critical after the API changed Redis readiness to degraded-but-serving | `configs/ansible/roles/haproxy/defaults/main.yml`; `configs/ansible/roles/haproxy/templates/haproxy.cfg.j2`; `configs/ansible/roles/haproxy/README.md`; `docs/architecture/ha-plan.md`; `internal/api/v1/server.go`; `cmd/ratesengine-api/main.go` | XFI-0076; EV-0227 | fixed | ops/docs/haproxy/api | Runtime now keeps HAProxy backends in service during Redis-only failures, but HAProxy defaults/template comments, the HAProxy README, and the HA plan still say `/v1/readyz` requires Redis or routes only when Redis is reachable. |
-| F-1285 | high | Loki, Promtail, Prometheus, and Alertmanager roles download upstream release archives without enforced checksums | `configs/ansible/roles/loki/tasks/{server-02-install.yml,agent-01-install.yml}`; `configs/ansible/roles/prometheus/tasks/02-install.yml`; role defaults/READMEs | XFI-0077; EV-0231 | fixed | ops/security/supply-chain | Loki and Promtail use `get_url` without any checksum, while Prometheus and Alertmanager use optional `prometheus_sha256 | default(omit)` / `alertmanager_sha256 | default(omit)` with no default or README requirement. A clean documented HA monitoring deployment therefore installs unauthenticated upstream binaries. |
+| F-1285 | high | Loki, Promtail, Prometheus, and Alertmanager roles download upstream release archives without enforced checksums | `configs/ansible/roles/loki/tasks/{server-02-install.yml,agent-01-install.yml}`; `configs/ansible/roles/prometheus/tasks/02-install.yml`; role defaults/READMEs | XFI-0077; EV-0231; EV-0241 | fixed | ops/security/supply-chain | Install tasks now assert and use SHA-256 variables for all four archives, but the role READMEs/defaults still do not document `loki_release_sha256`, `promtail_release_sha256`, `prometheus_sha256`, or `alertmanager_sha256` as required inventory inputs. |
 | F-1286 | high | Loki's systemd unit maps MinIO credentials through literal `${...}` strings that systemd does not expand | `configs/ansible/roles/loki/templates/loki.service.j2`; `configs/ansible/roles/loki/templates/loki-config.yaml.j2`; `configs/ansible/roles/loki/defaults/main.yml`; `configs/ansible/roles/loki/README.md`; systemd execution environment semantics | XFI-0078; EV-0232; EV-0238 | fixed | ops/deployment/loki | Current source removed the literal `Environment=AWS_ACCESS_KEY_ID=${...}` / `AWS_SECRET_ACCESS_KEY=${...}` assignments, leaves only `EnvironmentFile=-/etc/default/loki`, and documents direct `AWS_ACCESS_KEY_ID=` / `AWS_SECRET_ACCESS_KEY=` values in the role README/defaults. |
-| F-1287 | high | Prometheus and Alertmanager bind to loopback while the generated config targets private IPs for self-scrape and alert delivery | `configs/ansible/roles/prometheus/defaults/main.yml`; `configs/ansible/roles/prometheus/templates/prometheus.service.j2`; `configs/ansible/roles/prometheus/templates/alertmanager.service.j2`; `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`; `configs/ansible/roles/prometheus/README.md` | XFI-0079; EV-0234 | fixed | ops/observability/alerting | Defaults bind `prometheus_listen` and `alertmanager_listen` to `127.0.0.1`, but the rendered Prometheus config sends alertmanager traffic and self-scrapes to `{{ ansible_host }}:9090/9093` for every prom host. A default deployment can therefore fail to scrape the monitoring pair and fail to deliver alerts to Alertmanager. |
-| F-1288 | medium | Prometheus TSDB disk-space preflight is documented as an assertion but is configured to ignore failures | `configs/ansible/roles/prometheus/tasks/01-preflight.yml`; `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml` | XFI-0080; EV-0236 | fixed | ops/observability/capacity | The README says the role asserts at least 20 GB free for the 30-day TSDB, but the disk-space assert task ends with `ignore_errors: yes`. A host with insufficient or unparsable `/var` capacity can continue through install and fail later under retention pressure. |
-| F-1289 | medium | Loki storage prerequisites are documented as preflight checks but the server preflight does not verify MinIO bucket/access or `/var` capacity | `configs/ansible/roles/loki/tasks/server-01-preflight.yml`; `configs/ansible/roles/loki/defaults/main.yml`; `configs/ansible/roles/loki/README.md`; `docs/architecture/loki-ansible-role-design-note.md` | XFI-0081; EV-0239 | open | ops/observability/logging | Defaults say the role asserts the `loki-chunks` bucket exists at preflight, the README requires 50 GB free on `/var`, and the design note says the role creates/checks the bucket and asserts 50 GB. The actual server preflight checks only OS, inventory groups, time sync, and the Loki user. |
+| F-1287 | high | Prometheus and Alertmanager bind to loopback while the generated config targets private IPs for self-scrape and alert delivery | `configs/ansible/roles/prometheus/defaults/main.yml`; `configs/ansible/roles/prometheus/templates/prometheus.service.j2`; `configs/ansible/roles/prometheus/templates/alertmanager.service.j2`; `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`; `configs/ansible/roles/prometheus/README.md` | XFI-0079; EV-0234; EV-0241 | fixed | ops/observability/alerting | Runtime source now binds Prometheus and Alertmanager HTTP listeners to `0.0.0.0:9090/9093` and opens those ports plus 9094 to internal CIDRs in the Prometheus role firewall drop-in, so the generated private-IP scrape/alertmanager targets are reachable under the role's intended network model. Residual README wording drift is split into `F-1290`. |
+| F-1288 | medium | Prometheus TSDB disk-space preflight is documented as an assertion but is configured to ignore failures | `configs/ansible/roles/prometheus/tasks/01-preflight.yml`; `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml` | XFI-0080; EV-0236; EV-0241 | fixed | ops/observability/capacity | Current source replaces the ignored mount-fact assertion with a blocking `df --output=avail -B1 /var` check against the documented 20 GB threshold. |
+| F-1289 | medium | Loki storage prerequisites are documented as preflight checks but the server preflight does not verify MinIO bucket/access or `/var` capacity | `configs/ansible/roles/loki/tasks/server-01-preflight.yml`; `configs/ansible/roles/loki/defaults/main.yml`; `configs/ansible/roles/loki/README.md`; `docs/architecture/loki-ansible-role-design-note.md` | XFI-0081; EV-0239 | fixed | ops/observability/logging | Defaults say the role asserts the `loki-chunks` bucket exists at preflight, the README requires 50 GB free on `/var`, and the design note says the role creates/checks the bucket and asserts 50 GB. The actual server preflight checks only OS, inventory groups, time sync, and the Loki user. |
+| F-1290 | medium | Prometheus README still documents loopback-only UI access and a 9094-only firewall after the role moved 9090/9093 to internal network listeners | `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml`; `configs/ansible/roles/prometheus/tasks/06-firewall.yml` | XFI-0082; EV-0242 | fixed | ops/docs/observability/security | Defaults now bind Prometheus and Alertmanager to `0.0.0.0:9090/9093`, and the firewall task opens 9090, 9093, and 9094 to internal CIDRs. The README still labels the UI loopback-only and says `06-firewall.yml` opens only 9094, so operator security/access docs no longer match the role. |
 
 ## Finding Template
 
@@ -3163,20 +3168,21 @@ Evidence:
 
 - `XFI-0077`
 - `EV-0231`
+- `EV-0241`
 
 Expected: every upstream binary archive installed by production Ansible roles should be pinned to both a version and a mandatory digest, or the role should fail before download when the digest is missing.
 
-Observed: Loki server downloads `loki-linux-amd64.zip` from the Grafana GitHub release URL with no checksum. Promtail downloads `promtail-linux-amd64.zip` the same way. Prometheus and Alertmanager at least include checksum fields, but both use optional `{{ prometheus_sha256 | default(omit) }}` / `{{ alertmanager_sha256 | default(omit) }}` expressions. The role defaults pin only versions, and neither the Loki nor Prometheus README makes release checksums required inventory input.
+Observed: the code side has narrowed. Loki, Promtail, Prometheus, and Alertmanager install tasks now all assert 64-character SHA-256 variables and wire those variables into `get_url.checksum`. The remaining gap is the documented clean-run path: the Loki and Prometheus READMEs/defaults still do not list `loki_release_sha256`, `promtail_release_sha256`, `prometheus_sha256`, or `alertmanager_sha256` as required inventory variables.
 
-Impact: high. A clean documented monitoring deployment can install unauthenticated network-fetched observability binaries on production hosts. Compromise, cache poisoning, CDN/GitHub account abuse, or operator typo on the release path can become host code execution without a digest gate catching it.
+Impact: high. The unauthenticated-download runtime defect is source-fixed, but operators following the role docs can still hit first-run failures or work around the assertions without a documented release-verification procedure.
 
-Remediation direction: add mandatory checksum variables for Loki, Promtail, Prometheus, and Alertmanager; preflight-assert they are non-empty real SHA-256 values; wire each `get_url` to the corresponding digest; and document the release/checksum source in role READMEs and sample inventory. Role tests should fail when any checksum is omitted.
+Remediation direction: add the four checksum variables to role READMEs and sample inventory, including exact release/checksum source and architecture filename. Keep the fail-fast assertions and checksum wiring.
 
 ### F-1286. Loki's systemd unit maps MinIO credentials through literal `${...}` strings that systemd does not expand
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -3203,7 +3209,7 @@ Remediation direction: keep the direct `AWS_*` environment-file contract and add
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -3217,20 +3223,21 @@ Evidence:
 
 - `XFI-0079`
 - `EV-0234`
+- `EV-0241`
 
 Expected: the generated Prometheus config should target addresses that the rendered Prometheus and Alertmanager services actually listen on. If the services are loopback-only, self-scrape and alert delivery should use local loopback for local services and a deliberately exposed/listening internal address for peer services, or the role should fail until operators choose a coherent topology.
 
-Observed: defaults set `prometheus_listen: "127.0.0.1:9090"` and `alertmanager_listen: "127.0.0.1:9093"`. The systemd templates pass those values directly as `--web.listen-address` and `--web.listen-address` for Alertmanager. But `prometheus.yml.j2` renders alertmanager targets as `{{ hostvars[h].ansible_host }}:9093` and self-scrape targets as `{{ hostvars[h].ansible_host }}:9090` / `{{ hostvars[h].ansible_host }}:9093` for every host in `prometheus_pair`.
+Observed: the original bind-target defect no longer reproduces in source. Defaults now set `prometheus_listen: "0.0.0.0:9090"` and `alertmanager_listen: "0.0.0.0:9093"`, while `tasks/06-firewall.yml` opens 9090, 9093, and 9094 to `prometheus_internal_cidrs`. The generated `prometheus.yml.j2` private-IP scrape and alertmanager targets therefore match the role's intended listener model.
 
-Impact: high. A default two-host monitoring deployment can start both daemons but fail to scrape the pair and fail to submit alerts to Alertmanager, because the clients connect to private IPs while the servers listen only on loopback. That is launch-critical: alert fanout, deadmansswitch confidence, and the HA monitoring proof can be false-positive green at the role level but nonfunctional at runtime.
+Impact: fixed. A default two-host role render no longer binds the HTTP endpoints only to loopback while targeting private IPs for self-scrape and alert delivery. Residual README drift is tracked separately as `F-1290`, and the broader nftables composition problem remains tracked as `F-1278`.
 
-Remediation direction: choose one explicit model and make all files match it. Either bind Prometheus and Alertmanager HTTP listeners to the internal host IPs and rely on nftables/private CIDR controls, or keep UI loopback-only and add separate internal listener/proxy endpoints for peer/self traffic. Add preflight/render tests that reject `127.0.0.1` listener defaults when `prometheus.yml` targets `ansible_host`, and update README access/security prose accordingly.
+Remediation direction: keep listener defaults, generated targets, and firewall rules in one topology. Add rendered-config tests when role testing lands.
 
 ### F-1288. Prometheus TSDB disk-space preflight is documented as an assertion but is configured to ignore failures
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -3242,14 +3249,15 @@ Evidence:
 
 - `XFI-0080`
 - `EV-0236`
+- `EV-0241`
 
 Expected: if the role README says the Prometheus preflight asserts at least 20 GB free under `/var`, a host that does not satisfy that launch capacity requirement should fail before installation or the README should mark the check as warning-only and document the residual risk.
 
-Observed: `tasks/01-preflight.yml` defines an `assert disk space at /var` task with the same 20 GB threshold described by the README, but the task ends with `ignore_errors: yes`. The inline comment says Ansible mount shape varies and the task should soft-fail rather than block. Defaults still keep `prometheus_retention_days: 30`, and the README presents the 20 GB preflight as an enforced prerequisite.
+Observed: current source replaces the ignored mount-fact assertion with a deterministic command path: `df --output=avail -B1 /var`, followed by a blocking assertion against the documented 20 GB threshold. The `ignore_errors: yes` escape hatch is gone.
 
-Impact: medium. A low-disk or mount-fact-drift host can proceed through role application, start Prometheus, and then lose TSDB retention/headroom under normal scrape volume. That undermines the monitoring plane's own reliability and makes the documented capacity gate look stronger than the deployment actually enforces.
+Impact: fixed. Under-capacity `/var` no longer soft-fails through the role preflight.
 
-Remediation direction: make disk capacity validation deterministic and blocking. Prefer a small shell/stat command against `/var` or `prometheus_data_dir` that returns available bytes without fragile mount-fact filters; fail when below the documented threshold, or explicitly lower/parameterize the threshold. If a warning-only mode is required, rename the README claim and add a separate production gate that blocks launch.
+Remediation direction: keep the blocking `df`-based check and add role-test coverage for below-threshold and above-threshold hosts.
 
 ### F-1289. Loki storage prerequisites are documented as preflight checks but the server preflight does not verify MinIO bucket/access or `/var` capacity
 
@@ -3276,3 +3284,28 @@ Observed: defaults say the operator creates `loki-chunks` and "the role asserts 
 Impact: medium. A documented "successful" Loki role run can start a process that later drops chunks or cannot retain/query logs because the S3 bucket/IAM path or local working volume was never validated. This weakens incident response evidence at launch.
 
 Remediation direction: add explicit preflight checks for the resolved `loki_s3_endpoint`, `loki_s3_bucket`, and credential contract, plus a deterministic local capacity check against `loki_data_dir` or `/var`. Decide whether the role creates the bucket or only asserts it; then make defaults, README, and design note say the same thing.
+
+### F-1290. Prometheus README still documents loopback-only UI access and a 9094-only firewall after the role moved 9090/9093 to internal network listeners
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/prometheus/README.md`
+- `configs/ansible/roles/prometheus/defaults/main.yml`
+- `configs/ansible/roles/prometheus/tasks/06-firewall.yml`
+
+Evidence:
+
+- `XFI-0082`
+- `EV-0242`
+
+Expected: after changing Prometheus and Alertmanager from loopback-only listeners to internal network listeners, the operator README should describe the actual security boundary and the ports opened by the firewall task.
+
+Observed: defaults now bind `prometheus_listen` to `0.0.0.0:9090` and `alertmanager_listen` to `0.0.0.0:9093`; the role firewall task says it opens 9090, 9093, and 9094 to `prometheus_internal_cidrs`. The README still labels the query UI and Alertmanager UI "loopback-only", tells operators SSH tunnelling is the access model, and later says `06-firewall.yml` opens only 9094 for Alertmanager gossip.
+
+Impact: medium. Operators reviewing the role can believe 9090/9093 are socket-level loopback-only when they are actually network listeners protected by firewall policy. That matters especially while `F-1278` keeps the role firewall composition open.
+
+Remediation direction: update the README to describe internal-CIDR listeners plus SSH tunnelling through the firewall as the operator access path, and change the firewall section to list 9090/9093/9094. Cross-link the nftables composition finding until that lower-level policy is fixed.
