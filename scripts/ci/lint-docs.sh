@@ -378,6 +378,40 @@ if [ -d docs/operations/runbooks ]; then
   done
 fi
 
+# ─── 14. Alert-runbook section presence ────────────────────────────────────
+#
+# Per the runbook template at docs/operations/runbooks/_template.md
+# (wave 78 refresh + wave 81 normalisation), `## At a glance` and
+# `## Related` are the two universally-required sections on every
+# alert runbook. Without `## At a glance` an operator paged at
+# 3 AM has to read the body prose to learn severity / MTTR /
+# impact; without `## Related` the cross-link graph rots and
+# adjacent runbooks become undiscoverable.
+#
+# Exclude procedural runbooks (bring-up, disaster recovery,
+# SEV-comms procedures, one-off operator notes) — they're
+# legitimately shaped differently. The allow-list mirrors the
+# orphan-lint exclusions above plus three procedural runbooks
+# (`dr-activation`, `sev-status-page-update`, the dated operator
+# note) flagged as not-alert-shaped during the wave-81 survey.
+
+echo "Checking alert-runbook section presence..."
+if [ -d docs/operations/runbooks ]; then
+  for r in docs/operations/runbooks/*.md; do
+    fname="${r##*/}"
+    case "$fname" in
+      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md) continue ;;
+      dr-activation.md|sev-status-page-update.md|operator-unblock-2026-05-08.md) continue ;;
+    esac
+    if ! grep -q "^## At a glance" "$r" 2>/dev/null; then
+      err "runbook missing '## At a glance' section: $r — see docs/operations/runbooks/_template.md"
+    fi
+    if ! grep -q "^## Related" "$r" 2>/dev/null; then
+      err "runbook missing '## Related' section: $r — see docs/operations/runbooks/_template.md"
+    fi
+  done
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
