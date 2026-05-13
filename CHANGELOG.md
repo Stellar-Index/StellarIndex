@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **`/assets/{slug}` for catalogue slugs (`usdc`, `chinese-yuan`,
+  `btc`, …) now renders the real cross-chain view instead of the
+  "Asset not found" fallback.** The page's `fetchGlobalAsset`
+  was firing a per-slug `/v1/assets/{slug}` request at build
+  time, just like `[network]` was before its consolidation —
+  with ~1000 prerendered routes that storm tripped r1's anon
+  rate limit and every catalogue page baked in the not-found
+  fallback. Extracted the catalogue source to
+  `web/explorer/src/app/assets/catalogue.ts` (shared module,
+  single `/v1/assets/verified` call, memoised promise, 429-aware
+  retry). Both `[slug]` and `[slug]/[network]` now read from the
+  same map.
 - **`/assets/{slug}` and `/assets/{slug}/{network}` now resolve in
   both case variants** for catalogue entries. Previously only the
   uppercase form (`/assets/USDC/`) was prerendered because dedup in

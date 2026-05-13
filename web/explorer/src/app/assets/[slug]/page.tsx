@@ -19,7 +19,8 @@ import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
-import { NetworksPanel, type NetworkEntry } from './NetworksPanel';
+import { NetworksPanel } from './NetworksPanel';
+import { lookupGlobalAsset, getCatalogue, type GlobalAssetView } from '../catalogue';
 
 /**
  * /assets/[slug] — single asset detail page.
@@ -204,21 +205,7 @@ interface PriceResp {
  * is the cross-chain identity surface (when the route's slug
  * happens to be a verified-currency slug).
  */
-interface GlobalAssetView {
-  ticker: string;
-  slug: string;
-  name: string;
-  description?: string;
-  class?: 'fiat' | 'crypto' | 'stablecoin';
-  verified_issuer?: string;
-  coingecko_id?: string;
-  coinmarketcap_id?: string;
-  price_usd?: string | null;
-  price_authority?: 'vwap_native' | 'aggregator_avg' | 'triangulated';
-  price_sources?: string[];
-  price_as_of?: string | null;
-  networks: NetworkEntry[];
-}
+// GlobalAssetView lives in ../catalogue.ts (shared with [network]).
 
 // Static export hits every page once at build time. CI's stub
 // hostname doesn't resolve, and Node's DNS retry budget swallows
@@ -299,22 +286,12 @@ function getBuildCoinsCache(): Promise<Map<string, CoinSummary> | null> {
 }
 
 // fetchVerifiedSlugsForStaticParams pulls the verified-currency
-// catalogue slugs (us-dollar, chinese-yuan, usdc, …) so
-// generateStaticParams can pre-render those routes too. Falls back
-// to an empty list on transport error — the rest of the route set
-// still gets generated.
+// catalogue slugs from the shared catalogue (single
+// /v1/assets/verified call, memoised across [slug] and
+// [network] generateStaticParams).
 async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
-  if (isCIStub) return [];
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data: { slug: string }[] };
-    return (env.data ?? []).map((d) => d.slug).filter(Boolean);
-  } catch {
-    return [];
-  }
+  const map = await getCatalogue();
+  return Array.from(map.keys());
 }
 
 // fetchCoin retries up to 3x with a 500ms backoff on network /
@@ -394,50 +371,15 @@ async function fetchAssetDetail(assetId: string): Promise<AssetDetail | null> {
 }
 
 /**
- * fetchGlobalAsset hits `/v1/assets/{slug}` with the lowercased
- * route slug. When the slug matches a verified-currency catalogue
- * entry the API dispatches to handleGlobalAsset and returns the
- * cross-chain GlobalAssetView shape; otherwise it falls through to
- * canonical asset_id parsing and either returns the Stellar-asset
- * AssetDetail shape (irrelevant here — the page already fetches
- * that via fetchAssetDetail) or 400/404.
- *
- * Returns null when:
- *   - the slug isn't a verified currency (no `ticker` / `networks`
- *     fields on the response)
- *   - the fetch fails for any transport reason
- *   - we're in a CI stub build
- *
- * Detection runs by checking `data.ticker && Array.isArray(data.networks)`
- * — the AssetDetail shape has neither field, so even when the API
- * misroutes we recover by ignoring the result.
+ * fetchGlobalAsset reads from the shared build-time catalogue
+ * (single /v1/assets/verified call, retried on 429, memoised at
+ * module level — see ../catalogue.ts). Per-slug /v1/assets/{slug}
+ * calls at build time would 429 in parallel against r1's
+ * anon-tier rate limit and leave every cross-chain page rendering
+ * as "Asset not found".
  */
 async function fetchGlobalAsset(slug: string): Promise<GlobalAssetView | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/assets/${encodeURIComponent(slug.toLowerCase())}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as {
-      data: GlobalAssetView | Record<string, unknown>;
-    };
-    const d = env.data;
-    if (!d || typeof d !== 'object') return null;
-    // Shape discriminator: GlobalAssetView has `ticker` (string) AND
-    // `networks` (array). AssetDetail has `asset_id` (string) but
-    // no `ticker`/`networks`.
-    if (
-      typeof (d as GlobalAssetView).ticker === 'string' &&
-      Array.isArray((d as GlobalAssetView).networks)
-    ) {
-      return d as GlobalAssetView;
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  return lookupGlobalAsset(slug);
 }
 
 async function fetchPriceDirect(
