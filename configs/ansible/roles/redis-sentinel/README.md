@@ -75,13 +75,20 @@ refuses to overwrite a post-failover state.
 
 ## Running
 
+F-1266 (2026-05-13): the prior version of these commands named
+`playbooks/redis-cluster.yml` which doesn't exist yet — that
+playbook is on the L4 cutover backlog. Today the role is
+applied ad-hoc via a one-off play file or by inlining it in
+the multi-host cluster bring-up plan. When `redis-cluster.yml`
+lands, restore the original commands.
+
 ```sh
 cd configs/ansible
-# Bring up a fresh cluster (first run)
-ansible-playbook -i inventory/r1.yml playbooks/redis-cluster.yml --tags redis
+# Bring up a fresh cluster (first run) — playbook TBD:
+# ansible-playbook -i inventory/r1.yml playbooks/redis-cluster.yml --tags redis
 
-# Re-apply config without restarting (apt upgrade scenario)
-ansible-playbook -i inventory/r1.yml playbooks/redis-cluster.yml --tags redis,config --skip-tags restart
+# Re-apply config without restarting (apt upgrade scenario) — playbook TBD:
+# ansible-playbook -i inventory/r1.yml playbooks/redis-cluster.yml --tags redis,config --skip-tags restart
 
 # Promote a specific replica (operator action — not covered by
 # this role; Sentinel handles automatic failover):

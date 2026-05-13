@@ -49,20 +49,26 @@
       Type=simple
       User={{ redis_user }}
       Environment=REDIS_PASSWORD={{ redis_password }}
-      {# F-1272 (codex audit-2026-05-13): under ACL lockdown #}
-      {# `user default off` rejects the legacy password-only #}
-      {# AUTH path, so the exporter must authenticate as a #}
-      {# named ACL user. Use the dedicated `redis_exporter` user #}
-      {# defined in users.acl.j2 (narrow INFO/CLIENT/CLUSTER/ #}
-      {# CONFIG-GET/DBSIZE/SLOWLOG-GET command set; cannot reuse #}
-      {# the `ratesengine` application user because it has #}
-      {# `-@admin -@dangerous` which denies most of those #}
-      {# commands). Same `redis_password` — one-shot rotation #}
-      {# across every named user; the `-redis.user` flag is #}
-      {# what differentiates the ACL roles. #}
+      {# F-1272 (codex audit-2026-05-13): the exporter user is #}
+      {# only meaningful under ACL lockdown — `users.acl.j2` is #}
+      {# only rendered when `redis_acl_lockdown` is true. With #}
+      {# lockdown off, the legacy `default` user is `on nopass #}
+      {# ~* &* +@all` and the legacy single-arg AUTH path works. #}
+      {# With lockdown on, the dedicated `redis_exporter` ACL #}
+      {# user (defined in users.acl.j2) gates INFO/CLIENT/ #}
+      {# CLUSTER/CONFIG-GET/DBSIZE/SLOWLOG-GET — the commands #}
+      {# the exporter needs but that the `ratesengine` #}
+      {# application user denies via `-@admin -@dangerous`. #}
+      {# Same `redis_password` either way; the `-redis.user` #}
+      {# flag is what differentiates the ACL roles when lockdown #}
+      {# is on. (wave-106 shipped this unconditionally and #}
+      {# pointed the default-config exporter at a user the ACL #}
+      {# file never rendered — wave-107 makes it conditional.) #}
       ExecStart=/usr/local/bin/redis_exporter \
         -redis.addr=redis://127.0.0.1:{{ redis_port }} \
+        {% if redis_acl_lockdown | bool -%}
         -redis.user=redis_exporter \
+        {% endif -%}
         -web.listen-address=:{{ redis_exporter_listen_port }}
       Restart=on-failure
       RestartSec=5s

@@ -23,9 +23,23 @@ said "the only role is archival-node" before the rest landed):
 - `redis-sentinel` — Sentinel-fronted Redis cache cluster
   (ADR-0024).
 
-Playbooks under `playbooks/` orchestrate these roles for
-multi-host bring-ups (`monitoring.yml`, `postgres-cluster.yml`,
-`redis-cluster.yml`, `haproxy.yml`, `loki.yml`).
+Playbooks actually tracked under `playbooks/`:
+
+- `archival-node.yml` — the primary role's playbook.
+- `deploy-binary.yml` — per-binary deploy used by the GitHub
+  Actions `deploy.yml` workflow.
+- `monitoring.yml` — drives the `prometheus` role for the
+  Alertmanager/Prometheus stack.
+
+The `haproxy` / `loki` / `patroni` / `redis-sentinel` roles
+exist but don't yet have dedicated cluster playbooks — operators
+include them ad-hoc via tag-filtered plays today; the
+multi-host cluster playbooks (`postgres-cluster.yml`,
+`redis-cluster.yml`, `haproxy.yml`, `loki.yml`) are still
+on the L4 cutover backlog and have not landed yet. F-1266
+(2026-05-13): the prior version of this paragraph overstated
+the playbook inventory by listing those four as if they were
+in tree.
 
 The role *also* contains tasks for installing **stellar-core** and
 **stellar-rpc** (and the stellar-core Prometheus exporter) — but
