@@ -17,6 +17,19 @@ against.
 
 ### Added
 
+- `verify-launch-ready` gains a `-skip-ids` flag that ignores
+  the listed row IDs when computing the engineering-ready
+  verdict. New `make verify-launch-ready-single-region` Makefile
+  target bakes in the project's "live-in-development on R1, no
+  consumer traffic yet" posture by skipping L4.14-17 (R2/R3 +
+  DNS + Patroni) plus L5.6 (external security review) and L5.8
+  (region-failover chaos) — all of which gate on the multi-day
+  multi-region bringup or the external auditor. The default
+  `make verify-launch-ready` (and CI) still gates on the full
+  multi-region surface; the new target is for confirming "the
+  R1 engineering surface is operator-deploy-ready" without
+  conflating it with multi-region readiness. Backlog doc updated
+  with both gate semantics. F-1206 audit closure note refreshed.
 - New observability metric `ratesengine_stripe_platform_sync_errors_total{operation}`
   surfacing failures in the Stripe webhook's platform-store side-effects path
   (the F-1219 fan-out into Postgres `accounts` / `subscriptions` /

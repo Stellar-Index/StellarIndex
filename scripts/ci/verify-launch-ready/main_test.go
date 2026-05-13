@@ -168,3 +168,76 @@ func TestSurfaceReadiness_NamesBlocker(t *testing.T) {
 		t.Errorf("reason should name L3.5; got %q", reason)
 	}
 }
+
+// TestParseSkipIDs — accepts a comma-separated list with arbitrary
+// whitespace; empty input is nil.
+func TestParseSkipIDs(t *testing.T) {
+	t.Run("empty_returns_nil", func(t *testing.T) {
+		if got := parseSkipIDs(""); got != nil {
+			t.Errorf("empty input should be nil, got %v", got)
+		}
+		if got := parseSkipIDs("   "); got != nil {
+			t.Errorf("whitespace-only input should be nil, got %v", got)
+		}
+	})
+	t.Run("comma_separated", func(t *testing.T) {
+		got := parseSkipIDs("L4.14, L4.15 ,L5.6,,")
+		if len(got) != 3 {
+			t.Fatalf("got %d entries, want 3: %v", len(got), got)
+		}
+		for _, id := range []string{"L4.14", "L4.15", "L5.6"} {
+			if _, ok := got[id]; !ok {
+				t.Errorf("missing %q in skip set", id)
+			}
+		}
+	})
+}
+
+// TestEngineeringReady_SkipFlipsVerdict — a 🔴 row that is in the
+// skip set must not block the verdict, but other 🔴 rows still do.
+// This pins the `-skip-ids` flag's gating semantics — the row
+// stays visible in the report with its real status; only the
+// engineering-ready verdict ignores it.
+func TestEngineeringReady_SkipFlipsVerdict(t *testing.T) {
+	rows := []Row{
+		{ID: "L1.1", Status: "✅", Surface: "L1"},
+		{ID: "L2.1", Status: "✅", Surface: "L2"},
+		{ID: "L3.1", Status: "✅", Surface: "L3"},
+		{ID: "L4.1", Status: "✅", Surface: "L4"},
+		{ID: "L4.14", Status: "🔴", Surface: "L4"}, // multi-region — skipped in single-region mode
+		{ID: "L5.1", Status: "✅", Surface: "L5"},
+	}
+	if engineeringReady(rows) {
+		t.Fatal("baseline must NOT be ready: L4.14 is 🔴 and unskipped")
+	}
+	if !engineeringReadyWithSkip(rows, map[string]struct{}{"L4.14": {}}) {
+		t.Error("with L4.14 skipped, the surface must be ready")
+	}
+	// Skipping the wrong row leaves the verdict false.
+	if engineeringReadyWithSkip(rows, map[string]struct{}{"L4.99": {}}) {
+		t.Error("skipping a non-matching ID must not flip the verdict")
+	}
+}
+
+// TestRealBacklog_SingleRegionPosture — pins the project's
+// "live-in-development on R1" posture: skipping the multi-region
+// + chaos + external-security rows (L4.14-17, L5.6, L5.8) should
+// produce a green verdict against the real backlog. If a NEW
+// engineering-tier blocker is introduced this test fails — that's
+// the intended regression signal.
+func TestRealBacklog_SingleRegionPosture(t *testing.T) {
+	const path = "../../../docs/architecture/launch-readiness-backlog.md"
+	rows, err := parseFile(path)
+	if err != nil {
+		t.Fatalf("parseFile: %v", err)
+	}
+	skip := parseSkipIDs("L4.14,L4.15,L4.16,L4.17,L5.6,L5.8")
+	if !engineeringReadyWithSkip(rows, skip) {
+		blockers := collectBlockersWithSkip(rows, skip)
+		ids := make([]string, 0, len(blockers))
+		for _, b := range blockers {
+			ids = append(ids, b.ID+"="+b.Status)
+		}
+		t.Errorf("single-region posture should be ready; remaining blockers: %v", ids)
+	}
+}
