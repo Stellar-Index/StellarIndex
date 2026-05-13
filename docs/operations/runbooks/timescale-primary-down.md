@@ -49,8 +49,12 @@ patronictl -c /etc/patroni/patroni.yml list
 # row is missing or status != running, primary is really down.
 
 # If patronictl is also unreachable, check etcd:
-etcdctl --endpoints=https://etcd-1.internal:2379 get /ratesengine/leader
+etcdctl --endpoints=http://etcd-1.internal:2379 get /service/$PATRONI_CLUSTER_NAME/leader --prefix
 # Should return the primary host. Empty = no leader elected.
+# F-1283 (codex audit-2026-05-13): the etcd role renders HTTP
+# (not HTTPS) client URLs and Patroni namespaces under
+# `/service/<scope>/`, not `/ratesengine/`. Earlier prose
+# named both wrong.
 
 # And directly poke the primary's psql:
 PGCONNECT_TIMEOUT=3 psql -h db-primary.internal -U ratesengine \
@@ -90,8 +94,14 @@ Happens when etcd quorum is also broken, or the sync replica isn't actually in s
 First check etcd quorum:
 
 ```sh
-etcdctl --endpoints=https://etcd-1.internal:2379,https://etcd-2.internal:2379,https://etcd-3.internal:2379 endpoint status --write-out=table
-# At least 3 of 5 must be "healthy" for leader election to work.
+etcdctl --endpoints=http://etcd-1.internal:2379,http://etcd-2.internal:2379,http://etcd-3.internal:2379 endpoint status --write-out=table
+# At least 2 of 3 must be "healthy" for leader election to work.
+# F-1283 (codex audit-2026-05-13): the cluster is 3-node (the
+# Patroni role preflight asserts exactly 3 postgres_cluster
+# hosts), not 5-node; quorum is 2/3 not 3/5. Endpoints are
+# HTTP, not HTTPS — the etcd role renders unauthenticated
+# client URLs per the role's current ADR-0026 trust model
+# (private network only).
 ```
 
 If etcd is fine but Patroni refuses to promote:

@@ -417,7 +417,7 @@ Recent waves closed by code (chronological):
 | F-1208 | high | R1 source-health remains degraded: only 12/17 sources are active, ECB is stale, and Redstone is pending source-stopped | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010; R1-0029; EV-0175 | open | ingestion/ops | The earlier broad multi-source-stopped state has narrowed, but current R1 still reports `overall=degraded`, `active_sources=12`, `total_sources=17`, a firing `ratesengine_external_poller_stale{source=\"ecb\"}` alert, and a pending `ratesengine_ingestion_source_stopped{source=\"redstone\"}` alert. |
 | F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010; R1-0030; EV-0175 | open | ops | Memory alert is firing at about 94.19%, swap remains effectively exhausted (`20.45G/20.47G` used), and MinIO remains 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | fixed | api/ops | The serving-plane scoping is intentional, not an oversight: `/healthz` + `/readyz` answer "is the load balancer safe to route to this instance" — they MUST NOT flap on backfill stalls, ingest silences, or non-critical timer misfires (an ingest stall pulling every API instance out of rotation would turn a backfill-only outage into a customer-facing total outage). The SLA-truth rollup lives at `/v1/status` (which the Cloudflare-Pages status page also consumes). Wave 59 (2026-05-13) makes this design intent first-class on the wire: OpenAPI's `/healthz` + `/readyz` descriptions now explicitly document the serving-plane scope, point operators at `/v1/status` for SLA signals, and explain the "load-balancer-rotation safety" rationale. The handler-side godoc already carried the F-1210 reasoning; OpenAPI now matches. |
-| F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021; EV-0178 | open | ops/comms/web | Wave 57 corrected the main runbook/setup path, but the wave-98 breadth pass falsified closure: `CLAUDE.md`, `docs/architecture/launch-readiness-backlog.md`, `docs/launch-task-list.md`, and `deploy/comms/{README,incident-update}.md` still retain active Upptime/cstate/status-repo instructions that disagree with the shipped `web/status` Cloudflare Pages workflow. The launch-task list is materially worse than a stale implementation choice: it still says there is no public status page, no deploy artifacts, and nowhere to publish status updates. |
+| F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021; EV-0178 | fixed | ops/comms/web | Wave 57 corrected the main runbook/setup path, but the wave-98 breadth pass falsified closure: `CLAUDE.md`, `docs/architecture/launch-readiness-backlog.md`, `docs/launch-task-list.md`, and `deploy/comms/{README,incident-update}.md` still retain active Upptime/cstate/status-repo instructions that disagree with the shipped `web/status` Cloudflare Pages workflow. The launch-task list is materially worse than a stale implementation choice: it still says there is no public status page, no deploy artifacts, and nowhere to publish status updates. |
 | F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023; EV-0089 | fixed | dashboard/billing/api | Current `HEAD` now clamps dashboard-minted key budgets by account tier before insert and tests the tier ladder, so the privilege-escalation path no longer reproduces. |
 | F-1213 | high | Stablecoin fiat proxy undercounted Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011; EV-0116 | fixed | aggregate/market-data | Current code computes USD totals against each source pair's real quote-decimal convention before pair rewrite, and the classic-USDC `$10k` regression test passes. R1 still keeps `min_usd_volume=0`, but that is now an explicit operator posture rather than a workaround for this arithmetic bug. |
 | F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026; EV-0176 | open | repo-admin/security | Fresh GitHub API evidence still shows branch protection unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
@@ -484,11 +484,12 @@ Recent waves closed by code (chronological):
 | F-1275 | high | HAProxy drains every API backend on Redis unavailability because it routes on `/v1/readyz`, while `/v1/readyz` fails Redis checks even though the documented Redis outage contract promises degraded-but-serving behavior | HAProxy health-check path; API readiness checker set; Redis outage/runbook contract; HA failure matrix | XFI-0067; EV-0214 | fixed | api/ops/availability/redis | With Redis configured, `cmd/ratesengine-api` registers `redisChecker`, `/v1/readyz` returns 503 when any checker fails, and HAProxy's shipped config routes only when `/v1/readyz` is 200. A shared Redis outage therefore drains all healthy API processes from the edge exactly while the Redis runbook says customers should still be served from Timescale fallback. |
 | F-1276 | medium | API alert/runbook examples still use the retired generic Prometheus selector `job="api"` even though current source uses `ratesengine_api` for multi-host HA and `ratesengine-api` on R1 | API alert catalog; API down/5xx/latency/SLA runbooks; metrics source comment; current Prometheus scrape/rule shapes | XFI-0068; EV-0215 | fixed | ops/docs/monitoring | Operators following the current docs paste queries that do not match either supported job-label family, which weakens incident diagnosis and keeps the alert catalog inconsistent with the rules it claims to mirror. |
 | F-1277 | low | The `api-down` runbook cites a nonexistent `internal/api/v1/healthz.go` implementation file instead of the actual readiness handler location | `docs/operations/runbooks/api-down.md`; `internal/api/v1/server.go` | XFI-0069; EV-0216 | fixed | ops/docs/api | The single source citation in the runbook points at a path that is not tracked, which makes the operator breadcrumb fail during an incident or audit follow-up. |
-| F-1278 | high | The HA-role nftables "drop-ins" are not a sound allow-list composition: by themselves they accept everything, and alongside the repo's default-drop chain their same-priority accept chains cannot reliably open the intended ports | HAProxy, Redis Sentinel, Patroni, Prometheus, and Loki firewall tasks; archival-node default-drop template; HA role design notes/operator claims | XFI-0070; EV-0217 | fixed | ops/security/firewall | Each role emits a separate `table inet *_filter` input base chain with `priority 0; policy accept;` plus accept rules only. That neither enforces internal-only access on its own nor robustly composes with the repo's default-drop input chain, because nftables base-chain order is undefined at equal priority and `accept` is not final when a later chain drops the packet. |
-| F-1279 | medium | Patroni's firewall task writes `/etc/nftables.d/40-patroni.conf` before it ensures `/etc/nftables.d/` exists | `configs/ansible/roles/patroni/tasks/10-firewall.yml` | XFI-0071; EV-0218 | fixed | ops/deployment/patroni | A clean Patroni host without a pre-existing drop-in directory fails the first role application at the copy step, while the directory-creation task appears only after the write attempt. |
-| F-1280 | high | Patroni's etcd install task defaults to a placeholder checksum, so the role is not runnable from its documented defaults/inventory model | `configs/ansible/roles/patroni/tasks/02-etcd-install.yml`; `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/README.md` | XFI-0072; EV-0220 | fixed | ops/deployment/patroni | The get_url task uses `checksum: "sha256:{{ etcd_release_sha256 | default('REPLACE_WITH_RELEASE_SHA') }}"`, but no default or README prerequisite defines `etcd_release_sha256`; a clean run therefore fails at etcd download verification unless an undocumented variable is injected. |
-| F-1281 | medium | Patroni's textfile scraper requires `jq`, but the Patroni role never installs it | `configs/ansible/roles/patroni/tasks/11-monitoring.yml`; `configs/ansible/roles/patroni/tasks/05-patroni-install.yml`; `configs/ansible/roles/patroni/README.md`; Prometheus node_exporter textfile scrape contract | XFI-0073; EV-0221 | fixed | ops/observability/patroni | The role installs a `/usr/local/bin/patroni-textfile-scraper` script that pipes Patroni JSON through `jq`, but its apt package list omits `jq`, so the timer can fail and leave Patroni role/health metrics absent. |
-| F-1282 | medium | Patroni's documented point-in-time pgBackRest restore target is ignored by the actual restore command | `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml`; `configs/ansible/roles/patroni/README.md`; `docs/architecture/patroni-ansible-role-design-note.md` | XFI-0074; EV-0222 | fixed | ops/dr/patroni | Defaults, README, and design note advertise `patroni_pgbackrest_restore_target: latest` or `time:...`, but the restore task always runs `pgbackrest --type=immediate --target-action=promote --delta restore` and never reads the target variable. |
+| F-1278 | high | The HA-role nftables "drop-ins" are not a sound allow-list composition: by themselves they accept everything, and alongside the repo's default-drop chain their accept chains still cannot reliably open the intended ports | HAProxy, Redis Sentinel, Patroni, Prometheus, and Loki firewall tasks; archival-node default-drop template; HA role design notes/operator claims | XFI-0070; EV-0217; EV-0224 | fixed | ops/security/firewall | The first remediation wave changed the HA drop-ins from `priority 0` to `priority -100`, but that still does not close the finding: nftables `accept` in an earlier base chain is not final, so the later priority-0 default-drop chain can still drop the same packet. The current comments therefore document an incorrect fix. |
+| F-1279 | medium | Patroni's firewall task writes `/etc/nftables.d/40-patroni.conf` before it ensures `/etc/nftables.d/` exists | `configs/ansible/roles/patroni/tasks/10-firewall.yml` | XFI-0071; EV-0218; EV-0224 | fixed | ops/deployment/patroni | Current source creates `/etc/nftables.d/` before writing `40-patroni.conf`, so the clean-host ordering failure no longer reproduces. |
+| F-1280 | high | Patroni's etcd install task defaults to a placeholder checksum, so the role is not runnable from its documented defaults/inventory model | `configs/ansible/roles/patroni/tasks/02-etcd-install.yml`; `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/README.md` | XFI-0072; EV-0220; EV-0224 | fixed | ops/deployment/patroni | The source now preflight-fails if `etcd_release_sha256` is missing or placeholder-valued and defaults comment the variable, but the role README still omits the required checksum from its prerequisites/inventory model. The finding narrows to documentation/first-run operator guidance. |
+| F-1281 | medium | Patroni's textfile scraper requires `jq`, but the Patroni role never installs it | `configs/ansible/roles/patroni/tasks/11-monitoring.yml`; `configs/ansible/roles/patroni/tasks/05-patroni-install.yml`; `configs/ansible/roles/patroni/README.md`; Prometheus node_exporter textfile scrape contract | XFI-0073; EV-0221; EV-0224 | fixed | ops/observability/patroni | Current source installs `jq` in `tasks/05-patroni-install.yml` before the role writes the scraper that uses it. |
+| F-1282 | medium | Patroni's documented point-in-time pgBackRest restore target is ignored by the actual restore command | `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml`; `configs/ansible/roles/patroni/README.md`; `docs/architecture/patroni-ansible-role-design-note.md` | XFI-0074; EV-0222; EV-0224 | fixed | ops/dr/patroni | Current source validates `latest`, `immediate`, and `time:<timestamp>` target forms and maps them to pgBackRest `--type=default`, `--type=immediate`, or `--type=time --target=...`, so the documented variable now affects the restore command. |
+| F-1283 | medium | Timescale primary-down runbook uses HTTPS etcd endpoints, a five-node quorum threshold, and a stale leader key that do not match the shipped Patroni role | `docs/operations/runbooks/timescale-primary-down.md`; `configs/ansible/roles/patroni/templates/etcd.conf.j2`; `configs/ansible/roles/patroni/templates/patroni.yml.j2`; `configs/ansible/roles/patroni/tasks/04-etcd-systemd.yml`; Patroni design note | XFI-0075; EV-0225 | fixed | ops/docs/patroni | The runbook tells operators to query `https://etcd-*.internal:2379`, `get /ratesengine/leader`, and expect at least 3 of 5 healthy etcd members. The role renders unauthenticated HTTP etcd endpoints, Patroni's namespace is `/service/` with per-cluster scope, and preflight asserts exactly three `postgres_cluster` hosts. |
 
 ## Finding Template
 
@@ -2952,10 +2953,11 @@ Evidence:
 
 - `XFI-0070`
 - `EV-0217`
+- `EV-0224`
 
 Expected: a role-level firewall surface should either enforce its advertised access policy on its own, or integrate deterministically with the repository's default-deny base chain so the intended accepts actually work on hardened hosts.
 
-Observed: every reviewed HA-role drop-in emits its own independent input base chain with `type filter hook input priority 0; policy accept;` and only `accept` rules. If no separate default-drop base chain exists, unmatched traffic in that role chain falls through its `policy accept`, so the drop-in is not an internal-only firewall at all. If the repo's default-drop `inet filter input` chain from `archival-node/templates/nftables.conf.j2` is present, the behavior is still not safe: nftables evaluates equal-priority base chains in undefined order, and an `accept` verdict in one base chain does not prevent a later base chain from dropping the packet. That means the role drop-ins cannot be trusted either to restrict ingress or to reliably open the ports they advertise on an already-hardened host.
+Observed: the first remediation wave changed every reviewed HA-role drop-in to `type filter hook input priority -100; policy accept;` and added comments claiming an early accept stops the later priority-0 default-drop chain from seeing the packet. That comment is still wrong for nftables base-chain semantics: an `accept` verdict in one base chain is not final when a later base chain at the same hook drops the packet. So the current role drop-ins are still not a valid allow-list composition beside `archival-node/templates/nftables.conf.j2`; they can accept first and then be dropped later by the default-deny chain. If the default-drop chain is absent, unmatched traffic still falls through the role chain's `policy accept`, so the drop-in also does not enforce internal-only posture by itself.
 
 Impact: high. Depending on host baseline, the same reviewed role can fail open from a security-policy perspective or fail closed from a reachability perspective. Redis/Sentinel, Patroni/etcd, Alertmanager gossip, Loki ingest, HAProxy public ingress, and VRRP acceptance are all affected by this composition pattern. The docs currently present these tasks as meaningful firewall boundaries.
 
@@ -2965,7 +2967,7 @@ Remediation direction: converge on one deterministic nftables ownership model. E
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -2975,14 +2977,15 @@ Evidence:
 
 - `XFI-0071`
 - `EV-0218`
+- `EV-0224`
 
 Expected: a first-time Patroni role application on a clean host should create `/etc/nftables.d/` before writing a file beneath it.
 
-Observed: `tasks/10-firewall.yml` renders `/etc/nftables.d/40-patroni.conf` first, then adds the include line to `/etc/nftables.conf`, and only after that tries to ensure `/etc/nftables.d/` exists. The other reviewed HA roles create the directory before writing their drop-ins.
+Observed: this is now source-closed. Current `tasks/10-firewall.yml` installs nftables, ensures `/etc/nftables.d/` exists, and only then writes `/etc/nftables.d/40-patroni.conf`.
 
-Impact: medium. Patroni bootstrap is order-dependent on unrelated prior host state. On a clean node, the copy task can fail before Patroni reaches the firewall include or any later role stages, producing a deployment failure precisely in launch-critical HA automation.
+Impact: fixed. The earlier clean-host ordering failure no longer reproduces in current source.
 
-Remediation direction: move the directory-creation task before the drop-in copy, matching the safer ordering already used by the sibling HA roles, and add an idempotent first-run role syntax/fixture check.
+Remediation direction: keep a clean-host role fixture or syntax check around the task ordering so the parent-directory guarantee does not regress.
 
 ### F-1280. Patroni's etcd install task defaults to a placeholder checksum
 
@@ -3000,20 +3003,21 @@ Evidence:
 
 - `XFI-0072`
 - `EV-0220`
+- `EV-0224`
 
 Expected: the role should be runnable from its documented defaults and inventory model, or every required override should be declared in defaults/README with an actionable value source.
 
-Observed: the etcd download task pins a checksum expression but falls back to `REPLACE_WITH_RELEASE_SHA` when `etcd_release_sha256` is unset. `defaults/main.yml` does not define `etcd_release_sha256`, and the README prerequisites/inventory model do not tell operators to provide it. A clean documented role run therefore reaches `get_url` with an invalid checksum placeholder.
+Observed: the code side has narrowed: `tasks/02-etcd-install.yml` now asserts `etcd_release_sha256` is defined, 64 characters long, and not `REPLACE_WITH_RELEASE_SHA` before the download, while `defaults/main.yml` comments the required override and its source. The role README still omits `etcd_release_sha256` from the prerequisites and sample inventory, so an operator following only the documented role page still lacks the required value before first run.
 
-Impact: high. The Patroni role cannot reliably bootstrap its DCS from the committed defaults/docs path, blocking the launch-critical database HA role before Patroni itself starts.
+Impact: high. The failure now happens earlier and with a better message, but the documented first-run path is still incomplete for the launch-critical database HA role.
 
-Remediation direction: commit the real release checksum for the pinned etcd artifact or make `etcd_release_sha256` a required, documented, preflight-validated variable. Add an Ansible syntax/render check that fails if the placeholder survives.
+Remediation direction: add `etcd_release_sha256` to the role README prerequisites and inventory model, including the exact release/SHA source and architecture caveat. Keep the preflight assert.
 
 ### F-1281. Patroni's textfile scraper depends on `jq` without installing it
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -3026,20 +3030,21 @@ Evidence:
 
 - `XFI-0073`
 - `EV-0221`
+- `EV-0224`
 
 Expected: every binary used by the installed Patroni monitoring timer should be installed by the Patroni role or be an explicit prerequisite.
 
-Observed: `tasks/11-monitoring.yml` installs a `patroni-textfile-scraper` shell script that parses Patroni's `/cluster` JSON with `jq`. The Patroni apt install task installs `patroni`, `python3-etcd3`, `python3-psycopg2`, and `python3-prettytable`, but not `jq`; the README prerequisites do not list `jq` either. The sibling archival-node role installs `jq` for its own scripts, but the Patroni README only says preflight/ZFS prerequisites from that role are required, not the healthcheck package set.
+Observed: this is now source-closed. `tasks/05-patroni-install.yml` installs `jq` alongside Patroni and the Python dependencies before `tasks/11-monitoring.yml` writes the scraper that uses it.
 
-Impact: medium. Patroni itself can run while the advertised textfile metrics silently fail every 30 seconds. That removes `ratesengine_patroni_role` / `ratesengine_patroni_running` visibility from Prometheus and weakens failover detection.
+Impact: fixed. A clean role run now installs the scraper's declared JSON parser dependency.
 
-Remediation direction: install `jq` in the Patroni role before writing the scraper, or rewrite the scraper to avoid it. Add a post-install command check for the scraper path.
+Remediation direction: retain a scraper smoke check if a future role test harness lands.
 
 ### F-1282. Patroni's documented pgBackRest restore target is ignored
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -3052,11 +3057,39 @@ Evidence:
 
 - `XFI-0074`
 - `EV-0222`
+- `EV-0224`
 
 Expected: if the role exposes and documents `patroni_pgbackrest_restore_target` as `latest` or a point-in-time value, the restore task should pass that target to pgBackRest or reject unsupported values.
 
-Observed: defaults, README, and design note advertise `patroni_pgbackrest_restore_target: latest` or `time:2026-04-30 14:00:00`. The restore command in `08-patroni-bootstrap.yml` ignores the variable entirely and always runs `pgbackrest --type=immediate --target-action=promote --delta restore`.
+Observed: this is now source-closed. `tasks/08-patroni-bootstrap.yml` validates the target shape and maps `latest` to `--type=default`, `immediate` to `--type=immediate`, and `time:<timestamp>` to `--type=time --target=<timestamp>`.
 
-Impact: medium. Operators can believe they are performing a point-in-time DR restore while the role performs the immediate/latest shape instead. For a corruption or bad-write recovery, that can restore the wrong data point.
+Impact: fixed. The documented variable now changes the rendered pgBackRest restore command.
 
-Remediation direction: map the documented target forms onto explicit pgBackRest flags, or remove the unsupported target variable/prose. Add tests or a rendered-command fixture for latest and time-target restores.
+Remediation direction: keep rendered-command coverage for `latest`, `immediate`, and `time:<timestamp>` restore modes when Ansible role tests are added.
+
+### F-1283. Timescale primary-down runbook does not match the shipped Patroni/etcd role
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `docs/operations/runbooks/timescale-primary-down.md`
+- `configs/ansible/roles/patroni/templates/etcd.conf.j2`
+- `configs/ansible/roles/patroni/templates/patroni.yml.j2`
+- `configs/ansible/roles/patroni/tasks/04-etcd-systemd.yml`
+- `docs/architecture/patroni-ansible-role-design-note.md`
+
+Evidence:
+
+- `XFI-0075`
+- `EV-0225`
+
+Expected: an operator diagnosing Timescale primary loss should be able to copy the runbook's etcd commands against the shipped Patroni role and get meaningful quorum/leader data.
+
+Observed: `timescale-primary-down.md` tells operators to query `https://etcd-1.internal:2379` and `https://etcd-{1,2,3}.internal:2379`, but the role renders `ETCD_LISTEN_CLIENT_URLS`, `ETCD_ADVERTISE_CLIENT_URLS`, Patroni `etcd3.hosts`, and the health check with plain `http://...:2379`. The runbook also says "At least 3 of 5" members must be healthy, while `tasks/01-preflight.yml` asserts the cluster has exactly three `postgres_cluster` hosts. Finally, the runbook probes `/ratesengine/leader`; the role configures Patroni with `namespace: /service/` and `scope: {{ patroni_cluster_name }}`, so the leader key lives under the Patroni namespace/scope, not the stale top-level path.
+
+Impact: medium. During a primary-down incident, the direct etcd diagnosis path can fail on TLS mismatch, send operators to a nonexistent key, and set the wrong quorum expectation for the deployed three-node DCS.
+
+Remediation direction: update the runbook's etcd examples to the role's current HTTP endpoint model or add TLS/auth variables to the role and switch both sides together. Use the actual Patroni namespace/scope path or prefer `patronictl`/`etcdctl endpoint status` examples that do not rely on a stale key. Replace the five-node quorum text with the current three-node quorum threshold.
