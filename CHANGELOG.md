@@ -18,6 +18,16 @@ against.
 ### Added
 
 - Regression test
+  `TestRecovery_SweepDurationMetricRecorded` pins the wave-91
+  freeze-recovery-sweep latency-histogram wiring end-to-end.
+  Same shape as wave 92/93. The wave-90 supply-refresh
+  histogram is not yet test-pinned because it lives in the
+  aggregator main-package wrapper rather than `internal/supply`;
+  testing it cleanly would require either duplicating the
+  wrapper into `internal/supply` or moving the timing into
+  `Refresher.Tick` itself — both are wave-90 refactors rather
+  than test additions, so deferred.
+- Regression test
   `TestRefreshDivergenceAll_DurationMetricRecorded` pins the
   wave-89 divergence-refresh latency-histogram wiring end-to-end.
   Same shape as the wave-92 customer-webhook test; reuses the
