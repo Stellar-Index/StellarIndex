@@ -80,8 +80,11 @@ The week before the cut. Done while everything is still calm.
       curl headers show `cf-cache-status` for the historical
       surfaces.
 - [ ] **Status page provisioned.** Per
-      [`status-page-setup.md`](status-page-setup.md). Upptime
-      first probe cycle has run; all components show "operational".
+      [`status-page-setup.md`](status-page-setup.md). The
+      Cloudflare Pages deploy of `web/status/` is live at
+      `status.ratesengine.net`; `internal/incidents/data/`
+      has no open SEV entries (no `status: investigating |
+      identified | monitoring` rows).
 - [ ] **Customer comms ready.** Email/Slack draft for the
       announcement is approved by stakeholders, ready to send
       post-cut.
@@ -160,8 +163,11 @@ Order matters. Don't skip.
    is 200 (not 404).
 
 6. **Status page goes live.** Post the launch-cut maintenance
-   window resolved. (Or, if Upptime has been running pre-cut,
-   confirm components are still "operational".)
+   window resolved by editing the matching
+   `internal/incidents/data/<DATE>-launch-cut.md` (if a
+   maintenance entry was opened pre-cut) and merging to `main`
+   so Cloudflare Pages re-deploys with `status: resolved`.
+   Verify `status.ratesengine.net` shows no active incidents.
 
 7. **Send customer comms.** Email + Slack templates from T-1 day.
    Public announcement on the project handle if applicable.
