@@ -72,6 +72,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/currency"
+	"github.com/RatesEngine/rates-engine/internal/currency/marketcap"
 	"github.com/RatesEngine/rates-engine/internal/customerwebhook"
 	"github.com/RatesEngine/rates-engine/internal/divergence"
 	"github.com/RatesEngine/rates-engine/internal/metadata"
@@ -636,6 +637,27 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 	logger.Info("verified-currency catalogue loaded", "entries", len(verifiedCurrencies.All()))
 
+	// Process-local CG market_cap cache + background refresher.
+	// Populates market_cap_usd for catalogue crypto + stablecoin
+	// rows on /v1/assets / /v1/assets/verified. Free-tier CG
+	// /simple/price with include_market_cap=true&include_24hr_change
+	// =true; one batched call per refresh covers every catalogue
+	// entry with a coingecko_id. Survives CG outages (cache retains
+	// the last successful snapshot).
+	marketCapCache := marketcap.New()
+	marketCapRefresher := &marketcap.Refresher{
+		Cache:   marketCapCache,
+		Cat:     verifiedCurrencies,
+		Logger:  logger.With("component", "marketcap-refresher"),
+		APIKey:  os.Getenv("COINGECKO_API_KEY"),
+		DemoKey: os.Getenv("COINGECKO_DEMO_API_KEY"),
+	}
+	go func() {
+		if err := marketCapRefresher.Run(rootCtx); err != nil {
+			logger.Warn("market_cap refresher exited", "err", err)
+		}
+	}()
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -721,6 +743,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SACWrappers:        cfg.Supply.SACWrappers,
 		USDPeggedClassics:  usdPegs,
 		VerifiedCurrencies: verifiedCurrencies,
+		MarketCaps:         marketCapCache,
 		GlobalPrice: globalPriceReader{
 			s:   store,
 			tri: redisTriangulatedLooker{rdb: rdb},
