@@ -34,14 +34,22 @@ emitted metrics. Design rationale lives in
 - Vault contents (all optional; leaving any empty just means
   the corresponding fanout doesn't happen):
   - `alertmanager_pagerduty_key` — PagerDuty integration key
-    (used for the critical-severity route).
+    (used for the `page`-severity route).
   - `alertmanager_slack_webhook_url` — Slack incoming-webhook
-    URL (used for the warning + info routes via `chat-fanout`).
+    URL (used for the `ticket` + `informational` routes via
+    `chat-fanout`).
   - `alertmanager_discord_webhook_url` — Discord webhook URL
-    (used for the warning + info routes via `chat-fanout`,
-    parallel to Slack — operators can run either, both, or
-    neither). Per the proposal's commitment to "integrated
-    into discord/slack" alerting.
+    (used for the `ticket` + `informational` routes via
+    `chat-fanout`, parallel to Slack — operators can run either,
+    both, or neither). Per the proposal's commitment to
+    "integrated into discord/slack" alerting.
+
+  Note (F-1265, 2026-05-13): the template uses the shared
+  `page / ticket / informational` severity vocabulary that
+  matches the standalone R1 config at
+  `configs/alertmanager/alertmanager.r1.yml`. Earlier doc text
+  referenced `critical / warning / info`; that vocabulary is
+  gone from both files.
 
 ## Inventory model
 
@@ -102,16 +110,17 @@ on `prometheus_pair`. No manual scrape-config edits.
 ## Alert routing
 
 ```
-Critical → PagerDuty
-Warning  → chat-fanout (Slack + Discord, whichever are wired)
-Info     → chat-fanout (Slack + Discord, whichever are wired)
+page          → PagerDuty
+ticket        → chat-fanout (Slack + Discord, whichever are wired)
+informational → chat-fanout (Slack + Discord, whichever are wired)
 ```
 
 Inhibit rules:
-- A critical alert for a given `(alertname, service)` mutes
-  warning + info alerts for the same pair to avoid stacking.
+- A `page`-severity alert for a given `(alertname, service)`
+  mutes `ticket` + `informational` alerts for the same pair to
+  avoid stacking.
 
-When `alertmanager_pagerduty_key` is empty the critical route
+When `alertmanager_pagerduty_key` is empty the `page` route
 is unconfigured. When BOTH `alertmanager_slack_webhook_url` AND
 `alertmanager_discord_webhook_url` are empty the chat-fanout
 receiver has no destinations and alerts accumulate in the

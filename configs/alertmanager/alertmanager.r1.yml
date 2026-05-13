@@ -2,10 +2,12 @@
 #
 # Companion to configs/prometheus/prometheus.r1.yml +
 # configs/prometheus/rules.r1/. This config maps OUR severity
-# vocabulary (page / ticket / informational) — distinct from the
-# multi-host Ansible template at
-# configs/ansible/roles/prometheus/templates/alertmanager.yml.j2,
-# which uses critical / warning / info.
+# vocabulary (page / ticket / informational) — the same
+# vocabulary used by the multi-host Ansible template at
+# configs/ansible/roles/prometheus/templates/alertmanager.yml.j2
+# (the template converged on this severity ladder post-R1
+# standup; F-1265, 2026-05-13). The remaining difference between
+# the two is config shape, not severity vocabulary.
 #
 # Apply via configs/alertmanager/apply.sh — it env-substitutes the
 # four placeholder URLs from a sourced env file (kept off-disk in

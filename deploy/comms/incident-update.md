@@ -1,8 +1,15 @@
 <!--
-Mid-incident customer-facing update. Goes into the GitHub
-issue body on `RatesEngine/ratesengine-status` (Upptime
-auto-creates these on probe failure; manual incidents follow
-the same shape per status-page-setup.md).
+Mid-incident customer-facing update. Append into the body of
+the incident Markdown file at
+`internal/incidents/data/<YYYY-MM-DD>-<slug>.md` under a
+fresh "## Update — <UTC timestamp>" subheading. The
+`web/status/` Cloudflare Pages build picks it up on every push
+to `main`; `ratesengine-ops emit-incident --slug <slug>`
+re-fires the customer-webhook fan-out so subscribed customers
+get the new payload too. (F-1211, 2026-05-13: corrects the
+earlier Upptime / GitHub-issue prose — the project never
+adopted that path.) Full authoring procedure:
+`docs/operations/runbooks/sev-status-page-update.md`.
 
 Send a fresh update every 30 minutes during an open incident,
 even if the only thing to say is "still investigating". Silence

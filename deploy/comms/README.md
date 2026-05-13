@@ -22,10 +22,14 @@ a blank page.
 - **`{{customer_name}}`** — the customer's name or org. Keep
   one customer per send for personalisation; bulk announcements
   drop personalisation entirely (use "Hi all" or similar).
-- **`{{incident_id}}`** — the GitHub issue number on
-  `RatesEngine/ratesengine-status` (Upptime auto-creates these
-  on probe failure; manual incidents follow the same shape per
-  [`status-page-setup.md`](../../docs/operations/status-page-setup.md)).
+- **`{{incident_id}}`** — the incident slug from
+  `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` (the shipped
+  status-page corpus; F-1211, 2026-05-13 — the earlier text
+  referenced an Upptime GitHub-issue ID that the project never
+  used). Author the Markdown file per
+  [`runbooks/sev-status-page-update.md`](../../docs/operations/runbooks/sev-status-page-update.md);
+  `ratesengine-ops emit-incident --slug <slug>` fires the
+  customer-webhook fan-out from the same source.
 - **`{{tag}}`** — the CalVer release tag (e.g. `2026.07.15.1`).
 - **`{{utc_time}}`** — RFC-3339 UTC timestamp; e.g.
   `2026-05-03T14:23:00Z`.

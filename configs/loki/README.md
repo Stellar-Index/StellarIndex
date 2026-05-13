@@ -71,12 +71,15 @@ post-launch follow-up).
 
 ## Web UI
 
-R1's Loki HTTP API is on `:3100`, listening on `0.0.0.0`. No
-firewall (per r1-deployment-state §"Important but not urgent" #3),
-so it's publicly reachable. Once Caddy fronts it (post-launch
+R1's Loki HTTP API is on `:3100`, listening on `0.0.0.0` on-host.
+**External reachability is now blocked** by the R1 host firewall —
+nftables on R1 runs in `policy drop` mode and only explicitly
+accepts the captive-core port set, so external probes to `3100`
+time out (F-1264, 2026-05-13). The host firewall landed after the
+original "no firewall" wording. Once Caddy fronts it (post-launch
 follow-up), it'll be HTTPS-only via `loki.ratesengine.net` etc.
 
-For now operator access:
+Operator access today (the only path that works):
 - `ssh -L 3100:localhost:3100 root@136.243.90.96`
 - Then point a local Grafana at `http://localhost:3100`.
 

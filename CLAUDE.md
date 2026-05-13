@@ -119,7 +119,7 @@ development. If one does, it's a bug.
 │   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
 ├── openapi/                   rates-engine.v1.yaml — source of truth for API
 ├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
-├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), status-page (cstate scaffold)
+├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host). The shipped status-page lives at `web/status/` (Cloudflare Pages static export) — the earlier `deploy/status-page/cstate` scaffold was retired (F-1211 / wave 57)
 ├── web/explorer/              Next.js 15 static-export explorer rendered at ratesengine.net (Cloudflare Pages)
 ├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos

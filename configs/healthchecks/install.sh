@@ -30,9 +30,12 @@ install -m 0644 "$SCRIPT_DIR/ratesengine-sla-probe.service" "$SYSTEMD_DIR/"
 install -m 0644 "$SCRIPT_DIR/ratesengine-sla-probe.timer" "$SYSTEMD_DIR/"
 
 # Provision the env file with placeholders if missing. Operator
-# pastes the four Healthchecks.io URLs (3 heartbeats + 1 smoke)
-# they create on the dashboard, then runs
-# `systemctl restart ratesengine-heartbeat@*.timer ratesengine-smoke.timer`.
+# pastes the five Healthchecks.io URLs (3 heartbeats + 1 smoke
+# + 1 SLA probe; F-1267 corrected the four-vs-five count on
+# 2026-05-13) they create on the dashboard, then runs
+# `systemctl restart ratesengine-heartbeat@*.timer \
+#                    ratesengine-smoke.timer \
+#                    ratesengine-sla-probe.timer`.
 if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<'EOF'
 # Healthchecks.io URLs.

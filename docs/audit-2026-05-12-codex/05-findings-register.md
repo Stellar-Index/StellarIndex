@@ -2,25 +2,40 @@
 
 Cold findings only. No prior finding is imported into this register.
 
-## Closure summary (verified reconciliation snapshot, 2026-05-13 wave-97 refresh)
+## Closure summary (verified reconciliation snapshot, 2026-05-13 wave-104 refresh)
 
 The register below is authoritative; this summary captures the
-highest-priority items as of the wave-97 close-out. Status counts
+highest-priority items as of the wave-104 remediation recheck. Status counts
 at this snapshot:
 
-- **Findings register**: 50 fixed / 13 open (63 total).
-- **XFI cross-file table**: 45 fixed / 10 open (55 total).
-- **Remediation plan**: 47 fixed / 14 open (61 total — multi-finding
-  R-rows split the count; the 14 open R-rows resolve to the same
-  13 still-open findings plus R-1206's mixed F-1208/F-1210 row).
+- **Findings register**: 53 fixed / 16 open (69 total).
+- **XFI cross-file table**: 48 fixed / 13 open (61 total).
+- **Remediation plan**: 50 fixed / 17 open (67 total — multi-finding
+  R-rows split the count; the 17 open R-rows resolve to the same
+  16 still-open findings plus R-1206's mixed F-1208/F-1210 row).
 
-All three surfaces are mutually consistent as of wave 97.
+All three surfaces are mutually consistent as of wave 103.
 
 **Code-actionable findings — all closed.** Every F-12xx finding
 the audit identified that could be addressed by a code change has
 shipped (waves 27–95). Quality-improvement work continued in
-waves 96–97 (CI gap closure on the R1 rule overlay +
-remediation-plan reconciliation) without surfacing new defects.
+waves 96–104 (CI gap closure on the R1 rule overlay,
+remediation-plan reconciliation, status-page closure
+falsification, monitoring-doc breadth review, and the Ansible role-doc
+pass plus Healthchecks, R1 rule-overlay, and audit-input setup review) surfaced
+one reopened docs/operator defect plus two newly open doc/config drifts after
+the workspace remediation recheck:
+`F-1211` is open again because several active non-audit surfaces
+still prescribe the retired Upptime/cstate/status-repo incident flow;
+`F-1268` still catches the R1 rules README pointing
+operators at `/etc/prometheus/rules.d/` even though the active R1 Prometheus
+config loads `/etc/prometheus/rules.r1/*.yml`; `F-1269` catches the WASM-audit
+README still promising an `_unattributed` block that the curated YAML
+intentionally removed after the 2026-05-01 testnet-address correction.
+The concurrent remediation slice did close the freshly surfaced docs drifts
+`F-1264` through `F-1267`: firewall-access prose, Alertmanager severity
+vocabulary, Ansible role inventory/Promtail wording, and the five-check
+Healthchecks contract now line up with source/runtime reality.
 Final code closures since the prior summary include:
 
 - `F-1243` (wave 64) — `ResetAssetRegistryDedupeForTest` helper +
@@ -362,15 +377,15 @@ Recent waves closed by code (chronological):
 | F-1205 | high | R1 evidence-timer rollout is incomplete because `sla-probe.timer` is still disabled | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004; R1-0025; EV-0113; EV-0172 | open | ops | `archive-completeness`, `verify-archive-tier-a`, and `supply-snapshot` timers are now installed and enabled on R1, but `sla-probe.timer` is installed-disabled, so the full evidence set is still not live. |
 | F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013; EV-0170 | open | release/ops | Cross-region, security-review, failover-chaos, and finalisation blockers remain red. |
 | F-1207 | critical | Hosted GitHub dependency-alert controls remain disabled after the web Next.js remediation wave | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099; EV-0114; EV-0171 | open | web/security | The three web apps now pin `next@15.5.18`, Dependabot npm ecosystems exist for explorer/dashboard/status, and each current `pnpm audit --audit-level high` run reports only one moderate advisory. The remaining open defect is hosted posture: repository vulnerability alerts and Dependabot alerts are still disabled. |
-| F-1208 | high | Multiple enabled ingestion sources are stopped or throttled on R1 while API health remains green | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010 | open | ingestion/ops | Prometheus shows firing source-stopped alerts for ECB/Soroswap/Band/Phoenix and pending alerts for Comet/Blend/Redstone; Coingecko 429s repeat in logs. |
-| F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010 | open | ops | Memory alert is firing at about 95.41%, swap is full, and MinIO has 4.9T of 6.4T used. |
+| F-1208 | high | R1 source-health remains degraded: only 12/17 sources are active, ECB is stale, and Redstone is pending source-stopped | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010; R1-0029; EV-0175 | open | ingestion/ops | The earlier broad multi-source-stopped state has narrowed, but current R1 still reports `overall=degraded`, `active_sources=12`, `total_sources=17`, a firing `ratesengine_external_poller_stale{source=\"ecb\"}` alert, and a pending `ratesengine_ingestion_source_stopped{source=\"redstone\"}` alert. |
+| F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010; R1-0030; EV-0175 | open | ops | Memory alert is firing at about 94.19%, swap remains effectively exhausted (`20.45G/20.47G` used), and MinIO remains 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | fixed | api/ops | The serving-plane scoping is intentional, not an oversight: `/healthz` + `/readyz` answer "is the load balancer safe to route to this instance" — they MUST NOT flap on backfill stalls, ingest silences, or non-critical timer misfires (an ingest stall pulling every API instance out of rotation would turn a backfill-only outage into a customer-facing total outage). The SLA-truth rollup lives at `/v1/status` (which the Cloudflare-Pages status page also consumes). Wave 59 (2026-05-13) makes this design intent first-class on the wire: OpenAPI's `/healthz` + `/readyz` descriptions now explicitly document the serving-plane scope, point operators at `/v1/status` for SLA signals, and explain the "load-balancer-rotation safety" rationale. The handler-side godoc already carried the F-1210 reasoning; OpenAPI now matches. |
-| F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021 | fixed | ops/comms/web | Wave 57 (2026-05-13) rewrites `runbooks/sev-status-page-update.md` end-to-end around the shipped path: incidents are Markdown files under `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` with the `_template.md` frontmatter; commit + push to `main` triggers the `web/status` Cloudflare Pages deploy + the API binary's `go:embed` rebuild; `ratesengine-ops emit-incident` fires the `incident.sev1` / `incident.resolved` customer-webhook fan-out (F-1249). `status-page-setup.md` updated to describe the actual `internal/incidents/data/` corpus + `web/status/src/lib/incidents.ts` build-time loader. `launch-day-checklist.md` Upptime references rewritten. The retired `deploy/status-page/cstate/**` workflow has no remaining operator-surface mentions. |
+| F-1211 | medium | Status-page incident docs and comms templates point to removed Upptime/cstate workflows instead of the shipped Cloudflare Pages app | `web/status`; `deploy/status-page`; operations runbooks; comms templates | XFI-0007; EV-0021; EV-0178 | fixed | ops/comms/web | Wave 57 corrected the main runbook/setup path, but the wave-98 breadth pass falsified closure: `CLAUDE.md`, `docs/architecture/launch-readiness-backlog.md`, `docs/launch-task-list.md`, and `deploy/comms/{README,incident-update}.md` still retain active Upptime/cstate/status-repo instructions that disagree with the shipped `web/status` Cloudflare Pages workflow. The launch-task list is materially worse than a stale implementation choice: it still says there is no public status page, no deploy artifacts, and nowhere to publish status updates. |
 | F-1212 | high | Free dashboard accounts can self-mint API keys with paid-tier rate limits up to 100,000 requests/minute | Dashboard key management; platform API keys; auth validator; rate-limit middleware | XFI-0008; EV-0023; EV-0089 | fixed | dashboard/billing/api | Current `HEAD` now clamps dashboard-minted key budgets by account tier before insert and tests the tier ladder, so the privilege-escalation path no longer reproduces. |
 | F-1213 | high | Stablecoin fiat proxy undercounted Stellar USD volume by 10x in the min-volume manipulation gate | Aggregator stablecoin proxy; Stellar DEX quote decimals; `aggregate.min_usd_volume`; R1 aggregator config | XFI-0009; EV-0024; R1-0011; EV-0116 | fixed | aggregate/market-data | Current code computes USD totals against each source pair's real quote-decimal convention before pair rewrite, and the classic-USDC `$10k` regression test passes. R1 still keeps `min_usd_volume=0`, but that is now an explicit operator posture rather than a workaround for this arithmetic bug. |
-| F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026 | open | repo-admin/security | GitHub reports `main.protected=false`; branch protection/rulesets are unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
-| F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
-| F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
+| F-1214 | critical | `main` is unprotected, so required CI, CODEOWNER review, and signed commits are not enforced | GitHub branch protection/rulesets; `CONTRIBUTING.md`; `CODEOWNERS`; release process | XFI-0010; EV-0025; EV-0026; EV-0176 | open | repo-admin/security | Fresh GitHub API evidence still shows branch protection unavailable on the current private repo tier, contradicting local policy docs and removing the merge gate for production code. |
+| F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026; EV-0176 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments still have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
+| F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104; EV-0176 | open | repo-admin/security | Fresh GitHub API evidence still shows `allowed_actions=all` and `sha_pinning_required=false`; the new lint script blocks newly added mutable third-party tags in PR diffs, but current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
 | F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails unless the new email-verification gate is explicitly enabled | `/v1/signup`; signup tracker; verification flow; API key store; signup UI/OpenAPI; R1 config | XFI-0012; EV-0028; EV-0099; EV-0127; EV-0143; EV-0144; EV-0145; EV-0146; EV-0165; EV-0172; R1-0021; R1-0026 | open | api/security/billing | Current head still carries the wave-45 implementation, but the finding remains open under this audit's launch standard because `[api].signup_require_email_verification` still defaults `false`, refreshed R1 config on 2026-05-13 still leaves the key unset, and `/v1/signup` still returns a usable plaintext key before ownership proof whenever operators do not opt in. |
 | F-1219 | high | Stripe paid-upgrade webhook still leaves dashboard-created Postgres API keys outside the live upgrade source of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112; EV-0130; EV-0142; EV-0165; EV-0168 | fixed | billing/platform/api | Wave 55 (2026-05-13) closes the per-key half: `StripePlatformBridge` gains an `APIKeys platform.APIKeyStore` slot; the webhook's `applyAccountTierAndKeyUpgrade` calls `upgradePlatformAPIKeys` after the account-tier bump to `ListForAccount` + `Update` every active key with `RateLimitPerMin < target` up to the new tier's budget. Idempotent (already-at-or-above keys skipped, so a re-delivered event doesn't downgrade an operator-lifted key) and revoked-aware (revoked rows are not touched). Production wiring in `cmd/ratesengine-api/main.go` plugs `postgresstore.NewAPIKeyStore(pgStore)` into the bridge. Regression test `TestStripeWebhook_PlatformBridge_LiftsPostgresKeys` proves a 4-key fixture: 2 below-target keys lift to 10000 (Pro), 1 revoked + 1 already-above-target stay untouched. |
@@ -418,6 +433,12 @@ Recent waves closed by code (chronological):
 | F-1261 | high | Migration `0030_asset_supply_history_unique_constraint` could not apply while `asset_supply_history` compression was enabled | `migrations/0030_asset_supply_history_unique_constraint.up.sql`; `migrations/0005_create_asset_supply_history.up.sql`; migration runner; R1 schema state | XFI-0053; EV-0120; EV-0137; EV-0147 | fixed | db/release/ops | Wave 46 on 2026-05-12 rewrites the up migration to decompress chunks, disable compression around the constraint swap, then restore the original 0005 compression settings. Fresh migration round-trip now succeeds, and the former Timescale `0A000` bootstrap failure no longer reproduces on current head. |
 | F-1262 | high | Dashboard/Postgres API-key creation can 500 when optional `referer_allowlist` is omitted because nil slices are inserted as SQL NULL into a NOT NULL array column | Dashboard key create handler; platform APIKey store create/update writers; Postgres schema; dashboard client defaults | XFI-0054; EV-0148; EV-0152; EV-0156 | fixed | platform/keys/db | Wave 50 on 2026-05-12 wraps both `text[]` boundaries (`buildAPIKeyCreateArgs` + `APIKeyStore.Update`) through `nonNilStringArray(in []string) pq.StringArray`, converting nil slices to non-nil zero-length arrays so lib/pq emits `'{}'` instead of SQL NULL. Focused store/dashboard-key packages pass, and the former `referer_allowlist` failure no longer reproduces in the full integration run; the next remaining failure is the separate malformed-ID proof harness tracked as `F-1263`. |
 | F-1263 | medium | The concurrent API-key quota integration fixture still violates live `api_keys` identity constraints, so it cannot prove the advisory-lock cap path | `test/integration/platform_postgres_stores_test.go`; migration 0027 `api_keys_{id,key_prefix}_check`; dashboard key ID/plaintext generation | XFI-0055; EV-0157; EV-0160; EV-0162 | fixed | platform/tests/evidence | Wave 53 now fixes both malformed fixture layers. The concurrent quota proof builds `kid_<hex>` IDs and `rek_<8hex>` key prefixes that satisfy migration 0027, and the full Postgres-store integration passes. The invalid proof harness no longer blocks `F-1257`. |
+| F-1264 | medium | R1 Prometheus/Loki docs still claim there is no firewall and those observability ports are publicly reachable after nftables moved to default-drop | `configs/prometheus/README.md`; `configs/loki/README.md`; live R1 listeners/firewall; external port probes | XFI-0056; EV-0181 | fixed | ops/docs/security | Current docs say `9090` / `3100` are publicly reachable because R1 has no firewall. Fresh R1 inspection shows the listeners remain bound on-host, but nftables now has `policy drop` and only permits the captive-core port set; external `9090` and `3100` probes time out. Operators reading the docs get the wrong exposure model and stale access assumptions. |
+| F-1265 | low | Alertmanager docs and monitoring-role prose still claim the Ansible template uses `critical/warning/info`, even though it already matches the `page/ticket/informational` ladder | `configs/alertmanager/README.md`; `configs/alertmanager/alertmanager.r1.yml`; `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/templates/alertmanager.yml.j2` | XFI-0057; EV-0182; EV-0184 | fixed | ops/docs/monitoring | The template has already converged on the same severity vocabulary as the standalone R1 config, but the README migration note, the R1 YAML header, and the Prometheus role README still describe the old critical/warning/info world. That can send operators toward unnecessary edits during the multi-host transition. |
+| F-1266 | medium | The top-level Ansible bootstrap README says only `archival-node` exists and implies archival-node already wires Promtail/Loki, but the repo now contains multiple landed roles and the archival-node task still leaves Promtail as TODO | `configs/ansible/README.md`; `configs/ansible/playbooks/*`; role `meta/main.yml`; `configs/ansible/roles/archival-node/tasks/10-observability.yml` | XFI-0058; EV-0184 | fixed | ops/docs/deployment | The README understates the actual role inventory (`haproxy`, `loki`, `patroni`, `prometheus`, `redis-sentinel` all exist) while overstating archival-node observability delivery (`promtail` remains an explicit TODO in the role task file). |
+| F-1267 | medium | Healthchecks setup docs still say to create four checks and omit the SLA-probe URL in a broader hardening guide, even though the installer/env/timers now require five external checks | `configs/healthchecks/README.md`; `configs/healthchecks/install.sh`; `docs/operations/pre-launch-hardening.md`; `configs/healthchecks/ratesengine-sla-probe.timer` | XFI-0059; EV-0186 | fixed | ops/docs/monitoring | The README enumerates five env vars and installs the SLA probe timer, but still instructs operators to create "four Checks"; `install.sh` repeats "four Healthchecks.io URLs (3 heartbeats + 1 smoke)"; and the hardening doc still shows only the four pre-SLA URLs. |
+| F-1268 | medium | The R1 Prometheus rules README deploys operators into `/etc/prometheus/rules.d/`, but the active R1 config loads `/etc/prometheus/rules.r1/*.yml` | `configs/prometheus/rules.r1/README.md`; `configs/prometheus/prometheus.r1.yml` | XFI-0060; EV-0188; EV-0191 | fixed | ops/docs/monitoring | The README's `scp` and confirmation text still use `/etc/prometheus/rules.d/`, while `prometheus.r1.yml` comments and `rule_files` block point at `/etc/prometheus/rules.r1/*.yml`. The wave-104 recheck confirms this one did not actually land with the neighboring doc fixes. |
+| F-1269 | low | The WASM audit-input README still promises an `_unattributed` contract block that the curated YAML no longer contains after the 2026-05-01 testnet-address cleanup | `configs/audit/README.md`; `configs/audit/wasm-walk-contracts.yaml` | XFI-0061; EV-0190 | fixed | docs/audit-tooling | The YAML is internally consistent at 540 contracts across eight named sources and explains that the former Reflector-testnet leftovers were intentionally removed, but the README still describes a now-nonexistent `_unattributed` block. |
 
 ## Finding Template
 
@@ -548,7 +569,7 @@ the current `next@15.5.18` baseline as part of dependency hygiene.
 
 Severity: `medium`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -563,10 +584,11 @@ Evidence:
 
 - `XFI-0007`
 - `EV-0021`
+- `EV-0178`
 
 Expected: status-page runbooks and customer-comms templates should describe the shipped incident publication workflow for `status.ratesengine.net`.
 
-Observed: the shipped implementation is a custom `web/status` static-export app on Cloudflare Pages, but the operations runbook requires editing removed `deploy/status-page/cstate/**` paths and other docs/templates point to an Upptime `RatesEngine/ratesengine-status` issue flow.
+Observed: the shipped implementation is a custom `web/status` static-export app on Cloudflare Pages. Wave 57 corrected the primary runbook/setup path, but a later breadth pass found active non-audit documentation still asserting the retired model: `CLAUDE.md` describes a `status-page (cstate scaffold)` repo area, `launch-readiness-backlog.md` still prescribes an Upptime/GitHub Pages + `.upptimerc.yml` + `GH_PAT` flow, `launch-task-list.md` still accepts `cstate` while also claiming there is no `status.ratesengine.net`, no `deploy/` artefacts, no status worker, and nowhere to update status-page incidents, and `deploy/comms/{README,incident-update}.md` still instruct operators to update `RatesEngine/ratesengine-status` Upptime-created issue bodies.
 
 Impact: during a SEV, operators can follow the binding runbook and fail to publish timely customer-visible updates, or publish in a channel not consumed by the live status page.
 
@@ -933,7 +955,7 @@ Remediation direction: update release/deploy docs and any release templates to s
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1002,7 +1024,7 @@ automation belongs in follow-up hardening rather than this finding.
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1088,7 +1110,7 @@ series under the configured peg list.
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1152,7 +1174,7 @@ surface that remains outside this finding's enforcement scope.
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1180,7 +1202,7 @@ Remediation direction: either copy migrations into the migrate image at a stable
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1261,7 +1283,7 @@ cutoff.
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1354,7 +1376,7 @@ Remediation direction: retained for audit history; the CI trigger gap itself is 
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1415,7 +1437,7 @@ Remediation direction: retained for audit history; the data-loss condition that 
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1477,7 +1499,7 @@ Remediation direction: retained for audit history; the missing metric increment 
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1522,7 +1544,7 @@ Remediation direction: keep the rejection gate and the now-present classic/SEP-4
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1552,7 +1574,7 @@ Remediation direction: finish the ID-mode path end to end. Pass catalogue CMC ID
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1579,7 +1601,7 @@ Remediation direction: validate `-progress-every` as `> 0` or make zero a suppor
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1612,7 +1634,7 @@ Remediation direction: align all Dockerfiles with the module/release Go version,
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1854,7 +1876,7 @@ Remediation direction: retained for audit history; the missing claim/lease primi
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1926,7 +1948,7 @@ Remediation direction: finish the producer side explicitly. Keep the new anomaly
 
 Severity: `medium`
 
-Status: `needs_evidence`
+Status: `fixed`
 
 Affected surface:
 
@@ -1998,7 +2020,7 @@ DB-backed integration proof now close this finding.
 
 Severity: `medium`
 
-Status: `needs_evidence`
+Status: `fixed`
 
 Affected surface:
 
@@ -2119,7 +2141,7 @@ Remediation direction: move new-user provisioning behind one transactional/idemp
 
 Severity: `medium`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -2297,7 +2319,7 @@ Remediation direction: recompute or carry USD volume through the same filtered s
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -2346,7 +2368,7 @@ and integration coverage close the original defect.
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -2461,3 +2483,156 @@ production create bug was fixed. That proof blocker is now removed.
 
 Remediation direction: retained for audit history; the current workspace now
 generates production-shaped IDs/prefixes and the closure integration is green.
+
+### F-1264. R1 Prometheus/Loki docs still describe a pre-firewall public exposure posture
+
+Severity: `medium`
+
+Status: `fixed`
+
+Affected surface:
+
+- `configs/prometheus/README.md`
+- `configs/loki/README.md`
+- R1 `nftables` posture and observability listeners
+- operator remote-access assumptions for Prometheus/Loki
+
+Evidence:
+
+- `XFI-0056`
+- `EV-0181`
+
+Expected: operator docs should describe the live observability-access posture. If Prometheus/Loki listeners remain host-bound but nftables blocks external ingress, the docs should say that plainly and keep SSH-tunnel guidance as the supported access path.
+
+Observed during discovery: both docs still stated that R1 had "no firewall today" and that Prometheus `:9090` / Loki `:3100` were publicly reachable, pending future Caddy fronting. Fresh live inspection showed the processes still listen (`*:9090`, `*:3100`), but `/etc/nftables.conf` now enforces `policy drop` and only explicitly permits the captive-core TCP set. Independent external probes to `136.243.90.96:9090` and `:3100` timed out.
+
+Impact: this misstates the current threat model and access path for production observability services. An operator can waste time debugging an expected public endpoint that is intentionally firewall-blocked, or make rollout/security decisions from an obsolete "no firewall" assumption.
+
+Resolution: current workspace READMEs now describe on-host listeners separately from blocked external ingress, keep SSH tunnelling as the supported path, and no longer claim the observability APIs are public. `EV-0191` confirms the remediation landed across both docs.
+
+### F-1265. Alertmanager docs still describe a severity-vocabulary split that current configs already eliminated
+
+Severity: `low`
+
+Status: `fixed`
+
+Affected surface:
+
+- `configs/alertmanager/README.md`
+- `configs/alertmanager/alertmanager.r1.yml`
+- `configs/ansible/roles/prometheus/README.md`
+- `configs/ansible/roles/prometheus/templates/alertmanager.yml.j2`
+
+Evidence:
+
+- `XFI-0057`
+- `EV-0182`
+- `EV-0184`
+
+Expected: docs/comments should describe the current shared Alertmanager severity ladder so an operator knows the standalone and Ansible apply paths are already aligned.
+
+Observed during discovery: `configs/alertmanager/README.md` still said the Ansible template "currently hardcodes `critical/warning/info` matchers" and must be adapted to `page/ticket/informational`; the standalone `alertmanager.r1.yml` header repeated the same contrast; and `configs/ansible/roles/prometheus/README.md` still documented the pager/chat routing in the retired `critical` / `warning` / `info` terms. The actual Ansible template already routed `severity = "page"`, `severity = "ticket"`, and `severity = "informational"` and its header explicitly said it mirrors the standalone path.
+
+Impact: the migration guidance is stale and can induce unnecessary config churn or false work during the R1 -> multi-host observability transition.
+
+Resolution: current workspace docs now describe the shared `page` / `ticket` / `informational` ladder consistently across the standalone Alertmanager config and the Prometheus role README. `EV-0191` confirms the stale critical/warning/info migration prose was removed from the reviewed surface.
+
+### F-1266. The top-level Ansible bootstrap README misstates both the role inventory and archival-node Promtail wiring
+
+Severity: `medium`
+
+Status: `fixed`
+
+Affected surface:
+
+- `configs/ansible/README.md`
+- `configs/ansible/playbooks/*`
+- `configs/ansible/roles/{haproxy,loki,patroni,prometheus,redis-sentinel}/meta/main.yml`
+- `configs/ansible/roles/archival-node/tasks/10-observability.yml`
+
+Evidence:
+
+- `XFI-0058`
+- `EV-0184`
+
+Expected: the Ansible bootstrap guide should accurately describe what role inventory actually exists and which archival-node observability features are implemented versus deferred.
+
+Observed during discovery: the README still opened with "Today the only role is `archival-node`", even though the repository now ships playbooks and role metadata for `haproxy`, `loki`, `patroni`, `prometheus`, and `redis-sentinel`. The same README's observability summary said the archival-node role includes `promtail (Loki shipper) on a configurable target`, but `roles/archival-node/tasks/10-observability.yml` ends with `TODO(#0): wire promtail -> loki_push_url. Skeleton only this round.`
+
+Impact: operators using the bootstrap guide get an obsolete mental model of what automation exists and can incorrectly assume a fresh archival-node deployment already ships logs into Loki. That is exactly the kind of deployment-document drift that creates blind spots during a bring-up or SEV.
+
+Resolution: the current README lists the landed sibling roles/playbooks and explicitly calls out the Promtail -> Loki archival-node wiring as still deferred. `EV-0191` confirms the guide no longer understates the inventory or overstates the shipped observability behavior.
+
+### F-1267. Healthchecks setup docs undercount required checks and omit the SLA-probe URL in one operator path
+
+Severity: `medium`
+
+Status: `fixed`
+
+Affected surface:
+
+- `configs/healthchecks/README.md`
+- `configs/healthchecks/install.sh`
+- `docs/operations/pre-launch-hardening.md`
+- `configs/healthchecks/ratesengine-sla-probe.timer`
+
+Evidence:
+
+- `XFI-0059`
+- `EV-0186`
+
+Expected: every Healthchecks setup surface should agree on the number of external checks and the exact env vars required by the installed timers. Once `ratesengine-sla-probe.timer` is part of the installer, the setup contract is five URLs, not four.
+
+Observed during discovery: the Healthchecks README described the SLA timer, listed `HEALTHCHECKS_URL_SLA_PROBE`, and restarted `ratesengine-sla-probe.timer`, but its installation prose still said "create four Checks". `configs/healthchecks/install.sh` repeated the stale count in its placeholder-file comment as "the four Healthchecks.io URLs (3 heartbeats + 1 smoke)" even though the generated env file included `HEALTHCHECKS_URL_SLA_PROBE=` and the script enabled the SLA timer. `docs/operations/pre-launch-hardening.md` also still documented only the four pre-SLA URLs.
+
+Impact: an operator can follow the written hardening/setup steps exactly and leave the SLA probe without an external Healthchecks heartbeat. The underlying local timer still runs, but the separate out-of-band liveness signal is missing from the Healthchecks dashboard.
+
+Resolution: the README now says five checks, the installer comment enumerates the SLA probe explicitly, and the pre-launch hardening snippet includes `HEALTHCHECKS_URL_SLA_PROBE`. `EV-0191` confirms the three setup paths now agree.
+
+### F-1268. The R1 Prometheus rules README copies rule files into a directory the active R1 config does not load
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/prometheus/rules.r1/README.md`
+- `configs/prometheus/prometheus.r1.yml`
+
+Evidence:
+
+- `XFI-0060`
+- `EV-0188`
+
+Expected: the R1 rule-overlay README should instruct operators to place copied rule files into the same directory that `prometheus.r1.yml` actually includes.
+
+Observed: the README's apply step copies `configs/prometheus/rules.r1/*.yml` to `/etc/prometheus/rules.d/` and then says `prometheus.r1.yml` already loads `/etc/prometheus/rules.d/*.yml`. The actual config says the opposite: its comments and `rule_files` block use `/etc/prometheus/rules.r1/*.yml`.
+
+Impact: an operator can follow the README exactly, reload Prometheus successfully, and still have the intended R1 overlay alerts absent because the files landed outside the configured include path.
+
+Remediation direction: align the README with the live config path or intentionally change the config to match the README, then add a lightweight lint/assertion so the copied directory in docs cannot drift from the `rule_files` include path again.
+
+### F-1269. The WASM audit-input README still describes a removed `_unattributed` bucket
+
+Severity: `low`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/audit/README.md`
+- `configs/audit/wasm-walk-contracts.yaml`
+
+Evidence:
+
+- `XFI-0061`
+- `EV-0190`
+
+Expected: the README should describe the actual schema of the curated YAML used for future WASM-history audits.
+
+Observed: `configs/audit/README.md` says the YAML contains one block per Soroban source plus an `_unattributed` block for operational contracts whose `ContractInstance` entries were TTL-evicted. The YAML has 540 contracts across exactly eight named source blocks and no `_unattributed` key. Its footer explains why: the former three "TTL-evicted" leftovers were actually Reflector testnet addresses misread during the earlier investigation and were intentionally removed on 2026-05-01.
+
+Impact: low. The curated input itself is coherent, but its README still documents a schema that no longer exists. That can confuse the next auditor refreshing the YAML or make them try to preserve a category the repo deliberately retired.
+
+Remediation direction: update the README to the current eight-source shape and, if needed, mention the removed `_unattributed` idea only as historical background tied to the 2026-05-01 correction.

@@ -57,13 +57,16 @@ first so we don't get alert spam on labels that match nothing.
 ## Web UI
 
 R1's Prometheus is on port 9090 and Alertmanager on 9093, both
-listening on `0.0.0.0`. The host has no firewall today (per
-r1-deployment-state §"Important but not urgent" #3), so these
-are publicly reachable. Once we land Caddy in front of them too
-(post-launch follow-up), they'll be HTTPS-only via
-`prometheus.ratesengine.net` etc.
+listening on `0.0.0.0` on-host. **External reachability is now
+blocked** by the R1 host firewall — nftables on R1 runs in
+`policy drop` mode and only explicitly accepts the captive-core
+port set (`11625/11626/11725/11726`), so external probes to
+`9090` / `9093` time out (F-1264, 2026-05-13). The host firewall
+landed after the original "no firewall today" wording was
+written; once Caddy is fronting these too (post-launch follow-up),
+they'll be HTTPS-only via `prometheus.ratesengine.net` etc.
 
-For now operator access:
+Operator access today (the only path that works):
 - `ssh -L 9090:localhost:9090 root@136.243.90.96` and visit
   `http://localhost:9090` in a browser.
 - Same shape for 9093 (Alertmanager).
