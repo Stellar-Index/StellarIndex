@@ -19,8 +19,18 @@ set -uo pipefail
 SMOKE_SCRIPT="${SMOKE_SCRIPT:-/opt/ratesengine/healthchecks/r1-smoke.sh}"
 URL="${HEALTHCHECKS_URL_SMOKE:-}"
 
+# F-1302 (codex audit-2026-05-13): a missing or non-executable
+# smoke script is itself a failure — fan out to Healthchecks/fail
+# so the 5-min API-surface check goes red, otherwise a broken
+# install silently disables the check without anyone noticing.
 if [ ! -x "$SMOKE_SCRIPT" ]; then
-  echo "smoke: $SMOKE_SCRIPT not found or not executable" >&2
+  MSG="smoke: $SMOKE_SCRIPT not found or not executable"
+  echo "$MSG" >&2
+  if [ -n "$URL" ]; then
+    curl -fsS --max-time 10 -o /dev/null --retry 2 \
+      --data-binary "$MSG" \
+      "${URL}/fail" || true
+  fi
   exit 0
 fi
 

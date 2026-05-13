@@ -35,8 +35,18 @@ URL="${HEALTHCHECKS_URL_SLA_PROBE:-}"
 # automatically. Set to empty to disable the metric emission.
 TEXTFILE_OUTPUT="${SLA_PROBE_TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/sla_probe.prom}"
 
+# F-1303 (codex audit-2026-05-13): a missing or non-executable
+# probe binary is itself a failure — fan out to Healthchecks/fail
+# so the SLA-evidence check goes red, otherwise a broken binary
+# deploy silently disables the check without anyone noticing.
 if [ ! -x "$PROBE_BIN" ]; then
-  echo "sla-probe: $PROBE_BIN not found or not executable" >&2
+  MSG="sla-probe: $PROBE_BIN not found or not executable"
+  echo "$MSG" >&2
+  if [ -n "$URL" ]; then
+    curl -fsS --max-time 10 -o /dev/null --retry 2 \
+      --data-binary "$MSG" \
+      "${URL}/fail" || true
+  fi
   exit 0
 fi
 

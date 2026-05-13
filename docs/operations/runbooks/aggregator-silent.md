@@ -34,7 +34,13 @@ systemctl status ratesengine-aggregator
 journalctl -u ratesengine-aggregator -n 50 --no-pager
 
 # 2) What does the orchestrator say about its last tick?
-curl -fs http://localhost:9464/metrics | grep -E '^ratesengine_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
+# F-1301 (codex audit-2026-05-13): aggregator binary auto-shifts
+# its metrics listener from :9464 to :9465 when it would collide
+# with the indexer. R1's prometheus.r1.yml scrapes :9465 for the
+# aggregator; :9464 is the INDEXER's port. Use :9465 when probing
+# the aggregator. Override via AGGREGATOR_METRICS_PORT env if your
+# deployment pinned a different port.
+curl -fs "http://localhost:${AGGREGATOR_METRICS_PORT:-9465}/metrics" | grep -E '^ratesengine_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
 
 # 3) Is Redis reachable and accepting writes?
 redis-cli -h <redis_host> -a "$REDIS_PASSWORD" PING
