@@ -523,6 +523,16 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries := s.verifiedCurrencies.All()
+	out := projectVerifiedCurrencyList(entries)
+	s.attachFiatMarketCaps(r.Context(), entries, out)
+	s.attachCryptoMarketCaps(entries, out)
+	writeJSON(w, out, Flags{})
+}
+
+// projectVerifiedCurrencyList projects each catalogue entry into
+// VerifiedCurrencyListItem. Extracted from handleAssetsVerified
+// to keep the handler under the gocognit ceiling.
+func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []VerifiedCurrencyListItem {
 	out := make([]VerifiedCurrencyListItem, len(entries))
 	for i, vc := range entries {
 		out[i] = VerifiedCurrencyListItem{
@@ -539,30 +549,46 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 			Networks:          networkViewsFromCatalogue(vc),
 		}
 	}
+	return out
+}
 
-	// Compute market_cap_usd for fiat rows in parallel. Skipped for
-	// crypto/stablecoin (no catalogue supply) and when no PriceReader
-	// is wired (no FX rate source — fiatMarketCapUSD uses s.prices,
-	// not s.globalPrice, to pick up the Redis-triangulated FX
-	// fallback that prices_1m doesn't carry for fiat:fiat pairs).
-	if s.prices != nil {
-		ctx := r.Context()
-		var wg sync.WaitGroup
-		for i, vc := range entries {
-			if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
-				continue
-			}
-			i, vc := i, vc
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-					out[i].MarketCapUSD = *capStr
-				}
-			}()
-		}
-		wg.Wait()
+// attachFiatMarketCaps computes market_cap_usd for fiat rows in
+// parallel via fiatMarketCapUSD (M2 × FX rate). No-op when no
+// PriceReader is wired.
+func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
+	if s.prices == nil {
+		return
 	}
+	var wg sync.WaitGroup
+	for i, vc := range entries {
+		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
+			continue
+		}
+		i, vc := i, vc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+				out[i].MarketCapUSD = *capStr
+			}
+		}()
+	}
+	wg.Wait()
+}
 
-	writeJSON(w, out, Flags{})
+// attachCryptoMarketCaps reads market_cap_usd for crypto +
+// stablecoin rows from the CoinGecko-backed marketcap cache. No-op
+// when the cache isn't wired (handlers degrade to "—").
+func (s *Server) attachCryptoMarketCaps(entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
+	if s.marketCaps == nil {
+		return
+	}
+	for i, vc := range entries {
+		if vc.Class != currency.ClassCrypto && vc.Class != currency.ClassStablecoin {
+			continue
+		}
+		if snap, ok := s.marketCaps.Lookup(vc.Slug); ok && snap.MarketCapUSD != "" {
+			out[i].MarketCapUSD = snap.MarketCapUSD
+		}
+	}
 }

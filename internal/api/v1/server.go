@@ -15,6 +15,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/auth"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/currency"
+	"github.com/RatesEngine/rates-engine/internal/currency/marketcap"
 	"github.com/RatesEngine/rates-engine/internal/incidents"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/version"
@@ -122,6 +123,13 @@ type Server struct {
 	// without the warning surface — that's the same behaviour as
 	// pre-1.1.
 	verifiedCurrencies *currency.Catalogue
+	// marketCaps is the process-local cache of CoinGecko-sourced
+	// market_cap_usd values for catalogue crypto + stablecoin
+	// entries. Populated by a background refresher
+	// (internal/currency/marketcap.Refresher) on a 5-min cadence;
+	// handlers read on demand and gracefully degrade to "—" when
+	// the slug isn't cached yet. Nil-safe.
+	marketCaps *marketcap.Cache
 	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
 	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
 	// Nil-safe: handleGlobalAsset returns a view without the price
@@ -577,6 +585,13 @@ type Options struct {
 	// per-Stellar-asset surface.
 	VerifiedCurrencies *currency.Catalogue
 
+	// MarketCaps, when non-nil, is the process-local CoinGecko-
+	// sourced market_cap_usd cache for catalogue crypto +
+	// stablecoin entries. The cmd/ratesengine-api binary wires it
+	// with a background refresher; tests can pass a populated
+	// stub or leave nil (handlers degrade gracefully).
+	MarketCaps *marketcap.Cache
+
 	// GlobalPrice, when non-nil, powers the price block on
 	// `/v1/assets/{slug}` global views via the three-tier fallback
 	// chain (vwap_native → aggregator_avg → triangulated). Nil
@@ -653,6 +668,7 @@ func New(opts Options) *Server {
 		dashboardWebhooks:    opts.DashboardWebhooks,
 		sessionAuth:          opts.SessionAuth,
 		verifiedCurrencies:   opts.VerifiedCurrencies,
+		marketCaps:           opts.MarketCaps,
 		globalPrice:          opts.GlobalPrice,
 		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:          opts.SACWrappers,
