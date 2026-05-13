@@ -437,8 +437,9 @@ Recent waves closed by code (chronological):
 | F-1267 | medium | Healthchecks setup docs still say to create four checks and omit the SLA-probe URL in a broader hardening guide, even though the installer/env/timers now require five external checks | `configs/healthchecks/README.md`; `configs/healthchecks/install.sh`; `docs/operations/pre-launch-hardening.md`; `configs/healthchecks/ratesengine-sla-probe.timer` | XFI-0059; EV-0186; EV-0191 | fixed | ops/docs/monitoring | README, installer comment, and pre-launch hardening now agree on five checks and include `HEALTHCHECKS_URL_SLA_PROBE`. |
 | F-1268 | medium | The R1 Prometheus rules README deploys operators into `/etc/prometheus/rules.d/`, but the active R1 config loads `/etc/prometheus/rules.r1/*.yml` | `configs/prometheus/rules.r1/README.md`; `configs/prometheus/prometheus.r1.yml` | XFI-0060; EV-0188; EV-0191; EV-0194 | fixed | ops/docs/monitoring | Current workspace README now copies into `/etc/prometheus/rules.r1/` and explicitly says that path matches `prometheus.r1.yml`. |
 | F-1269 | low | The WASM audit-input README still promises an `_unattributed` contract block that the curated YAML no longer contains after the 2026-05-01 testnet-address cleanup | `configs/audit/README.md`; `configs/audit/wasm-walk-contracts.yaml` | XFI-0061; EV-0190; EV-0194 | fixed | docs/audit-tooling | Current workspace README now states that `_unattributed` was intentionally removed during the 2026-05-01 cleanup and describes the live eight-source schema accurately. |
-| F-1270 | medium | Active Caddy/operator docs contradict ADR-0025 by telling operators to add Cloudflare edge CIDRs to the API's `trusted_proxy_cidrs`, even though the chosen trust boundary keeps Cloudflare pinned at Caddy and leaves the API trusting only Caddy | `configs/caddy/README.md`; `docs/operations/pre-launch-hardening.md`; `docs/adr/0025-caddy-cloudflare-trusted-proxy.md`; `internal/config/config.go`; `docs/reference/config/README.md` | XFI-0062; EV-0193 | open | ops/docs/security | The Caddy README says Cloudflare-fronted multi-region deployment would "trust additional X-Forwarded-* CIDRs ... in the API config", and the hardening guide tells operators to add Cloudflare ranges to `trusted_proxy_cidrs`. ADR-0025 says the API should stay at `["127.0.0.1/32"]` because Caddy is the only immediate proxy the API trusts. |
-| F-1271 | high | The Redis Sentinel HA role, clients, and runbooks assume Sentinel listener authentication, but `sentinel.conf.j2` never configures a Sentinel password/ACL, so the advertised authenticated FailoverClient path is not the config the role actually renders | `configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2`; `configs/ansible/roles/redis-sentinel/README.md`; `docs/architecture/redis-sentinel-ansible-role-design-note.md`; `docs/operations/runbooks/redis-master-down.md`; `internal/storage/redisclient/redisclient.go`; go-redis Sentinel auth behavior | XFI-0063; EV-0196 | open | ops/redis/security/runtime | Repo docs and code all carry one shared `redis_password` into Sentinel client auth (`redis-cli -p 26379 -a ...`, `SentinelPassword: cfg.RedisPassword`), but the rendered Sentinel config contains only `sentinel auth-pass` for Sentinel-to-master auth and no listener-side `requirepass`/ACL. |
+| F-1270 | medium | Active Caddy/operator docs contradict ADR-0025 by telling operators to add Cloudflare edge CIDRs to the API's `trusted_proxy_cidrs`, even though the chosen trust boundary keeps Cloudflare pinned at Caddy and leaves the API trusting only Caddy | `configs/caddy/README.md`; `docs/operations/pre-launch-hardening.md`; `docs/adr/0025-caddy-cloudflare-trusted-proxy.md`; `internal/config/config.go`; `docs/reference/config/README.md` | XFI-0062; EV-0193; EV-0198 | fixed | ops/docs/security | Current workspace docs now preserve ADR-0025 explicitly: Cloudflare CIDRs stay in Caddy `trusted_proxies`, and the API keeps trusting only the immediate Caddy peer. |
+| F-1271 | high | The Redis Sentinel HA role, clients, and runbooks assume Sentinel listener authentication, but `sentinel.conf.j2` never configures a Sentinel password/ACL, so the advertised authenticated FailoverClient path is not the config the role actually renders | `configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2`; `configs/ansible/roles/redis-sentinel/README.md`; `docs/architecture/redis-sentinel-ansible-role-design-note.md`; `docs/operations/runbooks/redis-master-down.md`; `internal/storage/redisclient/redisclient.go`; go-redis Sentinel auth behavior | XFI-0063; EV-0196; EV-0198 | fixed | ops/redis/security/runtime | Current workspace rendering now emits Sentinel listener `requirepass {{ redis_password }}`, aligning the template with the docs, runbooks, and `SentinelPassword` client contract. |
+| F-1272 | medium | Redis ACL lockdown fixes application clients but leaves `redis_exporter` on the legacy password-only auth path, so enabling the hardened role can break the Redis metrics/alert path | `configs/ansible/roles/redis-sentinel/templates/users.acl.j2`; `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`; `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`; `configs/ansible/roles/redis-sentinel/README.md`; `docs/reference/config/README.md` | XFI-0064; EV-0197 | open | ops/redis/observability/security | ACL lockdown renders `user default off` and requires a named `ratesengine` user, while the generated exporter service sets only `REDIS_PASSWORD` and `-redis.addr=redis://127.0.0.1:6379` with no username. |
 
 ## Finding Template
 
@@ -525,7 +526,7 @@ as intentional. Preserve the external port probe as a release gate.
 
 Severity: `critical`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -2658,8 +2659,69 @@ Evidence:
 
 Expected: operator docs should describe the same trust boundary the code and ADR define. In the chosen `Cloudflare -> Caddy -> API` topology, Caddy validates Cloudflare's edge ranges and forwards a resolved client IP; the API continues to trust only its immediate peer, Caddy, through `trusted_proxy_cidrs = ["127.0.0.1/32"]`.
 
-Observed: ADR-0025, generated config docs, and the API config source all preserve that immediate-peer model. But `configs/caddy/README.md` says the future Cloudflare-fronted shape would "trust additional X-Forwarded-* CIDRs (Cloudflare's published edge ranges) in the API config", and `docs/operations/pre-launch-hardening.md` goes further: it says Cloudflare edge IPs become the immediate peer R1 sees and instructs operators to add Cloudflare ranges directly to `trusted_proxy_cidrs`.
+Observed: the drift was real when first captured under `EV-0193`, but the current workspace closes it. `configs/caddy/README.md` now says the API's `trusted_proxy_cidrs = ["127.0.0.1/32"]` setting stays unchanged under Cloudflare because Caddy remains the only trusted immediate proxy, and `docs/operations/pre-launch-hardening.md` now says no API-side CIDR change is needed while Cloudflare ranges live in Caddy's trusted-proxy block.
 
 Impact: medium. The docs do not describe the system that is actually implemented. An operator following them can widen the API trust surface at the wrong layer, reason incorrectly about who is allowed to supply `X-Forwarded-For`, or create a future deployment that disagrees with ADR-0025's explicit boundary. This is especially risky because rate-limit identity and access logs depend on that resolution chain.
 
-Remediation direction: make both operator docs match ADR-0025. Cloudflare ranges belong in Caddy's `trusted_proxies`; the API's `trusted_proxy_cidrs` remains the immediate Caddy peer unless the proxy topology itself is redesigned and the ADR is superseded.
+Remediation direction: closed on the current workspace. Keep future operator docs anchored to ADR-0025's immediate-peer trust model unless that ADR is deliberately superseded.
+
+### F-1271. Redis Sentinel listener authentication is promised everywhere except the rendered Sentinel config
+
+Severity: `high`
+
+Status: `fixed`
+
+Affected surface:
+
+- `configs/ansible/roles/redis-sentinel/templates/sentinel.conf.j2`
+- `configs/ansible/roles/redis-sentinel/README.md`
+- `docs/architecture/redis-sentinel-ansible-role-design-note.md`
+- `docs/operations/runbooks/redis-master-down.md`
+- `docs/operations/drills/scenarios/sev2-redis-sentinel-failover.md`
+- `internal/storage/redisclient/redisclient.go`
+- go-redis v9 Sentinel auth handling in the module cache
+
+Evidence:
+
+- `XFI-0063`
+- `EV-0196`
+
+Expected: the rendered Sentinel listener-auth contract should match every caller and operator instruction. If clients and runbooks pass a Sentinel password, the Sentinel process must actually require and accept listener auth through `requirepass` or an ACL-backed equivalent.
+
+Observed: the inconsistency was real when first captured under `EV-0196`, but the current workspace closes the source drift. `templates/sentinel.conf.j2` now renders `requirepass {{ redis_password }}` for Sentinel listener auth while preserving `sentinel auth-pass ... {{ redis_password }}` for Sentinel-to-primary auth, matching the docs, runbooks, and `redisclient.Build` SentinelPassword wiring already audited.
+
+Impact: high. The committed HA Redis topology is internally contradictory at an authentication boundary. Depending on Redis Sentinel's runtime posture, this can either leave `26379` accessible without the password the docs promise, or make the production FailoverClient/operator commands misbehave because they attempt Sentinel AUTH against a listener that was never configured for it. Either branch defeats the claimed launch-ready Sentinel path.
+
+Remediation direction: source drift closed. Runtime post-deploy verification should still prove:
+
+- rendered `sentinel.conf` contains the listener-auth directive or ACL equivalent
+- `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL ckquorum ...` succeeds
+- the same command without auth fails
+- a real `go-redis` FailoverClient configured through `redisclient.Build` reaches the Sentinel cluster successfully
+
+### F-1272. Redis ACL lockdown leaves `redis_exporter` on the wrong auth contract
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/redis-sentinel/templates/users.acl.j2`
+- `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`
+- `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`
+- `configs/ansible/roles/redis-sentinel/README.md`
+- `docs/reference/config/README.md`
+
+Evidence:
+
+- `XFI-0064`
+- `EV-0197`
+
+Expected: once Redis ACL lockdown disables the default user and requires the named application user, every generated Redis client or sidecar that authenticates to Redis should move to the same username-aware contract. The exporter scrape path is part of that rollout because Redis alerting depends on it.
+
+Observed: `users.acl.j2` explicitly renders `user default off` and the generated app config now writes `redis_username = "ratesengine"` under lockdown. The reference config docs also say password-only auth is rejected once lockdown is enabled. But `tasks/07-monitoring.yml` generates `redis_exporter.service` with only `Environment=REDIS_PASSWORD={{ redis_password }}` and `-redis.addr=redis://127.0.0.1:{{ redis_port }}`. There is no username in the URI, no username env var, and no role variable that couples exporter auth to the ACL-lockdown setting. Meanwhile the Prometheus role expects a live `redis_exporter` target and cache alerts are built on that path.
+
+Impact: medium. The hardening rollout fixes application-client auth while silently risking the Redis observability sidecar. A hardened Redis deployment can appear to lose Redis metrics or alert coverage exactly when operators expect monitoring to confirm the rollout succeeded.
+
+Remediation direction: render exporter credentials from the same ACL posture as the application clients, then verify a lockdown-on render produces a username-aware exporter invocation and that Prometheus can scrape Redis metrics through it.

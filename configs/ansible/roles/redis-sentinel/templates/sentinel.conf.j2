@@ -5,6 +5,18 @@
 port {{ redis_sentinel_port }}
 bind {{ redis_bind_address }} 127.0.0.1
 
+# Listener auth — clients connecting to the Sentinel port (26379)
+# must AUTH with this password. F-1271 (codex audit-2026-05-13):
+# the role README, the design note, the redis-master-down runbook,
+# and `internal/storage/redisclient/redisclient.go` all assume
+# Sentinel listener authentication via `requirepass` (e.g.
+# `redis-cli -p 26379 -a "$REDIS_PASSWORD"`,
+# `SentinelPassword: cfg.RedisPassword`), but the template
+# previously rendered only `sentinel auth-pass` (Sentinel-to-master
+# auth) and left the listener wide open. Adding `requirepass` here
+# enforces the contract the rest of the project already assumes.
+requirepass {{ redis_password }}
+
 # `sentinel monitor` sets the initial primary. Once Sentinel
 # elects a new primary mid-flight, it re-writes this directive
 # in place. The role's idempotency check in

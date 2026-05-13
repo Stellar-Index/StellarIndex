@@ -83,6 +83,30 @@ user ratesengine on >{{ redis_password }} \
 # (the F-1218 prior-signup reservation) and `signup:lock:` (the
 # F-1255 per-email serialisation lock).
 
+# Exporter user — narrow command set the oliver006/redis_exporter
+# binary needs for INFO / CLIENT / CLUSTER / CONFIG GET / DBSIZE /
+# SLOWLOG GET metric gathering. Cannot reuse the `ratesengine`
+# application user because that user has `-@admin -@dangerous` to
+# deny FLUSHALL / DEBUG / etc., and INFO / CLIENT / CLUSTER /
+# CONFIG / SLOWLOG all live in those denied categories.
+#
+# Same `redis_password` so the vault rotation is one-shot across
+# every named user; the username is what differentiates the ACL
+# roles. The exporter's systemd unit at
+# `tasks/07-monitoring.yml` passes `-redis.user=redis_exporter`
+# so the exporter sends `AUTH redis_exporter <pass>` instead of
+# the legacy single-arg AUTH that would resolve as `default` and
+# be rejected under lockdown.
+#
+# F-1272 (codex audit-2026-05-13): wave-106 adds this user
+# specifically because the wave-106 exporter wiring referenced
+# `-redis.user=redis_exporter`; without the matching ACL entry
+# the exporter would fail under lockdown.
+user redis_exporter on >{{ redis_password }} \
+  -@all +@connection \
+  +info +client +cluster|info +config|get +dbsize +slowlog|get +latency \
+  ~* &*
+
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}
 {# vault) and stop the API / aggregator / indexer binaries with #}
