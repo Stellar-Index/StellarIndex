@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/currency"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
@@ -385,17 +387,29 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	asset := r.URL.Query().Get("asset")
+	// Slug expansion: if `asset` doesn't parse as a canonical asset_id
+	// but DOES match a verified-currency catalogue slug, fan out to
+	// every asset_id form the catalogue knows for that slug — the
+	// networks[].asset_id entries (Stellar's USDC-GA5Z..., native,
+	// etc.) plus the global crypto:<TICKER> form (CEX trades, e.g.
+	// crypto:BTC on Binance/Coinbase). Empty if the slug has no
+	// expansion. Drives the cross-chain /assets/{slug} Markets tab
+	// surfacing both Stellar SDEX and CEX markets under one query.
+	var expandedAssets []string
 	if asset != "" {
-		// Validate canonical asset_id shape so an unparseable input
-		// returns 400 with a useful diagnostic instead of an empty
-		// 200 (the silent-empty-page anti-pattern that confuses
-		// callers; same guard family as ?source= above).
 		if _, err := canonical.ParseAsset(asset); err != nil {
-			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-asset-id",
-				"Invalid asset", http.StatusBadRequest,
-				"asset must be a canonical asset_id (e.g. 'native', 'USDC-G…', 'fiat:USD'); got "+asset+" ("+err.Error()+")")
-			return
+			// Try the catalogue. Successful lookup expands to a slice
+			// of canonical asset_ids; failure → 400 (existing
+			// behaviour for unparseable input).
+			expanded := s.expandSlugToAssetIDs(asset)
+			if len(expanded) == 0 {
+				writeProblem(w, r,
+					"https://api.ratesengine.net/errors/invalid-asset-id",
+					"Invalid asset", http.StatusBadRequest,
+					"asset must be a canonical asset_id (e.g. 'native', 'USDC-G…', 'fiat:USD') or a catalogue slug (e.g. 'usdc', 'btc'); got "+asset+" ("+err.Error()+")")
+				return
+			}
+			expandedAssets = expanded
 		}
 	}
 	if source != "" && asset != "" {
@@ -432,6 +446,18 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	switch {
 	case source != "":
 		rows, next, err = reader.SourceMarkets(mCtx, source, cursor, limit, order)
+	case len(expandedAssets) > 0:
+		// Catalogue-slug expansion path. Fan out one AssetMarkets
+		// query per expanded asset_id, merge results in-memory,
+		// sort by trade_count_24h desc, dedupe + cap at `limit`.
+		// Pagination is not supported on the slug-expansion path
+		// (each underlying cursor is per-asset_id; merging across
+		// streams would need a combined keyset that doesn't exist
+		// today). The cross-chain Markets tab uses this as a
+		// summary surface — operators wanting the full per-asset_id
+		// stream pass the canonical asset_id directly.
+		rows, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
+		next = ""
 	case asset != "":
 		rows, next, err = reader.AssetMarkets(mCtx, asset, cursor, limit, order)
 	default:
@@ -511,4 +537,128 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		env.Pagination = &Pagination{Next: next}
 	}
 	writeEnvelope(w, env)
+}
+
+// expandSlugToAssetIDs resolves a verified-currency catalogue slug
+// (e.g. "usdc", "btc", "xlm") to the list of canonical asset_ids it
+// represents on the wire. Used by /v1/markets?asset=<slug> to fan
+// out cross-chain Markets-tab queries.
+//
+// The expansion includes:
+//
+//   - Every networks[].asset_id from the catalogue entry, with
+//     "stellar"-network rows yielding the on-chain asset_id
+//     (USDC-GA5Z..., native, …). Non-Stellar networks have no
+//     asset_id (only `contract`) and contribute nothing for now —
+//     we don't index trades on those chains.
+//   - For crypto + stablecoin classes: also `crypto:<TICKER>` so
+//     CEX trades (Binance: crypto:BTC/crypto:USDT, Coinbase:
+//     crypto:BTC/fiat:USD, etc.) match the slug.
+//   - For fiat: also `fiat:<TICKER>` so any direct fiat trades
+//     match (rare today; included for symmetry + future-proofing).
+//
+// Returns nil when no catalogue is wired or the slug is unknown.
+func (s *Server) expandSlugToAssetIDs(slug string) []string {
+	if s.verifiedCurrencies == nil {
+		return nil
+	}
+	vc, ok := s.verifiedCurrencies.LookupBySlug(slug)
+	if !ok {
+		vc, ok = s.verifiedCurrencies.LookupByTicker(slug)
+	}
+	if !ok || vc == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 4)
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		if _, dup := seen[s]; dup {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, n := range vc.Networks {
+		if n.AssetID != "" {
+			add(n.AssetID)
+		}
+	}
+	switch vc.Class {
+	case currency.ClassCrypto, currency.ClassStablecoin:
+		add("crypto:" + vc.Ticker)
+	case currency.ClassFiat:
+		add("fiat:" + vc.Ticker)
+	}
+	return out
+}
+
+// fanOutAssetMarkets calls AssetMarkets in parallel for each
+// expanded asset_id, merges + dedupes the results, sorts by
+// 24h trade_count desc, caps at `limit`.
+//
+// Dedup key: (base, quote) tuple — same pair observed via two
+// different asset_id queries (e.g. native/USDC-GA5Z... matches
+// both `native` and `USDC-GA5Z...` queries on the XLM cross-chain
+// view) collapses to one row.
+//
+// No pagination — fan-out cursor protocols across heterogeneous
+// underlying streams aren't well-defined. Callers wanting the
+// full stream pass the canonical asset_id directly.
+func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) ([]Market, error) {
+	type result struct {
+		rows []Market
+		err  error
+	}
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		results []result
+	)
+	results = make([]result, len(assets))
+	for i, a := range assets {
+		i, a := i, a
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rows, _, err := reader.AssetMarkets(ctx, a, "", limit, order)
+			mu.Lock()
+			results[i] = result{rows: rows, err: err}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	// Surface the first error if any. We don't fail-fast on partial
+	// success because a single asset_id with no recent trades is
+	// not an error condition — it just contributes zero rows.
+	var firstErr error
+	type pairKey struct{ base, quote string }
+	seen := make(map[pairKey]struct{})
+	merged := make([]Market, 0, limit)
+	for _, r := range results {
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
+		}
+		for _, m := range r.rows {
+			k := pairKey{base: m.Base, quote: m.Quote}
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			merged = append(merged, m)
+		}
+	}
+	if firstErr != nil && len(merged) == 0 {
+		return nil, firstErr
+	}
+	// Sort by trade_count_24h desc (proxy for "interesting market").
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].TradeCount24h > merged[j].TradeCount24h
+	})
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged, nil
 }
