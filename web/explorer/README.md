@@ -1,12 +1,18 @@
 # Rates Engine — showcase site
 
 Public explorer for the Rates Engine API. Lives at
-`app.ratesengine.net` post-launch.
+`ratesengine.net` (Cloudflare Pages). The companion
+customer dashboard lives at `app.ratesengine.net` — see
+[`web/dashboard/README.md`](../dashboard/README.md).
 
-This is the **scaffold** that lands as Phase 0 of the
-[implementation plan](../../docs/architecture/explorer-implementation-plan.md).
-Everything visible today is a stub; real panels arrive starting in
-Phase 7.
+The original [implementation plan](../../docs/architecture/explorer-implementation-plan.md)
+called this Phase 0 scaffolding through Phase 7 panels; reality
+shipped well past that — the explorer now serves 50+ routes
+(asset detail, market browser, anomalies / divergences /
+diagnostics surfaces, embed widgets, blog, dev portal, etc.) and
+the verified-currency catalogue work (R-018 phases 1.1-1.5).
+The implementation plan is preserved as a record of the original
+phasing.
 
 ## Stack
 
@@ -52,25 +58,36 @@ all hit the same scripts from the repo root.
 
 ```
 src/
-├── app/                 Next.js routes
+├── app/                 Next.js routes (50+ surfaces — assets,
+│                        markets, dexes, exchanges, aggregators,
+│                        anomalies, divergences, diagnostics,
+│                        embed widgets, blog, changelog, careers,
+│                        company, contact, convert, dev portal, …)
 ├── components/
-│   ├── ui/              shadcn copies
-│   ├── primitives/      MultiWindowDelta, Sparkline, DirectionPill, …
-│   ├── panels/          Composed cards
+│   ├── primitives/      Sparkline, DirectionPill, etc.
 │   ├── reveal/          The <> mechanism
 │   ├── charts/          Lightweight Charts wrappers
 │   ├── nav/             Navbar, search, footer
-│   └── mdx/             RatesLink, RatesPanel, TxLink (Phase 12)
+│   ├── AssetLabel.tsx
+│   ├── CurrencyCombobox.tsx
+│   ├── SourceSparkline.tsx
+│   └── QueryProvider.tsx
 ├── api/
 │   ├── client.ts        Fetch wrapper
-│   ├── types.ts         Generated; DO NOT EDIT
-│   └── hooks.ts         TanStack Query hooks (Phase 7)
-├── lib/
-│   ├── url-state.ts     Query-param helpers
-│   ├── time-pin.ts      as_of_ledger helpers
-│   ├── format.ts        Number/date formatters
-│   └── slugs.ts         Asset-slug resolution
-└── posts/               MDX research articles (Phase 12)
+│   ├── types.ts         Generated from openapi/rates-engine.v1.yaml
+│   │                    via `pnpm generate:api` — DO NOT EDIT
+│   └── hooks.ts         TanStack Query hooks
+└── lib/
+    ├── adr.ts           ADR document loader (for /architecture)
+    ├── architecture.ts
+    ├── blog.ts
+    ├── changelog.ts
+    ├── discovery.ts     Discovery-doc loader
+    ├── fiat-slugs.ts    Fiat-asset slug resolution
+    ├── format.ts        Number / date formatters
+    ├── markdown.tsx     MDX rendering helpers
+    ├── operations.ts
+    └── seo.ts           Open Graph + meta-tag helpers
 ```
 
 ## Design principles

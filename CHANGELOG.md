@@ -31,6 +31,22 @@ against.
 
 ### Documentation
 
+- `web/explorer/README.md` factually corrected. Two real bugs:
+  (1) the README claimed the explorer lives at
+  `app.ratesengine.net` — wrong; that's the dashboard's
+  hostname (per CLAUDE.md, the OpenAPI generated comment, and
+  `web/dashboard/README.md`). Explorer lives at
+  `ratesengine.net`. (2) The README's "scaffold + everything is
+  a stub; real panels arrive at Phase 7" framing was three
+  rcs out of date — reality is 50+ shipped routes plus the
+  R-018 phases 1.1-1.5 verified-currency catalogue work. The
+  Layout section was likewise stale (cited `panels/` and
+  `mdx/` directories that don't exist; cited
+  `lib/url-state.ts`, `lib/time-pin.ts`, `lib/slugs.ts` —
+  none of which exist; reality is `adr.ts`, `architecture.ts`,
+  `blog.ts`, `changelog.ts`, `discovery.ts`, `fiat-slugs.ts`,
+  `format.ts`, `markdown.tsx`, `operations.ts`, `seo.ts`).
+  Layout section rewritten to match `src/` actual contents.
 - `docs/architecture/explorer-implementation-plan.md` row 5.1
   ("Coin endpoints") updated to reflect the rc.48 reality —
   endpoints renamed from `/v1/coins`-shape to `/v1/assets`-shape,
