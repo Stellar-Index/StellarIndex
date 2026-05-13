@@ -234,10 +234,13 @@ client := redis.NewFailoverClient(&redis.FailoverOptions{
 })
 ```
 
-`internal/cachekeys` (or whichever package owns the connection
-factory) gets a small change: read the Sentinel addresses + master
-name from config, instantiate `FailoverClient` instead of plain
-`Client`. The cache-key API surface doesn't change.
+**Already shipped** (F-1273, audit-2026-05-13): the connection
+factory lives in `internal/storage/redisclient`, not
+`internal/cachekeys`. The factory reads `redis.sentinel_addrs`
++ `redis.master_name` from config and instantiates
+`FailoverClient` when those are set, plain `Client` otherwise.
+The cache-key API surface in `internal/cachekeys` is purely a
+key-builder; it doesn't own the connection.
 
 This sidesteps the HAProxy / keepalived complexity that
 **Patroni** does need (Postgres clients aren't Sentinel-aware).
@@ -252,8 +255,10 @@ sub-role focuses on Postgres + API only.
   `redis-cli SENTINEL get-master-addr-by-name`."
 - Quick-diagnosis adds the Sentinel quorum check.
 
-`internal/cachekeys/` (or wherever `redis.NewClient` is called):
-- Switch from `redis.NewClient` to `redis.NewFailoverClient`.
+`internal/storage/redisclient` (already shipped — F-1273):
+- `redis.NewFailoverClient` is used when `redis.sentinel_addrs`
+  + `redis.master_name` are set; `redis.NewClient` is the
+  fallback for single-node dev/test deploys.
 - Config reads `redis.sentinel_addrs` + `redis.master_name`.
 
 `configs/example.toml`:

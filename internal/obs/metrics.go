@@ -106,7 +106,10 @@ func Handler() http.Handler {
 // route pattern (not raw URL — avoids cardinality blow-up on IDs),
 // and status class.
 //
-// Alert rules reference this via `http_requests_total{status=~"5..", job="api"}`.
+// Alert rules reference this via `http_requests_total{status=~"5..", job=~"ratesengine[-_]api"}`.
+// (F-1276, audit-2026-05-13: scrape jobs use `ratesengine_api` on HA
+// multi-host and `ratesengine-api` on R1; rules match both via regex.
+// Earlier comment said `job="api"` which never matched any series.)
 var HTTPRequestsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "http_requests_total",

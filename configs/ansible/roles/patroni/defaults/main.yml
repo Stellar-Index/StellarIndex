@@ -59,6 +59,14 @@ patroni_internal_cidrs:
   - 172.16.0.0/12
   - 192.168.0.0/16
 
+# F-1278 (codex audit-2026-05-13): the role now renders the COMPLETE
+# /etc/nftables.conf on its dedicated Patroni hosts. Override the
+# SSH allow-list CIDRs below for your bastion/operator network.
+patroni_allowed_ssh_cidrs:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+
 # ── Monitoring ─────────────────────────────────────────────────
 patroni_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
 

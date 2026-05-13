@@ -49,6 +49,16 @@ SEV-1 time. ADR-0024 captures the full reasoning.
   - `redis_password` — used as both `requirepass` (clients
     auth) and `masterauth` (replicas auth to primary).
 
+- **Inventory must set `redis_exporter_release_sha256`**
+  (F-1293, codex audit-2026-05-13) whenever
+  `redis_exporter_version` is non-empty (default).
+  `07-monitoring.yml` asserts at role-start that the variable is
+  set and exactly 64 chars, then pins the `get_url` checksum on
+  the redis_exporter tarball. The SHA is per-arch + per-release;
+  pull from the SHA256SUMS line on
+  `https://github.com/oliver006/redis_exporter/releases/tag/{{ redis_exporter_version }}`.
+  Not defaulted in `defaults/main.yml` to prevent stale-SHA rot.
+
 ## Inventory model
 
 Set in your `inventory/<region>.yml`:
@@ -118,8 +128,12 @@ Sentinel-aware (no equivalent), so Patroni needs HAProxy or
 PgBouncer in front; Redis clients (`go-redis/redis/v9.NewFailoverClient`)
 do the discovery themselves.
 
-In Go (we plumb this through `internal/cachekeys` after this
-role lands):
+In Go this is already live in `internal/storage/redisclient`
+(F-1273, audit-2026-05-13 — earlier README text said the
+client would land "after this role" in `internal/cachekeys`,
+but the failover client has been shipping out of
+`internal/storage/redisclient` since the SEP-10 auth work).
+The connection-construction pattern is:
 
 ```go
 client := redis.NewFailoverClient(&redis.FailoverOptions{

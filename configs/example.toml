@@ -262,22 +262,18 @@ allowed_origins          = ["*"]
 trusted_proxy_cidrs      = []                  # empty = ignore X-Forwarded-For; set to immediate proxy CIDRs (for example ["10.0.0.0/8"])
 
 # signup_require_email_verification (F-1218, codex audit-2026-05-13).
-# Default false — preserves the pre-F-1218 wire contract where
-# /v1/signup-minted API keys can authenticate immediately without
-# proving they own the supplied email address. When true, those
-# keys are 403'd by `middleware.RequireEmailVerified` until the
-# verification link emailed at signup is clicked.
-#
-# Flip to true after a rollout window where existing customers
-# have had time to click their verification email. New deployments
-# that never had a pre-flag-flip customer base can default true
-# from day one.
+# Default true (post-2026-05-13): /v1/signup-minted API keys cannot
+# authenticate until the verification link emailed at signup is
+# clicked. Pre-launch we have no consumer traffic, so the safe
+# default is to require ownership proof — operators who want to
+# allow unverified signup (dev sandbox / migration window) must
+# opt in explicitly by setting this to false.
 #
 # Independent of `auth_mode` (the gate runs against API-key
 # Subjects regardless of whether other auth modes are enabled
 # alongside) — but only meaningful when /v1/signup is reachable
 # (i.e. when sep10/apikey is the auth mode and signup is wired).
-# signup_require_email_verification = false
+# signup_require_email_verification = true
 
 # Closed-bucket SSE fanout — pairs the API binary republishes to
 # the streaming Hub on every new closed prices_1m bucket. Empty

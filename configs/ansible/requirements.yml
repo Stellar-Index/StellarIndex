@@ -1,20 +1,26 @@
 ---
 # Ansible Galaxy collection requirements.
 # Install with: ansible-galaxy collection install -r requirements.yml
+#
+# F-1299 (codex audit-2026-05-13): collections are pinned to EXACT
+# versions, not lower bounds. The deploy workflow installs from this
+# file at deploy time; a `>=8.0.0` constraint allowed silent drift
+# across runs of the same repo revision. Bumps are deliberate edits
+# of this file — re-test deploys after every change.
+#
+# To bump: `ansible-galaxy collection install <name>:<new-version>`
+# locally, run a deploy dry-run against r1-staging, then update both
+# the pin here and the deploy.yml `pip install` pin in the same PR.
 
 collections:
   # Core modules (copy, template, file, service, user, etc.)
   - name: ansible.posix
-    version: ">=1.5.0"
+    version: "1.5.4"
 
-  # Apt + debconf, systemd, ufw/nftables
+  # Apt + debconf, systemd, nftables, ZFS pool/filesystem management.
   - name: community.general
-    version: ">=8.0.0"
+    version: "9.5.0"
 
-  # Postgres role management, DB creation, user creation
+  # Postgres role management, DB creation, user creation.
   - name: community.postgresql
-    version: ">=3.4.0"
-
-  # ZFS filesystem + pool management
-  - name: community.general
-    version: ">=8.0.0"
+    version: "3.10.0"

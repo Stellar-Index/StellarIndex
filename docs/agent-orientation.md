@@ -119,7 +119,7 @@ development. If one does, it's a bug.
 │   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
 ├── openapi/                   rates-engine.v1.yaml — source of truth for API
 ├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
-├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host). The shipped status-page lives at `web/status/` (Cloudflare Pages static export) — the earlier `deploy/status-page/cstate` scaffold was retired (F-1211 / wave 57)
+├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host). The shipped status-page lives at `web/status/` (Cloudflare Pages static export); earlier scaffolds were retired (F-1211 / wave 57).
 ├── web/explorer/              Next.js 15 static-export explorer rendered at ratesengine.net (Cloudflare Pages)
 ├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
@@ -487,14 +487,18 @@ End-to-end (operator side):
    section + green `verify.sh` before tagging and pushing. Pass
    `--dry-run` first to see the plan.
 4. **`release.yml` fires automatically** on the tag push:
-   - Cross-compiles every binary in `cmd/` for `linux/{amd64,arm64}`
+   - Cross-compiles every binary in `cmd/` for `linux/amd64`
+     (arm64 was dropped 2026-05-08 — every region is amd64; re-add
+     when an arm64 host is provisioned).
    - Computes SHA256SUMS
    - Auto-extracts the matching CHANGELOG section as release notes
    - Creates the GitHub Release (marked `--prerelease` if the tag
      contains a `-suffix`)
-   - Builds + pushes container images to
-     `ghcr.io/RatesEngine/<binary>:<tag>` plus `:latest` (only on
-     non-prerelease tags)
+   - **Does NOT publish container images.** The previous GHCR job
+     was dropped (no consumer existed); see
+     `docs/operations/release-process.md` for the rationale.
+     F-1221 (2026-05-13): pre-fix this paragraph claimed both
+     amd64+arm64 and GHCR pushes — both were stale.
 
 Full runbook + manual fallback in
 [docs/operations/release-process.md](docs/operations/release-process.md).

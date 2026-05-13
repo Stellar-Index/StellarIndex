@@ -34,6 +34,17 @@ Promtail agents on every other host that produces logs. Per
   - Outbound HTTP to the log_aggregator host on port 3100
     (firewall rule on the aggregator side handles).
 
+- **Inventory must set `loki_release_sha256` and
+  `promtail_release_sha256`** (F-1285, codex audit-2026-05-13).
+  Both install tasks (`server-02-install.yml`,
+  `agent-01-install.yml`) assert at role-start that the variables
+  are set and exactly 64 chars, then pin the `get_url` checksum
+  to those values. The SHAs are per-architecture and per-release;
+  pull them from the matching SHA256SUMS line on
+  `https://github.com/grafana/loki/releases/tag/v{{ loki_version }}`.
+  Variables are intentionally not defaulted in `defaults/main.yml`
+  to prevent stale-SHA rot.
+
 ## Inventory model
 
 ```yaml

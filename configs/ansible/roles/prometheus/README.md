@@ -51,6 +51,27 @@ emitted metrics. Design rationale lives in
   referenced `critical / warning / info`; that vocabulary is
   gone from both files.
 
+- **Inventory must set `prometheus_sha256` and
+  `alertmanager_sha256`** (F-1285, codex audit-2026-05-13).
+  `02-install.yml` asserts at role-start that both variables are
+  set and exactly 64 chars, then pins the `get_url` checksum on
+  the Prometheus and Alertmanager tarballs to those values. The
+  SHAs are per-architecture and per-release; pull them from
+  `https://github.com/prometheus/prometheus/releases/tag/v{{ prometheus_version }}`
+  and `https://github.com/prometheus/alertmanager/releases/tag/v{{ alertmanager_version }}`.
+  Variables are intentionally not defaulted in `defaults/main.yml`
+  to prevent stale-SHA rot.
+
+- **Listener bind + firewall** (F-1290, codex audit-2026-05-13):
+  The role binds Prometheus to `0.0.0.0:9090` and Alertmanager to
+  `0.0.0.0:9093` (not loopback) so the peer-Prometheus scrape and
+  alert delivery work in the multi-host topology. The role's
+  `06-firewall.yml` renders the COMPLETE `/etc/nftables.conf` for
+  the host (F-1278 fix) — default-drop everywhere except SSH from
+  the SSH allow-list CIDRs and 9090/9093/9094 from
+  `prometheus_internal_cidrs`. Operators reach the UI via SSH
+  tunnel (SSH bypasses the firewall).
+
 ## Inventory model
 
 ```yaml

@@ -58,11 +58,20 @@ jobs:
       is_prerelease: ${{ steps.out.outputs.is_prerelease }}
     steps:
       - id: out
+        # F-1298 (codex audit-2026-05-13): inputs through `env:`,
+        # never interpolated `${{ inputs.* }}` into the shell.
+        # Pre-fix `tag="${{ inputs.tag }}"` would have shell-
+        # expanded a malicious tag like `"; cat /etc/passwd; echo "v1.0.0`
+        # before the SemVer regex even ran.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${{ github.ref_name }}"
+            tag="$REF_NAME"
           fi
           # Sanity-check tag shape; abort early on garbage so we don't
           # publish a v-prefix-typo release.

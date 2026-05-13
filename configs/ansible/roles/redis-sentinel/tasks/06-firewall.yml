@@ -1,41 +1,96 @@
 ---
-# Open Redis (6379) + Sentinel (26379) to internal CIDRs only.
-# Pattern mirrors the patroni role's nftables drop-in approach.
+# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
+# /etc/nftables.conf for this host. Previously the role wrote a
+# drop-in inside a separate `inet redis_filter` table with
+# `policy accept`, which composed unpredictably with the repo's
+# default-drop base chain (an `accept` verdict in one chain at
+# priority -100 does NOT short-circuit a later priority-0 drop
+# in another chain — netfilter evaluates every base chain in the
+# hook ladder and a `drop` anywhere is final). On HA-dedicated
+# hosts the redis-sentinel role now owns the whole-host firewall.
 
 - name: ensure nftables installed
   apt:
     name: nftables
     state: present
 
-- name: ensure /etc/nftables.d/ exists
-  file:
-    path: /etc/nftables.d
-    state: directory
-    mode: "0755"
-
-- name: render redis-sentinel nftables drop-in
+- name: render full /etc/nftables.conf (default-drop + redis/sentinel + ssh)
   copy:
-    dest: /etc/nftables.d/41-redis-sentinel.conf
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
     mode: "0644"
+    validate: "nft -c -f %s"
     content: |
-      # Managed by ansible (redis-sentinel role).
-      # Redis data plane + Sentinel control plane, internal-only.
-      table inet redis_filter {
-        chain input {
-          type filter hook input priority -100; policy accept;
-      {% for cidr in redis_internal_cidrs %}
-          ip saddr {{ cidr }} tcp dport { {{ redis_port }}, {{ redis_sentinel_port }} } accept comment "redis-{{ cidr }}";
+      #!/usr/sbin/nft -f
+      # Managed by ansible (redis-sentinel role) — DO NOT EDIT BY HAND.
+      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      flush ruleset
+
+      table inet filter {
+        set internal_v4 {
+          type ipv4_addr
+          flags interval
+          elements = {
+      {% for cidr in redis_internal_cidrs if ':' not in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
       {% endfor %}
-          ip saddr 127.0.0.1 tcp dport { {{ redis_port }}, {{ redis_sentinel_port }} } accept comment "redis-loopback";
-          # Implicit: anything not from internal CIDRs hits the
-          # main filter chain's defaults.
+          }
+        }
+
+        set ssh_allowed_v4 {
+          type ipv4_addr
+          flags interval
+          elements = {
+      {% for cidr in redis_allowed_ssh_cidrs if ':' not in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
+        chain input {
+          type filter hook input priority filter; policy drop;
+
+          ct state established,related accept
+          ct state invalid drop
+
+          iif lo accept
+
+          ip protocol icmp limit rate 10/second accept
+          ip6 nexthdr ipv6-icmp limit rate 10/second accept
+
+          tcp dport 22 ip saddr @ssh_allowed_v4 ct state new limit rate 30/minute accept comment "ssh"
+
+          # Redis data plane + Sentinel control plane, internal-only.
+          tcp dport { {{ redis_port }}, {{ redis_sentinel_port }} } ip saddr @internal_v4 accept comment "redis-sentinel-internal"
+          tcp dport { {{ redis_port }}, {{ redis_sentinel_port }} } ip saddr 127.0.0.1 accept comment "redis-sentinel-loopback"
+
+          # redis_exporter scrape (Prometheus, internal-only).
+          tcp dport {{ redis_exporter_listen_port }} ip saddr @internal_v4 accept comment "redis-exporter-internal"
+
+          limit rate 1/second log prefix "nft-drop: " flags all
+        }
+
+        chain forward {
+          type filter hook forward priority filter; policy drop;
+        }
+
+        chain output {
+          type filter hook output priority filter; policy accept;
         }
       }
   notify: "firewall rules changed"
 
-- name: ensure nftables loads our drop-in
-  lineinfile:
-    path: /etc/nftables.conf
-    line: 'include "/etc/nftables.d/*.conf"'
-    state: present
+- name: ensure nftables enabled + running
+  systemd:
+    name: nftables
+    state: started
+    enabled: true
+
+# Clean up the legacy F-1278-broken drop-in if it still exists on
+# previously-deployed hosts. Safe no-op on fresh deploys.
+- name: remove legacy 41-redis-sentinel.conf drop-in (was no-op)
+  file:
+    path: /etc/nftables.d/41-redis-sentinel.conf
+    state: absent
   notify: "firewall rules changed"

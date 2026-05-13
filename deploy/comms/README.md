@@ -24,9 +24,8 @@ a blank page.
   drop personalisation entirely (use "Hi all" or similar).
 - **`{{incident_id}}`** — the incident slug from
   `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` (the shipped
-  status-page corpus; F-1211, 2026-05-13 — the earlier text
-  referenced an Upptime GitHub-issue ID that the project never
-  used). Author the Markdown file per
+  status-page corpus; F-1211, 2026-05-13 — earlier prose pointed
+  at retired external-issue IDs). Author the Markdown file per
   [`runbooks/sev-status-page-update.md`](../../docs/operations/runbooks/sev-status-page-update.md);
   `ratesengine-ops emit-incident --slug <slug>` fires the
   customer-webhook fan-out from the same source.

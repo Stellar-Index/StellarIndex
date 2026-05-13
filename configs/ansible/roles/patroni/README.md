@@ -40,6 +40,17 @@ role lands as a complete PR).
   - (optional) `patroni_rest_basic_auth` — Patroni REST API
     Basic Auth, defaults disabled if vault entry absent.
 
+- **Inventory must set `etcd_release_sha256`** (F-1280, codex
+  audit-2026-05-13). The role pins etcd to `{{ etcd_release_sha256 }}`
+  on download and the 02-etcd-install task asserts at role-start
+  that the variable is set, exactly 64 chars, and not the legacy
+  `REPLACE_WITH_RELEASE_SHA` placeholder. The SHA is per-architecture
+  (amd64 vs arm64; different values per release) and changes with
+  every etcd version bump, so it is not defaulted in
+  `defaults/main.yml` — it must come from inventory. Pull the value
+  from the matching SHA256SUMS line on
+  `https://github.com/etcd-io/etcd/releases/tag/v{{ etcd_version }}`.
+
 ## Inventory model
 
 Set in your `inventory/<region>.yml`:
