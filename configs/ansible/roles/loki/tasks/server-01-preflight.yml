@@ -43,3 +43,49 @@
     home: "{{ loki_data_dir }}"
     create_home: yes
     state: present
+
+# F-1289 (codex audit-2026-05-13): defaults/README/design-note
+# advertised preflight checks the role didn't actually run.
+# Pre-fix this task file ended above with only OS / inventory /
+# time-sync / user checks. The two below close the documented
+# contract.
+- name: collect /var free bytes
+  command: df --output=avail -B1 /var
+  register: _var_df
+  changed_when: false
+
+- name: assert /var has at least loki_var_min_free_gb of free space
+  assert:
+    that:
+      - (_var_df.stdout_lines[1] | int) >= ((loki_var_min_free_gb | default(50)) * 1024 * 1024 * 1024)
+    fail_msg: >-
+      /var has insufficient free space for Loki chunks + index
+      (got {{ (_var_df.stdout_lines[1] | int) // (1024*1024*1024) }} GB,
+      need ≥ {{ loki_var_min_free_gb | default(50) }} GB). The
+      role caches chunks locally before flushing to MinIO and
+      keeps the boltdb index on local disk; both share /var by
+      default. Provision a larger volume or lower
+      `loki_var_min_free_gb` if the design changed.
+
+- name: probe MinIO bucket existence
+  uri:
+    url: "{{ loki_s3_endpoint }}/{{ loki_s3_bucket }}/"
+    method: HEAD
+    status_code: [200, 403]   # 403 = bucket exists but anon can't list (expected)
+    return_content: no
+    timeout: 5
+    validate_certs: no
+  register: _loki_bucket_probe
+  changed_when: false
+  failed_when: false
+
+- name: assert loki-chunks bucket exists
+  assert:
+    that:
+      - _loki_bucket_probe.status in [200, 403]
+    fail_msg: >-
+      MinIO bucket `{{ loki_s3_bucket }}` not reachable at
+      {{ loki_s3_endpoint }} (got status
+      {{ _loki_bucket_probe.status | default('unreachable') }}).
+      Operator pre-creates the bucket as a one-shot before the
+      role runs — see the role README §"Storage layout".

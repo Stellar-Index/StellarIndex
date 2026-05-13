@@ -142,19 +142,29 @@ The preflight task warns when neither is set.
 
 ## Operator UI access
 
+F-1287/F-1290 (codex audit-2026-05-13): the listeners bind to
+`0.0.0.0:9090/9093` (changed from loopback in wave 120 so peer-
+Prometheus scrape + alert delivery work in the multi-host
+topology). Public exposure is blocked by the role's
+`06-firewall.yml` drop-in: nftables priority -100 chain opens
+9090/9093 inbound to `prometheus_internal_cidrs` ONLY, so
+external probes time out. Operators still SSH-tunnel for the
+UI — SSH bypasses the firewall.
+
 ```sh
-# Prometheus query UI (loopback-only; SSH-tunnel)
+# Prometheus query UI — internal listener, public-blocked by firewall
 ssh -L 9090:127.0.0.1:9090 root@prom-01
 # → http://localhost:9090/
 
-# AlertManager UI (loopback-only; SSH-tunnel)
+# AlertManager UI — same pattern
 ssh -L 9093:127.0.0.1:9093 root@prom-01
 # → http://localhost:9093/
 ```
 
-Don't expose `9090` or `9093` publicly — neither has built-in
-auth. SSH-tunnel for ad-hoc queries; future Grafana role provides
-the operator-facing dashboards layer.
+Don't disable the firewall — neither port has built-in auth, so
+removing the CIDR scope exposes Prometheus + Alertmanager
+publicly. Future Grafana role provides the operator-facing
+dashboards layer.
 
 ## Rule-file sync
 
@@ -178,9 +188,11 @@ synchronise alert state. Required for dedupe; without it, both
 AlertManagers fan out independently and on-call gets paged
 twice.
 
-The `06-firewall.yml` task opens 9094 on the internal CIDRs.
-Gossip uses unicast, so no multicast/VRRP-style host config
-needed (unlike keepalived in the haproxy role).
+The `06-firewall.yml` task opens 9090 (Prometheus web/scrape),
+9093 (Alertmanager API), and 9094 (Alertmanager cluster gossip)
+on the internal CIDRs — all three are needed for the multi-host
+topology. Gossip uses unicast, so no multicast/VRRP-style host
+config needed (unlike keepalived in the haproxy role).
 
 ## What this role does NOT cover
 
