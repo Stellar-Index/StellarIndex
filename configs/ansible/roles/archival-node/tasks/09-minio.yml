@@ -3,6 +3,21 @@
 # Production HA MinIO (9-node EC) is a later concern — tracked against
 # the HA plan. See TODO(#0).
 
+# F-1291 (codex audit-2026-05-13): fail fast if the operator
+# hasn't supplied the MinIO release SHA256. Pre-fix the get_url
+# had no `checksum:` — root-owned executable installed without
+# provenance. Same fail-fast pattern as F-1280/F-1285.
+- name: assert minio_release_sha256 is set
+  ansible.builtin.assert:
+    that:
+      - minio_release_sha256 is defined
+      - minio_release_sha256 | length == 64
+    fail_msg: >-
+      minio_release_sha256 must be set in inventory (SHA-256 of
+      the MinIO server binary for `minio_version`). MinIO
+      publishes a `.sha256sum` next to every release artefact at
+      https://dl.min.io/server/minio/release/linux-amd64/archive/minio.{{ minio_version }}.sha256sum
+
 - name: Download MinIO server binary (pinned version)
   ansible.builtin.get_url:
     url: "https://dl.min.io/server/minio/release/linux-amd64/archive/minio.{{ minio_version }}"
@@ -10,7 +25,7 @@
     mode: "0755"
     owner: root
     group: root
-    # TODO(#0): pin SHA256 once we lock the MinIO version.
+    checksum: "sha256:{{ minio_release_sha256 }}"
 
 - name: Template MinIO environment file
   ansible.builtin.template:
@@ -44,14 +59,33 @@
 # Both `mc alias set` and `mc mb -p` are idempotent so this re-runs
 # safely.
 
+# F-1291 (codex audit-2026-05-13): pre-fix mc was downloaded
+# from the MUTABLE `linux-amd64/mc` URL (no version pin) with no
+# checksum. That's strictly worse than the server-binary case —
+# the URL itself rolls to whatever upstream's "latest" is. Pin
+# both `mc_version` AND the SHA via the
+# `linux-amd64/archive/mc.RELEASE.<date>` archive form.
+- name: assert mc_release_sha256 is set
+  ansible.builtin.assert:
+    that:
+      - mc_release_sha256 is defined
+      - mc_release_sha256 | length == 64
+      - mc_version is defined
+      - mc_version != ''
+    fail_msg: >-
+      mc_version + mc_release_sha256 must be set in inventory.
+      Pick a release from https://github.com/minio/mc/releases —
+      `mc_version` is the `RELEASE.<date>T<time>Z` slug, and
+      mc_release_sha256 is alongside the release tarball.
+
 - name: Install mc (MinIO CLI) for bucket bootstrap + operator use
   ansible.builtin.get_url:
-    url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+    url: "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.{{ mc_version }}"
     dest: /usr/local/bin/mc
     mode: "0755"
     owner: root
     group: root
-  # TODO(#0): pin MinIO mc version + SHA256.
+    checksum: "sha256:{{ mc_release_sha256 }}"
 
 - name: Wait for MinIO API to be reachable on :9000
   ansible.builtin.uri:

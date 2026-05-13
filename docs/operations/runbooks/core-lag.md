@@ -62,7 +62,9 @@ ssh root@<val-host> "journalctl -u stellar-core -n 200 --no-pager" \
 1. **Stellar network itself is having issues**. Rare but has
    happened. Check SDF's status page / #stellar-core on Keybase /
    stellar.expert/explorer — if the whole network is halted, you
-   wait.
+   wait. (F-1292, 2026-05-13: per ADR-0001, prefer stellar.expert
+   or a public stellar-rpc endpoint for the cross-check;
+   Horizon is not in our architecture.)
 
 2. **We lost quorum** — too many of our configured quorum-set
    members are unreachable. Core refuses to close ledgers without
@@ -78,9 +80,15 @@ ssh root@<val-host> "journalctl -u stellar-core -n 200 --no-pager" \
 
 ## Mitigation
 
-- [ ] Step 1 — network-wide or us? Cross-check via SDF's Horizon /
-      stellar.expert. If the network is down, this is a P0 for
-      Stellar, not for us.
+- [ ] Step 1 — network-wide or us? Cross-check via
+      stellar.expert/explorer OR a public stellar-rpc endpoint
+      (e.g. `curl -s https://mainnet.sorobanrpc.com -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'`).
+      If the network is down, this is a P0 for Stellar, not for
+      us. F-1292 (codex audit-2026-05-13): the earlier prose
+      named SDF's Horizon, which ADR-0001 bans from our
+      operational surfaces — replaced with the
+      stellar.expert/stellar-rpc pair we already use elsewhere
+      in this runbook tree.
 - [ ] Step 2 — if quorum: verify our quorum set members are
       reachable. Update the quorum-set if a chosen validator is
       permanently offline.

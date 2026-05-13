@@ -3,11 +3,24 @@
 # :9100 and :9473 respectively; both bound to loopback and reachable
 # only over the internal_cidrs (nftables enforces).
 
+# F-1291 (codex audit-2026-05-13): same fail-fast checksum
+# pattern as F-1280/F-1285. Pre-fix get_url had no checksum.
+- name: assert node_exporter_release_sha256 is set
+  ansible.builtin.assert:
+    that:
+      - node_exporter_release_sha256 is defined
+      - node_exporter_release_sha256 | length == 64
+    fail_msg: >-
+      node_exporter_release_sha256 must be set in inventory.
+      Get the SHA from the release page:
+      https://github.com/prometheus/node_exporter/releases/tag/v{{ node_exporter_version }}
+
 - name: Download node_exporter
   ansible.builtin.get_url:
     url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
     dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
     mode: "0644"
+    checksum: "sha256:{{ node_exporter_release_sha256 }}"
 
 - name: Extract node_exporter
   ansible.builtin.unarchive:
