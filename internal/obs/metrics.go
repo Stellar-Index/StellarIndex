@@ -86,6 +86,7 @@ func init() {
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
 		AggregatorSupplyRefreshDurationSeconds,
+		AnomalyFreezeRecoverySweepDurationSeconds,
 	)
 }
 
@@ -815,6 +816,32 @@ var AnomalyFreezeRecoverySweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "ratesengine_anomaly_freeze_recovery_sweeps_total",
 		Help: "Freeze recovery-worker sweep cycles. Outcome ∈ {ok, partial, error}.",
+	},
+	[]string{"outcome"},
+)
+
+// AnomalyFreezeRecoverySweepDurationSeconds — latency histogram
+// for the freeze recovery worker's per-sweep tick. Pairs with the
+// counter above. The sweep does ListOpen (Postgres read) plus,
+// per open row, a Redis GET and possibly MarkRecovered (Postgres
+// write). Fast path is sub-100 ms when there are zero open rows;
+// climbs proportionally with the open-row count.
+//
+// Latency degradation typically means Postgres pressure or Redis
+// lag rather than a freeze-policy issue. The 60-second sweep
+// cadence means even a multi-second sweep doesn't lose
+// correctness — the next tick catches up — but sustained
+// slowness is worth investigating before the freeze_events
+// table accumulates open rows the operator UI shows as
+// permanently firing.
+//
+// Buckets span 10 ms → 30 s. No alert wired today; the
+// existing recovery-sweep error counter covers correctness.
+var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "ratesengine_anomaly_freeze_recovery_sweep_duration_seconds",
+		Help:    "Freeze recovery-worker sweep latency, labelled by outcome (ok|partial|error). Sweep does ListOpen (Postgres) + per-row Redis GET + maybe MarkRecovered (Postgres write).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
 )

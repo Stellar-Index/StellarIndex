@@ -662,6 +662,27 @@ dashboards can distinguish "mismatch fired and the run aborted at
 second X" from "chunk aborted for an unrelated reason (canceled
 context)".
 
+### `ratesengine_anomaly_freeze_recovery_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches the `_sweeps_total` counter:
+`ok` / `partial` / `error`).
+
+Latency of the freeze recovery worker's per-sweep tick. Pairs
+with `_sweeps_total` — that one tells you whether sweeps succeed,
+this one tells you how long they take. Sweep does ListOpen
+(Postgres read) plus, per open row, a Redis GET and possibly
+MarkRecovered (Postgres write). Fast path is sub-100 ms when
+zero rows are open; latency scales with open-row count.
+
+Latency degradation typically means Postgres pressure or Redis
+lag rather than a freeze-policy issue. Sweep cadence is 60 s,
+so even a multi-second sweep doesn't lose correctness — the
+next tick catches up — but sustained slowness is worth
+investigating before the freeze_events table accumulates open
+rows the operator UI shows as permanently firing.
+
+Buckets span 10 ms → 30 s. No alert wired today.
+
 ### `ratesengine_aggregator_supply_refresh_duration_seconds`
 
 Histogram, label `outcome` (matches the per-asset_key counter's
@@ -770,6 +791,11 @@ per-key rate-limit lift failure.
 
 ## Changelog
 
+- 2026-05-13 — added freeze-recovery-sweep latency histogram
+  (`ratesengine_anomaly_freeze_recovery_sweep_duration_seconds`).
+  Pairs with the existing `_sweeps_total` counter; surfaces
+  Postgres / Redis pressure as a chartable signal before the
+  freeze_events table accumulates open rows.
 - 2026-05-13 — added supply-refresh latency histogram
   (`ratesengine_aggregator_supply_refresh_duration_seconds`).
   Pairs with the existing per-asset_key `_total` counter;
