@@ -7,6 +7,12 @@ import { API_BASE_URL } from '@/api/client';
 import { IssuerPanel } from '../IssuerPanel';
 import { MarketsTabPanel } from '../MarketsTabPanel';
 import { SupplyTabPanel } from '../SupplyTabPanel';
+import {
+  getCatalogue,
+  lookupGlobalAsset,
+  type GlobalAssetView,
+  type NetworkEntry,
+} from '../../catalogue';
 
 /**
  * /assets/[slug]/[network] — per-network deep dive.
@@ -25,103 +31,8 @@ import { SupplyTabPanel } from '../SupplyTabPanel';
  * contract metadata + an external explorer link.
  */
 
-interface NetworkEntry {
-  network: string;
-  data_quality: 'indexed' | 'external';
-  asset_id?: string;
-  code?: string;
-  issuer?: string;
-  contract?: string;
-  external_link?: string;
-  deep_link?: string;
-}
-
-interface GlobalAssetView {
-  ticker: string;
-  slug: string;
-  name: string;
-  description?: string;
-  class?: 'fiat' | 'crypto' | 'stablecoin';
-  networks: NetworkEntry[];
-}
-
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
-const FETCH_TIMEOUT_MS = 8_000;
-
-interface VerifiedCurrencyListItem {
-  ticker: string;
-  slug: string;
-  name: string;
-  class?: string;
-  networks: NetworkEntry[];
-}
-
-/**
- * Build-time catalogue source. Both generateStaticParams AND
- * fetchGlobalAsset derive from the same single `/v1/assets/verified`
- * call — without this consolidation, the build fires hundreds of
- * `/v1/assets/{slug}` requests in parallel and trips r1's anonymous-
- * tier rate limit (60 req/min), producing prerendered "Not found"
- * pages for every [slug]/[network] route. The catalogue listing
- * already carries `networks[]` per entry, so per-slug fetches are
- * redundant at build time.
- *
- * Sequential retry on 429 (small jittered backoff) because even
- * the single call occasionally races a parallel /assets/[slug]
- * build phase that's hammering the same endpoint.
- */
-let cataloguePromise: Promise<Map<string, GlobalAssetView>> | null = null;
-
-function getCatalogue(): Promise<Map<string, GlobalAssetView>> {
-  if (cataloguePromise) return cataloguePromise;
-  cataloguePromise = fetchCatalogueWithRetry();
-  return cataloguePromise;
-}
-
-async function fetchCatalogueWithRetry(): Promise<Map<string, GlobalAssetView>> {
-  if (isCIStub) return new Map();
-  const maxAttempts = 5;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (res.status === 429) {
-        const backoffMs = 1000 * (attempt + 1) + Math.floor(Math.random() * 500);
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[catalogue] /v1/assets/verified 429 (attempt ${attempt + 1}/${maxAttempts}); backing off ${backoffMs}ms`,
-        );
-        await new Promise((r) => setTimeout(r, backoffMs));
-        continue;
-      }
-      if (!res.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(`[catalogue] /v1/assets/verified http=${res.status}`);
-        return new Map();
-      }
-      const env = (await res.json()) as { data?: VerifiedCurrencyListItem[] };
-      const map = new Map<string, GlobalAssetView>();
-      for (const item of env.data ?? []) {
-        map.set(item.slug, {
-          ticker: item.ticker,
-          slug: item.slug,
-          name: item.name,
-          class: item.class as GlobalAssetView['class'],
-          networks: item.networks ?? [],
-        });
-      }
-      return map;
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[catalogue] fetch threw (attempt ${attempt + 1}): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-  return new Map();
-}
 
 /**
  * Static-export enumeration of every (slug, network) pair the
@@ -172,13 +83,7 @@ function caseVariants(s: string): string[] {
 
 async function fetchGlobalAsset(slug: string): Promise<GlobalAssetView | null> {
   if (isCIStub) return null;
-  const map = await getCatalogue();
-  // Case-insensitive lookup — generateStaticParams emits multiple
-  // case variants, all of which should resolve to the catalogue's
-  // canonical (lowercase) entry.
-  const hit = map.get(slug);
-  if (hit) return hit;
-  return map.get(slug.toLowerCase()) ?? null;
+  return lookupGlobalAsset(slug);
 }
 
 function findNetwork(
