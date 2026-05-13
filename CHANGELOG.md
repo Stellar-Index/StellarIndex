@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /v1/diagnostics/ingestion`** — single-fetch ingestion
+  snapshot for the region. Composes: region label, binary version,
+  live ledger tip + lag, per-decoder backfill state (ranges
+  total/active, oldest lag), Frankfurter / fx_quotes coverage
+  (earliest/latest dates, total quotes, distinct currencies),
+  market-cap cache state, supply observer coverage (classic vs
+  SEP-41 counts, last snapshot age), and the full source registry
+  joined with trailing-24h trades/volume/markets.
+  Designed as the only call the status page makes for its
+  per-region ingestion panel — operators no longer have to scrape
+  `/v1/network/stats` + `/v1/sources` + `/v1/diagnostics/cursors`
+  + `/v1/version` and reconcile by hand. New storage helpers:
+  `FXCoverageStats`, `SupplyCoverageStats` (one query each, ~1ms
+  on populated tables). Cache: `public, max-age=15`.
+
 ### Fixed
 
 - **`/assets/{slug}` for catalogue slugs (`usdc`, `chinese-yuan`,

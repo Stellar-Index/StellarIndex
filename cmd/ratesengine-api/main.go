@@ -2178,6 +2178,15 @@ func (r storeSupplyLooker) LatestSupply(ctx context.Context, assetKey string) (s
 	return snap, nil
 }
 
+// SupplyCoverageStats delegates to the underlying Store so the
+// wrapper satisfies v1.SupplyCoverageReader as well as
+// v1.SupplyLooker. Same pattern as fxHistoryReader's coverage
+// delegate — without it, /v1/diagnostics/ingestion's supply
+// section renders as empty.
+func (r storeSupplyLooker) SupplyCoverageStats(ctx context.Context) (timescale.SupplyCoverage, error) {
+	return r.s.SupplyCoverageStats(ctx)
+}
+
 // parseStreamingPairs converts the operator-declared
 // `[api.streaming].pairs` TOML rows (each a [base, quote]
 // two-element string array) into canonical Pairs.
@@ -2753,4 +2762,13 @@ func (r *fxHistoryReader) ListFXHistory(ctx context.Context, ticker string, from
 		}
 	}
 	return out, nil
+}
+
+// FXCoverageStats delegates to the underlying Store so the wrapper
+// satisfies v1.FXCoverageReader as well as v1.FXHistoryReader. The
+// /v1/diagnostics/ingestion endpoint type-asserts to FXCoverageReader
+// at request time; if this delegate is missing, the FX section of
+// the response renders as empty.
+func (r *fxHistoryReader) FXCoverageStats(ctx context.Context) (timescale.FXCoverage, error) {
+	return r.store.FXCoverageStats(ctx)
 }
