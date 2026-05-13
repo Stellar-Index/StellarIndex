@@ -68,6 +68,82 @@ interface Envelope {
   flags: { stale?: boolean };
 }
 
+// REGIONS is the deployment fleet the status page queries. One
+// entry today (r1); r2/r3 join as their deploys land — just append
+// a row and the page renders an extra panel. Each region must
+// expose `/v1/diagnostics/ingestion` (any version of the binary
+// post-rc.51).
+interface RegionDef {
+  name: string;
+  label: string;
+  apiBaseUrl: string;
+}
+
+const REGIONS: RegionDef[] = [
+  {
+    name: 'r1',
+    label: 'Hetzner · Frankfurt',
+    apiBaseUrl: API_BASE_URL,
+  },
+];
+
+// IngestionSnapshot mirrors the wire shape returned by
+// `/v1/diagnostics/ingestion`. Field-for-field with the Go
+// IngestionDiagnostics struct — see
+// `internal/api/v1/diagnostics_ingestion.go`.
+interface IngestionSnapshot {
+  region: { name: string; deployment: string };
+  version: {
+    version: string;
+    build_date: string;
+    commit: string;
+    dirty: string;
+    go_version: string;
+  };
+  ledger: {
+    latest_ledger: number;
+    lag_seconds: number;
+    volume_24h_usd?: string;
+    markets_count_24h: number;
+    assets_indexed: number;
+  };
+  backfill: Array<{
+    decoder: string;
+    ranges_total: number;
+    ranges_active: number;
+    oldest_updated_at?: string;
+    oldest_lag_seconds: number;
+    newest_ledger: number;
+  }>;
+  fx_backfill: {
+    earliest_quote?: string;
+    latest_quote?: string;
+    total_quotes: number;
+    currencies_count: number;
+  };
+  market_cap: {
+    entries_count: number;
+    oldest_fetched_at?: string;
+    newest_fetched_at?: string;
+  };
+  supply: {
+    classic_assets_with_supply: number;
+    sep41_assets_with_supply: number;
+    last_snapshot_at?: string;
+    latest_ledger?: number;
+  };
+  sources: Array<{
+    name: string;
+    class: string;
+    subclass?: string;
+    include_in_vwap: boolean;
+    backfill_safe: boolean;
+    trade_count_24h: number;
+    volume_24h_usd?: string;
+    markets_count_24h: number;
+  }>;
+}
+
 // Public-facing endpoints we surface on the status page.
 // Not auto-derived from the OpenAPI spec because not every
 // endpoint deserves a status row — operator surfaces (`/metrics`,
@@ -311,6 +387,14 @@ export default function StatusPage() {
     IncidentHistoryEntry[]
   >([]);
 
+  // ingestionByRegion is keyed by REGIONS[].name. Each region
+  // polls its own /v1/diagnostics/ingestion at hot cadence and
+  // independently — a r2 outage shouldn't block r1's panel from
+  // refreshing.
+  const [ingestionByRegion, setIngestionByRegion] = useState<
+    Record<string, IngestionSnapshot | null>
+  >({});
+
   useEffect(() => {
     let cancelled = false;
     async function poll() {
@@ -333,6 +417,53 @@ export default function StatusPage() {
     }
     poll();
     const id = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  // Per-region ingestion snapshot. One fetch per region per
+  // POLL_INTERVAL_MS (the backend response has Cache-Control
+  // public, max-age=15 so the underlying load is minimal even
+  // across many viewers). Each region polls independently —
+  // r2 timing out doesn't stall r1's refresh.
+  useEffect(() => {
+    let cancelled = false;
+    async function pollRegion(region: RegionDef) {
+      try {
+        const res = await fetch(
+          `${region.apiBaseUrl}/v1/diagnostics/ingestion`,
+          { cache: 'no-store' },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const env = (await res.json()) as { data: IngestionSnapshot };
+        if (cancelled) return;
+        setIngestionByRegion((prev) => ({
+          ...prev,
+          [region.name]: env.data,
+        }));
+      } catch {
+        if (cancelled) return;
+        // Soft-fail: render the previous snapshot if any, else
+        // an empty-state card. We don't surface this in the
+        // top-level error banner because the /v1/status feed is
+        // the canonical "is the region up" signal — ingestion
+        // diagnostics being temporarily slow shouldn't paint the
+        // whole page red.
+        setIngestionByRegion((prev) =>
+          region.name in prev ? prev : { ...prev, [region.name]: null },
+        );
+      }
+    }
+    for (const r of REGIONS) {
+      pollRegion(r);
+    }
+    const id = setInterval(() => {
+      for (const r of REGIONS) {
+        pollRegion(r);
+      }
+    }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -433,6 +564,10 @@ export default function StatusPage() {
           <ServiceGrid services={status.services} />
           <LatencyStrip latency={status.latency} />
           <FreshnessRow freshness={status.freshness} />
+          <IngestionRegions
+            regions={REGIONS}
+            snapshots={ingestionByRegion}
+          />
           <ActiveIncidents incidents={status.incidents.active} />
           <EndpointMatrix
             endpoints={PUBLIC_ENDPOINTS}
@@ -962,6 +1097,399 @@ function Footer({
       </span>
     </footer>
   );
+}
+
+// IngestionRegions renders one RegionPanel per entry in REGIONS.
+// Today there's just r1 so the page collapses to a single panel;
+// when r2/r3 ship, each gets its own framed block.
+function IngestionRegions({
+  regions,
+  snapshots,
+}: {
+  regions: RegionDef[];
+  snapshots: Record<string, IngestionSnapshot | null>;
+}) {
+  return (
+    <section className="space-y-4">
+      <SectionHeader>Ingestion</SectionHeader>
+      {regions.map((r) => (
+        <RegionPanel key={r.name} region={r} snapshot={snapshots[r.name]} />
+      ))}
+    </section>
+  );
+}
+
+function RegionPanel({
+  region,
+  snapshot,
+}: {
+  region: RegionDef;
+  snapshot: IngestionSnapshot | null | undefined;
+}) {
+  if (!snapshot) {
+    return (
+      <div className="rounded-md border border-surface-line bg-surface p-4 text-sm text-ink-faint">
+        Waiting for first ingestion snapshot from{' '}
+        <span className="font-mono">{region.name}</span>…
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3 rounded-md border border-surface-line bg-surface p-5">
+      <RegionHeader region={region} snapshot={snapshot} />
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <LedgerCard ledger={snapshot.ledger} />
+        <FXBackfillCard fx={snapshot.fx_backfill} />
+        <MarketCapCard mc={snapshot.market_cap} />
+        <SupplyCard supply={snapshot.supply} />
+      </div>
+      <BackfillTable rows={snapshot.backfill} />
+      <SourceHealthTable rows={snapshot.sources} />
+    </div>
+  );
+}
+
+function RegionHeader({
+  region,
+  snapshot,
+}: {
+  region: RegionDef;
+  snapshot: IngestionSnapshot;
+}) {
+  const v = snapshot.version;
+  const commitShort = v.commit ? v.commit.slice(0, 7) : '—';
+  const dirty = v.dirty === 'true';
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-surface-line pb-3">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-sm font-semibold text-ink">
+          {region.name}
+        </span>
+        <span className="text-xs uppercase tracking-wider text-ink-faint">
+          {snapshot.region.deployment}
+        </span>
+        <span className="text-xs text-ink-muted">· {region.label}</span>
+      </div>
+      <div
+        className="font-mono text-xs text-ink-faint"
+        title={`commit ${v.commit}\nbuilt ${v.build_date}\nGo ${v.go_version}`}
+      >
+        {v.version}{' '}
+        <span className="text-ink-muted">
+          @ {commitShort}
+          {dirty && (
+            <span className="ml-1 rounded bg-warn-50 px-1 text-[10px] text-warn-700">
+              dirty
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function LedgerCard({
+  ledger,
+}: {
+  ledger: IngestionSnapshot['ledger'];
+}) {
+  const lagTone =
+    ledger.lag_seconds < 15
+      ? 'ok'
+      : ledger.lag_seconds < 60
+        ? 'warn'
+        : ('bad' as const);
+  const lagColor = {
+    ok: 'text-ok-700',
+    warn: 'text-warn-700',
+    bad: 'text-bad-700',
+  }[lagTone];
+  return (
+    <Card title="Live ledger">
+      <Row label="Latest ledger" value={ledger.latest_ledger.toLocaleString()} mono />
+      <Row
+        label="Lag from tip"
+        value={`${ledger.lag_seconds}s`}
+        valueClass={lagColor}
+        mono
+      />
+      <Row
+        label="24h volume"
+        value={ledger.volume_24h_usd ? formatUSD(ledger.volume_24h_usd) : '—'}
+      />
+      <Row label="Markets (24h)" value={ledger.markets_count_24h.toLocaleString()} />
+      <Row label="Assets indexed" value={ledger.assets_indexed.toLocaleString()} />
+    </Card>
+  );
+}
+
+function FXBackfillCard({
+  fx,
+}: {
+  fx: IngestionSnapshot['fx_backfill'];
+}) {
+  return (
+    <Card title="FX backfill (fx_quotes)">
+      <Row
+        label="Coverage"
+        value={
+          fx.earliest_quote && fx.latest_quote
+            ? `${fx.earliest_quote} → ${fx.latest_quote}`
+            : '—'
+        }
+        mono
+      />
+      <Row label="Currencies" value={fx.currencies_count.toLocaleString()} />
+      <Row label="Total quotes" value={fx.total_quotes.toLocaleString()} />
+    </Card>
+  );
+}
+
+function MarketCapCard({ mc }: { mc: IngestionSnapshot['market_cap'] }) {
+  const ageS = mc.newest_fetched_at
+    ? Math.floor((Date.now() - new Date(mc.newest_fetched_at).getTime()) / 1000)
+    : null;
+  const ageTone =
+    ageS == null
+      ? 'neutral'
+      : ageS < 600
+        ? 'ok'
+        : ageS < 1800
+          ? 'warn'
+          : ('bad' as const);
+  const ageColor = {
+    ok: 'text-ok-700',
+    warn: 'text-warn-700',
+    bad: 'text-bad-700',
+    neutral: 'text-ink-faint',
+  }[ageTone];
+  return (
+    <Card title="Market cap cache (CoinGecko)">
+      <Row label="Entries" value={mc.entries_count.toLocaleString()} />
+      <Row
+        label="Newest fetch"
+        value={ageS == null ? '—' : `${formatAge(ageS)} ago`}
+        valueClass={ageColor}
+        mono
+      />
+      <Row
+        label="Oldest fetch"
+        value={
+          mc.oldest_fetched_at
+            ? `${formatAge(
+                Math.floor(
+                  (Date.now() - new Date(mc.oldest_fetched_at).getTime()) / 1000,
+                ),
+              )} ago`
+            : '—'
+        }
+        mono
+      />
+    </Card>
+  );
+}
+
+function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
+  const ageS = supply.last_snapshot_at
+    ? Math.floor((Date.now() - new Date(supply.last_snapshot_at).getTime()) / 1000)
+    : null;
+  return (
+    <Card title="Supply observers">
+      <Row label="Classic assets" value={supply.classic_assets_with_supply.toLocaleString()} />
+      <Row label="SEP-41 assets" value={supply.sep41_assets_with_supply.toLocaleString()} />
+      <Row
+        label="Latest snapshot"
+        value={ageS == null ? '—' : `${formatAge(ageS)} ago`}
+        mono
+      />
+    </Card>
+  );
+}
+
+function BackfillTable({
+  rows,
+}: {
+  rows: IngestionSnapshot['backfill'];
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-md border border-surface-line bg-surface-subtle p-3 text-xs text-ink-faint">
+        No active backfill — every decoder caught up to tip.
+      </div>
+    );
+  }
+  return (
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+        Backfill by decoder
+      </h3>
+      <div className="overflow-hidden rounded-md border border-surface-line">
+        <table className="w-full text-xs">
+          <thead className="bg-surface-subtle text-ink-faint">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Decoder</th>
+              <th className="px-3 py-2 text-right font-medium">Ranges</th>
+              <th className="px-3 py-2 text-right font-medium">Active</th>
+              <th className="px-3 py-2 text-right font-medium">Newest ledger</th>
+              <th className="px-3 py-2 text-right font-medium">Oldest lag</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-line">
+            {rows.map((r) => (
+              <tr key={r.decoder}>
+                <td className="px-3 py-2 font-mono break-all">{r.decoder}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {r.ranges_total}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {r.ranges_active > 0 ? (
+                    <span className="text-warn-700">{r.ranges_active}</span>
+                  ) : (
+                    <span className="text-ok-700">0</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right font-mono tabular-nums">
+                  {r.newest_ledger > 0 ? r.newest_ledger.toLocaleString() : '—'}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {r.oldest_lag_seconds > 0
+                    ? formatAge(r.oldest_lag_seconds)
+                    : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SourceHealthTable({
+  rows,
+}: {
+  rows: IngestionSnapshot['sources'];
+}) {
+  return (
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+        Sources — {rows.length} registered
+      </h3>
+      <div className="overflow-hidden rounded-md border border-surface-line">
+        <table className="w-full text-xs">
+          <thead className="bg-surface-subtle text-ink-faint">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Source</th>
+              <th className="px-3 py-2 text-left font-medium">Class</th>
+              <th className="px-3 py-2 text-right font-medium">Trades 24h</th>
+              <th className="px-3 py-2 text-right font-medium">Volume 24h</th>
+              <th className="px-3 py-2 text-right font-medium">Markets</th>
+              <th className="px-3 py-2 text-center font-medium">VWAP</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-line">
+            {rows.map((r) => {
+              const classLabel = r.subclass ? `${r.class}/${r.subclass}` : r.class;
+              const silent = r.include_in_vwap && r.trade_count_24h === 0;
+              return (
+                <tr key={r.name}>
+                  <td className="px-3 py-2 font-mono">{r.name}</td>
+                  <td className="px-3 py-2 text-ink-muted">{classLabel}</td>
+                  <td
+                    className={`px-3 py-2 text-right tabular-nums ${
+                      silent ? 'text-bad-700' : ''
+                    }`}
+                  >
+                    {r.trade_count_24h.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                    {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                    {r.markets_count_24h.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {r.include_in_vwap ? (
+                      <span className="text-ok-700">✓</span>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Card({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-surface-line bg-surface-subtle p-4">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+        {title}
+      </h3>
+      <dl className="space-y-1.5 text-sm">{children}</dl>
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  mono,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  valueClass?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-xs text-ink-muted">{label}</dt>
+      <dd
+        className={`tabular-nums ${mono ? 'font-mono text-xs' : ''} ${
+          valueClass ?? ''
+        }`}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+// formatUSD renders a backend-shaped decimal string (e.g.
+// "4382354579.48040914") as a compact human form ("$4.38B").
+// The backend keeps full precision via ADR-0003 stringified
+// numerics; the UI rounds for display.
+function formatUSD(s: string): string {
+  const n = Number(s);
+  if (!Number.isFinite(n) || n === 0) return '—';
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+// formatAge turns seconds into "12s" / "5m" / "3h" / "2d".
+function formatAge(s: number): string {
+  if (!Number.isFinite(s) || s < 0) return '—';
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {

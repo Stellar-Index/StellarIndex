@@ -17,6 +17,16 @@ against.
 
 ### Added
 
+- **Status page — per-region "Ingestion" section.** Polls each
+  region's `/v1/diagnostics/ingestion` every 30s and renders a
+  panel with: binary version + commit, live ledger card (latest,
+  lag, 24h volume, indexed markets/assets), FX backfill coverage
+  (date range, currencies, total quotes), CoinGecko market-cap
+  cache state (entries, newest/oldest fetch age), supply observer
+  counts, per-decoder backfill table (ranges total/active, oldest
+  lag), and per-source health table joined with trailing-24h
+  trades/volume/markets. Region list is a single `REGIONS` const —
+  r2/r3 join by appending a row, no other code changes needed.
 - **`GET /v1/diagnostics/ingestion`** — single-fetch ingestion
   snapshot for the region. Composes: region label, binary version,
   live ledger tip + lag, per-decoder backfill state (ranges
