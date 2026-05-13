@@ -85,6 +85,7 @@ func init() {
 
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
+		AggregatorSupplyRefreshDurationSeconds,
 	)
 }
 
@@ -887,6 +888,30 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, no_ledger, no_observation, compute_error, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
+)
+
+// AggregatorSupplyRefreshDurationSeconds — latency histogram for
+// the supply.Refresher.Tick call per supply-refresh cycle. Pairs
+// with the per-asset_key counter above; this metric labels by
+// outcome only (NOT asset_key) to keep cardinality manageable
+// when many assets are watched.
+//
+// Tick does Postgres reads (ledger lookup + per-component
+// freshness queries) plus a Postgres write (snapshot insert).
+// Steady-state ~50-200 ms; a p99 climb past 1 s typically means
+// the snapshot inserter is contending with another writer or one
+// of the per-component freshness readers fell off its index.
+//
+// Buckets span 10 ms → 30 s. The per-tick log line emitted by
+// supply.Refresher.Tick names the asset; correlate from the
+// histogram + log timestamp when per-asset latency matters.
+var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "ratesengine_aggregator_supply_refresh_duration_seconds",
+		Help:    "Supply-snapshot refresh tick latency, labelled by outcome. Asset-level granularity available via per-tick log timestamps.",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
 )
 
 // AggregatorConfidenceComputeTotal — counter of confidence-score
