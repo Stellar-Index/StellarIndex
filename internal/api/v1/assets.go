@@ -379,8 +379,18 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	//                   ordered) THEN classic_assets via volume-desc.
 	//                   See handleAssetListUnified.
 	assetClass := normaliseAssetClass(r.URL.Query().Get("asset_class"))
+	// Network can compose with the class filter — the redesign-spec
+	// explorer surfaces "Network: <chain>" as a sub-dropdown when
+	// the class chip is Blockchain or Stablecoin. Empty / "all" /
+	// "stellar" returns the catalogue subset for that network +
+	// class; explicit non-Stellar narrows to entries with a
+	// matching networks[] row (USDC on ethereum, XLM on stellar,
+	// etc.). Read here so handleAssetListFromCatalogue can apply
+	// it; fiat catalogue entries have no networks so the filter is
+	// effectively a no-op for them.
+	classNetwork := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("network")))
 	if assetClass == "fiat" || assetClass == "stablecoin" || assetClass == "crypto" {
-		s.handleAssetListFromCatalogue(w, r, assetClass, limit, cursor)
+		s.handleAssetListFromCatalogue(w, r, assetClass, classNetwork, limit, cursor)
 		return
 	}
 
@@ -674,16 +684,44 @@ func normaliseAssetClass(raw string) string {
 //
 // Pagination via offset cursor — the result set is bounded at
 // ≤45 catalogue rows per class, so a simple offset is sufficient.
-func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Request, class string, limit int, cursor string) {
+func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Request, class, network string, limit int, cursor string) {
 	if s.verifiedCurrencies == nil {
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
 	matched := filterCatalogueByClass(s.verifiedCurrencies.All(), currency.AssetClass(class))
+	// Network sub-filter — when set to a specific chain, narrow to
+	// catalogue entries with a matching networks[] row. "all" /
+	// "" passes through. Fiat catalogue entries have empty
+	// networks so a non-empty network filter would drop them all;
+	// that's the spec's intent (fiat class hides the Network
+	// dropdown in the UI, so this is an API-direct-callers path).
+	if network != "" && network != "all" {
+		matched = filterCatalogueByNetwork(matched, network)
+	}
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := projectCatalogueRows(matched, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	writeCataloguePage(w, rows, limit, cursor)
+}
+
+// filterCatalogueByNetwork narrows the input slice to entries
+// whose networks[] contains a row matching `network` (case-
+// insensitive). Used by the asset_class + network combo on
+// /v1/assets to power the explorer's "Blockchain on Stellar" /
+// "Stablecoin on Ethereum" / etc. drilldowns.
+func filterCatalogueByNetwork(entries []*currency.VerifiedCurrency, network string) []*currency.VerifiedCurrency {
+	target := strings.ToLower(network)
+	out := make([]*currency.VerifiedCurrency, 0, len(entries))
+	for _, vc := range entries {
+		for _, n := range vc.Networks {
+			if strings.EqualFold(n.Network, target) {
+				out = append(out, vc)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // filterCatalogueByClass returns the catalogue entries matching the
