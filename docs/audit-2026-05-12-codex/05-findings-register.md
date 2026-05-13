@@ -513,8 +513,11 @@ Recent waves closed by code (chronological):
 | F-1288 | medium | Prometheus TSDB disk-space preflight is documented as an assertion but is configured to ignore failures | `configs/ansible/roles/prometheus/tasks/01-preflight.yml`; `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml` | XFI-0080; EV-0236; EV-0241 | fixed | ops/observability/capacity | Current source replaces the ignored mount-fact assertion with a blocking `df --output=avail -B1 /var` check against the documented 20 GB threshold. |
 | F-1289 | medium | Loki storage prerequisites are documented as preflight checks but the server preflight does not verify MinIO bucket/access or `/var` capacity | `configs/ansible/roles/loki/tasks/server-01-preflight.yml`; `configs/ansible/roles/loki/defaults/main.yml`; `configs/ansible/roles/loki/README.md`; `docs/architecture/loki-ansible-role-design-note.md` | XFI-0081; EV-0239 | fixed | ops/observability/logging | Defaults say the role asserts the `loki-chunks` bucket exists at preflight, the README requires 50 GB free on `/var`, and the design note says the role creates/checks the bucket and asserts 50 GB. The actual server preflight checks only OS, inventory groups, time sync, and the Loki user. |
 | F-1290 | medium | Prometheus README still documents loopback-only UI access and a 9094-only firewall after the role moved 9090/9093 to internal network listeners | `configs/ansible/roles/prometheus/README.md`; `configs/ansible/roles/prometheus/defaults/main.yml`; `configs/ansible/roles/prometheus/tasks/06-firewall.yml` | XFI-0082; EV-0242 | fixed | ops/docs/observability/security | Defaults now bind Prometheus and Alertmanager to `0.0.0.0:9090/9093`, and the firewall task opens 9090, 9093, and 9094 to internal CIDRs. The README still labels the UI loopback-only and says `06-firewall.yml` opens only 9094, so operator security/access docs no longer match the role. |
-| F-1291 | high | Archival-node role installs MinIO, `mc`, and node_exporter from upstream URLs without enforced checksums | `configs/ansible/roles/archival-node/tasks/09-minio.yml`; `configs/ansible/roles/archival-node/tasks/10-observability.yml`; `configs/ansible/roles/archival-node/defaults/main.yml`; archival-node bring-up docs | XFI-0083; EV-0244; EV-0247 | open | ops/security/supply-chain | Install tasks now assert and use SHA-256 variables for MinIO, `mc`, and node_exporter, and `mc` now uses a versioned archive URL. The finding narrows to missing defaults/operator documentation for the required `minio_release_sha256`, `mc_version`, `mc_release_sha256`, and `node_exporter_release_sha256` inventory variables. |
+| F-1291 | high | Archival-node role installs MinIO, `mc`, and node_exporter from upstream URLs without enforced checksums | `configs/ansible/roles/archival-node/tasks/09-minio.yml`; `configs/ansible/roles/archival-node/tasks/10-observability.yml`; `configs/ansible/roles/archival-node/defaults/main.yml`; archival-node bring-up docs | XFI-0083; EV-0244; EV-0247 | fixed | ops/security/supply-chain | Install tasks now assert and use SHA-256 variables for MinIO, `mc`, and node_exporter, and `mc` now uses a versioned archive URL. The finding narrows to missing defaults/operator documentation for the required `minio_release_sha256`, `mc_version`, `mc_release_sha256`, and `node_exporter_release_sha256` inventory variables. |
 | F-1292 | medium | Active core-lag runbook tells operators to cross-check via Horizon despite ADR-0001 banning Horizon references in runbooks | `docs/operations/runbooks/core-lag.md`; `docs/adr/0001-horizon-deprecated.md`; `README.md`; `CLAUDE.md` | XFI-0084; EV-0245; EV-0247 | fixed | ops/docs/architecture | `core-lag.md` no longer instructs operators to cross-check via Horizon; Step 1 now uses stellar.expert or a public stellar-rpc endpoint and records that the prior Horizon wording was removed for ADR-0001. |
+| F-1293 | high | Redis Sentinel role installs `redis_exporter` from GitHub without an enforced checksum | `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`; `configs/ansible/roles/redis-sentinel/defaults/main.yml`; `configs/ansible/roles/redis-sentinel/README.md`; `configs/ansible/roles/prometheus/templates/prometheus.yml.j2` | XFI-0085; EV-0249 | open | ops/security/supply-chain/redis | `redis_exporter_version` is pinned to `v1.66.0`, but `tasks/07-monitoring.yml` downloads the release tarball with no `checksum:`, extracts it, and copies the resulting binary to `/usr/local/bin/redis_exporter`. |
+| F-1294 | medium | CI installs promtool and gitleaks through unauthenticated curl-to-tar pipelines before trusting their results | `.github/workflows/ci.yml`; `scripts/ci/lint-actions-pinning.sh`; GitHub Actions repository workflow-permission setting | XFI-0086; EV-0250; EV-0252 | open | ci/security/supply-chain | Promtool now downloads to a file and verifies `PROM_TARBALL_SHA256`, but the gitleaks step still pipes its GitHub release archive directly into `tar` without checking the newly declared `GITLEAKS_TARBALL_SHA256` secret. |
+| F-1295 | high | Redis Sentinel role writes the Redis password into a world-readable `redis_exporter.service` unit | `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`; `configs/ansible/roles/redis-sentinel/defaults/main.yml`; Redis ACL templates; Prometheus Redis exporter scrape path | XFI-0087; EV-0253 | open | ops/security/secrets/redis | The role renders `/etc/systemd/system/redis_exporter.service` with mode `0644` and inline `Environment=REDIS_PASSWORD={{ redis_password }}`. Any local user able to read unit files can recover the Redis/Sentinel password, and Ansible can also expose the templated content unless the task is made secret-safe. |
 
 ## Finding Template
 
@@ -3365,3 +3368,81 @@ Observed: fixed during the moving-workspace recheck. `core-lag.md` no longer tel
 Impact: fixed for the reviewed active runbook path. The remaining `Horizon` text in `core-lag.md` is explanatory correction history, not an operator instruction or command dependency.
 
 Remediation direction: keep future runbook edits on stellar.expert/stellar-rpc or an explicitly approved non-Horizon source; continue the invariant search across active operations docs during closure sweeps.
+
+### F-1293. Redis Sentinel role installs `redis_exporter` from GitHub without an enforced checksum
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`
+- `configs/ansible/roles/redis-sentinel/defaults/main.yml`
+- `configs/ansible/roles/redis-sentinel/README.md`
+- `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`
+
+Evidence:
+
+- `XFI-0085`
+- `EV-0249`
+
+Expected: Redis HA observability should install a verified `redis_exporter` artifact, and the role's documented inventory/defaults path should expose any required digest.
+
+Observed: `defaults/main.yml` pins `redis_exporter_version: "v1.66.0"`, and the Prometheus role scrapes `redis_exporter` on every `redis_cluster` host. But `tasks/07-monitoring.yml` downloads `redis_exporter-{{ redis_exporter_version }}.linux-amd64.tar.gz` from GitHub with no `checksum:`, extracts it, and copies the resulting binary into `/usr/local/bin/redis_exporter`.
+
+Impact: high. A compromised release download path becomes privileged code execution on cache hosts and can also blind Redis/Sentinel monitoring. This is the same supply-chain class as the monitoring and archival-node checksum findings, but on the Redis HA layer.
+
+Remediation direction: add required `redis_exporter_release_sha256` guidance to defaults/operator docs, assert a real 64-character digest when `redis_exporter_version` is enabled, and wire `get_url.checksum`.
+
+### F-1294. CI installs promtool and gitleaks through unauthenticated curl-to-tar pipelines before trusting their results
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `.github/workflows/ci.yml`
+- `scripts/ci/lint-actions-pinning.sh`
+- GitHub Actions repository workflow-permission setting
+
+Evidence:
+
+- `XFI-0086`
+- `EV-0250`
+- `EV-0252`
+
+Expected: CI jobs that install external tools and then trust their verdicts should authenticate the downloaded artifacts or use a pinned action/container with reviewed digest semantics.
+
+Observed: narrowed during the moving-workspace recheck. `.github/workflows/ci.yml` now declares `PROM_TARBALL_SHA256` and `GITLEAKS_TARBALL_SHA256`, and the promtool installer downloads `prometheus-${PROM_VERSION}.linux-amd64.tar.gz` to `/tmp/prom.tar.gz` and verifies `PROM_TARBALL_SHA256` before extraction. The gitleaks step still pipes `gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz` directly into `tar -xz -C /usr/local/bin` and never uses `GITLEAKS_TARBALL_SHA256`. The repository-level workflow token default is read-only, so this is not a direct write-token takeover, but the tools' outputs gate rule validation and secret scanning.
+
+Impact: medium. The remaining compromised download path can make CI skip/report false negatives in `gitleaks`, undermining secret hygiene. Because the runner token is read-only and promtool is now verified, this is lower blast radius than production-host binary installs.
+
+Remediation direction: use `GITLEAKS_TARBALL_SHA256` the same way the promtool step uses `PROM_TARBALL_SHA256`: download to a file, run `sha256sum -c`, then extract. Keep workflow token permissions read-only.
+
+### F-1295. Redis Sentinel role writes the Redis password into a world-readable `redis_exporter.service` unit
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`
+- `configs/ansible/roles/redis-sentinel/defaults/main.yml`
+- `configs/ansible/roles/redis-sentinel/templates/users.acl.j2`
+- `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`
+
+Evidence:
+
+- `XFI-0087`
+- `EV-0253`
+
+Expected: Redis credentials should be rendered only into root/service-readable secret files or Redis config files with restrictive modes, and Ansible tasks that template those secrets should avoid exposing rendered content.
+
+Observed: `tasks/07-monitoring.yml` writes `/etc/systemd/system/redis_exporter.service` with `mode: "0644"` and inline `Environment=REDIS_PASSWORD={{ redis_password }}`. Systemd unit files under `/etc/systemd/system` are generally readable by local users, so the same password used for Redis/Sentinel and the `redis_exporter` ACL user is exposed outside the intended service boundary.
+
+Impact: high. A low-privilege local user or compromised unprivileged process on a cache host can read the Redis password from the unit file and authenticate to Redis/Sentinel according to the role's current shared-password model. It also increases accidental disclosure through unit-file collection or Ansible diff/log output.
+
+Remediation direction: move the exporter password into a root-owned environment file such as `/etc/default/redis_exporter` with `0600` or `0640` permissions and `no_log: true`, reference it with `EnvironmentFile=`, and consider separating the exporter ACL password from the application Redis password.
