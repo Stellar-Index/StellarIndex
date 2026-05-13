@@ -6,6 +6,16 @@ status: living procedure
 
 # FX history empty / `fx_quotes` table missing
 
+## At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Trigger | Customer report: "FX history is empty" / operator-noticed `history_1y: 0` on `/v1/assets/<fiat>`. No specific Prometheus alert fires today — surfaces as a recurring WARN in the API log. |
+| Severity | P3 (data-quality, not data-loss) |
+| Detected by | API log: `forex: fx_quotes persist failed ... pq: relation "fx_quotes" does not exist` |
+| Typical MTTR | 5–15 min (one-shot operator action: apply migration + restart) |
+| Impact | FX history endpoints serve `history_1y: 0` and `history_all: 0` for every ticker. `history_7d` populates normally because it reads from a different surface. The aggregator's stablecoin-fiat proxy is unaffected (uses `[trades].usd_pegged_classic_assets`, not `fx_quotes`). |
+
 Companion to [`db-disk-full.md`](db-disk-full.md) and
 [`redis-write-blocked-disk-full.md`](redis-write-blocked-disk-full.md).
 Different shape: a database migration that ships in the repo

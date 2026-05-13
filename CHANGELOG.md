@@ -17,6 +17,29 @@ against.
 
 ### Documentation
 
+- Four alert runbooks normalised to the wave-78 template shape
+  (`## At a glance` + `## Related` are universally required —
+  these four were the only alert-shaped runbooks missing one or
+  both):
+    - `external-poller-stale.md` — was the most-rotten of the
+      four (no frontmatter at all + idiosyncratic `**Alert:**`
+      bold-line shape). Added frontmatter, At-a-glance table,
+      cross-reference to the wave-70 vendor-specific 429 matrix
+      in `external-poller-error-rate-high.md`. Section names
+      normalised: `What it means → Symptoms`,
+      `Triage → Quick diagnosis`,
+      `Common scenarios + fixes → Mitigation`,
+      `Related runbooks → Related`. The wave-65 `Why this
+      exists` section already existed; preserved verbatim.
+    - `fx-history-missing.md` — added At-a-glance table.
+    - `redis-write-blocked-disk-full.md` — added At-a-glance
+      table including the alert pairing
+      (`ratesengine_aggregator_cache_write_errors`).
+    - `supply-snapshot-never-initialized.md` — renamed
+      `## See also` → `## Related` and expanded entries to
+      include the `internal/supply/refresher.go` implementation
+      back-link plus the F-1236 `OutcomeKindMissingFreshness`
+      cross-reference.
 - F-1204 sweep widened (wave 80) — found seven more operator-
   facing surfaces still referencing the rc.48-removed `/v1/coins`
   and `/v1/currencies` routes after the original close (which

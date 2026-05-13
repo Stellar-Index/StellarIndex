@@ -6,6 +6,16 @@ status: living procedure
 
 # Redis writes blocked — disk full → MISCONF stop-writes
 
+## At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `ratesengine_aggregator_cache_write_errors` (P1 / page) |
+| Severity | P1 |
+| Detected by | Prometheus rule `ratesengine_aggregator_cache_write_errors` (alerts on `rate(ratesengine_aggregator_vwap_cache_write_errors_total[5m]) > 0` for ≥ 2 min) in `deploy/monitoring/rules/aggregator.yml` |
+| Typical MTTR | 5–10 min once root cause is confirmed (free disk space → Redis re-enables writes automatically) |
+| Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written. Customer-visible. |
+
 Companion to [`db-disk-full.md`](db-disk-full.md). Different
 mechanism, same root cause: when `/` fills up, Redis can't write
 RDB snapshots; with the default `stop-writes-on-bgsave-error yes`

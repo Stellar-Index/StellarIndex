@@ -138,9 +138,19 @@ curl -s 'https://api.ratesengine.net/v1/assets/native' | jq '.data.circulating_s
 # Expect a numeric string, not null.
 ```
 
-## See also
+## Related
 
-- [supply-snapshot-stale.md](supply-snapshot-stale.md) — sibling alert, fires when a previously-working pipeline goes stale.
-- [supply-refresh-stalled.md](supply-refresh-stalled.md) — sibling alert for Path B (goroutine).
+- [`supply-snapshot-stale.md`](supply-snapshot-stale.md) —
+  sibling alert: fires when a previously-working pipeline goes
+  stale. Both alerts cover the same data-quality surface; this
+  runbook is the never-initialised case (cold deploy), the
+  sibling is the steady-state-degraded case.
+- [`supply-refresh-stalled.md`](supply-refresh-stalled.md) —
+  sibling alert for Path B (goroutine refresher) rather than
+  Path A (one-shot timer).
+- `internal/supply/refresher.go` — implementation; the
+  `OutcomeKindMissingFreshness` outcome from F-1236 wave 60
+  surfaces here when the operator-opt-in
+  `[supply].strict_freshness_required` is enabled.
 - [docs/architecture/supply-pipeline.md](../../architecture/supply-pipeline.md) — the three-algorithm design.
 - [docs/adr/0011-supply-algorithm.md](../../adr/0011-supply-algorithm.md) — original ADR.
