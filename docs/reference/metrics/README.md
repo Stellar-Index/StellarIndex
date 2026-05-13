@@ -662,6 +662,31 @@ dashboards can distinguish "mismatch fired and the run aborted at
 second X" from "chunk aborted for an unrelated reason (canceled
 context)".
 
+### `ratesengine_aggregator_supply_refresh_duration_seconds`
+
+Histogram, label `outcome` (matches the per-asset_key counter's
+outcome enum: `ok` / `no_ledger` / `no_observation` /
+`compute_error` / `write_error` / `stale_component` /
+`missing_freshness`).
+
+Latency of the supply.Refresher.Tick call per supply-refresh
+cycle. Pairs with `_aggregator_supply_refresh_total{asset_key,
+outcome}` — that one tells you which assets refreshed + how often
+they succeeded; this one tells you how long each tick took.
+
+**Why no `asset_key` label here?** Histograms multiply cardinality
+by buckets; pairing `asset_key × outcome × 12 buckets` blows up
+fast on deployments watching many assets. Operators correlate
+per-asset latency from the per-tick log line emitted by
+`supply.Refresher.Tick` (timestamps + asset_key) when needed.
+
+Steady-state ~50-200 ms per tick. A p99 climb past 1 s typically
+means the snapshot inserter is contending with another writer or
+a per-component freshness reader fell off its index. Buckets span
+10 ms → 30 s. No alert wired today; the existing
+`ratesengine_supply_snapshot_*` alert family covers freshness
++ never-initialised paths.
+
 ### `ratesengine_divergence_refresh_duration_seconds`
 
 Histogram, label `outcome` (`ok` / `no_vwap` / `parse_error` /
@@ -745,6 +770,11 @@ per-key rate-limit lift failure.
 
 ## Changelog
 
+- 2026-05-13 — added supply-refresh latency histogram
+  (`ratesengine_aggregator_supply_refresh_duration_seconds`).
+  Pairs with the existing per-asset_key `_total` counter;
+  histogram labels by outcome only to keep cardinality bounded
+  on deployments watching many assets.
 - 2026-05-13 — added divergence-refresh latency histogram
   (`ratesengine_divergence_refresh_duration_seconds`). Pairs
   with the existing `_total` counter to give operators per-pair

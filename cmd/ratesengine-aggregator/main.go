@@ -691,8 +691,15 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.L
 // per-asset bootstrap progress + isolate failure modes per asset.
 func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration, assetKey string) {
 	tick := func() {
+		// Time the full Tick — Postgres reads (ledger lookup +
+		// per-component freshness queries) + Postgres write
+		// (snapshot insert). Histogram is labelled by outcome
+		// only (not asset_key) to keep cardinality bounded
+		// across operator deployments that watch many assets.
+		start := time.Now()
 		out := r.Tick(ctx)
 		obs.AggregatorSupplyRefreshTotal.WithLabelValues(assetKey, string(out.Kind)).Inc()
+		obs.AggregatorSupplyRefreshDurationSeconds.WithLabelValues(string(out.Kind)).Observe(time.Since(start).Seconds())
 	}
 
 	tick() // immediate first refresh

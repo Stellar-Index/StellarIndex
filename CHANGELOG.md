@@ -18,6 +18,20 @@ against.
 ### Added
 
 - New observability metric
+  `ratesengine_aggregator_supply_refresh_duration_seconds`
+  (Histogram, label `outcome`). Same wave-88/89 pattern applied
+  to a third worker — the supply.Refresher.Tick goroutine.
+  Pairs with the existing per-asset_key `_total` counter; this
+  histogram intentionally drops the `asset_key` label to keep
+  cardinality bounded on deployments watching many assets
+  (operators correlate per-asset latency via the per-tick log
+  timestamps when needed). Steady-state ~50-200 ms per tick;
+  buckets span 10 ms → 30 s. Wired in
+  `cmd/ratesengine-aggregator/main.go::runSupplyRefresh`. Closes
+  the latency-gap on the third (and final) operationally-meaningful
+  IO-heavy goroutine worker after the wave-88 customer-webhook
+  delivery and wave-89 divergence refresh metrics.
+- New observability metric
   `ratesengine_divergence_refresh_duration_seconds` (Histogram,
   label `outcome`). Per-pair divergence-refresh latency; pairs
   with the existing `_total` counter (counter says how often /
