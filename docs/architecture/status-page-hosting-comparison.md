@@ -14,16 +14,19 @@ related:
 > **Superseded note (2026-05-13).** When this doc was originally
 > written (2026-04-30) it recommended Instatus. The project
 > ultimately shipped something different — a self-hosted static
-> Next.js app under `web/status/` deploying to Cloudflare Pages,
-> with incidents authored as Markdown files under
+> Next.js app under [`web/status/`](../../web/status/README.md)
+> deploying to Cloudflare Pages, with incidents authored as
+> Markdown files under
 > `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`. The shipped
 > approach is closest to "cstate" in this doc's matrix; see the
 > [§Why we ended up at "cstate-shaped"](#why-we-ended-up-at-cstate-shaped)
 > section at the bottom for what changed in the analysis.
 >
 > The matrix and the original Instatus recommendation are kept
-> below as a record of the decision process. For "how to actually
-> open an incident today" see
+> below as a record of the decision process. For the shipped
+> implementation's stack + dev/build/deploy reference see
+> [`web/status/README.md`](../../web/status/README.md); for "how
+> to actually open an incident today" see
 > [`runbooks/sev-status-page-update.md`](../operations/runbooks/sev-status-page-update.md).
 
 Decision-support doc — pick a hosting option from §Recommendation
@@ -232,8 +235,9 @@ implementation.
 
 ### What was actually built
 
-`web/status/` — a Next.js 15 static export deploying to Cloudflare
-Pages on every push to `main`. Incidents are Markdown files under
+[`web/status/`](../../web/status/README.md) — a Next.js 15 static
+export deploying to Cloudflare Pages on every push to `main`.
+Incidents are Markdown files under
 `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, embedded into the
 API binary via `go:embed` so `ratesengine-ops emit-incident` can
 fire customer-webhook fan-out (`incident.sev1` /
