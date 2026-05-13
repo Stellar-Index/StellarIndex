@@ -53,7 +53,11 @@ concurrency:
 
 permissions:
   contents: read           # download release artefacts
-  id-token: write          # future: keyless attestation
+  # F-1296 (codex audit-2026-05-13): `id-token: write` removed.
+  # No step currently consumes the OIDC JWT (keyless attestation
+  # is planned but not wired yet); a compromised step in this
+  # deploy job shouldn't be able to mint an OIDC token. Add it
+  # back in the SAME PR that wires the attestation step.
 
 jobs:
   deploy:
