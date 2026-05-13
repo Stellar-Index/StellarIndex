@@ -115,6 +115,16 @@ interface IngestionSnapshot {
     oldest_lag_seconds: number;
     newest_ledger: number;
   }>;
+  backfill_coverage: Array<{
+    source: string;
+    applies: boolean;
+    genesis_ledger?: number;
+    earliest_ledger?: number;
+    latest_ledger?: number;
+    trade_count: number;
+    coverage_pct?: number;
+  }>;
+  backfill_coverage_as_of?: string;
   fx_backfill: {
     earliest_quote?: string;
     latest_quote?: string;
@@ -1143,6 +1153,10 @@ function RegionPanel({
         <MarketCapCard mc={snapshot.market_cap} />
         <SupplyCard supply={snapshot.supply} />
       </div>
+      <BackfillCoverageTable
+        rows={snapshot.backfill_coverage}
+        asOf={snapshot.backfill_coverage_as_of}
+      />
       <BackfillTable rows={snapshot.backfill} />
       <SourceHealthTable rows={snapshot.sources} />
     </div>
@@ -1303,6 +1317,105 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
         mono
       />
     </Card>
+  );
+}
+
+function BackfillCoverageTable({
+  rows,
+  asOf,
+}: {
+  rows: IngestionSnapshot['backfill_coverage'];
+  asOf?: string;
+}) {
+  if (!rows || rows.length === 0) {
+    return (
+      <div className="rounded-md border border-warn-500/30 bg-warn-50 p-3 text-xs text-warn-700">
+        Coverage snapshot pending — first refresh runs ~30s after process
+        start, then every 5 min.
+      </div>
+    );
+  }
+  const onChain = rows.filter((r) => r.applies);
+  const offChain = rows.filter((r) => !r.applies);
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-faint">
+          Coverage — ledger genesis → tip
+        </h3>
+        {asOf && (
+          <span className="text-[10px] text-ink-faint">
+            snapshot {timeSince(asOf)} ago
+          </span>
+        )}
+      </div>
+      <div className="overflow-hidden rounded-md border border-surface-line">
+        <table className="w-full text-xs">
+          <thead className="bg-surface-subtle text-ink-faint">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Source</th>
+              <th className="px-3 py-2 text-right font-medium">Genesis</th>
+              <th className="px-3 py-2 text-right font-medium">Earliest</th>
+              <th className="px-3 py-2 text-right font-medium">Latest</th>
+              <th className="px-3 py-2 text-right font-medium">Coverage</th>
+              <th className="px-3 py-2 text-right font-medium">Trades</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-line">
+            {onChain.map((r) => {
+              const pct = (r.coverage_pct ?? 0) * 100;
+              const tone = pct >= 99 ? 'ok' : pct >= 50 ? 'warn' : ('bad' as const);
+              const colors = {
+                ok: 'bg-ok-500 text-ok-700',
+                warn: 'bg-warn-500 text-warn-700',
+                bad: 'bg-bad-500 text-bad-700',
+              };
+              return (
+                <tr key={r.source}>
+                  <td className="px-3 py-2 font-mono">{r.source}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-muted">
+                    {r.genesis_ledger?.toLocaleString() ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">
+                    {r.earliest_ledger?.toLocaleString() ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">
+                    {r.latest_ledger?.toLocaleString() ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="inline-flex items-center justify-end gap-2">
+                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-line">
+                        <div
+                          className={`h-full ${colors[tone].split(' ')[0]}`}
+                          style={{ width: `${Math.max(2, pct)}%` }}
+                        />
+                      </div>
+                      <span className={`tabular-nums ${colors[tone].split(' ')[1]}`}>
+                        {pct.toFixed(1)}%
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                    {r.trade_count.toLocaleString()}
+                  </td>
+                </tr>
+              );
+            })}
+            {offChain.map((r) => (
+              <tr key={r.source} className="text-ink-muted">
+                <td className="px-3 py-2 font-mono">{r.source}</td>
+                <td className="px-3 py-2 text-right text-[10px] italic" colSpan={4}>
+                  off-chain — no Stellar ledger context
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {r.trade_count.toLocaleString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

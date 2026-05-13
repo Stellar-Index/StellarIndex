@@ -130,6 +130,10 @@ type Server struct {
 	// handlers read on demand and gracefully degrade to "—" when
 	// the slug isn't cached yet. Nil-safe.
 	marketCaps *marketcap.Cache
+	// backfillCoverage is the per-source min/max-ledger snapshot
+	// powering /v1/diagnostics/ingestion's coverage section. Nil
+	// leaves that section absent. See [CoverageCache].
+	backfillCoverage *CoverageCache
 	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
 	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
 	// Nil-safe: handleGlobalAsset returns a view without the price
@@ -592,6 +596,14 @@ type Options struct {
 	// stub or leave nil (handlers degrade gracefully).
 	MarketCaps *marketcap.Cache
 
+	// BackfillCoverage, when non-nil, is the process-local cache of
+	// per-source min/max ledger + trade count, refreshed on a 5-min
+	// background goroutine. Powers the per-source coverage section
+	// on `/v1/diagnostics/ingestion`. The underlying SQL is 2–3s on
+	// a populated trades hypertable so we never run it synchronously
+	// from a request. Nil leaves that section absent from the wire.
+	BackfillCoverage *CoverageCache
+
 	// GlobalPrice, when non-nil, powers the price block on
 	// `/v1/assets/{slug}` global views via the three-tier fallback
 	// chain (vwap_native → aggregator_avg → triangulated). Nil
@@ -669,6 +681,7 @@ func New(opts Options) *Server {
 		sessionAuth:          opts.SessionAuth,
 		verifiedCurrencies:   opts.VerifiedCurrencies,
 		marketCaps:           opts.MarketCaps,
+		backfillCoverage:     opts.BackfillCoverage,
 		globalPrice:          opts.GlobalPrice,
 		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:          opts.SACWrappers,

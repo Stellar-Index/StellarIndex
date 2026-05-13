@@ -17,6 +17,23 @@ against.
 
 ### Added
 
+- **Backfill coverage on `/v1/diagnostics/ingestion` + status page.**
+  New `backfill_coverage[]` array on the diagnostics endpoint
+  reports per-source MIN/MAX ledger from the trades hypertable,
+  joined with an operator-curated map of source genesis ledgers
+  (1 for SDEX, contract deploy ledger for each Soroban DEX), with
+  a derived `coverage_pct` so the answer to "do we have data from
+  ledger 1 to tip?" is one column. CEX/FX sources surface as
+  `applies=false` (their trades have no Stellar-ledger context).
+  Backed by a process-local cache refreshed every 5 min in a
+  background goroutine — the underlying SQL is 2-3s on a populated
+  trades hypertable, too slow for the request path.
+
+  Status page renders a new "Coverage — ledger genesis → tip"
+  table with per-source progress bars (green ≥99%, amber ≥50%,
+  red <50%). Today's r1 reading: SDEX 2.18% covered (61.2M → 62.5M
+  out of 1 → 62.5M), Soroban DEXes 15-17%, off-chain sources N/A.
+
 - **Status page — per-region "Ingestion" section.** Polls each
   region's `/v1/diagnostics/ingestion` every 30s and renders a
   panel with: binary version + commit, live ledger card (latest,

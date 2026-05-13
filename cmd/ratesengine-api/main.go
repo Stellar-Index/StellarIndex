@@ -658,6 +658,38 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 
+	// Per-source backfill coverage cache. The underlying SQL is 2-3s
+	// on a populated trades hypertable so it can't run inline from
+	// /v1/diagnostics/ingestion's request path. First refresh runs
+	// in the background — endpoint reports an empty coverage section
+	// until it completes (within ~5s of process start). Subsequent
+	// refreshes happen on the v1.CoverageRefreshInterval cadence.
+	backfillCoverageCache := v1.NewCoverageCache(store, logger.With("component", "backfill-coverage"))
+	go func() {
+		// Initial population — block-with-timeout so the first
+		// status-page poll after restart sees data sooner than the
+		// next ticker boundary.
+		initCtx, initCancel := context.WithTimeout(rootCtx, 30*time.Second)
+		defer initCancel()
+		if err := backfillCoverageCache.Refresh(initCtx); err != nil {
+			logger.Warn("backfill coverage initial refresh", "err", err)
+		}
+		tick := time.NewTicker(v1.CoverageRefreshInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-tick.C:
+				refreshCtx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
+				if err := backfillCoverageCache.Refresh(refreshCtx); err != nil {
+					logger.Warn("backfill coverage periodic refresh", "err", err)
+				}
+				cancel()
+			}
+		}
+	}()
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -744,6 +776,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		USDPeggedClassics:  usdPegs,
 		VerifiedCurrencies: verifiedCurrencies,
 		MarketCaps:         marketCapCache,
+		BackfillCoverage:   backfillCoverageCache,
 		GlobalPrice: globalPriceReader{
 			s:   store,
 			tri: redisTriangulatedLooker{rdb: rdb},
