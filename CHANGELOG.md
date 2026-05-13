@@ -132,6 +132,18 @@ against.
 
 ### Documentation
 
+- `docs/audit-2026-05-12-codex/07-remediation-plan.md` reconciled
+  against the findings register: 20 remediation rows flipped from
+  `open` to `fixed` (5 with rich closure prose written inline, 15
+  via batch status flip). The remediation-plan was N waves behind
+  the register because the reconciler agent's runs sync the
+  register without touching the remediation plan. Counts now
+  align: 14 still-open R-rows = 13 still-open findings + R-1206's
+  mixed F-1208/F-1210 status. The remaining-open rows are all
+  genuinely operator/admin work (R1 firewall, sla-probe.timer,
+  branch protection UI, Dependabot UI, capacity triage, signup-
+  verify config flip, R1 deploy-lag deploys, backfill supervised
+  job).
 - `docs/operations/runbooks/api-5xx.md` Step 3 of "B. Specific
   endpoint family broken" carried a stale `(TODO(#0) — runbook
   in flight)` qualifier next to its `dr-activation.md` cross-
