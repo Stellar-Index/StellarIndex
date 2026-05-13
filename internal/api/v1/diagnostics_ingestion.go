@@ -36,14 +36,85 @@ type SupplyCoverageReader interface {
 // section so it can render the whole region panel without scraping
 // five separate endpoints.
 type IngestionDiagnostics struct {
-	Region     RegionInfo             `json:"region"`
-	Version    IngestionVersionInfo   `json:"version"`
-	Ledger     LedgerTip              `json:"ledger"`
-	Backfill   []BackfillDecoderState `json:"backfill"`
-	FXBackfill FXBackfillState        `json:"fx_backfill"`
-	MarketCap  MarketCapState         `json:"market_cap"`
-	Supply     SupplyStateView        `json:"supply"`
-	Sources    []SourceHealthRow      `json:"sources"`
+	Region   RegionInfo             `json:"region"`
+	Version  IngestionVersionInfo   `json:"version"`
+	Ledger   LedgerTip              `json:"ledger"`
+	Backfill []BackfillDecoderState `json:"backfill"`
+	// BackfillCoverage answers "do we have data from genesis to
+	// tip?" by reporting per-source MIN/MAX ledger + trade count
+	// derived from the trades hypertable. SECONDARY to Backfill —
+	// `Backfill` shows what backfill *is doing*, `BackfillCoverage`
+	// shows what data we *actually have*. Both matter: a stalled
+	// backfill range with last_ledger=18M against an SDEX coverage
+	// MIN=61M means SDEX history pre-61M is missing AND the
+	// backfill that would fill it isn't progressing.
+	BackfillCoverage   []BackfillCoverageRow `json:"backfill_coverage"`
+	BackfillCoverageAt string                `json:"backfill_coverage_as_of,omitempty"`
+	FXBackfill         FXBackfillState       `json:"fx_backfill"`
+	MarketCap          MarketCapState        `json:"market_cap"`
+	Supply             SupplyStateView       `json:"supply"`
+	Sources            []SourceHealthRow     `json:"sources"`
+}
+
+// BackfillCoverageRow is the per-source coverage projection.
+//
+// EarliestLedger / LatestLedger come straight from the trades
+// hypertable's MIN/MAX(ledger) for that source. CEX/FX sources
+// report 0 / 0 because their trades don't carry a Stellar ledger
+// — `applies` distinguishes the two cases for the UI (no point
+// drawing a "coverage bar" for binance).
+//
+// GenesisLedger is the source's known start point — 1 for SDEX
+// (Stellar pubnet genesis), the contract deploy ledger for
+// Soroban contracts, 0 ("not applicable") for CEX/FX. Hardcoded
+// in `sourceGenesisLedger`; when an operator deploys a new source
+// add a row there.
+//
+// CoveragePct is `(LatestLedger - max(EarliestLedger, GenesisLedger)
+// + 1) / (LatestLedger - GenesisLedger + 1)` — i.e. fraction of the
+// expected genesis-to-tip range we have any data for. Doesn't
+// detect internal gaps (EarliestLedger=1, LatestLedger=tip with a
+// hole at 30M-40M still scores 100%); for that we'd need a much
+// heavier distinct-ledger scan, deferred.
+type BackfillCoverageRow struct {
+	Source         string  `json:"source"`
+	Applies        bool    `json:"applies"`
+	GenesisLedger  int64   `json:"genesis_ledger,omitempty"`
+	EarliestLedger int64   `json:"earliest_ledger,omitempty"`
+	LatestLedger   int64   `json:"latest_ledger,omitempty"`
+	TradeCount     int64   `json:"trade_count"`
+	CoveragePct    float64 `json:"coverage_pct,omitempty"`
+}
+
+// sourceGenesisLedger is the operator-curated map of "what's the
+// earliest ledger this source can possibly have data for". Values:
+//   - 1                : SDEX (Stellar pubnet genesis 2015-08-19).
+//   - <contract deploy>: per-Soroban-contract first observable
+//     ledger. For dispatcher-routed sources we set it slightly
+//     before the on-chain deploy (gives the "we cover this fully"
+//     check some slack against the exact deploy ledger). Approx
+//     values are fine — the UI shows "X% of expected range" so
+//     a few-thousand-ledger error is invisible.
+//   - 0 (default)      : not applicable (CEX/FX/aggregator/oracle —
+//     these sources don't have a Stellar-ledger genesis concept).
+//
+// When a new on-chain source ships, add its known deploy ledger
+// here. The list intentionally sits next to the projection so a
+// reviewer notices it during PR review.
+var sourceGenesisLedger = map[string]int64{
+	"sdex": 1,
+	// Soroban contracts — approximate deploy-era ledgers from
+	// the per-contract WASM audits (docs/operations/wasm-audits/).
+	"soroswap":      54_000_000,
+	"aquarius":      54_500_000,
+	"phoenix":       53_700_000,
+	"comet":         53_900_000,
+	"blend":         54_000_000,
+	"reflector-cex": 51_000_000,
+	"reflector-dex": 51_000_000,
+	"reflector-fx":  51_000_000,
+	"band":          53_500_000,
+	"redstone":      55_000_000,
 }
 
 // RegionInfo identifies which deployment generated this snapshot.
@@ -184,6 +255,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	s.fillIngestionBackfill(ctx, &out)
 	s.fillIngestionFXCoverage(ctx, &out)
 	s.fillIngestionSupplyCoverage(ctx, &out)
+	s.fillIngestionBackfillCoverage(&out)
 	out.MarketCap = projectMarketCapState(s.marketCaps)
 
 	w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
@@ -251,6 +323,89 @@ func (s *Server) fillIngestionFXCoverage(ctx context.Context, out *IngestionDiag
 	if !cov.LatestQuote.IsZero() {
 		out.FXBackfill.LatestQuote = cov.LatestQuote.Format("2006-01-02")
 	}
+}
+
+// fillIngestionBackfillCoverage projects the cached coverage
+// snapshot onto the wire shape. Reads from a process-local cache
+// (background-refreshed every 5 min); zero-allocates on a normal
+// hit. Empty section when the cache hasn't been wired (test
+// builds) or hasn't completed its first refresh yet (cold start
+// in the first 5 min).
+func (s *Server) fillIngestionBackfillCoverage(out *IngestionDiagnostics) {
+	if s.backfillCoverage == nil {
+		return
+	}
+	rows, fetchedAt := s.backfillCoverage.Snapshot()
+	if fetchedAt.IsZero() {
+		return
+	}
+	out.BackfillCoverageAt = fetchedAt.UTC().Format(time.RFC3339)
+	tip := out.Ledger.LatestLedger
+	out.BackfillCoverage = projectBackfillCoverage(rows, tip)
+}
+
+// projectBackfillCoverage maps the storage-layer rows onto the
+// wire shape, joining with sourceGenesisLedger to compute
+// CoveragePct. CEX/FX sources (LatestLedger == 0) are reported
+// with Applies=false so the UI can render them as "not applicable"
+// rather than a misleading 0% bar.
+//
+// CoveragePct definition: of the (genesis → tip) range we want to
+// cover, what fraction do we have *any* data for? Doesn't measure
+// internal density — gaps inside the EarliestLedger..LatestLedger
+// span aren't visible here. That's a separate, much heavier query
+// (distinct-ledger scan) deferred to a follow-up.
+func projectBackfillCoverage(rows []timescale.BackfillCoverage, tip int64) []BackfillCoverageRow {
+	out := make([]BackfillCoverageRow, 0, len(rows))
+	for _, r := range rows {
+		row := BackfillCoverageRow{
+			Source:     r.Source,
+			TradeCount: r.TradeCount,
+		}
+		applies := r.LatestLedger > 0 && r.EarliestLedger > 0
+		if applies {
+			row.Applies = true
+			row.EarliestLedger = r.EarliestLedger
+			row.LatestLedger = r.LatestLedger
+			if g, ok := sourceGenesisLedger[r.Source]; ok {
+				row.GenesisLedger = g
+			}
+			row.CoveragePct = computeCoveragePct(row.GenesisLedger, r.EarliestLedger, r.LatestLedger, tip)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// computeCoveragePct returns the fraction of the
+// (genesis → tip) interval we have any data for. Returns 0 if
+// genesis or tip aren't usable (cold start, missing config).
+// Capped at 1.0; any LatestLedger ≥ tip → 1.0 (covered to head).
+func computeCoveragePct(genesis, earliest, latest, tip int64) float64 {
+	if tip <= 0 || genesis <= 0 {
+		return 0
+	}
+	expectedSpan := tip - genesis + 1
+	if expectedSpan <= 0 {
+		return 0
+	}
+	covStart := earliest
+	if covStart < genesis {
+		covStart = genesis
+	}
+	covEnd := latest
+	if covEnd > tip {
+		covEnd = tip
+	}
+	if covEnd < covStart {
+		return 0
+	}
+	covered := covEnd - covStart + 1
+	pct := float64(covered) / float64(expectedSpan)
+	if pct > 1 {
+		pct = 1
+	}
+	return pct
 }
 
 // fillIngestionSupplyCoverage type-asserts that the wired

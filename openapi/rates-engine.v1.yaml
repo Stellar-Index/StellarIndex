@@ -1574,7 +1574,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [region, version, ledger, backfill, fx_backfill, market_cap, supply, sources]
+                required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, market_cap, supply, sources]
                 properties:
                   region:
                     type: object
@@ -1612,6 +1612,32 @@ paths:
                         oldest_updated_at:  { type: string, format: date-time }
                         oldest_lag_seconds: { type: integer, format: int64 }
                         newest_ledger:      { type: integer, format: int64 }
+                  backfill_coverage:
+                    type: array
+                    description: |
+                      Per-source min/max ledger + trade count from the
+                      trades hypertable. Answers "do we have data
+                      from genesis to tip?" — `applies=true` rows are
+                      Stellar-ledger-bearing sources (sdex + Soroban
+                      contracts); CEX/FX sources surface as
+                      `applies=false`. Background-refreshed every
+                      5 min; empty array until first refresh
+                      completes after process start.
+                    items:
+                      type: object
+                      required: [source, applies, trade_count]
+                      properties:
+                        source:          { type: string, example: "sdex" }
+                        applies:         { type: boolean, description: "False for CEX/FX sources whose trades have no Stellar ledger." }
+                        genesis_ledger:  { type: integer, format: int64, description: "Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban)." }
+                        earliest_ledger: { type: integer, format: int64 }
+                        latest_ledger:   { type: integer, format: int64 }
+                        trade_count:     { type: integer, format: int64 }
+                        coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
+                  backfill_coverage_as_of:
+                    type: string
+                    format: date-time
+                    description: When the backfill_coverage snapshot was last refreshed.
                   fx_backfill:
                     type: object
                     required: [total_quotes, currencies_count]
