@@ -18,6 +18,16 @@ against.
 ### Added
 
 - Regression test
+  `TestRunSupplyRefresh_DurationMetricRecorded` pins the wave-90
+  supply-refresh latency-histogram wiring, closing the deferred
+  item from wave 94. Shipped via the existing
+  `cmd/ratesengine-aggregator/main_test.go` (which I had
+  forgotten existed at wave-94 time) — no refactor of wave 90
+  required after all. The test pre-cancels the context before
+  calling `runSupplyRefresh` so the immediate first tick runs
+  once and the for-loop sees ctx.Done() and returns. Wave-88-91
+  histogram quartet is now 4-of-4 test-pinned.
+- Regression test
   `TestRecovery_SweepDurationMetricRecorded` pins the wave-91
   freeze-recovery-sweep latency-histogram wiring end-to-end.
   Same shape as wave 92/93. The wave-90 supply-refresh

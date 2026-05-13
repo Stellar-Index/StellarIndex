@@ -1,11 +1,21 @@
 package main
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	io_prom_dto "github.com/prometheus/client_model/go"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/obs"
+	"github.com/RatesEngine/rates-engine/internal/supply"
 )
 
 // TestDefaultPairs_IncludesBothXLMForms guards against regression of
@@ -102,4 +112,107 @@ func TestBuildTriangulations_RespectsTriangulationEnabled(t *testing.T) {
 			t.Errorf("err = %v; want substring 'triangulations[0]'", err)
 		}
 	})
+}
+
+// TestRunSupplyRefresh_DurationMetricRecorded pins the wave-90
+// (2026-05-13) latency-histogram wiring on the supply-refresh
+// loop. Final entry in the wave-92/93/94 regression-test series.
+//
+// Setup: build a real *supply.Refresher with stub
+// LedgerLookup/SnapshotComputer/SnapshotInserter (the supply
+// package's own interfaces — production impls are timescale-
+// backed, the test ones are in-memory). Pre-cancel the context
+// so the immediate first tick runs once and the ticker loop
+// exits via <-ctx.Done() without firing.
+func TestRunSupplyRefresh_DurationMetricRecorded(t *testing.T) {
+	r := supply.NewRefresher(
+		stubSupplyLedgers{ledger: 50_000_000, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+		stubSupplyComputer{out: supply.Supply{
+			AssetKey:          "TEST",
+			TotalSupply:       big.NewInt(1_000_000),
+			CirculatingSupply: big.NewInt(900_000),
+			Basis:             supply.BasisXLMSDFReserveExclusion,
+		}},
+		&stubSupplyInserter{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	before := histogramSampleCount(t, obs.AggregatorSupplyRefreshDurationSeconds, "ok")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // immediate-first-tick runs; for-loop sees ctx.Done() and returns
+	runSupplyRefresh(ctx, r, time.Hour, "TEST")
+
+	after := histogramSampleCount(t, obs.AggregatorSupplyRefreshDurationSeconds, "ok")
+	if after <= before {
+		t.Errorf("supply refresh duration histogram did not advance: before=%d after=%d", before, after)
+	}
+}
+
+// ─── stubs for TestRunSupplyRefresh_DurationMetricRecorded ──────
+//
+// Mirror the (unexported) stubs in internal/supply/refresher_test.go.
+// Re-implemented here since the supply package's stubs are
+// package-private; the cost of duplicating ~25 lines beats either
+// exporting test fixtures or adding a separate testfixture
+// subpackage.
+
+type stubSupplyLedgers struct {
+	ledger     uint32
+	observedAt time.Time
+}
+
+func (s stubSupplyLedgers) LatestKnownLedger(_ context.Context) (uint32, time.Time, error) {
+	return s.ledger, s.observedAt, nil
+}
+
+type stubSupplyComputer struct {
+	out supply.Supply
+}
+
+func (s stubSupplyComputer) Compute(_ context.Context, ledger uint32, observedAt time.Time) (supply.Supply, error) {
+	out := s.out
+	out.LedgerSequence = ledger
+	out.ObservedAt = observedAt
+	return out, nil
+}
+
+type stubSupplyInserter struct{}
+
+func (*stubSupplyInserter) InsertSupply(_ context.Context, _ supply.Supply) error { return nil }
+
+// histogramSampleCount returns the sample count of the histogram
+// series with the given outcome label. Mirrors the helpers in
+// `internal/customerwebhook/worker_test.go` (wave 92),
+// `internal/aggregate/orchestrator/divergence_refresh_test.go`
+// (wave 93), and `internal/aggregate/freeze/recovery_test.go`
+// (wave 94). Required because `vec.WithLabelValues(...)` returns
+// a prometheus.Observer (not Collector) so testutil.CollectAndCount
+// can't act on the per-label child directly.
+//
+// Fourth duplicate of this 20-line helper. Cross-package test
+// helpers aren't worth the import-cycle risk for a small
+// dto.Metric reader; the fourth copy makes the duplication cost
+// obvious enough that the next reader will see it as an
+// intentional choice rather than oversight.
+func histogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, outcome string) uint64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 16)
+	go func() {
+		vec.Collect(ch)
+		close(ch)
+	}()
+	var total uint64
+	for m := range ch {
+		var dto io_prom_dto.Metric
+		if err := m.Write(&dto); err != nil {
+			t.Fatalf("histogram Write: %v", err)
+		}
+		for _, l := range dto.GetLabel() {
+			if l.GetName() == "outcome" && l.GetValue() == outcome {
+				total += dto.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return total
 }
