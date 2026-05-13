@@ -63,11 +63,11 @@ sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq .
      `--collector.textfile.directory` flag points at the right path.
 
 4. **TEXTFILE_OUTPUT environment variable unset** — operators who
-   skipped the `/etc/default/sla-probe` config don't write the
+   skipped the `/etc/default/ratesengine-healthchecks` config don't write the
    textfile, so node_exporter never sees the metric.
    - Signal: file doesn't exist at all.
    - Mitigation: add `TEXTFILE_OUTPUT=/var/lib/node_exporter/...`
-     to `/etc/default/sla-probe`; reload the service.
+     to `/etc/default/ratesengine-healthchecks`; reload the service.
 
 ## Mitigation
 

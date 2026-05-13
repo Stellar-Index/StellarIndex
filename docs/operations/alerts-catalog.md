@@ -95,7 +95,7 @@ signal lands.
 ## SLA-probe alerts
 
 Source: `cmd/ratesengine-sla-probe` runs every 15 min via the
-systemd timer in `deploy/systemd/ratesengine-sla-probe.timer`; metrics emitted
+systemd timer in `configs/healthchecks/ratesengine-sla-probe.timer`; metrics emitted
 to node_exporter's textfile_collector via `-textfile-output`.
 Per the Freighter RFP V1 §SLA targets — these are the synthetic
 counterparts to the API-plane alerts above.
