@@ -43,6 +43,7 @@ verified_currencies:
     slug: xlm
     name: Stellar Lumens
     description: Native asset of the Stellar network.
+    class: crypto
     coingecko_id: stellar
     coinmarketcap_id: 512
     verified_issuer_label: Stellar Development Foundation
@@ -129,6 +130,7 @@ verified_currencies:
     slug: btc
     name: Bitcoin
     description: The original cryptocurrency.
+    class: crypto
     coingecko_id: bitcoin
     coinmarketcap_id: 1
     networks:
@@ -139,6 +141,7 @@ verified_currencies:
     slug: eth
     name: Ethereum
     description: Native asset of the Ethereum network.
+    class: crypto
     coingecko_id: ethereum
     coinmarketcap_id: 1027
     networks:
@@ -149,6 +152,7 @@ verified_currencies:
     slug: sol
     name: Solana
     description: Native asset of the Solana network.
+    class: crypto
     coingecko_id: solana
     coinmarketcap_id: 5426
     networks:
@@ -159,6 +163,7 @@ verified_currencies:
     slug: bnb
     name: BNB
     description: Native asset of the BNB Chain (formerly Binance Smart Chain).
+    class: crypto
     coingecko_id: binancecoin
     coinmarketcap_id: 1839
     networks:
@@ -169,6 +174,7 @@ verified_currencies:
     slug: xrp
     name: XRP
     description: Native asset of the XRP Ledger.
+    class: crypto
     coingecko_id: ripple
     coinmarketcap_id: 52
     networks:
@@ -179,6 +185,7 @@ verified_currencies:
     slug: ada
     name: Cardano
     description: Native asset of the Cardano network.
+    class: crypto
     coingecko_id: cardano
     coinmarketcap_id: 2010
     networks:
@@ -189,6 +196,7 @@ verified_currencies:
     slug: doge
     name: Dogecoin
     description: A peer-to-peer cryptocurrency originally launched as a parody of Bitcoin.
+    class: crypto
     coingecko_id: dogecoin
     coinmarketcap_id: 74
     networks:
@@ -199,6 +207,7 @@ verified_currencies:
     slug: avax
     name: Avalanche
     description: Native asset of the Avalanche network.
+    class: crypto
     coingecko_id: avalanche-2
     coinmarketcap_id: 5805
     networks:
@@ -209,6 +218,7 @@ verified_currencies:
     slug: matic
     name: Polygon
     description: Native asset of the Polygon (formerly Matic) network.
+    class: crypto
     coingecko_id: matic-network
     coinmarketcap_id: 3890
     networks:
@@ -219,6 +229,7 @@ verified_currencies:
     slug: dot
     name: Polkadot
     description: Native asset of the Polkadot network.
+    class: crypto
     coingecko_id: polkadot
     coinmarketcap_id: 6636
     networks:
@@ -229,6 +240,7 @@ verified_currencies:
     slug: link
     name: Chainlink
     description: Native token of the Chainlink decentralized oracle network.
+    class: crypto
     coingecko_id: chainlink
     coinmarketcap_id: 1975
     networks:
@@ -240,6 +252,7 @@ verified_currencies:
     slug: aqua
     name: Aquarius
     description: Governance token of the Aquarius DEX on Stellar.
+    class: crypto
     coingecko_id: aquarius
     verified_issuer_label: Aquarius (aqua.network)
     networks:
@@ -252,6 +265,7 @@ verified_currencies:
     slug: yxlm
     name: yieldXLM
     description: Ultra Capital's yield-bearing wrapped XLM on Stellar.
+    class: crypto
     verified_issuer_label: Ultra Capital (ultracapital.xyz)
     networks:
       - network: stellar
@@ -263,6 +277,7 @@ verified_currencies:
     slug: shx
     name: Stronghold Token
     description: Native token of Stronghold's institutional crypto platform.
+    class: crypto
     coingecko_id: stronghold-token
     verified_issuer_label: Stronghold (stronghold.co)
     networks:
@@ -275,6 +290,7 @@ verified_currencies:
     slug: velo
     name: Velo
     description: Native token of the Velo Labs financial protocol on Stellar.
+    class: crypto
     coingecko_id: velo
     verified_issuer_label: Velo Labs (velo.org)
     networks:
@@ -287,6 +303,7 @@ verified_currencies:
     slug: blnd
     name: Blend
     description: Governance token of Blend Capital's lending protocol on Stellar.
+    class: crypto
     verified_issuer_label: Blend Capital (blend.capital)
     networks:
       - network: stellar
@@ -298,6 +315,7 @@ verified_currencies:
     slug: pho
     name: Phoenix
     description: Governance token of the Phoenix DEX on Stellar.
+    class: crypto
     verified_issuer_label: Phoenix (phoenix-hub.io)
     networks:
       - network: stellar
@@ -310,6 +328,7 @@ verified_currencies:
     slug: yusdc
     name: yieldUSDC
     description: Ultra Capital's yield-bearing wrapped USDC on Stellar.
+    class: stablecoin
     verified_issuer_label: Ultra Capital (ultracapital.xyz)
     networks:
       - network: stellar
@@ -322,6 +341,7 @@ verified_currencies:
     slug: uni
     name: Uniswap
     description: Governance token of the Uniswap decentralized exchange.
+    class: crypto
     coingecko_id: uniswap
     coinmarketcap_id: 7083
     networks:
@@ -332,6 +352,7 @@ verified_currencies:
     slug: aave
     name: Aave
     description: Governance token of the Aave lending protocol.
+    class: crypto
     coingecko_id: aave
     coinmarketcap_id: 7278
     networks:
@@ -342,6 +363,7 @@ verified_currencies:
     slug: wbtc
     name: Wrapped Bitcoin
     description: Bitcoin tokenized on Ethereum (1:1 BTC-backed).
+    class: crypto
     coingecko_id: wrapped-bitcoin
     coinmarketcap_id: 3717
     networks:

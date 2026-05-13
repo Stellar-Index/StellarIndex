@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -235,25 +236,25 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 
 // fiatMarketCapUSD computes market_cap_usd for a fiat catalogue
 // entry. USD is special-cased to identity (price = 1.00); every
-// other fiat goes through PriceReader.LatestPrice for the
-// fiat:CCY/fiat:USD pair, then multiplies by M2.
+// other fiat goes through the FX-rate fallback chain:
 //
-// Why PriceReader (s.prices) rather than ComputeGlobalPrice
-// (s.globalPrice):
+//  1. fxHistory (fx_quotes table — Frankfurter-backed daily ECB
+//     reference rates back to 1999). Reads the latest point in a
+//     trailing 7-day window and uses its InverseUSD as the
+//     fiat→USD price. This is the authoritative path because
+//     fx_quotes is where the Frankfurter backfill + the
+//     continuous forex worker both land.
+//  2. PriceReader.LatestPrice as a last resort. Pre-fix the
+//     ordering was reversed: PriceReader was tried first and
+//     storePriceReader fast-paths a `quote.Type==fiat` request to
+//     ErrPriceNotFound (see cmd/ratesengine-api/main.go:1935),
+//     so this layer never returned a value for fiat→fiat. With
+//     fx_quotes tried first, the 19 catalogue fiats with a
+//     populated circulating_supply now all get a market_cap_usd
+//     (verified on r1 with EUR/CNY/JPY/GBP/CAD/CHF/…).
 //
-// Fiat FX rates are written into the aggregator's Redis cache by
-// the triangulation worker (`vwap:fiat:CCY:fiat:USD:300s` with a
-// `triangulated` provenance marker), not into the prices_1m CAGG.
-// The standalone /v1/price endpoint reads this Redis fallback after
-// a CAGG miss. ComputeGlobalPrice's tier 1 reads the CAGG directly
-// and tier 3 reads a SEPARATE TriangulatedPriceLooker that returns
-// fxonly when explicit triangulation chains are configured — neither
-// surfaces the Redis-cached implied VWAP that /v1/price uses for
-// fiat:fiat. PriceReader.LatestPrice consults both paths
-// transparently, so we delegate.
-//
-// Returns nil when the FX rate isn't available or the supply parse
-// fails.
+// Returns nil when neither path returns a price or the supply
+// parse fails.
 func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurrency) *string {
 	if vc.CirculatingSupply == "" {
 		return nil
@@ -261,12 +262,29 @@ func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurr
 	if strings.EqualFold(vc.Ticker, "USD") {
 		return computeFiatMarketCap(vc.CirculatingSupply, "1.00000000000000")
 	}
+	// Path 1: fx_quotes (authoritative for fiat→USD rates).
+	if s.fxHistory != nil {
+		now := time.Now().UTC()
+		from := now.AddDate(0, 0, -7)
+		points, err := s.fxHistory.ListFXHistory(ctx, vc.Ticker, from, now)
+		if err == nil && len(points) > 0 {
+			// ListFXHistory returns oldest→newest; take the most
+			// recent point with a usable InverseUSD.
+			for i := len(points) - 1; i >= 0; i-- {
+				if points[i].InverseUSD > 0 {
+					price := strconv.FormatFloat(points[i].InverseUSD, 'f', -1, 64)
+					return computeFiatMarketCap(vc.CirculatingSupply, price)
+				}
+			}
+		}
+	}
+	// Path 2: PriceReader fallback (kept for deployments without
+	// fx_quotes wiring — e.g. test fixtures).
 	if s.prices == nil {
 		return nil
 	}
 	base, err := canonical.NewFiatAsset(vc.Ticker)
 	if err != nil {
-		// Ticker isn't on the canonical fiat allow-list. Skip.
 		return nil
 	}
 	quote, err := canonical.NewFiatAsset("USD")
