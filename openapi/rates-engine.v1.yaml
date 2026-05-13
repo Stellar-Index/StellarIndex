@@ -1604,11 +1604,14 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [decoder, ranges_total, ranges_active, oldest_lag_seconds, newest_ledger]
+                      required: [decoder, ranges_total, ranges_complete, ranges_running, ranges_stalled, ranges_active, oldest_lag_seconds, newest_ledger]
                       properties:
                         decoder:            { type: string, example: "sdex,soroswap" }
-                        ranges_total:       { type: integer }
-                        ranges_active:      { type: integer, description: "Ranges with last_ledger < range_end." }
+                        ranges_total:       { type: integer, description: "Total cursor rows for this decoder set." }
+                        ranges_complete:    { type: integer, description: "last_ledger == range_end." }
+                        ranges_running:     { type: integer, description: "Incomplete AND updated within the last 10 min — actively progressing." }
+                        ranges_stalled:     { type: integer, description: "Incomplete AND not updated for 10+ min — needs `-resume` restart." }
+                        ranges_active:      { type: integer, description: "Back-compat: ranges_running + ranges_stalled." }
                         oldest_updated_at:  { type: string, format: date-time }
                         oldest_lag_seconds: { type: integer, format: int64 }
                         newest_ledger:      { type: integer, format: int64 }

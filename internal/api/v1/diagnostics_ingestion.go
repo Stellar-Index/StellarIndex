@@ -187,13 +187,38 @@ type LedgerTip struct {
 // sub_source after the range prefix (e.g.
 // "50534290-51275895:sdex,soroswap" → decoder "sdex,soroswap").
 type BackfillDecoderState struct {
-	Decoder         string `json:"decoder"`
-	RangesTotal     int    `json:"ranges_total"`
+	Decoder string `json:"decoder"`
+	// RangesTotal is unchanged for back-compat: total cursor
+	// rows for this decoder set. Three new fields decompose it
+	// for the status page so operators can immediately see how
+	// many are done vs stuck.
+	RangesTotal int `json:"ranges_total"`
+	// RangesComplete: cursor's last_ledger == range_end.
+	RangesComplete int `json:"ranges_complete"`
+	// RangesRunning: last_ledger < range_end AND last_updated
+	// in the recent past (≤ 10 min — the same threshold the
+	// /diagnostics/cursors `?status=active` filter uses).
+	RangesRunning int `json:"ranges_running"`
+	// RangesStalled: last_ledger < range_end AND last_updated
+	// is older than 10 min — the cursor advanced once but
+	// hasn't moved since. Almost always means an operator
+	// killed the backfill mid-run; needs a `-resume` restart.
+	RangesStalled int `json:"ranges_stalled"`
+	// RangesActive is RangesRunning + RangesStalled. Kept for
+	// back-compat with the v0 wire shape — UIs that just want
+	// "incomplete count" can keep using it.
 	RangesActive    int    `json:"ranges_active"`
 	OldestUpdatedAt string `json:"oldest_updated_at,omitempty"`
 	OldestLagSecs   int64  `json:"oldest_lag_seconds"`
 	NewestLedger    int64  `json:"newest_ledger"`
 }
+
+// stalledThreshold is the wall-clock age above which an in-progress
+// backfill cursor is considered stalled rather than actively
+// processing. Mirrors the `statusActiveMaxAge` in
+// diagnostics_cursors.go (the `?status=active` filter on
+// /v1/diagnostics/cursors uses the same boundary).
+const stalledThreshold = 10 * time.Minute
 
 // FXBackfillState describes how much fiat-rate history we have in
 // fx_quotes. Earliest/Latest are RFC3339 dates (truncated to day
@@ -489,7 +514,9 @@ func (s *Server) fillIngestionSupplyCoverage(ctx context.Context, out *Ingestion
 func aggregateBackfill(rows []timescale.Cursor) []BackfillDecoderState {
 	type group struct {
 		total       int
-		active      int
+		complete    int // last_ledger == range_end
+		running     int // incomplete AND updated_at within stalledThreshold
+		stalled     int // incomplete AND updated_at older than stalledThreshold
 		newestLedge int64
 		oldestAt    time.Time
 	}
@@ -509,8 +536,13 @@ func aggregateBackfill(rows []timescale.Cursor) []BackfillDecoderState {
 			groups[decoder] = g
 		}
 		g.total++
-		if rangeEnd > 0 && int64(c.LastLedger) < rangeEnd {
-			g.active++
+		incomplete := rangeEnd > 0 && int64(c.LastLedger) < rangeEnd
+		if !incomplete {
+			g.complete++
+		} else if now.Sub(c.UpdatedAt) <= stalledThreshold {
+			g.running++
+		} else {
+			g.stalled++
 		}
 		if int64(c.LastLedger) > g.newestLedge {
 			g.newestLedge = int64(c.LastLedger)
@@ -522,10 +554,13 @@ func aggregateBackfill(rows []timescale.Cursor) []BackfillDecoderState {
 	out := make([]BackfillDecoderState, 0, len(groups))
 	for decoder, g := range groups {
 		state := BackfillDecoderState{
-			Decoder:      decoder,
-			RangesTotal:  g.total,
-			RangesActive: g.active,
-			NewestLedger: g.newestLedge,
+			Decoder:        decoder,
+			RangesTotal:    g.total,
+			RangesComplete: g.complete,
+			RangesRunning:  g.running,
+			RangesStalled:  g.stalled,
+			RangesActive:   g.running + g.stalled,
+			NewestLedger:   g.newestLedge,
 		}
 		if !g.oldestAt.IsZero() {
 			state.OldestUpdatedAt = g.oldestAt.UTC().Format(time.RFC3339)

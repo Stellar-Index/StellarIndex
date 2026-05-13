@@ -17,6 +17,78 @@ against.
 
 ### Fixed
 
+- **Incident triage sweep — 9 active alerts → root-cause +
+  preventatives.** Worked through every alert firing on r1 today
+  and either resolved the root cause, codified prevention in
+  ansible, or filed it as a known-real signal needing follow-up:
+
+    - `node_root_disk_warning` — disk 81% → 62% by truncating a
+      7.3GB syslog. Root cause: Loki running at `log_level=debug`
+      spamming ~4M `caller=mock.go msg=Get key=collectors/...`
+      lines/day into syslog. Fix: set Loki to `warn`
+      (`configs/ansible/roles/loki/templates/loki-config.yaml.j2`)
+      and add a defense-in-depth rsyslog filter so even an
+      accidental level regression can't reach `/var/log/syslog`
+      (`configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`).
+      Also pruned 36 old binary backups + 9 stale toml backups +
+      vacuumed journal to 7 days.
+
+    - `verify_archive_unit_failed` — re-ran cleanly (10K
+      ledgers/sec). Prior failure had no journal because of
+      rotation; the alert correctly surfaces real failures,
+      timer-based retry is sufficient.
+
+    - `sla_probe_unit_failed_alert` — REAL: `/v1/markets`,
+      `/v1/assets` cold-cache p99 spikes (~5s, ~2.4s) breach
+      the 500ms target on the probe's first sample after each
+      30s cache-TTL window. Filed as a perf workstream — needs
+      `/v1/assets` + `/v1/issuers` cache wrappers + prewarm.
+
+    - `api_cache_miss_rate_high` — REAL: prewarm covers
+      `markets/all_pools` for limits {5,25,100,200} but
+      `markets/asset_markets` and `markets/source_markets`
+      ops aren't prewarmed at all; user-facing requests with
+      novel param tuples miss cache. Same perf workstream.
+
+    - `anomaly_freeze_sustained` / `anomaly_freeze_engaged` —
+      REAL but invisible: 1892 freeze decisions emitted, zero
+      Redis markers, zero `freeze_events` rows. Phase 2's
+      baseline z-score is unstable because we only have 7 days
+      of `prices_1h` data (root cause = the SDEX backfill bug
+      from the previous session). Added an INFO log in
+      `markPhase2Freeze` so operators can grep
+      `journalctl -u ratesengine-aggregator | grep "phase2 freeze"`
+      to see which pairs are firing. Updated the alert
+      annotation (both repo + R1 overlay) to call out the
+      cold-baseline pattern + triage steps.
+
+    - `aggregator_supply_refresh_never_initialized` — gated by
+      `[supply].aggregator_refresh_enabled = false` (default).
+      Enabling it requires the on-chain supply observers to be
+      backfilled across the watched accounts; same workstream as
+      the SDEX backfill. Not a quick fix; documented for follow-up.
+
+    - `supply_snapshot_never_initialized` — RESOLVED: the
+      `supply-snapshot.service` was running daily and exiting 0,
+      but `/etc/default/supply-snapshot` didn't set `TEXTFILE_OUTPUT`,
+      so the binary skipped the metric write. Wired the textfile
+      path; metric now emits. Codified in
+      `configs/ansible/roles/archival-node/tasks/10-observability.yml`
+      so a rebuilt host gets the wiring automatically.
+
+    - `slo_latency_burn_slow` — same family as the SLA-probe
+      perf finding; will track with that workstream.
+
+- **Backfill status surfaces "stalled" vs "running" separately.**
+  `BackfillDecoderState` (the per-decoder row on
+  `/v1/diagnostics/ingestion`) decomposes the previously-opaque
+  `ranges_active` count into `ranges_complete` (done),
+  `ranges_running` (incomplete + updated within 10 min), and
+  `ranges_stalled` (incomplete + idle > 10 min — needs
+  `ratesengine-ops backfill -resume`). Status page renders three
+  separate columns with green/blue/red coloring. The old
+  `ranges_active` field stays on the wire for back-compat.
+
 - **Backfill auto-refreshes the long-lived CAGGs (`prices_1h` /
   `prices_4h` / `prices_1d` / `prices_1w` / `prices_1mo`) at the
   end of every chunk.** Without this, historical inserts get

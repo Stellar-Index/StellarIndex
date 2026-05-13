@@ -129,6 +129,26 @@ func (o *Orchestrator) markPhase2Freeze(
 	}
 	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(class)).Inc()
 
+	// Visibility for the operator: until 2026-05-13 Phase 2 freeze
+	// decisions only manifested as a Prometheus counter +
+	// (optional) Redis marker. Phase 1 logs the same event at
+	// WARN level (orchestrator.go:851). The Phase 2 path stayed
+	// silent for ergonomic reasons (3-signal AND can fire many
+	// times in a tick) but that hid an actionable signal — when
+	// baselines aren't mature (insufficient historical samples)
+	// Phase 2 false-fires across many pairs and the operator's
+	// only signal is the alert summary "freeze sustained" with no
+	// way to triage which pairs / how confidently. This INFO line
+	// gives the alert runbook something to grep.
+	o.logger.Info("phase2 freeze engaged",
+		"pair", pair.String(),
+		"class", class,
+		"confidence", c.Confidence,
+		"zscore", c.ZScore,
+		"source_count", c.SourceCount,
+		"writer_wired", o.cfg.FreezeWriter != nil,
+	)
+
 	if o.cfg.FreezeWriter == nil {
 		return
 	}

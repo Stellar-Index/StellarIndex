@@ -57,6 +57,29 @@
     group: ratesengine
     mode: "0775"
 
+# /etc/default/supply-snapshot — operator override that wires the
+# textfile-collector path the supply-snapshot binary writes its
+# success metric to. Without this, the binary runs successfully on
+# its daily cadence but emits no metric, and
+# `ratesengine_supply_snapshot_never_initialized` (alert in
+# deploy/monitoring/rules/supply-snapshot.yml) fires permanently.
+# The asset coverage limitation (only XLM today) is documented in
+# the unit comments + tracked separately — this file just unblocks
+# the SLA-evidence chain.
+- name: Install /etc/default/supply-snapshot (textfile metric wiring)
+  ansible.builtin.copy:
+    dest: /etc/default/supply-snapshot
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node role / 10-observability.yml).
+      # Required for ratesengine_supply_snapshot_last_success_timestamp
+      # to emit. Without TEXTFILE_OUTPUT, the unit succeeds but no
+      # metric is written and the never-initialized alert fires.
+      TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_snapshot.prom
+  tags: [observability, supply-snapshot]
+
 - name: Install node_exporter systemd unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/node_exporter.service
