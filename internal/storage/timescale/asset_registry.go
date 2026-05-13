@@ -119,6 +119,29 @@ func (s *Store) registerClassicAssetSeen(
 	return nil
 }
 
+// ResetAssetRegistryDedupeForTest clears the process-lifetime
+// dedupe cache used by [Store.registerClassicAssetSeen]. Used by
+// the F-1243 (codex audit-2026-05-13) duplicate-replay integration
+// proof to simulate a process restart between an original trade
+// insert and a replay of the same trade — the test asserts that
+// the registry row's `observation_count` does NOT advance on the
+// replay because the [Store.InsertTrade] `RowsAffected == 0` guard
+// short-circuits the registry hook even with a cold dedupe cache.
+//
+// Production code never calls this; it only exists so the
+// integration test can isolate the RowsAffected guard from the
+// in-process TTL cache that would otherwise mask a regression.
+func ResetAssetRegistryDedupeForTest() {
+	assetRegistryDedupe.Range(func(k, _ any) bool {
+		assetRegistryDedupe.Delete(k)
+		return true
+	})
+	issuerRegistryDedupe.Range(func(k, _ any) bool {
+		issuerRegistryDedupe.Delete(k)
+		return true
+	})
+}
+
 // shouldSkipAssetRegistryUpsert returns true when `now` falls
 // within `assetRegistryDedupeTTL` of the last recorded upsert
 // for `assetID`. Returns false on no-cache (first time) and on

@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- F-1243 (codex audit-2026-05-13, wave 64) — closes the long-
+  standing duplicate-replay evidence gap on the classic-asset
+  registry. New `timescale.ResetAssetRegistryDedupeForTest`
+  helper + `test/integration/asset_registry_replay_test.go::
+  TestAssetRegistry_DuplicateReplayDoesNotMutateCounters` proves
+  end-to-end (against testcontainers-go Timescale) that replaying
+  a stored trade with a cold dedupe cache — the simulated-
+  process-restart shape the audit specifically called out — does
+  NOT advance `classic_assets.observation_count` or
+  `last_seen_*`, while a distinct trade on the same asset does.
+  Source-side guards from waves 47 + 51 (TTL dedupe + RowsAffected
+  short-circuit) were already correct; this lands the closure-
+  grade proof. F-1243 → `fixed`; XFI-0035 → `fixed`.
+
 ## [v0.5.0-rc.49] — 2026-05-12
 
 audit-2026-05-12 remediation pass — 27 audit findings closed in
