@@ -1,13 +1,30 @@
 ---
 title: Status page hosting comparison
-last_verified: 2026-04-30
-status: decision-support (Task #73)
+last_verified: 2026-05-13
+status: superseded
 related:
+  - web/status/README.md (the shipped implementation)
+  - docs/operations/runbooks/sev-status-page-update.md (operator runbook for the shipped path)
   - docs/operations/sev-playbook.md §5.1 (Public communication)
   - docs/operations/public-flip.md §"Post-flip" (DNS cutover)
 ---
 
 # Status page hosting comparison
+
+> **Superseded note (2026-05-13).** When this doc was originally
+> written (2026-04-30) it recommended Instatus. The project
+> ultimately shipped something different — a self-hosted static
+> Next.js app under `web/status/` deploying to Cloudflare Pages,
+> with incidents authored as Markdown files under
+> `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`. The shipped
+> approach is closest to "cstate" in this doc's matrix; see the
+> [§Why we ended up at "cstate-shaped"](#why-we-ended-up-at-cstate-shaped)
+> section at the bottom for what changed in the analysis.
+>
+> The matrix and the original Instatus recommendation are kept
+> below as a record of the decision process. For "how to actually
+> open an incident today" see
+> [`runbooks/sev-status-page-update.md`](../operations/runbooks/sev-status-page-update.md).
 
 Decision-support doc — pick a hosting option from §Recommendation
 below and the implementation under Task #73 is then straightforward
@@ -206,3 +223,69 @@ Revisit the vendor choice if:
 Otherwise, the choice is sticky — switching status pages
 mid-life is operationally expensive and signals instability to
 customers.
+
+## Why we ended up at "cstate-shaped"
+
+This section is the addendum (2026-05-13) explaining what changed
+between the original Instatus recommendation and the shipped
+implementation.
+
+### What was actually built
+
+`web/status/` — a Next.js 15 static export deploying to Cloudflare
+Pages on every push to `main`. Incidents are Markdown files under
+`internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, embedded into the
+API binary via `go:embed` so `ratesengine-ops emit-incident` can
+fire customer-webhook fan-out (`incident.sev1` /
+`incident.resolved`, F-1249) directly from the same source. The
+status page itself is a static rendering of the same corpus via
+`web/status/src/lib/incidents.ts`.
+
+This is the matrix's "cstate" shape, with two material differences:
+- **Cloudflare Pages, not GitHub Pages.** Build + propagate is
+  ~30-90 seconds end-to-end on `main` push; not the multi-minute
+  GitHub Pages round-trip the original analysis assumed.
+- **Customer-webhook fan-out plus the status page.** Incidents are
+  pushed to subscribed customers' webhook URLs the moment
+  `emit-incident` runs, not just rendered on a polled status page.
+
+### Why the original Instatus recommendation was abandoned
+
+Three things shifted between 2026-04-30 and the wave-57 ship date:
+
+1. **The "no consumer traffic yet" posture changed the SEV-1
+   timing premise.** The original analysis weighted the cstate
+   "edit YAML, push, wait for CI" cost against a SEV-1 5-minute
+   acknowledgement window for live customers. Pre-launch (where
+   we still are) there are no live customers; the SEV-1 window
+   doesn't apply. By the time live customers arrive, the
+   Cloudflare Pages 30-90s deploy time is already inside any
+   reasonable SEV-1 ack window the playbook would target.
+
+2. **Customer-webhook fan-out (F-1249) made push the primary
+   channel, not pull.** With incidents firing as
+   `incident.sev1` / `incident.resolved` webhook events to every
+   subscribed customer, the public status page became a
+   secondary visibility surface — not the customer's primary
+   notification path. That changes the "what does the page need
+   to do" calculus from "real-time incident UI" toward "durable
+   public archive."
+
+3. **Single source of truth for incidents won the trade-off.** A
+   third-party SaaS would force operators to update both the
+   webhook payload (in the codebase) AND the SaaS status page
+   (in a separate UI). With Markdown-as-source-of-truth, one
+   commit drives both.
+
+### When to revisit (still applicable)
+
+The original revisit triggers still hold, plus one new one:
+- **If sustained operator load on the Markdown workflow becomes
+  painful** — the current implementation has zero authoring UI.
+  An Instatus migration becomes worth the SaaS cost if the team
+  is opening 5+ incidents/week.
+
+The shipped approach is reversible: every incident is plain
+Markdown in git, so a future migration to a SaaS becomes "switch
+the vendor; replay the Markdown corpus." That preserves the
+original recommendation's exit-cost mitigation.
