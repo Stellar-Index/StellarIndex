@@ -17,6 +17,15 @@ against.
 
 ### Documentation
 
+- `runbooks/external-poller-error-rate-high.md` adds a new
+  "Vendor-specific 429 patterns" section covering CoinGecko's
+  three pricing tiers (public / demo / Pro), the post-2024
+  403-as-429 behaviour, the in-binary cooldown semantics
+  (`MinBackoff = 60s`, `MaxBackoff = 1h`, exponential, honours
+  `Retry-After`), quick-diagnosis commands for the R1 host, and
+  three ranked common causes. Closes the CoinGecko-half of the
+  audit's F-1208 follow-up; the remaining per-source triage stays
+  operator-only.
 - `configs/example.toml` now documents three audit-driven config
   flags that previously existed only in `internal/config` struct
   tags: `[storage].redis_username` (F-1213, the named ACL user

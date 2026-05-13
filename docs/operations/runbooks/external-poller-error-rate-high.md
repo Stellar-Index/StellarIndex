@@ -1,6 +1,6 @@
 ---
 title: Runbook — external-poller-error-rate-high
-last_verified: 2026-05-12
+last_verified: 2026-05-13
 status: draft
 severity: P3
 ---
@@ -38,11 +38,59 @@ curl -sv 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencie
 ```
 
 Key signals:
-- **HTTP 429** → vendor rate-limit. Check our poll cadence vs their published cap; upgrade to a paid tier if traffic grows.
-- **HTTP 401/403** → API key rotated or revoked; check the env var the binary reads (per `internal/sources/external/<vendor>/poller.go`).
+- **HTTP 429** → vendor rate-limit. Check our poll cadence vs their published cap; upgrade to a paid tier if traffic grows. Vendor-specific guidance for CoinGecko in [§ Vendor-specific 429 patterns](#vendor-specific-429-patterns) below.
+- **HTTP 401/403** → API key rotated or revoked; check the env var the binary reads (per `internal/sources/external/<vendor>/poller.go`). For CoinGecko specifically a 403 often means the public-no-auth tier was hit — see [§ Vendor-specific 429 patterns](#vendor-specific-429-patterns).
 - **HTTP 5xx** → vendor outage; check their status page.
 - **Connect timeout** → DNS or network egress issue; jump to `host-network` diagnostics.
 - **Schema parse error** → vendor changed their response shape; per CLAUDE.md "external sources" surprise list, this is recoverable but requires a code update.
+
+### Vendor-specific 429 patterns
+
+#### CoinGecko (audit-2026-05-12 F-1208)
+
+CoinGecko has three pricing tiers and the 429/403 behaviour
+differs across them. Our poller (`internal/sources/external/
+coingecko/poller.go`) has built-in cooldown handling:
+exponential backoff from `MinBackoff = 60s` to `MaxBackoff = 1h`,
+honours `Retry-After`, and treats 403 the same as 429 (CoinGecko
+post-2024 returns 403 instead of 429 when the public-no-auth
+tier is denied).
+
+| Tier | Request cap | Symptom when exceeded | Operator action |
+| ---- | ----------- | --------------------- | --------------- |
+| Public (no auth) | ~5-15 req/min, IP-throttled — increasingly tightened since late 2024 | HTTP 403 with no `Retry-After`. Poller arms 60s cooldown, doubles each consecutive denial. | Provision a free demo key at coingecko.com/api/pricing and set the `DemoAPIKey` field via the indexer's CG poller config. |
+| Demo (free signup) | 30 req/min | HTTP 429, sometimes with `Retry-After`. Same backoff path as public. | Reduce CG poll frequency, or upgrade to Analyst. |
+| Pro (paid) | 500 req/min (Analyst) → 1000 req/min (Pro) → custom (Enterprise) | HTTP 429 only when the paid cap is exceeded; rare. | Check whether CG is in incident state (status.coingecko.com); if not, raise the poll interval until the next billing cycle. |
+
+Quick CG diagnosis on R1:
+
+```sh
+# Which CG key is the binary using? Logs disclose Pro/Demo/none.
+journalctl -u ratesengine-indexer -n 1000 --no-pager | \
+  grep -iE 'coingecko.*key|coingecko.*tier' | tail -5
+
+# Manual probe with the SAME key the binary uses (replace KEY):
+curl -sv "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd&x_cg_demo_api_key=KEY" 2>&1 | head -20
+
+# Check the cooldown state from logs (poller logs `cooldown armed for Xs` on each backoff).
+journalctl -u ratesengine-indexer -n 500 --no-pager | \
+  grep -iE 'coingecko.*cooldown|coingecko.*backoff' | tail -5
+```
+
+Common 429 causes ranked by likelihood on a healthy R1:
+
+1. **No CG API key configured** — the public tier is the new
+   default-deny. Provision a demo key (free signup at
+   coingecko.com/api/pricing).
+2. **Demo key cap exceeded by the verified-currency catalogue
+   growth** — every catalogue entry adds one slug to the polled
+   set. At 30 req/min the cap is reached around 25-28 verified
+   currencies polled at the default 60s interval. Raise the
+   interval OR upgrade to Pro.
+3. **Multiple binaries (indexer + ops `verify-external`) using
+   the same key against the same IP** — both count toward the
+   per-IP cap. Prefer the indexer-only path during steady-state;
+   only run the ops verifier on demand.
 
 ## Mitigation (≤ 15 min)
 

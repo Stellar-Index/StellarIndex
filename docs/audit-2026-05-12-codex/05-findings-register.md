@@ -57,7 +57,14 @@ or admin-UI action — no further code change pending):
   Code-side npm/pnpm ecosystems already wired.
 - `F-1208` — operator: per-source triage on R1 (ECB / Soroswap /
   Band / Phoenix / Comet / Blend / Redstone) + Coingecko 429
-  diagnosis.
+  diagnosis. Wave 70 (2026-05-13) added a CoinGecko-specific 429
+  triage matrix to `runbooks/external-poller-error-rate-high.md`
+  covering the three CG tiers (public/demo/Pro), the 403-as-429
+  post-2024 behavior, the `MinBackoff = 60s` / `MaxBackoff = 1h`
+  cooldown semantics, and three ranked common causes (missing
+  key / catalogue growth past 25-28 entries / multi-binary IP
+  contention). The CG half is now operator-runbook complete; the
+  remaining per-source triage stays operator-only.
 - `F-1209` — operator: R1 capacity triage (memory + swap +
   MinIO 78% full).
 - `F-1214` — repo-admin UI: enable main-branch protection rules
