@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -57,6 +60,15 @@ type AssetDetail struct {
 	ContractID *string `json:"contract_id,omitempty"`
 	HomeDomain *string `json:"home_domain,omitempty"`
 	Decimals   int     `json:"decimals"`
+
+	// Class is the cross-chain asset class for catalogue-backed rows:
+	// "fiat" | "stablecoin" | "crypto". Omitted for Stellar-classic
+	// rows that have no catalogue entry (the long tail of asset codes
+	// observed in trades). Populated from `internal/currency`'s
+	// verified-currency catalogue via the asset's slug. R-018
+	// assets-unification — lets /v1/assets serve as the CMC/CoinGecko-
+	// style global listing with class-filtered views (`?asset_class=fiat`).
+	Class string `json:"class,omitempty"`
 	// Sep1Status is the state of the SEP-1 overlay for this asset:
 	//   - "not_applicable" — no home-domain (native, fiat, SAC-only).
 	//   - "not_fetched"    — has a home-domain but overlay not configured.
@@ -355,6 +367,24 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
+	// asset_class filter. Drives the CMC/CoinGecko-style class chip
+	// group on the explorer's /assets page. Recognised values:
+	//   - "fiat"        → catalogue fiat rows only (USD, EUR, …).
+	//   - "stablecoin"  → catalogue stablecoin rows only (USDC, USDT, …).
+	//   - "crypto" / "blockchain"
+	//                   → catalogue crypto rows only (BTC, ETH, XLM, …).
+	//                   "blockchain" is the spec's surface alias for
+	//                   the same set.
+	//   - "" / "all"    → existing classic_assets + external-network
+	//                   paths below; catalogue rows do NOT merge in
+	//                   until R-018 finalisation lands the
+	//                   cursor-phased catalogue→classic protocol.
+	assetClass := normaliseAssetClass(r.URL.Query().Get("asset_class"))
+	if assetClass == "fiat" || assetClass == "stablecoin" || assetClass == "crypto" {
+		s.handleAssetListFromCatalogue(w, r, assetClass, limit, cursor)
+		return
+	}
+
 	// Network filter. Drives the /blockchains/{network} → assets
 	// click-through. Recognised values:
 	//   - "" / "stellar" → existing reader path; returns the indexer's
@@ -599,6 +629,196 @@ func (s *Server) handleAssetListExternalNetwork(w http.ResponseWriter, r *http.R
 		env.Pagination = &Pagination{Next: next}
 	}
 	writeEnvelope(w, env)
+}
+
+// normaliseAssetClass folds the spec's surface labels into the
+// catalogue's internal class identifiers. "blockchain" is the
+// explorer's filter chip name for the catalogue's "crypto" class
+// (CMC's / CoinGecko's "Cryptocurrencies" tab equivalent). Empty
+// + "all" both fall through unchanged; the handler treats them as
+// the legacy classic_assets path.
+func normaliseAssetClass(raw string) string {
+	c := strings.ToLower(strings.TrimSpace(raw))
+	switch c {
+	case "blockchain", "cryptocurrency", "cryptocurrencies":
+		return "crypto"
+	}
+	return c
+}
+
+// handleAssetListFromCatalogue serves /v1/assets?asset_class={fiat,
+// stablecoin,crypto} from the verified-currency catalogue (45
+// rows total today). The catalogue is the source of cross-chain
+// identities (USDC the currency, GBP the fiat) — distinct from
+// the classic_assets table which carries per-issuer-on-Stellar
+// rows (USDC-GA5Z..., USDT-GCQT...).
+//
+// Returns rows with:
+//   - asset_id = slug ("usdc", "us-dollar", "btc") — the route
+//     /v1/assets/{slug} dispatches to GlobalAssetView for these.
+//   - type = "global"; consumers distinguishing wire shape can
+//     check (a) the type field or (b) the absence of issuer.
+//   - market_cap_usd populated for fiat via the same fxHistory-
+//     backed path /v1/assets/verified uses (R-018 wave 140 fix).
+//     Crypto + stablecoin rows lack supply data in the catalogue
+//     today; their market_cap stays null until the crypto-supply
+//     pipeline lands.
+//   - networks[] reflected on the wire as a count + the array
+//     itself in the same shape /v1/assets/verified uses.
+//   - issuer/contract_id/home_domain/sep1_status absent — those
+//     are Stellar-network-specific and belong on the
+//     /v1/assets/{slug}/{network} deep-dive route.
+//
+// Pagination via offset cursor — the result set is bounded at
+// ≤45 catalogue rows per class, so a simple offset is sufficient.
+func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Request, class string, limit int, cursor string) {
+	if s.verifiedCurrencies == nil {
+		writeJSON(w, []AssetDetail{}, Flags{})
+		return
+	}
+	matched := filterCatalogueByClass(s.verifiedCurrencies.All(), currency.AssetClass(class))
+	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
+	rows := projectCatalogueRows(matched, caps)
+	sortAssetDetailsByMarketCapDesc(rows)
+	writeCataloguePage(w, rows, limit, cursor)
+}
+
+// filterCatalogueByClass returns the catalogue entries matching the
+// target class in source order. Helper extracted from
+// handleAssetListFromCatalogue to keep that handler under the
+// gocognit budget.
+func filterCatalogueByClass(entries []*currency.VerifiedCurrency, target currency.AssetClass) []*currency.VerifiedCurrency {
+	out := make([]*currency.VerifiedCurrency, 0, len(entries))
+	for _, vc := range entries {
+		if vc.Class == target {
+			out = append(out, vc)
+		}
+	}
+	return out
+}
+
+// computeCatalogueMarketCaps fans out fiatMarketCapUSD for each fiat
+// catalogue entry in parallel. Returns a parallel-indexed slice of
+// market_cap strings (empty string for rows where computation
+// skipped or failed). Crypto + stablecoin classes return all-empty
+// because the catalogue carries no supply data for them today.
+func (s *Server) computeCatalogueMarketCaps(ctx context.Context, matched []*currency.VerifiedCurrency, class string) []string {
+	caps := make([]string, len(matched))
+	if class != "fiat" {
+		return caps
+	}
+	var wg sync.WaitGroup
+	for i, vc := range matched {
+		if vc.CirculatingSupply == "" {
+			continue
+		}
+		i, vc := i, vc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+				caps[i] = *capStr
+			}
+		}()
+	}
+	wg.Wait()
+	return caps
+}
+
+// projectCatalogueRows applies projectCatalogueRow + the parallel
+// market_cap slice to produce the wire shape.
+func projectCatalogueRows(matched []*currency.VerifiedCurrency, caps []string) []AssetDetail {
+	rows := make([]AssetDetail, len(matched))
+	for i, vc := range matched {
+		rows[i] = projectCatalogueRow(vc)
+		if caps[i] != "" {
+			c := caps[i]
+			rows[i].MarketCapUSD = &c
+		}
+	}
+	return rows
+}
+
+// writeCataloguePage applies offset-cursor pagination + writes the
+// envelope. Catalogue paging is small (≤45 rows per class) so offset
+// is sufficient.
+func writeCataloguePage(w http.ResponseWriter, rows []AssetDetail, limit int, cursor string) {
+	offset := 0
+	if cursor != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	if offset >= len(rows) {
+		writeJSON(w, []AssetDetail{}, Flags{})
+		return
+	}
+	end := offset + limit
+	if end > len(rows) {
+		end = len(rows)
+	}
+	env := Envelope{Data: rows[offset:end], Flags: Flags{}}
+	if end < len(rows) {
+		next := strconv.Itoa(end)
+		env.Pagination = &Pagination{Next: next}
+	}
+	writeEnvelope(w, env)
+}
+
+// projectCatalogueRow maps a catalogue entry to the listing's
+// AssetDetail wire shape. NO issuer / contract_id / home_domain
+// / sep1_status — those are Stellar-network-specific and belong
+// on /v1/assets/{slug}/{network}.
+func projectCatalogueRow(vc *currency.VerifiedCurrency) AssetDetail {
+	name := vc.Name
+	d := AssetDetail{
+		AssetID:    vc.Slug,
+		Type:       "global",
+		Code:       vc.Ticker,
+		Decimals:   vc.SupplyDecimals,
+		Sep1Status: "not_applicable",
+		Class:      string(vc.Class),
+		Slug:       vc.Slug,
+		Name:       &name,
+	}
+	if vc.CirculatingSupply != "" {
+		s := vc.CirculatingSupply
+		d.CirculatingSupply = &s
+	}
+	return d
+}
+
+// sortAssetDetailsByMarketCapDesc sorts rows in place by
+// market_cap_usd descending. Nil market_cap sinks to the bottom
+// (preserves the catalogue's source order among equally-unknown
+// rows via stable sort). Used by the catalogue-listing path; the
+// classic-assets path orders server-side in SQL.
+func sortAssetDetailsByMarketCapDesc(rows []AssetDetail) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		ai := bigFloatFromOptionalString(rows[i].MarketCapUSD)
+		aj := bigFloatFromOptionalString(rows[j].MarketCapUSD)
+		switch {
+		case ai == nil && aj == nil:
+			return false
+		case ai == nil:
+			return false
+		case aj == nil:
+			return true
+		default:
+			return ai.Cmp(aj) > 0
+		}
+	})
+}
+
+func bigFloatFromOptionalString(s *string) *big.Float {
+	if s == nil || *s == "" {
+		return nil
+	}
+	f, ok := new(big.Float).SetPrec(128).SetString(*s)
+	if !ok {
+		return nil
+	}
+	return f
 }
 
 // projectCatalogueForNetwork walks the catalogue and returns one
