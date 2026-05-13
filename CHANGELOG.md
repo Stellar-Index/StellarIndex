@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Documentation
+
+- Wave-102 audit-doc-rot sweep — closes the new findings the
+  reconciler surfaced after my prior wave-98/100 stop ("any
+  additional codex findings?" was a real question, not a
+  rhetorical one):
+    - **F-1211 reopened** (the wave-57 fix missed 4 surfaces).
+      Updated `CLAUDE.md` repo-map, `launch-readiness-backlog.md`
+      L4.11 row, `launch-task-list.md` G4 entry, and
+      `deploy/comms/{README,incident-update}.md` to describe the
+      shipped `web/status/` + `internal/incidents/data/` Markdown
+      corpus instead of the retired Upptime/cstate workflows.
+    - **F-1264** — `configs/prometheus/README.md` +
+      `configs/loki/README.md` no longer claim "no firewall"
+      and "publicly reachable"; updated to reflect nftables
+      default-drop on R1.
+    - **F-1265** — `configs/alertmanager/README.md`,
+      `configs/alertmanager/alertmanager.r1.yml` header, and
+      `configs/ansible/roles/prometheus/README.md` switched to
+      the `page/ticket/informational` severity ladder the
+      Ansible template actually uses (was incorrectly described
+      as `critical/warning/info`).
+    - **F-1266** — `configs/ansible/README.md` now lists all
+      five roles (`haproxy`, `loki`, `patroni`, `prometheus`,
+      `redis-sentinel`) instead of claiming `archival-node` is
+      the only one; the Promtail-TODO note carried forward.
+    - **F-1267** — `configs/healthchecks/README.md`,
+      `configs/healthchecks/install.sh` comment, and
+      `docs/operations/pre-launch-hardening.md` updated from
+      "four Checks" to "five Checks" (the SLA-probe timer
+      joined the heartbeat fleet).
+    - **F-1268** — `configs/prometheus/rules.r1/README.md`
+      `scp` target corrected from `/etc/prometheus/rules.d/` to
+      `/etc/prometheus/rules.r1/` (matches the active
+      `prometheus.r1.yml` include path).
+    - **F-1269** — `configs/audit/README.md` no longer promises
+      an `_unattributed` block that the YAML hasn't contained
+      since the 2026-05-01 testnet-address cleanup.
+  Findings register + XFI table flipped accordingly: 8 new
+  fixes across the two surfaces.
+
 ### Added
 
 - New `internal/obstest` package centralising the

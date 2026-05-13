@@ -69,8 +69,10 @@ scp -r configs/healthchecks/ root@136.243.90.96:/tmp/
 ssh root@136.243.90.96 'bash /tmp/healthchecks/install.sh'
 ```
 
-Then on healthchecks.io, create four Checks and paste their ping
-URLs into `/etc/default/ratesengine-healthchecks`:
+Then on healthchecks.io, create **five Checks** (F-1267,
+2026-05-13 — was four before the SLA-probe timer joined the
+heartbeat fleet) and paste their ping URLs into
+`/etc/default/ratesengine-healthchecks`:
 
 ```sh
 HEALTHCHECKS_URL_INDEXER='https://hc-ping.com/<uuid-indexer>'
@@ -79,6 +81,9 @@ HEALTHCHECKS_URL_API='https://hc-ping.com/<uuid-api>'
 HEALTHCHECKS_URL_SMOKE='https://hc-ping.com/<uuid-smoke>'
 HEALTHCHECKS_URL_SLA_PROBE='https://hc-ping.com/<uuid-sla-probe>'
 ```
+
+That's 3 binary heartbeats (indexer / aggregator / api) +
+1 smoke timer + 1 SLA-probe timer = 5 total.
 
 Then `systemctl restart ratesengine-heartbeat@*.timer ratesengine-smoke.timer ratesengine-sla-probe.timer`.
 

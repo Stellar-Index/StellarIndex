@@ -9,9 +9,11 @@ r1) so audits are reproducible.
 ### `wasm-walk-contracts.yaml`
 
 The input list for `ratesengine-ops wasm-history` walks. One entry per
-Soroban source we ingest, plus an `_unattributed` block for contracts
-known to be operational but whose ContractInstance entries are
-TTL-evicted from RPC.
+Soroban source we ingest. (Earlier versions of this README also
+described an `_unattributed` block for contracts whose
+ContractInstance entries were TTL-evicted from RPC; that block was
+intentionally removed in the 2026-05-01 testnet-address cleanup —
+F-1269, 2026-05-13.)
 
 **Total: 540 contracts across 8 sources** (derived from the 2026-04-30
 r1 walk + 2026-05-01 cross-check).

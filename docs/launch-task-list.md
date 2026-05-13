@@ -328,17 +328,16 @@ FX path is available. Existing Phase 1 path remains the fast lane.
 **Effort:** 2–3 days. Designed in the L2.2 scope notes.
 **Owner:** `internal/storage/timescale/`, `internal/aggregate/orchestrator/`.
 
-### G4. Public status page (§F3, L4.11)
+### G4. Public status page (§F3, L4.11) — ✅ shipped
 
-**The gap:** No `status.ratesengine.net`. SEV playbook references
-"status page updates" but there's nowhere to update.
-
-**Acceptance:** `cstate` (or equivalent) deployed; `deploy/`
-contains the config; the status page is reachable; DNS points at
-it; `docs/operations/sev-playbook.md` references the live URL.
-
-**Effort:** half-day infra + 1 hour DNS/runbook update.
-**Owner:** infra; tracked at L4.11.
+**Status (F-1211, 2026-05-13):** shipped as a self-hosted
+Next.js 15 static export at [`web/status/`](../web/status/README.md)
+deploying to Cloudflare Pages on every push to `main`. Incidents
+are Markdown files under `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`,
+embedded into the API binary via `go:embed`. Earlier text named
+`cstate` as a candidate; the shipped path is closest in spirit
+but uses Cloudflare Pages + the embedded incident corpus. Operator
+runbook: [`docs/operations/runbooks/sev-status-page-update.md`](operations/runbooks/sev-status-page-update.md).
 
 ### G5. SEV-1 / SEV-2 dry-run (§D, L5.7)
 

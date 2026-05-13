@@ -348,6 +348,87 @@ without evidence IDs.
   non-audit scope and TSV rows both equal `1,898`; status roll-up is
   `done=112`, `in_progress=88`, `todo=1698`; `internal` area count is `693`;
   docs lint passes.
+- `CMD-0167` closes the remaining evidence gate on `F-1243`: the new
+  asset-registry replay integration test runs green on current head and proves
+  duplicate replays no longer mutate `classic_assets` counters after the
+  dedupe cache is cleared between attempts.
+- `CMD-0168` reconciles `F-1219` to genuinely fixed on current source rather
+  than merely "narrowed": the Stripe bridge now fans paid upgrades into
+  Postgres dashboard keys in production wiring, targeted platform-webhook
+  tests pass, and the new sync-error metric/runbook makes best-effort platform
+  write failures operator-visible.
+- `CMD-0169` restores literal control parity after the latest tracked-scope
+  growth. The Codex TSV now matches the repo at `tracked=1901`, `rows=1901`;
+  the roll-up is `done=115`, `in_progress=88`, `todo=1698`; area counts and the
+  repo snapshot are refreshed to `HEAD=34511e50...`; docs lint passes.
+- `CMD-0170` through `CMD-0173` refresh the live/open tranche rather than
+  carrying forward stale snapshots: launch-readiness is still red on the same
+  cross-region/security/failover rows, GitHub hosted alerts remain disabled,
+  R1 still exposes captive-core `11726/tcp` / leaves `sla-probe.timer`
+  disabled / leaves signup verification unset, and the public history/SSE
+  probes still reproduce `F-1225`, `F-1228`, and `F-1230`.
+- `CMD-0174` falsifies the register itself: after the live refreshes, a
+  summary-table-versus-detail-section status comparator found 19 stale detail
+  labels, those are now reconciled to the already-settled table statuses, the
+  comparator returns no mismatches, and docs lint stays green.
+- `CMD-0175` refines the remaining R1 operations findings against current live
+  truth. The old "many stopped sources" picture has narrowed, but launch-state
+  remains degraded: status reports `12/17` active sources and eight incidents,
+  ECB is still stale, Redstone is pending source-stopped, memory remains above
+  94%, swap is effectively exhausted, and MinIO is still 78% full.
+- `CMD-0176` refreshes the hosted governance tranche directly from GitHub:
+  branch protection is still unavailable on the private-plan posture,
+  production environments still have no reviewer/branch protection, and
+  repository Actions policy is still all-actions/no-SHA-pinning.
+- `CMD-0177` captured the pre-reopen wave-97 count reconciliation:
+  findings `50/13`, XFI `45/10`, remediation `47/14`.
+- `CMD-0178` then falsifies the wave-57 `F-1211` closure claim during the
+  breadth pass. The primary status-page setup/runbook path is current, but
+  `CLAUDE.md`, `launch-readiness-backlog.md`, `launch-task-list.md`, and the
+  two `deploy/comms/*` templates still retain active Upptime/cstate/status-repo
+  instructions that can misdirect an operator during an incident. `F-1211`,
+  `XFI-0007`, and `R-1209` are reopened.
+- `CMD-0179` verifies that the post-reopen wave-98 ledgers reconcile again:
+  findings `49/14`, XFI `44/11`, remediation `46/15`; file coverage now rolls
+  up to `done=115`, `in_progress=91`, `todo=1695`; docs lint still passes.
+- `CMD-0180` closes the first root/control-doc breadth tranche without
+  manufacturing findings from clearly historical documents. The dated review
+  is explicitly unratified, the status-page hosting comparison is explicitly
+  superseded, and the root README/VERSIONS/agent-orientation surfaces add no
+  new defect beyond already-tracked live findings.
+- `CMD-0181` surfaces new medium-severity `F-1264`: the Prometheus/Loki R1
+  docs still describe a no-firewall/publicly reachable observability posture
+  even though live R1 now has nftables `policy drop`, external `9090` / `3100`
+  probes time out, and only the captive-core port set is explicitly accepted.
+- `CMD-0182` surfaces new low-severity `F-1265`: Alertmanager migration docs
+  and inline config comments still claim the Ansible template uses
+  `critical/warning/info`, but the actual template already matches the
+  standalone `page/ticket/informational` ladder.
+- `CMD-0183` verifies that the wave-99 tables reconcile after both additions:
+  findings `49/16`, XFI `44/13`, remediation `46/17`; coverage now rolls up
+  to `done=125`, `in_progress=95`, `todo=1681`; docs lint remains green.
+- `CMD-0184` broadens the Ansible/doc review. It expands `F-1265` to include
+  the Prometheus role README's stale `critical/warning/info` prose and opens
+  new medium-severity `F-1266`: the top-level Ansible bootstrap README still
+  says archival-node is the only role while sibling HA roles/playbooks have
+  landed, and it advertises Promtail/Loki wiring that the archival-node
+  observability task still marks TODO.
+- `CMD-0185` restores post-Ansible-pass control parity: findings `49/17`, XFI
+  `44/14`, remediation `46/18`; file coverage now rolls up to `done=126`,
+  `in_progress=98`, `todo=1677`; docs lint remains green.
+- `CMD-0186` opens new medium-severity `F-1267`: Healthchecks setup docs and
+  installer comments still say "four" external checks / URLs after the SLA
+  probe timer/env slot expanded the contract to five; the pre-launch hardening
+  guide also still omits `HEALTHCHECKS_URL_SLA_PROBE`.
+- `CMD-0187` restores post-Healthchecks control parity: findings `49/18`, XFI
+  `44/15`, remediation `46/19`; file coverage now rolls up to `done=126`,
+  `in_progress=101`, `todo=1674`; docs lint remains green.
+- `CMD-0188` opens new medium-severity `F-1268`: the R1 rules README still
+  copies alert overlays into `/etc/prometheus/rules.d/`, while the actual R1
+  Prometheus config loads `/etc/prometheus/rules.r1/*.yml`.
+- `CMD-0189` restores post-rule-overlay control parity: findings `49/19`, XFI
+  `44/16`, remediation `46/20`; file coverage now rolls up to `done=126`,
+  `in_progress=103`, `todo=1672`; docs lint remains green.
 - `CMD-0122` surfaced new high-severity migration finding `F-1261`.
   Migration `0030_asset_supply_history_unique_constraint` fails against the
   compressed hypertable created by `0005`, fresh integration bootstrap dies
@@ -381,8 +462,11 @@ without evidence IDs.
   missing `asset_registry_test.go` ledger row was added. `EV-0164` advances
   parity again at `1,898` tracked non-audit rows after the wave-50
   `apikey_store_test.go` scope growth and the wave-54 reconciliation refresh.
+  `EV-0169` advances the same control to `1,901` tracked rows after the
+  replay-integration test, Stripe sync runbook, and status README entered the
+  tracked tree.
   Current findings remain source/R1 verified and not imported from prior
   audits, but final whole-repo closure still requires terminal review
   status across the refreshed TSV. The current inventory roll-up is
-  `done=112`, `in_progress=88`, `todo=1698`, with tracked-file parity
-  restored at `1898` rows and preserved through `CMD-0164`.
+  `done=115`, `in_progress=88`, `todo=1698`, with tracked-file parity
+  restored at `1901` rows and preserved through `CMD-0169`.

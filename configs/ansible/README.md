@@ -1,10 +1,31 @@
 # Rates Engine — Ansible bootstrap
 
-Config-management entrypoint for Rates Engine hosts. Today the only
+Config-management entrypoint for Rates Engine hosts. The primary
 role is `archival-node` — it takes a bare Ubuntu 24.04 (or 22.04)
 install and brings it up as a Stellar archival node running
-**Galexie + Postgres 15 + MinIO** by default, with ZFS, a locked-down
-firewall, and Prometheus exporters wired in.
+**Galexie + Postgres 15 + MinIO** by default, with ZFS, a
+locked-down firewall, and Prometheus exporters wired in.
+
+Other roles in tree (F-1266, 2026-05-13 — the README originally
+said "the only role is archival-node" before the rest landed):
+
+- `haproxy` — public-facing HAProxy load balancer for the
+  multi-region API + dashboard fronting plan.
+- `loki` — log aggregation (Loki + Promtail). The
+  archival-node task at
+  `roles/archival-node/tasks/10-observability.yml` still leaves
+  `promtail → loki_push_url` as a `TODO(#0)` on the archival
+  side; loki itself is roleified.
+- `patroni` — Postgres HA cluster member for the R1↔R2 sync /
+  R1→R3 async replication topology.
+- `prometheus` — multi-host Prometheus + Alertmanager. See
+  [`roles/prometheus/README.md`](roles/prometheus/README.md).
+- `redis-sentinel` — Sentinel-fronted Redis cache cluster
+  (ADR-0024).
+
+Playbooks under `playbooks/` orchestrate these roles for
+multi-host bring-ups (`monitoring.yml`, `postgres-cluster.yml`,
+`redis-cluster.yml`, `haproxy.yml`, `loki.yml`).
 
 The role *also* contains tasks for installing **stellar-core** and
 **stellar-rpc** (and the stellar-core Prometheus exporter) — but

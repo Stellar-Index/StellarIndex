@@ -51,12 +51,15 @@ and the wrapper script defaults `SLA_PROBE_TEXTFILE_OUTPUT`.
 ## Apply to R1
 
 ```sh
-scp configs/prometheus/rules.r1/*.yml root@136.243.90.96:/etc/prometheus/rules.d/
+scp configs/prometheus/rules.r1/*.yml root@136.243.90.96:/etc/prometheus/rules.r1/
 ssh root@136.243.90.96 'systemctl reload prometheus'
 ```
 
-`prometheus.r1.yml` already loads `/etc/prometheus/rules.d/*.yml`,
-so no Prometheus config change is needed.
+`prometheus.r1.yml` loads `/etc/prometheus/rules.r1/*.yml`
+(matches the source-tree directory name), so no Prometheus
+config change is needed. F-1268 (2026-05-13) corrected an
+earlier README that pointed at the wrong `/etc/prometheus/rules.d/`
+target.
 
 ## Migrate to multi-host
 

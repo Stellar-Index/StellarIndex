@@ -79,6 +79,9 @@ amtool alert add \
 
 When R2 / R3 land, the Ansible role at
 `configs/ansible/roles/prometheus/templates/alertmanager.yml.j2`
-takes over. That template currently hardcodes `critical/warning/info`
-matchers — adapt our `page/ticket/informational` vocabulary into
-the role and decommission this directory.
+takes over. That template **already uses** the same
+`page/ticket/informational` vocabulary this R1 file does (F-1265,
+2026-05-13 — the template converged on the same severity ladder
+post-R1 standup, so the multi-host transition is a config-shape
+swap, not a severity-vocabulary rewrite). Decommission this
+directory when the role applies cleanly to R1.

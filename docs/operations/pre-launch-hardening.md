@@ -131,13 +131,16 @@ ratesengine-api` and apply the upgrade.
 
 ## 6. Healthchecks.io URLs
 
-Four URLs go into `/etc/default/ratesengine-healthchecks`:
+Five URLs go into `/etc/default/ratesengine-healthchecks`
+(F-1267 corrected the four-vs-five count on 2026-05-13 — the
+SLA-probe timer joined the heartbeat fleet):
 
 ```sh
 HEALTHCHECKS_URL_INDEXER='https://hc-ping.com/<uuid-indexer>'
 HEALTHCHECKS_URL_AGGREGATOR='https://hc-ping.com/<uuid-aggregator>'
 HEALTHCHECKS_URL_API='https://hc-ping.com/<uuid-api>'
 HEALTHCHECKS_URL_SMOKE='https://hc-ping.com/<uuid-smoke>'
+HEALTHCHECKS_URL_SLA_PROBE='https://hc-ping.com/<uuid-sla-probe>'
 ```
 
 Plus the deadmansswitch URL into `/etc/default/alertmanager-secrets`:
