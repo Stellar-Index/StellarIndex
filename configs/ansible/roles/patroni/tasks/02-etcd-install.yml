@@ -14,11 +14,35 @@
   changed_when: false
   when: _etcd_bin.stat.exists
 
+# F-1280 (codex audit-2026-05-13): fail fast with a helpful
+# message if the operator hasn't supplied the etcd release
+# SHA256 in their inventory. The role can't ship a baked-in
+# default because the SHA is per-architecture (amd64 vs arm64)
+# and changes with every upstream release; pinning one would
+# rot. The pre-wave-112 default was `'REPLACE_WITH_RELEASE_SHA'`
+# which only fails LATER at the get_url checksum verification,
+# producing a confusing error mid-run. This assertion surfaces
+# the cause at role-start.
+- name: assert etcd_release_sha256 is set
+  assert:
+    that:
+      - etcd_release_sha256 is defined
+      - etcd_release_sha256 | length == 64
+      - etcd_release_sha256 != 'REPLACE_WITH_RELEASE_SHA'
+    fail_msg: >-
+      etcd_release_sha256 must be set in inventory (per-architecture
+      SHA-256 of the etcd 3.5.21 tarball). Get the SHA from
+      https://github.com/etcd-io/etcd/releases/tag/v3.5.21 — pick
+      the line matching
+      `etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}.tar.gz`
+      in the SHA256SUMS file.
+  when: not _etcd_bin.stat.exists or 'v3.5.21' not in (_etcd_version_check.stdout | default(''))
+
 - name: download etcd 3.5.21
   get_url:
     url: "https://github.com/etcd-io/etcd/releases/download/v3.5.21/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}.tar.gz"
     dest: /tmp/etcd.tar.gz
-    checksum: "sha256:{{ etcd_release_sha256 | default('REPLACE_WITH_RELEASE_SHA') }}"
+    checksum: "sha256:{{ etcd_release_sha256 }}"
     mode: '0644'
   when: not _etcd_bin.stat.exists or 'v3.5.21' not in _etcd_version_check.stdout | default('')
 
