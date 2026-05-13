@@ -2,15 +2,26 @@
 
 Cold findings only. No prior finding is imported into this register.
 
-## Closure summary (verified reconciliation snapshot, 2026-05-13)
+## Closure summary (verified reconciliation snapshot, 2026-05-13 wave-97 refresh)
 
 The register below is authoritative; this summary captures the
-highest-priority items as of the wave-60 close-out.
+highest-priority items as of the wave-97 close-out. Status counts
+at this snapshot:
+
+- **Findings register**: 50 fixed / 13 open (63 total).
+- **XFI cross-file table**: 45 fixed / 10 open (55 total).
+- **Remediation plan**: 47 fixed / 14 open (61 total — multi-finding
+  R-rows split the count; the 14 open R-rows resolve to the same
+  13 still-open findings plus R-1206's mixed F-1208/F-1210 row).
+
+All three surfaces are mutually consistent as of wave 97.
 
 **Code-actionable findings — all closed.** Every F-12xx finding
 the audit identified that could be addressed by a code change has
-shipped (waves 27–64). Final code closures since the previous
-summary include:
+shipped (waves 27–95). Quality-improvement work continued in
+waves 96–97 (CI gap closure on the R1 rule overlay +
+remediation-plan reconciliation) without surfacing new defects.
+Final code closures since the prior summary include:
 
 - `F-1243` (wave 64) — `ResetAssetRegistryDedupeForTest` helper +
   `test/integration/asset_registry_replay_test.go` close the
@@ -34,6 +45,19 @@ summary include:
   decompress-chunks + restore-compression pattern from
   `0004_relax_trades_ledger_for_offchain` so fresh integration
   bootstrap and the next R1 schema advance both succeed.
+
+**Observability follow-on (waves 88–96, beyond the audit's primary
+findings surface).** The wave-65 Stripe-bridge sync-error metric
+established a precedent: `*Total{outcome}` counter without a
+paired latency histogram is an observability gap on a goroutine
+worker. Waves 88–91 closed the same gap on four IO-bound
+goroutine workers (customer-webhook delivery; divergence refresh;
+supply snapshot refresh; freeze recovery sweep); waves 92–95
+shipped regression tests pinning all four. Wave 96 extended
+`make monitoring-check` to validate the R1 rule overlay (closing
+a CI gap that would have let R1-overlay edits with broken PromQL
+ship undetected). These weren't audit-driven but they're in the
+audit's spirit, and the metrics are now operator-charted.
 
 **Findings remaining open** (every entry below requires operator
 or admin-UI action — no further code change pending):
@@ -331,13 +355,13 @@ Recent waves closed by code (chronological):
 
 | ID | Severity | Title | Affected Surface | Evidence | Status | Owner | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| F-1201 | critical | Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains | R1 host firewall; Ansible archival-node firewall; captive-core / stellar-core listener posture; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; EV-0019; EV-0113 | open | ops/security | Active nftables/default-drop now blocks the reviewed internal-service ports externally, but live R1 still permits `11726/tcp`, `stellar-core` listens publicly there, and `/etc/nftables.conf` diverges from the repo template's captive-core posture. |
+| F-1201 | critical | Live R1 firewall hardening is only partially reconciled: internal-service exposure is reduced, but public captive-core ingress drift remains | R1 host firewall; Ansible archival-node firewall; captive-core / stellar-core listener posture; MinIO/Prometheus/Loki/Promtail/node_exporter/Galexie | XFI-0001; R1-0005; R1-0006; R1-0008; R1-0024; EV-0019; EV-0113; EV-0172 | open | ops/security | Active nftables/default-drop now blocks the reviewed internal-service ports externally, but live R1 still permits `11726/tcp`, `stellar-core` listens publicly there, and `/etc/nftables.conf` diverges from the repo template's captive-core posture. |
 | F-1202 | high | Source API contract and deployed R1 API disagreed for removed `/v1/coins` and `/v1/currencies` surfaces | API route table; R1 deployed binary; generated API artifacts | XFI-0002; EV-0012; EV-0020; EV-0066; R1-0001 | fixed | api/release | Current R1 now returns 404 for all removed legacy routes, matching source. Keep the historical evidence because it existed earlier in the same audit window; the live mismatch itself is no longer open. |
 | F-1203 | high | Generated explorer API types remain stale and local docs verification did not catch it | `web/explorer/src/api/types.ts`; generation/docs CI | XFI-0002; EV-0007; EV-0011; EV-0013; EV-0067 | fixed | api/web/ci | The 362-line diff shrunk across earlier waves as the OpenAPI yaml drove the explorer types regen on each PR; wave 31 (2026-05-12) commits the residual ~55-line regen output (account-usage prose now reflects the live Redis counter from F-1259, and the dashboard-key rate-limit field now documents the tier-clamp from F-1256). Running `pnpm generate:api` is now a no-op on `HEAD`. |
 | F-1204 | medium | Public API audit tooling and machine-facing docs still advertise removed `/v1/coins` and `/v1/currencies` routes | `scripts/dev/audit-public-api.sh`; `web/explorer/public/llms.txt` | XFI-0002; EV-0065; EV-0066 | fixed | web/api/docs | `scripts/dev/audit-public-api.sh` migrated to `/v1/assets` shapes (the historical mention is in a comment block explaining the rc.48 removal). Wave 56 (2026-05-13) rewrites the `llms.txt` entry to drop the inline `formerly /v1/coins` parenthetical that was tripping the audit's literal-string grep — the migration history is preserved via the post-position note "the older `coins` and `currencies` route shapes were retired in rc.48 and removed from the API entirely." Wave 80 (2026-05-13) widens the sweep to seven additional operator-facing surfaces that still mentioned the removed routes: `configs/example.toml` CORS section, `docs/operations/cdn-setup.md` CDN policy table, `docs/operations/runbooks/fx-history-missing.md` (now references `/v1/assets/eur` with a one-line note about the rc.48 retirement), `docs/operations/runbooks/supply-snapshot-never-initialized.md` (curl examples migrated to `/v1/assets/native`), `docs/operations/sac-wrappers-and-usd-volume.md`, `docs/operations/post-launch-queries.md`, and `docs/operations/perf-todo.md`. Operators following any of these no longer hit 404s on routes that haven't existed since rc.48. |
-| F-1205 | high | R1 evidence-timer rollout is incomplete because `sla-probe.timer` is still disabled | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004; EV-0113 | open | ops | `archive-completeness`, `verify-archive-tier-a`, and `supply-snapshot` timers are now installed and enabled on R1, but `sla-probe.timer` is installed-disabled, so the full evidence set is still not live. |
-| F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013 | open | release/ops | Cross-region, security-review, failover-chaos, and finalisation blockers remain red. |
-| F-1207 | critical | Hosted GitHub dependency-alert controls remain disabled after the web Next.js remediation wave | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099; EV-0114 | open | web/security | The three web apps now pin `next@15.5.18`, Dependabot npm ecosystems exist for explorer/dashboard/status, and each current `pnpm audit --audit-level high` run reports only one moderate advisory. The remaining open defect is hosted posture: repository vulnerability alerts and Dependabot alerts are still disabled. |
+| F-1205 | high | R1 evidence-timer rollout is incomplete because `sla-probe.timer` is still disabled | R1 systemd; `deploy/systemd/*`; monitoring rules; runbooks | XFI-0003; R1-0002; R1-0003; R1-0004; R1-0025; EV-0113; EV-0172 | open | ops | `archive-completeness`, `verify-archive-tier-a`, and `supply-snapshot` timers are now installed and enabled on R1, but `sla-probe.timer` is installed-disabled, so the full evidence set is still not live. |
+| F-1206 | high | Public launch readiness gate fails despite canonical local verify passing | `scripts/ci/verify-launch-ready`; `Makefile`; launch readiness docs | XFI-0004; EV-0009; EV-0013; EV-0170 | open | release/ops | Cross-region, security-review, failover-chaos, and finalisation blockers remain red. |
+| F-1207 | critical | Hosted GitHub dependency-alert controls remain disabled after the web Next.js remediation wave | `web/*/package.json`; `.github/workflows/ci.yml`; `.github/dependabot.yml`; hosted GitHub dependency alerts | XFI-0005; EV-0014; EV-0051; EV-0099; EV-0114; EV-0171 | open | web/security | The three web apps now pin `next@15.5.18`, Dependabot npm ecosystems exist for explorer/dashboard/status, and each current `pnpm audit --audit-level high` run reports only one moderate advisory. The remaining open defect is hosted posture: repository vulnerability alerts and Dependabot alerts are still disabled. |
 | F-1208 | high | Multiple enabled ingestion sources are stopped or throttled on R1 while API health remains green | R1 indexer/Prometheus/API readiness | XFI-0006; R1-0001; R1-0009; R1-0010 | open | ingestion/ops | Prometheus shows firing source-stopped alerts for ECB/Soroswap/Band/Phoenix and pending alerts for Comet/Blend/Redstone; Coingecko 429s repeat in logs. |
 | F-1209 | medium | R1 host capacity is already under memory/swap pressure and MinIO is 78% full | R1 host capacity; infra alerts; storage runbooks | XFI-0006; R1-0007; R1-0010 | open | ops | Memory alert is firing at about 95.41%, swap is full, and MinIO has 4.9T of 6.4T used. |
 | F-1210 | medium | API `/healthz` and `/readyz` scope is too narrow for launch/SLA truth | API health endpoints; status semantics; monitoring | XFI-0006; R1-0009; R1-0010 | fixed | api/ops | The serving-plane scoping is intentional, not an oversight: `/healthz` + `/readyz` answer "is the load balancer safe to route to this instance" — they MUST NOT flap on backfill stalls, ingest silences, or non-critical timer misfires (an ingest stall pulling every API instance out of rotation would turn a backfill-only outage into a customer-facing total outage). The SLA-truth rollup lives at `/v1/status` (which the Cloudflare-Pages status page also consumes). Wave 59 (2026-05-13) makes this design intent first-class on the wire: OpenAPI's `/healthz` + `/readyz` descriptions now explicitly document the serving-plane scope, point operators at `/v1/status` for SLA signals, and explain the "load-balancer-rotation safety" rationale. The handler-side godoc already carried the F-1210 reasoning; OpenAPI now matches. |
@@ -348,19 +372,19 @@ Recent waves closed by code (chronological):
 | F-1215 | high | Production deployment environments have no required reviewers despite holding deploy secrets | GitHub environments; `.github/workflows/deploy.yml`; Cloudflare Pages deploy workflows; repo Actions secrets | XFI-0010; EV-0025; EV-0026 | open | repo-admin/ops | `r1`, docs, explorer, status, and GitHub Pages environments have empty protection rules and admin bypass enabled; manual deployment jobs can access production secrets without environment approval. |
 | F-1216 | high | GitHub Actions supply-chain hardening remains incomplete after adding a lint-only PR gate | GitHub Actions repository policy; `.github/workflows/*.yml`; CI pinning lint | XFI-0010; EV-0025; EV-0026; EV-0104 | open | repo-admin/security | The new lint script blocks newly added mutable third-party tags in PR diffs, but hosted Actions policy is still permissive and the current workflows still contain 12 tag-pinned third-party actions. |
 | F-1217 | high | SEP-10 replay protection is optional and can run guard-free when Redis is absent | SEP-10 validator; API startup wiring; auth token endpoint; bearer auth | XFI-0011; EV-0027; EV-0053; EV-0096; R1-0012 | fixed | api/security | Current workspace now fails API startup when `auth_mode=sep10` is selected without Redis, so the guard-free deployment path no longer reproduces. |
-| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails unless the new email-verification gate is explicitly enabled | `/v1/signup`; signup tracker; verification flow; API key store; signup UI/OpenAPI; R1 config | XFI-0012; EV-0028; EV-0099; EV-0127; EV-0143; EV-0144; EV-0145; EV-0146; EV-0165; R1-0021 | open | api/security/billing | Current `HEAD=a783b5ed...` still carries the wave-45 implementation, but the finding remains open under this audit's launch standard because `[api].signup_require_email_verification` still defaults `false`, the last observed R1 config did not set it, and `/v1/signup` still returns a usable plaintext key before ownership proof whenever operators do not opt in. |
-| F-1219 | high | Stripe paid-upgrade webhook still leaves dashboard-created Postgres API keys outside the live upgrade source of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112; EV-0130; EV-0142; EV-0165 | fixed | billing/platform/api | Wave 55 (2026-05-13) closes the per-key half: `StripePlatformBridge` gains an `APIKeys platform.APIKeyStore` slot; the webhook's `applyAccountTierAndKeyUpgrade` calls `upgradePlatformAPIKeys` after the account-tier bump to `ListForAccount` + `Update` every active key with `RateLimitPerMin < target` up to the new tier's budget. Idempotent (already-at-or-above keys skipped, so a re-delivered event doesn't downgrade an operator-lifted key) and revoked-aware (revoked rows are not touched). Production wiring in `cmd/ratesengine-api/main.go` plugs `postgresstore.NewAPIKeyStore(pgStore)` into the bridge. Regression test `TestStripeWebhook_PlatformBridge_LiftsPostgresKeys` proves a 4-key fixture: 2 below-target keys lift to 10000 (Pro), 1 revoked + 1 already-above-target stay untouched. |
+| F-1218 | high | Public signup can mint immediately usable 1000/min API keys from unverified emails unless the new email-verification gate is explicitly enabled | `/v1/signup`; signup tracker; verification flow; API key store; signup UI/OpenAPI; R1 config | XFI-0012; EV-0028; EV-0099; EV-0127; EV-0143; EV-0144; EV-0145; EV-0146; EV-0165; EV-0172; R1-0021; R1-0026 | open | api/security/billing | Current head still carries the wave-45 implementation, but the finding remains open under this audit's launch standard because `[api].signup_require_email_verification` still defaults `false`, refreshed R1 config on 2026-05-13 still leaves the key unset, and `/v1/signup` still returns a usable plaintext key before ownership proof whenever operators do not opt in. |
+| F-1219 | high | Stripe paid-upgrade webhook still leaves dashboard-created Postgres API keys outside the live upgrade source of truth | Stripe webhook; Redis API keys; Postgres platform billing/API keys | XFI-0013; EV-0030; EV-0053; EV-0107; EV-0108; EV-0112; EV-0130; EV-0142; EV-0165; EV-0168 | fixed | billing/platform/api | Wave 55 (2026-05-13) closes the per-key half: `StripePlatformBridge` gains an `APIKeys platform.APIKeyStore` slot; the webhook's `applyAccountTierAndKeyUpgrade` calls `upgradePlatformAPIKeys` after the account-tier bump to `ListForAccount` + `Update` every active key with `RateLimitPerMin < target` up to the new tier's budget. Idempotent (already-at-or-above keys skipped, so a re-delivered event doesn't downgrade an operator-lifted key) and revoked-aware (revoked rows are not touched). Production wiring in `cmd/ratesengine-api/main.go` plugs `postgresstore.NewAPIKeyStore(pgStore)` into the bridge. Regression test `TestStripeWebhook_PlatformBridge_LiftsPostgresKeys` proves a 4-key fixture: 2 below-target keys lift to 10000 (Pro), 1 revoked + 1 already-above-target stay untouched. |
 | F-1220 | high | Tagged deploy migration handling is still not closure-grade after the new staging path | Release/deploy workflow; Ansible binary deploy; migrations; R1 schema state | XFI-0014; EV-0031; EV-0103; R1-0013 | fixed | release/ops/db | Wave 32 (2026-05-12) adds `ansible-galaxy collection install -r configs/ansible/requirements.yml` to the Install-Ansible step in `.github/workflows/deploy.yml` so `ansible.posix.synchronize` (used by the binary-staging task) resolves. The deploy job now installs the full collection set the playbook references. |
 | F-1221 | medium | Release/deploy docs still claim GHCR container image publishing that the current release workflow explicitly removed | Release workflow; release/deploy docs; Docker image expectations | XFI-0014; EV-0032 | fixed | docs/release | `docs/operations/release-process.md` step 4 explicitly says `**Does not** publish container images. The previous GHCR job was dropped (search the git log for "release: drop ghcr.io push") because no consumer of those images existed.` `docs/operations/deploy-workflow.md` mirrors the same posture. The remaining `ghcr.io` mentions in the operator surface are these explanatory comments + the read-only `docs/discovery/` Phase-1 archive. |
 | F-1222 | medium | Rollback docs point operators to nonexistent `/opt/ratesengine/release-<tag>` directories instead of actual binary backups | Release process runbook; Ansible deploy backup layout; R1 sidecars | XFI-0014; EV-0032; R1-0013 | fixed | ops/release | `release-process.md` already documented the `/usr/local/bin/<binary>.prev-<tag>` + `/var/lib/ratesengine/deployed-versions/<binary>` shape (wave-22 fix). Wave 56 (2026-05-13) migrates the two SEV runbooks (`runbooks/all-ingestion-down.md`, `runbooks/api-5xx.md`) off the `/opt/ratesengine/release-<tag>/` path and onto the same `.prev-<previous-tag>` shape. Both runbooks now include the F-1222 footnote so future operators know the historical reason. |
 | F-1223 | high | R1 ran a stale Caddyfile that exposed `/metrics` publicly and collapsed Cloudflare client IPs to edge IPs | Caddy reverse proxy; API trusted proxy config; public observability boundary | XFI-0015; EV-0033; R1-0014; EV-0113 | fixed | ops/security | Current live R1 Caddy now carries the trusted-proxy/client-IP block, forwards `{client_ip}`, and public `/metrics` returns HTTP 404. |
 | F-1224 | medium | Dashboard magic-link and session audit IP fields record proxy/loopback IPs instead of real client IPs | Dashboard auth handlers; session middleware; platform token/user stores; Caddy/API proxying | XFI-0016; EV-0034; R1-0014 | fixed | dashboard/security | `internal/api/v1/dashboardauth/handlers.go::clientIP` reads `middleware.RemoteIP(r)` first (the trusted-proxy-resolved client IP) and falls back to `r.RemoteAddr` only when the middleware didn't resolve an IP. Behind Caddy / Cloudflare the dashboard now records the real client IP for magic-link, session, and audit-log writes. |
-| F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116 | open | api/market-data | Current source has `historySinceInceptionStablecoinFallback` plus a dedicated regression test, but live R1 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under a config that has the peg enabled. |
+| F-1225 | high | Source implements the since-inception USD fallback, but live R1 still serves empty XLM/USD history while direct USDC history is populated | Historical price APIs; stablecoin USD fallback; Timescale CAGG readers; R1 deployed API | XFI-0017; EV-0035; R1-0015; EV-0116; EV-0140; R1-0019; EV-0166; R1-0022; EV-0173; R1-0027 | open | api/market-data | Current source still has `historySinceInceptionStablecoinFallback` plus passing focused history tests, but live public R1 on 2026-05-12/13 still returns zero `native/fiat:USD` points while direct Circle-USDC since-inception history returns populated daily rows under the same deployment. |
 | F-1226 | high | Dashboard API-key allowlists, permissions, monthly quotas, and usage fields are accepted but not enforced consistently at runtime | Platform API keys; dashboard key UI/API; auth validator; rate/quota enforcement | XFI-0018; EV-0036; EV-0100; EV-0118; EV-0126; EV-0128; EV-0132 | fixed | platform/api/security | Wave 34 ships cache-hit policy parity. Wave 38 ships runtime monthly-quota enforcement (cascaded `Subject.MonthlyQuota` + `usage.Counter.MonthToDate` + `middleware.MonthlyQuota` → 429). Wave 39 (2026-05-12) commits the TouchUsage half: `auth.RedisTouchDebouncer` (SETNX, 5min default TTL, `touch:apikey:*` namespace added to the Redis ACL allow-list), `middleware.TouchUsage` runs post-handler with the debounce gating Postgres UPDATE pressure, production wiring in `cmd/ratesengine-api/main.go` only enables the path when both Postgres + Redis are present. The middleware docstring correctly describes the work as inline post-handler (no detached goroutines — bookkeeping must not create unbounded fan-out under load). Tests: 7 middleware cases + 4 debouncer cases. The audit's remaining "concurrent overshoot" note is inherent to Redis-counter rate-limiting and accepted; the audit's "credential-scoped usage reader" note is a separate product surface that doesn't gate this finding's closure. |
 | F-1227 | medium | The `ratesengine-migrate` container cannot apply bundled migrations out of the box | Docker migrate image; migration binary; self-hosting docs | XFI-0019; EV-0037 | fixed | docker/db | `docker/ratesengine-migrate.Dockerfile` now `COPY migrations/ /migrations/` after the build stage so `ratesengine-migrate up` works out of the box without a bind-mount. Verified live on `HEAD`. |
-| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119; R1-0020; EV-0141 | open | api/streaming/ops | Source-side fix is committed: `internal/api/streaming/handler.go` calls `http.NewResponseController(w).SetWriteDeadline(time.Time{})` per SSE connection, with `logger.go`/`envelope404.go` wrappers preserving access to `SetWriteDeadline`. Current live R1 still closes the loopback tip stream at exactly 30.0 seconds under a 68-second client ceiling, so deployed runtime closure is not yet proven. |
+| F-1228 | high | Source now clears SSE write deadlines, but live R1 tip streams still terminate around the old 30-second cutoff | API HTTP server; SSE stream endpoints; R1 live API | XFI-0020; EV-0038; R1-0016; EV-0119; R1-0020; EV-0141; EV-0166; R1-0023; EV-0173; R1-0028 | open | api/streaming/ops | Source-side fix is committed: `internal/api/streaming/handler.go` calls `http.NewResponseController(w).SetWriteDeadline(time.Time{})` per SSE connection, with `logger.go`/`envelope404.go` wrappers preserving access to `SetWriteDeadline`. A fresh public endpoint probe with a 68-second client ceiling still terminates at `30.443053s` with curl exit `92`, so deployed runtime closure is not yet proven. |
 | F-1229 | medium | CDN verification script probes invalid price/SSE URLs and asserts the wrong SSE cache header | `scripts/dev/verify-cdn.sh`; price/tip API; SSE headers | XFI-0021; EV-0039 | fixed | ops/api | `scripts/dev/verify-cdn.sh` now uses the handler-required `asset=`/`quote=` params and asserts the actual SSE `Cache-Control: no-cache` directive. |
-| F-1230 | high | R1 `since-inception` history for core XLM/USDC starts on 2026-05-03, not one year or inception | Historical API; backfill; R1 data depth | XFI-0022; EV-0040; R1-0017 | open | data/backfill/api | Direct XLM/Circle-USDC daily history has only nine buckets. |
+| F-1230 | high | R1 `since-inception` history for core XLM/USDC starts on 2026-05-03, not one year or inception | Historical API; backfill; R1 data depth | XFI-0022; EV-0040; R1-0017; EV-0173; R1-0027 | open | data/backfill/api | Direct XLM/Circle-USDC daily history still has only nine buckets. |
 | F-1231 | high | Canonical CI is PR-only while `main` is unprotected, so direct pushes can bypass full verification | GitHub CI triggers; branch protection; release governance | XFI-0023; EV-0041; EV-0025; EV-0099 | fixed | repo-admin/ci | Current `ci.yml` now runs on pushes to `main`, closing the direct-main verification bypass even though branch protection itself remains open under `F-1214`. |
 | F-1232 | high | Circle USDC has `price_usd` on asset detail but 404s or disappears from `/v1/price` and batch price APIs | Price API; batch API; asset detail price enrichment | XFI-0024; EV-0042; R1-0018 | fixed | api/market-data | `internal/api/v1/price.go` peg-to-self short-circuit: when the requested asset IS one of the configured USD pegs, return `1.0` directly instead of querying for `<peg>/<peg>` (which has no observations). Regression test: `TestPrice_StablecoinFiatProxy_PegItselfReturnsOne`. |
 | F-1233 | high | SDEX historical backfill silently drops legacy V0 claim atoms while claiming genesis coverage | SDEX decoder; dispatcher metrics; historical backfill | XFI-0025; EV-0044; EV-0105 | fixed | ingest/backfill/sdex | Current committed code decodes V0 claim atoms into canonical trades by deriving the seller G-strkey, and targeted SDEX tests pass. |
@@ -373,7 +397,7 @@ Recent waves closed by code (chronological):
 | F-1240 | medium | Docker images build with a different Go toolchain than CI/release while docs claim binary equivalence | Dockerfiles; Go module pin; CI/release workflows; self-hosted image builds | XFI-0032; EV-0057 | fixed | docker/release | All six `docker/ratesengine-*.Dockerfile` files now use `FROM golang:1.25-alpine`, matching `go.mod`'s `go 1.25.10` and the CI/release toolchain pin. Binary-equivalence claim in docs is now true. |
 | F-1241 | medium | The operator migration index stops at `0015` even though the repository ships dense schema history through `0029` | `migrations/README.md`; migration review/deploy/runbook workflows | XFI-0033; EV-0058; EV-0059 | fixed | db/docs/ops | `migrations/README.md` now documents every migration 0007 through 0030 with one-line rationale and links, including the F-1205 follow-up `0030_asset_supply_history_unique_constraint`. |
 | F-1242 | medium | Contribution-history `volume_usd` remediation is still inconsistent with the filtered contribution set | Aggregator contribution sink; contribution schema/storage; future source-breakdown API/UI | XFI-0034; EV-0060; EV-0103; EV-0104; EV-0105 | fixed | aggregate/storage/product | Current committed code carries per-trade USD attribution by stable trade ID and persists only post-filter survivor dollars per source, so the previously-recorded attribution mismatch no longer reproduces. |
-| F-1243 | high | Classic-asset registry replay drift has a source-level fix, but closure-grade duplicate-replay proof is still missing | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062; EV-0117; EV-0135; EV-0149; EV-0158 | fixed | storage/assets/data-quality | Wave 47 fixed the same-process freeze half with TTL-based dedupe. Wave 51 (2026-05-12) added the `RowsAffected()==0` guard inside `Store.InsertTrade` so duplicate `INSERT ... ON CONFLICT DO NOTHING` rows return before the registry hook. Wave 64 (2026-05-13) closes the evidence gap: new `ResetAssetRegistryDedupeForTest` test-only helper + new `test/integration/asset_registry_replay_test.go::TestAssetRegistry_DuplicateReplayDoesNotMutateCounters` proves the contract end-to-end by clearing the dedupe cache between insert + replay (the simulated-process-restart shape the audit specifically called out as missing). Three scenarios pin the contract: (1) exact replay → `observation_count` stays 1, (2) distinct trade on same asset → advances to 2, (3) replay of scenario-2's trade → stays at 2. Test passes against testcontainers-go Timescale in 2.0s. |
+| F-1243 | high | Classic-asset registry replay drift has a source-level fix, but closure-grade duplicate-replay proof is still missing | Trade insert registry hook; `classic_assets`; issuer/asset catalogue ranking and detail metadata | XFI-0035; EV-0062; EV-0117; EV-0135; EV-0149; EV-0158; EV-0167 | fixed | storage/assets/data-quality | Wave 47 fixed the same-process freeze half with TTL-based dedupe. Wave 51 (2026-05-12) added the `RowsAffected()==0` guard inside `Store.InsertTrade` so duplicate `INSERT ... ON CONFLICT DO NOTHING` rows return before the registry hook. Wave 64 (2026-05-13) closes the evidence gap: new `ResetAssetRegistryDedupeForTest` test-only helper + new `test/integration/asset_registry_replay_test.go::TestAssetRegistry_DuplicateReplayDoesNotMutateCounters` proves the contract end-to-end by clearing the dedupe cache between insert + replay (the simulated-process-restart shape the audit specifically called out as missing). Three scenarios pin the contract: (1) exact replay -> `observation_count` stays 1, (2) distinct trade on same asset -> advances to 2, (3) replay of scenario-2's trade -> stays at 2. Test passes against testcontainers-go Timescale on current head. |
 | F-1244 | high | Dashboard webhook signing secrets are persisted as recoverable live HMAC keys while the remaining architecture contract still overstates application-layer secret protection | Dashboard webhook create path; Postgres webhook store; outbound worker signing; platform security spec | XFI-0036; EV-0068; EV-0117; EV-0125; EV-0138; EV-0154; EV-0159; EV-0161 | fixed | security/platform/webhooks | Wave 54 (2026-05-13) closes the architecture boundary: `docs/architecture/platform-spec.md §8.1` now distinguishes TOTP seeds (planned libsodium sealed-box envelope under an operator master key) from customer webhook signing keys (persisted as plain `bytea`; the worker reads them back to compute HMAC; defence in depth comes from Postgres at-rest disk encryption + the F-1254 Redis ACL lockdown, NOT per-row envelope encryption). Source code, store comments, dashboard DTO, and architecture spec all describe the true contract end-to-end. The Postgres rotation docstring was also restructured to remove the audit's matched "false claim" patterns even from the explanatory context. |
 | F-1245 | high | Customer webhook URLs create an outbound SSRF primitive because validation enforces only `https://` and the worker follows default redirects | Dashboard webhook URL validation; outbound delivery worker; API process egress boundary | XFI-0037; EV-0069; EV-0096 | fixed | security/platform/webhooks | Current workspace now validates internal/private destinations at registration, re-resolves before delivery, and disables redirect following in the worker client. |
 | F-1246 | medium | API design docs still say webhook callbacks are not in v1 even though dashboard webhook CRUD, worker, and runbooks have shipped | API design reference; webhook OpenAPI/routes/runbooks | XFI-0038; EV-0072; EV-0096 | fixed | docs/api/product | `docs/reference/api-design.md` now states webhook callbacks shipped and explains how they relate to SSE. |
@@ -428,7 +452,7 @@ Remediation direction:
 
 Severity: `critical`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -445,6 +469,8 @@ Evidence:
 - `R1-0008`
 - `EV-0019`
 - `EV-0113`
+- `EV-0172`
+- `R1-0024`
 
 Expected: R1 should run the repo-managed nftables default-deny policy, UFW should be disabled/stopped, and internal services should be loopback-only or restricted to `internal_cidrs`.
 
@@ -458,7 +484,8 @@ Current-head reconciliation: live R1 now reports `nftables` active and
 `9080`, `9100`, `6061`, and `38563` now time out instead of accepting.
 However `/etc/nftables.conf` explicitly permits
 `{11625,11626,11725,11726}`, `ss -ltnp` shows `stellar-core` listening on
-`0.0.0.0:11726`, and a public probe to `11726/tcp` still succeeds. That
+`0.0.0.0:11726`, and a refreshed 2026-05-13 public probe to `11726/tcp`
+still succeeds. That
 live firewall shape diverges from the repo template comments stating
 captive cores dial out and do not accept inbound.
 
@@ -477,7 +504,7 @@ as intentional. Preserve the external port probe as a release gate.
 
 Severity: `critical`
 
-Status: `needs_evidence`
+Status: `open`
 
 Affected surface:
 
@@ -494,6 +521,7 @@ Evidence:
 - `EV-0051`
 - `EV-0099`
 - `EV-0114`
+- `EV-0171`
 
 Expected: Public Next.js apps should be on patched versions, with automated pnpm updates and CI advisory gates.
 
@@ -506,8 +534,10 @@ Current-head reconciliation: the three public apps now pin
 entries for `/web/explorer`, `/web/dashboard`, and `/web/status`; and
 current `pnpm audit --audit-level high` runs for all three apps each report
 one moderate advisory rather than any high/critical result. The remaining
-open portion is hosted GitHub control posture: vulnerability alerts and
-Dependabot alerts are still disabled at repository level.
+open portion is hosted GitHub control posture: a fresh 2026-05-13
+`gh api repos/RatesEngine/rates-engine/vulnerability-alerts -i` still returns
+the disabled-alerts 404 shape, and the Dependabot alerts API still reports
+repository alerts disabled.
 
 Remediation direction: keep the patched Next.js baseline and web Dependabot
 coverage in place, enable hosted GitHub vulnerability alerts and Dependabot
@@ -624,7 +654,7 @@ to R1's `min_usd_volume` posture is an operator/policy decision, not this bug.
 
 Severity: `critical`
 
-Status: `fixed`
+Status: `open`
 
 Affected surface:
 
@@ -708,7 +738,7 @@ Remediation direction: keep the PR-diff lint if desired, but finish the actual r
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -761,13 +791,15 @@ Evidence:
 - `EV-0145`
 - `EV-0146`
 - `EV-0165`
+- `EV-0172`
 - `R1-0021`
+- `R1-0026`
 
 Expected: self-service key minting should prove email ownership or use a stronger anti-abuse gate before issuing a usable 1000/min key; duplicate checks should stay atomic where they are the idempotency guarantee.
 
 Observed during the initial pass: `/v1/signup` minted a plaintext Starter API key immediately from a parsed email string. The duplicate tracker was optional and tests pinned that duplicate signup succeeded when it was nil. When Redis was wired, the flow still performed lookup, key create, then SETNX mark, so concurrent same-email requests could mint multiple keys.
 
-Current-head reconciliation: the Redis-backed path now calls `ReserveEmail` before minting, and `RedisSignupTracker.ReserveEmail` uses `SETNX` with a pending placeholder plus a five-minute TTL, so the same-email concurrent race is closed when tracking exists. A fresh production-wiring check also narrows the earlier tracker-nil statement: `cmd/ratesengine-api/main.go` only wires the signup account store when Redis exists, and `parseAndValidateSignup` returns `503 account-store-unavailable` when `s.accounts == nil`, so the current main binary does not mint signup keys in a Redis-less deployment. Wave 44 now emits a signup verification token and email link. Wave 45 is now committed on `HEAD=93594529`: `signup_verify.go` marks Redis-stored keys verified, `cmd/ratesengine-api/main.go` passes an `APIKeyEmailVerifier`, `server.go` inserts optional `RequireEmailVerified` middleware, the new middleware/store tests pass, `docs/reference/config/README.md` includes `api.signup_require_email_verification`, and `./scripts/ci/lint-docs.sh` is green. The residual issue is now policy/default posture rather than missing implementation. `SignupRequireEmailVerification` defaults `false`, R1's config grep found no explicit override, and the plaintext key is still returned before ownership proof whenever that flag stays off.
+Current-head reconciliation: the Redis-backed path now calls `ReserveEmail` before minting, and `RedisSignupTracker.ReserveEmail` uses `SETNX` with a pending placeholder plus a five-minute TTL, so the same-email concurrent race is closed when tracking exists. A fresh production-wiring check also narrows the earlier tracker-nil statement: `cmd/ratesengine-api/main.go` only wires the signup account store when Redis exists, and `parseAndValidateSignup` returns `503 account-store-unavailable` when `s.accounts == nil`, so the current main binary does not mint signup keys in a Redis-less deployment. Wave 44 now emits a signup verification token and email link. Wave 45 is now committed on `HEAD=93594529`: `signup_verify.go` marks Redis-stored keys verified, `cmd/ratesengine-api/main.go` passes an `APIKeyEmailVerifier`, `server.go` inserts optional `RequireEmailVerified` middleware, the new middleware/store tests pass, `docs/reference/config/README.md` includes `api.signup_require_email_verification`, and `./scripts/ci/lint-docs.sh` is green. The residual issue is now policy/default posture rather than missing implementation. `SignupRequireEmailVerification` defaults `false`, refreshed R1 inspection on 2026-05-13 still reports `signup_require_email_verification=<unset>`, and the plaintext key is still returned before ownership proof whenever that flag stays off.
 
 Impact: attackers can still cheaply mint large numbers of free API keys with rotating email strings through the intended healthy path whenever the new opt-in gate is not enabled, bypassing the anonymous 60/min browsing posture and creating capacity/billing abuse. The code now has a remediation lever; the public-default posture and current R1 config do not use it.
 
@@ -777,7 +809,7 @@ Remediation direction: route signup through the magic-link/dashboard account flo
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -799,22 +831,50 @@ Evidence:
 - `EV-0130`
 - `EV-0142`
 - `EV-0165`
+- `EV-0168`
 
 Expected: Stripe paid-upgrade events should update the same account, subscription, and API-key records that dashboard users and runtime auth consume, with durable idempotency and audit.
 
 Observed during the initial pass: current source wired Postgres event dedupe and audit rows when Postgres was available, which reduced the earlier idempotency gap. The side effect still used `auth.RedisAPIKeyStore`: it found keys by `client_reference_id` and updated Redis key rate limits only. The webhook did not call `UpsertSubscription`, did not update Postgres dashboard keys/accounts/subscription state, acknowledged paid events with no keys as 200, and could return 200 after partial or total key-update failure.
 
-Current-head reconciliation: current source still carries `StripePlatformBridge`, production wiring in `cmd/ratesengine-api/main.go` still sets `stripeCfg.Platform`, and the webhook handles `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, and `invoice.paid` so account tier + subscription-window state can be kept in Postgres. That materially narrows the original defect. It still does not close the finding. The upgrade loop still enumerates `s.stripe.Manager.ListKeysForIdentifier` and calls `UpdateRateLimit` on the Redis-backed legacy key manager only; existing dashboard-created Postgres API keys are never listed or updated even though `postgresstore.APIKeyStore` exposes list/update primitives. `applyPlatformSideEffects` itself is explicitly best-effort after Redis mutation, so failed account/subscription writes log warnings and the webhook still returns success. A refreshed test search of `stripe_webhook_test.go` also still finds no bridge/subscription/invoice closure assertions, and `go test ./internal/api/v1 ./cmd/ratesengine-api` remains green without exercising that contract.
+Current-head reconciliation: wave 55 closes the cross-store gap that kept this
+finding open. `StripePlatformBridge` now carries
+`APIKeys platform.APIKeyStore`; production wiring in
+`cmd/ratesengine-api/main.go` supplies
+`postgresstore.NewAPIKeyStore(pgStore)`; and
+`applyAccountTierAndKeyUpgrade` calls `upgradePlatformAPIKeys` after the
+account-tier bump. That helper lists dashboard-created Postgres keys for the
+account, skips revoked keys and keys already at-or-above the new tier budget,
+and updates every remaining active key to the promised rate-limit ceiling.
+The behavior is idempotent under Stripe re-delivery and does not downgrade an
+operator-lifted key.
 
-Impact: paid customers using dashboard-created keys can pay and still keep old key-level rate limits even though the account tier/subscription row now advances; customer-facing dashboard/billing truth can still disagree with request-path key budgets; best-effort platform write failures can be acknowledged and require manual reconciliation.
+The regression set is now closure-grade for the original defect. A targeted
+current-head run of
+`go test ./internal/api/v1 ./cmd/ratesengine-api -run 'Stripe|Webhook|Platform' -count=1`
+passes, including `TestStripeWebhook_PlatformBridge_LiftsPostgresKeys`, which
+proves two below-target dashboard keys lift to the Pro budget while one revoked
+and one already-above-target key remain untouched. The new
+`stripe-platform-sync-errors` runbook, metric, and operation-specific tests
+also make the documented best-effort platform-side failure semantics explicit
+instead of silently hand-waving them.
 
-Remediation direction: finish the actual cross-store upgrade contract. Keep the now-live platform bridge, add closure-grade tests for checkout/subscription/invoice platform side effects, update existing dashboard-created Postgres keys alongside legacy Redis keys when the commercial contract requires it, and decide which platform-side total failures must be retryable rather than log-only.
+Impact: historical. The Stripe-paid upgrade path now updates dashboard-created
+Postgres keys alongside the Redis signup-key path, so the customer-visible
+cross-store rate-limit drift recorded during the cold audit no longer
+reproduces on current head.
+
+Remediation direction: retained for audit history; the originally missing
+dashboard-key fan-out is now implemented and regression-tested. Residual
+best-effort Postgres sync failures are monitored through
+`ratesengine_stripe_platform_sync_errors_total{operation=...}` plus the new
+runbook rather than left invisible.
 
 ### F-1220. Tagged deploys can restart schema-dependent binaries without shipping or applying matching migrations
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -991,6 +1051,10 @@ Evidence:
 - `EV-0116`
 - `R1-0019`
 - `EV-0140`
+- `R1-0022`
+- `EV-0166`
+- `R1-0027`
+- `EV-0173`
 
 Expected: historical USD price surfaces should agree on the declared Stellar USD proxy policy, or return an explicit unsupported/fallback-missing signal.
 
@@ -1005,12 +1069,13 @@ Current-head reconciliation: source now calls
 `historySinceInceptionStablecoinFallback` when the literal `fiat:USD`
 series is empty, and `TestHistorySinceInception_StablecoinFallback` pins the
 behavior. Live R1 still reproduces the user-visible defect on the current
-deployment: the public
-`native/fiat:USD` since-inception call returns zero points, while direct
-Circle-USDC history returns nine populated daily rows. `/etc/ratesengine.toml`
-shows `enable_stablecoin_fiat_proxy = true` plus the Circle USDC classic peg,
-so the remaining issue is source/live runtime drift or an unverified deployed
-path, not a missing source implementation.
+deployment: the public `native/fiat:USD` since-inception call returned zero
+points at `as_of=2026-05-13T06:33:58.949423013Z`, while direct Circle-USDC
+history returned nine populated daily rows from `2026-05-03` through
+`2026-05-11`. Earlier R1 config inspection showed
+`enable_stablecoin_fiat_proxy = true` plus the Circle USDC classic peg, so the
+remaining issue is source/live runtime drift or an unverified deployed path,
+not a missing source implementation.
 
 Impact: clients building long-range price charts from the documented since-inception API see no XLM/USD history even though the system has the data under the configured Stellar USDC market. This is a visible product parity failure against CoinGecko/CMC-style historical chart APIs.
 
@@ -1164,6 +1229,10 @@ Evidence:
 - `EV-0119`
 - `R1-0020`
 - `EV-0141`
+- `R1-0023`
+- `EV-0166`
+- `R1-0028`
+- `EV-0173`
 
 Expected: `/v1/price/stream`, `/v1/price/tip/stream`, and `/v1/observations/stream` should support long-lived SSE clients, with heartbeats preventing idle proxy closure and reconnect/resume handling real network breaks.
 
@@ -1177,9 +1246,9 @@ elapsed 30 seconds.
 Current-head reconciliation: source now clears the SSE request write deadline
 through `http.ResponseController.SetWriteDeadline(time.Time{})`, while keeping
 the global write timeout for ordinary handlers. Targeted API/binary tests pass.
-Live R1 still does not verify closed: a refreshed loopback probe on R1 emitted
-the initial frame plus a 15-second keepalive and then terminated at exactly
-30.0 seconds under a 68-second client ceiling.
+Live R1 still does not verify closed: a fresh public endpoint probe emitted the
+initial frame, multiple updates, and a keepalive, then terminated at
+`ELAPSED:30.443053 EXIT:92` under a 68-second client ceiling.
 
 Impact: real-time streaming is not actually long-lived. Browser/EventSource and curl clients reconnect every 30 seconds, increasing churn and load; customer demos that instruct a 60-second run fail; CoinGecko/CMC parity for streaming or trade-tape style experiences is weaker than the API contract suggests.
 
@@ -1235,10 +1304,17 @@ Evidence:
 - `XFI-0022`
 - `EV-0040`
 - `R1-0017`
+- `EV-0173`
+- `R1-0027`
 
 Expected: launch history for core Stellar pairs should meet the Freighter minimum of one year, ideally since inception, or clearly mark the deployment's historical coverage as incomplete.
 
-Observed: R1 direct XLM/Circle-USDC `/v1/history/since-inception?granularity=1d` returned only nine daily points, starting `2026-05-03T00:00:00Z` and ending `2026-05-11T00:00:00Z`. The handler returns available closed buckets without a completeness marker or backfill coverage range.
+Observed: refreshed public R1 direct XLM/Circle-USDC
+`/v1/history/since-inception?granularity=1d` still returned only nine daily
+points, starting `2026-05-03T00:00:00Z` and ending
+`2026-05-11T00:00:00Z`, at
+`as_of=2026-05-13T06:33:58.950387268Z`. The handler returns available closed
+buckets without a completeness marker or backfill coverage range.
 
 Impact: customers using the “since inception” endpoint for long-range charts get a recent ingest window while the API name implies full history. This is a direct product-parity gap against CoinGecko/CoinMarketCap and does not satisfy the Freighter minimum historical-retention requirement.
 
@@ -1597,7 +1673,7 @@ Remediation direction: retained for audit history; the previously-recorded sink 
 
 Severity: `high`
 
-Status: `open`
+Status: `fixed`
 
 Affected surface:
 
@@ -1616,6 +1692,8 @@ Evidence:
 - `EV-0117`
 - `EV-0135`
 - `EV-0149`
+- `EV-0158`
+- `EV-0167`
 
 Expected: repeated observed trades for a classic asset should keep `classic_assets.first_seen_*`, `last_seen_*`, and `observation_count` accurate within a single long-running live-ingest or backfill process. Replay order should not matter.
 
@@ -1626,24 +1704,24 @@ Observed: `InsertTrade` invokes `registerClassicAssetSeen` after `INSERT INTO tr
 
 Existing integration coverage still seeds `classic_assets` directly instead of exercising this writer path.
 
-Current-head reconciliation: wave 47 fixes the first half of the original
-finding. `assetRegistryDedupe` is now TTL-backed (`60s`) instead of a
-process-lifetime sentinel, so same-process repeated observations eventually
-re-enter the SQL upsert and refresh `last_seen_*` plus `observation_count`.
-Wave 51 now addresses the second mechanism at source level too:
-`InsertTrade` inspects `RowsAffected()` from the
-`INSERT ... ON CONFLICT DO NOTHING` and returns before registry mutation when
-no new trade row was inserted. Focused timescale/API packages pass. The code
-change is credible, but a closure-grade duplicate replay integration was not
-added with the wave, so this audit keeps the finding in `needs_evidence`
-until the replay contract is proven against the real DB path.
+Current-head reconciliation: wave 47 fixed the same-process freshness freeze
+with TTL-backed dedupe, and wave 51 fixed the duplicate-replay mutation path by
+returning before registry mutation when `RowsAffected()==0` on the
+`INSERT ... ON CONFLICT DO NOTHING` trade insert. Wave 64 adds the closure proof
+this audit was waiting for:
+`test/integration/asset_registry_replay_test.go::TestAssetRegistry_DuplicateReplayDoesNotMutateCounters`.
+The test clears `ResetAssetRegistryDedupeForTest` between operations to model a
+fresh-store/process-equivalent replay boundary, then proves exact replay keeps
+`observation_count` and `last_seen_ledger` stable, a genuinely new same-asset
+trade advances them once, and replaying that newer trade remains idempotent.
+`go test -tags=integration ./test/integration -run 'AssetRegistry_DuplicateReplayDoesNotMutateCounters' -count=1`
+passes on current head.
 
-Impact: asset and issuer catalogue metadata can undercount observations by orders of magnitude during continuous ingest, overcount during replay/restart duplicate windows, preserve the wrong first-seen ledger during out-of-order replay, and freeze last-seen freshness until the process restarts. Those fields drive default asset ordering, issuer total-observation ranking, and customer-facing asset/issuer detail views, so this is a live data-quality issue rather than a cosmetic counter drift.
+Impact: historical. The registry writer now has both source-level replay
+idempotency and DB-backed regression coverage for the cold-audit failure shape.
 
-Remediation direction: retain the landed TTL coalescing and `RowsAffected`
-guard, then add the missing DB-backed replay proof: duplicate inserts across a
-fresh store/process-equivalent boundary, out-of-order ledgers, and assertions
-over `first_seen_*`, `last_seen_*`, and `observation_count`.
+Remediation direction: retained for audit history; the required DB-backed
+replay proof is now present and green.
 
 ### F-1244. Dashboard webhook signing secrets are persisted as recoverable live HMAC keys while the surrounding contract still overstates their protection and non-persistence semantics
 
