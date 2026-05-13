@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- New observability metric `ratesengine_stripe_platform_sync_errors_total{operation}`
+  surfacing failures in the Stripe webhook's platform-store side-effects path
+  (the F-1219 fan-out into Postgres `accounts` / `subscriptions` /
+  `api_keys`). Webhook deliberately does not 5xx on these failures — Stripe
+  retries would not heal Postgres — so the metric is the operator-visible
+  signal that customer dashboard / Postgres key state is drifting from
+  Stripe billing state. Per-`operation` label isolates the failing layer
+  (`get_account` / `upsert_subscription` / `account_update` / `list_keys` /
+  `key_update`). Wired through five failure sites across
+  `applyPlatformSideEffects`, `handleStripeSubscriptionEvent`, and
+  `handleStripeInvoicePaid`. New `ratesengine_stripe_platform_sync_errors`
+  alert in both `deploy/monitoring/rules/api.yml` (multi-host) and
+  `configs/prometheus/rules.r1/api.yml` (R1 overlay), plus runbook at
+  `docs/operations/runbooks/stripe-platform-sync-errors.md`. Closes the
+  long-standing TODO from F-1219 wave 32.
+
 ### Fixed
 
 - F-1243 (codex audit-2026-05-13, wave 64) — closes the long-

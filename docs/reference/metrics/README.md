@@ -662,8 +662,33 @@ dashboards can distinguish "mismatch fired and the run aborted at
 second X" from "chunk aborted for an unrelated reason (canceled
 context)".
 
+### `ratesengine_stripe_platform_sync_errors_total`
+
+Counter, label `operation` (`get_account` / `upsert_subscription` /
+`account_update` / `list_keys` / `key_update`).
+
+Failures inside the Stripe webhook's platform-store side-effects path
+(`internal/api/v1/stripe_webhook.go::applyPlatformSideEffects` and
+the subscription / invoice handlers). The webhook deliberately does
+NOT 5xx on platform-store failures — Stripe retries would just keep
+applying the same Redis rate-limit without making the platform-store
+path any healthier — so this counter is the operator-visible signal
+that the bridge is degraded.
+
+**Any non-zero reading is alertable**: the customer's dashboard /
+Postgres-backed key state is drifting from their Stripe billing
+state. Per-`operation` breakdown isolates the failing layer:
+`get_account` → no row for that Stripe customer (signup never
+completed); `upsert_subscription` → Postgres write failure;
+`account_update` → tier sync failure; `list_keys` / `key_update` →
+per-key rate-limit lift failure.
+
 ## Changelog
 
+- 2026-05-13 — added Stripe platform-bridge error counter
+  (`ratesengine_stripe_platform_sync_errors_total`) covering the
+  five platform-store side-effect failure sites in the Stripe
+  webhook path. Closes the long-standing TODO from F-1219 wave 32.
 - 2026-04-29 — added verify-archive metrics (`ratesengine_verify_archive_*`)
   covering per-chunk ledger progress, checkpoint outcomes, and
   mismatches.

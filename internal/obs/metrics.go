@@ -80,6 +80,8 @@ func init() {
 		VerifyArchiveCurrentLedger,
 		VerifyArchiveCheckpointsTotal,
 		VerifyArchiveMismatchesTotal,
+
+		StripePlatformSyncErrorsTotal,
 	)
 }
 
@@ -905,4 +907,26 @@ var VerifyArchiveMismatchesTotal = prometheus.NewCounterVec(
 		Help: "Chain breaks, sequence gaps, and checkpoint mismatches per verify-archive chunk_idx + reason (chain|sequence|checkpoint).",
 	},
 	[]string{"chunk_idx", "reason"},
+)
+
+// StripePlatformSyncErrorsTotal — counter of failures inside the
+// Stripe webhook's platform-store side-effects path
+// (`internal/api/v1/stripe_webhook.go::applyPlatformSideEffects`).
+// The webhook deliberately does NOT 5xx on platform-store failures
+// (Stripe retries would just keep applying the same Redis rate-
+// limit without making the platform-store path any healthier), so
+// this counter is the operator-visible signal that the bridge is
+// degraded. Any non-zero reading is alertable — the customer's
+// dashboard / Postgres-backed key state is drifting from their
+// Stripe billing state.
+//
+// Labels:
+//   - operation: which step failed
+//     (get_account|upsert_subscription|account_update|list_keys|key_update)
+var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_stripe_platform_sync_errors_total",
+		Help: "Stripe webhook platform-store side-effect failures, labelled by operation. Non-zero = bridge degraded; customer dashboard state drifting from Stripe billing state.",
+	},
+	[]string{"operation"},
 )

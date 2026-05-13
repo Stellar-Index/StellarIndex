@@ -210,6 +210,7 @@ override.
 | `ratesengine_aggregator_cache_write_errors` | `rate(ratesengine_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | **P1** | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 | `ratesengine_customer_webhook_delivery_failing` | `rate(ratesengine_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.1/s for ≥ 15 min | P3 | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `ratesengine_customer_webhook_delivery_exhausted` | `rate(ratesengine_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0 for ≥ 1h | informational | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
+| `ratesengine_stripe_platform_sync_errors` | `rate(ratesengine_stripe_platform_sync_errors_total[15m])` | > 0 for ≥ 15 min | P3 | [stripe-platform-sync-errors](runbooks/stripe-platform-sync-errors.md) |
 
 ## Supply alerts
 

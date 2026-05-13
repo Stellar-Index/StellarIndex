@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/auth"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/platform"
 )
 
@@ -349,9 +350,11 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	// failure here is logged but does NOT 5xx the webhook —
 	// Stripe retries would just keep applying the same Redis
 	// rate-limit (already done above) without making the
-	// platform-store path any healthier. Operators surface this
-	// via the audit log + a separate `ratesengine_stripe_platform_
-	// sync_errors_total` metric (TODO).
+	// platform-store path any healthier. Operators surface failures
+	// via the `ratesengine_stripe_platform_sync_errors_total{operation}`
+	// counter (incremented per error site) — any non-zero value is
+	// alertable as "Stripe bridge degraded; customer dashboard
+	// state drifting from billing state."
 	s.applyPlatformSideEffects(r.Context(), ev, session, tierName)
 
 	s.logger.Info("stripe webhook: customer upgraded",
@@ -481,6 +484,7 @@ func (s *Server) handleStripeSubscriptionEvent(ctx context.Context, ev stripeEve
 	}
 	acct, err := bridge.Accounts.GetByStripeCustomerID(ctx, obj.Customer)
 	if err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("get_account").Inc()
 		s.logger.Warn("stripe webhook: subscription event GetByStripeCustomerID failed",
 			"event_id", ev.ID, "stripe_customer_id", obj.Customer, "err", err)
 		return
@@ -501,6 +505,7 @@ func (s *Server) handleStripeSubscriptionEvent(ctx context.Context, ev stripeEve
 			CanceledAt:           canceledAt,
 		}
 		if err := bridge.Billing.UpsertSubscription(ctx, sub); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("upsert_subscription").Inc()
 			s.logger.Warn("stripe webhook: subscription event UpsertSubscription failed",
 				"event_id", ev.ID, "account_id", acct.ID, "err", err)
 		}
@@ -515,6 +520,7 @@ func (s *Server) handleStripeSubscriptionEvent(ctx context.Context, ev stripeEve
 	if ev.Type == "customer.subscription.deleted" && acct.Tier != platform.TierFree {
 		acct.Tier = platform.TierFree
 		if err := bridge.Accounts.Update(ctx, acct); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("account_update").Inc()
 			s.logger.Warn("stripe webhook: tier downgrade-to-free failed",
 				"event_id", ev.ID, "account_id", acct.ID, "err", err)
 		}
@@ -553,6 +559,7 @@ func (s *Server) handleStripeInvoicePaid(ctx context.Context, ev stripeEvent) {
 	}
 	acct, err := bridge.Accounts.GetByStripeCustomerID(ctx, obj.Customer)
 	if err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("get_account").Inc()
 		s.logger.Warn("stripe webhook: invoice.paid GetByStripeCustomerID failed",
 			"event_id", ev.ID, "stripe_customer_id", obj.Customer, "err", err)
 		return
@@ -585,6 +592,7 @@ func (s *Server) handleStripeInvoicePaid(ctx context.Context, ev stripeEvent) {
 		CurrentPeriodEnd:     end,
 	}
 	if err := bridge.Billing.UpsertSubscription(ctx, sub); err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("upsert_subscription").Inc()
 		s.logger.Warn("stripe webhook: invoice.paid UpsertSubscription failed",
 			"event_id", ev.ID, "account_id", acct.ID,
 			"stripe_subscription_id", obj.Subscription, "err", err)
@@ -621,6 +629,7 @@ func (s *Server) applyPlatformSideEffects(ctx context.Context, ev stripeEvent, s
 	if bridge.Accounts != nil && session.Customer != "" {
 		acct, err := bridge.Accounts.GetByStripeCustomerID(ctx, session.Customer)
 		if err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("get_account").Inc()
 			s.logger.Warn("stripe webhook: GetByStripeCustomerID failed",
 				"event_id", ev.ID, "stripe_customer_id", session.Customer, "err", err)
 		} else {
@@ -648,6 +657,7 @@ func (s *Server) applyPlatformSideEffects(ctx context.Context, ev stripeEvent, s
 			CurrentPeriodEnd:   now.Add(30 * 24 * time.Hour),
 		}
 		if err := bridge.Billing.UpsertSubscription(ctx, sub); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("upsert_subscription").Inc()
 			s.logger.Warn("stripe webhook: UpsertSubscription failed",
 				"event_id", ev.ID, "account_id", account.ID,
 				"stripe_subscription_id", session.Subscription, "err", err)
@@ -679,6 +689,7 @@ func (s *Server) applyAccountTierAndKeyUpgrade(ctx context.Context, ev stripeEve
 	if newTier != "" && account.Tier != newTier {
 		account.Tier = newTier
 		if err := bridge.Accounts.Update(ctx, account); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("account_update").Inc()
 			s.logger.Warn("stripe webhook: account tier update failed",
 				"event_id", ev.ID, "account_id", account.ID, "tier", newTier, "err", err)
 		}
@@ -708,6 +719,7 @@ func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, sto
 	}
 	keys, err := store.ListForAccount(ctx, account.ID)
 	if err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("list_keys").Inc()
 		s.logger.Warn("stripe webhook: ListForAccount failed; skipping per-key upgrade",
 			"event_id", ev.ID, "account_id", account.ID, "err", err)
 		return
@@ -723,6 +735,7 @@ func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, sto
 		}
 		k.RateLimitPerMin = target
 		if err := store.Update(ctx, k); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_update").Inc()
 			s.logger.Warn("stripe webhook: platform-key Update failed",
 				"event_id", ev.ID, "account_id", account.ID,
 				"key_id", k.ID, "err", err)
