@@ -15,10 +15,45 @@
   register: _pg_data_present
 
 - block:
+    # F-1282 (codex audit-2026-05-13): honor
+    # `patroni_pgbackrest_restore_target` per the defaults /
+    # README / design-note documented contract. Pre-wave-112
+    # the command always used `--type=immediate` regardless of
+    # the variable's value, so an operator setting
+    # `time:2026-05-12T14:00:00Z` for a point-in-time recovery
+    # silently got an immediate-consistent restore instead.
+    #
+    # Supported values:
+    #   - `latest`     → pgbackrest --type=default
+    #                    (apply all available WAL)
+    #   - `time:<ts>`  → pgbackrest --type=time --target=<ts>
+    #                    (point-in-time recovery)
+    #   - `immediate`  → pgbackrest --type=immediate
+    #                    (restore to first consistent point;
+    #                    the pre-wave-112 behavior)
+    - name: assert patroni_pgbackrest_restore_target shape
+      assert:
+        that:
+          - patroni_pgbackrest_restore_target in ['latest', 'immediate']
+            or patroni_pgbackrest_restore_target.startswith('time:')
+        fail_msg: >-
+          patroni_pgbackrest_restore_target must be "latest",
+          "immediate", or "time:<RFC3339-timestamp>".
+          Got "{{ patroni_pgbackrest_restore_target }}".
+      when:
+        - patroni_bootstrap_method == "pgbackrest"
+        - not _pg_data_present.stat.exists
+
     - name: bootstrap via pgBackRest restore
       command: >
         pgbackrest --stanza={{ patroni_pgbackrest_stanza }}
+        {%- if patroni_pgbackrest_restore_target == 'latest' %}
+        --type=default
+        {%- elif patroni_pgbackrest_restore_target == 'immediate' %}
         --type=immediate
+        {%- else %}
+        --type=time --target={{ patroni_pgbackrest_restore_target[5:] | quote }}
+        {%- endif %}
         --target-action=promote
         --delta
         restore

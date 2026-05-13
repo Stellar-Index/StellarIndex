@@ -61,3 +61,20 @@ patroni_internal_cidrs:
 
 # ── Monitoring ─────────────────────────────────────────────────
 patroni_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
+
+# ── etcd pinned-version install ────────────────────────────────
+# F-1280 (codex audit-2026-05-13): `etcd_release_sha256` is the
+# per-architecture SHA-256 of the etcd 3.5.21 tarball. We pin
+# the version but the SHA is intentionally NOT defaulted here
+# because:
+#   - It's per-arch (amd64 vs arm64; different SHAs).
+#   - It changes with every etcd release we bump to.
+# A baked-in default would rot. Operators set this in their
+# inventory after pulling the SHA from
+# https://github.com/etcd-io/etcd/releases/tag/v3.5.21 (the
+# SHA256SUMS file). The 02-etcd-install task asserts at
+# role-start that the variable is set + 64 chars + not the
+# pre-wave-112 'REPLACE_WITH_RELEASE_SHA' placeholder.
+etcd_arch: amd64
+# etcd_release_sha256: <required; set in inventory per the
+#                       assert at 02-etcd-install.yml>

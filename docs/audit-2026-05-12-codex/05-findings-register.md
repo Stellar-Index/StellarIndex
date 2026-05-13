@@ -455,6 +455,9 @@ Recent waves closed by code (chronological):
 | F-1277 | low | The `api-down` runbook cites a nonexistent `internal/api/v1/healthz.go` implementation file instead of the actual readiness handler location | `docs/operations/runbooks/api-down.md`; `internal/api/v1/server.go` | XFI-0069; EV-0216 | fixed | ops/docs/api | The single source citation in the runbook points at a path that is not tracked, which makes the operator breadcrumb fail during an incident or audit follow-up. |
 | F-1278 | high | The HA-role nftables "drop-ins" are not a sound allow-list composition: by themselves they accept everything, and alongside the repo's default-drop chain their same-priority accept chains cannot reliably open the intended ports | HAProxy, Redis Sentinel, Patroni, Prometheus, and Loki firewall tasks; archival-node default-drop template; HA role design notes/operator claims | XFI-0070; EV-0217 | fixed | ops/security/firewall | Each role emits a separate `table inet *_filter` input base chain with `priority 0; policy accept;` plus accept rules only. That neither enforces internal-only access on its own nor robustly composes with the repo's default-drop input chain, because nftables base-chain order is undefined at equal priority and `accept` is not final when a later chain drops the packet. |
 | F-1279 | medium | Patroni's firewall task writes `/etc/nftables.d/40-patroni.conf` before it ensures `/etc/nftables.d/` exists | `configs/ansible/roles/patroni/tasks/10-firewall.yml` | XFI-0071; EV-0218 | fixed | ops/deployment/patroni | A clean Patroni host without a pre-existing drop-in directory fails the first role application at the copy step, while the directory-creation task appears only after the write attempt. |
+| F-1280 | high | Patroni's etcd install task defaults to a placeholder checksum, so the role is not runnable from its documented defaults/inventory model | `configs/ansible/roles/patroni/tasks/02-etcd-install.yml`; `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/README.md` | XFI-0072; EV-0220 | fixed | ops/deployment/patroni | The get_url task uses `checksum: "sha256:{{ etcd_release_sha256 | default('REPLACE_WITH_RELEASE_SHA') }}"`, but no default or README prerequisite defines `etcd_release_sha256`; a clean run therefore fails at etcd download verification unless an undocumented variable is injected. |
+| F-1281 | medium | Patroni's textfile scraper requires `jq`, but the Patroni role never installs it | `configs/ansible/roles/patroni/tasks/11-monitoring.yml`; `configs/ansible/roles/patroni/tasks/05-patroni-install.yml`; `configs/ansible/roles/patroni/README.md`; Prometheus node_exporter textfile scrape contract | XFI-0073; EV-0221 | fixed | ops/observability/patroni | The role installs a `/usr/local/bin/patroni-textfile-scraper` script that pipes Patroni JSON through `jq`, but its apt package list omits `jq`, so the timer can fail and leave Patroni role/health metrics absent. |
+| F-1282 | medium | Patroni's documented point-in-time pgBackRest restore target is ignored by the actual restore command | `configs/ansible/roles/patroni/defaults/main.yml`; `configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml`; `configs/ansible/roles/patroni/README.md`; `docs/architecture/patroni-ansible-role-design-note.md` | XFI-0074; EV-0222 | fixed | ops/dr/patroni | Defaults, README, and design note advertise `patroni_pgbackrest_restore_target: latest` or `time:...`, but the restore task always runs `pgbackrest --type=immediate --target-action=promote --delta restore` and never reads the target variable. |
 
 ## Finding Template
 
@@ -2949,3 +2952,80 @@ Observed: `tasks/10-firewall.yml` renders `/etc/nftables.d/40-patroni.conf` firs
 Impact: medium. Patroni bootstrap is order-dependent on unrelated prior host state. On a clean node, the copy task can fail before Patroni reaches the firewall include or any later role stages, producing a deployment failure precisely in launch-critical HA automation.
 
 Remediation direction: move the directory-creation task before the drop-in copy, matching the safer ordering already used by the sibling HA roles, and add an idempotent first-run role syntax/fixture check.
+
+### F-1280. Patroni's etcd install task defaults to a placeholder checksum
+
+Severity: `high`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/patroni/tasks/02-etcd-install.yml`
+- `configs/ansible/roles/patroni/defaults/main.yml`
+- `configs/ansible/roles/patroni/README.md`
+
+Evidence:
+
+- `XFI-0072`
+- `EV-0220`
+
+Expected: the role should be runnable from its documented defaults and inventory model, or every required override should be declared in defaults/README with an actionable value source.
+
+Observed: the etcd download task pins a checksum expression but falls back to `REPLACE_WITH_RELEASE_SHA` when `etcd_release_sha256` is unset. `defaults/main.yml` does not define `etcd_release_sha256`, and the README prerequisites/inventory model do not tell operators to provide it. A clean documented role run therefore reaches `get_url` with an invalid checksum placeholder.
+
+Impact: high. The Patroni role cannot reliably bootstrap its DCS from the committed defaults/docs path, blocking the launch-critical database HA role before Patroni itself starts.
+
+Remediation direction: commit the real release checksum for the pinned etcd artifact or make `etcd_release_sha256` a required, documented, preflight-validated variable. Add an Ansible syntax/render check that fails if the placeholder survives.
+
+### F-1281. Patroni's textfile scraper depends on `jq` without installing it
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/patroni/tasks/11-monitoring.yml`
+- `configs/ansible/roles/patroni/tasks/05-patroni-install.yml`
+- `configs/ansible/roles/patroni/README.md`
+- Prometheus node_exporter textfile collector path
+
+Evidence:
+
+- `XFI-0073`
+- `EV-0221`
+
+Expected: every binary used by the installed Patroni monitoring timer should be installed by the Patroni role or be an explicit prerequisite.
+
+Observed: `tasks/11-monitoring.yml` installs a `patroni-textfile-scraper` shell script that parses Patroni's `/cluster` JSON with `jq`. The Patroni apt install task installs `patroni`, `python3-etcd3`, `python3-psycopg2`, and `python3-prettytable`, but not `jq`; the README prerequisites do not list `jq` either. The sibling archival-node role installs `jq` for its own scripts, but the Patroni README only says preflight/ZFS prerequisites from that role are required, not the healthcheck package set.
+
+Impact: medium. Patroni itself can run while the advertised textfile metrics silently fail every 30 seconds. That removes `ratesengine_patroni_role` / `ratesengine_patroni_running` visibility from Prometheus and weakens failover detection.
+
+Remediation direction: install `jq` in the Patroni role before writing the scraper, or rewrite the scraper to avoid it. Add a post-install command check for the scraper path.
+
+### F-1282. Patroni's documented pgBackRest restore target is ignored
+
+Severity: `medium`
+
+Status: `open`
+
+Affected surface:
+
+- `configs/ansible/roles/patroni/defaults/main.yml`
+- `configs/ansible/roles/patroni/tasks/08-patroni-bootstrap.yml`
+- `configs/ansible/roles/patroni/README.md`
+- `docs/architecture/patroni-ansible-role-design-note.md`
+
+Evidence:
+
+- `XFI-0074`
+- `EV-0222`
+
+Expected: if the role exposes and documents `patroni_pgbackrest_restore_target` as `latest` or a point-in-time value, the restore task should pass that target to pgBackRest or reject unsupported values.
+
+Observed: defaults, README, and design note advertise `patroni_pgbackrest_restore_target: latest` or `time:2026-04-30 14:00:00`. The restore command in `08-patroni-bootstrap.yml` ignores the variable entirely and always runs `pgbackrest --type=immediate --target-action=promote --delta restore`.
+
+Impact: medium. Operators can believe they are performing a point-in-time DR restore while the role performs the immediate/latest shape instead. For a corruption or bad-write recovery, that can restore the wrong data point.
+
+Remediation direction: map the documented target forms onto explicit pgBackRest flags, or remove the unsupported target variable/prose. Add tests or a rendered-command fixture for latest and time-target restores.
