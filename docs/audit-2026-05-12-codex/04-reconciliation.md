@@ -883,3 +883,17 @@ without evidence IDs.
   `90 fixed / 14 open`, file coverage
   `done=186 / in_progress=132 / todo=1608`, docs lint green, and no
   finding-status mismatches between the register table and detailed sections.
+- `CMD-0283` adds `F-1307`: R1 wrote `sla_probe.prom`, but live
+  node_exporter lacked the textfile collector directory flag, so Prometheus had
+  no `ratesengine_sla_probe_*` series and the SLA-probe rules were inert.
+- `CMD-0284` verifies moving fixes: `F-1307` is live-closed because
+  node_exporter now exposes the SLA probe series and Prometheus returns them;
+  `F-1306` narrows but remains open because the new source-side
+  `PriceStalenessSeconds` producer is not yet visible on live R1.
+- `CMD-0285` restores audit-control parity after the SLA textfile scrape-chain
+  closure:
+  findings `95 fixed / 12 open`, XFI `89 fixed / 10 open`, remediation
+  `91 fixed / 14 open`, file coverage
+  `done=186 / in_progress=133 / todo=1607`, tracked-file parity
+  `1926 / 1926`, docs lint green, and no finding-status mismatches between
+  the register table and detailed sections.
