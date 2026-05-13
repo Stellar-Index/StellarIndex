@@ -93,7 +93,7 @@ configs/ansible/roles/archival-node/tasks/06-stellar-core.yml	configs	configs/an
 configs/ansible/roles/archival-node/tasks/07-galexie.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/08-stellar-rpc.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/09-minio.yml	configs	configs/ansible	config	done	F-1291	XFI-0083	Reviewed MinIO and mc install tasks for checksum/version enforcement
-configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184;EV-0273;F-1266;F-1291;F-1300	XFI-0058;XFI-0083;XFI-0092	Reviewed against README claim, node_exporter checksum path, and textfile collector ownership for the Healthchecks SLA sandbox closure; promtail-to-Loki wiring remains explicit TODO
+configs/ansible/roles/archival-node/tasks/10-observability.yml	configs	configs/ansible	config	in_progress	EV-0184;EV-0273;EV-0286;F-1266;F-1291;F-1300;F-1307	XFI-0058;XFI-0083;XFI-0092;XFI-0099	Reviewed against README claim, node_exporter checksum path, textfile collector ownership/flags, and live R1 drift where node_exporter lacks the textfile collector; promtail-to-Loki wiring remains explicit TODO
 configs/ansible/roles/archival-node/tasks/11-firewall.yml	configs	configs/ansible	config	in_progress	XFI-0001,F-1201		Reviewed nftables/UFW service contract
 configs/ansible/roles/archival-node/tasks/12-hardening.yml	configs	configs/ansible	config	todo			cold audit pending
 configs/ansible/roles/archival-node/tasks/13-healthcheck.yml	configs	configs/ansible	config	todo			cold audit pending
@@ -222,7 +222,7 @@ configs/loki/README.md	configs	configs/loki	documentation	done	EV-0181;EV-0191;F
 configs/loki/loki.r1.yml	configs	configs/loki	config	todo			cold audit pending
 configs/loki/promtail.r1.yml	configs	configs/loki	config	todo			cold audit pending
 configs/prometheus/README.md	configs	configs/prometheus	documentation	done	EV-0181;EV-0191;F-1264	XFI-0056	Reviewed pre-firewall exposure drift and confirmed current Prometheus/Alertmanager access docs now match blocked-ingress reality
-configs/prometheus/prometheus.r1.yml	configs	configs/prometheus	config	done	EV-0188;EV-0194;EV-0215;EV-0269;F-1268;F-1276;F-1301	XFI-0060;XFI-0068;XFI-0093	Reviewed active rule include path, the real R1 API job-label family used by alert rules, and the R1 aggregator scrape target on 9465
+configs/prometheus/prometheus.r1.yml	configs	configs/prometheus	config	done	EV-0188;EV-0194;EV-0215;EV-0269;EV-0286;F-1268;F-1276;F-1301;F-1307	XFI-0060;XFI-0068;XFI-0093;XFI-0099	Reviewed active rule include path, the real R1 API job-label family, R1 aggregator scrape target on 9465, and node_exporter scrape dependency for SLA textfile metrics
 configs/prometheus/rules.r1/README.md	configs	configs/prometheus	documentation	done	EV-0188;EV-0194;F-1268	XFI-0060	Reviewed stale copy-target drift and confirmed current README now deploys into `/etc/prometheus/rules.r1/`
 configs/prometheus/rules.r1/aggregator.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/anomaly.yml	configs	configs/prometheus	config	todo			cold audit pending
@@ -234,7 +234,7 @@ configs/prometheus/rules.r1/external-pollers.yml	configs	configs/prometheus	conf
 configs/prometheus/rules.r1/infra.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/ingestion.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/meta.yml	configs	configs/prometheus	config	todo			cold audit pending
-configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	todo			cold audit pending
+configs/prometheus/rules.r1/sla-probe.yml	configs	configs/prometheus	config	in_progress	EV-0280;EV-0286;F-1305;F-1307	XFI-0097;XFI-0099	Partially reviewed SLA probe R1 alert rules against live textfile and Prometheus scrape-chain evidence; rules are present but no SLA probe series reach Prometheus
 configs/prometheus/rules.r1/slo.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/stellar.yml	configs	configs/prometheus	config	todo			cold audit pending
 configs/prometheus/rules.r1/storage.yml	configs	configs/prometheus	config	todo			cold audit pending
@@ -263,7 +263,7 @@ deploy/monitoring/rules/external-pollers.yml	deploy	deploy/monitoring	config	tod
 deploy/monitoring/rules/infra.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/ingestion.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/meta.yml	deploy	deploy/monitoring	config	todo			cold audit pending
-deploy/monitoring/rules/sla-probe.yml	deploy	deploy/monitoring	config	in_progress	EV-0267;EV-0280;F-1300;F-1305	XFI-0092;XFI-0097	Partially reviewed as the Prometheus consumer of SLA probe textfile metrics and the live failing R1 SLA proof verdict
+deploy/monitoring/rules/sla-probe.yml	deploy	deploy/monitoring	config	in_progress	EV-0267;EV-0280;EV-0286;F-1300;F-1305;F-1307	XFI-0092;XFI-0097;XFI-0099	Partially reviewed as the Prometheus consumer of SLA probe textfile metrics, the live failing R1 SLA proof verdict, and the missing node_exporter textfile scrape chain
 deploy/monitoring/rules/slo.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/stellar.yml	deploy	deploy/monitoring	config	todo			cold audit pending
 deploy/monitoring/rules/storage.yml	deploy	deploy/monitoring	config	todo			cold audit pending
@@ -630,7 +630,7 @@ docs/operations/runbooks/scrape-failing.md	docs	docs/operations	documentation	to
 docs/operations/runbooks/sev-status-page-update.md	docs	docs/operations	documentation	in_progress	EV-0021,F-1211	XFI-0007	Binding SEV runbook points to removed cstate files
 docs/operations/runbooks/sla-probe-freshness-breach.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/sla-probe-p95-breach.md	docs	docs/operations	documentation	done	EV-0215;EV-0229;F-1276	XFI-0068	Rechecked incident query example; selector drift is closed in this runbook
-docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0280;F-1300;F-1305	XFI-0092;XFI-0097	Partially reviewed as the runbook consumer of the missing/failing sla_probe.prom failure modes
+docs/operations/runbooks/sla-probe-stale.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0280;EV-0286;F-1300;F-1305;F-1307	XFI-0092;XFI-0097;XFI-0099	Partially reviewed as the runbook consumer of missing/failing sla_probe.prom and node_exporter textfile collector failure modes
 docs/operations/runbooks/sla-probe-unit-failed.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/slo-availability-burn-fast.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/runbooks/slo-availability-burn-medium.md	docs	docs/operations	documentation	todo			cold audit pending
@@ -654,7 +654,7 @@ docs/operations/runbooks/zfs-degraded.md	docs	docs/operations	documentation	todo
 docs/operations/sac-wrappers-and-usd-volume.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sep1-resolution.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sev-playbook.md	docs	docs/operations	documentation	todo			cold audit pending
-docs/operations/sla-probe.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0274;EV-0280;F-1300;F-1303;F-1305	XFI-0092;XFI-0095;XFI-0097	Partially reviewed for SLA textfile-output contract, systemd wiring, Healthchecks missing-binary failure mode, and the live R1 failing probe verdict
+docs/operations/sla-probe.md	docs	docs/operations	documentation	in_progress	EV-0267;EV-0274;EV-0280;EV-0286;F-1300;F-1303;F-1305;F-1307	XFI-0092;XFI-0095;XFI-0097;XFI-0099	Partially reviewed for SLA textfile-output contract, systemd wiring, Healthchecks missing-binary failure mode, live R1 failing probe verdict, and missing node_exporter textfile scrape chain
 docs/operations/sla-proof-procedure.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/sla-proof-template.md	docs	docs/operations	documentation	todo			cold audit pending
 docs/operations/status-page-setup.md	docs	docs/operations	documentation	in_progress	EV-0021,F-1211	XFI-0007	Setup doc still selects Upptime/GitHub Pages despite web/status implementation
