@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Soroswap Router decoder** (`internal/sources/soroswap_router/`).
+  New ContractCallDecoder following the Band oracle pattern —
+  matches by `(contract_id, function_name)` and decodes
+  `swap_exact_tokens_for_tokens` / `swap_tokens_for_exact_tokens`
+  invocations on the canonical pubnet router
+  (`CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH`).
+  Phase A is log-only — every routed swap surfaces an INFO line
+  with path, in/out amounts (i128, no truncation per ADR-0003),
+  recipient, and deadline. Phase B will tag matching same-tx
+  `trades.routed_via` rows via the existing migration-0025 column.
+  New `ClassRouter` taxonomy in `internal/sources/external/`
+  (alongside the existing `ClassLending`); router class is
+  attribution-only, never contributes to VWAP. Pre-seed migration
+  `0032_seed_soroswap_router.up.sql` populates the `routers`
+  registry. WASM-history audit started at
+  `docs/operations/wasm-audits/soroswap-router.md`;
+  `BackfillSafe=false` until the per-hash review lands.
+
 ### Changed
 
 - **Raw trades retention removed** (migration 0031). Pre-fix the

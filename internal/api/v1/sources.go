@@ -81,6 +81,8 @@ var validSourceClasses = map[string]bool{
 	string(external.ClassAggregator):      true,
 	string(external.ClassOracle):          true,
 	string(external.ClassAuthoritySanity): true,
+	string(external.ClassLending):         true,
+	string(external.ClassRouter):          true,
 }
 
 // handleSources serves GET /v1/sources.

@@ -24,6 +24,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	sep41_supply "github.com/RatesEngine/rates-engine/internal/sources/sep41_supply"
 	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
+	soroswap_router "github.com/RatesEngine/rates-engine/internal/sources/soroswap_router"
 	"github.com/RatesEngine/rates-engine/internal/sources/trustlines"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
@@ -140,6 +141,22 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		persistOracle(ctx, logger, store, e.Update)
 	case band.UpdateEvent:
 		persistOracle(ctx, logger, store, e.Update)
+	case soroswap_router.Event:
+		// Phase A: log-only sink. Phase B will tag matching same-tx
+		// trades.routed_via and (TBD) write to a dedicated
+		// router_swaps table. Until then this just records the
+		// dispatcher correctly routed the call so operators can
+		// validate via journal.
+		logger.Info("soroswap-router swap routed",
+			"source", soroswap_router.SourceName,
+			"tx_hash", e.Swap.TxHash,
+			"ledger", e.Swap.Ledger,
+			"function", e.Swap.Function,
+			"path_len", len(e.Swap.Path),
+			"recipient", e.Swap.Recipient,
+			"amount_in", e.Swap.AmountIn.String(),
+			"amount_out", e.Swap.AmountOut.String(),
+		)
 	case external.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 	case external.UpdateEvent:
