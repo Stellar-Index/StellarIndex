@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **`backfill_coverage[].density_pct` replaces `coverage_pct` on
+  `/v1/diagnostics/ingestion`.** Pre-fix the metric was `(latest -
+  earliest) / (tip - genesis)` — endpoint span, not data density. A
+  source with one trade at genesis and one trade at tip scored
+  100% even with the whole interior empty (caught live 2026-05-14
+  when SDEX backfill was still running but coverage showed 99.8%
+  and aquarius/comet/phoenix/soroswap all showed 99.99%).
+
+  New metric: union of completed portions of all backfill cursor
+  intervals that include this source in their decoder set, clamped
+  to `[genesis, tip]`, divided by `tip - genesis + 1`. Hits 100%
+  only when backfill ranges actually cover the whole interval.
+  Sparse sources no longer score 100% just for having endpoint
+  trades — they score by what fraction of ledgers their backfill
+  has *processed*, which is the question operators actually want
+  answered.
+
+  Wire: `coverage_pct` retained as a transitional field for one
+  release. New fields: `density_pct`, `covered_ledgers`,
+  `expected_ledgers`. Status page updated to render the new
+  density (tooltip exposes the absolute "covered / expected"
+  numerator + denominator).
+
 ### Added
 
 - **Chainlink ingest source** (`internal/sources/external/chainlink/`).
