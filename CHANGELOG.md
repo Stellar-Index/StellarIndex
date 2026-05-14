@@ -17,6 +17,37 @@ against.
 
 ### Fixed
 
+- **Backfill auto-refresh: three bugs caught on first real run.**
+  Yesterday's commit added `refresh_continuous_aggregate` calls
+  after each backfill chunk but every CAGG refresh failed. Three
+  fixes from the live test:
+
+    1. **`42P18: could not determine data type of parameter $1`**
+       — lib/pq's `CALL` syntax doesn't propagate the procedure
+       signature's parameter types, so untyped placeholders fail.
+       Fix: explicit `::timestamptz` casts in the SQL.
+    2. **`22023: refresh window too small`** for `prices_4h` /
+       `_1d` / `_1w` / `_1mo` — Timescale rejects refresh windows
+       narrower than 2× bucket width. A 10k-ledger chunk's ts
+       span (~4h) was fine for `prices_1h` but failed every
+       coarser CAGG. Fix: per-CAGG `MinWindow` declared in
+       `CAGGsLiveForever`; new `PadRefreshWindow` helper expands
+       the chunk's window to that minimum centered on the
+       chunk's midpoint. Padded area materialises as empty
+       buckets (cheap).
+    3. **`55P03: concurrent refresh`** — with `-parallel N`,
+       multiple chunks race on the same coarse CAGG (`prices_1mo`
+       was the worst — chunks finishing close together all want
+       to refresh the same monthly bucket). Fix: retry-on-55P03
+       with exponential backoff (200ms → 1.6s × 5 attempts).
+
+  End-to-end verified live: 10k-ledger SDEX backfill at
+  ledgers 50,000,000-50,010,000 inserted 718,873 trades AND
+  populated 66,513 `prices_1h` buckets + 22,005 `prices_1d`
+  buckets — those CAGGs will now persist past the 90-day raw
+  retention. Yesterday's claim "auto-refresh now works" was
+  premature; this commit is what makes it true.
+
 - **Live-site QA pass — F-01/F-03/F-04 resolved, F-02 partial.**
   Working through `docs/review-2026-05-13-live-site-qa.md`:
 

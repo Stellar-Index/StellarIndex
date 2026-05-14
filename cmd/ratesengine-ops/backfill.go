@@ -348,10 +348,16 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store *times
 		"ts_from", tsFrom.UTC().Format(time.RFC3339),
 		"ts_to", tsTo.UTC().Format(time.RFC3339),
 	)
-	for _, view := range timescale.CAGGsLiveForever {
-		if err := store.RefreshContinuousAggregate(ctx, view, tsFrom, tsTo); err != nil {
+	for _, spec := range timescale.CAGGsLiveForever {
+		// Pad the chunk's ts range to the per-CAGG minimum so the
+		// refresh procedure doesn't reject with "refresh window
+		// too small". For tiny chunks (10k ledgers ≈ 4h) the
+		// padded area is mostly empty — Timescale iterates the
+		// padded buckets quickly with nothing to materialize.
+		padFrom, padTo := timescale.PadRefreshWindow(tsFrom, tsTo, spec.MinWindow)
+		if err := store.RefreshContinuousAggregate(ctx, spec.Name, padFrom, padTo); err != nil {
 			logger.Error("CAGG refresh failed",
-				"view", view, "err", err)
+				"view", spec.Name, "err", err)
 			// Don't abort the chunk — log and continue. An
 			// operator can re-refresh manually via psql; the
 			// trade rows are still in the hypertable until next
