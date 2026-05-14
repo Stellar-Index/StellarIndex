@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/currency/marketcap"
@@ -283,7 +284,14 @@ type SourceHealthRow struct {
 // so 15s smooths the load from a refreshing status page without
 // hiding live degradation.
 func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	// Per-handler ceiling — 30s. Each filler uses its own
+	// sub-context (5-10s each) so one slow reader doesn't starve
+	// the others. Pre-2026-05-14 the parent ctx was 6s and the
+	// fillers were sequential with no per-call timeout — when one
+	// reader exceeded its share, every subsequent filler aborted
+	// with `context deadline exceeded` and the response showed
+	// 0% coverage on every source. Caught live on r1 12:45 UTC.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	out := IngestionDiagnostics{
@@ -298,22 +306,57 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 			Dirty:     version.Dirty,
 			GoVersion: version.GoVersion,
 		},
-		Sources: buildSourceHealth(ctx, s),
 	}
 	// Defensive empty-slice init: Go marshals nil slices as `null`,
-	// which crashes naïve clients that do `rows.length` (saw this
-	// on status.ratesengine.net 2026-05-14: `Cannot read properties
-	// of null (reading 'length')` from BackfillTable). Always emit
-	// `[]` for the array fields the wire shape declares as required.
+	// which crashes naïve clients that do `rows.length`.
 	out.Backfill = []BackfillDecoderState{}
 	out.BackfillCoverage = []BackfillCoverageRow{}
-	s.fillIngestionLedger(ctx, &out)
-	s.fillIngestionBackfill(ctx, &out)
-	s.fillIngestionFXCoverage(ctx, &out)
-	s.fillIngestionSupplyCoverage(ctx, &out)
-	s.fillIngestionBackfillCoverage(&out)
-	s.fillIngestionCAGGCoverage(ctx, &out)
+	out.Sources = []SourceHealthRow{}
+
+	// Run independent fillers concurrently. Each has its own per-
+	// call timeout so a slow reader can't block the others. The
+	// in-memory cached/projected sections (BackfillCoverage,
+	// MarketCap) run inline since they don't touch the DB.
 	out.MarketCap = projectMarketCapState(s.marketCaps)
+	s.fillIngestionBackfillCoverage(&out)
+
+	type filler struct {
+		name    string
+		fn      func(context.Context)
+		timeout time.Duration
+	}
+	fillers := []filler{
+		{"sources", func(c context.Context) { out.Sources = buildSourceHealth(c, s) }, 8 * time.Second},
+		{"ledger", func(c context.Context) { s.fillIngestionLedger(c, &out) }, 6 * time.Second},
+		{"backfill", func(c context.Context) { s.fillIngestionBackfill(c, &out) }, 5 * time.Second},
+		{"fx_coverage", func(c context.Context) { s.fillIngestionFXCoverage(c, &out) }, 5 * time.Second},
+		{"supply_coverage", func(c context.Context) { s.fillIngestionSupplyCoverage(c, &out) }, 5 * time.Second},
+		{"cagg_coverage", func(c context.Context) { s.fillIngestionCAGGCoverage(c, &out) }, 5 * time.Second},
+	}
+	var wg sync.WaitGroup
+	for _, f := range fillers {
+		wg.Add(1)
+		go func(f filler) {
+			defer wg.Done()
+			subCtx, subCancel := context.WithTimeout(ctx, f.timeout)
+			defer subCancel()
+			f.fn(subCtx)
+		}(f)
+	}
+	wg.Wait()
+
+	// Once all fillers complete, recompute coverage_pct against the
+	// freshly-fetched tip. Backfill coverage was projected with
+	// tip=0 above (before the parallel fillers ran); now that
+	// fillIngestionLedger has populated out.Ledger.LatestLedger,
+	// re-compute.
+	tip := out.Ledger.LatestLedger
+	for i := range out.BackfillCoverage {
+		row := &out.BackfillCoverage[i]
+		if row.Applies && tip > 0 {
+			row.CoveragePct = computeCoveragePct(row.GenesisLedger, row.EarliestLedger, row.LatestLedger, tip)
+		}
+	}
 
 	w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
 	writeJSON(w, out, Flags{})
