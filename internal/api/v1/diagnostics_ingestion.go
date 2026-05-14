@@ -300,6 +300,13 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 		},
 		Sources: buildSourceHealth(ctx, s),
 	}
+	// Defensive empty-slice init: Go marshals nil slices as `null`,
+	// which crashes naïve clients that do `rows.length` (saw this
+	// on status.ratesengine.net 2026-05-14: `Cannot read properties
+	// of null (reading 'length')` from BackfillTable). Always emit
+	// `[]` for the array fields the wire shape declares as required.
+	out.Backfill = []BackfillDecoderState{}
+	out.BackfillCoverage = []BackfillCoverageRow{}
 	s.fillIngestionLedger(ctx, &out)
 	s.fillIngestionBackfill(ctx, &out)
 	s.fillIngestionFXCoverage(ctx, &out)
