@@ -2651,7 +2651,18 @@ func prewarmLight(
 	markets *v1.CachedMarketsReader,
 	coins *v1.CachedCoinsReader,
 ) {
-	mkCtx, mkCancel := context.WithTimeout(ctx, 60*time.Second)
+	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
+	// was 60s shared across ~25 sequential calls — when the first
+	// few were slow (cold cache after API restart, ~8s each), the
+	// budget was exhausted and the remaining ~20 calls all aborted
+	// with `context deadline exceeded`. Net: cache stayed cold for
+	// hours, sustained api_cache_miss_rate_high. The next prewarm
+	// cycle starts 60s after the previous one's tick (not its
+	// completion), but the call site is sequential so cycles
+	// can't overlap; a 5-min ceiling means a slow cycle just
+	// drops a couple of subsequent ticks rather than truncating
+	// the in-flight cycle's per-key warming.
+	mkCtx, mkCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer mkCancel()
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
 	// the explorer fires (default order, no source filter). The
