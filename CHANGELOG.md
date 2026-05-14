@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.51] — 2026-05-14
+
 ### Changed
 
 - **verify-archive Tier A is now incremental.** Pre-fix the nightly
