@@ -258,7 +258,7 @@ Subcommands:
                           print per-venue first-trade/update samples. Exits
                           early once every enabled venue has emitted at
                           least one output. No DB, no Timescale, no cursors.
-  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR]
+  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
                           Verify a galexie bucket at one or more tiers:
                             chain      (Tier A) — chain-link hash integrity:
                                        each ledger N's PreviousLedgerHash
@@ -1822,6 +1822,22 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 			"let operators dashboard the bottleneck during multi-hour "+
 			"sweeps rather than guessing from log tails. Empty (default) "+
 			"disables the endpoint.")
+	stateFile := fs.String("state-file", "",
+		"Path to a JSON state file persisting LastVerifiedLedger per "+
+			"tier across runs (e.g. /var/lib/ratesengine/verify-archive-state.json). "+
+			"Empty disables both reading and writing — every run is "+
+			"full-from-scratch, matching the pre-incremental behaviour.")
+	fromLastVerified := fs.Bool("from-last-verified", false,
+		"Compute -from from the prior state's LastVerifiedLedger minus "+
+			"the safety overlap window, instead of using the -from flag "+
+			"value directly. Requires -state-file. Skipped (falls back "+
+			"to -from) when the state file is missing or has no prior "+
+			"entry for this tier.")
+	safetyOverlap := fs.Uint("safety-overlap", 5000,
+		"Number of ledgers to re-verify behind the prior LastVerifiedLedger "+
+			"when -from-last-verified is set. Catches any anomalies that "+
+			"snuck in just before the last run's high-water mark. Default "+
+			"5000 ledgers ≈ 17h of chain history at 12s/ledger.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1872,11 +1888,53 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 		fmt.Fprintf(os.Stderr, "verify-archive: metrics on http://%s/metrics\n", *metricsListen)
 	}
 
+	// Incremental run support — when -state-file is set, read prior
+	// state. -from-last-verified overrides the operator's -from with
+	// (prior.LastVerifiedLedger - safety_overlap). The resume hash
+	// from prior state feeds -resume-from-hash for strict cross-run
+	// chain continuity (so an operator running incremental nightly
+	// runs gets the same continuity proof an unbroken single-process
+	// walk would have).
+	priorState, stateErr := readVerifyArchiveState(*stateFile)
+	if stateErr != nil {
+		return stateErr
+	}
+	effectiveFrom := uint32(*from)
+	effectiveResumeHash := *resumeFromHash
+	if *fromLastVerified && *stateFile != "" {
+		effectiveFrom = resolveIncrementalFrom(priorState, *tier, uint32(*from), uint32(*safetyOverlap))
+		if effectiveResumeHash == "" {
+			effectiveResumeHash = resolveIncrementalResumeHash(priorState, *tier)
+		}
+		fmt.Fprintf(os.Stderr, "verify-archive: incremental run, prior state high-water=%d → effective -from=%d (safety overlap %d)\n",
+			priorState.Tiers[*tier].LastVerifiedLedger, effectiveFrom, *safetyOverlap)
+	}
+
 	// Tier A + B (LCM walk via ledgerstream). Skipped when tier=peers.
 	if doChain || doCheckpoint {
-		if err := verifyArchiveLCMWalk(cfg, bucket, uint32(*from), uint32(*to), *maxRuntime, *workers,
-			doChain, doCheckpoint, *archiveRoot, *failOnMissed, *resumeFromHash); err != nil {
+		highestLedger, highestHash, err := verifyArchiveLCMWalk(cfg, bucket, effectiveFrom, uint32(*to), *maxRuntime, *workers,
+			doChain, doCheckpoint, *archiveRoot, *failOnMissed, effectiveResumeHash)
+		if err != nil {
 			return err
+		}
+		// Persist incremental state on success. Tier name comes from
+		// the operator's -tier flag — "chain", "checkpoint", or "all"
+		// (we record under each underlying tier so a future
+		// `-tier chain -from-last-verified` run reads the right one).
+		if *stateFile != "" && highestLedger > 0 {
+			now := time.Now().UTC()
+			newState := priorState
+			if doChain {
+				newState = updateTierState(newState, "chain", highestLedger, highestHash, now)
+			}
+			if doCheckpoint {
+				newState = updateTierState(newState, "checkpoint", highestLedger, "", now)
+			}
+			if err := writeVerifyArchiveState(*stateFile, newState); err != nil {
+				return fmt.Errorf("write state %s: %w", *stateFile, err)
+			}
+			fmt.Fprintf(os.Stderr, "verify-archive: state advanced to ledger %d (file: %s)\n",
+				highestLedger, *stateFile)
 		}
 	}
 
@@ -1908,7 +1966,12 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 // of the walk is treated as a hard failure per ADR-0017 X1.7.
 // When false (default), missed checkpoints are reported but tolerated
 // — matches the pre-bootstrap operator workflow.
-func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, maxRuntime time.Duration, workers int, doChain, doCheckpoint bool, archiveRoot string, failOnMissed bool, resumeFromHash string) error { //nolint:funlen,gocognit,gocyclo
+// verifyArchiveLCMWalk returns (highestLedger, highestLedgerHashHex,
+// err). On success, highestLedger is the maximum LastSeq across all
+// chunk results — used by the caller to advance the persisted
+// verify-archive state. highestLedgerHashHex is hex-encoded;
+// callers carry it forward as -resume-from-hash on the next run.
+func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, maxRuntime time.Duration, workers int, doChain, doCheckpoint bool, archiveRoot string, failOnMissed bool, resumeFromHash string) (uint32, string, error) { //nolint:funlen,gocognit,gocyclo
 	lsCfg := ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{
 			Type: "S3",
@@ -1954,17 +2017,25 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 
 	// Aggregate counters across chunks for the final summary. Match
 	// the pre-parallel field naming so log-scrapers don't break.
+	// highestLedger / highestHash are reported back to the caller so
+	// it can persist incremental-run state via -state-file.
 	var (
 		verified          int
 		mismatches        int
 		checkpointsOK     int
 		checkpointsMissed int
+		highestLedger     uint32
+		highestHashHex    string
 	)
 	for _, r := range results {
 		verified += r.Verified
 		mismatches += r.Mismatches
 		checkpointsOK += r.CheckpointsOK
 		checkpointsMissed += r.CheckpointsMissed
+		if r.LastSeq > highestLedger {
+			highestLedger = r.LastSeq
+			highestHashHex = fmt.Sprintf("%x", r.LastHash[:])
+		}
 	}
 
 	// Stitch cross-chunk boundary chain integrity. Skip on walkErr
@@ -1998,16 +2069,16 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		}
 	}
 	if walkErr != nil {
-		return fmt.Errorf("verification FAILED: %w", walkErr)
+		return 0, "", fmt.Errorf("verification FAILED: %w", walkErr)
 	}
 	if stitchErr != nil {
-		return fmt.Errorf("verification FAILED: %w", stitchErr)
+		return 0, "", fmt.Errorf("verification FAILED: %w", stitchErr)
 	}
 	if resumeErr != nil {
-		return fmt.Errorf("verification FAILED: %w", resumeErr)
+		return 0, "", fmt.Errorf("verification FAILED: %w", resumeErr)
 	}
 	if verified == 0 {
-		return fmt.Errorf("verified 0 ledgers — bucket empty or range out of scope")
+		return 0, "", fmt.Errorf("verified 0 ledgers — bucket empty or range out of scope")
 	}
 	if doChain {
 		fmt.Fprintf(os.Stderr, "verify-archive: chain-link integrity OK ✓\n")
@@ -2016,17 +2087,17 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		if checkpointsOK == 0 && checkpointsMissed > 0 {
 			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor INCONCLUSIVE — %d missed, 0 matched (archive mirror may be stale)\n", checkpointsMissed)
 			if failOnMissed {
-				return fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched (with -fail-on-missed)", checkpointsMissed)
+				return 0, "", fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched (with -fail-on-missed)", checkpointsMissed)
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor OK ✓  (%d matched, %d missed)\n", checkpointsOK, checkpointsMissed)
 		}
 		if failOnMissed && checkpointsMissed > 0 {
-			return fmt.Errorf("verification FAILED: %d checkpoint(s) missing from cross-anchor archive (with -fail-on-missed per ADR-0017 X1.7)", checkpointsMissed)
+			return 0, "", fmt.Errorf("verification FAILED: %d checkpoint(s) missing from cross-anchor archive (with -fail-on-missed per ADR-0017 X1.7)", checkpointsMissed)
 		}
 	}
 	_ = mismatches // reserved for future exit-code semantics
-	return nil
+	return highestLedger, highestHashHex, nil
 }
 
 // defaultTier1Peers is a representative set of tier-1 validator

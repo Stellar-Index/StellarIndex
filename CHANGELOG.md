@@ -17,6 +17,31 @@ against.
 
 ### Changed
 
+- **verify-archive Tier A is now incremental.** Pre-fix the nightly
+  systemd unit re-walked the entire chain from genesis every night,
+  taking ~13.8h of wall time and ~7h of CPU time per pass (67% of
+  every day; visible as a sustained load-average drag on r1). Past
+  LCM files are immutable, so re-hashing them is wasted compute.
+
+  New scheme: ratesengine-ops verify-archive accepts
+  `-state-file PATH -from-last-verified [-safety-overlap N]`.
+  Reads the prior run's high-water mark from a small JSON file,
+  computes `-from = max(2, last_verified - safety_overlap)`, and
+  verifies only the new tail. The resume-from-hash from prior
+  state is plumbed through so cross-run chain continuity is
+  preserved (the next incremental run's first chunk must chain to
+  the previous run's last verified hash).
+
+  Default safety overlap: 5000 ledgers (~17h of chain) catches any
+  anomalies that snuck in just before the last run's tip.
+  systemd unit defaults updated:
+  `VERIFY_ARCHIVE_STATE_FILE=/var/lib/ratesengine/verify-archive-state.json`,
+  `VERIFY_ARCHIVE_MAX_RUNTIME=4h` (down from 16h). Typical
+  incremental pass covers ~24h of new ledgers in minutes.
+
+  A weekly full-archive re-pass (defense-in-depth against silent
+  corruption in older chunks) remains a TBD sibling unit.
+
 - **`backfill_coverage[].density_pct` replaces `coverage_pct` on
   `/v1/diagnostics/ingestion`.** Pre-fix the metric was `(latest -
   earliest) / (tip - genesis)` — endpoint span, not data density. A

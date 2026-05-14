@@ -53,19 +53,39 @@ EnvironmentFile=-/etc/default/ratesengine-ops
 # Sensible defaults. Operators override via /etc/default/ratesengine-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
-Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=4h
+Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/ratesengine/verify-archive-state.json
+Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 
+# Incremental scheme (since 2026-05-14): -from-last-verified reads
+# the prior run's high-water mark from the state file, then verifies
+# only the [last_verified - safety_overlap, tip] window. Past LCM
+# files are immutable so re-verifying them nightly is wasted compute.
+# Pre-incremental (single-day pass), the nightly run took ~13.8h
+# (67% of every day) and consumed 7-8 hours of CPU time per pass —
+# a real load-average drag visible on r1.
+#
+# A weekly full-archive re-pass (defense-in-depth against any
+# silent corruption in older chunks) lives in a sibling
+# verify-archive-tier-a-weekly.{service,timer} unit (TBD), running
+# without -from-last-verified.
+#
+# -from is the FALLBACK lower bound when the state file is missing
+# or has no prior entry for this tier — typically a fresh deployment.
+# That first-ever run is a full pass; subsequent runs are incremental.
+#
 # -to is omitted intentionally — verify-archive resolves the head
 # ledger from the manifest at start time, so we always verify up to
-# whatever the archive contained at run-launch. -tier=chain limits
-# the run to chain-link integrity (Tier A); B/D/E run on a weekly
-# timer (separate service file).
+# whatever the archive contained at run-launch.
 ExecStart=/usr/local/bin/ratesengine-ops verify-archive \
   -config /etc/ratesengine.toml \
   -from ${VERIFY_ARCHIVE_FROM} \
   -tier chain \
   -workers ${VERIFY_ARCHIVE_WORKERS} \
-  -max-runtime ${VERIFY_ARCHIVE_MAX_RUNTIME}
+  -max-runtime ${VERIFY_ARCHIVE_MAX_RUNTIME} \
+  -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
+  -from-last-verified \
+  -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP}
 
 User=root
 
@@ -78,12 +98,12 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# Hard cap matching the documented MAX_RUNTIME. Even on the slowest
-# parallel-chunk pass (the original 24h serial cap predates the
-# -workers flag), the 8-worker run finishes a full archive verify
-# in ~6h. 8h gives headroom for a slow run without wedging the
-# timer indefinitely.
-TimeoutStartSec=8h
+# Hard cap matching the documented MAX_RUNTIME. With incremental
+# runs (since 2026-05-14) the typical pass covers only ~1 day of
+# new ledgers and finishes in minutes; the 4h budget gives plenty
+# of headroom for a worst-case multi-day catch-up after an outage
+# without wedging the timer indefinitely.
+TimeoutStartSec=4h
 
 [Install]
 WantedBy=multi-user.target
