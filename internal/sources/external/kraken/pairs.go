@@ -72,8 +72,24 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		{"XLM/AUD", xlm, fiatAssets["AUD"]},
 		{"XLM/CAD", xlm, fiatAssets["CAD"]},
 		{"XLM/CHF", xlm, fiatAssets["CHF"]},
-		{"BTC/USD", btc, fiatAssets["USD"]},
-		{"ETH/USD", eth, fiatAssets["USD"]},
+	}
+	// BTC + ETH cross-fiat. Pre-2026-05-14 these were USD-only,
+	// which left BTC/EUR (and ETH/EUR) with single-source coverage
+	// (only Bitstamp publishes them in our integration set). Phase 2
+	// freeze fired permanently on those pairs as a result. Adding
+	// BTC + ETH × {EUR, GBP} to the cross-venue set so multi-source
+	// VWAP works on the most-asked-for fiat conversions.
+	for _, base := range []struct {
+		code  string
+		asset canonical.Asset
+	}{{"BTC", btc}, {"ETH", eth}} {
+		for _, fiat := range []string{"USD", "EUR", "GBP"} {
+			spec = append(spec, struct {
+				symbol string
+				base   canonical.Asset
+				quote  canonical.Asset
+			}{base.code + "/" + fiat, base.asset, fiatAssets[fiat]})
+		}
 	}
 	for _, code := range majors {
 		spec = append(spec, struct {

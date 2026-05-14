@@ -47,6 +47,14 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 	if err != nil {
 		return nil, fmt.Errorf("USDT: %w", err)
 	}
+	eur, err := canonical.NewFiatAsset("EUR")
+	if err != nil {
+		return nil, fmt.Errorf("EUR: %w", err)
+	}
+	gbp, err := canonical.NewFiatAsset("GBP")
+	if err != nil {
+		return nil, fmt.Errorf("GBP: %w", err)
+	}
 
 	majors := []string{
 		"ADA", "ATOM", "AVAX", "BCH", "BNB", "DASH", "DOGE", "DOT",
@@ -68,8 +76,16 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 	}{
 		{"XLMUSDT", xlm, usdt},
 		{"XLMBTC", xlm, btc},
+		// BTC + ETH cross-fiat (2026-05-14): Binance supports BTCEUR
+		// + ETHEUR + BTCGBP + ETHGBP natively. Adding so multi-source
+		// VWAP works on the most-asked-for fiat conversions (the only
+		// pre-fix venue publishing BTC/EUR was Bitstamp).
 		{"BTCUSDT", btc, usdt},
+		{"BTCEUR", btc, eur},
+		{"BTCGBP", btc, gbp},
 		{"ETHUSDT", eth, usdt},
+		{"ETHEUR", eth, eur},
+		{"ETHGBP", eth, gbp},
 	}
 	for _, code := range majors {
 		pairs = append(pairs, struct {
