@@ -41,6 +41,14 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 	if err != nil {
 		return nil, fmt.Errorf("USD: %w", err)
 	}
+	eur, err := canonical.NewFiatAsset("EUR")
+	if err != nil {
+		return nil, fmt.Errorf("EUR: %w", err)
+	}
+	gbp, err := canonical.NewFiatAsset("GBP")
+	if err != nil {
+		return nil, fmt.Errorf("GBP: %w", err)
+	}
 
 	majors := []string{
 		"ADA", "ATOM", "AVAX", "BCH", "BNB", "DOGE", "DOT", "LINK",
@@ -61,8 +69,18 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		quote  canonical.Asset
 	}{
 		{"XLM-USD", xlm, usd},
+		// BTC + ETH cross-fiat (2026-05-14): pre-fix BTC-EUR + ETH-EUR
+		// were single-source (only Bitstamp publishes), causing
+		// permanent Phase 2 freeze fires on those pairs. Coinbase
+		// supports BTC-EUR + BTC-GBP + ETH-EUR + ETH-GBP natively;
+		// adding to the cross-venue set so VWAP has multi-source
+		// corroboration on the most-asked-for fiat conversions.
 		{"BTC-USD", btc, usd},
+		{"BTC-EUR", btc, eur},
+		{"BTC-GBP", btc, gbp},
 		{"ETH-USD", eth, usd},
+		{"ETH-EUR", eth, eur},
+		{"ETH-GBP", eth, gbp},
 	}
 	for _, code := range majors {
 		spec = append(spec, struct {

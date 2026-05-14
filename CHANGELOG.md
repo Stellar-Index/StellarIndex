@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **CEX pair coverage — cross-fiat majors.** All four CEX
+  connectors (binance/bitstamp/coinbase/kraken) now stream BTC
+  and ETH against EUR + GBP in addition to USD. Pre-fix, only
+  Bitstamp published BTC/EUR — every aggregator tick on
+  `crypto:BTC/fiat:EUR` was single-source, which falsely tripped
+  Phase 2 freeze permanently. Bitstamp + Coinbase + Kraken +
+  Binance all support these pairs natively; we just hadn't
+  enumerated them in the connector defaults.
+
+  Stop-gap pre-Tier-3. The next change in this area will replace
+  the hand-curated `DefaultPairs()` maps with auto-discovery from
+  each exchange's pair-catalogue endpoint
+  (`/api/v3/exchangeInfo` / `/products` / `/0/public/AssetPairs` /
+  `/api/v2/trading-pairs-info`), filtered by an allow-list of
+  quote assets. That move expands coverage from ~50 hand-curated
+  pairs/exchange to ~200-1500 active pairs/exchange. Storage
+  scales with PAIR COUNT (CAGG rows, ~50 MB/year for 1500 pairs)
+  not raw trade volume (90-day retention), so the cost is
+  bounded.
+
 ### Fixed
 
 - **Backfill auto-refresh: three bugs caught on first real run.**
