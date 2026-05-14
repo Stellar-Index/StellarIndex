@@ -1427,7 +1427,12 @@ function BackfillTable({
 }: {
   rows: IngestionSnapshot['backfill'];
 }) {
-  if (rows.length === 0) {
+  // Go marshals a nil slice as `null` (not `[]`) so the wire shape
+  // can carry `backfill: null` even though OpenAPI calls it an
+  // array. Defensive: treat null/undefined as "no rows" rather
+  // than crashing on `.length`. Same defense in
+  // SourceHealthTable + BackfillCoverageTable.
+  if (!rows || rows.length === 0) {
     return (
       <div className="rounded-md border border-surface-line bg-surface-subtle p-3 text-xs text-ink-faint">
         No active backfill — every decoder caught up to tip.
@@ -1492,10 +1497,14 @@ function SourceHealthTable({
 }: {
   rows: IngestionSnapshot['sources'];
 }) {
+  // Same defensive shape-handling as BackfillTable — Go marshals
+  // nil slices as `null`.
+  const safeRows = rows ?? [];
+  if (safeRows.length === 0) return null;
   return (
     <div>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
-        Sources — {rows.length} registered
+        Sources — {safeRows.length} registered
       </h3>
       <div className="overflow-hidden rounded-md border border-surface-line">
         <table className="w-full text-xs">
@@ -1510,7 +1519,7 @@ function SourceHealthTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-line">
-            {rows.map((r) => {
+            {safeRows.map((r) => {
               const classLabel = r.subclass ? `${r.class}/${r.subclass}` : r.class;
               const silent = r.include_in_vwap && r.trade_count_24h === 0;
               return (
