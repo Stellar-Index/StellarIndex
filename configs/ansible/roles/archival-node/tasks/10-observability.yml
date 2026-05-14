@@ -80,6 +80,42 @@
       TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_snapshot.prom
   tags: [observability, supply-snapshot]
 
+# /etc/default/sla-probe — operator override that:
+#   1. Targets the local API binary (bypasses CF + Caddy edges).
+#   2. Wires the textfile-collector output for the
+#      ratesengine_sla_probe_unit_failed gauge — without this the
+#      Prometheus alert can't read the verdict and stays stuck on
+#      whatever the previous run wrote (or stuck firing if no run
+#      ever wrote a value).
+#   3. Loosens the availability target from 99.9% (default) to
+#      99.0%. With 30s × 2-worker burst the probe collects ~430
+#      samples per endpoint; a single transient failure (TCP
+#      reset, packet drop) registers as 99.77% < 99.9% — false-
+#      positive that fired the alert constantly. 99.0% tolerates
+#      4 transient failures per probe burst, still tighter than
+#      the published customer-facing SLA (99.5%).
+- name: Install /etc/default/sla-probe (probe target + textfile wiring)
+  ansible.builtin.copy:
+    dest: /etc/default/sla-probe
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node role / 10-observability.yml).
+      BASE_URL=http://127.0.0.1:3000/v1
+      DURATION=30s
+      CONCURRENCY=2
+      TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom
+      EXTRA_FLAGS="-availability-target 99.0"
+  tags: [observability, sla-probe]
+
+- name: Enable sla-probe.timer (the GO probe; emits the textfile metric)
+  ansible.builtin.systemd:
+    name: sla-probe.timer
+    enabled: true
+    state: started
+  tags: [observability, sla-probe]
+
 - name: Install node_exporter systemd unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/node_exporter.service
