@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/pools?order_by=pair` returned 500 on every request.** The
+  pair-ordered SQL branch in `buildPoolsQuery` was missing the
+  `filter.Asset` arg in its `args` slice — postgres returned
+  `pq: got 6 parameters but the statement requires 7` because the
+  CTE references `$7`. The volume-desc branch already had the
+  correct 7-arg slice. Caught live on r1 2026-05-14.
+
+### Added
+
+- **CORS `Allow-Credentials: true` opt-in** for cookie-bearing
+  cross-origin fetches. New `[api].allow_credentials` config flag
+  (default false). Required for the magic-link session on
+  `/v1/account/me` + `/v1/account/keys` to actually work from a
+  cross-origin browser SPA — pre-fix the preflight emitted
+  `Access-Control-Allow-Origin` but no `Access-Control-Allow-Credentials`,
+  so browsers stripped cookies. The middleware now panics at boot
+  when both `allowed_origins=["*"]` and `allow_credentials=true`
+  are set, since browsers reject that combo at the parser.
+
 ## [v0.5.0-rc.51] — 2026-05-14
 
 ### Changed

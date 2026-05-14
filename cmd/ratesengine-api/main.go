@@ -285,7 +285,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var cors middleware.Middleware
 	if len(cfg.API.AllowedOrigins) > 0 {
 		cors = middleware.CORS(middleware.CORSOptions{
-			AllowedOrigins: cfg.API.AllowedOrigins,
+			AllowedOrigins:   cfg.API.AllowedOrigins,
+			AllowCredentials: cfg.API.AllowCredentials,
 		})
 	}
 

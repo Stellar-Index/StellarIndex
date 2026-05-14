@@ -287,3 +287,61 @@ func TestCORS_PerRequestObservability(t *testing.T) {
 		})
 	}
 }
+
+// TestCORS_AllowCredentialsEmittedOnAllowedOrigin confirms the new
+// AllowCredentials option emits Access-Control-Allow-Credentials:
+// true on responses to allowed origins. Required for cookie-bearing
+// cross-origin fetches (magic-link session on /v1/account/me).
+func TestCORS_AllowCredentialsEmittedOnAllowedOrigin(t *testing.T) {
+	h := middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins:   []string{"https://app.ratesengine.net"},
+		AllowCredentials: true,
+	})(corsOK())
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
+	r.Header.Set("Origin", "https://app.ratesengine.net")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("Allow-Credentials = %q, want true", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.ratesengine.net" {
+		t.Errorf("Allow-Origin = %q, want app.ratesengine.net (cookies require non-wildcard)", got)
+	}
+}
+
+// TestCORS_AllowCredentialsAbsentByDefault — the default config
+// (AllowCredentials: false, the original behaviour) must NOT emit
+// the header. Documented in the godoc but worth pinning so a
+// future refactor doesn't silently flip the default.
+func TestCORS_AllowCredentialsAbsentByDefault(t *testing.T) {
+	h := middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins: []string{"https://app.ratesengine.net"},
+		// AllowCredentials zero value (false)
+	})(corsOK())
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
+	r.Header.Set("Origin", "https://app.ratesengine.net")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("Allow-Credentials = %q, want empty (default no-credentials)", got)
+	}
+}
+
+// TestCORS_AllowCredentialsPanicOnWildcard — browsers reject the
+// (Allow-Origin: *, Allow-Credentials: true) combination at parse
+// time. Fail at boot rather than ship a no-op CORS policy.
+func TestCORS_AllowCredentialsPanicOnWildcard(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic on AllowedOrigins=[\"*\"] + AllowCredentials=true")
+		}
+	}()
+	_ = middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins:   []string{"*"},
+		AllowCredentials: true,
+	})
+}
