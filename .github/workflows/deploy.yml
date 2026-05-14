@@ -222,7 +222,12 @@ jobs:
                   --jq '.content' | base64 -d > "$target"
               done
           echo "---"
-          ls -la dist/migrations/ | head
+          # `| head` + pipefail interacts badly: head closes early,
+          # ls hits SIGPIPE, pipefail fails the step even though
+          # everything staged correctly. F-1300 (rc.51 deploy fail).
+          # Print the count + the first 10 names via sort+head.
+          echo "staged $(ls dist/migrations/ | wc -l) migration files"
+          ls dist/migrations/ | sort | head -n 10
 
       - name: Set up SSH
         env:
