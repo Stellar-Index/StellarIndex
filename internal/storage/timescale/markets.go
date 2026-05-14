@@ -402,7 +402,11 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	 ORDER BY (t.source || '|' || t.base_asset || '|' || t.quote_asset) ASC
 	 LIMIT $3
 	`
-	args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote}
+	// 7 args matching the $1..$7 placeholders. The asset arg was
+	// missing pre-fix, causing `pq: got 6 parameters but the
+	// statement requires 7` on every order_by=pair request — caught
+	// 2026-05-14 live on r1.
+	args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote, filter.Asset}
 	return cte + tail, args
 }
 

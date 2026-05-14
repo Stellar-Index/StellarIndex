@@ -14,11 +14,23 @@ type CORSOptions struct {
 	// AllowedOrigins is the exact-match allow-list of `Origin:`
 	// values the middleware honours. Special form `*` means "allow
 	// any origin" (wildcard); use sparingly — it's incompatible
-	// with `Access-Control-Allow-Credentials: true`, which we don't
-	// set anyway.
+	// with `Access-Control-Allow-Credentials: true`, so when both
+	// AllowedOrigins=["*"] and AllowCredentials=true are set, the
+	// constructor panics rather than emit a browser-rejected combo.
 	//
 	// Empty slice = no cross-origin access permitted.
 	AllowedOrigins []string
+
+	// AllowCredentials emits `Access-Control-Allow-Credentials: true`
+	// on preflight + actual responses to allowed origins. Required
+	// for credentialed cross-origin fetches (cookies, HTTP auth,
+	// client TLS certs). Without it browsers strip cookies from the
+	// request and reject Set-Cookie from the response.
+	//
+	// Required by /v1/account/me + /v1/account/keys (magic-link
+	// session cookie auth). Off by default — enabling it is a
+	// per-deployment policy decision the operator makes via config.
+	AllowCredentials bool
 
 	// AllowedMethods defaults to {GET, HEAD, OPTIONS, POST} when
 	// empty — matches the v1 surface (POST /v1/account/keys,
@@ -60,6 +72,11 @@ type CORSOptions struct {
 func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list + preflight branch + Vary handling are all part of one cohesive CORS contract; splitting would scatter the policy
 	allowed := buildOriginSet(opts.AllowedOrigins)
 	wildcard := allowed["*"]
+	if wildcard && opts.AllowCredentials {
+		// Browser rejects this combo at the parser. Fail at boot
+		// rather than ship a CORS policy no browser will honour.
+		panic("middleware.CORS: AllowedOrigins=[\"*\"] is incompatible with AllowCredentials=true")
+	}
 	methods := strings.Join(defaultIfEmpty(opts.AllowedMethods,
 		[]string{"GET", "HEAD", "OPTIONS", "POST"}), ", ")
 	headers := strings.Join(defaultIfEmpty(opts.AllowedHeaders,
@@ -69,6 +86,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 		maxAge = 600
 	}
 	maxAgeStr := strconv.Itoa(maxAge)
+	allowCredentials := opts.AllowCredentials
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +114,9 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 					w.Header().Set("Access-Control-Allow-Origin", "*")
 				} else {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
+				}
+				if allowCredentials {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
 			}
 
