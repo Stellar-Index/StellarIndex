@@ -56,6 +56,15 @@ var Registry = map[string]Metadata{
 	// package README for the full extraction scope.
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-02; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 
+	// ─── On-chain routers + aggregator vaults ────────────────────
+	// Excluded from VWAP — these don't emit independent trades; they
+	// invoke other contracts (DEX pairs / lending pools) which do.
+	// Captured for per-tx attribution + user-intent visibility (path
+	// requested vs path realised; aggregator vault → underlying
+	// protocol exposures). See docs/architecture/explorer-data-
+	// inventory.md §7.9 + migration 0025 (routers + aggregator_exposures).
+	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false /* WASM audit pending — keep BackfillSafe=false until docs/operations/wasm-audits/soroswap-router.md lands */},
+
 	// ─── Off-chain centralised exchanges (this package's scope) ─
 	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
 	"kraken":   {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true /* implemented, but 720-interval cap: ~30d at 1h */, BackfillSafe: true},

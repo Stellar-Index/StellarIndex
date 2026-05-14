@@ -29,17 +29,18 @@ var ErrInvalidConfig = errors.New("config: invalid")
 // contractIDPattern). When you add a source in cmd/ratesengine-indexer/
 // main.go buildSources(), mirror the name here.
 var KnownSources = map[string]struct{}{
-	"soroswap":      {},
-	"aquarius":      {},
-	"phoenix":       {},
-	"comet":         {},
-	"sdex":          {},
-	"blend":         {},
-	"reflector-dex": {},
-	"reflector-cex": {},
-	"reflector-fx":  {},
-	"redstone":      {},
-	"band":          {},
+	"soroswap":        {},
+	"soroswap-router": {},
+	"aquarius":        {},
+	"phoenix":         {},
+	"comet":           {},
+	"sdex":            {},
+	"blend":           {},
+	"reflector-dex":   {},
+	"reflector-cex":   {},
+	"reflector-fx":    {},
+	"redstone":        {},
+	"band":            {},
 }
 
 // Validate checks the loaded Config against the same constraints

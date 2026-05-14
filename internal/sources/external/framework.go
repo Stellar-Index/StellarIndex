@@ -95,6 +95,17 @@ const (
 	// alongside as a secondary validation surface per the proposal
 	// (docs/discovery/dexes-amms/blend.md).
 	ClassLending Class = "lending"
+
+	// ClassRouter — Soroban DEX routers + aggregator vaults (Soroswap
+	// Router, DeFindex). These don't emit independent trades; they
+	// invoke other contracts that do. Their value is per-tx
+	// attribution (which router drove this swap?) + intent
+	// (path the user requested vs realised). Excluded from VWAP
+	// for the same reason as ClassLending — derivative actions on
+	// top of other sources, not new price observations. The
+	// `routers` table (migration 0025) is the registry of contract
+	// addresses each ClassRouter source watches.
+	ClassRouter Class = "router"
 )
 
 // Subclass is a finer-grained partition within a [Class]. Used by

@@ -44,6 +44,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	sep41supply "github.com/RatesEngine/rates-engine/internal/sources/sep41_supply"
 	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
+	soroswap_router "github.com/RatesEngine/rates-engine/internal/sources/soroswap_router"
 	"github.com/RatesEngine/rates-engine/internal/sources/trustlines"
 )
 
@@ -137,6 +138,14 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, soroswapOpts ..
 			callDecoders = append(callDecoders,
 				band.NewDecoder(oracle.Band.StandardReferenceContract))
 			obs.OracleResolutionSeconds.WithLabelValues(band.SourceName).Set(float64(band.DefaultResolutionSeconds))
+		case soroswap_router.SourceName:
+			// Soroswap router emits no events itself — its swap_*
+			// functions delegate to per-pair contracts which DO
+			// emit events (handled by the sister soroswap source).
+			// We hook the router's InvokeContract call directly via
+			// ContractCallDecoder, same pattern as Band.
+			callDecoders = append(callDecoders,
+				soroswap_router.NewDecoder(soroswap_router.MainnetRouter))
 		case sdex.SourceName:
 			opDecoders = append(opDecoders, sdex.NewDecoder())
 		case blend.SourceName:

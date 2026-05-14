@@ -1925,7 +1925,7 @@ paths:
             split the catalogue by role.
           schema:
             type: string
-            enum: [exchange, aggregator, oracle, authority_sanity]
+            enum: [exchange, aggregator, oracle, authority_sanity, lending, router]
         - name: include
           in: query
           required: false
@@ -4335,7 +4335,7 @@ components:
             properties:
               name:
                 type: string
-                enum: [exchange, aggregator, oracle, authority_sanity]
+                enum: [exchange, aggregator, oracle, authority_sanity, lending, router]
               contributes_to_vwap: { type: boolean }
               description:         { type: string }
             required: [name, contributes_to_vwap, description]
