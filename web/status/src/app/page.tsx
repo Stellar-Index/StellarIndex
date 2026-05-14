@@ -1344,7 +1344,7 @@ function BackfillCoverageTable({
     <div>
       <div className="mb-2 flex items-baseline justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-faint">
-          Coverage — ledger genesis → tip
+          Raw-trades coverage (last 90 days)
         </h3>
         {asOf && (
           <span className="text-[10px] text-ink-faint">
@@ -1352,6 +1352,13 @@ function BackfillCoverageTable({
           </span>
         )}
       </div>
+      <p className="mb-2 text-[11px] text-ink-faint">
+        Raw <code>trades</code> hypertable has a 90-day retention by
+        design (ADR-0006). For long-term historical OHLC see the
+        prices_1h CAGG range above — that&apos;s preserved forever
+        and powers <code>/v1/chart</code> +{' '}
+        <code>/v1/history/since-inception</code>.
+      </p>
       <div className="overflow-hidden rounded-md border border-surface-line">
         <table className="w-full text-xs">
           <thead className="bg-surface-subtle text-ink-faint">
