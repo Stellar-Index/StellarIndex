@@ -15,8 +15,19 @@
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  Read creds for the
 #                                              galexie-archive S3 bucket.
 #   VERIFY_ARCHIVE_FROM                         Default 2 (genesis).
-#   VERIFY_ARCHIVE_WORKERS                      Default 8 (parallel chunks).
-#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 8h cap.
+#   VERIFY_ARCHIVE_WORKERS                      Default 12 (parallel chunks).
+#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap.
+#
+# Workers + max-runtime were 8 / 8h until 2026-05-13. The 8h cap
+# was tight for a ~62.5M-ledger pubnet — the nightly run completed
+# 34.7M ledgers in 8h (1207 l/s aggregate at 8 workers) then
+# exited 1/FAILURE on context deadline, permanently keeping
+# ratesengine_verify_archive_unit_failed firing. End-to-end at the
+# 8-worker rate needs ~14h. Bumped the defaults to 12 workers + 16h
+# cap: each chunk is an independent walk so workers scale linearly
+# until disk I/O on /var/lib/minio saturates (per the binary's
+# own --workers help text); 16h sits comfortably inside the 24h
+# timer cadence with headroom.
 #
 # Run health is observable via systemd unit state — node_exporter's
 # `--collector.systemd` exports the unit's success/failure as
@@ -41,8 +52,8 @@ EnvironmentFile=-/etc/default/ratesengine-ops
 
 # Sensible defaults. Operators override via /etc/default/ratesengine-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
-Environment=VERIFY_ARCHIVE_WORKERS=8
-Environment=VERIFY_ARCHIVE_MAX_RUNTIME=8h
+Environment=VERIFY_ARCHIVE_WORKERS=12
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
 
 # -to is omitted intentionally — verify-archive resolves the head
 # ledger from the manifest at start time, so we always verify up to

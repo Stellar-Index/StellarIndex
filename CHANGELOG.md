@@ -64,10 +64,16 @@ against.
       Also pruned 36 old binary backups + 9 stale toml backups +
       vacuumed journal to 7 days.
 
-    - `verify_archive_unit_failed` — re-ran cleanly (10K
-      ledgers/sec). Prior failure had no journal because of
-      rotation; the alert correctly surfaces real failures,
-      timer-based retry is sufficient.
+    - `verify_archive_unit_failed` — root cause: 8h max-runtime
+      cap was tight for ~62.5M-ledger pubnet. Fresh run completed
+      34.7M ledgers in 8h (1207 l/s aggregate at 8 workers) then
+      exited 1/FAILURE on context deadline — the same as the
+      previously-rotated journal would have shown. Bumped
+      defaults to 12 workers + 16h cap (sits inside the 24h
+      timer cadence with headroom). Updated both the in-repo
+      unit (`deploy/systemd/verify-archive-tier-a.service`) and
+      the live r1 drop-in. Started a fresh run on the new
+      settings; the alert clears when it finishes.
 
     - `sla_probe_unit_failed_alert` — REAL: `/v1/markets`,
       `/v1/assets` cold-cache p99 spikes (~5s, ~2.4s) breach
