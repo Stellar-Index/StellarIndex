@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -123,8 +124,45 @@ var allowedCAGGViews = map[string]bool{
 // each chunk. The minute-grain CAGGs (1m/15m) have a 30-day
 // retention by design (per migration 0002), so refreshing historical
 // buckets there is wasted work.
-var CAGGsLiveForever = []string{
-	"prices_1h", "prices_4h", "prices_1d", "prices_1w", "prices_1mo",
+//
+// Per-entry MinWindow is the Timescale-imposed minimum refresh
+// window: refresh_continuous_aggregate rejects (`SQLSTATE 22023:
+// refresh window too small`) any window narrower than 2× bucket
+// width. The backfill caller pads the chunk's actual ts range up
+// to the entry's MinWindow before invoking refresh; the padded
+// area beyond the chunk has no new trades, so the no-op buckets
+// are nearly free. Caught live 2026-05-14 on the first 10k-ledger
+// test backfill — chunk's natural ts range was ~4h, which was
+// fine for prices_1h but failed every coarser CAGG.
+type CAGGSpec struct {
+	Name      string
+	MinWindow time.Duration
+}
+
+var CAGGsLiveForever = []CAGGSpec{
+	{Name: "prices_1h", MinWindow: 3 * time.Hour},
+	{Name: "prices_4h", MinWindow: 12 * time.Hour},
+	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
+	// 1mo CAGG uses calendar months, not 30-day windows. Padding
+	// to ~93 days (3 calendar months) trivially clears the
+	// "must span >= 2 buckets" minimum without depending on month
+	// arithmetic at the storage seam.
+	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour},
+}
+
+// PadRefreshWindow expands [from, to] to span at least minWindow
+// while staying centered on the original midpoint. Used by the
+// backfill tool's per-chunk CAGG-refresh helper to satisfy the
+// 2-buckets-minimum invariant. Padded area beyond the chunk's
+// actual data is materialized as empty buckets (cheap).
+func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, time.Time) {
+	span := to.Sub(from)
+	if span >= minWindow {
+		return from, to
+	}
+	pad := (minWindow - span) / 2
+	return from.Add(-pad), to.Add(pad)
 }
 
 // RefreshContinuousAggregate force-materialises a continuous
@@ -146,15 +184,51 @@ func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string,
 	if !allowedCAGGViews[viewName] {
 		return fmt.Errorf("timescale: RefreshContinuousAggregate: unknown view %q", viewName)
 	}
-	// CALL refresh_continuous_aggregate(view, $1, $2). The first
-	// arg is REGCLASS in Timescale's signature, which pgx can't
-	// placeholder; concatenating from the allow-list is safe.
-	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1, $2)`, viewName)
-	_, err := s.db.ExecContext(ctx, q, from, to)
-	if err != nil {
-		return fmt.Errorf("timescale: RefreshContinuousAggregate(%s): %w", viewName, err)
+	// CALL refresh_continuous_aggregate(view, $1::timestamptz, $2::timestamptz).
+	// The first arg is REGCLASS in Timescale's signature, which pgx
+	// can't placeholder; concatenating from the allow-list is safe.
+	// Time params need explicit ::timestamptz casts: lib/pq's
+	// implementation of stored-procedure CALL doesn't propagate the
+	// declared parameter types from the procedure signature, so an
+	// untyped placeholder fails with `42P18: could not determine
+	// data type of parameter $1`. Caught live 2026-05-14 on the
+	// first real backfill that exercised this path.
+	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz)`, viewName)
+	// Retry on 55P03 (concurrent refresh) — Timescale serializes
+	// refresh of the same CAGG, so two parallel callers (e.g.
+	// backfill chunks racing on prices_1mo) collide. Backoff is
+	// short because the other caller's refresh is fast for our
+	// padded windows. Caught live 2026-05-14 on a `-parallel 4`
+	// SDEX backfill: every chunk's prices_1mo refresh raced.
+	const maxAttempts = 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		_, err := s.db.ExecContext(ctx, q, from, to)
+		if err == nil {
+			return nil
+		}
+		if !isConcurrentRefreshErr(err) || attempt == maxAttempts-1 {
+			return fmt.Errorf("timescale: RefreshContinuousAggregate(%s): %w", viewName, err)
+		}
+		// Exponential backoff with jitter: 200ms, 400ms, 800ms, 1.6s.
+		// Sleep capped via select so ctx-cancel exits promptly.
+		backoff := time.Duration(200*(1<<attempt)) * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
 	}
-	return nil
+	return nil // unreachable
+}
+
+// isConcurrentRefreshErr reports whether err is the
+// SQLSTATE 55P03 ("could not refresh continuous aggregate due to
+// a concurrent refresh") emitted by Timescale when two callers
+// race on the same CAGG. Matched by message substring rather
+// than driver-typed code so we don't take a hard pq dep here.
+func isConcurrentRefreshErr(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "55P03") ||
+		strings.Contains(err.Error(), "concurrent refresh"))
 }
 
 // CAGGCoverage describes the time range and row count of the
