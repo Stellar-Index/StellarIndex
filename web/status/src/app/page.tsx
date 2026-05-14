@@ -126,6 +126,9 @@ interface IngestionSnapshot {
     latest_ledger?: number;
     trade_count: number;
     coverage_pct?: number;
+    density_pct?: number;
+    covered_ledgers?: number;
+    expected_ledgers?: number;
   }>;
   backfill_coverage_as_of?: string;
   fx_backfill: {
@@ -1353,10 +1356,12 @@ function BackfillCoverageTable({
         )}
       </div>
       <p className="mb-2 text-[11px] text-ink-faint">
-        Per-source min/max ledger from the <code>trades</code>
-        hypertable (no retention; trades are kept forever per
-        migration 0031). Coverage % climbs monotonically as
-        backfills land.
+        <strong>Density</strong> = % of ledgers in the source&apos;s
+        expected range we&apos;ve actually processed (union of
+        completed backfill cursor intervals, clamped to [genesis,
+        tip]). Hits 100% only when backfill ranges fully cover the
+        interval — sparse sources no longer score 100% just because
+        they have endpoint trades far apart with gaps between.
       </p>
       <div className="overflow-hidden rounded-md border border-surface-line">
         <table className="w-full text-xs">
@@ -1366,13 +1371,13 @@ function BackfillCoverageTable({
               <th className="px-3 py-2 text-right font-medium">Genesis</th>
               <th className="px-3 py-2 text-right font-medium">Earliest</th>
               <th className="px-3 py-2 text-right font-medium">Latest</th>
-              <th className="px-3 py-2 text-right font-medium">Coverage</th>
+              <th className="px-3 py-2 text-right font-medium">Density</th>
               <th className="px-3 py-2 text-right font-medium">Trades</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-line">
             {onChain.map((r) => {
-              const pct = (r.coverage_pct ?? 0) * 100;
+              const pct = (r.density_pct ?? 0) * 100;
               const tone = pct >= 99 ? 'ok' : pct >= 50 ? 'warn' : ('bad' as const);
               const colors = {
                 ok: 'bg-ok-500 text-ok-700',
@@ -1391,7 +1396,14 @@ function BackfillCoverageTable({
                   <td className="px-3 py-2 text-right font-mono tabular-nums">
                     {r.latest_ledger?.toLocaleString() ?? '—'}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td
+                    className="px-3 py-2 text-right"
+                    title={
+                      r.covered_ledgers !== undefined && r.expected_ledgers !== undefined
+                        ? `${r.covered_ledgers.toLocaleString()} / ${r.expected_ledgers.toLocaleString()} ledgers covered by completed backfill ranges`
+                        : undefined
+                    }
+                  >
                     <div className="inline-flex items-center justify-end gap-2">
                       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-line">
                         <div

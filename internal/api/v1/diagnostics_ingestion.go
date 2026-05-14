@@ -58,6 +58,11 @@ type IngestionDiagnostics struct {
 	// backfill that would fill it isn't progressing.
 	BackfillCoverage   []BackfillCoverageRow `json:"backfill_coverage"`
 	BackfillCoverageAt string                `json:"backfill_coverage_as_of,omitempty"`
+	// rawCursors is stashed by fillIngestionBackfill so the post-
+	// fillers density-projection step has access without re-issuing
+	// ListCursors. Unexported + json:"-" so it never leaks to the
+	// wire — purely an in-process scratchpad.
+	rawCursors []timescale.Cursor `json:"-"`
 	// CAGGCoverage is the time range of prices_1h — the canonical
 	// "long-lived" continuous aggregate. The raw trades hypertable
 	// has a 90-day retention so its MIN(ledger) only reports the
@@ -95,12 +100,25 @@ type CAGGCoverageView struct {
 // in `sourceGenesisLedger`; when an operator deploys a new source
 // add a row there.
 //
-// CoveragePct is `(LatestLedger - max(EarliestLedger, GenesisLedger)
-// + 1) / (LatestLedger - GenesisLedger + 1)` — i.e. fraction of the
-// expected genesis-to-tip range we have any data for. Doesn't
-// detect internal gaps (EarliestLedger=1, LatestLedger=tip with a
-// hole at 30M-40M still scores 100%); for that we'd need a much
-// heavier distinct-ledger scan, deferred.
+// DensityPct is the fraction of (genesis → tip) ledgers we've
+// SUCCESSFULLY PROCESSED for this source, measured via the union
+// of completed portions of backfill cursor ranges. When backfill
+// fully covers [genesis, tip], DensityPct = 1.0.
+//
+// Why cursor-based, not row-based: a sparse source like Comet
+// (~16k trades over 10.7M ledgers) naturally has ≥1 trade on only
+// 0.15% of its ledgers. A row-COUNT(DISTINCT ledger) metric would
+// peg at 0.15% even with perfect backfill, useless as a "are we
+// done" signal. Cursor coverage measures "did the indexer walk
+// this ledger?" — which is the question the operator actually
+// wants to answer.
+//
+// CoveragePct (deprecated 2026-05-14) is the prior endpoint-span
+// metric — `(LatestLedger - max(EarliestLedger, GenesisLedger) + 1)
+// / (tip - GenesisLedger + 1)`. Misleading: a source with one
+// trade at ledger 1 and one trade at tip with 99% gap in between
+// scored 100%. Kept as a transitional field; the status page reads
+// DensityPct instead.
 type BackfillCoverageRow struct {
 	Source         string `json:"source"`
 	Applies        bool   `json:"applies"`
@@ -108,12 +126,22 @@ type BackfillCoverageRow struct {
 	EarliestLedger int64  `json:"earliest_ledger,omitempty"`
 	LatestLedger   int64  `json:"latest_ledger,omitempty"`
 	TradeCount     int64  `json:"trade_count"`
-	// CoveragePct is the fraction of the (genesis → tip) ledger
-	// range covered by raw trades for this source. Pre-2026-05-14
-	// this was a rolling 90-day window because trades had a
-	// retention policy; that policy was removed in migration 0031,
-	// so coverage now grows monotonically as backfills land.
+	// CoveragePct — see godoc on the type. Endpoint-span metric.
+	// Deprecated; retained as a transitional field. Status page
+	// renders DensityPct.
 	CoveragePct float64 `json:"coverage_pct,omitempty"`
+	// DensityPct is the honest "what fraction of ledgers have we
+	// processed" measurement based on the union of backfill cursor
+	// intervals. 1.0 = fully backfilled. See godoc.
+	DensityPct float64 `json:"density_pct,omitempty"`
+	// CoveredLedgers is the absolute count of ledgers covered by
+	// successful backfill ranges between genesis and tip. The
+	// numerator of DensityPct.
+	CoveredLedgers int64 `json:"covered_ledgers,omitempty"`
+	// ExpectedLedgers is tip - genesis + 1 — the denominator of
+	// DensityPct. Exposed so the UI can render absolute "X / Y
+	// ledgers covered" rather than just a percentage.
+	ExpectedLedgers int64 `json:"expected_ledgers,omitempty"`
 }
 
 // sourceGenesisLedger is the operator-curated map of "what's the
@@ -354,12 +382,27 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	// freshly-fetched tip. Backfill coverage was projected with
 	// tip=0 above (before the parallel fillers ran); now that
 	// fillIngestionLedger has populated out.Ledger.LatestLedger,
-	// re-compute.
+	// re-compute. Same step ALSO fills the new cursor-based
+	// DensityPct from the stashed raw cursors — both metrics
+	// surface on the wire during the deprecation window.
 	tip := out.Ledger.LatestLedger
 	for i := range out.BackfillCoverage {
 		row := &out.BackfillCoverage[i]
-		if row.Applies && tip > 0 {
-			row.CoveragePct = computeCoveragePct(row.GenesisLedger, row.EarliestLedger, row.LatestLedger, tip)
+		if !row.Applies || tip <= 0 {
+			continue
+		}
+		row.CoveragePct = computeCoveragePct(row.GenesisLedger, row.EarliestLedger, row.LatestLedger, tip)
+		// Honest density: union of completed portions of all
+		// backfill cursors mentioning this source, clamped to
+		// [genesis, tip]. Hits 100% only when backfill ranges
+		// actually cover the whole interval — sparse sources like
+		// Comet no longer score 100% just because they have
+		// endpoint trades 10M ledgers apart with nothing between.
+		if row.GenesisLedger > 0 && len(out.rawCursors) > 0 {
+			covered, density := computeSourceDensity(out.rawCursors, row.Source, row.GenesisLedger, tip)
+			row.CoveredLedgers = covered
+			row.ExpectedLedgers = tip - row.GenesisLedger + 1
+			row.DensityPct = density
 		}
 	}
 
@@ -403,6 +446,9 @@ func (s *Server) fillIngestionBackfill(ctx context.Context, out *IngestionDiagno
 	}
 	out.Backfill = aggregateBackfill(rows)
 	out.Ledger.LagSeconds = ledgerStreamLagSeconds(rows)
+	// Stash for the post-fillers density-projection step. Cheap —
+	// just a slice of pointers; the recomputation reads it once.
+	out.rawCursors = rows
 }
 
 // fillIngestionFXCoverage type-asserts that the wired FX reader
@@ -645,6 +691,168 @@ func parseBackfillSub(sub string) (decoder string, rangeEnd int64) {
 	endStr := rangePart[dashIdx+1:]
 	rangeEnd = parseInt64(endStr)
 	return decoder, rangeEnd
+}
+
+// parseBackfillSubFull splits "<start>-<end>:<decoder-set>" into all
+// three pieces. parseBackfillSub returns end-only because that's the
+// only piece aggregateBackfill needs; density projection needs the
+// start too. Returns (0, 0, "") on malformed input.
+func parseBackfillSubFull(sub string) (rangeStart, rangeEnd int64, decoder string) {
+	colonIdx := strings.IndexByte(sub, ':')
+	if colonIdx <= 0 || colonIdx == len(sub)-1 {
+		return 0, 0, ""
+	}
+	rangePart := sub[:colonIdx]
+	decoder = sub[colonIdx+1:]
+	dashIdx := strings.IndexByte(rangePart, '-')
+	if dashIdx <= 0 || dashIdx == len(rangePart)-1 {
+		return 0, 0, decoder
+	}
+	rangeStart = parseInt64(rangePart[:dashIdx])
+	rangeEnd = parseInt64(rangePart[dashIdx+1:])
+	return rangeStart, rangeEnd, decoder
+}
+
+// coverageInterval is [Start, End] inclusive on both ends.
+type coverageInterval struct {
+	Start, End int64
+}
+
+// mergeCoverageIntervals takes any set of intervals (possibly
+// overlapping, in any order) and returns a minimal sorted set of
+// non-overlapping intervals covering the same point set. Adjacent
+// intervals (End+1 == next.Start) are joined.
+//
+// Standard sweep-line merge, O(n log n) sort + O(n) walk. Fine for
+// the ~1000s of backfill cursors r1 carries today; an operator
+// with a million cursors would want something fancier.
+func mergeCoverageIntervals(intervals []coverageInterval) []coverageInterval {
+	if len(intervals) == 0 {
+		return nil
+	}
+	sorted := make([]coverageInterval, len(intervals))
+	copy(sorted, intervals)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start < sorted[j].Start })
+	out := []coverageInterval{sorted[0]}
+	for _, iv := range sorted[1:] {
+		last := &out[len(out)-1]
+		if iv.Start <= last.End+1 {
+			if iv.End > last.End {
+				last.End = iv.End
+			}
+		} else {
+			out = append(out, iv)
+		}
+	}
+	return out
+}
+
+// sumCoverageIntervals returns the total ledger count in a
+// pre-merged interval set. Each interval contributes (End - Start
+// + 1) because the bounds are inclusive.
+func sumCoverageIntervals(intervals []coverageInterval) int64 {
+	var total int64
+	for _, iv := range intervals {
+		total += iv.End - iv.Start + 1
+	}
+	return total
+}
+
+// decoderSetContains reports whether the comma-separated decoder
+// list `set` contains the exact source name `source`. Substring
+// match would false-positive on prefixes (e.g. "reflector-dex" in
+// "reflector-dex-extended").
+func decoderSetContains(set, source string) bool {
+	for {
+		idx := strings.IndexByte(set, ',')
+		var part string
+		if idx == -1 {
+			part = set
+		} else {
+			part = set[:idx]
+		}
+		if part == source {
+			return true
+		}
+		if idx == -1 {
+			return false
+		}
+		set = set[idx+1:]
+	}
+}
+
+// computeSourceDensity returns the cursor-based coverage for one
+// source: the union of completed portions of all backfill cursors
+// that include `source` in their decoder set, clamped to
+// [genesis, tip].
+//
+// The "completed portion" of a range cursor `<start>-<end>` is
+// [start, min(last_ledger, end)] — if the range cursor's worker
+// only got partway through, only the partway portion counts.
+//
+// Returns (covered_ledger_count, density_pct). Density is
+// covered / (tip - genesis + 1) capped at 1.0. Zero genesis or
+// non-positive expected range → (0, 0).
+func computeSourceDensity(cursors []timescale.Cursor, source string, genesis, tip int64) (int64, float64) {
+	if genesis <= 0 || tip <= 0 || tip < genesis {
+		return 0, 0
+	}
+	expected := tip - genesis + 1
+
+	intervals := make([]coverageInterval, 0, len(cursors))
+	for _, c := range cursors {
+		iv, ok := cursorCoverageInterval(c, source, genesis, tip)
+		if !ok {
+			continue
+		}
+		intervals = append(intervals, iv)
+	}
+	merged := mergeCoverageIntervals(intervals)
+	covered := sumCoverageIntervals(merged)
+	density := float64(covered) / float64(expected)
+	if density > 1.0 {
+		density = 1.0
+	}
+	return covered, density
+}
+
+// cursorCoverageInterval extracts the [start, min(last, end)]
+// completed portion of one backfill cursor, clamped to
+// [genesis, tip] and gated on the decoder set containing `source`.
+// Returns ok=false for non-backfill cursors, malformed sub_source,
+// decoder mismatch, or completed-portion below the start.
+//
+// Split out from computeSourceDensity to keep that function's
+// cognitive complexity below the linter ceiling — the per-cursor
+// logic is naturally branchy.
+func cursorCoverageInterval(c timescale.Cursor, source string, genesis, tip int64) (coverageInterval, bool) {
+	if c.Source != "backfill" {
+		return coverageInterval{}, false
+	}
+	rangeStart, rangeEnd, decoder := parseBackfillSubFull(c.Sub)
+	if decoder == "" || rangeStart == 0 || rangeEnd == 0 {
+		return coverageInterval{}, false
+	}
+	if !decoderSetContains(decoder, source) {
+		return coverageInterval{}, false
+	}
+	covEnd := int64(c.LastLedger)
+	if covEnd > rangeEnd {
+		covEnd = rangeEnd
+	}
+	if covEnd < rangeStart {
+		return coverageInterval{}, false
+	}
+	if rangeStart < genesis {
+		rangeStart = genesis
+	}
+	if covEnd > tip {
+		covEnd = tip
+	}
+	if covEnd < rangeStart {
+		return coverageInterval{}, false
+	}
+	return coverageInterval{Start: rangeStart, End: covEnd}, true
 }
 
 // parseInt64 returns 0 on parse failure — defensive default.
