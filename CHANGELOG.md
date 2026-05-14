@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Raw trades retention removed** (migration 0031). Pre-fix the
+  `trades` hypertable aged out at 90 days; we relied on the
+  hourly+ CAGGs to preserve historical OHLC. Operator wants raw
+  per-trade fidelity preserved indefinitely (regulatory + proof-
+  of-pricing queries can't be reconstructed from CAGGs).
+  Justification: r1's postgres data dir is on a 1.5 TB ZFS volume
+  with 4% used. Earlier "no room" analysis was wrong — was
+  measuring the OS root disk (49 GB), not the postgres data
+  volume. Status page coverage panel relabeled from "Raw-trades
+  coverage (last 90 days)" → "Raw-trades coverage — genesis →
+  tip"; coverage_pct grows monotonically as backfills land.
+  Compression policy on chunks > 7d is unchanged (~5x reduction).
+
 ### Added
 
 - **CEX pair coverage — cross-fiat majors.** All four CEX
