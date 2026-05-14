@@ -108,13 +108,12 @@ type BackfillCoverageRow struct {
 	EarliestLedger int64  `json:"earliest_ledger,omitempty"`
 	LatestLedger   int64  `json:"latest_ledger,omitempty"`
 	TradeCount     int64  `json:"trade_count"`
-	// CoveragePct is the rolling-90d raw-trades window only —
-	// see RawTradesWindowDays note below. For the actual
-	// "do we have historical OHLC for this period?" answer,
-	// consumers should look at the parent's `cagg_coverage` field
-	// (prices_1h MIN/MAX) which is preserved forever.
-	CoveragePct         float64 `json:"coverage_pct,omitempty"`
-	RawTradesWindowDays int     `json:"raw_trades_window_days,omitempty"`
+	// CoveragePct is the fraction of the (genesis → tip) ledger
+	// range covered by raw trades for this source. Pre-2026-05-14
+	// this was a rolling 90-day window because trades had a
+	// retention policy; that policy was removed in migration 0031,
+	// so coverage now grows monotonically as backfills land.
+	CoveragePct float64 `json:"coverage_pct,omitempty"`
 }
 
 // sourceGenesisLedger is the operator-curated map of "what's the
@@ -496,7 +495,6 @@ func projectBackfillCoverage(rows []timescale.BackfillCoverage, tip int64) []Bac
 		applies := r.LatestLedger > 0 && r.EarliestLedger > 0
 		if applies {
 			row.Applies = true
-			row.RawTradesWindowDays = 90 // matches migration 0001's add_retention_policy
 			row.EarliestLedger = r.EarliestLedger
 			row.LatestLedger = r.LatestLedger
 			if g, ok := sourceGenesisLedger[r.Source]; ok {
