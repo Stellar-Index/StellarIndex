@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.53] — 2026-05-15
+
 ### Fixed
 
 - **Coverage snapshot now populates DURING an all-time backfill.**
