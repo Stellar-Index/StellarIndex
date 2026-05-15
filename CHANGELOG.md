@@ -17,6 +17,30 @@ against.
 
 ### Fixed
 
+- **Backfill-coverage snapshot was permanently "pending".** The
+  cache-refresh query (`BackfillCoverageStats`) ran a single
+  `SELECT ... GROUP BY source` over the `trades` hypertable. Once
+  trades grew past ~2700 chunks, that scan needed >2700 chunk
+  AccessShareLocks in one transaction, overflowing
+  `max_locks_per_transaction` (256 on r1) with
+  `out of shared memory`. The error was masked by the API's 30s
+  context timeout, so the symptom looked like a slow query rather
+  than a hard limit.
+
+  Rewritten to a per-source loop: each source's earliest/latest
+  ledger via `ORDER BY ts {ASC,DESC} LIMIT 1` (chunk-exclusion
+  stops after the first/last chunk — ~3s vs ~68s for `MIN()/MAX()`
+  which seek every per-chunk index), trade count approximated from
+  the 24h source/total ratio scaled by `approximate_row_count`
+  (precise per-source `COUNT(*)` is 2:34s on sdex). Each statement
+  runs in its own implicit transaction so the per-transaction lock
+  budget resets — the 2700-chunk overflow can't recur. Full refresh
+  is now ~23s across all 13 on-chain sources.
+
+  Cache-refresh timeout raised 30s → 2min (it's a background
+  goroutine, never bounds an API request; 2min sits below the 5min
+  refresh interval so refreshes don't stack).
+
 - **`/v1/pools?order_by=pair` returned 500 on every request.** The
   pair-ordered SQL branch in `buildPoolsQuery` was missing the
   `filter.Asset` arg in its `args` slice — postgres returned

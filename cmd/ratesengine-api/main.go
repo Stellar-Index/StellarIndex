@@ -667,10 +667,25 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// refreshes happen on the v1.CoverageRefreshInterval cadence.
 	backfillCoverageCache := v1.NewCoverageCache(store, logger.With("component", "backfill-coverage"))
 	go func() {
+		// Refresh timeout is 2 min: the per-source coverage query
+		// (BackfillCoverageStats) does ~13 sources × (ts-ordered
+		// LIMIT 1 earliest/latest + 24h count) plus two shared
+		// scalars (approximate_row_count + 24h total). On r1's
+		// ~2700-chunk trades hypertable that totals ~40-90s. This is
+		// a BACKGROUND goroutine — the timeout never bounds an API
+		// request, only how long one refresh attempt may run before
+		// the next CoverageRefreshInterval (5 min) tick. 2 min sits
+		// comfortably below the 5-min interval so refreshes never
+		// stack. Pre-2026-05-15 this was 30s, which the old
+		// `GROUP BY source` query (and even the rewritten per-source
+		// form on sdex) blew past, leaving the snapshot permanently
+		// "pending".
+		const coverageRefreshTimeout = 2 * time.Minute
+
 		// Initial population — block-with-timeout so the first
 		// status-page poll after restart sees data sooner than the
 		// next ticker boundary.
-		initCtx, initCancel := context.WithTimeout(rootCtx, 30*time.Second)
+		initCtx, initCancel := context.WithTimeout(rootCtx, coverageRefreshTimeout)
 		defer initCancel()
 		if err := backfillCoverageCache.Refresh(initCtx); err != nil {
 			logger.Warn("backfill coverage initial refresh", "err", err)
@@ -682,7 +697,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			case <-rootCtx.Done():
 				return
 			case <-tick.C:
-				refreshCtx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
+				refreshCtx, cancel := context.WithTimeout(rootCtx, coverageRefreshTimeout)
 				if err := backfillCoverageCache.Refresh(refreshCtx); err != nil {
 					logger.Warn("backfill coverage periodic refresh", "err", err)
 				}
