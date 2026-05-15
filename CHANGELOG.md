@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.55] — 2026-05-15
+
 ### Changed
 
 - **`backfill_coverage[].trade_count` → `entries`, backed by an
