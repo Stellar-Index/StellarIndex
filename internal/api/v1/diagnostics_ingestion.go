@@ -48,18 +48,19 @@ type IngestionDiagnostics struct {
 	Version  IngestionVersionInfo   `json:"version"`
 	Ledger   LedgerTip              `json:"ledger"`
 	Backfill []BackfillDecoderState `json:"backfill"`
-	// BackfillCoverage answers "do we have data from genesis to
-	// tip?" by reporting per-source MIN/MAX ledger + trade count
-	// derived from the trades hypertable. SECONDARY to Backfill —
-	// `Backfill` shows what backfill *is doing*, `BackfillCoverage`
-	// shows what data we *actually have*. Both matter: a stalled
-	// backfill range with last_ledger=18M against an SDEX coverage
-	// MIN=61M means SDEX history pre-61M is missing AND the
-	// backfill that would fill it isn't progressing.
+	// BackfillCoverage answers "what fraction of genesis→tip have we
+	// actually processed?" per source. The headline DensityPct (and
+	// covered/expected/earliest/latest) is derived CURSOR-FIRST from
+	// the union of completed backfill-cursor intervals — no trades
+	// scan — so it stays live even mid-backfill when the trades
+	// coverage query is too IO-contended to finish. trade_count is
+	// best-effort enrichment from the background trades-scan cache.
+	// SECONDARY to Backfill: `Backfill` shows what backfill *is
+	// doing*; `BackfillCoverage` shows what we've actually walked.
 	BackfillCoverage   []BackfillCoverageRow `json:"backfill_coverage"`
 	BackfillCoverageAt string                `json:"backfill_coverage_as_of,omitempty"`
-	// rawCursors is stashed by fillIngestionBackfill so the post-
-	// fillers density-projection step has access without re-issuing
+	// rawCursors is stashed by fillIngestionBackfill so the cursor-
+	// first buildBackfillCoverage step has access without re-issuing
 	// ListCursors. Unexported + json:"-" so it never leaks to the
 	// wire — purely an in-process scratchpad.
 	rawCursors []timescale.Cursor `json:"-"`
@@ -88,11 +89,13 @@ type CAGGCoverageView struct {
 
 // BackfillCoverageRow is the per-source coverage projection.
 //
-// EarliestLedger / LatestLedger come straight from the trades
-// hypertable's MIN/MAX(ledger) for that source. CEX/FX sources
-// report 0 / 0 because their trades don't carry a Stellar ledger
-// — `applies` distinguishes the two cases for the UI (no point
-// drawing a "coverage bar" for binance).
+// For on-chain (mapped) sources EarliestLedger / LatestLedger are
+// the min/max of the MERGED backfill-cursor union — the actual
+// processed span, not a trades MIN/MAX. They're display context
+// only; DensityPct is the gap-aware number (a wide earliest..latest
+// with interior gaps still yields a low density). CEX/FX sources
+// report 0 / 0 (no Stellar ledger); `applies` distinguishes the two
+// cases for the UI (no point drawing a "coverage bar" for binance).
 //
 // GenesisLedger is the source's known start point — 1 for SDEX
 // (Stellar pubnet genesis), the contract deploy ledger for
@@ -163,16 +166,18 @@ var sourceGenesisLedger = map[string]int64{
 	"sdex": 1,
 	// Soroban contracts — approximate deploy-era ledgers from
 	// the per-contract WASM audits (docs/operations/wasm-audits/).
-	"soroswap":      54_000_000,
-	"aquarius":      54_500_000,
-	"phoenix":       53_700_000,
-	"comet":         53_900_000,
-	"blend":         54_000_000,
-	"reflector-cex": 51_000_000,
-	"reflector-dex": 51_000_000,
-	"reflector-fx":  51_000_000,
-	"band":          53_500_000,
-	"redstone":      55_000_000,
+	"soroswap":        54_000_000,
+	"soroswap-router": 54_000_000,
+	"defindex":        55_000_000,
+	"aquarius":        54_500_000,
+	"phoenix":         53_700_000,
+	"comet":           53_900_000,
+	"blend":           54_000_000,
+	"reflector-cex":   51_000_000,
+	"reflector-dex":   51_000_000,
+	"reflector-fx":    51_000_000,
+	"band":            53_500_000,
+	"redstone":        55_000_000,
 }
 
 // RegionInfo identifies which deployment generated this snapshot.
@@ -351,7 +356,18 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	// in-memory cached/projected sections (BackfillCoverage,
 	// MarketCap) run inline since they don't touch the DB.
 	out.MarketCap = projectMarketCapState(s.marketCaps)
-	s.fillIngestionBackfillCoverage(&out)
+	// The background-refreshed trades-scan snapshot is now ONLY a
+	// best-effort enrichment source (per-source trade_count + the
+	// off-chain CEX/FX rows). The authoritative coverage/density is
+	// derived cursor-first after the parallel fillers run — see
+	// buildBackfillCoverage. Fetching it here (cheap RLock) keeps
+	// the read off the request critical path; an empty/stale cache
+	// no longer blanks the whole snapshot during an all-time
+	// backfill when the trades scan is too IO-contended to finish.
+	var cacheRows []timescale.BackfillCoverage
+	if s.backfillCoverage != nil {
+		cacheRows, _ = s.backfillCoverage.Snapshot()
+	}
 
 	type filler struct {
 		name    string
@@ -378,32 +394,22 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	}
 	wg.Wait()
 
-	// Once all fillers complete, recompute coverage_pct against the
-	// freshly-fetched tip. Backfill coverage was projected with
-	// tip=0 above (before the parallel fillers ran); now that
-	// fillIngestionLedger has populated out.Ledger.LatestLedger,
-	// re-compute. Same step ALSO fills the new cursor-based
-	// DensityPct from the stashed raw cursors — both metrics
-	// surface on the wire during the deprecation window.
+	// Build the coverage rows cursor-first now that the parallel
+	// fillers have populated the tip (fillIngestionLedger) and the
+	// raw cursors (fillIngestionBackfill). This is the authoritative
+	// path: density / covered / expected / earliest / latest for
+	// every on-chain source come from the union of completed
+	// backfill cursor intervals — no trades scan — so the snapshot
+	// populates DURING an all-time backfill instead of waiting for
+	// the IO-contended trades-coverage query to finish. cacheRows
+	// only enriches trade_count + carries the off-chain rows.
 	tip := out.Ledger.LatestLedger
-	for i := range out.BackfillCoverage {
-		row := &out.BackfillCoverage[i]
-		if !row.Applies || tip <= 0 {
-			continue
-		}
-		row.CoveragePct = computeCoveragePct(row.GenesisLedger, row.EarliestLedger, row.LatestLedger, tip)
-		// Honest density: union of completed portions of all
-		// backfill cursors mentioning this source, clamped to
-		// [genesis, tip]. Hits 100% only when backfill ranges
-		// actually cover the whole interval — sparse sources like
-		// Comet no longer score 100% just because they have
-		// endpoint trades 10M ledgers apart with nothing between.
-		if row.GenesisLedger > 0 && len(out.rawCursors) > 0 {
-			covered, density := computeSourceDensity(out.rawCursors, row.Source, row.GenesisLedger, tip)
-			row.CoveredLedgers = covered
-			row.ExpectedLedgers = tip - row.GenesisLedger + 1
-			row.DensityPct = density
-		}
+	out.BackfillCoverage = buildBackfillCoverage(out.rawCursors, cacheRows, tip)
+	if len(out.BackfillCoverage) > 0 {
+		// Assembled this request from live cursors — the headline
+		// density is as-of-now, not the (possibly stale/failed)
+		// trades-scan cache time.
+		out.BackfillCoverageAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
@@ -501,52 +507,75 @@ func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDi
 	}
 }
 
-// fillIngestionBackfillCoverage projects the cached coverage
-// snapshot onto the wire shape. Reads from a process-local cache
-// (background-refreshed every 5 min); zero-allocates on a normal
-// hit. Empty section when the cache hasn't been wired (test
-// builds) or hasn't completed its first refresh yet (cold start
-// in the first 5 min).
-func (s *Server) fillIngestionBackfillCoverage(out *IngestionDiagnostics) {
-	if s.backfillCoverage == nil {
-		return
-	}
-	rows, fetchedAt := s.backfillCoverage.Snapshot()
-	if fetchedAt.IsZero() {
-		return
-	}
-	out.BackfillCoverageAt = fetchedAt.UTC().Format(time.RFC3339)
-	tip := out.Ledger.LatestLedger
-	out.BackfillCoverage = projectBackfillCoverage(rows, tip)
-}
-
-// projectBackfillCoverage maps the storage-layer rows onto the
-// wire shape, joining with sourceGenesisLedger to compute
-// CoveragePct. CEX/FX sources (LatestLedger == 0) are reported
-// with Applies=false so the UI can render them as "not applicable"
-// rather than a misleading 0% bar.
+// buildBackfillCoverage produces the per-source coverage rows
+// CURSOR-FIRST.
 //
-// CoveragePct definition: of the (genesis → tip) range we want to
-// cover, what fraction do we have *any* data for? Doesn't measure
-// internal density — gaps inside the EarliestLedger..LatestLedger
-// span aren't visible here. That's a separate, much heavier query
-// (distinct-ledger scan) deferred to a follow-up.
-func projectBackfillCoverage(rows []timescale.BackfillCoverage, tip int64) []BackfillCoverageRow {
-	out := make([]BackfillCoverageRow, 0, len(rows))
-	for _, r := range rows {
+// For every on-chain source with a known genesis (sourceGenesisLedger)
+// it derives density / covered / expected / earliest / latest purely
+// from the union of completed backfill-cursor intervals. This path
+// needs NO trades scan, so it always populates — including during an
+// all-time backfill when the trades-hypertable coverage query is too
+// IO-contended to finish within its timeout. earliest/latest here are
+// the *processed* span (min/max of the merged cursor union), not a
+// trades MIN/MAX — honest for "what have we actually walked", and it
+// can never claim a gap is covered.
+//
+// cacheRows (the background-refreshed trades-scan snapshot) is
+// best-effort enrichment ONLY: per-source trade_count, plus the
+// off-chain CEX/FX rows which have no Stellar-ledger genesis and thus
+// no cursor concept. An empty or stale cache degrades trade_count to
+// 0 and drops the off-chain context rows — it can no longer blank
+// the whole snapshot. Any cache source not in sourceGenesisLedger
+// keeps the legacy endpoint-span behaviour (Applies + deprecated
+// CoveragePct) so an un-mapped on-chain source doesn't silently
+// vanish; DensityPct stays 0 for it (no genesis → no honest density,
+// the signal to add it to sourceGenesisLedger).
+func buildBackfillCoverage(cursors []timescale.Cursor, cacheRows []timescale.BackfillCoverage, tip int64) []BackfillCoverageRow {
+	tradeCounts := make(map[string]int64, len(cacheRows))
+	for _, r := range cacheRows {
+		tradeCounts[r.Source] = r.TradeCount
+	}
+
+	out := make([]BackfillCoverageRow, 0, len(sourceGenesisLedger)+len(cacheRows))
+
+	sources := make([]string, 0, len(sourceGenesisLedger))
+	for src := range sourceGenesisLedger {
+		sources = append(sources, src)
+	}
+	sort.Strings(sources)
+	for _, src := range sources {
+		genesis := sourceGenesisLedger[src]
 		row := BackfillCoverageRow{
-			Source:     r.Source,
-			TradeCount: r.TradeCount,
+			Source:        src,
+			Applies:       true,
+			GenesisLedger: genesis,
+			TradeCount:    tradeCounts[src],
 		}
-		applies := r.LatestLedger > 0 && r.EarliestLedger > 0
-		if applies {
+		if genesis > 0 && tip > 0 {
+			covered, density, earliest, latest := computeSourceCoverage(cursors, src, genesis, tip)
+			row.CoveredLedgers = covered
+			row.ExpectedLedgers = tip - genesis + 1
+			row.DensityPct = density
+			row.EarliestLedger = earliest
+			row.LatestLedger = latest
+			row.CoveragePct = computeCoveragePct(genesis, earliest, latest, tip)
+		}
+		out = append(out, row)
+	}
+
+	// Cache-only rows: off-chain CEX/FX (no genesis → no cursors)
+	// plus any on-chain source not yet mapped. Best-effort context;
+	// absent entirely when the cache is cold.
+	for _, r := range cacheRows {
+		if _, mapped := sourceGenesisLedger[r.Source]; mapped {
+			continue
+		}
+		row := BackfillCoverageRow{Source: r.Source, TradeCount: r.TradeCount}
+		if r.EarliestLedger > 0 && r.LatestLedger > 0 {
 			row.Applies = true
 			row.EarliestLedger = r.EarliestLedger
 			row.LatestLedger = r.LatestLedger
-			if g, ok := sourceGenesisLedger[r.Source]; ok {
-				row.GenesisLedger = g
-			}
-			row.CoveragePct = computeCoveragePct(row.GenesisLedger, r.EarliestLedger, r.LatestLedger, tip)
+			row.CoveragePct = computeCoveragePct(0, r.EarliestLedger, r.LatestLedger, tip)
 		}
 		out = append(out, row)
 	}
@@ -781,7 +810,7 @@ func decoderSetContains(set, source string) bool {
 	}
 }
 
-// computeSourceDensity returns the cursor-based coverage for one
+// computeSourceCoverage returns the cursor-based coverage for one
 // source: the union of completed portions of all backfill cursors
 // that include `source` in their decoder set, clamped to
 // [genesis, tip].
@@ -790,12 +819,15 @@ func decoderSetContains(set, source string) bool {
 // [start, min(last_ledger, end)] — if the range cursor's worker
 // only got partway through, only the partway portion counts.
 //
-// Returns (covered_ledger_count, density_pct). Density is
-// covered / (tip - genesis + 1) capped at 1.0. Zero genesis or
-// non-positive expected range → (0, 0).
-func computeSourceDensity(cursors []timescale.Cursor, source string, genesis, tip int64) (int64, float64) {
+// Returns (covered_ledger_count, density_pct, earliest, latest).
+// earliest/latest are the min Start / max End of the MERGED union —
+// the actual processed span, so they cannot imply a gap is covered
+// (density is the gap-aware number; earliest/latest are display
+// context). Density is covered / (tip - genesis + 1) capped at 1.0.
+// Zero genesis or non-positive expected range → all zero.
+func computeSourceCoverage(cursors []timescale.Cursor, source string, genesis, tip int64) (covered int64, density float64, earliest, latest int64) {
 	if genesis <= 0 || tip <= 0 || tip < genesis {
-		return 0, 0
+		return 0, 0, 0, 0
 	}
 	expected := tip - genesis + 1
 
@@ -808,11 +840,23 @@ func computeSourceDensity(cursors []timescale.Cursor, source string, genesis, ti
 		intervals = append(intervals, iv)
 	}
 	merged := mergeCoverageIntervals(intervals)
-	covered := sumCoverageIntervals(merged)
-	density := float64(covered) / float64(expected)
+	covered = sumCoverageIntervals(merged)
+	if len(merged) > 0 {
+		earliest = merged[0].Start
+		latest = merged[len(merged)-1].End
+	}
+	density = float64(covered) / float64(expected)
 	if density > 1.0 {
 		density = 1.0
 	}
+	return covered, density, earliest, latest
+}
+
+// computeSourceDensity is the (covered, density)-only view of
+// computeSourceCoverage, kept for callers/tests that don't need the
+// processed-span endpoints.
+func computeSourceDensity(cursors []timescale.Cursor, source string, genesis, tip int64) (int64, float64) {
+	covered, density, _, _ := computeSourceCoverage(cursors, source, genesis, tip)
 	return covered, density
 }
 
