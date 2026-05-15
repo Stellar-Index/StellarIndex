@@ -255,48 +255,62 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 		return err
 	}
 
+	// One statement, two effects, fully atomic:
+	//   1. Insert the trade (idempotent on its PK).
+	//   2. If — and only if — a row was actually inserted, bump the
+	//      per-source entry tally (migration 0035). The `HAVING
+	//      count(*) > 0` makes the counter upsert produce zero rows
+	//      on a duplicate, so a backfill re-walk over already-stored
+	//      ledgers never inflates the tally. Data-modifying CTEs
+	//      always execute even though `bump` is unreferenced.
+	// The trailing `SELECT count(*) FROM ins` returns 1 (new) or 0
+	// (duplicate) — an explicit count, sturdier than the old
+	// RowsAffected() path (no driver-quirk fail-open ambiguity).
 	const q = `
-        INSERT INTO trades (
-            source, ledger, tx_hash, op_index, ts,
-            base_asset, quote_asset,
-            base_amount, quote_amount, usd_volume,
-            maker, taker
-        ) VALUES (
-            $1, $2, $3, $4, $5,
-            $6, $7,
-            $8, $9, $10,
-            NULLIF($11, ''), NULLIF($12, '')
+        WITH ins AS (
+            INSERT INTO trades (
+                source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount, usd_volume,
+                maker, taker
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7,
+                $8, $9, $10,
+                NULLIF($11, ''), NULLIF($12, '')
+            )
+            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
+            RETURNING 1
+        ), bump AS (
+            INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
+            SELECT $1, count(*), now() FROM ins
+            HAVING count(*) > 0
+            ON CONFLICT (source) DO UPDATE
+              SET entry_count = sec.entry_count + EXCLUDED.entry_count,
+                  updated_at  = EXCLUDED.updated_at
         )
-        ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
+        SELECT count(*) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
 	if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
 		usdVolume = *v
 	}
-	res, err := s.db.ExecContext(ctx, q,
+	var rowsInserted int64
+	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 		t.Pair.Base.String(), t.Pair.Quote.String(),
 		t.BaseAmount, t.QuoteAmount, usdVolume,
 		t.Maker, t.Taker,
-	)
-	if err != nil {
+	).Scan(&rowsInserted); err != nil {
 		return fmt.Errorf("timescale: InsertTrade: %w", err)
 	}
 
 	// F-1243 (codex audit-2026-05-13) second half: skip the
-	// registry hook when the trade was a duplicate (rows-affected
+	// registry hook when the trade was a duplicate (rowsInserted
 	// = 0 from the `ON CONFLICT DO NOTHING`). The wave-47 TTL fix
 	// already addressed the freeze; this guard fixes the
 	// observation_count drift on backfill replays / process
-	// restarts that re-encounter already-stored trades. The
-	// `RowsAffected` failure mode (driver doesn't report it)
-	// fails open: we fall through to the registry hook so a
-	// driver quirk can never SILENCE legitimate registry
-	// updates — only stale-replay drift is tightened.
-	rowsInserted := int64(1)
-	if n, raErr := res.RowsAffected(); raErr == nil {
-		rowsInserted = n
-	}
+	// restarts that re-encounter already-stored trades.
 	if rowsInserted == 0 {
 		return nil
 	}

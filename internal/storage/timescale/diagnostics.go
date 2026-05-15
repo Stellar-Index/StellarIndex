@@ -433,3 +433,68 @@ func (s *Store) SupplyCoverageStats(ctx context.Context) (SupplyCoverage, error)
 	}
 	return out, nil
 }
+
+// SourceEntryCounts returns the per-source running entry tally from
+// `source_entry_counts` (migration 0035) — trades + oracle_updates,
+// keyed by source. This is a ~20-row PK scan of a tiny tally table,
+// so it is O(1)-ish and ALWAYS fast — unlike BackfillCoverageStats
+// it does not touch the trades/oracle_updates hypertables, so it
+// stays responsive even during an all-time backfill (the whole
+// reason the counter exists). Powers the `entries` column on
+// /v1/diagnostics/ingestion.
+func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT source, entry_count FROM source_entry_counts`)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: SourceEntryCounts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]int64, 32)
+	for rows.Next() {
+		var src string
+		var n int64
+		if err := rows.Scan(&src, &n); err != nil {
+			return nil, fmt.Errorf("timescale: SourceEntryCounts scan: %w", err)
+		}
+		out[src] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: SourceEntryCounts rows: %w", err)
+	}
+	return out, nil
+}
+
+// SeedSourceEntryCounts authoritatively recomputes source_entry_counts
+// from a full GROUP BY over `trades` + `oracle_updates` and overwrites
+// the tally (SET, not ADD — so re-running converges). Returns the
+// number of source rows reconciled.
+//
+// This is the heavy reconciliation the writers' incremental bump can
+// never do on its own (a fresh counter doesn't know pre-counter
+// history). Operator one-shot via `ratesengine-ops seed-entry-counts`
+// — run post-backfill: the GROUP BY scans every trades chunk in one
+// transaction (fine within the 4096 max_locks budget, slow + IO-hungry
+// mid-backfill). A source appears once even if it somehow wrote to
+// both tables (sum over the UNION ALL).
+func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
+	const q = `
+        INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
+        SELECT source, sum(c)::bigint, now()
+        FROM (
+            SELECT source, count(*) AS c FROM trades         GROUP BY source
+            UNION ALL
+            SELECT source, count(*) AS c FROM oracle_updates GROUP BY source
+        ) u
+        GROUP BY source
+        ON CONFLICT (source) DO UPDATE
+          SET entry_count = EXCLUDED.entry_count,
+              updated_at  = EXCLUDED.updated_at
+    `
+	res, err := s.db.ExecContext(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("timescale: SeedSourceEntryCounts: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}

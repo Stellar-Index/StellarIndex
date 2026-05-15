@@ -124,7 +124,7 @@ interface IngestionSnapshot {
     genesis_ledger?: number;
     earliest_ledger?: number;
     latest_ledger?: number;
-    trade_count: number;
+    entries: number;
     coverage_pct?: number;
     density_pct?: number;
     covered_ledgers?: number;
@@ -1346,7 +1346,7 @@ function BackfillCoverageTable({
     <div>
       <div className="mb-2 flex items-baseline justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-faint">
-          Raw-trades coverage — genesis → tip
+          Ingest coverage — genesis → tip
         </h3>
         {asOf && (
           <span className="text-[10px] text-ink-faint">
@@ -1371,7 +1371,7 @@ function BackfillCoverageTable({
               <th className="px-3 py-2 text-right font-medium">Earliest</th>
               <th className="px-3 py-2 text-right font-medium">Latest</th>
               <th className="px-3 py-2 text-right font-medium">Density</th>
-              <th className="px-3 py-2 text-right font-medium">Trades</th>
+              <th className="px-3 py-2 text-right font-medium">Entries</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-line">
@@ -1416,7 +1416,7 @@ function BackfillCoverageTable({
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                    {r.trade_count.toLocaleString()}
+                    {r.entries.toLocaleString()}
                   </td>
                 </tr>
               );
@@ -1428,7 +1428,7 @@ function BackfillCoverageTable({
                   off-chain — no Stellar ledger context
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums">
-                  {r.trade_count.toLocaleString()}
+                  {r.entries.toLocaleString()}
                 </td>
               </tr>
             ))}

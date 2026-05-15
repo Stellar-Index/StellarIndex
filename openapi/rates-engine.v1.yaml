@@ -1628,14 +1628,14 @@ paths:
                       completes after process start.
                     items:
                       type: object
-                      required: [source, applies, trade_count]
+                      required: [source, applies, entries]
                       properties:
                         source:          { type: string, example: "sdex" }
                         applies:         { type: boolean, description: "False for CEX/FX sources whose trades have no Stellar ledger." }
                         genesis_ledger:  { type: integer, format: int64, description: "Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban)." }
                         earliest_ledger: { type: integer, format: int64 }
                         latest_ledger:   { type: integer, format: int64 }
-                        trade_count:     { type: integer, format: int64 }
+                        entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
                         coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
                   backfill_coverage_as_of:
                     type: string

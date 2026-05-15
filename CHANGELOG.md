@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **`backfill_coverage[].trade_count` → `entries`, backed by an
+  always-on per-source tally** (`source_entry_counts`, migration
+  0035). The old `trade_count` came from the IO-contended
+  `BackfillCoverageStats` trades scan — during an all-time backfill
+  it never completed, so every source's count collapsed to a
+  misleading `0` (we actually had 60M+ trades). It was also
+  structurally always-`0` for oracle sources, which write to
+  `oracle_updates`, never `trades`. The new `entries` column is a
+  ~20-row tally table the writers bump **atomically and
+  idempotently**: `InsertTrade` / `InsertOracleUpdate` increment it
+  in the *same statement* as the row insert via a data-modifying
+  CTE gated on `HAVING count(*) > 0`, so a backfill re-walk
+  (`ON CONFLICT DO NOTHING` → 0 rows) never inflates the count.
+  Reading it is O(20) regardless of trades/oracle_updates size, so
+  it stays exact and available even mid-backfill, and it counts
+  oracle updates for oracle sources. New `ratesengine-ops
+  seed-entry-counts` authoritatively reconciles the tally from a
+  full GROUP BY (run once post-backfill to fold in pre-counter
+  history; SETs not ADDs, so re-running converges). Status-page
+  column "Trades" → "Entries"; the section heading "Raw-trades
+  coverage" → "Ingest coverage". Wire-shape change to
+  `/v1/diagnostics/ingestion` (pre-v1; OpenAPI updated).
+
 ## [v0.5.0-rc.54] — 2026-05-15
 
 ### Fixed
