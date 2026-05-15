@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.54] — 2026-05-15
+
 ### Fixed
 
 - **Backfill-coverage density now credits the live-ingest tail —
