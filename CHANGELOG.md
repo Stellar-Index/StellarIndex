@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Backfill-coverage density now credits the live-ingest tail —
+  caught-up sources reach (and stay at) ~100%.** rc.53's
+  cursor-first density only counted `source='backfill'` cursors, so
+  every source showed a uniform ~281k-ledger shortfall (~96.8% for
+  Soroban-era sources, 99.55% for sdex): the "head band" between
+  the top of the backfill union and the live network tip. That band
+  is *not* a data gap — the live `ledgerstream` cursor is covering
+  it gap-free in real time — it was simply uncounted, so density
+  could never reach 100% no matter how complete ingest was.
+  `extendWithLiveTail` now unions `[backfillTop, min(liveTop, tip)]`
+  on top of the merged backfill intervals. Honest by construction:
+  a source with no backfill anchor (e.g. the un-audited
+  `defindex` / `soroswap-router`, `BackfillSafe=false`) stays at
+  0% — live-only decoding from the deploy ledger is not "we have
+  its history"; the live contribution starts at `backfillTop` so an
+  interior backfill hole is never falsely filled; and only the
+  `[backfillTop, tip]` tail is asserted gap-free (the live path's
+  contract + the archivecompleteness daemon, ADR-0017). A
+  fully-caught-up source now reads ~100% and stays there as the tip
+  advances.
+
 ## [v0.5.0-rc.53] — 2026-05-15
 
 ### Fixed

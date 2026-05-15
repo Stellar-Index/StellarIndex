@@ -235,16 +235,62 @@ func TestComputeSourceDensity(t *testing.T) {
 			wantDensityMax: 0.0,
 		},
 		{
-			name: "non-backfill cursors ignored (live ledgerstream)",
+			name: "live cursor with NO backfill anchor → no credit (0)",
 			cursors: []timescale.Cursor{
+				{Source: "ledgerstream", Sub: "", LastLedger: 1000, UpdatedAt: now},
+			},
+			source:  "sdex",
+			genesis: 1,
+			tip:     1000,
+			// A source that's never been backfilled stays 0 even
+			// though live ingest is running — live-only coverage
+			// from the deploy ledger is not "we have its history",
+			// and there's no anchor proving [genesis, liveLow].
+			wantCovered:    0,
+			wantDensityMin: 0.0,
+			wantDensityMax: 0.0,
+		},
+		{
+			name: "live tail closes the head band on top of backfill",
+			cursors: []timescale.Cursor{
+				{Source: "backfill", Sub: "1-800:sdex", LastLedger: 800, UpdatedAt: now},
 				{Source: "ledgerstream", Sub: "", LastLedger: 1000, UpdatedAt: now},
 			},
 			source:         "sdex",
 			genesis:        1,
 			tip:            1000,
-			wantCovered:    0, // density is backfill-only by design
-			wantDensityMin: 0.0,
-			wantDensityMax: 0.0,
+			wantCovered:    1000, // [1,800] ∪ live-tail [800,1000]
+			wantDensityMin: 1.0,
+			wantDensityMax: 1.0,
+		},
+		{
+			name: "live tail does NOT fill an interior backfill hole",
+			cursors: []timescale.Cursor{
+				{Source: "backfill", Sub: "1-200:sdex", LastLedger: 200, UpdatedAt: now},
+				{Source: "backfill", Sub: "500-800:sdex", LastLedger: 800, UpdatedAt: now},
+				{Source: "ledgerstream", Sub: "", LastLedger: 1000, UpdatedAt: now},
+			},
+			source:  "sdex",
+			genesis: 1,
+			tip:     1000,
+			// [1,200] ∪ [500,800] ∪ live-tail [800,1000]
+			// = [1,200] ∪ [500,1000]; hole [201,499] stays open.
+			wantCovered:    200 + 501,
+			wantDensityMin: 0.700,
+			wantDensityMax: 0.702,
+		},
+		{
+			name: "live below backfill top → no change",
+			cursors: []timescale.Cursor{
+				{Source: "backfill", Sub: "1-900:sdex", LastLedger: 900, UpdatedAt: now},
+				{Source: "ledgerstream", Sub: "", LastLedger: 500, UpdatedAt: now},
+			},
+			source:         "sdex",
+			genesis:        1,
+			tip:            1000,
+			wantCovered:    900, // live tail 500 ≤ backfill top 900
+			wantDensityMin: 0.899,
+			wantDensityMax: 0.901,
 		},
 		{
 			name: "range extends past tip → clamped",

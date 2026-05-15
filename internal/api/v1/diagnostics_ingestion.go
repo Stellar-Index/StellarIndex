@@ -812,12 +812,23 @@ func decoderSetContains(set, source string) bool {
 
 // computeSourceCoverage returns the cursor-based coverage for one
 // source: the union of completed portions of all backfill cursors
-// that include `source` in their decoder set, clamped to
-// [genesis, tip].
+// that include `source` in their decoder set, PLUS the live-ingest
+// tail, clamped to [genesis, tip].
 //
 // The "completed portion" of a range cursor `<start>-<end>` is
 // [start, min(last_ledger, end)] — if the range cursor's worker
 // only got partway through, only the partway portion counts.
+//
+// Live-ingest tail: the `ledgerstream` cursor tracks the network tip
+// in real time and live ingest is gap-free from its low-water to tip
+// (sequential walker + archivecompleteness daemon, ADR-0017). We
+// don't persist that low-water, so the tail is only credited UPWARD
+// from where the backfill union already reached — see
+// extendWithLiveTail. This closes the "head band" between the top of
+// the backfill union and the live tip (so a fully-caught-up source
+// reads ~100% and STAYS there as the tip advances) without ever
+// claiming an interior backfill hole is covered, and without giving
+// a never-backfilled source false credit.
 //
 // Returns (covered_ledger_count, density_pct, earliest, latest).
 // earliest/latest are the min Start / max End of the MERGED union —
@@ -840,6 +851,7 @@ func computeSourceCoverage(cursors []timescale.Cursor, source string, genesis, t
 		intervals = append(intervals, iv)
 	}
 	merged := mergeCoverageIntervals(intervals)
+	merged = extendWithLiveTail(merged, cursors, tip)
 	covered = sumCoverageIntervals(merged)
 	if len(merged) > 0 {
 		earliest = merged[0].Start
@@ -850,6 +862,51 @@ func computeSourceCoverage(cursors []timescale.Cursor, source string, genesis, t
 		density = 1.0
 	}
 	return covered, density, earliest, latest
+}
+
+// liveLedgerstreamTop returns the high-water ledger of the live
+// `ledgerstream` ingest cursor. 0 when no live cursor is present
+// (e.g. a test fixture or a region whose live ingest hasn't started).
+func liveLedgerstreamTop(cursors []timescale.Cursor) int64 {
+	var top int64
+	for _, c := range cursors {
+		if c.Source != "ledgerstream" {
+			continue
+		}
+		if l := int64(c.LastLedger); l > top {
+			top = l
+		}
+	}
+	return top
+}
+
+// extendWithLiveTail credits the live-ingest tail on top of the
+// backfill union. It extends coverage from the backfill top up to
+// min(liveTop, tip) and re-merges.
+//
+// Honest-by-construction:
+//   - No backfill anchor (merged empty) → returned unchanged. A
+//     source that's never been backfilled (e.g. an un-audited
+//     Soroban source with BackfillSafe=false) stays at 0%: live
+//     ingest decoding its events from the r1-deploy ledger forward
+//     is NOT "we have this source's history", and there's no anchor
+//     proving the [genesis, liveLow] span is covered.
+//   - Live contribution starts at backfillTop, never below it, so an
+//     interior backfill hole is never falsely filled.
+//   - liveTop ≤ backfillTop → unchanged (nothing to add).
+func extendWithLiveTail(merged []coverageInterval, cursors []timescale.Cursor, tip int64) []coverageInterval {
+	if len(merged) == 0 {
+		return merged
+	}
+	backfillTop := merged[len(merged)-1].End
+	liveTop := liveLedgerstreamTop(cursors)
+	if liveTop > tip {
+		liveTop = tip
+	}
+	if liveTop <= backfillTop {
+		return merged
+	}
+	return mergeCoverageIntervals(append(merged, coverageInterval{Start: backfillTop, End: liveTop}))
 }
 
 // computeSourceDensity is the (covered, density)-only view of
