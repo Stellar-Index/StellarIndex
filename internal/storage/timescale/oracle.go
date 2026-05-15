@@ -17,21 +17,36 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 	if err := u.Validate(); err != nil {
 		return err
 	}
+	// Atomic + idempotent, mirroring InsertTrade: the trade/oracle
+	// row insert and the per-source entry-tally bump (migration
+	// 0035) are one statement; the `HAVING count(*) > 0` gate means
+	// a re-walked duplicate (ON CONFLICT DO NOTHING → 0 rows) never
+	// inflates the tally. Oracle ingest doesn't need the inserted
+	// count, so this stays an Exec.
 	const q = `
-        INSERT INTO oracle_updates (
-            source, contract_id,
-            ledger, tx_hash, op_index, ts,
-            asset, quote,
-            price, decimals,
-            confidence, observer
-        ) VALUES (
-            $1, NULLIF($2, ''),
-            $3, $4, $5, $6,
-            $7, $8,
-            $9, $10,
-            NULLIF($11, 0.0), NULLIF($12, '')
+        WITH ins AS (
+            INSERT INTO oracle_updates (
+                source, contract_id,
+                ledger, tx_hash, op_index, ts,
+                asset, quote,
+                price, decimals,
+                confidence, observer
+            ) VALUES (
+                $1, NULLIF($2, ''),
+                $3, $4, $5, $6,
+                $7, $8,
+                $9, $10,
+                NULLIF($11, 0.0), NULLIF($12, '')
+            )
+            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
+            RETURNING 1
         )
-        ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
+        INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
+        SELECT $1, count(*), now() FROM ins
+        HAVING count(*) > 0
+        ON CONFLICT (source) DO UPDATE
+          SET entry_count = sec.entry_count + EXCLUDED.entry_count,
+              updated_at  = EXCLUDED.updated_at
     `
 	_, err := s.db.ExecContext(ctx, q,
 		u.Source, u.ContractID,

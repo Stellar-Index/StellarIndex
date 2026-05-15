@@ -186,6 +186,11 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 			fmt.Fprintf(os.Stderr, "seed-soroswap-pairs: %v\n", err)
 			os.Exit(1)
 		}
+	case "seed-entry-counts":
+		if err := seedEntryCounts(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "seed-entry-counts: %v\n", err)
+			os.Exit(1)
+		}
 	case "hubble-check":
 		if err := hubbleCheck(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "hubble-check: %v\n", err)
@@ -552,6 +557,15 @@ Subcommands:
                           ~3N+1 RPC calls at 300ms throttle, so wall-time
                           scales linearly with pair count (~3 min for 200
                           pairs). Idempotent — re-running is safe.
+  seed-entry-counts -config PATH [-timeout DUR]
+                          Authoritatively recompute source_entry_counts
+                          (the "entries" column on /v1/diagnostics/
+                          ingestion) from a full GROUP BY over trades +
+                          oracle_updates. The writers keep it live going
+                          forward; this one-shot folds in pre-counter
+                          history + any crash drift. Run ONCE post-
+                          backfill (scans every trades chunk). Idempotent
+                          — SETs not ADDs, so re-running converges.
   mint-key -config PATH -identifier ID -label LABEL [-tier T] [-rate-limit-per-min N] [-expires-in DUR]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path

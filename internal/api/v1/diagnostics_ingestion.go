@@ -35,6 +35,14 @@ type CAGGCoverageReader interface {
 	CAGGCoverageStats(ctx context.Context) (timescale.CAGGCoverage, error)
 }
 
+// SourceEntryCountReader is the seam the ingestion diagnostics reads
+// the per-source entry tally through. timescale.Store satisfies it
+// via SourceEntryCounts. Cheap ~20-row tally read — available even
+// during an all-time backfill, which is the whole point.
+type SourceEntryCountReader interface {
+	SourceEntryCounts(ctx context.Context) (map[string]int64, error)
+}
+
 // IngestionDiagnostics is the wire shape for
 // /v1/diagnostics/ingestion. One snapshot of the region's ingest
 // state — region label, version, ledger tip, per-decoder backfill,
@@ -64,6 +72,10 @@ type IngestionDiagnostics struct {
 	// ListCursors. Unexported + json:"-" so it never leaks to the
 	// wire — purely an in-process scratchpad.
 	rawCursors []timescale.Cursor `json:"-"`
+	// entryCounts is stashed by fillIngestionEntryCounts: the
+	// always-on per-source tally (source_entry_counts) that backs
+	// the `entries` column. Unexported scratchpad, never on the wire.
+	entryCounts map[string]int64 `json:"-"`
 	// CAGGCoverage is the time range of prices_1h — the canonical
 	// "long-lived" continuous aggregate. The raw trades hypertable
 	// has a 90-day retention so its MIN(ledger) only reports the
@@ -128,7 +140,16 @@ type BackfillCoverageRow struct {
 	GenesisLedger  int64  `json:"genesis_ledger,omitempty"`
 	EarliestLedger int64  `json:"earliest_ledger,omitempty"`
 	LatestLedger   int64  `json:"latest_ledger,omitempty"`
-	TradeCount     int64  `json:"trade_count"`
+	// Entries is the always-on per-source running tally of ingested
+	// rows — `trades` for exchange/DEX/CEX sources, `oracle_updates`
+	// for oracle sources (migration 0035 / source_entry_counts).
+	// Read from a tiny ~20-row tally table, so it's exact and
+	// available EVEN during an all-time backfill — unlike the old
+	// `trade_count`, which came from the IO-contended trades scan
+	// and collapsed to a misleading 0 mid-backfill (and was
+	// structurally always-0 for oracle sources, which never write
+	// to `trades`). Renamed trade_count → entries 2026-05-15.
+	Entries int64 `json:"entries"`
 	// CoveragePct — see godoc on the type. Endpoint-span metric.
 	// Deprecated; retained as a transitional field. Status page
 	// renders DensityPct.
@@ -381,6 +402,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 		{"fx_coverage", func(c context.Context) { s.fillIngestionFXCoverage(c, &out) }, 5 * time.Second},
 		{"supply_coverage", func(c context.Context) { s.fillIngestionSupplyCoverage(c, &out) }, 5 * time.Second},
 		{"cagg_coverage", func(c context.Context) { s.fillIngestionCAGGCoverage(c, &out) }, 5 * time.Second},
+		{"entry_counts", func(c context.Context) { s.fillIngestionEntryCounts(c, &out) }, 5 * time.Second},
 	}
 	var wg sync.WaitGroup
 	for _, f := range fillers {
@@ -402,9 +424,10 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	// backfill cursor intervals — no trades scan — so the snapshot
 	// populates DURING an all-time backfill instead of waiting for
 	// the IO-contended trades-coverage query to finish. cacheRows
-	// only enriches trade_count + carries the off-chain rows.
+	// now only carries the off-chain row presence; the `entries`
+	// count comes from the always-on tally (out.entryCounts).
 	tip := out.Ledger.LatestLedger
-	out.BackfillCoverage = buildBackfillCoverage(out.rawCursors, cacheRows, tip)
+	out.BackfillCoverage = buildBackfillCoverage(out.rawCursors, cacheRows, out.entryCounts, tip)
 	if len(out.BackfillCoverage) > 0 {
 		// Assembled this request from live cursors — the headline
 		// density is as-of-now, not the (possibly stale/failed)
@@ -507,6 +530,25 @@ func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDi
 	}
 }
 
+// fillIngestionEntryCounts stashes the always-on per-source entry
+// tally (source_entry_counts) onto out for buildBackfillCoverage.
+// Type-asserts through fxHistory like the other coverage readers;
+// no-ops on test fakes that don't implement SourceEntryCountReader.
+// Soft-fail: a reader error leaves entryCounts nil → the `entries`
+// column reads 0 rather than erroring the whole response.
+func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDiagnostics) {
+	reader, ok := s.fxHistory.(SourceEntryCountReader)
+	if !ok || reader == nil {
+		return
+	}
+	counts, err := reader.SourceEntryCounts(ctx)
+	if err != nil {
+		s.logger.Warn("diagnostics/ingestion: entry_counts", "err", err)
+		return
+	}
+	out.entryCounts = counts
+}
+
 // buildBackfillCoverage produces the per-source coverage rows
 // CURSOR-FIRST.
 //
@@ -520,22 +562,19 @@ func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDi
 // trades MIN/MAX — honest for "what have we actually walked", and it
 // can never claim a gap is covered.
 //
-// cacheRows (the background-refreshed trades-scan snapshot) is
-// best-effort enrichment ONLY: per-source trade_count, plus the
-// off-chain CEX/FX rows which have no Stellar-ledger genesis and thus
-// no cursor concept. An empty or stale cache degrades trade_count to
-// 0 and drops the off-chain context rows — it can no longer blank
-// the whole snapshot. Any cache source not in sourceGenesisLedger
-// keeps the legacy endpoint-span behaviour (Applies + deprecated
-// CoveragePct) so an un-mapped on-chain source doesn't silently
-// vanish; DensityPct stays 0 for it (no genesis → no honest density,
-// the signal to add it to sourceGenesisLedger).
-func buildBackfillCoverage(cursors []timescale.Cursor, cacheRows []timescale.BackfillCoverage, tip int64) []BackfillCoverageRow {
-	tradeCounts := make(map[string]int64, len(cacheRows))
-	for _, r := range cacheRows {
-		tradeCounts[r.Source] = r.TradeCount
-	}
-
+// entryCounts (source_entry_counts, the always-on tally) supplies
+// the `entries` column for every row — exact and available even
+// mid-backfill. cacheRows (the background-refreshed trades-scan
+// snapshot) now ONLY carries off-chain CEX/FX row presence (those
+// sources have no Stellar-ledger genesis and thus no cursor concept).
+// An empty/stale cache just drops the off-chain context rows — it
+// can no longer blank the whole snapshot, and the `entries` numbers
+// are unaffected (different source). Any cache source not in
+// sourceGenesisLedger keeps the legacy endpoint-span behaviour
+// (Applies + deprecated CoveragePct) so an un-mapped on-chain source
+// doesn't silently vanish; DensityPct stays 0 for it (no genesis →
+// no honest density, the signal to add it to sourceGenesisLedger).
+func buildBackfillCoverage(cursors []timescale.Cursor, cacheRows []timescale.BackfillCoverage, entryCounts map[string]int64, tip int64) []BackfillCoverageRow {
 	out := make([]BackfillCoverageRow, 0, len(sourceGenesisLedger)+len(cacheRows))
 
 	sources := make([]string, 0, len(sourceGenesisLedger))
@@ -549,7 +588,7 @@ func buildBackfillCoverage(cursors []timescale.Cursor, cacheRows []timescale.Bac
 			Source:        src,
 			Applies:       true,
 			GenesisLedger: genesis,
-			TradeCount:    tradeCounts[src],
+			Entries:       entryCounts[src],
 		}
 		if genesis > 0 && tip > 0 {
 			covered, density, earliest, latest := computeSourceCoverage(cursors, src, genesis, tip)
@@ -570,7 +609,7 @@ func buildBackfillCoverage(cursors []timescale.Cursor, cacheRows []timescale.Bac
 		if _, mapped := sourceGenesisLedger[r.Source]; mapped {
 			continue
 		}
-		row := BackfillCoverageRow{Source: r.Source, TradeCount: r.TradeCount}
+		row := BackfillCoverageRow{Source: r.Source, Entries: entryCounts[r.Source]}
 		if r.EarliestLedger > 0 && r.LatestLedger > 0 {
 			row.Applies = true
 			row.EarliestLedger = r.EarliestLedger
