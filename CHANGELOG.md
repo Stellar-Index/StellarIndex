@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Coverage snapshot now populates DURING an all-time backfill.**
+  `/v1/diagnostics/ingestion`'s `backfill_coverage` was built from
+  the background trades-scan cache (`BackfillCoverageStats`). Under
+  the all-time SDEX backfill that query is too IO-contended to
+  finish within its timeout, so the cache stayed empty and the
+  status page showed "Coverage snapshot pending" indefinitely —
+  exactly when operators most need it. Rebuilt cursor-first:
+  `density_pct` / covered / expected / earliest / latest for every
+  on-chain source now derive purely from the union of completed
+  backfill-cursor intervals (no trades scan), so the snapshot is
+  live even mid-backfill. The trades-scan cache is demoted to
+  best-effort `trade_count` enrichment + off-chain CEX/FX context
+  rows; an empty or stale cache can no longer blank the whole
+  section. `earliest_ledger` / `latest_ledger` are now the
+  merged-cursor *processed* span (honest "what we walked"), not a
+  trades MIN/MAX that could imply an interior gap is covered —
+  `density_pct` remains the gap-aware number. Added
+  `soroswap-router` + `defindex` to `sourceGenesisLedger` so the
+  two new on-chain Soroban sources get an honest density bar
+  instead of falling through to the un-mapped cache-only path.
+
 ### Changed
 
 - **`max_locks_per_transaction` 256 → 4096** (archival-node ansible
