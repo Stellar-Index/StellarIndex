@@ -15,6 +15,30 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.52] — 2026-05-15
+
+### Changed
+
+- **Status page: removed the "Backfill by decoder" panel.** Each
+  backfill restart (without `-resume`) creates fresh cursor rows
+  keyed by chunk boundaries, so the panel accumulated "stalled"
+  rows from every prior partial run — making the page look like
+  data was unreliable even when later runs (or live ingest) had
+  filled the same ledger ranges. The `density_pct` column on
+  backfill_coverage already answers "do we have data here"
+  honestly via interval union. Wire field retained; only the UI
+  panel dropped.
+
+- **deploy.yml hardening.** Two fixes after the rc.51 deploy
+  failures: (1) the migration-staging step's `ls … | head`
+  tripped `pipefail` via SIGPIPE even though staging succeeded —
+  swapped for a SIGPIPE-safe `sort | head` + explicit count;
+  (2) new `migrations_skip` workflow input so operators who have
+  applied migrations out-of-band (or know the schema is unchanged)
+  can deploy past the playbook's hardcoded passwordless DSN, which
+  fails auth against the live db. Proper DSN-from-target-host fix
+  is a follow-up.
+
 ### Fixed
 
 - **Backfill-coverage snapshot was permanently "pending".** The
