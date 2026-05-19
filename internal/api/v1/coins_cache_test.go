@@ -328,3 +328,105 @@ func TestCachedCoinsReader_SWRKeepsStaleOnError(t *testing.T) {
 		t.Fatalf("failed refresh was not retried on the next request; calls=%d", up.calls.Load())
 	}
 }
+
+// swrCoinByIDUpstream is a race-safe configurable GetCoinByAssetID
+// stub for the generic swr[T] tests (#24): atomic call counter,
+// fixed construction-time delay, atomic "fail on call >= 2" toggle
+// (deterministic by call number → no mid-test field mutation, so
+// `go test -race` is clean under the concurrent background
+// refresh). Embeds *fakeCoinsUpstream for the other methods.
+type swrCoinByIDUpstream struct {
+	*fakeCoinsUpstream
+	calls   atomic.Int64
+	delay   time.Duration
+	failGE2 atomic.Bool
+}
+
+func (s *swrCoinByIDUpstream) GetCoinByAssetID(ctx context.Context, assetID string) (timescale.CoinRow, error) {
+	n := s.calls.Add(1)
+	if s.delay > 0 {
+		select {
+		case <-time.After(s.delay):
+		case <-ctx.Done():
+			return timescale.CoinRow{}, ctx.Err()
+		}
+	}
+	if n >= 2 && s.failGE2.Load() {
+		return timescale.CoinRow{}, errors.New("swr coin boom")
+	}
+	return timescale.CoinRow{AssetID: assetID}, nil
+}
+
+// TestCachedCoinsReader_GenericSWRServesStaleSingleFlight pins the
+// generic swr[T] via the now-cached GetCoinByAssetID: an expired
+// entry serves stale IMMEDIATELY under heavy concurrency and
+// triggers EXACTLY ONE single-flighted background refresh — the
+// #24 fix for /v1/assets/{id}.
+func TestCachedCoinsReader_GenericSWRServesStaleSingleFlight(t *testing.T) {
+	up := &swrCoinByIDUpstream{fakeCoinsUpstream: &fakeCoinsUpstream{}, delay: 300 * time.Millisecond}
+	c := NewCachedCoinsReader(up, 25*time.Millisecond)
+
+	if r, err := c.GetCoinByAssetID(context.Background(), "X"); err != nil || r.AssetID != "X" {
+		t.Fatalf("cold fetch: got %q err=%v, want X", r.AssetID, err) // blocks ~300ms, calls=1
+	}
+	if up.calls.Load() != 1 {
+		t.Fatalf("cold calls=%d, want 1", up.calls.Load())
+	}
+	time.Sleep(50 * time.Millisecond) // expire
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st := time.Now()
+			r, err := c.GetCoinByAssetID(context.Background(), "X")
+			if err != nil || r.AssetID != "X" {
+				t.Errorf("SWR must serve stale X no err; got %q err=%v", r.AssetID, err)
+			}
+			if d := time.Since(st); d > 120*time.Millisecond {
+				t.Errorf("SWR blocked %v; must serve stale ~instantly (refresh is 300ms)", d)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("want exactly 2 upstream calls (1 cold + 1 single-flighted refresh); got %d", up.calls.Load())
+	}
+	time.Sleep(400 * time.Millisecond) // let the 300ms refresh finish; no new reads
+	if got := up.calls.Load(); got != 2 {
+		t.Fatalf("single-flight violated: %d upstream calls for 20 concurrent stale reads", got)
+	}
+}
+
+// TestCachedCoinsReader_GenericSWRKeepsStaleOnError: a failing
+// background refresh keeps serving stale (never an error, never a
+// block) and is retried on the next expired request.
+func TestCachedCoinsReader_GenericSWRKeepsStaleOnError(t *testing.T) {
+	up := &swrCoinByIDUpstream{fakeCoinsUpstream: &fakeCoinsUpstream{}}
+	up.failGE2.Store(true) // call 1 (cold) OK; call >=2 (refresh) errors
+	c := NewCachedCoinsReader(up, 20*time.Millisecond)
+
+	if r, err := c.GetCoinByAssetID(context.Background(), "X"); err != nil || r.AssetID != "X" {
+		t.Fatalf("cold: got %q err=%v, want X", r.AssetID, err) // calls=1
+	}
+	time.Sleep(40 * time.Millisecond) // expire
+
+	r, err := c.GetCoinByAssetID(context.Background(), "X")
+	if err != nil || r.AssetID != "X" {
+		t.Fatalf("stale-with-failing-refresh must serve stale X no err; got %q err=%v", r.AssetID, err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("refresh not attempted; calls=%d want 2", up.calls.Load())
+	}
+
+	time.Sleep(40 * time.Millisecond) // re-expire
+	r2, err2 := c.GetCoinByAssetID(context.Background(), "X")
+	if err2 != nil || r2.AssetID != "X" {
+		t.Fatalf("after a failed refresh, still serve stale no err; got %q err=%v", r2.AssetID, err2)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() >= 3 }) {
+		t.Fatalf("failed refresh was not retried; calls=%d", up.calls.Load())
+	}
+}

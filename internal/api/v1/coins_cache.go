@@ -29,8 +29,13 @@ type CachedCoinsReader struct {
 	upstream CoinsReader
 	ttl      time.Duration
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// entries backs the legacy method-field caches (ListCoinsExt /
+	// history batches via fetchRows / fetchHistoryMap).
 	entries map[string]*coinsCacheEntry
+	// swrEntries backs the generic single-value SWR path (swr[T] —
+	// the per-asset single-row methods). Distinct map, SAME mu.
+	swrEntries map[string]*swrEntry
 }
 
 type coinsCacheEntry struct {
@@ -58,9 +63,10 @@ type coinsCacheEntry struct {
 // react-query layer caches client-side anyway.
 func NewCachedCoinsReader(upstream CoinsReader, ttl time.Duration) *CachedCoinsReader {
 	return &CachedCoinsReader{
-		upstream: upstream,
-		ttl:      ttl,
-		entries:  map[string]*coinsCacheEntry{},
+		upstream:   upstream,
+		ttl:        ttl,
+		entries:    map[string]*coinsCacheEntry{},
+		swrEntries: map[string]*swrEntry{},
 	}
 }
 
@@ -115,46 +121,228 @@ func (c *CachedCoinsReader) GetCoinsATHBatch(ctx context.Context, assetIDs []str
 	return c.upstream.GetCoinsATHBatch(ctx, assetIDs)
 }
 
-// Pass-throughs for narrow methods that don't share keys across
-// callers. The single-coin lookups are typically <50ms each and
-// are already low-volume traffic.
+// Per-asset single-value reads — all stale-while-revalidate cached
+// via the generic swr[T] helper. These were pass-through on the
+// assumption they were "<50ms low-volume single-row" lookups; that
+// became false post-backfill: /v1/assets/{id}'s coin-extension
+// fans out ~9 of these per request and GetCoinByAssetID /
+// GetNativeCoinRow run the whole-asset-universe listCoinsBaseSelect
+// query (~13s under load), with GetCoinTradeCount24h /
+// GetCoinMarketsCount adding multi-second trades-OR scans (#24).
+// SWR moves all of that off the request path with zero correctness
+// loss (serve stale instantly, single-flighted background refresh).
+
 func (c *CachedCoinsReader) GetCoinBySlug(ctx context.Context, slug string) (timescale.CoinRow, error) {
-	return c.upstream.GetCoinBySlug(ctx, slug)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinBySlug(ctx, slug)
+	}
+	return swr(ctx, c, "coin_by_slug", "GetCoinBySlug|"+slug,
+		func(ctx context.Context) (timescale.CoinRow, error) {
+			return c.upstream.GetCoinBySlug(ctx, slug)
+		})
 }
 
-// GetCoinByAssetID is the canonical-asset_id (CODE-ISSUER) flavour
-// of [GetCoinBySlug]. Pass-through — same low-volume single-row
-// shape; not worth adding an additional cache dimension.
 func (c *CachedCoinsReader) GetCoinByAssetID(ctx context.Context, assetID string) (timescale.CoinRow, error) {
-	return c.upstream.GetCoinByAssetID(ctx, assetID)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinByAssetID(ctx, assetID)
+	}
+	return swr(ctx, c, "coin_by_asset", "GetCoinByAssetID|"+assetID,
+		func(ctx context.Context) (timescale.CoinRow, error) {
+			return c.upstream.GetCoinByAssetID(ctx, assetID)
+		})
 }
 
 func (c *CachedCoinsReader) GetNativeCoinRow(ctx context.Context) (timescale.CoinRow, error) {
-	return c.upstream.GetNativeCoinRow(ctx)
+	if c.ttl <= 0 {
+		return c.upstream.GetNativeCoinRow(ctx)
+	}
+	return swr(ctx, c, "native_coin", "GetNativeCoinRow",
+		func(ctx context.Context) (timescale.CoinRow, error) {
+			return c.upstream.GetNativeCoinRow(ctx)
+		})
 }
 
 func (c *CachedCoinsReader) GetCoinTopMarkets(ctx context.Context, assetID string, limit int) ([]timescale.CoinTopMarket, error) {
-	return c.upstream.GetCoinTopMarkets(ctx, assetID, limit)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinTopMarkets(ctx, assetID, limit)
+	}
+	return swr(ctx, c, "coin_top_markets", fmt.Sprintf("GetCoinTopMarkets|%s|%d", assetID, limit),
+		func(ctx context.Context) ([]timescale.CoinTopMarket, error) {
+			return c.upstream.GetCoinTopMarkets(ctx, assetID, limit)
+		})
 }
 
 func (c *CachedCoinsReader) GetCoinPriceHistory24h(ctx context.Context, assetID string) ([]timescale.CoinPricePoint, error) {
-	return c.upstream.GetCoinPriceHistory24h(ctx, assetID)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinPriceHistory24h(ctx, assetID)
+	}
+	return swr(ctx, c, "coin_hist_24h", "GetCoinPriceHistory24h|"+assetID,
+		func(ctx context.Context) ([]timescale.CoinPricePoint, error) {
+			return c.upstream.GetCoinPriceHistory24h(ctx, assetID)
+		})
 }
 
 func (c *CachedCoinsReader) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]timescale.CoinPricePoint, error) {
-	return c.upstream.GetCoinPriceHistory7d(ctx, assetID)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinPriceHistory7d(ctx, assetID)
+	}
+	return swr(ctx, c, "coin_hist_7d", "GetCoinPriceHistory7d|"+assetID,
+		func(ctx context.Context) ([]timescale.CoinPricePoint, error) {
+			return c.upstream.GetCoinPriceHistory7d(ctx, assetID)
+		})
 }
 
 func (c *CachedCoinsReader) GetCoinMarketsCount(ctx context.Context, assetID string) (int64, error) {
-	return c.upstream.GetCoinMarketsCount(ctx, assetID)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinMarketsCount(ctx, assetID)
+	}
+	return swr(ctx, c, "coin_markets_count", "GetCoinMarketsCount|"+assetID,
+		func(ctx context.Context) (int64, error) {
+			return c.upstream.GetCoinMarketsCount(ctx, assetID)
+		})
 }
 
 func (c *CachedCoinsReader) GetCoinATH(ctx context.Context, assetID string) (*timescale.CoinATH, error) {
-	return c.upstream.GetCoinATH(ctx, assetID)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinATH(ctx, assetID)
+	}
+	return swr(ctx, c, "coin_ath", "GetCoinATH|"+assetID,
+		func(ctx context.Context) (*timescale.CoinATH, error) {
+			return c.upstream.GetCoinATH(ctx, assetID)
+		})
 }
 
 func (c *CachedCoinsReader) GetCoinTradeCount24h(ctx context.Context, assetID string) (int64, error) {
-	return c.upstream.GetCoinTradeCount24h(ctx, assetID)
+	if c.ttl <= 0 {
+		return c.upstream.GetCoinTradeCount24h(ctx, assetID)
+	}
+	return swr(ctx, c, "coin_trade_count_24h", "GetCoinTradeCount24h|"+assetID,
+		func(ctx context.Context) (int64, error) {
+			return c.upstream.GetCoinTradeCount24h(ctx, assetID)
+		})
+}
+
+// swrEntry backs the generic single-value SWR path. Separate from
+// coinsCacheEntry's method-field shape — `val` holds an opaque T;
+// its dynamic type is invariant per key because keys are
+// method-namespaced (e.g. "GetCoinByAssetID|<id>"), so the
+// e.val.(T) assertions never mix types. Guarded by
+// CachedCoinsReader.mu (shared with `entries`; distinct map).
+type swrEntry struct {
+	at     time.Time
+	flight chan struct{}
+	val    any
+	err    error
+}
+
+// swr is the generic single-value stale-while-revalidate fetch: the
+// proven, race-clean coins fetchRows/refreshRows logic (#22), made
+// type-parametric so every per-asset single-value coin method
+// shares ONE implementation. Free function — Go methods can't have
+// type parameters.
+//
+//	(A)  fresh hit → return cached
+//	(A') expired with a prior success → serve stale IMMEDIATELY +
+//	     one single-flighted background refresh (refreshSWR); never
+//	     blocks a request on the slow upstream
+//	(B)  cold fetch already in flight → join it
+//	(C)  cold leader → block inline; delete-on-error with the
+//	     waiter-err-pointer panic-safety
+func swr[T any](ctx context.Context, c *CachedCoinsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
+	var zero T
+	c.mu.Lock()
+	e, ok := c.swrEntries[key]
+
+	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
+		v := e.val
+		c.mu.Unlock()
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
+		return v.(T), nil
+	}
+	if ok && !e.at.IsZero() {
+		v := e.val
+		if e.flight == nil {
+			done := make(chan struct{})
+			e.flight = done
+			entry := e
+			c.mu.Unlock()
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+			//nolint:gosec,contextcheck // G118 / contextcheck:
+			// intentional. The SWR background refresh MUST use a
+			// fresh context (refreshSWR -> context.Background), NOT
+			// the request ctx, which is cancelled the instant the
+			// stale response is written; reusing it would abort
+			// every refresh — defeating the entire point of SWR.
+			go refreshSWR(c, op, entry, done, upstream)
+			return v.(T), nil
+		}
+		c.mu.Unlock()
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+		return v.(T), nil
+	}
+	if ok && e.flight != nil {
+		entry := e
+		ch := e.flight
+		c.mu.Unlock()
+		select {
+		case <-ch:
+			if entry.err != nil {
+				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+				return zero, entry.err
+			}
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
+			return entry.val.(T), nil
+		case <-ctx.Done():
+			return zero, ctx.Err()
+		}
+	}
+
+	done := make(chan struct{})
+	entry := &swrEntry{flight: done}
+	c.swrEntries[key] = entry
+	c.mu.Unlock()
+	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+
+	v, err := upstream(ctx)
+
+	c.mu.Lock()
+	if err == nil {
+		entry.at = time.Now()
+		entry.val = v
+		entry.flight = nil
+	} else {
+		entry.err = err
+		delete(c.swrEntries, key) // don't cache the error
+	}
+	c.mu.Unlock()
+	close(done)
+	return v, err
+}
+
+// refreshSWR runs the upstream call OFF the request path for swr's
+// (A') branch — fresh background context (the request ctx dies when
+// the stale response is written); on success swaps val+at under the
+// lock; on failure keeps the stale value and only clears the
+// in-flight marker (retry next request); single-flighted via
+// done/entry.flight. Mirrors coins_cache.go refreshRows.
+func refreshSWR[T any](c *CachedCoinsReader, op string, entry *swrEntry, done chan struct{}, upstream func(context.Context) (T, error)) {
+	defer close(done)
+	ctx, cancel := context.WithTimeout(context.Background(), coinsRefreshBudget)
+	defer cancel()
+
+	v, err := upstream(ctx)
+
+	c.mu.Lock()
+	if err == nil {
+		entry.at = time.Now()
+		entry.val = v
+	}
+	entry.flight = nil
+	c.mu.Unlock()
+
+	if err != nil {
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+	}
 }
 
 // coinsRefreshBudget bounds a stale-while-revalidate background
