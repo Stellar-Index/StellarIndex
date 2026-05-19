@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **`BackfillCoverageStats` is now fail-soft + per-query
+  time-bounded — fixes the coverage-cache cold-start hang and a
+  primary SLO-burn contributor.** Oracle sources (band / redstone /
+  reflector-\*) write to `oracle_updates`, never `trades`, so their
+  per-source `… WHERE source=$1 ORDER BY ts LIMIT 1` `earliest`
+  query could not chunk-exclude and scanned all ~2700 trades chunks
+  to prove emptiness, hitting the statement-timeout (`57014`). The
+  old code did `return nil, err` on that, so `CoverageCache`'s
+  cold-start `Refresh` **never succeeded** (snapshot stayed nil
+  forever) and the failing query was re-issued every refresh
+  interval, feeding the SLO availability/latency burn alerts. Every
+  query is now run through `scanScalarBestEffort` (8 s per-query
+  timeout, returns 0 on any error instead of propagating), so one
+  slow/empty source degrades that field to 0 instead of blanking
+  the whole snapshot. `BackfillCoverageStats` now always returns
+  `(rows, nil)`. These stats are best-effort enrichment only — the
+  headline density is cursor-derived and `entries` come from
+  `source_entry_counts` — so 0-on-timeout is the correct safe
+  degradation. Integration-covered (no DB-free unit seam).
 - **`sourceGenesisLedger`: corrected `comet`/`blend` off-by-one
   (`51_499_545` → `51_499_546`).** `51_499_545` came from the walk
   JSON's `from_ledger` (the ContractCode-upload / walker transition

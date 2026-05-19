@@ -336,58 +336,76 @@ func (s *Store) BackfillCoverageStats(ctx context.Context) ([]BackfillCoverage, 
 	//   - recent-24h total row count (chunk-excluded to the last day's
 	//     chunks — ~1-2s)
 	// trade_count per source = approxTotal × recentSrc / recentTotal.
-	var approxTotal, recentTotal float64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT approximate_row_count('trades')::numeric`,
-	).Scan(&approxTotal); err != nil {
-		return nil, fmt.Errorf("timescale: BackfillCoverageStats approx_total: %w", err)
-	}
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*)::numeric FROM trades WHERE ts >= NOW() - INTERVAL '24 hours'`,
-	).Scan(&recentTotal); err != nil {
-		return nil, fmt.Errorf("timescale: BackfillCoverageStats recent_total: %w", err)
-	}
+	// Every query below is best-effort and individually time-bounded
+	// via scanScalarBestEffort. A single source can no longer abort
+	// the whole snapshot: pre-fix, an oracle source (band / redstone /
+	// reflector-* — they write to oracle_updates, never `trades`)
+	// made `… WHERE source=$1 ORDER BY ts LIMIT 1` scan every chunk
+	// to prove emptiness, hit the statement-timeout (57014), and the
+	// `return nil, err` blanked CoverageCache permanently (its
+	// cold-start Refresh never succeeded) while the failing query
+	// fed the SLO availability/latency burn every refresh interval.
+	// These stats are best-effort enrichment only — the headline
+	// density is cursor-derived and `entries` come from
+	// source_entry_counts — so degrading to 0 on timeout is the
+	// correct, safe behaviour. Always returns (rows, nil).
+	approxTotal := s.scanScalarBestEffort(ctx,
+		`SELECT approximate_row_count('trades')::numeric`)
+	recentTotal := s.scanScalarBestEffort(ctx,
+		`SELECT COUNT(*)::numeric FROM trades WHERE ts >= NOW() - INTERVAL '24 hours'`)
 
 	out := make([]BackfillCoverage, 0, len(sources))
 	for _, src := range sources {
 		row := BackfillCoverage{Source: src}
-		// earliest/latest ledger via ts-ordered LIMIT 1. Ledger is
-		// monotonic with ts (the partition key), so chunk-exclusion
-		// lets postgres stop after the first/last chunk that has data
-		// for this source — ~3s vs ~68s for MIN()/MAX() which seek
-		// every per-chunk (source, ledger) index. Each runs in its
-		// own implicit transaction → fresh max_locks budget, so the
-		// pre-fix `out of shared memory` (2700+ chunk locks in one
-		// GROUP BY) can't recur.
-		if err := s.db.QueryRowContext(ctx,
+		// ts-ordered LIMIT 1: chunk-exclusion makes this ~3s for a
+		// source that HAS trades; a zero-trades source would scan
+		// every chunk, so the per-query timeout bounds it and it
+		// degrades to 0 (these sources are mapped → the API derives
+		// earliest/latest from cursors, not this cache, anyway).
+		row.EarliestLedger = int64(s.scanScalarBestEffort(ctx,
 			`SELECT COALESCE((SELECT ledger FROM trades WHERE source = $1 ORDER BY ts ASC LIMIT 1), 0)`,
-			src,
-		).Scan(&row.EarliestLedger); err != nil {
-			return nil, fmt.Errorf("timescale: BackfillCoverageStats %s earliest: %w", src, err)
-		}
-		if err := s.db.QueryRowContext(ctx,
+			src))
+		row.LatestLedger = int64(s.scanScalarBestEffort(ctx,
 			`SELECT COALESCE((SELECT ledger FROM trades WHERE source = $1 ORDER BY ts DESC LIMIT 1), 0)`,
-			src,
-		).Scan(&row.LatestLedger); err != nil {
-			return nil, fmt.Errorf("timescale: BackfillCoverageStats %s latest: %w", src, err)
-		}
-		// Per-source 24h count (chunk-excluded, cheap), scaled to an
-		// approximate all-time count via the ratio against the
-		// shared scalars. Approximate by design — the precise per-
-		// source COUNT(*) is 2:34s on sdex and the metric only needs
-		// rough magnitude for the status page.
-		var recentSrc float64
-		if err := s.db.QueryRowContext(ctx,
+			src))
+		// Per-source 24h count scaled to an approximate all-time
+		// count via the shared-scalar ratio. Approximate by design —
+		// the precise per-source COUNT(*) is minutes on sdex and the
+		// status page only needs rough magnitude.
+		recentSrc := s.scanScalarBestEffort(ctx,
 			`SELECT COUNT(*)::numeric FROM trades WHERE source = $1 AND ts >= NOW() - INTERVAL '24 hours'`,
-			src,
-		).Scan(&recentSrc); err != nil {
-			row.TradeCount = 0
-		} else if recentTotal > 0 && recentSrc > 0 {
+			src)
+		if recentTotal > 0 && recentSrc > 0 {
 			row.TradeCount = int64(approxTotal * recentSrc / recentTotal)
 		}
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// coverageStatTimeout bounds each individual BackfillCoverageStats
+// query. A real per-source earliest/latest is ~3s via chunk
+// exclusion; a zero-trades source (oracle sources never write to
+// `trades`) would otherwise scan all ~2700 chunks until the caller's
+// deadline. 8s comfortably covers the legitimate case while capping
+// the pathological one.
+const coverageStatTimeout = 8 * time.Second
+
+// scanScalarBestEffort runs a single-scalar query under
+// coverageStatTimeout and returns 0 on ANY error (timeout, no rows,
+// driver error) instead of propagating it. This is what makes
+// BackfillCoverageStats fail-soft per-query: one slow/empty source
+// degrades to 0 rather than blanking the entire diagnostic snapshot
+// and — pre-fix — permanently breaking CoverageCache's cold start
+// while a 57014-timing-out query fed the SLO burn every refresh.
+func (s *Store) scanScalarBestEffort(ctx context.Context, query string, args ...any) float64 {
+	cctx, cancel := context.WithTimeout(ctx, coverageStatTimeout)
+	defer cancel()
+	var v float64
+	if err := s.db.QueryRowContext(cctx, query, args...).Scan(&v); err != nil {
+		return 0
+	}
+	return v
 }
 
 // SupplyCoverageStats returns the current coverage state of the
