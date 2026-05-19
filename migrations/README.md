@@ -43,6 +43,28 @@ migrate -path migrations -database "${RATESENGINE_POSTGRES_DSN}" down 1
 6. **IDs follow canonical wire form** as text: `<code>-<issuer>` for
    classic, `C…` for Soroban, `native` for XLM. See
    `internal/canonical/asset.go`.
+7. **Migrations are applied as the `ratesengine` app role, never as
+   a superuser.** Always go through `ratesengine-migrate` /
+   `RATESENGINE_POSTGRES_DSN` (the DSN under "Running" above) — that
+   DSN is the `ratesengine` role, so every object a migration
+   creates is owned by `ratesengine` and the application has full
+   access to it by construction. This is why a bare
+   `CREATE TABLE …` needs no explicit `GRANT … TO ratesengine` — on
+   a correctly-applied deploy (R2/R3/fresh) the app *is* the owner.
+   Applying a migration manually as the `postgres` superuser
+   instead makes the object superuser-owned and the app loses
+   access to it. That happened to `source_entry_counts` (migration
+   0035) on r1 on 2026-05-19 — `permission denied for table
+   source_entry_counts (42501)` from the indexer's always-on entry
+   tally and from `ratesengine-ops seed-entry-counts`. Hot-fixed in
+   place with `ALTER TABLE source_entry_counts OWNER TO ratesengine`
+   (the canonical shape — matches `trades` and every other table).
+   Do **not** "fix" this class of issue with a follow-up GRANT
+   migration: run as the `ratesengine` role it cannot `GRANT`/
+   `ALTER` on a superuser-owned object (errors in exactly the
+   anomaly case), and on a correctly-owned object it is a redundant
+   self-grant no-op. The fix is operational (apply as the app
+   role), not schema.
 
 ## Conventions
 

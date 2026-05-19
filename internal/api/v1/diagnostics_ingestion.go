@@ -171,34 +171,47 @@ type BackfillCoverageRow struct {
 // sourceGenesisLedger is the operator-curated map of "what's the
 // earliest ledger this source can possibly have data for". Values:
 //   - 1                : SDEX (Stellar pubnet genesis 2015-08-19).
-//   - <contract deploy>: per-Soroban-contract first observable
-//     ledger. For dispatcher-routed sources we set it slightly
-//     before the on-chain deploy (gives the "we cover this fully"
-//     check some slack against the exact deploy ledger). Approx
-//     values are fine — the UI shows "X% of expected range" so
-//     a few-thousand-ledger error is invisible.
+//   - <first deploy>    : the EXACT ledger the source's first
+//     contract WASM was installed on mainnet — the minimum
+//     create_contract ledger across ALL of that protocol's
+//     contracts (factory + every instance; multi-contract,
+//     upgrade-in-place aware). Zero slack: this is the denominator
+//     of DensityPct, so a value before the real deploy makes 100%
+//     unreachable (counts pre-existence ledgers) and a value after
+//     it silently hides genuine early-history gaps. Sourced from
+//     the per-source WASM-audit walk evidence
+//     (docs/operations/wasm-audits/, r1-walk-2026-05-01).
 //   - 0 (default)      : not applicable (CEX/FX/aggregator/oracle —
 //     these sources don't have a Stellar-ledger genesis concept).
 //
-// When a new on-chain source ships, add its known deploy ledger
-// here. The list intentionally sits next to the projection so a
-// reviewer notices it during PR review.
+// When a new on-chain source ships, add its exact first-deploy
+// ledger here from its WASM audit (not a rounded estimate). The
+// list intentionally sits next to the projection so a reviewer
+// notices it during PR review.
 var sourceGenesisLedger = map[string]int64{
 	"sdex": 1,
-	// Soroban contracts — approximate deploy-era ledgers from
-	// the per-contract WASM audits (docs/operations/wasm-audits/).
-	"soroswap":        54_000_000,
-	"soroswap-router": 54_000_000,
-	"defindex":        55_000_000,
-	"aquarius":        54_500_000,
-	"phoenix":         53_700_000,
-	"comet":           53_900_000,
-	"blend":           54_000_000,
-	"reflector-cex":   51_000_000,
-	"reflector-dex":   51_000_000,
-	"reflector-fx":    51_000_000,
-	"band":            53_500_000,
-	"redstone":        55_000_000,
+	// Soroban contracts — exact first-deploy ledgers, MIN across
+	// every contract the source routes, from the per-source WASM
+	// audits (docs/operations/wasm-audits/<src>.md +
+	// evidence/r1-walk-2026-05-01/per-source-final/<src>.json).
+	"soroswap":        50_746_266, // factory first-deploy (soroswap.md:242)
+	"soroswap-router": 50_746_272, // router, +6 ledgers after factory (soroswap.md:236)
+	"aquarius":        52_728_375, // MIN across 313 pools + router
+	"phoenix":         51_572_016, // factory first-deploy
+	"comet":           51_499_545, // Blend backstop pool (only mainnet Comet) (comet.md:158)
+	"blend":           51_499_545, // factory/backstop mainnet rollout
+	"reflector-dex":   50_644_229, // v2 WASM deploy (reflector.md:186)
+	"reflector-cex":   50_644_239, // v2 WASM deploy, +10 after DEX (reflector.md:186)
+	"reflector-fx":    56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
+	"band":            50_842_736, // single stable WASM since 2024-03-19 (band.md:198)
+	"redstone":        58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
+	// PROVISIONAL — defindex per-WASM walk not yet captured
+	// (BackfillSafe=false, audit in_progress: defindex.md, Task
+	// #6). Anchored to the Blend-ecosystem rollout window its
+	// vaults launched in (2025-04-14, ~L51,499,545); erring early
+	// keeps density honest (reads <100% rather than hiding
+	// history) until the exact value lands.
+	"defindex": 51_499_545,
 }
 
 // RegionInfo identifies which deployment generated this snapshot.

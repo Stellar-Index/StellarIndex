@@ -15,6 +15,43 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sourceGenesisLedger` now holds exact first-WASM-deploy ledgers,
+  not rounded deploy-era constants.** The per-source genesis is the
+  denominator of `backfill_coverage[].density_pct`, so a rounded
+  value was a two-way correctness bug under the "every source to
+  100%" invariant: rounded *before* the real deploy padded the
+  denominator with pre-existence ledgers (100% mathematically
+  unreachable), rounded *after* it silently hid genuine
+  early-history gaps (e.g. `band` const `53_500_000` vs real first
+  deploy `50_842_736` — ~2.66M ledgers of history structurally
+  invisible to the metric; `reflector-fx` const `51_000_000` vs
+  real `56_733_481` — ~5.7M phantom pre-existence ledgers). All
+  on-chain sources now use the MIN `create_contract` ledger across
+  every routed contract (factory + instances, upgrade-in-place
+  aware), sourced from the per-source WASM-audit walk evidence
+  (`docs/operations/wasm-audits/`, `r1-walk-2026-05-01`); the doc
+  contract flips from "approx slack is fine" to "exact, zero
+  slack". `defindex` stays explicitly provisional pending its
+  per-WASM walk (BackfillSafe=false; audit in_progress).
+- **Migration ownership invariant documented (`migrations/README.md`
+  Rule 7).** `source_entry_counts` (migration 0035) was applied
+  manually as the `postgres` superuser on r1, leaving it
+  superuser-owned; the rc.55 indexer's always-on entry tally and
+  `ratesengine-ops seed-entry-counts` then hit `permission denied
+  for table source_entry_counts (42501)`. Root cause is operational,
+  not schema: `ratesengine-migrate` runs as the `ratesengine` app
+  role (`RATESENGINE_POSTGRES_DSN`), so on correctly-applied deploys
+  (R2/R3/fresh) the table is app-owned by construction and needs no
+  GRANT — only r1's manual-as-superuser application was the anomaly.
+  Hot-fixed in place with `ALTER TABLE source_entry_counts OWNER TO
+  ratesengine` (canonical shape, matches `trades`); a follow-up
+  GRANT migration was deliberately *not* added (it would error when
+  run as the app role against a superuser-owned object and is a
+  no-op otherwise — the fix is "apply as the app role", now a
+  documented Rule).
+
 ## [v0.5.0-rc.55] — 2026-05-15
 
 ### Changed
