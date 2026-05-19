@@ -257,3 +257,107 @@ func toString(v any) string {
 	}
 	return "unknown"
 }
+
+// swrPoolsUpstream is a race-safe configurable AllPools stub for the
+// #23 stale-while-revalidate tests: atomic call counter, a fixed
+// construction-time delay, and an atomic "fail on call >= 2" toggle
+// (deterministic by call number → no mid-test field mutation, so
+// `go test -race` is clean even under the concurrent background
+// refresh). Embeds *fakeMarketsReader for the other interface
+// methods.
+type swrPoolsUpstream struct {
+	*fakeMarketsReader
+	calls   atomic.Int64
+	delay   time.Duration
+	failGE2 atomic.Bool
+}
+
+func (s *swrPoolsUpstream) AllPools(ctx context.Context, _ timescale.PoolsFilter, _ string, _ int, _ timescale.MarketsOrder) ([]Pool, string, error) {
+	n := s.calls.Add(1)
+	if s.delay > 0 {
+		select {
+		case <-time.After(s.delay):
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		}
+	}
+	if n >= 2 && s.failGE2.Load() {
+		return nil, "", errors.New("swr pools boom")
+	}
+	return []Pool{{Source: "aquarius", Base: "native"}}, "c", nil
+}
+
+// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: an expired
+// pools entry serves stale IMMEDIATELY (not blocked on the slow
+// upstream — the #23 fix) under heavy concurrency, triggering
+// EXACTLY ONE single-flighted background refresh.
+func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}, delay: 300 * time.Millisecond}
+	c := NewCachedMarketsReader(up, 25*time.Millisecond)
+	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc); err != nil {
+		t.Fatal(err) // cold leader (blocks ~300ms), calls=1
+	}
+	if up.calls.Load() != 1 {
+		t.Fatalf("cold calls=%d, want 1", up.calls.Load())
+	}
+	time.Sleep(50 * time.Millisecond) // expire
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st := time.Now()
+			rows, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc)
+			if err != nil || len(rows) == 0 {
+				t.Errorf("SWR must serve stale rows no err; got %d rows err=%v", len(rows), err)
+			}
+			if d := time.Since(st); d > 120*time.Millisecond {
+				t.Errorf("SWR blocked %v; must serve stale ~instantly (refresh is 300ms)", d)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("want exactly 2 upstream calls (1 cold + 1 single-flighted refresh); got %d", up.calls.Load())
+	}
+	time.Sleep(400 * time.Millisecond) // let the 300ms refresh finish; no new reads
+	if got := up.calls.Load(); got != 2 {
+		t.Fatalf("single-flight violated: %d upstream calls for 20 concurrent stale reads", got)
+	}
+}
+
+// TestCachedMarketsReader_PoolsSWRKeepsStaleOnError: a failing
+// background refresh keeps serving stale (never an error, never a
+// block) and is retried on the next expired request.
+func TestCachedMarketsReader_PoolsSWRKeepsStaleOnError(t *testing.T) {
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}}
+	up.failGE2.Store(true) // call 1 (cold) OK; call >=2 (refresh) errors
+	c := NewCachedMarketsReader(up, 20*time.Millisecond)
+	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc); err != nil {
+		t.Fatal(err) // cold OK, calls=1
+	}
+	time.Sleep(40 * time.Millisecond) // expire
+
+	rows, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc)
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("stale-with-failing-refresh must serve stale rows no err; got %d rows err=%v", len(rows), err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("refresh not attempted; calls=%d want 2", up.calls.Load())
+	}
+
+	time.Sleep(40 * time.Millisecond) // re-expire
+	rows2, _, err2 := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc)
+	if err2 != nil || len(rows2) == 0 {
+		t.Fatalf("after a failed refresh, still serve stale no err; got %d rows err=%v", len(rows2), err2)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() >= 3 }) {
+		t.Fatalf("failed refresh was not retried; calls=%d", up.calls.Load())
+	}
+}

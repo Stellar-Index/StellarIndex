@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`CachedMarketsReader` stale-while-revalidate — fixes `/v1/pools`
+  ~8 s cold (#23).** Post-rc.57 sweep surfaced `/v1/pools` at
+  ~8 s/ok 87 %: `buildPoolsQuery`'s OUTER `FROM trades … ts>=14 d
+  GROUP BY source,base,quote` raw-trades enumeration (same disease
+  class as #20). Unlike #20 it **cannot** be query-rewritten —
+  verification ruled out every candidate per-source pre-aggregate
+  (`prices_*` collapse source; `price_source_contributions` is
+  curated/sparse — 5 sources/10 pairs, would make `/v1/pools`
+  return ~10 pairs; `market_observations` doesn't exist). So the
+  unavoidable per-source scan is moved **off the request path**:
+  `fetchPools`/`fetchPairs` now stale-while-revalidate (serve stale
+  immediately on expiry + one single-flighted, request-ctx-
+  independent background refresh, keep-stale-on-error, cold-miss
+  still blocks) — the exact proven `coins_cache.go` #22 pattern,
+  mirrored. **Zero correctness loss** (full per-source coverage
+  from raw trades preserved). `go test -race` clean across new
+  `fetchPools` SWR tests (serves-stale-under-20-concurrent,
+  single-flight, keeps-stale-on-error); existing cold-path tests
+  still green (SWR only changes the expired path). New
+  `stale`/`refresh_error` markets cache-op outcomes. A per-source
+  pools CAGG (so the background query itself is cheap) is a logged
+  follow-up. Bundles into rc.58.
+
 ## [v0.5.0-rc.57] — 2026-05-19
 
 ### Fixed
