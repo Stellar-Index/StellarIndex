@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`ratesengine-ops scan-soroban-events` — in-infra ground-truth
+  event dumper (#28).** Streams a bounded galexie ledger range and
+  prints every Soroban contract event as one JSON line
+  (`contract_id`, decoded `topic[]`, body map keys + value types),
+  optionally filtered to `topic[0]==STR` and/or one contract. A
+  catch-all `dispatcher.Decoder` reuses the dispatcher's
+  LCM→`events.Event` extraction, so it answers "what does protocol
+  X *actually* emit on-chain" without BigQuery (the
+  `hubble-soroban-events` analogue, which needs GCP we don't have).
+  No DB writes. Built to unblock the defindex decoder
+  re-derivation (#28) — discover real contract addresses + event
+  schemas before writing/auditing a decoder — but reusable for the
+  whole granular-coverage mission. Bundles into rc.58.
+
 ### Fixed
 
 - **WASM-history audit: `soroswap-router` PASS → `BackfillSafe:
