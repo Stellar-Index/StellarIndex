@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.56] — 2026-05-19
+
 ### Fixed
 
 - **`/v1/diagnostics/ingestion` `entries` is no longer silently 0 for
