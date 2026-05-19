@@ -17,6 +17,30 @@ against.
 
 ### Fixed
 
+- **`CachedCoinsReader` single-asset SWR — fixes `/v1/assets/{id}`
+  ~3.9 s (#24).** The coin-extension path was *entirely uncached
+  pass-through*: every `/v1/assets/{id}` ran the ~13 s
+  whole-asset-universe `listCoinsBaseSelect` query (its CTEs
+  aggregate ALL pairs even for one asset — structural, all CTEs are
+  already time-bounded) via `GetCoinByAssetID`/`GetNativeCoinRow`,
+  plus ~7 more uncached fan-out calls incl. the ~5.8 s
+  `trades WHERE base OR quote=$1` scan
+  (`GetCoinTradeCount24h`/`GetCoinMarketsCount`). Added a **generic
+  `swr[T]`** single-value stale-while-revalidate helper (free
+  function — Go methods can't be type-parametric; new `swrEntry`
+  map under the existing mutex) that is the proven, race-clean #22
+  `fetchRows`/`refreshRows` logic made type-parametric, and wired
+  **all 9 per-asset single-value coin methods** through it
+  (`GetCoinBySlug`/`ByAssetID`/`NativeCoinRow`/`TopMarkets`/
+  `PriceHistory24h`/`7d`/`MarketsCount`/`ATH`/`TradeCount24h`):
+  serve stale instantly, single-flighted request-ctx-independent
+  background refresh, keep-stale-on-error, cold-miss blocks,
+  `ttl<=0` still passes through. Zero correctness loss. `go
+  test -race` clean (new generic-SWR serves-stale-under-20-
+  concurrent / single-flight / keeps-stale-on-error tests + all
+  existing coins tests still green). Deeper follow-up logged
+  (asset-filter pushdown into the CTEs so the query itself is
+  cheap). Bundles into rc.58.
 - **`CachedMarketsReader` stale-while-revalidate — fixes `/v1/pools`
   ~8 s cold (#23).** Post-rc.57 sweep surfaced `/v1/pools` at
   ~8 s/ok 87 %: `buildPoolsQuery`'s OUTER `FROM trades … ts>=14 d
