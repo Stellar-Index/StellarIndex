@@ -1,9 +1,9 @@
 ---
 title: Soroswap Router WASM-history audit
-last_verified: 2026-05-14
-status: in_progress — decoder shipped, BackfillSafe still false
+last_verified: 2026-05-19
+status: complete — BackfillSafe=true (audited 2026-05-19)
 source: soroswap-router
-backfill_safe: false
+backfill_safe: true
 ---
 
 # Soroswap Router WASM audit
@@ -13,11 +13,11 @@ See `README.md` for the full procedure.
 
 ## Status
 
-**In progress (2026-05-14).** Decoder package
-`internal/sources/soroswap_router/` shipped this session. Live
-decoding starts from current ledger forward; `BackfillSafe`
-remains `false` in `internal/sources/external/registry.go`
-pending the per-WASM-hash walk below.
+**Complete (2026-05-19) — `BackfillSafe: true`.** The
+per-WASM-hash walk landed (see "Audit result" below); both decoder
+entry points are present in the single deployed hash with zero
+mid-life upgrades over the contract's entire life. `BackfillSafe`
+flipped `true` in `internal/sources/external/registry.go`.
 
 The router is a sister source to `soroswap` — same upstream
 protocol, different vantage point. Where the existing `soroswap`
@@ -88,14 +88,35 @@ recovered from the per-pair `SoroswapPair("swap")` events in the
 same tx by the sister `soroswap` decoder, joined on `tx_hash` at
 aggregator time.
 
-## Pending work to flip BackfillSafe → true
+## Audit result (2026-05-19) — PASS
 
-1. Cite per-hash WASM identity from the 2026-04-30 r1 walk
-   evidence directory (`evidence/r1-walk-2026-05-01/`).
-2. Disassemble the router WASM and confirm both function exports
-   match the signatures above.
-3. Walk historical `update_contract_op` events on this contract
-   ID across the post-Soroban window — confirm zero or audit each
-   prior hash.
-4. Once Phase 1+2 land, flip `BackfillSafe: true` in
-   `internal/sources/external/registry.go`.
+Walk evidence: `evidence/r1-walk-2026-05-01/` + the recovered
+canonical `merged.json` from the 2026-05-19 r1 wasm-history walk.
+
+1. **Per-hash WASM identity.** Router contract
+   `CAG5LRYQ...JDDH` resolved to a **single** WASM hash
+   `4c3db3ebd2d6a2ab23de1f622eaabb39501539b4611b68622ec4e47f76c4ba07`
+   across `[50_746_272 → 62_600_000]` (the walk's upper bound;
+   `from_ledger` 50,746,272 = the contract's first-deploy ledger,
+   so this is its **entire on-chain life**). **Zero mid-life
+   `update_contract` upgrades** — `merged.json` lists exactly one
+   range for this contract.
+2. **Both decoder entry points present.** The WASM bytes
+   (`evidence/r1-walk-2026-05-01/wasm-bytes/4c3db3eb...07.wasm`,
+   already in-repo) export both
+   `swap_exact_tokens_for_tokens` and
+   `swap_tokens_for_exact_tokens` — confirmed via export-name
+   dump. No other swap entry points exist for the decoder to miss.
+3. **No event surface to audit.** The router emits no contract
+   events (`verify-decoder-wasm-match.py` reports an empty
+   event-topic set for `soroswap-router`); the decoder is a
+   `dispatcher.ContractCallDecoder` keyed on the two function
+   names above. There is no topic/body schema that could have
+   drifted across an upgrade — and there were no upgrades anyway.
+
+**Conclusion:** single immutable WASM over the contract's whole
+life, both decoded functions present, no event schema to drift.
+`BackfillSafe` flipped `true` in
+`internal/sources/external/registry.go` (2026-05-19).
+`ratesengine-ops backfill --source=soroswap-router` is now
+unblocked.

@@ -1,7 +1,7 @@
 ---
 title: DeFindex WASM-history audit
-last_verified: 2026-05-14
-status: in_progress — decoder shipped, BackfillSafe still false
+last_verified: 2026-05-19
+status: BLOCKED — audit FAIL, decoder ↔ deployed-WASM mismatch (BackfillSafe stays false)
 source: defindex
 backfill_safe: false
 ---
@@ -13,11 +13,15 @@ Audit log for the `defindex` source's `BackfillSafe` flag. See
 
 ## Status
 
-**In progress (2026-05-14).** Decoder package
-`internal/sources/defindex/` shipped this session. Live decoding
-starts from current ledger forward; `BackfillSafe` remains
-`false` in `internal/sources/external/registry.go` pending the
-per-WASM-hash walk below.
+**BLOCKED — audit FAIL (2026-05-19).** The per-WASM-hash walk +
+disassembly landed and the audit **failed**: the deployed mainnet
+vault WASM does not emit the events the
+`internal/sources/defindex/` decoder matches on. `BackfillSafe`
+stays `false`; **live defindex decoding is almost certainly
+producing nothing** (see "Audit result" below). Unblocking
+requires re-deriving the decoder from the *actually-deployed*
+contract, not the paltalabs tag-`1.0.0` reference it was written
+against. Tracked as Task #28.
 
 DeFindex is a yield-aggregator vault system from
 [paltalabs/defindex](https://github.com/paltalabs/defindex).
@@ -38,12 +42,19 @@ against `paltalabs/defindex` tag `1.0.0` on 2026-05-14):
 | USDC autocompound vault | `CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP` |
 | EURC autocompound vault | `CC5CE6MWISDXT3MLNQ7R3FVILFVFEIH3COWGH45GJKL6BD2ZHF7F7JVI` |
 | XLM autocompound vault | `CDPWNUW7UMCSVO36VAJSQHQECISPJLCVPDASKHRC5SEROAAZDUQ5DG2Z` |
-| Vault WASM hash (current baseline) | `0f3073517cbfacbfd482bc166cff38a0e7abeab9b7ee77334abab45880fb8f3a` |
-| BlendStrategy WASM hash (current baseline) | `65ee2e1b32ff39a6c8f8572dd0d6d2db7952be6d54c740bfb1d6eab6dd209dc0` |
+| Vault WASM hash (paltalabs tag 1.0.0 — **NOT what's deployed**) | `0f3073517cbfacbfd482bc166cff38a0e7abeab9b7ee77334abab45880fb8f3a` |
+| Vault WASM hash (**actually deployed on mainnet**, walk-confirmed) | `11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988` |
+| BlendStrategy WASM hash (tag 1.0.0 ref) | `65ee2e1b32ff39a6c8f8572dd0d6d2db7952be6d54c740bfb1d6eab6dd209dc0` |
 
-The vault WASM hash is shared by all three Phase-A vaults (they're
-the same template instantiated against different underlying
-assets / Blend pools).
+The deployed vault WASM hash `11329c24...988` is shared by all
+three Phase-A vaults (same template, different underlying
+assets / Blend pools) — confirmed by the 2026-05-19 r1
+wasm-history walk, single hash, **zero mid-life upgrades** over
+each vault's entire life. **Critically, this is NOT the
+`0f3073...8f3a` hash the decoder + this doc were originally
+written against** (that hash came from `paltalabs/defindex` tag
+`1.0.0` — a different contract version than mainnet runs). See
+"Audit result" for why this matters.
 
 ## Decoder expectations
 
@@ -117,16 +128,68 @@ decoder doesn't hardcode that.
    the end-user. End-user attribution requires correlating with
    the vault event in the same tx (Phase B).
 
+## Audit result (2026-05-19) — FAIL
+
+Walk: the recovered canonical `merged.json` from the 2026-05-19
+r1 wasm-history walk.
+
+1. **WASM identity (this part passed).** Factory
+   `CDKFHFJI...NFKI` first-deploy `L57,056,338`; the three vaults
+   (`CDB2WMKQ...` L57,056,388 / `CC5CE6MW...` L57,056,390 /
+   `CDPWNUW7...` L57,056,392) all run a **single shared** WASM
+   hash `11329c24...988` with **zero mid-life upgrades** over
+   their entire lives. The staggered deploy ledgers confirm these
+   are genuine first-deploy points, not the walk window's lower
+   bound. (`sourceGenesisLedger["defindex"]` corrected to the
+   factory's `57_056_338` accordingly — see
+   `internal/api/v1/diagnostics_ingestion.go`.)
+
+2. **Decoder ↔ deployed-WASM check (this part FAILED).** The
+   vault WASM `11329c24...988` was extracted from galexie
+   (sha256-verified) and its bytes scanned. The decoder
+   (`internal/sources/defindex/`) and the "Decoder expectations"
+   section above require topic[0] = `ScvString("DeFindexVault")`
+   and `ScvMap` bodies keyed `depositor` / `amounts` /
+   `df_tokens_minted` (deposit) and `withdrawer` /
+   `amounts_withdrawn` / `df_tokens_burned` (withdraw).
+
+   In the verified deployed bytes:
+   - `deposit` and `withdraw` appear.
+   - **`DeFindexVault` is ABSENT.** It is 13 chars — it cannot be
+     a packed `SymbolSmall` (9-char cap) and cannot be
+     reconstructed at runtime; if the contract published that
+     topic the literal would be in the WASM. It is not.
+   - **Every documented body field is ABSENT** (`depositor`,
+     `amounts`, `df_tokens_minted`, `withdrawer`,
+     `amounts_withdrawn`, `df_tokens_burned`).
+
+3. **Live corroboration.** `aggregator_exposures` (defindex's
+   only sink table) is **empty (0 rows)** on r1 despite the
+   vaults being live since `L57,056,388` — consistent with a
+   decoder that never matches the deployed contract's events.
+
+**Root cause:** the decoder + this doc were written against
+`paltalabs/defindex` tag `1.0.0` (vault hash `0f3073...8f3a`).
+Mainnet runs a *different* version (`11329c24...988`) whose
+deposit/withdraw event topic + body schema differ. Decoding by
+name against the wrong reference yields no matches.
+
 ## Pending work to flip BackfillSafe → true
 
-1. Walk historical `update_contract_op` events on each of the 3
-   vault contracts + factory across the post-Soroban window —
-   confirm zero (or audit each prior hash).
-2. Disassemble the vault WASM at hash `0f3073...8f3a` and confirm
-   the `deposit` / `withdraw` event-body field names match the
-   decoder's expectations.
-3. Once Phase 1+2 land, flip `BackfillSafe: true` in
-   `internal/sources/external/registry.go`.
+`BackfillSafe` **stays `false`**; `ratesengine-ops backfill
+--source=defindex` remains gated. To unblock (Task #28):
 
-Until then, `ratesengine-ops backfill --source=defindex` is
-gated off via the registry's `BackfillSafe: false`.
+1. Disassemble the **deployed** vault WASM `11329c24...988`
+   (`wasm2wat` / capture a real on-chain defindex deposit/withdraw
+   from LCM) to determine the topic strings + body field names it
+   *actually* emits.
+2. Rewrite `internal/sources/defindex/{events,decode}.go` to
+   match the deployed contract (decode-by-name per
+   `docs/architecture/contract-schema-evolution.md`); verify live
+   decoding produces rows in `aggregator_exposures`.
+3. Re-run this audit against `11329c24...988`; only then flip
+   `BackfillSafe: true`.
+4. Separately: confirm whether the *factory* `b0fe36b2...0e`
+   (first-deploy `L57,056,338`, code-upload ledger < the walk
+   window) needs its own decoder review — Phase A decodes vault
+   events only, so it is not Phase-A-critical, but note it.
