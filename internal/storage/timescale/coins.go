@@ -301,6 +301,24 @@ const listCoinsBaseSelect = `
 		  -- the XLM/USD price. Circle's USDC issuer G-strkey is
 		  -- hardcoded; a future revision pulls the list from
 		  -- [trades].usd_pegged_classic_assets.
+		  --
+		  -- The 24h floor on bucket is REQUIRED, not just an
+		  -- optimisation. With no time predicate TimescaleDB cannot
+		  -- chunk-prune, so ORDER BY bucket DESC LIMIT 1 across the
+		  -- 3 quote_assets must consider EVERY prices_1m chunk
+		  -- (thousands post-backfill). Warm + idle that is ~13ms,
+		  -- but the all-chunks access pattern degrades badly under
+		  -- concurrent load + cold buffers -- observed ~40s in
+		  -- pg_stat_activity during /v1/assets/{id} fan-out, the
+		  -- dominant tax on every native to USD price path
+		  -- (this query is #18 == #21). Bounded to 24h it touches
+		  -- ~1 day of chunks (~2-3ms) and stays resilient under
+		  -- load. It is also MORE correct: the unbounded form could
+		  -- surface a days-stale vwap as the *current* price.
+		  -- XLM/USDC is among the highest-volume pairs (trades
+		  -- every minute) so a 24h floor never realistically misses
+		  -- the latest. Mirrors the already-bounded
+		  -- sources_stats.go xlm_usd CTE.
 		  SELECT vwap
 		    FROM prices_1m
 		   WHERE base_asset = 'native'
@@ -310,6 +328,7 @@ const listCoinsBaseSelect = `
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
+		     AND bucket >= now() - INTERVAL '24 hours'
 		   ORDER BY bucket DESC
 		   LIMIT 1
 		),
