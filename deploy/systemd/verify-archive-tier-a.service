@@ -53,7 +53,7 @@ EnvironmentFile=-/etc/default/ratesengine-ops
 # Sensible defaults. Operators override via /etc/default/ratesengine-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
-Environment=VERIFY_ARCHIVE_MAX_RUNTIME=4h
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/ratesengine/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 
@@ -98,12 +98,21 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# Hard cap matching the documented MAX_RUNTIME. With incremental
-# runs (since 2026-05-14) the typical pass covers only ~1 day of
-# new ledgers and finishes in minutes; the 4h budget gives plenty
-# of headroom for a worst-case multi-day catch-up after an outage
-# without wedging the timer indefinitely.
-TimeoutStartSec=4h
+# systemd's hard cap MUST exceed the binary's own -max-runtime
+# (VERIFY_ARCHIVE_MAX_RUNTIME, 16h). The binary self-bounds at
+# -max-runtime and exits cleanly *writing the -from-last-verified
+# state file*; only then are subsequent runs incremental (minutes).
+# Regression fixed 2026-05-19 (Task #13): TimeoutStartSec was 4h
+# while -max-runtime was 16h, so on a fresh deploy / after a state-
+# file loss the bootstrap full pass (~10-14h at 12 workers, state
+# absent → -from genesis) was SIGTERM'd by systemd at 4h before it
+# could seed state → every run a full pass → permanent
+# ratesengine_verify_archive_unit_failed (a true bootstrap
+# deadlock; the old "4h is plenty for incremental" comment ignored
+# that the FIRST run is always a full pass). 17h = 16h binary cap
+# + 1h graceful-shutdown/state-write grace, still well inside the
+# 24h timer cadence.
+TimeoutStartSec=17h
 
 [Install]
 WantedBy=multi-user.target
