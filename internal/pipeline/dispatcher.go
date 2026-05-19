@@ -148,12 +148,13 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, soroswapOpts ..
 			callDecoders = append(callDecoders,
 				soroswap_router.NewDecoder(soroswap_router.MainnetRouter))
 		case defindex.SourceName:
-			// DeFindex vault contracts emit standard Soroban events
-			// (`("DeFindexVault","deposit"|"withdraw")`) — event-based
-			// Decoder is the right hook. Phase A matches the 3 known
-			// autocompound vaults; multi-vault discovery via the
-			// factory is a Phase-B follow-up.
-			decoders = append(decoders, defindex.NewDecoder(defindex.MainnetVaults))
+			// DeFindex's deployed vault-address contracts are Blend
+			// strategy contracts emitting
+			// `("BlendStrategy","deposit"|"withdraw")` (verified
+			// on-chain 2026-05-19; see defindex.md). Event-based
+			// Decoder, dispatched by topic across every BlendStrategy
+			// emitter — not a hand-curated contract set.
+			decoders = append(decoders, defindex.NewDecoder())
 		case sdex.SourceName:
 			opDecoders = append(opDecoders, sdex.NewDecoder())
 		case blend.SourceName:

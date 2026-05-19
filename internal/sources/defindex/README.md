@@ -1,85 +1,89 @@
 # defindex source
 
-Decoder for **DeFindex** vault contracts on Stellar mainnet.
-DeFindex is a yield-aggregator vault system from
-[paltalabs/defindex](https://github.com/paltalabs/defindex) — vaults
-hold user-deposited capital and route it into underlying lending /
-DEX protocols (currently Blend) via per-vault `Strategy` contracts.
+Decoder for the **Blend autocompound strategy** contracts that back
+paltalabs' [DeFindex](https://github.com/paltalabs/defindex) vaults
+on Stellar mainnet.
+
+> **Corrected 2026-05-19.** This package previously targeted a
+> fictional `("DeFindexVault", …){depositor, amounts:Vec<i128>,
+> df_tokens_minted}` schema taken from paltalabs/defindex tag
+> `1.0.0`. **Mainnet never deployed that.** The contract addresses
+> we watch run Blend *strategy* code (deployed WASM `11329c24…988`)
+> and emit a much simpler schema, verified from real on-chain LCM
+> via `ratesengine-ops scan-soroban-events`. See
+> `docs/operations/wasm-audits/defindex.md` "Audit result" for the
+> full evidence trail (#28).
+
+## What it decodes (verified on-chain)
+
+| topic | body | example |
+|---|---|---|
+| `("BlendStrategy","deposit")` | `ScvMap{ from: Address, amount: i128 }` | L57,056,389 |
+| `("BlendStrategy","withdraw")` | `ScvMap{ from: Address, amount: i128 }` | recent live |
+
+- `topic[0]` is `ScvString("BlendStrategy")` (13 chars > the 9-char
+  `symbol_short!` cap → String, same pattern as `"SoroswapPair"`).
+- `from` is the caller moving capital — usually the vault/router
+  **contract** (a C-strkey), occasionally a plain account
+  (G-strkey). `scval.AsAddressStrkey` renders both.
+- `amount` is the underlying-asset delta (`i128`, never truncated —
+  ADR-0003).
+
+These are **flow-attribution** events, not price discovery — a
+strategy deposit/withdraw moves capital at NAV, it doesn't set a
+market price. Registered `Class: ClassRouter`; never a VWAP
+contributor.
 
 ## Why a separate decoder
 
-DeFindex vaults emit Soroban contract events with topic[0] =
-`ScvString("DeFindexVault")`. The events flow through the standard
-event-based dispatcher (`Decoder` interface, like `soroswap` /
-`aquarius`); no `ContractCallDecoder` needed for the vault events.
-Each user-facing vault op (`deposit` / `withdraw`) emits one event —
-no swap+sync correlation, so the wire shape is simpler than Soroswap.
-
-The vaults DO **not** emit price-discovery trades — a deposit moves
-LP shares (the vault's `df_token`) at the vault's NAV but doesn't
-set a market price. We surface them as **flow attribution** rows
-only:
-
-- They feed `aggregator_exposures` (capital allocation) via a
-  separate periodic worker (Phase B follow-up).
-- Same-tx Blend / Soroswap legs spawned by the vault's strategy
-  get tagged `trades.routed_via = "defindex-{vault_name}"` by the
-  router-attribution observer (also Phase B).
-
-The vault is registered with `Class: ClassRouter` (alongside the
-Soroswap router) — same attribution-only treatment, never a VWAP
-contributor.
+Standard event-based dispatcher (`Decoder` interface, like
+`soroswap` / `aquarius` / `comet`). Dispatch is **by topic**: any
+contract emitting the `("BlendStrategy",deposit|withdraw)` topic is
+matched — the comet/aquarius shared-emitter topology — so we cover
+*every* Blend autocompound strategy instance, not a hand-curated
+set. (The previous revision filtered on a mislabeled 3-contract
+"vault" set.)
 
 ## Files
 
 ```
-events.go              — constants: source name, contract IDs,
-                         topic prefix bytes, event-name symbols
-decode.go              — RawVaultEvent → DepositEvent / WithdrawEvent
-dispatcher_adapter.go  — implements dispatcher.Decoder (event-based)
+events.go              — source name, topic prefix bytes, event symbols, StrategyFlow
+decode.go              — classify() + decodeFlow() → StrategyFlow
+dispatcher_adapter.go  — implements dispatcher.Decoder (topic-matched)
 consumer.go            — Sink for the pipeline-side log emit
 README.md              — this file
 ```
 
 ## Phase A scope (what ships now)
 
-- Decode `("DeFindexVault","deposit")` and `("DeFindexVault","withdraw")`
-  events on the **3 known autocompound vaults** (USDC / EURC / XLM).
-- Emit a structured log line per event with depositor / amounts /
-  share-token delta.
-- No persist — no `routed_via` tag yet; no `aggregator_exposures`
-  rows yet.
+- Decode `("BlendStrategy","deposit"|"withdraw")` across all
+  emitters; emit a structured log line per event
+  (contract / direction / from / amount).
+- No persist yet — no `routed_via` tag, no `aggregator_exposures`
+  rows. `BackfillSafe` stays `false` until live decoding is
+  verified producing rows on r1 and the WASM is re-audited against
+  the real deployed hash `11329c24…988`.
 
 ## Phase B follow-ups
 
-1. **Multi-vault discovery.** Watch `("DeFindexFactory","create")`
-   events + read the InvokeContract op return value to capture
-   newly-deployed vault addresses (factory event body lacks the
-   address — confirmed against
-   `apps/contracts/factory/src/lib.rs:205-231` at tag `1.0.0`).
-2. **`trades.routed_via` tagging.** Hook the dispatcher's
-   ContractCallDecoder for vault `deposit` / `withdraw` calls —
-   when the same tx contains a Blend or Soroswap event, tag those
-   trades with the vault name.
-3. **Aggregator-exposure ticker.** Periodic worker that queries
-   each vault's on-chain state (vault token holdings + per-strategy
-   balances) and writes `aggregator_exposures` rows. Frequency:
-   1 min (same as TVL ticker).
-4. **Strategy events.** Optionally decode `("BlendStrategy","deposit")`
-   / `("BlendStrategy","withdraw")` events emitted by the strategy
-   contract — these correlate with the vault event in the same tx
-   and give per-strategy granularity.
-5. **Rebalance event multiplexing.** The `("DeFindexVault","rebalance")`
-   topic is shared by 4 distinct body shapes (`unwind` / `invest` /
-   `SwapEIn` / `SwapEOut`). Discriminate by the `rebalance_method`
-   field inside the body.
+1. **`trades.routed_via` tagging.** When the same tx contains a
+   Blend (`("Pool","supply")`) or Soroswap leg, tag those trades
+   with the strategy attribution.
+2. **Exposure ticker.** Periodic worker writing
+   `aggregator_exposures` rows from per-strategy on-chain state.
+3. **`harvest` / keeper-admin events.** Decode the autocompound
+   `harvest` event (yield realisation) for APY attribution.
+4. **End-user attribution.** When `from` is a vault contract,
+   correlate with the same-tx vault event to recover the end-user.
+5. **Source rename.** `defindex` → e.g. `blend-strategy` (more
+   honest; distinct from the existing `blend` pool source). A
+   product-taxonomy decision deferred so registry / genesis /
+   status-page keys stay stable for now.
 
 ## Sources
 
-- Function signatures: `apps/contracts/vault/src/interface.rs`
-  @ tag 1.0.0.
-- Event shapes: `apps/contracts/vault/src/events.rs` @ tag 1.0.0.
-- Mainnet hashes: `apps/contracts/public/mainnet.contracts.json`
-  @ tag 1.0.0 — vault WASM
-  `0f3073517cbfacbfd482bc166cff38a0e7abeab9b7ee77334abab45880fb8f3a`.
-- WASM audit: `docs/operations/wasm-audits/defindex.md` (in_progress).
+- Event shapes: **real mainnet LCM**, captured via
+  `ratesengine-ops scan-soroban-events` (2026-05-19).
+- Deployed WASM: `11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988`
+  (Blend strategy code; walk-confirmed single hash, zero upgrades).
+- WASM audit: `docs/operations/wasm-audits/defindex.md`.

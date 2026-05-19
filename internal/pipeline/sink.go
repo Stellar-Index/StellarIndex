@@ -160,25 +160,19 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		)
 	case defindex.Event:
 		// Phase A: log-only sink. Phase B will tag matching same-tx
-		// Blend / Soroswap legs as `routed_via=defindex-{vault}` and
-		// write to the aggregator_exposures hypertable from a
-		// separate periodic ticker. Until then we emit one INFO line
-		// per vault flow so operators can verify the dispatcher
-		// routes vault events correctly via the journal.
-		amounts := make([]string, len(e.Flow.Amounts))
-		for i, a := range e.Flow.Amounts {
-			amounts[i] = a.String()
-		}
-		logger.Info("defindex vault flow",
+		// Blend / Soroswap legs as `routed_via` and write to the
+		// aggregator_exposures hypertable from a separate periodic
+		// ticker. Until then we emit one INFO line per strategy flow
+		// so operators can verify the dispatcher routes BlendStrategy
+		// events correctly via the journal.
+		logger.Info("defindex strategy flow",
 			"source", defindex.SourceName,
 			"tx_hash", e.Flow.TxHash,
 			"ledger", e.Flow.Ledger,
-			"vault", e.Flow.VaultName,
 			"contract_id", e.Flow.ContractID,
 			"direction", string(e.Flow.Direction),
-			"counterparty", e.Flow.Counterparty,
-			"amounts", amounts,
-			"df_token_delta", e.Flow.DfTokenDelta.String(),
+			"from", e.Flow.From,
+			"amount", e.Flow.Amount.String(),
 		)
 	case external.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)

@@ -12,7 +12,7 @@ import (
 )
 
 // TestClassify_depositWithdraw covers the topic-byte equality path —
-// ensures topic[0] = ScvString("DeFindexVault") + topic[1] in
+// ensures topic[0] = ScvString("BlendStrategy") + topic[1] in
 // {deposit, withdraw} is the only thing the decoder picks up.
 // Verifies the byte-equality constants line up with the SDK encoder.
 func TestClassify_depositWithdraw(t *testing.T) {
@@ -24,27 +24,32 @@ func TestClassify_depositWithdraw(t *testing.T) {
 	}{
 		{
 			name:      "deposit",
-			topic:     []string{TopicPrefixVault, TopicSymbolDeposit},
+			topic:     []string{TopicPrefixStrategy, TopicSymbolDeposit},
 			wantClass: EventDeposit,
 		},
 		{
 			name:      "withdraw",
-			topic:     []string{TopicPrefixVault, TopicSymbolWithdraw},
+			topic:     []string{TopicPrefixStrategy, TopicSymbolWithdraw},
 			wantClass: EventWithdraw,
 		},
 		{
-			name:      "wrong prefix",
+			name:      "wrong prefix (SoroswapPair)",
 			topic:     []string{mustB64String(t, "SoroswapPair"), TopicSymbolDeposit},
 			wantClass: "",
 		},
 		{
-			name:      "rescue (not Phase A)",
-			topic:     []string{TopicPrefixVault, mustB64Symbol(t, "rescue")},
+			name:      "prefix as Symbol not String",
+			topic:     []string{mustB64Symbol(t, "BlendStrategy"), TopicSymbolDeposit},
+			wantClass: "",
+		},
+		{
+			name:      "harvest (not Phase A)",
+			topic:     []string{TopicPrefixStrategy, mustB64Symbol(t, "harvest")},
 			wantClass: "",
 		},
 		{
 			name:      "single-element topic",
-			topic:     []string{TopicPrefixVault},
+			topic:     []string{TopicPrefixStrategy},
 			wantClass: "",
 		},
 	}
@@ -59,24 +64,22 @@ func TestClassify_depositWithdraw(t *testing.T) {
 	}
 }
 
-// TestDecodeFlow_deposit covers the happy-path decode of a single-
-// asset deposit event. Verifies amount preservation (no truncation
-// per ADR-0003), depositor address round-trip, and df_token_minted
-// is captured separately from the underlying-asset amount.
+// TestDecodeFlow_deposit covers the happy-path decode of a deposit
+// event with an account (G-strkey) `from`. Verifies amount
+// preservation (no truncation per ADR-0003) and address round-trip.
 func TestDecodeFlow_deposit(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
 		Type:           "contract",
 		Ledger:         60_000_000,
 		LedgerClosedAt: "2026-05-14T10:30:00Z",
-		ContractID:     MainnetVaultUSDC,
+		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
 		OperationIndex: 2,
 		TxHash:         "abc123",
-		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolDeposit},
 		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xAA))),
-			mapEntry(t, "amounts", vecSCVal(i128SCVal(big.NewInt(123_456_789_000)))), // 1234.5 USDC at 1e8
-			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(1_000_000_000))),    // 10 shares at 1e8
+			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xAA))),
+			mapEntry(t, "amount", i128SCVal(big.NewInt(123_456_789_000))),
 		)),
 	}
 	flow, err := decodeFlow(ev, EventDeposit)
@@ -89,42 +92,33 @@ func TestDecodeFlow_deposit(t *testing.T) {
 	if flow.Direction != DirectionDeposit {
 		t.Errorf("Direction = %q, want deposit", flow.Direction)
 	}
-	if flow.VaultName != "usdc-autocompound" {
-		t.Errorf("VaultName = %q, want usdc-autocompound", flow.VaultName)
+	if flow.From == "" || flow.From[0] != 'G' {
+		t.Errorf("From = %q, want a G-strkey account address", flow.From)
 	}
-	if flow.Counterparty == "" {
-		t.Errorf("Counterparty empty")
-	}
-	if got, want := len(flow.Amounts), 1; got != want {
-		t.Fatalf("len(Amounts) = %d, want %d", got, want)
-	}
-	if got, want := flow.Amounts[0].String(), "123456789000"; got != want {
-		t.Errorf("Amounts[0] = %q, want %q (no truncation)", got, want)
-	}
-	if got, want := flow.DfTokenDelta.String(), "1000000000"; got != want {
-		t.Errorf("DfTokenDelta = %q, want %q", got, want)
+	if got, want := flow.Amount.String(), "123456789000"; got != want {
+		t.Errorf("Amount = %q, want %q (no truncation)", got, want)
 	}
 	if flow.Ledger != 60_000_000 || flow.OpIndex != 2 || flow.TxHash != "abc123" {
 		t.Errorf("header fields not preserved: %+v", flow)
 	}
 }
 
-// TestDecodeFlow_withdraw confirms the withdraw branch picks the
-// correct field names (`withdrawer`, `amounts_withdrawn`,
-// `df_tokens_burned`). These differ from deposit and a wrong field-
-// name lookup would silently zero the body fields.
-func TestDecodeFlow_withdraw(t *testing.T) {
+// TestDecodeFlow_withdrawFromContract covers the withdraw branch
+// AND the real-world case where `from` is the vault/router
+// *contract* (a C-strkey), not an end-user account — exactly what
+// scan-soroban-events observed on mainnet. The body shape is
+// identical to deposit; only Direction differs.
+func TestDecodeFlow_withdrawFromContract(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
 		Type:           "contract",
 		Ledger:         60_000_001,
 		LedgerClosedAt: "2026-05-14T10:31:00Z",
-		ContractID:     MainnetVaultEURC,
-		Topic:          []string{TopicPrefixVault, TopicSymbolWithdraw},
+		ContractID:     "CC5CE6MWISDXT3MLNQ7R3FVILFVFEIH3COWGH45GJKL6BD2ZHF7F7JVI",
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolWithdraw},
 		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "withdrawer", addrSCVal(makeAccountAddress(t, 0xBB))),
-			mapEntry(t, "amounts_withdrawn", vecSCVal(i128SCVal(big.NewInt(50_000_000)))),
-			mapEntry(t, "df_tokens_burned", i128SCVal(big.NewInt(500_000_000))),
+			mapEntry(t, "from", addrSCVal(makeContractAddress(t, 0xBB))),
+			mapEntry(t, "amount", i128SCVal(big.NewInt(29_999_999))),
 		)),
 	}
 	flow, err := decodeFlow(ev, EventWithdraw)
@@ -134,53 +128,46 @@ func TestDecodeFlow_withdraw(t *testing.T) {
 	if flow.Direction != DirectionWithdraw {
 		t.Errorf("Direction = %q, want withdraw", flow.Direction)
 	}
-	if flow.VaultName != "eurc-autocompound" {
-		t.Errorf("VaultName = %q, want eurc-autocompound", flow.VaultName)
+	if flow.From == "" || flow.From[0] != 'C' {
+		t.Errorf("From = %q, want a C-strkey contract address", flow.From)
 	}
-	if got, want := flow.Amounts[0].String(), "50000000"; got != want {
-		t.Errorf("Amounts[0] = %q, want %q", got, want)
-	}
-	if got, want := flow.DfTokenDelta.String(), "500000000"; got != want {
-		t.Errorf("DfTokenDelta = %q, want %q (df_tokens_burned)", got, want)
+	if got, want := flow.Amount.String(), "29999999"; got != want {
+		t.Errorf("Amount = %q, want %q", got, want)
 	}
 }
 
-// TestDecodeFlow_unknownVault defends the contract-id pre-filter.
-// An event from a vault not in MainnetVaults should return
-// ErrUnknownVault (the dispatcher's Matches() should have filtered
-// first; this is a defensive double-check).
-func TestDecodeFlow_unknownVault(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		ContractID:     "CINVALID",
-		LedgerClosedAt: "2026-05-14T10:30:00Z",
-		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
-		Value:          "",
-	}
-	_, err := decodeFlow(ev, EventDeposit)
-	if !errors.Is(err, ErrUnknownVault) {
-		t.Errorf("err = %v, want ErrUnknownVault", err)
-	}
-}
-
-// TestDecodeFlow_missingField covers the malformed-input path.
-// If the body is missing `df_tokens_minted` we should return
-// ErrMalformedPayload, not panic on a nil-deref.
+// TestDecodeFlow_missingField covers the malformed-input path. A
+// body missing `amount` must return ErrMalformedPayload, not panic
+// on a nil-deref.
 func TestDecodeFlow_missingField(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
-		ContractID:     MainnetVaultUSDC,
+		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
 		LedgerClosedAt: "2026-05-14T10:30:00Z",
-		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolDeposit},
 		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xAA))),
-			mapEntry(t, "amounts", vecSCVal(i128SCVal(big.NewInt(1)))),
-			// no df_tokens_minted
+			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xAA))),
+			// no amount
 		)),
 	}
 	_, err := decodeFlow(ev, EventDeposit)
 	if !errors.Is(err, ErrMalformedPayload) {
 		t.Errorf("err = %v, want ErrMalformedPayload", err)
+	}
+}
+
+// TestDecodeFlow_badKind defends the defensive default branch — a
+// kind classify() would never return must still error cleanly.
+func TestDecodeFlow_badKind(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		LedgerClosedAt: "2026-05-14T10:30:00Z",
+		Topic:          []string{TopicPrefixStrategy, TopicSymbolDeposit},
+		Value:          mustB64(t, mapSCVal(t)),
+	}
+	_, err := decodeFlow(ev, "rebalance")
+	if !errors.Is(err, ErrUnknownEvent) {
+		t.Errorf("err = %v, want ErrUnknownEvent", err)
 	}
 }
 
@@ -223,12 +210,6 @@ func i128SCVal(n *big.Int) sdkxdr.ScVal {
 	}
 }
 
-func vecSCVal(elems ...sdkxdr.ScVal) sdkxdr.ScVal {
-	v := sdkxdr.ScVec(elems)
-	pv := &v
-	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvVec, Vec: &pv}
-}
-
 func addrSCVal(addr sdkxdr.ScAddress) sdkxdr.ScVal {
 	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvAddress, Address: &addr}
 }
@@ -244,6 +225,15 @@ func makeAccountAddress(t *testing.T, fillByte byte) sdkxdr.ScAddress {
 		Ed25519: &ed25519,
 	}
 	return sdkxdr.ScAddress{Type: sdkxdr.ScAddressTypeScAddressTypeAccount, AccountId: &acct}
+}
+
+func makeContractAddress(t *testing.T, fillByte byte) sdkxdr.ScAddress {
+	t.Helper()
+	var cid sdkxdr.ContractId
+	for i := range cid {
+		cid[i] = fillByte
+	}
+	return sdkxdr.ScAddress{Type: sdkxdr.ScAddressTypeScAddressTypeContract, ContractId: &cid}
 }
 
 func mapEntry(t *testing.T, key string, val sdkxdr.ScVal) sdkxdr.ScMapEntry {

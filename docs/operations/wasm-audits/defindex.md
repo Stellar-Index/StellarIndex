@@ -1,7 +1,7 @@
 ---
 title: DeFindex WASM-history audit
 last_verified: 2026-05-19
-status: BLOCKED — audit FAIL, decoder ↔ deployed-WASM mismatch (BackfillSafe stays false)
+status: decoder RE-DERIVED to real on-chain schema; BackfillSafe still false pending live-verify + WASM re-audit
 source: defindex
 backfill_safe: false
 ---
@@ -174,22 +174,47 @@ Mainnet runs a *different* version (`11329c24...988`) whose
 deposit/withdraw event topic + body schema differ. Decoding by
 name against the wrong reference yields no matches.
 
+## Resolution (2026-05-19) — decoder re-derived from real on-chain
+
+The mismatch was diagnosed and the decoder rewritten:
+
+1. **Disassembly.** `wasm2wat` of the verified deployed WASM
+   `11329c24...988` showed it is **Blend strategy code**
+   (`BlendStrategy`, `blend_pool_address`, `harvest`, `keeper`,
+   `__constructor`; no `DeFindexVault` / vault strings). The three
+   curated "vault" addresses are strategy contracts.
+2. **Real schema captured on-chain.** `ratesengine-ops
+   scan-soroban-events` (the new in-infra event dumper, commit
+   `57781f59`) against galexie LCM showed the contracts emit:
+   - `("BlendStrategy","deposit")` body `ScvMap{from:Address,
+     amount:i128}` (e.g. L57,056,389; 27/40 in a recent window)
+   - `("BlendStrategy","withdraw")` body `ScvMap{from:Address,
+     amount:i128}` (13/40 in a recent window)
+   `from` is an account *or* contract strkey;
+   `scval.AsAddressStrkey` renders both.
+3. **Decoder rewritten** (`internal/sources/defindex/{events,
+   decode,dispatcher_adapter,consumer}.go`): topic[0] ==
+   `ScvString("BlendStrategy")`, topic[1] ∈ {deposit,withdraw},
+   body decode-by-name `{from, amount}`, **dispatched by topic
+   across every emitter** (not the old 3-contract set) —
+   comet/aquarius shared-emitter topology. Tests regenerated from
+   the real schema; `go test -race` green. The fictional
+   `MainnetVault*` / `MainnetVaultWASMHash` / factory consts were
+   deleted.
+
 ## Pending work to flip BackfillSafe → true
 
 `BackfillSafe` **stays `false`**; `ratesengine-ops backfill
---source=defindex` remains gated. To unblock (Task #28):
+--source=defindex` remains gated until:
 
-1. Disassemble the **deployed** vault WASM `11329c24...988`
-   (`wasm2wat` / capture a real on-chain defindex deposit/withdraw
-   from LCM) to determine the topic strings + body field names it
-   *actually* emits.
-2. Rewrite `internal/sources/defindex/{events,decode}.go` to
-   match the deployed contract (decode-by-name per
-   `docs/architecture/contract-schema-evolution.md`); verify live
-   decoding produces rows in `aggregator_exposures`.
-3. Re-run this audit against `11329c24...988`; only then flip
-   `BackfillSafe: true`.
-4. Separately: confirm whether the *factory* `b0fe36b2...0e`
-   (first-deploy `L57,056,338`, code-upload ledger < the walk
-   window) needs its own decoder review — Phase A decodes vault
-   events only, so it is not Phase-A-critical, but note it.
+1. **Live-verify on r1.** Deploy the rewritten decoder; confirm
+   live ingest emits `defindex strategy flow` log lines (and,
+   once the Phase-B persist path lands, `aggregator_exposures`
+   rows) against real traffic.
+2. **WASM re-audit.** Re-run the per-hash decoder audit against
+   the deployed `11329c24...988` now that the decoder matches its
+   real schema; record PASS here.
+3. Only then flip `BackfillSafe: true`.
+4. Separately (not Phase-A-critical): the *factory*
+   `b0fe36b2...0e` (first-deploy `L57,056,338`) needs no decoder —
+   we dispatch by the strategy topic, not factory events.
