@@ -2,6 +2,8 @@ package v1
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -162,5 +164,167 @@ func TestCachedCoinsReader_TTLZeroBypasses(t *testing.T) {
 	}
 	if got := up.listCalls.Load(); got != 3 {
 		t.Errorf("upstream called %d times with ttl=0; want 3 (cache must be bypassed)", got)
+	}
+}
+
+// swrCoinsUpstream is a configurable ListCoinsExt stub for the
+// stale-while-revalidate tests: a per-call counter plus a settable
+// delay / return value / failure. Embeds fakeCoinsUpstream so the
+// other CoinsReader methods are satisfied.
+type swrCoinsUpstream struct {
+	*fakeCoinsUpstream
+	calls atomic.Int64
+	mu    sync.Mutex
+	delay time.Duration
+	val   string
+	fail  bool
+}
+
+func (s *swrCoinsUpstream) ListCoinsExt(ctx context.Context, _ timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+	s.calls.Add(1)
+	s.mu.Lock()
+	d, v, f := s.delay, s.val, s.fail
+	s.mu.Unlock()
+	if d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f {
+		return nil, errors.New("swr upstream boom")
+	}
+	return []timescale.CoinRow{{AssetID: v}}, nil
+}
+
+func (s *swrCoinsUpstream) set(delay time.Duration, val string, fail bool) {
+	s.mu.Lock()
+	s.delay, s.val, s.fail = delay, val, fail
+	s.mu.Unlock()
+}
+
+func swrGet(t *testing.T, c *CachedCoinsReader) (string, error) {
+	t.Helper()
+	rows, err := c.ListCoinsExt(context.Background(), timescale.ListCoinsOptions{Limit: 7})
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return rows[0].AssetID, nil
+}
+
+func waitFor(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return cond()
+}
+
+// TestCachedCoinsReader_SWRServesStaleAndRefreshes: an expired entry
+// returns the stale value IMMEDIATELY (not blocked on the slow
+// upstream refetch — the #22 fix), a single background refresh runs,
+// and afterwards the fresh value is served.
+func TestCachedCoinsReader_SWRServesStaleAndRefreshes(t *testing.T) {
+	up := &swrCoinsUpstream{fakeCoinsUpstream: &fakeCoinsUpstream{}, val: "v1"}
+	c := NewCachedCoinsReader(up, 25*time.Millisecond)
+
+	if v, err := swrGet(t, c); err != nil || v != "v1" {
+		t.Fatalf("cold fetch: got %q err=%v, want v1", v, err)
+	}
+	if up.calls.Load() != 1 {
+		t.Fatalf("cold calls=%d, want 1", up.calls.Load())
+	}
+
+	time.Sleep(50 * time.Millisecond)         // let it expire
+	up.set(300*time.Millisecond, "v2", false) // slow refresh, new value
+
+	start := time.Now()
+	v, err := swrGet(t, c)
+	elapsed := time.Since(start)
+	if err != nil || v != "v1" {
+		t.Fatalf("SWR must serve stale v1; got %q err=%v", v, err)
+	}
+	if elapsed > 120*time.Millisecond {
+		t.Fatalf("SWR blocked %v on the 300ms refresh; must serve stale ~instantly", elapsed)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("background refresh not started; calls=%d want 2", up.calls.Load())
+	}
+	if !waitFor(2*time.Second, func() bool { vv, _ := swrGet(t, c); return vv == "v2" }) {
+		t.Fatalf("post-refresh did not serve fresh v2")
+	}
+}
+
+// TestCachedCoinsReader_SWRSingleFlight: many concurrent reads of an
+// expired entry all get stale immediately and trigger EXACTLY ONE
+// background refresh (1 cold + 1 refresh = 2 upstream calls), never
+// a stampede, regardless of concurrency.
+func TestCachedCoinsReader_SWRSingleFlight(t *testing.T) {
+	up := &swrCoinsUpstream{fakeCoinsUpstream: &fakeCoinsUpstream{}, val: "v1"}
+	c := NewCachedCoinsReader(up, 20*time.Millisecond)
+
+	if _, err := swrGet(t, c); err != nil { // cold → calls=1
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)         // expire
+	up.set(250*time.Millisecond, "v2", false) // slow refresh window
+
+	var wg sync.WaitGroup
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if v, err := swrGet(t, c); err != nil || v != "v1" {
+				t.Errorf("concurrent SWR got %q err=%v, want stale v1", v, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("want exactly 2 upstream calls (1 cold + 1 single-flighted refresh); got %d", up.calls.Load())
+	}
+	time.Sleep(350 * time.Millisecond) // let the 250ms refresh finish; no new reads
+	if got := up.calls.Load(); got != 2 {
+		t.Fatalf("single-flight violated: %d upstream calls for 25 concurrent stale reads", got)
+	}
+}
+
+// TestCachedCoinsReader_SWRKeepsStaleOnError: when the background
+// refresh fails, the user keeps getting the stale value (never an
+// error, never a block) and the refresh is retried on the next
+// expired request.
+func TestCachedCoinsReader_SWRKeepsStaleOnError(t *testing.T) {
+	up := &swrCoinsUpstream{fakeCoinsUpstream: &fakeCoinsUpstream{}, val: "v1"}
+	c := NewCachedCoinsReader(up, 20*time.Millisecond)
+
+	if _, err := swrGet(t, c); err != nil { // cold v1, calls=1
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond) // expire
+	up.set(0, "v2", true)             // refresh will error (fast)
+
+	v, err := swrGet(t, c)
+	if err != nil || v != "v1" {
+		t.Fatalf("stale-with-failing-refresh must serve stale v1, no error; got %q err=%v", v, err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("refresh not attempted; calls=%d want 2", up.calls.Load())
+	}
+
+	time.Sleep(40 * time.Millisecond) // re-expire
+	v2, err2 := swrGet(t, c)
+	if err2 != nil || v2 != "v1" {
+		t.Fatalf("after a failed refresh, still serve stale v1 no error; got %q err=%v", v2, err2)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() >= 3 }) {
+		t.Fatalf("failed refresh was not retried on the next request; calls=%d", up.calls.Load())
 	}
 }

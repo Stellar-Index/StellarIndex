@@ -157,19 +157,65 @@ func (c *CachedCoinsReader) GetCoinTradeCount24h(ctx context.Context, assetID st
 	return c.upstream.GetCoinTradeCount24h(ctx, assetID)
 }
 
+// coinsRefreshBudget bounds a stale-while-revalidate background
+// refresh. It runs OFF the request path so a generous budget costs
+// users nothing (they're already served the stale value); it just
+// has to comfortably exceed the listing aggregate's worst case
+// (~seconds, contended) so the refresh actually completes and the
+// cache moves forward instead of perpetually re-spawning.
+const coinsRefreshBudget = 30 * time.Second
+
 func (c *CachedCoinsReader) fetchRows(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]timescale.CoinRow, error),
 ) ([]timescale.CoinRow, error) {
 	c.mu.Lock()
-	if e, ok := c.entries[key]; ok && e.flight == nil && time.Since(e.at) < c.ttl {
+	e, ok := c.entries[key]
+
+	// (A) Fresh hit.
+	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
 		out := e.rows
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
 		return out, nil
 	}
-	if e, ok := c.entries[key]; ok && e.flight != nil {
+
+	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
+	// (e.at non-zero — failed cold fetches delete the entry, so a
+	// present entry with non-zero at always has servable rows) but
+	// it's expired. Serve the stale rows IMMEDIATELY and, if no
+	// refresh is already running, kick exactly one in the
+	// background. Concurrent callers during the refresh also get
+	// stale — nobody ever waits on the upstream call. This is the
+	// entire fix for #22: the expiry refetch (~seconds on the
+	// listing aggregate) must never land on a user request.
+	if ok && !e.at.IsZero() {
+		stale := e.rows
+		if e.flight == nil {
+			done := make(chan struct{})
+			e.flight = done
+			entry := e
+			c.mu.Unlock()
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+			//nolint:gosec,contextcheck // G118 / contextcheck:
+			// intentional. The SWR background refresh MUST use a
+			// fresh context (refreshRows -> context.Background), NOT
+			// the request ctx: the request ctx is cancelled the
+			// instant the stale response is written, so reusing it
+			// would abort every refresh — defeating the entire point
+			// of serving stale while revalidating.
+			go c.refreshRows(op, entry, done, upstream)
+			return stale, nil
+		}
+		c.mu.Unlock()
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+		return stale, nil
+	}
+
+	// (B) Cold fetch already in flight (no prior success to serve) —
+	// join it rather than stampede upstream.
+	if ok && e.flight != nil {
 		entry := e
 		ch := e.flight
 		c.mu.Unlock()
@@ -185,6 +231,9 @@ func (c *CachedCoinsReader) fetchRows(
 			return nil, ctx.Err()
 		}
 	}
+
+	// (C) Cold leader: no entry (or a prior failed cold fetch left
+	// none). Block inline — there is nothing stale to serve.
 	done := make(chan struct{})
 	entry := &coinsCacheEntry{flight: done}
 	c.entries[key] = entry
@@ -205,6 +254,47 @@ func (c *CachedCoinsReader) fetchRows(
 	c.mu.Unlock()
 	close(done)
 	return rows, err
+}
+
+// refreshRows runs the upstream call OFF the request path for the
+// stale-while-revalidate (A') branch of fetchRows.
+//
+//   - It uses a fresh background context, NOT the triggering
+//     request's ctx: that ctx is cancelled the instant the stale
+//     response is written, which would abort every refresh.
+//   - On success it swaps the entry's rows + timestamp under the
+//     lock → subsequent callers get a fresh hit.
+//   - On failure it KEEPS the existing stale value (does not delete,
+//     does not touch e.at) so we keep serving stale and simply
+//     retry on the next request; only the in-flight marker clears.
+//   - Single-flighted via `done`/`entry.flight`: while it runs,
+//     fetchRows' (A') sees e.flight != nil and serves stale without
+//     spawning a second refresh. Nothing waits on `done` (the SWR
+//     path never blocks), but closing it is harmless and keeps the
+//     channel lifecycle symmetric with the cold path.
+func (c *CachedCoinsReader) refreshRows(
+	op string,
+	entry *coinsCacheEntry,
+	done chan struct{},
+	upstream func(context.Context) ([]timescale.CoinRow, error),
+) {
+	defer close(done)
+	ctx, cancel := context.WithTimeout(context.Background(), coinsRefreshBudget)
+	defer cancel()
+
+	rows, err := upstream(ctx)
+
+	c.mu.Lock()
+	if err == nil {
+		entry.at = time.Now()
+		entry.rows = rows
+	}
+	entry.flight = nil
+	c.mu.Unlock()
+
+	if err != nil {
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+	}
 }
 
 func (c *CachedCoinsReader) fetchHistoryMap(

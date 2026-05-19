@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **`CachedCoinsReader` stale-while-revalidate — kills the
+  `/v1/assets` list cold-refresh stampede (#22).** The cache
+  already single-flighted, but on TTL expiry the leader *discarded*
+  the still-present stale rows and blocked ~3.9 s on the upstream
+  listing aggregate inline, so every request landing in a refetch
+  window paid it (p50 1 ms warm / p95 3.9 s at each TTL boundary).
+  `fetchRows` now serves the stale rows **immediately** on expiry
+  and triggers exactly one **background** refresh (`refreshRows`,
+  request-ctx-independent so it isn't aborted when the stale
+  response is written; keeps serving stale and retries on refresh
+  error; single-flighted so concurrent stale reads never stampede
+  upstream). Cold miss still blocks (nothing to serve). Acceptable
+  staleness for an activity-ranked listing (the cache's own
+  rationale). New `stale`/`refresh_error` cache-op outcomes.
+  Concurrency-correct: `go test -race` clean across new SWR tests
+  (serves-stale-instantly, single-flight under 25 concurrent reads,
+  keeps-stale-on-error). Same SWR pattern is a candidate follow-up
+  for `fetchHistoryMap` (sparkline). Bundles into rc.57.
+
 - **`coins.go` `xlm_usd` CTE bounded to 24 h — collapses #18 ≡ #21.**
   The native→USD price CTE in the `/v1/assets/{id}` coins query had
   **no time predicate** (its `xlm_usd_1h`/`xlm_usd_24h` siblings and
