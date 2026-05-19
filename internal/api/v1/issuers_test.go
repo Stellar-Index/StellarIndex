@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -171,6 +172,37 @@ func TestHandleIssuersList_ReaderError500(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/v1/issuers")
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+// TestHandleIssuersList_ClientAbortedNo500 — regression for #34. When
+// the inbound request is canceled mid-flight (concurrent callers /
+// the sla-probe / a browser navigating away), lib/pq surfaces the
+// canceled ListIssuers query as SQLSTATE 57014. That is a client
+// abort, NOT a server fault: the handler must return quietly, never
+// a 500 (a 500 pollutes the 5xx rate + SLA availability — it was the
+// sole sla-probe SLA-harness blocker). Pre-fix the missing
+// clientAborted guard let the canceled-context error fall through to
+// the generic `Issuers list failed` 500. clientAborted keys off
+// r.Context().Err(), so any storage error + a canceled request ctx
+// must NOT 500.
+func TestHandleIssuersList_ClientAbortedNo500(t *testing.T) {
+	reader := &stubIssuersReader{
+		listErr: errors.New("pq: canceling statement due to user request"),
+	}
+	srv := v1.New(v1.Options{Issuers: reader})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/issuers", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel() // client went away before/while the handler ran
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusInternalServerError {
+		t.Fatalf("client-aborted request must NOT return 500; got %d body=%s",
+			rec.Code, rec.Body.String())
 	}
 }
 
