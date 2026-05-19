@@ -216,16 +216,21 @@ var sourceGenesisLedger = map[string]int64{
 	"reflector-fx":  56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
 	"band":          50_842_736, // single stable WASM since 2024-03-19 (band.md:198)
 	"redstone":      58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
-	// PROVISIONAL placeholder — NOT the Blend shared origin above.
 	// defindex is paltalabs' yield aggregator, a separate 2025
-	// protocol; its real first-deploy ledger is unknown until its
-	// wasm-history walk lands (BackfillSafe=false, defindex.md,
-	// Task #6 — walk in progress on r1). Held at a conservative
-	// early anchor so density reads honestly low (never hides
-	// history) until the walk overwrites this with the exact value.
-	// Deliberately distinct from comet/blend so it is not mistaken
-	// for the real Blend-rollout coincidence.
-	"defindex": 51_499_545,
+	// protocol. EXACT first-deploy from the 2026-05-19 r1 wasm-history
+	// walk (merged.json): factory CDKFHFJI... first observed at
+	// L57,056,338 — staggered ahead of its three vaults (CDB2WMKQ
+	// L57,056,388 / CC5CE6MW L57,056,390 / CDPWNUW7 L57,056,392),
+	// which confirms these are genuine deploy ledgers, not the walk
+	// window's lower bound. MIN across every contract the source
+	// routes = the factory = 57,056,338. (Was a provisional
+	// 51_499_545 placeholder, deliberately distinct from comet/blend
+	// while the walk was pending; #10 "exact, zero slack".) NOTE:
+	// defindex BackfillSafe stays false — the decoder↔deployed-WASM
+	// mismatch (Task #28, defindex.md) is orthogonal to genesis
+	// precision; an honest genesis here makes density read correctly,
+	// not falsely.
+	"defindex": 57_056_338,
 }
 
 // RegionInfo identifies which deployment generated this snapshot.

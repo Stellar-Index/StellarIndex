@@ -63,8 +63,8 @@ var Registry = map[string]Metadata{
 	// requested vs path realised; aggregator vault → underlying
 	// protocol exposures). See docs/architecture/explorer-data-
 	// inventory.md §7.9 + migration 0025 (routers + aggregator_exposures).
-	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false /* WASM audit pending — keep BackfillSafe=false until docs/operations/wasm-audits/soroswap-router.md lands */},
-	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false /* WASM audit pending — vault hash 0f3073...8f3a baseline; see docs/operations/wasm-audits/defindex.md */},
+	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-19; r1 wasm-history walk: single hash 4c3db3eb...07 over the contract's entire life [50746272→tip], zero mid-life upgrades; both swap_exact_tokens_for_tokens + swap_tokens_for_exact_tokens exports verified present; ContractCallDecoder (router emits no events). See docs/operations/wasm-audits/soroswap-router.md */},
+	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false /* AUDIT FAILED 2026-05-19 — decoder↔deployed-WASM mismatch: decoder was written vs paltalabs tag 1.0.0 (vault hash 0f3073...8f3a) but mainnet runs 11329c24...988, whose deposit/withdraw topic+body schema differs (DeFindexVault topic + all body fields absent from the verified deployed bytes; aggregator_exposures empty on r1). MUST stay false until the decoder is re-derived from the deployed contract. Task #28; see docs/operations/wasm-audits/defindex.md "Audit result" */},
 
 	// ─── Off-chain centralised exchanges (this package's scope) ─
 	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},

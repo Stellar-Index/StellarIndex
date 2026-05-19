@@ -17,6 +17,31 @@ against.
 
 ### Fixed
 
+- **WASM-history audit: `soroswap-router` PASS → `BackfillSafe:
+  true`; `defindex` FAIL → stays gated; defindex genesis
+  corrected (#6, #28).** The 2026-05-19 r1 wasm-history walk +
+  byte-level disassembly resolved both Phase-A router sources.
+  `soroswap-router`: a single immutable WASM hash
+  (`4c3db3eb...07`) over the contract's entire on-chain life
+  `[50_746_272→tip]`, zero mid-life upgrades, both decoded
+  function exports present, no event surface — `BackfillSafe`
+  flipped `true`. `defindex`: **audit FAILED** — the decoder was
+  written against `paltalabs/defindex` tag `1.0.0` (vault hash
+  `0f3073...8f3a`) but mainnet runs `11329c24...988`, whose
+  deposit/withdraw topic + body schema differ (the
+  `DeFindexVault` topic and every documented body field are
+  absent from the sha256-verified deployed bytes;
+  `aggregator_exposures` is empty on r1, corroborating that live
+  defindex decoding matches nothing). `BackfillSafe` stays
+  `false`; the gate did its job. Re-deriving the decoder from the
+  deployed contract is Task #28. Independently,
+  `sourceGenesisLedger["defindex"]` corrected from the
+  provisional `51_499_545` to the walk-exact factory first-deploy
+  `57_056_338` (#10-class precision; orthogonal to the decoder
+  fault — an honest genesis makes density read correctly, not
+  falsely). Audit logs:
+  `docs/operations/wasm-audits/{soroswap-router,defindex}.md`.
+  Bundles into rc.58.
 - **`CachedCoinsReader` single-asset SWR — fixes `/v1/assets/{id}`
   ~3.9 s (#24).** The coin-extension path was *entirely uncached
   pass-through*: every `/v1/assets/{id}` ran the ~13 s
