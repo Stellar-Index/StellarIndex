@@ -17,6 +17,24 @@ against.
 
 ### Fixed
 
+- **`verify-archive-tier-a.service`: `TimeoutStartSec` 4h → 17h —
+  fixes a bootstrap deadlock that kept
+  `ratesengine_verify_archive_unit_failed` firing permanently.** The
+  binary self-bounds at `-max-runtime` (16h) and only writes the
+  `-from-last-verified` state file on a clean exit; subsequent runs
+  are then incremental (minutes). But systemd's `TimeoutStartSec`
+  was 4h while `-max-runtime` was 16h, so on a fresh deploy / after
+  a state-file loss the bootstrap full pass (~10–14h at 12 workers,
+  state absent → `-from` genesis) was SIGTERM'd at 4h before it
+  could seed state → every run a full pass → permanent failure
+  (true deadlock; the old "4h is plenty for incremental" rationale
+  ignored that the *first* run is always a full pass). Also bumped
+  `Environment=VERIFY_ARCHIVE_MAX_RUNTIME` 4h → 16h to match. r1
+  hot-fixed in place via a drop-in (TimeoutStartSec=17h) +
+  `reset-failed`; the next nightly run bootstraps the state file and
+  it is self-healing thereafter. Operator-copied unit (not in the
+  binary release) — repo is now source-of-truth-correct so R2/R3 /
+  fresh deploys don't reintroduce the deadlock.
 - **`BackfillCoverageStats` is now fail-soft + per-query
   time-bounded — fixes the coverage-cache cold-start hang and a
   primary SLO-burn contributor.** Oracle sources (band / redstone /
