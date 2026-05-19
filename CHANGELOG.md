@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/dev/api-latency-sweep.sh`** — granular latency profiler
+  over the entire anonymous public GET surface (the "kitchen sink"):
+  N samples/endpoint → p50/p95/p99/max, ranked slowest-first,
+  flagged against the RFP SLO (p95 < 200 ms) and a 1 s concern
+  ceiling, exit code = endpoints over the ceiling. Portable
+  (`API_BASE_URL` → run on-host for pure server compute, or from a
+  VPS / against r2/r3 for network + cross-region), `CACHE_BUST=1`
+  exposes uncached cost, `JSON=1` for machine diffing,
+  `--spec-check` diffs coverage against `openapi/…v1.yaml` so it
+  can't rot. Complements `cmd/ratesengine-sla-probe` (focused RFP
+  pass/fail) with a broad diagnostic ranking. First r1 run
+  surfaced `/v1/markets` (~8 s, failing), `/v1/assets/native`
+  (~5 s), `/v1/assets` list cold-refresh stampede (1 ms/3.9 s).
+
 ### Fixed
 
 - **`BackfillCoverageStats` gutted to a no-op — removes the dead
