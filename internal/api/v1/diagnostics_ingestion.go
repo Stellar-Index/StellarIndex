@@ -198,19 +198,33 @@ var sourceGenesisLedger = map[string]int64{
 	"soroswap-router": 50_746_272, // router, +6 ledgers after factory (soroswap.md:236)
 	"aquarius":        52_728_375, // MIN across 313 pools + router
 	"phoenix":         51_572_016, // factory first-deploy
-	"comet":           51_499_545, // Blend backstop pool (only mainnet Comet) (comet.md:158)
-	"blend":           51_499_545, // factory/backstop mainnet rollout
-	"reflector-dex":   50_644_229, // v2 WASM deploy (reflector.md:186)
-	"reflector-cex":   50_644_239, // v2 WASM deploy, +10 after DEX (reflector.md:186)
-	"reflector-fx":    56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
-	"band":            50_842_736, // single stable WASM since 2024-03-19 (band.md:198)
-	"redstone":        58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
-	// PROVISIONAL — defindex per-WASM walk not yet captured
-	// (BackfillSafe=false, audit in_progress: defindex.md, Task
-	// #6). Anchored to the Blend-ecosystem rollout window its
-	// vaults launched in (2025-04-14, ~L51,499,545); erring early
-	// keeps density honest (reads <100% rather than hiding
-	// history) until the exact value lands.
+	// comet ≡ blend genesis is a REAL shared origin, not a
+	// copy-paste: there is no standalone mainnet Comet — the only
+	// mainnet Comet deployment IS Blend's backstop pool, instantiated
+	// in the SAME ledger as Blend's Pool Factory V2 during Blend's
+	// mainnet rollout. Exact instantiation ledger L51,499,546 per
+	// comet.md:157 ("first instantiated by Blend's deploy") and
+	// blend.md:90 ("the factory's deploy ledger (L51,499,546)").
+	// (Was 51_499_545 — that was the walk-JSON from_ledger /
+	// ContractCode-upload boundary, off by one vs the actual
+	// ContractInstance create; corrected under #10 "exact, zero
+	// slack".)
+	"comet":         51_499_546, // Blend backstop pool instantiation (comet.md:157)
+	"blend":         51_499_546, // Pool Factory V2 deploy, same ledger (blend.md:90)
+	"reflector-dex": 50_644_229, // v2 WASM deploy (reflector.md:186)
+	"reflector-cex": 50_644_239, // v2 WASM deploy, +10 after DEX (reflector.md:186)
+	"reflector-fx":  56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
+	"band":          50_842_736, // single stable WASM since 2024-03-19 (band.md:198)
+	"redstone":      58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
+	// PROVISIONAL placeholder — NOT the Blend shared origin above.
+	// defindex is paltalabs' yield aggregator, a separate 2025
+	// protocol; its real first-deploy ledger is unknown until its
+	// wasm-history walk lands (BackfillSafe=false, defindex.md,
+	// Task #6 — walk in progress on r1). Held at a conservative
+	// early anchor so density reads honestly low (never hides
+	// history) until the walk overwrites this with the exact value.
+	// Deliberately distinct from comet/blend so it is not mistaken
+	// for the real Blend-rollout coincidence.
 	"defindex": 51_499_545,
 }
 

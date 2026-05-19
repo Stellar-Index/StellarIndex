@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sourceGenesisLedger`: corrected `comet`/`blend` off-by-one
+  (`51_499_545` → `51_499_546`).** `51_499_545` came from the walk
+  JSON's `from_ledger` (the ContractCode-upload / walker transition
+  boundary); the exact `ContractInstance` instantiation ledger is
+  `L51_499_546` per `comet.md:157` and `blend.md:90`. comet and
+  blend legitimately share this ledger — there is no standalone
+  mainnet Comet; the only mainnet Comet deployment *is* Blend's
+  backstop pool, instantiated in the same ledger as Blend's Pool
+  Factory V2 during Blend's mainnet rollout. Comment expanded so
+  the shared origin reads as intentional, not a copy-paste bug.
+  `defindex` stays a clearly-labelled PROVISIONAL placeholder
+  (separate 2025 protocol; real value pending its in-progress
+  `wasm-history` walk) and is now deliberately distinct from the
+  comet/blend pair so it is not mistaken for the real coincidence.
+
 ## [v0.5.0-rc.56] — 2026-05-19
 
 ### Fixed
