@@ -33,6 +33,28 @@ against.
 
 ### Fixed
 
+- **galexie-archive 23-day mirror stall — healed + scheduled
+  catch-up so it can't silently recur (#26).** r1's durable
+  full-mirror (ADR-0016) had silently fallen ~346 k ledgers /
+  23 days behind (held genesis→`62,296,694`, nothing after
+  2026-04-26): the live appender kept `galexie-live` current but
+  the hardened `galexie-archive-fill` catch-up script (already
+  built + installed) was only ever invoked **by hand** — nothing
+  scheduled it. Healed the gap (`mc mirror` from live, 57.8 GiB,
+  all partitions now complete; aws-public-blockchain is the
+  durable upstream so nothing was at permanent risk, but the
+  full-mirror guarantee was broken and local WASM-walks /
+  backfills past the stall failed). Standing fix:
+  `galexie-archive-fill.{service,timer}` (hourly, oneshot,
+  root for the `local`+`aws-public` mc aliases) — added to
+  `deploy/systemd/` + Ansible
+  (`roles/archival-node/templates/systemd/*.j2` +
+  `tasks/07-galexie.yml`), and installed + enabled + test-fired
+  on r1 immediately (test run: `Result=success`, "needs work
+  (missing): 0"). A stall is now repaired within ~1 h instead of
+  weeks. Defense-in-depth lag alert split to a follow-up.
+  Bundles into rc.58.
+
 - **`/v1/observations` ~8 s → 503 fixed via `CachedHistoryReader`
   SWR (#29).** The status page polls
   `?asset=native&quote=fiat:USD` every ~2 min; that pair has zero
