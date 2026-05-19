@@ -33,6 +33,28 @@ against.
 
 ### Fixed
 
+- **`defindex` decoder re-derived from real on-chain schema —
+  was decoding nothing (#28).** The decoder + its docs/tests were
+  written against `paltalabs/defindex` tag `1.0.0`
+  (`("DeFindexVault",…){depositor,amounts:Vec<i128>,
+  df_tokens_minted}`); mainnet never deployed that. The watched
+  contract addresses run Blend *strategy* code (deployed WASM
+  `11329c24…988`) and emit `("BlendStrategy","deposit"|
+  "withdraw")` with body `ScvMap{from:Address, amount:i128}` —
+  confirmed from real LCM via the new `scan-soroban-events`.
+  Rewrote `internal/sources/defindex/{events,decode,
+  dispatcher_adapter,consumer}.go` to the real schema,
+  **dispatched by topic across every BlendStrategy emitter** (not
+  the mislabeled 3-contract set — comet/aquarius shared-emitter
+  topology, captures all Blend autocompound instances). Deleted
+  the fictional `MainnetVault*` / `MainnetVaultWASMHash` / factory
+  consts; regenerated tests from the real schema (`go test -race`
+  green, incl. the contract-`from` case mainnet actually emits).
+  `BackfillSafe` stays `false` until live-verify on r1 + WASM
+  re-audit vs `11329c24…988` (defindex.md "Resolution"). Source
+  key kept `defindex` (rename to `blend-strategy` deferred —
+  product-taxonomy, not correctness). Bundles into rc.58.
+
 - **WASM-history audit: `soroswap-router` PASS → `BackfillSafe:
   true`; `defindex` FAIL → stays gated; defindex genesis
   corrected (#6, #28).** The 2026-05-19 r1 wasm-history walk +

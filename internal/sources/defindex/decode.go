@@ -3,26 +3,25 @@ package defindex
 import (
 	"fmt"
 
-	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/events"
 	"github.com/RatesEngine/rates-engine/internal/scval"
 )
 
-// classify decides what kind of DeFindex vault event this is.
+// classify decides whether this is a Blend strategy flow event we
+// decode. Topics are 2-tuples:
 //
-// Vault event topics are 2-tuples:
-//
-//	topic[0] = String("DeFindexVault")    — pre-encoded, byte-equal
-//	topic[1] = Symbol("deposit"/"withdraw"/...)
+//	topic[0] = String("BlendStrategy")     — pre-encoded, byte-equal
+//	topic[1] = Symbol("deposit"|"withdraw")
 //
 // Both positions are compared as byte-equal base64 against the
-// constants computed at package init. Returns "" if this isn't an
-// event we decode (the dispatcher's drop-counter handles "" cases).
+// constants computed at package init — no SCVal parsing on the
+// reject path. Returns "" for anything else (the dispatcher's
+// drop-counter handles "" cases: harvest / keeper admin / …).
 func classify(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
 	}
-	if e.Topic[0] != TopicPrefixVault {
+	if e.Topic[0] != TopicPrefixStrategy {
 		return ""
 	}
 	switch e.Topic[1] {
@@ -34,105 +33,67 @@ func classify(e *events.Event) string {
 	return ""
 }
 
-// decodeFlow converts one classified vault event into a VaultFlow.
+// decodeFlow converts one classified strategy event into a
+// StrategyFlow.
 //
-// Body shapes (from `apps/contracts/vault/src/events.rs` at tag 1.0.0):
+// Body shape (verified on-chain via scan-soroban-events — identical
+// for both deposit and withdraw):
 //
-//	deposit  { depositor: Address, amounts: Vec<i128>, df_tokens_minted: i128, ... }
-//	withdraw { withdrawer: Address, amounts_withdrawn: Vec<i128>, df_tokens_burned: i128, ... }
+//	{ from: Address, amount: i128 }
 //
-// Other body fields (`total_supply_before`,
-// `total_managed_funds_before`) describe the pre-state for accurate
-// NAV reconstruction; we ignore them at Phase A and pull only the
-// user-facing dimensions.
-//
-// All fields are pulled by name from the top-level Map per
+// Fields are pulled by name from the top-level Map per
 // docs/architecture/contract-schema-evolution.md's decode-by-name
 // rule — positional decoding would silently break across upgrades.
-func decodeFlow(e *events.Event, kind string) (VaultFlow, error) {
-	if _, ok := MainnetVaults[e.ContractID]; !ok {
-		return VaultFlow{}, fmt.Errorf("%w: %s", ErrUnknownVault, e.ContractID)
-	}
+func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
+		return StrategyFlow{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 
-	// Common header from the wrapping event.
-	flow := VaultFlow{
+	flow := StrategyFlow{
 		Source:     SourceName,
 		Ledger:     e.Ledger,
 		ClosedAt:   closedAt,
 		TxHash:     e.TxHash,
 		OpIndex:    e.OperationIndex,
 		ContractID: e.ContractID,
-		VaultName:  VaultName[e.ContractID],
+	}
+
+	switch kind {
+	case EventDeposit:
+		flow.Direction = DirectionDeposit
+	case EventWithdraw:
+		flow.Direction = DirectionWithdraw
+	default:
+		// Defensive — classify() should have filtered.
+		return StrategyFlow{}, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)
 	}
 
 	body, err := scval.Parse(e.Value)
 	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
+		return StrategyFlow{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
 	}
 	entries, err := scval.AsMap(body)
 	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: body not a Map: %w", ErrMalformedPayload, err)
+		return StrategyFlow{}, fmt.Errorf("%w: body not a Map: %w", ErrMalformedPayload, err)
 	}
 
-	// Per-direction field names.
-	var counterpartyField, amountsField, sharesField string
-	switch kind {
-	case EventDeposit:
-		flow.Direction = DirectionDeposit
-		counterpartyField = "depositor"
-		amountsField = "amounts"
-		sharesField = "df_tokens_minted"
-	case EventWithdraw:
-		flow.Direction = DirectionWithdraw
-		counterpartyField = "withdrawer"
-		amountsField = "amounts_withdrawn"
-		sharesField = "df_tokens_burned"
-	default:
-		// Defensive — classify() should have filtered. Surface as
-		// ErrUnknownEvent so the dispatcher counts it correctly.
-		return VaultFlow{}, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)
+	fromSv, err := scval.MustMapField(entries, "from")
+	if err != nil {
+		return StrategyFlow{}, fmt.Errorf("%w: %s.from: %w", ErrMalformedPayload, kind, err)
+	}
+	flow.From, err = scval.AsAddressStrkey(fromSv)
+	if err != nil {
+		return StrategyFlow{}, fmt.Errorf("%w: %s.from: %w", ErrMalformedPayload, kind, err)
 	}
 
-	cpSv, err := scval.MustMapField(entries, counterpartyField)
+	amountSv, err := scval.MustMapField(entries, "amount")
 	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, counterpartyField, err)
+		return StrategyFlow{}, fmt.Errorf("%w: %s.amount: %w", ErrMalformedPayload, kind, err)
 	}
-	flow.Counterparty, err = scval.AsAddressStrkey(cpSv)
+	flow.Amount, err = scval.AsAmountFromI128(amountSv)
 	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, counterpartyField, err)
-	}
-
-	amountsSv, err := scval.MustMapField(entries, amountsField)
-	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, amountsField, err)
-	}
-	amountVec, err := scval.AsVec(amountsSv)
-	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, amountsField, err)
-	}
-	if len(amountVec) == 0 {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s empty vec", ErrMalformedPayload, kind, amountsField)
-	}
-	flow.Amounts = make([]canonical.Amount, len(amountVec))
-	for i, sv := range amountVec {
-		amt, err := scval.AsAmountFromI128(sv)
-		if err != nil {
-			return VaultFlow{}, fmt.Errorf("%w: %s.%s[%d]: %w", ErrMalformedPayload, kind, amountsField, i, err)
-		}
-		flow.Amounts[i] = amt
-	}
-
-	sharesSv, err := scval.MustMapField(entries, sharesField)
-	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, sharesField, err)
-	}
-	flow.DfTokenDelta, err = scval.AsAmountFromI128(sharesSv)
-	if err != nil {
-		return VaultFlow{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, sharesField, err)
+		return StrategyFlow{}, fmt.Errorf("%w: %s.amount: %w", ErrMalformedPayload, kind, err)
 	}
 
 	return flow, nil
