@@ -27,18 +27,27 @@ against.
   8 s 503/500/empty-200 (live log: a Chrome client, a node client).
   It's a *directory* query, so it now sources the 14-day
   active-pair set + `last_trade_at` + `last_price` from `prices_1d`
-  and the 24 h `trade_count`/`volume_usd` from `prices_1h` (Σ is
-  associative → 24 h totals identical to the prior `prices_1m`
-  FILTER form). **No data/precision loss anywhere data is consumed
-  at resolution** — `prices_1m` and every detail endpoint
+  (cheap — the killer was always the 14 d × 52 k-pair enumeration)
+  and the 24 h `trade_count`/`volume_usd` from `prices_1m`
+  RESTRICTED to the trailing 24 h (chunk-pruned → ~160 ms
+  all-pairs on r1 — fast *and* exact). **Correction (caught
+  pre-deploy by r1 measurement):** an interim variant sourced the
+  24 h figures from `prices_1h` under a "Σ-associative → identical"
+  claim — that is *false* for a rolling, non-hour-aligned 24 h
+  window: prices_1h understated all-pairs 24 h volume **~9 %**
+  ($3.60 B vs prices_1m $3.97 B; boundary + prices_1h refresh-lag).
+  The shipped form keeps the user-facing 24 h figure
+  `prices_1m`-accurate. **No data/precision loss anywhere data is
+  consumed at resolution** — `prices_1m` and every detail endpoint
   (`/history`, `/ohlc`, `/chart`, `/vwap`, `/twap`) are untouched;
   the only change is the listing's `last_trade_at` rounds to the
-  day. Verified on r1 real data: plan cost 330 k → 46 k, raw-scan →
-  `prices_1d`/`prices_1h` index scans, ~8 s+&uncompletable →
-  ~7 s cold / 373 ms warm, results sane & correctly volume-desc
-  ordered (BTC/USDT $1.0 B, ETH/USDT $588 M, …). Keyset cursor /
-  order / `Market` shape preserved byte-for-byte; `count_24h`
-  COALESCE'd to 0 for 24 h-idle pairs (more robust than the prior
+  day (from `prices_1d`). Verified on r1 real data: plan cost
+  330 k → 46 k, raw-scan → `prices_1d` index scan + a ~160 ms
+  `prices_1m`-24 h aggregate, ~8 s+&uncompletable → fast, results
+  sane & correctly volume-desc ordered (BTC/USDT $1.0 B,
+  ETH/USDT $588 M, …). Keyset cursor / order / `Market` shape
+  preserved byte-for-byte; `count_24h` COALESCE'd to 0 for
+  24 h-idle pairs (more robust than the prior
   FILTER-SUM NULL). Takes effect on r1 with the rc.57 deploy;
   end-to-end re-measure via `api-latency-sweep.sh` post-deploy.
 

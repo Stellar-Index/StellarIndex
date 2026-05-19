@@ -616,14 +616,22 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// query reads:
 	//   - active-pair set + last_trade_at + last_price (latest
 	//     within the 14d window) ← prices_1d   (~14 buckets/pair)
-	//   - 24h trade_count + volume_usd          ← prices_1h over the
-	//     trailing 24h (~24 buckets/pair, only 24h-active pairs)
-	// SUM is associative, so the 24h totals are identical to the
-	// prior prices_1m FILTER form (Σ over hourly buckets = Σ over
-	// minute buckets = the 24h total). The ONLY change is
-	// last_trade_at rounds to the day instead of the minute —
-	// immaterial for a directory; the exact ts/price is always on
-	// the detail endpoints. count_24h is COALESCE'd to 0 for
+	//   - 24h trade_count + volume_usd          ← prices_1m
+	//     RESTRICTED to the trailing 24h. Exact + fresh. A rolling
+	//     (non-hour-aligned) 24h window is NOT bucket-additive over
+	//     a coarser CAGG: measured on r1, prices_1h understated the
+	//     all-pairs 24h volume ~9% vs prices_1m ($3.60B vs $3.97B —
+	//     boundary mismatch + prices_1h refresh-lag near the tip).
+	//     The #20 perf problem was ONLY the 14d × ~52k-pair
+	//     enumeration (now on prices_1d); a 24h prices_1m sum is
+	//     chunk-pruned to the last day's chunks → ~160ms all-pairs
+	//     on r1 — fast AND exact, so the user-facing 24h figure
+	//     stays prices_1m-accurate. (Corrects an earlier prices_1h
+	//     variant that shipped a ~9% headline-volume understatement
+	//     under a false "Σ-associative → identical" claim.)
+	// last_trade_at rounds to the day (from prices_1d) — immaterial
+	// for a directory; the exact ts/price is on the detail
+	// endpoints. count_24h is COALESCE'd to 0 for
 	// 14d-active-but-24h-idle pairs (more robust than the prior
 	// FILTER-SUM, which yielded NULL for that case).
 	//
@@ -647,7 +655,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
             SELECT p.base_asset, p.quote_asset,
                    SUM(p.trade_count) AS count_24h,
                    SUM(p.volume_usd)  AS vol_24h_num
-              FROM prices_1h p
+              FROM prices_1m p
              WHERE p.bucket > NOW() - INTERVAL '24 hours'
                AND ($4 = '' OR $4 = ANY(p.sources))
                AND ($5 = '' OR p.base_asset = $5 OR p.quote_asset = $5)
