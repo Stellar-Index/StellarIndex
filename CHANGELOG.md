@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.57] — 2026-05-19
+
 ### Fixed
 
 - **`CachedCoinsReader` stale-while-revalidate — kills the
