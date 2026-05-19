@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.58] — 2026-05-19
+
 ### Added
 
 - **`ratesengine-ops scan-soroban-events` — in-infra ground-truth
