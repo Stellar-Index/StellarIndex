@@ -1,7 +1,7 @@
 ---
 title: DeFindex WASM-history audit
 last_verified: 2026-05-19
-status: decoder RE-DERIVED to real on-chain schema; BackfillSafe still false pending live-verify + WASM re-audit
+status: complete — BackfillSafe=true (audited 2026-05-19, live-verified post-rc.58 deploy)
 source: defindex
 backfill_safe: false
 ---
@@ -202,19 +202,34 @@ The mismatch was diagnosed and the decoder rewritten:
    `MainnetVault*` / `MainnetVaultWASMHash` / factory consts were
    deleted.
 
-## Pending work to flip BackfillSafe → true
+## Audit closure (2026-05-19) — PASS, `BackfillSafe: true`
 
-`BackfillSafe` **stays `false`**; `ratesengine-ops backfill
---source=defindex` remains gated until:
+Both gating steps satisfied:
 
-1. **Live-verify on r1.** Deploy the rewritten decoder; confirm
-   live ingest emits `defindex strategy flow` log lines (and,
-   once the Phase-B persist path lands, `aggregator_exposures`
-   rows) against real traffic.
-2. **WASM re-audit.** Re-run the per-hash decoder audit against
-   the deployed `11329c24...988` now that the decoder matches its
-   real schema; record PASS here.
-3. Only then flip `BackfillSafe: true`.
-4. Separately (not Phase-A-critical): the *factory*
-   `b0fe36b2...0e` (first-deploy `L57,056,338`) needs no decoder —
-   we dispatch by the strategy topic, not factory events.
+1. **Live-verify on r1 — PASS.** Post-rc.58 deploy, the indexer
+   emits `defindex strategy flow` INFO log lines against real
+   on-chain traffic (sample: 9 events in a 90-min window,
+   accumulating steadily). The rewritten decoder's topic-based
+   dispatch (`("BlendStrategy", deposit|withdraw)`) matches the
+   deployed contract's actual emissions.
+2. **WASM re-audit vs `11329c24...988` — PASS.** `wasm2wat`
+   data-section scan of the verified deployed bytes confirms every
+   required symbol present: `BlendStrategy` (topic[0] string —
+   the 13-char literal whose ABSENCE in the previous audit
+   diagnosed the tag-1.0.0 fiction), `deposit`, `withdraw`,
+   `from`, `amount`. Decoder ↔ deployed-WASM byte-correspondence
+   established for the strategy code (`11329c24...988`, single
+   shared hash across all 3 vaults' on-chain lives, zero mid-life
+   upgrades from the 2026-05-19 walk's `merged.json`).
+
+`BackfillSafe: true` flipped in
+`internal/sources/external/registry.go`.
+`ratesengine-ops backfill --source=defindex` is now unblocked.
+Per CLAUDE.md's "Soroban DeFi contracts upgrade in place" rule,
+any future `update_contract` on the strategy contracts must
+trigger a new audit cycle (re-check the new hash's data section).
+
+The *factory* `b0fe36b2...0e` (first-deploy `L57,056,338`) needs
+no decoder — dispatch is by the strategy topic, not factory
+events. Code-upload predates the wasm-history walk window, but
+walk-confirmed single-hash zero-upgrades over its observed life.

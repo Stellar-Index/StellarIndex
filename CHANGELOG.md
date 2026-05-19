@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **`defindex` `BackfillSafe: true`** — audit closed
+  (`docs/operations/wasm-audits/defindex.md` Audit closure).
+  Both gates satisfied post-rc.58: (1) **live-verify PASS** —
+  indexer emits `defindex strategy flow` against real on-chain
+  traffic (accumulating steadily; the rewritten BlendStrategy
+  topic-dispatched decoder matches the deployed contract's actual
+  emissions); (2) **WASM re-audit PASS vs `11329c24…988`** —
+  `wasm2wat` data-section scan confirms every required symbol
+  present (`BlendStrategy`/`deposit`/`withdraw`/`from`/`amount`).
+  Unblocks `ratesengine-ops backfill --source=defindex` (still
+  operator-triggered + zpool-headroom-gated; coordinate with #35
+  Soroban-era backfill resume and #7 LCM-tiering).
+
 ### Fixed
 
 - **`/v1/observations` short-circuit for aggregator-only quotes —
