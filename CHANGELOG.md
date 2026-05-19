@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/issuers` spurious 500 under concurrency (#34).** A
+  client-canceled request mid-`ListIssuers` surfaces from lib/pq as
+  `canceling statement due to user request` (SQLSTATE 57014). The
+  handler checked `handlerTimedOut` but was missing the
+  `clientAborted` guard the canonical pattern (and
+  `handleObservations`) uses — so a client abort fell through to a
+  generic `Issuers list failed` **500** + ERROR log, polluting the
+  5xx rate and SLA availability (it was the sole sla-probe
+  SLA-harness blocker post-#32, ~4 % under the probe's concurrency;
+  external sequential requests were always 200). Added
+  `if clientAborted(r, err) { return }` as the first error check
+  (matches `envelope.go`'s documented ordering). Regression test
+  `TestHandleIssuersList_ClientAbortedNo500`; the existing
+  generic-error→500 test still passes (fix is scoped to client
+  abort only). `go test -race` green.
+
 ## [v0.5.0-rc.58] — 2026-05-19
 
 ### Added

@@ -106,6 +106,18 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	rows, err := s.issuers.ListIssuers(listCtx, limit)
 	if err != nil {
+		if clientAborted(r, err) {
+			// Client went away mid-query — e.g. concurrent callers
+			// (the sla-probe, a browser navigating away) that cancel
+			// in-flight requests. lib/pq surfaces the resulting
+			// context cancellation as `canceling statement due to
+			// user request` (SQLSTATE 57014); that is NOT a server
+			// fault. Return quietly: no ERROR log, no 500 (which
+			// otherwise pollutes the 5xx rate + SLA availability).
+			// Same canonical ordering as handleObservations
+			// (envelope.go clientAborted doc).
+			return
+		}
 		if handlerTimedOut(listCtx, err) {
 			s.logger.Warn("ListIssuers deadline exceeded", "limit", limit)
 			writeProblem(w, r,
