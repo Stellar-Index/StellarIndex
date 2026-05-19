@@ -1,0 +1,28 @@
+# systemd timer: hourly galexie-archive catch-up (#26).
+#
+# Hourly is the deliberate cadence: a stalled archive is then
+# detected+repaired within ~1h instead of the 23 days the original
+# #26 outage went unnoticed. The pull source is aws-public-blockchain
+# (full durable Stellar history), so frequency is not bounded by
+# galexie-live's rolling retention. A normal hour's drift is a
+# handful of partitions and fills in seconds; the cost when there's
+# nothing to do is one cheap partition-list diff.
+#
+# :17 past the hour + jitter keeps it off the :00 boundary (avoids
+# the AWS S3 thundering-herd other cron-aligned jobs create — same
+# rationale as archive-completeness.timer). Persistent=true: if the
+# box was down when it should have fired, run on next boot so a
+# reboot can't silently reopen the gap.
+
+[Unit]
+Description=Hourly galexie-archive catch-up (#26 standing fix)
+Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/galexie-backfill.md
+
+[Timer]
+OnCalendar=*-*-* *:17:00 UTC
+RandomizedDelaySec=180
+Persistent=true
+Unit=galexie-archive-fill.service
+
+[Install]
+WantedBy=timers.target

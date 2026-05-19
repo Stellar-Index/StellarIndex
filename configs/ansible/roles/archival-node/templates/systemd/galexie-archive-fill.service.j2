@@ -1,0 +1,45 @@
+# systemd service: scheduled galexie-archive catch-up.
+#
+# Runs the hardened /usr/local/bin/galexie-archive-fill — the
+# per-partition mirror (aws-public-blockchain → local galexie-archive)
+# that the team already built but, until #26, only ever invoked by
+# hand. galexie-archive silently fell ~23 days / ~346k ledgers behind
+# (2026-04-26 → 2026-05-19) precisely because nothing scheduled this
+# script: the live appender (galexie.service) kept galexie-live
+# current, but the durable full-mirror (ADR-0016) had no recurring
+# catch-up. aws-public-blockchain is the durable upstream so no data
+# was at permanent risk, but the R1 full-mirror guarantee was broken
+# and local WASM-walks / backfills past the stall point failed.
+#
+# Pull source is aws-public (full Stellar history), so this is safe to
+# run as often as the timer fires regardless of galexie-live retention.
+# It mirrors only fully-missing partitions; residual PARTIAL partitions
+# are surfaced by the existing verify-archive Tier A/B timers for
+# operator follow-up (run with PARTIALS=... then). See
+# docs/operations/galexie-backfill.md "mc mirror gotcha".
+#
+# Runs as root: galexie-archive-fill uses the `local` + `aws-public`
+# mc aliases which live in root's ~/.mc/config.json (the galexie
+# service user has no mc config).
+
+[Unit]
+Description=Rates Engine — galexie-archive scheduled catch-up (#26)
+Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/galexie-backfill.md
+After=network-online.target minio.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/galexie-archive-fill
+# A routine hourly drift fills in seconds-minutes; a large catch-up
+# after an outage (e.g. the original ~346k-ledger hole) can run for
+# hours. Cap generously rather than risk a half-mirrored partition
+# from a mid-run kill (the script handles missing partitions cleanly
+# on the next fire anyway).
+TimeoutStartSec=21600
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

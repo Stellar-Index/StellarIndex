@@ -199,3 +199,25 @@
     state: started
     enabled: true
     daemon_reload: true
+
+# #26 standing fix: schedule the hardened galexie-archive-fill so the
+# durable full-mirror (ADR-0016) can never silently fall ~23 days
+# behind again. The script already existed and was installed; it was
+# only ever run by hand. Hourly timer → a stall is repaired within
+# ~1h instead of going unnoticed for weeks.
+- name: Install galexie-archive-fill systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - galexie-archive-fill.service
+    - galexie-archive-fill.timer
+  notify: Reload systemd
+
+- name: Enable + start galexie-archive-fill.timer
+  ansible.builtin.systemd:
+    name: galexie-archive-fill.timer
+    state: started
+    enabled: true
+    daemon_reload: true
