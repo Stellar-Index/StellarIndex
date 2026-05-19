@@ -17,6 +17,28 @@ against.
 
 ### Fixed
 
+- **`coins.go` `xlm_usd` CTE bounded to 24 h — collapses #18 ≡ #21.**
+  The native→USD price CTE in the `/v1/assets/{id}` coins query had
+  **no time predicate** (its `xlm_usd_1h`/`xlm_usd_24h` siblings and
+  the `sources_stats.go` copies were already bounded). With no
+  `bucket` floor TimescaleDB can't chunk-prune, so
+  `ORDER BY bucket DESC LIMIT 1` across 3 quote_assets must consider
+  *every* `prices_1m` chunk (thousands post-backfill). Warm+idle
+  that's ~13 ms, but the all-chunks access pattern degrades badly
+  under concurrent load + cold buffers — **observed ~40 s in
+  `pg_stat_activity` during `/v1/assets/{id}` fan-out** (caught via
+  in-flight sampling), the dominant tax on *every* native→USD price
+  path (assets detail ×3 in the F2 chain, change_24h, market_cap,
+  `/v1/price?asset=native`, network stats). This is the same query
+  #18 logged at ~51 s. Adding `AND bucket >= now() - INTERVAL
+  '24 hours'` chunk-prunes it to ~1 day (~2–3 ms, resilient under
+  load) **and is more correct** — the unbounded form could surface
+  a days-stale vwap as the *current* price; XLM/USDC trades every
+  minute so a 24 h floor never realistically misses the latest.
+  Surgical one-clause change; mirrors the already-bounded
+  `sources_stats.go` CTE. Verified on r1; re-measure end-to-end via
+  `api-latency-sweep.sh` post rc.57.
+
 - **`/v1/markets` no longer 8 s-times-out / 503s — `distinctPairsCommon`
   reads right-granularity CAGGs (#20).** The query that powers
   `/v1/markets` (+ `?source=` / `?asset=` variants) aggregated
