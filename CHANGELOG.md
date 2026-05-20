@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.60] — 2026-05-20
+
 ### Added
 
 - **`ratesengine-ops trim-galexie-archive` operator (#7
