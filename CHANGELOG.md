@@ -17,6 +17,30 @@ against.
 
 ### Added
 
+- **`ratesengine-ops rehydrate-galexie-archive` operator (#7
+  implementation step 2a — first half of ADR-0027 §Step 2).**
+  Non-destructive subcommand that copies LCM files for a ledger
+  range from the configured cold tier (`storage.s3_cold_*`) back
+  into the local hot tier (`storage.s3_bucket_archive` MinIO
+  bucket). Idempotent via `PutFileIfNotExists` — files already
+  present in hot are skipped, not refetched. `-dry-run` reports
+  the file list + skipped / would-copy / missing-in-cold counts
+  without writing. Use cases: recover from accidental trim,
+  pre-warm hot before a planned backfill, cold-tier integrity
+  spot check (the `missing_in_cold` counter surfaces files that
+  genuinely never landed upstream). Refuses to run when cold tier
+  isn't configured. The path-enumeration logic uses the SDK's
+  `DataStoreSchema.GetObjectKeyFromSequenceNumber` + steps by
+  `LedgersPerFile` so each schema-aligned file is visited once;
+  a defensive fallback handles `LedgersPerFile == 0` (a
+  malformed schema would otherwise infinite-loop). Tests cover:
+  alignment of `-from` down to file boundary, no-duplicates,
+  zero-LPF fallback, single-LPF (the Galexie default), flag
+  parsing (4 cases). The destructive **trim** operator (the
+  second half of §Step 2) follows in a separate commit — it
+  needs delete capability which the SDK's `datastore.DataStore`
+  doesn't expose, so it'll wire AWS SDK v2's `s3.Client`
+  directly.
 - **`StorageConfig` cold-tier fields + `LedgerstreamConfig` wires
   them (#7 implementation step 1c).** New TOML fields in
   `[storage]`: `s3_cold_endpoint`, `s3_cold_region`,

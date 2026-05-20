@@ -188,6 +188,11 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 			fmt.Fprintf(os.Stderr, "backfill: %v\n", err)
 			os.Exit(1)
 		}
+	case "rehydrate-galexie-archive":
+		if err := rehydrateGalexieArchive(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rehydrate-galexie-archive: %v\n", err)
+			os.Exit(1)
+		}
 	case "seed-soroswap-pairs":
 		if err := seedSoroswapPairs(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "seed-soroswap-pairs: %v\n", err)
@@ -586,6 +591,24 @@ Subcommands:
                           history + any crash drift. Run ONCE post-
                           backfill (scans every trades chunk). Idempotent
                           — SETs not ADDs, so re-running converges.
+  rehydrate-galexie-archive -config PATH -from N -to N [-dry-run]
+                          Per ADR-0027 §Step 2: copy LCM files for the
+                          ledger range [-from, -to] from the configured
+                          cold tier (storage.s3_cold_*; production is the
+                          aws-public-blockchain bucket) back into the
+                          local hot tier (storage.s3_bucket_archive on
+                          MinIO). Idempotent — uses PutFileIfNotExists,
+                          so files already present in hot are skipped.
+                          -dry-run reports the file list + skipped vs
+                          would-copy counts without writing.
+                          Use cases:
+                            * recover from accidental trim;
+                            * pre-warm hot before a planned backfill;
+                            * cold-tier integrity spot check (surfaces
+                              files missing in cold via the
+                              missing_in_cold counter).
+                          Refuses to run if cold tier is not configured
+                          (cfg.Storage.ColdTieringEnabled() == false).
   mint-key -config PATH -identifier ID -label LABEL [-tier T] [-rate-limit-per-min N] [-expires-in DUR]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path
