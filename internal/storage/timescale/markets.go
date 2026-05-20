@@ -265,31 +265,32 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 }
 
 func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
-	// vol_24h derives per-(source, base, quote) USD volume directly
-	// from the trades hypertable rather than reading prices_1m's
-	// per-(base, quote) totals. Two reasons:
+	// Pre-#25 this query scanned the trades hypertable three times:
+	// once for the vol_24h CTE (24h SUM grouped by source+pair),
+	// once for the last_px CTE (DISTINCT ON per-source latest price),
+	// and once for the outer FROM trades enumeration (14d window
+	// LEFT JOINing both CTEs). Measured 8-30s on a populated 2.7B-
+	// row hypertable; #23 wrapped the result in stale-while-
+	// revalidate so user requests stayed sub-ms warm but cold-fill
+	// + the background refresh both paid the full cost.
 	//
-	//   1. Per-source attribution. Two DEXes trading the same (base,
-	//      quote) pair (rare in practice — sdex uses classic credit
-	//      assets, Soroban DEXes use SAC contract addresses — but
-	//      possible) get their own slice rather than the cross-source
-	//      sum.
-	//   2. XLM-side fallback for Soroban trades. Phoenix / Aquarius /
-	//      Comet trades against the XLM SAC wrapper
-	//      (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA)
-	//      have NULL `usd_volume` because the operator's USD-pegged
-	//      allow-list (Phase 1 of the L2.2 path) doesn't include XLM
-	//      itself. We derive USD volume from base_amount × XLM/USD
-	//      when XLM is on the base side, or quote_amount × XLM/USD
-	//      when XLM is on the quote side. The XLM/USD price comes
-	//      from the same on-chain XLM/USDC vwap that powers
-	//      coins.go's xlm_usd CTE — single source of truth for the
-	//      stablecoin-proxy policy.
+	// Post-#25 every read collapses into a single scan of the
+	// pools_per_source_1h continuous aggregate (migration 0036).
+	// One row per (source, base, quote, 1h bucket) holds
+	// SUM(usd_volume) split by Phase-1-priced vs needs-XLM-fallback,
+	// COUNT(*), and last(quote_amount/base_amount, ts). The
+	// `pools` CTE re-aggregates those hourly rows over the 14d
+	// window with FILTER clauses pulling the 24h slice for
+	// vol_24h_usd + count_24h. Trade-off: last_trade_at lags by up
+	// to one refresh interval (5 min) — acceptable for a pools
+	// discovery surface.
 	//
-	// Trades that are neither already-priced (Phase 1) nor have an
-	// XLM leg stay NULL in vol_usd — pure SEP-41/SEP-41 token
-	// swaps need real per-token USD oracles, which is a separate
-	// piece of work (see CHANGELOG #72).
+	// XLM-fallback semantics preserved exactly: priced trades
+	// contribute their stored usd_volume; unpriced trades with an
+	// XLM leg contribute base_amount × XLM/USD (or quote_amount
+	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (the
+	// pre-#25 query returned NULL; the handler scan collapses
+	// NULL and "0" identically, so functionally equivalent).
 	cte := `
         WITH xlm_usd AS (
           SELECT vwap
@@ -305,60 +306,31 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
            ORDER BY bucket DESC
            LIMIT 1
         ),
-        vol_24h AS (
-          SELECT t.source, t.base_asset, t.quote_asset,
-                 SUM(
-                   CASE
-                     WHEN t.usd_volume IS NOT NULL
-                       THEN t.usd_volume::numeric
-                     -- XLM SAC or native on the base side: use
-                     -- base_amount × XLM/USD (classic 7-decimal
-                     -- scale; SEP-41 token decimals only matter
-                     -- for the OTHER side, which we're not pricing).
-                     WHEN t.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-                       THEN (t.base_amount / 1e7) * (SELECT vwap FROM xlm_usd)
-                     -- XLM SAC or native on the quote side: use
-                     -- quote_amount × XLM/USD.
-                     WHEN t.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-                       THEN (t.quote_amount / 1e7) * (SELECT vwap FROM xlm_usd)
-                     ELSE NULL
-                   END
-                 )::text AS vol_usd
-            FROM trades t
-           WHERE t.ts >= NOW() - INTERVAL '24 hours'
-           GROUP BY t.source, t.base_asset, t.quote_asset
-        )
-        ,
-        last_px AS (
-          -- Most recent non-null per-(source, base, quote) price
-          -- from the trades hypertable. Pools-side (per-source)
-          -- analogue of the cross-source last_px CTE used by
-          -- buildDistinctPairsQuery — note we read directly from
-          -- trades because prices_1m collapses across sources.
-          SELECT DISTINCT ON (source, base_asset, quote_asset)
-                 source, base_asset, quote_asset,
-                 (quote_amount::numeric / NULLIF(base_amount::numeric, 0))::text AS last_px
-            FROM trades
-           WHERE ts >= NOW() - INTERVAL '24 hours'
-             AND base_amount IS NOT NULL AND base_amount <> 0
-             AND quote_amount IS NOT NULL
-           ORDER BY source, base_asset, quote_asset, ts DESC
-        )
-        SELECT t.source, t.base_asset, t.quote_asset,
-               MAX(t.ts) AS last_trade_at,
-               count(*) FILTER (WHERE t.ts > NOW() - INTERVAL '24 hours') AS count_24h,
-               v.vol_usd AS vol_24h_usd,
-               lp.last_px AS last_price
-          FROM trades t
-          LEFT JOIN vol_24h v
-            ON v.source = t.source
-           AND v.base_asset = t.base_asset
-           AND v.quote_asset = t.quote_asset
-          LEFT JOIN last_px lp
-            ON lp.source = t.source
-           AND lp.base_asset = t.base_asset
-           AND lp.quote_asset = t.quote_asset
-         WHERE t.ts >= $1
+        pools AS (
+          SELECT
+            p.source, p.base_asset, p.quote_asset,
+            MAX(p.bucket_last_ts) AS last_trade_at,
+            COALESCE(SUM(p.trade_count)
+                     FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) AS count_24h,
+            (
+              COALESCE(SUM(p.sum_usd_priced)
+                       FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0)
+              +
+              CASE
+                WHEN p.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                  THEN COALESCE(SUM(p.sum_base_unpriced)
+                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7
+                       * COALESCE((SELECT vwap FROM xlm_usd), 0)
+                WHEN p.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                  THEN COALESCE(SUM(p.sum_quote_unpriced)
+                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7
+                       * COALESCE((SELECT vwap FROM xlm_usd), 0)
+                ELSE 0
+              END
+            )::text AS vol_24h_usd,
+            last(p.bucket_last_price, p.bucket_last_ts)::text AS last_price
+          FROM pools_per_source_1h p
+         WHERE p.bucket >= $1
     `
 	// $4 sources, $5 base, $6 quote, $7 asset are always bound;
 	// empty values short-circuit each predicate so the planner
@@ -372,35 +344,39 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// firing two parallel `?base=` + `?quote=` requests and
 	// merging client-side.
 	cte += `
-           AND (cardinality($4::text[]) = 0 OR t.source = ANY($4))
-           AND ($5 = '' OR t.base_asset = $5)
-           AND ($6 = '' OR t.quote_asset = $6)
-           AND ($7 = '' OR t.base_asset = $7 OR t.quote_asset = $7)
+           AND (cardinality($4::text[]) = 0 OR p.source = ANY($4))
+           AND ($5 = '' OR p.base_asset = $5)
+           AND ($6 = '' OR p.quote_asset = $6)
+           AND ($7 = '' OR p.base_asset = $7 OR p.quote_asset = $7)
+         GROUP BY p.source, p.base_asset, p.quote_asset
+        )
     `
 	if order == MarketsOrderVolume24hDesc {
 		const tail = `
-		 GROUP BY t.source, t.base_asset, t.quote_asset, v.vol_usd, lp.last_px
-		HAVING $2 = ''
-		    OR COALESCE(v.vol_usd::numeric, 0)
-		         <  CAST(NULLIF(split_part($2, ':', 1), '') AS numeric)
-		    OR (
-		         COALESCE(v.vol_usd::numeric, 0)
-		         =  CAST(COALESCE(NULLIF(split_part($2, ':', 1), ''), '0') AS numeric)
-		         AND (t.source || '|' || t.base_asset || '|' || t.quote_asset)
-		             > substring($2 from position(':' in $2) + 1)
-		       )
-		 ORDER BY COALESCE(v.vol_usd::numeric, 0) DESC,
-		          (t.source || '|' || t.base_asset || '|' || t.quote_asset) ASC
-		 LIMIT $3
+		 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price
+		   FROM pools
+		  WHERE $2 = ''
+		     OR COALESCE(vol_24h_usd::numeric, 0)
+		          <  CAST(NULLIF(split_part($2, ':', 1), '') AS numeric)
+		     OR (
+		          COALESCE(vol_24h_usd::numeric, 0)
+		          =  CAST(COALESCE(NULLIF(split_part($2, ':', 1), ''), '0') AS numeric)
+		          AND (source || '|' || base_asset || '|' || quote_asset)
+		              > substring($2 from position(':' in $2) + 1)
+		        )
+		  ORDER BY COALESCE(vol_24h_usd::numeric, 0) DESC,
+		           (source || '|' || base_asset || '|' || quote_asset) ASC
+		  LIMIT $3
 		`
 		args := []any{since, cursor, limit + 1, pq.Array(filter.Sources), filter.Base, filter.Quote, filter.Asset}
 		return cte + tail, args
 	}
 	const tail = `
-	   AND ($2 = '' OR (t.source || '|' || t.base_asset || '|' || t.quote_asset) > $2)
-	 GROUP BY t.source, t.base_asset, t.quote_asset, v.vol_usd, lp.last_px
-	 ORDER BY (t.source || '|' || t.base_asset || '|' || t.quote_asset) ASC
-	 LIMIT $3
+	 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price
+	   FROM pools
+	  WHERE ($2 = '' OR (source || '|' || base_asset || '|' || quote_asset) > $2)
+	  ORDER BY (source || '|' || base_asset || '|' || quote_asset) ASC
+	  LIMIT $3
 	`
 	// 7 args matching the $1..$7 placeholders. The asset arg was
 	// missing pre-fix, causing `pq: got 6 parameters but the
