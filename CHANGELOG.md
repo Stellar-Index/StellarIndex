@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Prewarm extended to verified-currency canonical asset_ids
+  (#37 follow-up).** Real measurement on r1 post-rc.60:
+  `/v1/assets/usdc` (slug form) was 144ms but
+  `/v1/assets/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`
+  (canonical form) was **3.3s** — same underlying
+  `getCoinBySlugSQL`, but the canonical form missed cache because
+  prewarmLight only warmed `ListCoinsExt` + `GetNativeCoinRow`.
+  Programmatic clients + the explorer's drill-out paths navigate
+  by canonical asset_id, so this was the dominant user-visible
+  slowness post-rc.59's native-only prewarm. Fix: catalogue load
+  moved BEFORE the prewarm goroutine; `prewarmCaches` +
+  `prewarmLight` now take a `[]string verifiedAssetIDs` extracted
+  from the catalogue (each Stellar-network entry's `AssetID`,
+  excluding native + empty). Each entry feeds a
+  `coins.GetCoinByAssetID` call alongside the existing
+  `GetNativeCoinRow`. Drift-safe — `GetCoinByAssetID` is the
+  exact reader the `/v1/assets/{id}` handler calls
+  (`assets_coin_extension.go:215`); same wire path = same cache
+  key.
+
 ## [v0.5.0-rc.60] — 2026-05-20
 
 ### Added
