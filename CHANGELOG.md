@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **`buildPoolsQuery` reads from `pools_per_source_1h` (#25 phase
+  2).** Replaces three trades-hypertable scans (vol_24h CTE,
+  last_px DISTINCT-ON CTE, outer FROM trades) with a single CAGG
+  scan + GROUP BY. The XLM-fallback semantics for unpriced trades
+  are preserved exactly (priced trades contribute their stored
+  `usd_volume`; trades with an XLM leg fall back to
+  `base_amount × XLM/USD` or `quote_amount × XLM/USD`; pure-token-
+  token unpriced trades contribute 0 — pre-#25 returned NULL, but
+  the handler scan collapsed NULL and "0" identically, so client-
+  visible behaviour unchanged). Trade-off: `last_trade_at` lags by
+  up to one CAGG refresh interval (5 min); acceptable for a pools
+  discovery surface. After this commit ships, #23's
+  `CachedMarketsReader` SWR layer becomes a latency nicety rather
+  than load-bearing — refresh fills stop paying the 8-30s trades-
+  scan cost. Integration test bootstrap force-refreshes the new
+  CAGG alongside `prices_1m`. **Operator note:** the CAGG was
+  created `WITH NO DATA` in migration 0036; the 5-minute policy
+  only refreshes the last 7 days. Run
+  `CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`
+  once on r1 after the 0036 migration applies, to backfill the
+  14d-window's historical buckets so /v1/pools sees the full pool
+  set immediately rather than ramping up over a week.
+
 ### Added
 
 - **Per-source pools continuous aggregate — `pools_per_source_1h`

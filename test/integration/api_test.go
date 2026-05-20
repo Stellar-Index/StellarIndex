@@ -73,6 +73,16 @@ func TestAPI_EndToEnd(t *testing.T) {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
 
+	// Same force-refresh for pools_per_source_1h (migration 0036 —
+	// the durable backing for /v1/pools post-#25). Without this the
+	// AllPools sub-test sees an empty CAGG and returns zero rows for
+	// the seeded trades.
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`,
+	); err != nil {
+		t.Fatalf("refresh pools_per_source_1h: %v", err)
+	}
+
 	// Build the same v1.Server the ratesengine-api binary builds —
 	// minus the adapters we don't need here.
 	srv := v1.New(v1.Options{
