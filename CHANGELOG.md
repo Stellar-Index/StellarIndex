@@ -132,6 +132,22 @@ against.
 
 ### Docs
 
+- **`docs/operations/lcm-cache-tiering.md` — operator runbook for
+  ADR-0027 §Steps 3-5 (#7 implementation companion).** Step-by-
+  step playbook for the operator-gated transition: TOML flag-flip
+  (Step 3), first bulk trim with chunked 1M-ledger invocations
+  + per-chunk pool monitoring (Step 4), and the monthly cadence
+  caveat (Step 5 — timer not yet shipped, pending an
+  `--older-than-duration` mode that resolves tip at run time).
+  Includes pre-flight checklist, cutoff-ledger computation
+  formula (`TIP - 90 × 17280`), rollback playbook via the
+  rehydrate operator, and a "common failure modes" catalogue
+  (cold tier check fails, `cold.Exists` warnings, pool capacity
+  rise during trim, indexer `cold.GetFile` errors). Metrics
+  reference points operators at
+  `ratesengine_ledgerstream_tier_read_total{outcome=...}` and
+  `ratesengine_ledgerstream_cold_read_duration_seconds` for
+  real-time visibility.
 - **ADR-0027 (Proposed): LCM cache tiering — local
   galexie-archive as hot, `aws-public-blockchain` as cold (#7
   design pass).** R1's ZFS pool is at 93% (12.5 TB used, 1.35 TB
