@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Docs
+
+- **ADR-0027 (Proposed): LCM cache tiering — local
+  galexie-archive as hot, `aws-public-blockchain` as cold (#7
+  design pass).** R1's ZFS pool is at 93% (12.5 TB used, 1.35 TB
+  free) with the 2026-05-17 SEV showing what structural-tight
+  headroom costs. The biggest single tier-able lever is the
+  4.96 TB `data/minio` dataset (mostly galexie-archive's
+  genesis→tip LCM mirror); the AWS Open Data Sponsorship publishes
+  the same data at sub-15ms for in-region readers and ~80 ms per-
+  GET (amortised over 64-ledger partitions) for r1. ADR proposes a
+  90 d hot window in local galexie-archive with cold reads
+  falling back to AWS, a HEAD-verify-before-delete trim operator
+  (`ratesengine-ops trim-galexie-archive`), and a five-step
+  rollout that lands the dual-source read path under a feature
+  flag before any deletion happens. Recovers ~3-4 TB at the 90 d
+  cutoff, unblocking #30 (composite index on the 2.7B-row
+  trades hypertable) and #35 (the SEV-frozen Soroban-era
+  backfill resume). History-archive offload + galexie-live
+  promotion-cadence tuning + PostgreSQL chunk retention beyond
+  current policy are explicitly out of scope as separate ADRs.
+
 ### Changed
 
 - **`buildPoolsQuery` reads from `pools_per_source_1h` (#25 phase
