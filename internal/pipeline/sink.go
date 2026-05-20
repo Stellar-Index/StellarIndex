@@ -147,7 +147,10 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		// trades.routed_via and (TBD) write to a dedicated
 		// router_swaps table. Until then this just records the
 		// dispatcher correctly routed the call so operators can
-		// validate via journal.
+		// validate via journal. Counter bump surfaces decoded
+		// activity on /v1/diagnostics/ingestion's `entries` even
+		// without a per-protocol storage table.
+		bumpEntryCount(ctx, logger, store, soroswap_router.SourceName)
 		logger.Info("soroswap-router swap routed",
 			"source", soroswap_router.SourceName,
 			"tx_hash", e.Swap.TxHash,
@@ -164,7 +167,10 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		// aggregator_exposures hypertable from a separate periodic
 		// ticker. Until then we emit one INFO line per strategy flow
 		// so operators can verify the dispatcher routes BlendStrategy
-		// events correctly via the journal.
+		// events correctly via the journal. Counter bump as for
+		// soroswap-router above — surfaces decoded activity on
+		// /v1/diagnostics/ingestion's `entries`.
+		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		logger.Info("defindex strategy flow",
 			"source", defindex.SourceName,
 			"tx_hash", e.Flow.TxHash,
@@ -284,6 +290,7 @@ func persistBlendNewAuction(ctx context.Context, logger *slog.Logger, store *tim
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend new_auction ingested",
 		"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 		"percent", e.Percent, "ledger", e.Ledger)
@@ -297,6 +304,7 @@ func persistBlendFillAuction(ctx context.Context, logger *slog.Logger, store *ti
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend fill_auction ingested",
 		"pool", e.Pool, "user", e.User, "filler", e.Filler,
 		"fill_percent", e.FillPercent, "ledger", e.Ledger)
@@ -310,9 +318,26 @@ func persistBlendDeleteAuction(ctx context.Context, logger *slog.Logger, store *
 			"ledger", e.Ledger, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend delete_auction ingested",
 		"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 		"ledger", e.Ledger)
+}
+
+// bumpEntryCount is the shared 'entries' counter increment used by
+// every sink whose decoded events don't ride the trades + oracle_updates
+// per-insert bump path (those tables have their counter bump inlined
+// in the INSERT). Surfaces source-attributed protocol activity on
+// /v1/diagnostics/ingestion's `entries` column for the broader set
+// of sources (blend lending, soroswap-router + defindex log-only
+// sinks). Errors are logged at Warn — a failed bump doesn't fail
+// the underlying decode/persist; the operator's periodic
+// `ratesengine-ops seed-entry-counts` reconciles drift.
+func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.Store, source string) {
+	if err := store.BumpSourceEntryCount(ctx, source, 1); err != nil {
+		logger.Warn("bump source entry count failed",
+			"source", source, "err", err)
+	}
 }
 
 func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o accounts.Observation) {

@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`entries` counter now tracks total protocol activity, not just
+  trades.** User-reported: `/v1/diagnostics/ingestion` showed 0
+  entries for **blend** (writes to `blend_auctions`, not `trades`),
+  **defindex** (Phase A log-only sink — no storage table),
+  **soroswap-router** (same — log-only). Root cause:
+  `SeedSourceEntryCounts` only UNION-ALL'd over `trades` +
+  `oracle_updates`. Three-part fix:
+  (1) `SeedSourceEntryCounts` query extended to also UNION
+  `blend_auctions` (literal source `'blend'`) and `fx_quotes`
+  (its nullable source column COALESCE'd to `'unknown-fx'` so
+  unlabelled rows still surface rather than vanish). (2) New
+  `Store.BumpSourceEntryCount(ctx, source, n)` method — single
+  UPSERT with `ON CONFLICT DO UPDATE SET entry_count =
+  entry_count + EXCLUDED.entry_count`. Cheap enough for per-event
+  use on low-volume sinks. (3) `sink.go` wires the bump into
+  every Phase A log-only case (soroswap-router, defindex) and
+  every blend-auction persister (new / fill / delete). Shared
+  helper `bumpEntryCount` logs failures at Warn — bump errors
+  don't fail the underlying decode (operator's
+  `ratesengine-ops seed-entry-counts` reconciles drift). Other
+  observer-driven sinks (account_observations,
+  classic_supply_*, sep41_supply_events) are surfaced via the
+  supply-observer pages per ADR-0023, not source-attributed
+  entries — documented in the updated seed-query comment.
+
 ### Added
 
 - **`internal/sources/cctp` decoder for Circle CCTP v2 events

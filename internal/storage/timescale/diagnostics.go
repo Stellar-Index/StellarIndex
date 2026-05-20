@@ -392,17 +392,44 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 }
 
 // SeedSourceEntryCounts authoritatively recomputes source_entry_counts
-// from a full GROUP BY over `trades` + `oracle_updates` and overwrites
-// the tally (SET, not ADD — so re-running converges). Returns the
-// number of source rows reconciled.
+// from a full GROUP BY over EVERY decoded-event hypertable and
+// overwrites the tally (SET, not ADD — so re-running converges).
+// Returns the number of source rows reconciled.
 //
 // This is the heavy reconciliation the writers' incremental bump can
 // never do on its own (a fresh counter doesn't know pre-counter
 // history). Operator one-shot via `ratesengine-ops seed-entry-counts`
-// — run post-backfill: the GROUP BY scans every trades chunk in one
+// — run post-backfill: the GROUP BY scans every relevant chunk in one
 // transaction (fine within the 4096 max_locks budget, slow + IO-hungry
-// mid-backfill). A source appears once even if it somehow wrote to
-// both tables (sum over the UNION ALL).
+// mid-backfill).
+//
+// Tables covered (per "entries = total decoded protocol activity"):
+//
+//	trades                         — DEX swap + CEX trade events (sources:
+//	                                 soroswap, phoenix, aquarius, comet,
+//	                                 sdex, binance, kraken, …).
+//	oracle_updates                 — oracle publications (band, redstone,
+//	                                 reflector-{dex,cex,fx}, chainlink).
+//	fx_quotes                      — off-chain FX (ecb, frankfurter,
+//	                                 exchangeratesapi, polygonforex,
+//	                                 coingecko-fx, …).
+//	blend_auctions                 — Blend lending auctions; implicit
+//	                                 source 'blend' (no source column).
+//
+// Sources whose Phase A sink is log-only (soroswap-router, defindex)
+// have no storage table; the counter for those is bumped directly in
+// the sink case via Store.BumpSourceEntryCount, so they're picked up
+// in the steady-state bump path but NOT by this seed reconciliation.
+// A re-seed will RESET their counts to 0 because there's no table to
+// recompute from — until a per-protocol log-table lands or the sink
+// gains a dedicated tally hypertable, operators must NOT seed-reset
+// router/defindex counts.
+//
+// Other decoded-event sinks (account_observations, classic_supply_*,
+// sep41_supply_events) are observer-driven, not source-attributed —
+// they're surfaced via the supply-observer surfaces, not source
+// entries. See ADR-0023 (SEP-41 supply observer) for the observer
+// reporting model.
 func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 	const q = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
@@ -411,6 +438,18 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
             SELECT source, count(*) AS c FROM trades         GROUP BY source
             UNION ALL
             SELECT source, count(*) AS c FROM oracle_updates GROUP BY source
+            UNION ALL
+            -- fx_quotes.source is nullable; coalesce to 'unknown-fx'
+            -- so rows that landed without a source label still get
+            -- accounted for and surface the gap rather than vanishing.
+            SELECT COALESCE(source, 'unknown-fx') AS source, count(*) AS c
+              FROM fx_quotes GROUP BY 1
+            UNION ALL
+            -- Blend writes lending events to blend_auctions; no
+            -- per-row source column (the table is single-source by
+            -- construction). Literal 'blend' here matches the
+            -- registry SourceName.
+            SELECT 'blend' AS source, count(*) AS c FROM blend_auctions
         ) u
         GROUP BY source
         ON CONFLICT (source) DO UPDATE
@@ -423,4 +462,34 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+// BumpSourceEntryCount increments the running entry tally for one
+// source by n. Idempotent under ON CONFLICT — the first writer for
+// a source creates the row, subsequent writers ADD. Used by:
+//
+//   - per-table insert paths (trades, oracle_updates, blend_auctions,
+//     fx_quotes) — usually n = batch size after a multi-row INSERT.
+//   - log-only sinks (soroswap-router, defindex) — n = 1 per
+//     decoded event in the dispatcher → sink hand-off, since there's
+//     no Postgres table to seed-reconcile from.
+//
+// The bump is a single UPSERT — cheap enough for per-event use on
+// the low-volume log-only sinks (router + defindex emit handfuls
+// per minute at steady state).
+func (s *Store) BumpSourceEntryCount(ctx context.Context, source string, n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	const q = `
+        INSERT INTO source_entry_counts (source, entry_count, updated_at)
+        VALUES ($1, $2, now())
+        ON CONFLICT (source) DO UPDATE
+          SET entry_count = source_entry_counts.entry_count + EXCLUDED.entry_count,
+              updated_at  = EXCLUDED.updated_at
+    `
+	if _, err := s.db.ExecContext(ctx, q, source, n); err != nil {
+		return fmt.Errorf("timescale: BumpSourceEntryCount(%s, %d): %w", source, n, err)
+	}
+	return nil
 }
