@@ -624,19 +624,50 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	cachedSourcesStats := v1.NewCachedSourcesStatsReader(store, 10*time.Minute)
 	cachedMarketsReader := v1.NewCachedMarketsReader(marketsReader, 2*time.Minute)
 	cachedCoinsReader := v1.NewCachedCoinsReader(store, 2*time.Minute)
-	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedCoinsReader)
 
 	usdPegs := parseUSDPeggedClassics(cfg.Trades.USDPeggedClassicAssets, logger)
 
 	// Load the verified-currency catalogue (R-018 Phase 1.1).
 	// Failure here is fatal — the seed YAML is embedded; a parse
 	// error means a code change broke the build artifact, not an
-	// operator misconfiguration.
+	// operator misconfiguration. Loaded BEFORE the prewarm goroutine
+	// because prewarmCaches now uses it to extend canonical
+	// asset_id prewarming (pre-2026-05-20 the catalogue was loaded
+	// after the goroutine kicked off, so prewarmLight only knew
+	// about native; every other canonical-form asset_id lookup
+	// missed cache and paid the ~3s getCoinBySlugSQL cold cost).
 	verifiedCurrencies, err := currency.LoadEmbedded()
 	if err != nil {
 		return fmt.Errorf("load verified-currency catalogue: %w", err)
 	}
 	logger.Info("verified-currency catalogue loaded", "entries", len(verifiedCurrencies.All()))
+
+	// Extract the Stellar-network canonical asset_ids the verified-
+	// currency catalogue points at. Each entry feeds an additional
+	// GetCoinByAssetID prewarm call so a programmatic client hitting
+	// /v1/assets/USDC-GA5Z…, /v1/assets/EURC-GDH…, etc. lands on a
+	// warm cache instead of cold-filling the heavy
+	// `listCoinsBaseSelect` whole-asset-universe CTE chain on every
+	// canonical-form request. Excludes native (already prewarmed by
+	// the GetNativeCoinRow path) and empty AssetIDs (the rare
+	// off-Stellar networks where a verified currency exists but has
+	// no Stellar issuance yet).
+	var verifiedAssetIDs []string
+	for _, vc := range verifiedCurrencies.All() {
+		for _, ne := range vc.Networks {
+			if ne.Network != "stellar" {
+				continue
+			}
+			if ne.AssetID == "" || ne.AssetID == "native" {
+				continue
+			}
+			verifiedAssetIDs = append(verifiedAssetIDs, ne.AssetID)
+		}
+	}
+	logger.Info("prewarm: verified canonical asset_ids extracted",
+		"count", len(verifiedAssetIDs))
+
+	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedCoinsReader, verifiedAssetIDs)
 
 	// Process-local CG market_cap cache + background refresher.
 	// Populates market_cap_usd for catalogue crypto + stablecoin
@@ -2631,6 +2662,7 @@ func prewarmCaches(
 	stats *v1.CachedSourcesStatsReader,
 	markets *v1.CachedMarketsReader,
 	coins *v1.CachedCoinsReader,
+	verifiedAssetIDs []string,
 ) {
 	heavyCadence := 5 * time.Minute
 	lightCadence := 60 * time.Second
@@ -2638,7 +2670,7 @@ func prewarmCaches(
 	// Fire both immediately on startup so the first user request
 	// after a binary restart hits a warm cache.
 	prewarmHeavy(ctx, logger, stats)
-	prewarmLight(ctx, logger, markets, coins)
+	prewarmLight(ctx, logger, markets, coins, verifiedAssetIDs)
 
 	heavyTick := time.NewTicker(heavyCadence)
 	defer heavyTick.Stop()
@@ -2652,7 +2684,7 @@ func prewarmCaches(
 		case <-heavyTick.C:
 			prewarmHeavy(ctx, logger, stats)
 		case <-lightTick.C:
-			prewarmLight(ctx, logger, markets, coins)
+			prewarmLight(ctx, logger, markets, coins, verifiedAssetIDs)
 		}
 	}
 }
@@ -2680,6 +2712,7 @@ func prewarmLight(
 	logger *slog.Logger,
 	markets *v1.CachedMarketsReader,
 	coins *v1.CachedCoinsReader,
+	verifiedAssetIDs []string,
 ) {
 	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
 	// was 60s shared across ~25 sequential calls — when the first
@@ -2806,6 +2839,25 @@ func prewarmLight(
 	// (assets_coin_extension.go GetNativeCoinRow path).
 	if _, err := coins.GetNativeCoinRow(coinsCtx); err != nil {
 		logger.Debug("prewarm native coin row failed", "err", err)
+	}
+
+	// #37 extension (2026-05-20): every verified-currency canonical
+	// asset_id gets the same warm-cache treatment as native. Without
+	// this, /v1/assets/USDC-GA5Z…, /v1/assets/EURC-GDH…, etc. cold-
+	// fill the heavy `listCoinsBaseSelect` chain on every
+	// canonical-form request — measured 3.3s on r1 for USDC's
+	// canonical form. The slug-form path (/v1/assets/usdc) was
+	// already fast because the explorer happens to fan out to it,
+	// but programmatic clients (and the explorer's drill-out from
+	// market detail) navigate by canonical asset_id, which missed
+	// the warm slot. Drift-safe: GetCoinByAssetID is exactly what
+	// the handler calls (assets_coin_extension.go line 215).
+	// Errors logged at Debug — a transient miss is fine since the
+	// user request still fronts the cache.
+	for _, assetID := range verifiedAssetIDs {
+		if _, err := coins.GetCoinByAssetID(coinsCtx, assetID); err != nil {
+			logger.Debug("prewarm verified asset failed", "asset_id", assetID, "err", err)
+		}
 	}
 }
 
