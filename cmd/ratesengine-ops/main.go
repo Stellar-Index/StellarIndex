@@ -193,6 +193,11 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 			fmt.Fprintf(os.Stderr, "rehydrate-galexie-archive: %v\n", err)
 			os.Exit(1)
 		}
+	case "trim-galexie-archive":
+		if err := trimGalexieArchive(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "trim-galexie-archive: %v\n", err)
+			os.Exit(1)
+		}
 	case "seed-soroswap-pairs":
 		if err := seedSoroswapPairs(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "seed-soroswap-pairs: %v\n", err)
@@ -591,6 +596,30 @@ Subcommands:
                           history + any crash drift. Run ONCE post-
                           backfill (scans every trades chunk). Idempotent
                           — SETs not ADDs, so re-running converges.
+  trim-galexie-archive -config PATH -older-than-ledger N [-dry-run|-commit] [-no-verify-upstream] [-max-files N]
+                          Per ADR-0027 §Step 2: DESTRUCTIVE — deletes
+                          LCM files from the local hot tier
+                          (galexie-archive on MinIO) whose ledger range
+                          is entirely below -older-than-ledger, after
+                          verifying their presence in the cold tier
+                          (aws-public-blockchain). Reclaims pool
+                          capacity by tiering off historical mirror.
+                          Safety stack:
+                            * --dry-run is the DEFAULT when neither
+                              flag is set; --commit MUST be explicit.
+                            * --verify-upstream is the DEFAULT; every
+                              candidate is HEAD'd against cold before
+                              deletion. --no-verify-upstream skips
+                              this and is NOT RECOMMENDED.
+                            * --max-files caps deletions per run
+                              (default 100000) — a typo cannot delete
+                              the full archive in one shot.
+                            * --older-than-ledger is REQUIRED — no
+                              implicit "trim everything below tip - N".
+                            * Cold tier MUST be configured. Refuses
+                              to run otherwise.
+                          Rollback: ratesengine-ops
+                          rehydrate-galexie-archive -from N -to N.
   rehydrate-galexie-archive -config PATH -from N -to N [-dry-run]
                           Per ADR-0027 §Step 2: copy LCM files for the
                           ledger range [-from, -to] from the configured

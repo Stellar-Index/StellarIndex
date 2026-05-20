@@ -17,6 +17,37 @@ against.
 
 ### Added
 
+- **`ratesengine-ops trim-galexie-archive` operator (#7
+  implementation step 2b — second half of ADR-0027 §Step 2).**
+  DESTRUCTIVE subcommand that deletes LCM files from the local hot
+  tier (galexie-archive MinIO) whose entire ledger range is below
+  the operator-specified `--older-than-ledger N`, after verifying
+  upstream presence in the cold tier. Five-layer safety stack:
+  (1) `--dry-run` is the **default** when neither `--dry-run` nor
+  `--commit` is set — actual deletion requires explicit
+  `--commit`; (2) `--verify-upstream` is the **default** — every
+  candidate is HEAD'd against cold before being marked for
+  deletion; `--no-verify-upstream` is a documented escape hatch
+  for restore-from-backup workflows; (3) `--max-files` caps
+  deletions per run (default 100000) — a typo cannot trim the
+  full archive in one shot; (4) `--older-than-ledger` is
+  **required** (no implicit cutoff); (5) cold tier MUST be
+  configured (refuses to run otherwise — trim without a cold
+  fallback is unrecoverable data loss). Rollback is mechanical:
+  `ratesengine-ops rehydrate-galexie-archive -from N -to N`
+  re-fetches from cold. Per-object `DeleteObject` (vs bulk
+  `DeleteObjects`) so a partial failure leaves a clear position
+  cursor — operator re-runs `--dry-run` to see what's left.
+  Promotes `aws-sdk-go-v2/{aws,config,credentials,service/s3}`
+  from transitive to direct dependencies (already in our tree
+  via go-stellar-sdk) — needed because the SDK's
+  `datastore.DataStore` interface lacks a `Delete` method. Tests
+  cover the safety primitives (default verify-upstream, default
+  no-commit, `--commit` opt-in, uint32 overflow guard) +
+  `splitBucketPath` (SDK-compatible `bucket/prefix` parsing). The
+  full ADR-0027 §Step 2 is now complete (rehydrate from §2a +
+  trim from §2b); §Steps 3-5 (flag-flip in r1's TOML, first bulk
+  trim, monthly cadence) are operator-gated and follow.
 - **`ratesengine-ops rehydrate-galexie-archive` operator (#7
   implementation step 2a — first half of ADR-0027 §Step 2).**
   Non-destructive subcommand that copies LCM files for a ledger
