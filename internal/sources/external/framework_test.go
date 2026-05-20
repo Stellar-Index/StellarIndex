@@ -27,15 +27,28 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 
 func TestRegistry_ClassPolicy(t *testing.T) {
 	// Invariant: only ClassExchange may have IncludeInVWAP=true.
-	// The three other classes (aggregator, oracle, authority_sanity)
-	// MUST be excluded from VWAP by default — mixing them in
-	// double-counts upstream markets or imposes someone else's
-	// methodology on our output.
+	// Every other class (aggregator, oracle, authority_sanity,
+	// lending, router, bridge) MUST be excluded from VWAP by
+	// default — mixing them in double-counts upstream markets or
+	// imposes someone else's methodology on our output.
 	for name, m := range Registry {
 		if m.IncludeInVWAP && m.Class != ClassExchange {
 			t.Errorf("source %q: IncludeInVWAP=true but Class=%q — only ClassExchange may VWAP-contribute by default",
 				name, m.Class)
 		}
+	}
+}
+
+// TestClassBridge_Defined locks down the existence of the
+// ClassBridge constant so a downstream rename / accidental
+// removal would surface as a build break here rather than as a
+// silent classification miss in the registry. The dependent
+// docs (cctp-stellar-coverage.md, rozo-stellar-coverage.md)
+// reference this class by name; if it disappears the docs lie.
+func TestClassBridge_Defined(t *testing.T) {
+	t.Parallel()
+	if ClassBridge != "bridge" {
+		t.Errorf("ClassBridge wire value = %q, want \"bridge\"", ClassBridge)
 	}
 }
 

@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`ClassBridge` source class for cross-chain transfer protocols
+  (#40 + #41 unblock).** Adds `ClassBridge Class = "bridge"` to
+  `internal/sources/external/framework.go` alongside the existing
+  six classes. Bridges (Circle CCTP, Rozo) move tokens between
+  chains rather than exchanging them at a price — a
+  `deposit_for_burn` on Stellar + `mint_and_withdraw` on Ethereum
+  is one logical USDC transfer, not a two-leg trade. Excluded
+  from VWAP by default (`IncludeInVWAP: false`); reported
+  alongside for cross-chain flow attribution and as the
+  cross-chain side of Algorithm 3 supply accounting (complements
+  ADR-0023's SEP-41 supply observer that already tracks
+  classic trustline-driven mints/burns). The
+  `TestRegistry_ClassPolicy` invariant ("only ClassExchange may
+  VWAP-contribute") covers ClassBridge unchanged.
+  `TestClassBridge_Defined` locks the wire value so a downstream
+  rename surfaces as a build break here rather than as a silent
+  classification miss. Removes the primary operator gate from
+  the #40 / #41 design docs — implementation can now proceed on
+  the storage-shape decision alone (`bridge_events` shared vs
+  per-protocol tables).
+
 ### Docs
 
 - **`docs/architecture/rozo-stellar-coverage.md` — Rozo intents

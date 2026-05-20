@@ -216,11 +216,12 @@ history because it is brand new". Initial implementation:
 
 ## Open design questions (operator-gated)
 
-1. **New `ClassBridge` source class** vs reuse `ClassRouter`?
-   ClassBridge is the right semantic; need to add it to
-   `internal/sources/external/framework.go` and decide
-   `IncludeInVWAP` (should be `false` — no price signal),
-   `DefaultWeight` (0), etc.
+1. ~~**New `ClassBridge` source class** vs reuse `ClassRouter`?~~
+   **Resolved 2026-05-20** — `ClassBridge` added to
+   `internal/sources/external/framework.go`. Registry entries for
+   CCTP + Rozo use `Class: ClassBridge, IncludeInVWAP: false,
+   DefaultWeight: 0, Paid: false`. Test guard
+   `TestClassBridge_Defined` locks the wire value.
 
 2. **Cross-chain attribution data**: when we record
    `DepositForBurn` with `destination_domain = 0` (Ethereum),

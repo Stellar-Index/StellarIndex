@@ -185,8 +185,10 @@ contracts go live.
 
 ## Open design questions (operator-gated)
 
-1. **`ClassBridge` source class** — same as CCTP's open question.
-   See [[docs/architecture/cctp-stellar-coverage]] §Open #1.
+1. ~~**`ClassBridge` source class** — same as CCTP's open
+   question.~~ **Resolved 2026-05-20** — `ClassBridge` landed in
+   `internal/sources/external/framework.go`. Rozo registry entries
+   use `Class: ClassBridge`, same as CCTP.
 2. **Storage shape** — `bridge_events` shared with CCTP, or
    `rozo_events` separate? See §Storage above.
 3. **Phase-1 scope** — ship just v1 Payment now, or wait until

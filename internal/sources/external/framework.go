@@ -106,6 +106,23 @@ const (
 	// `routers` table (migration 0025) is the registry of contract
 	// addresses each ClassRouter source watches.
 	ClassRouter Class = "router"
+
+	// ClassBridge — cross-chain transfer / intent protocols (Circle
+	// CCTP, Rozo). These move tokens between chains rather than
+	// exchanging them at a price; a `deposit_for_burn` on Stellar +
+	// `mint_and_withdraw` on Ethereum is one logical USDC transfer,
+	// not a two-leg trade. Excluded from VWAP — no price signal in
+	// the event stream. Reported alongside for cross-chain flow
+	// attribution (which bridge moved the most USDC out of Stellar
+	// yesterday? which destination chain drives the most inbound
+	// USDC mint volume?) and for USDC supply accounting (CCTP
+	// burns/mints are the cross-chain side of Algorithm 3 supply,
+	// complementing the classic trustline-driven mints/burns
+	// already tracked by the SEP-41 supply observer per ADR-0023).
+	// Design + per-protocol event schemas at
+	// docs/architecture/cctp-stellar-coverage.md and
+	// docs/architecture/rozo-stellar-coverage.md.
+	ClassBridge Class = "bridge"
 )
 
 // Subclass is a finer-grained partition within a [Class]. Used by
