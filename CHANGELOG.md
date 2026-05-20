@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Docs
+
+- **`docs/architecture/cctp-stellar-coverage.md` — CCTP-Stellar
+  decoder + storage design (#40 design pass).** Captures the
+  three mainnet contract addresses (TokenMessengerMinter,
+  MessageTransmitter, CctpForwarder), the four canonical event
+  schemas (`DepositForBurn`, `MintAndWithdraw`, `MessageSent`,
+  `MessageReceived`) extracted verbatim from
+  `circlefin/stellar-cctp/contracts/{token-messenger-minter-v2,
+  message-transmitter-v2}/src/lib.rs`, decoder strategy
+  recommendation (Option A: topic-based via existing dispatcher,
+  same pattern as Soroswap / Phoenix / Aquarius), and storage
+  shape recommendation (new `cctp_events` hypertable via
+  migration 0037 — bridge events don't fit `trades`). Surfaces
+  five operator-gated design questions, primary being whether
+  CCTP warrants a new `ClassBridge` source class (it doesn't fit
+  `ClassExchange` — no trades, no price signal — or the existing
+  `ClassRouter` semantic, which elides the cross-chain
+  dimension). Implementation lands after class-design sign-off
+  (per CLAUDE.md "Add a new on-chain Soroban DEX" + WASM-history
+  walk before `BackfillSafe: true`). The user direction was
+  "CCTP shouldn't have any history because it is brand new" —
+  so initial implementation is live-only ingest from current
+  ledger forward.
+
 ### Changed
 
 - **Issuer-filter pushdown into `listCoinsBaseSelect` CTEs (#27).**
