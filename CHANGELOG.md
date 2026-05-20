@@ -17,6 +17,28 @@ against.
 
 ### Added
 
+- **`internal/sources/rozo` decoder for Rozo v1 Payment events
+  (#41 Phase 1).** Pure-function decoder package — `events.go`
+  defines the canonical `Payment` + `Flush` Go types and the
+  pre-encoded topic-symbol constants;  `decode.go` exposes
+  `Classify`, `DecodePayment`, `DecodeFlush` with explicit
+  `ErrMalformedBody` for field-missing surfacing; `decode_test.go`
+  carries 12 parallel tests including the ADR-0003 large-i128
+  round-trip (locks the `*big.Int → string` precision invariant
+  against the int64-truncation bug class) and topic-symbol
+  encoding stability guards (re-encoded bytes must match the
+  package-init constants — drift would silently break
+  `Classify`). The package is **NOT yet wired** — no
+  registration in `internal/sources/external/registry.go`, no
+  `consumer.Source` impl, no `dispatcher_adapter.go`. Wiring +
+  storage layer follows the `bridge_events` vs `rozo_events`
+  shape decision (operator-gated; see
+  `docs/architecture/rozo-stellar-coverage.md` §Storage).
+  Capturing the decoder logic in code with tests means the
+  implementation phase doesn't have to re-derive the on-chain
+  event schema from the contract source — it's the
+  smallest-possible-PR that advances #41 without committing to a
+  specific storage shape.
 - **`ClassBridge` source class for cross-chain transfer protocols
   (#40 + #41 unblock).** Adds `ClassBridge Class = "bridge"` to
   `internal/sources/external/framework.go` alongside the existing
