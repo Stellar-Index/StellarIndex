@@ -17,6 +17,33 @@ against.
 
 ### Added
 
+- **`internal/sources/cctp` decoder for Circle CCTP v2 events
+  (#40 Phase 1).** Pure-function decoder package for all four CCTP
+  events: `DepositForBurn` (outbound USDC burn from
+  TokenMessengerMinter), `MintAndWithdraw` (inbound mint after
+  attestation), `MessageSent` (wire envelope, paired with
+  DepositForBurn), `MessageReceived` (wire envelope, paired with
+  MintAndWithdraw). `events.go` defines the four canonical Go
+  types with full BytesN<32>-as-hex serialisation for the
+  cross-chain address fields (`mint_recipient`,
+  `destination_token_messenger`, `destination_caller`, `nonce`,
+  `sender`); `decode.go` exposes `Classify` + four `Decode*`
+  functions with explicit `ErrMalformedTopic` /
+  `ErrMalformedBody` sentinels for schema-drift detection;
+  `decode_test.go` covers 16 cases including all four event
+  types' happy paths, ADR-0003 large-i128 round-trip on
+  DepositForBurn's amount, short-topic + missing-body-field
+  drift signals, MessageSent's dual ScMap/raw-Bytes paths
+  (forward-compat against macro layout shifts), and topic-symbol
+  encoding stability for all four. Per ADR-0013 the decoder
+  doesn't import `xdr` directly — uses inferred-type entries
+  through `scval` returns, same pattern as Soroswap.
+  **NOT yet wired** — no registry entry, no `consumer.Source`,
+  no migration. Wiring follows the storage-shape decision
+  (`bridge_events` shared with Rozo vs `cctp_events` separate)
+  per `docs/architecture/cctp-stellar-coverage.md` §Storage.
+  CCTP + Rozo decoders shipping in parallel means the storage
+  layer can be designed against both event shapes at once.
 - **`internal/sources/rozo` decoder for Rozo v1 Payment events
   (#41 Phase 1).** Pure-function decoder package — `events.go`
   defines the canonical `Payment` + `Flush` Go types and the
