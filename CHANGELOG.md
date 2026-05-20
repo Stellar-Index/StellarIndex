@@ -17,6 +17,30 @@ against.
 
 ### Docs
 
+- **`docs/architecture/rozo-stellar-coverage.md` — Rozo intents
+  decoder + storage design (#41 design pass).** Captures three
+  distinct contract variants discovered in
+  `RozoAI/rozo-intents-contracts`: (1) **v1 Payment LIVE** on
+  mainnet at `CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL`
+  (verified via StellarExpert) — emits `PaymentEvent { from,
+  destination, amount, memo }` on `("payment", from)` topic and
+  `FlushEvent { token, destination, amount }` on `("flush",)`
+  topic; (2) **v2 Forwarder + IntentBridge** pre-mainnet with
+  topic shapes `("forward", sender)`, `("memo_set",)`,
+  `("created",)`, `("filled",)`, `("refunded",)`; (3) a **newer
+  rozo-intents** package emitting `("intent_created", intent_id:
+  BytesN<32>)` + `intent_filled` / `intent_failed` /
+  `intent_refunded` long-form symbols (status unclear — possibly
+  v2.1 or v3 unifying variant). Shares CCTP's
+  `ClassBridge`-or-not design question + the storage shape
+  question (`bridge_events` shared with CCTP vs `rozo_events`
+  separate). Recommends three-phase rollout: ship v1 Payment
+  decoder now (the only live contract — user direction was "v1
+  and v2", but v2 isn't deployed yet so Phase 1 covers reality),
+  Phase 2 for v2 contracts when they deploy to mainnet, Phase 3
+  for the rozo-intents variant after schema-status
+  clarification. Implementation gated on the same operator
+  decisions as CCTP.
 - **`docs/architecture/cctp-stellar-coverage.md` — CCTP-Stellar
   decoder + storage design (#40 design pass).** Captures the
   three mainnet contract addresses (TokenMessengerMinter,
