@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`ledgerstream.TieredDataStore` — two-tier `datastore.DataStore`
+  fallback chain (#7 implementation step 1).** Satisfies the SDK's
+  `datastore.DataStore` interface; composes a `hot` + `cold`
+  underlying store. Reads try hot first, fall through to cold on
+  `IsNotFound` errors only — transient errors (network timeouts,
+  auth failures, throttling) propagate immediately so a
+  misconfigured hot endpoint surfaces as the operator's problem
+  rather than being masked by a slow cold path that always
+  succeeds. Writes (`PutFile`, `PutFileIfNotExists`) target hot
+  exclusively (cold is read-only by design — production cold is
+  `aws-public-blockchain`, the AWS Open Data Sponsorship bucket).
+  `ListFilePaths` unions hot + cold with hot-wins dedup so a
+  backfill spanning the tier boundary sees every partition.
+  Optional Prometheus metrics: `ratesengine_ledgerstream_tier_read_total{outcome="hot"|"cold"|"both_missing"}`
+  and `ratesengine_ledgerstream_cold_read_duration_seconds`. Not
+  yet wired into `ledgerstream.Stream`'s Config — that integration
+  is the next step (still behind the planned `LCM_TIER_ENABLED`
+  feature flag per ADR-0027 §Sequencing).
+
 ### Docs
 
 - **ADR-0027 (Proposed): LCM cache tiering — local
