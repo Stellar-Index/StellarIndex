@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.62] — 2026-05-20
+
 ### Fixed
 
 - **Prewarm extended to all 7 readers fired by `/v1/assets/{id}`
