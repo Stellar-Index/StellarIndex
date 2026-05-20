@@ -348,6 +348,7 @@ func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *
 			"is_removal", o.IsRemoval, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, accounts.SourceName)
 	logger.Debug("account observation ingested",
 		"account_id", o.AccountID, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String(),
@@ -369,6 +370,7 @@ func persistTrustlineObservation(ctx context.Context, logger *slog.Logger, store
 			"is_removal", o.IsRemoval, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, trustlines.SourceName)
 	logger.Debug("trustline observation ingested",
 		"account_id", o.AccountID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String(), "is_removal", o.IsRemoval)
@@ -389,6 +391,7 @@ func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store
 			"err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, claimable_balances.SourceName)
 	logger.Debug("claimable observation ingested",
 		"claimable_id", o.ClaimableID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String())
@@ -409,6 +412,7 @@ func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store
 			"err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, liquidity_pools.SourceName)
 	logger.Debug("LP-reserve observation ingested",
 		"pool_id", o.PoolID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String())
@@ -430,6 +434,7 @@ func persistSACBalanceObservation(ctx context.Context, logger *slog.Logger, stor
 			"ledger", o.Ledger, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, sac_balances.SourceName)
 	logger.Debug("SAC balance observation ingested",
 		"contract_id", o.ContractID, "holder", o.Holder, "asset_key", o.AssetKey,
 		"ledger", o.Ledger, "balance_stroops", o.Balance.String(),
@@ -453,6 +458,7 @@ func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *ti
 			"tx_hash", e.TxHash, "err", err)
 		return
 	}
+	bumpEntryCount(ctx, logger, store, sep41_supply.SourceName)
 	logger.Debug("SEP-41 supply event ingested",
 		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
 		"amount", e.Amount.String(), "counterparty", e.Counterparty)

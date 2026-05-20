@@ -17,6 +17,26 @@ against.
 
 ### Fixed
 
+- **`entries` counter expanded to ALL observer-driven sinks
+  (follow-up to the blend/router/defindex fix).** Same session,
+  same root cause: the seed query only knew about `trades` +
+  `oracle_updates`, leaving the supply observers' tables
+  (`account_observations`, `trustline_observations`,
+  `claimable_observations`, `lp_reserve_observations`,
+  `sac_balance_observations`, `sep41_supply_events`) silently
+  excluded from per-source entries even though they're the
+  primary observable activity surface for those sources. Now:
+  (1) `SeedSourceEntryCounts` UNIONs all six observer tables
+  with literal source names matching each observer's
+  `SourceName` constant; (2) each persister
+  (`persistAccountObservation`, `persistTrustlineObservation`,
+  …, `persistSEP41SupplyEvent`) calls `bumpEntryCount` after a
+  successful insert so the steady-state counter stays current
+  between seed reconciliations. The result: `/v1/diagnostics/ingestion`
+  surfaces entries for `accounts`, `trustlines`,
+  `claimable_balances`, `liquidity_pools`, `sac_balances`,
+  `sep41_supply` alongside the trade + oracle sources — the
+  full "total decoded protocol activity" the user asked for.
 - **`entries` counter now tracks total protocol activity, not just
   trades.** User-reported: `/v1/diagnostics/ingestion` showed 0
   entries for **blend** (writes to `blend_auctions`, not `trades`),

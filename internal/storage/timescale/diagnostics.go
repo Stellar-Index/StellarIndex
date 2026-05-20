@@ -413,8 +413,21 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	fx_quotes                      — off-chain FX (ecb, frankfurter,
 //	                                 exchangeratesapi, polygonforex,
 //	                                 coingecko-fx, …).
-//	blend_auctions                 — Blend lending auctions; implicit
-//	                                 source 'blend' (no source column).
+//	blend_auctions                 — Blend lending auctions; literal
+//	                                 source 'blend' (single-source table).
+//	account_observations           — AccountEntry observer; literal
+//	                                 source 'accounts'.
+//	trustline_observations         — classic-supply trustline observer;
+//	                                 literal source 'trustlines'.
+//	claimable_observations         — claimable-balance observer; literal
+//	                                 source 'claimable_balances'.
+//	lp_reserve_observations        — LP-reserve observer; literal source
+//	                                 'liquidity_pools'.
+//	sac_balance_observations       — SAC-balance observer; literal source
+//	                                 'sac_balances'.
+//	sep41_supply_events            — SEP-41 mint/burn/clawback per
+//	                                 ADR-0023; literal source
+//	                                 'sep41_supply'.
 //
 // Sources whose Phase A sink is log-only (soroswap-router, defindex)
 // have no storage table; the counter for those is bumped directly in
@@ -424,12 +437,6 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 // recompute from — until a per-protocol log-table lands or the sink
 // gains a dedicated tally hypertable, operators must NOT seed-reset
 // router/defindex counts.
-//
-// Other decoded-event sinks (account_observations, classic_supply_*,
-// sep41_supply_events) are observer-driven, not source-attributed —
-// they're surfaced via the supply-observer surfaces, not source
-// entries. See ADR-0023 (SEP-41 supply observer) for the observer
-// reporting model.
 func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 	const q = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
@@ -445,11 +452,22 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
             SELECT COALESCE(source, 'unknown-fx') AS source, count(*) AS c
               FROM fx_quotes GROUP BY 1
             UNION ALL
-            -- Blend writes lending events to blend_auctions; no
-            -- per-row source column (the table is single-source by
-            -- construction). Literal 'blend' here matches the
-            -- registry SourceName.
-            SELECT 'blend' AS source, count(*) AS c FROM blend_auctions
+            -- Single-source observer tables — the table is
+            -- single-source by construction. Literals here match the
+            -- registry SourceName for each observer.
+            SELECT 'blend'              AS source, count(*) AS c FROM blend_auctions
+            UNION ALL
+            SELECT 'accounts'           AS source, count(*) AS c FROM account_observations
+            UNION ALL
+            SELECT 'trustlines'         AS source, count(*) AS c FROM trustline_observations
+            UNION ALL
+            SELECT 'claimable_balances' AS source, count(*) AS c FROM claimable_observations
+            UNION ALL
+            SELECT 'liquidity_pools'    AS source, count(*) AS c FROM lp_reserve_observations
+            UNION ALL
+            SELECT 'sac_balances'       AS source, count(*) AS c FROM sac_balance_observations
+            UNION ALL
+            SELECT 'sep41_supply'       AS source, count(*) AS c FROM sep41_supply_events
         ) u
         GROUP BY source
         ON CONFLICT (source) DO UPDATE
