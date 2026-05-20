@@ -186,11 +186,38 @@ func streamTiered(
 	}
 	cold, err := datastore.NewDataStore(ctx, cfg.ColdDataStore)
 	if err != nil {
-		// Close hot so the build error doesn't leak its resources;
-		// the inner Close error is intentionally swallowed — the
-		// caller wants the construction failure surfaced first.
+		// Cold tier is OPTIONAL by design (ADR-0027) — it's a
+		// fallback for ledger ranges trimmed from local
+		// galexie-archive. If cold init fails (wrong region,
+		// network issue, anonymous auth rejected by the upstream
+		// bucket, etc.) we should NOT abort — local galexie-archive
+		// is still authoritative for everything the system was
+		// reading pre-tier-enable. Hot-only path via the legacy
+		// ApplyLedgerMetadata is byte-equivalent to pre-#7-step-1b
+		// behaviour.
+		//
+		// Fail-loud-but-degrade: log a Warn (operator-visible) and
+		// fall back; don't propagate the cold-side error as a
+		// blocking failure. The pre-fix behaviour cascaded a
+		// cold-misconfig (region mismatch in r1's 2026-05-20 §3
+		// enable) into a backfill abort — opposite of the cold
+		// tier being optional.
+		if cfg.Logger != nil {
+			cfg.Logger.WithField("err", err).Warn("ledgerstream: cold datastore init failed; falling back to hot-only single-source path")
+		}
 		_ = hot.Close()
-		return fmt.Errorf("ledgerstream: cold datastore: %w", err)
+		return ingest.ApplyLedgerMetadata(
+			ledgerRange,
+			ingest.PublisherConfig{
+				Registry:              cfg.Registry,
+				RegistryNamespace:     cfg.RegistryNamespace,
+				BufferedStorageConfig: buffered,
+				DataStoreConfig:       cfg.DataStore,
+				Log:                   cfg.Logger,
+			},
+			ctx,
+			callback,
+		)
 	}
 	tiered := NewTieredDataStore(hot, cold, cfg.Registry)
 
