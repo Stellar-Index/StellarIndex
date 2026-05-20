@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-source pools continuous aggregate — `pools_per_source_1h`
+  (#25, migration 0036).** The durable backing for `/v1/pools`.
+  Pre-#25 the handler's `buildPoolsQuery` scanned the full trades
+  hypertable for `ts >= NOW() - 24h` grouped by `(source, base,
+  quote)` — measured 8-30s; #23 wrapped it in SWR (sub-ms warm,
+  ~8s cold first hit). This CAGG pre-aggregates per
+  `(source, base_asset, quote_asset, 1h bucket)`:
+  `sum_usd_priced`, `sum_base_unpriced` / `sum_quote_unpriced`
+  (Phase-1 vs needs-XLM-fallback splits), `trade_count`, and
+  `last(quote_amount/base_amount, ts)` for the per-pool latest
+  price. Refresh policy every 5 minutes covering the last 7 days
+  (over-refresh tolerates late-arriving backfilled trades — the
+  #38 router/defindex run is the current example). Storage:
+  ~3-4M rows steady-state (~hundreds of MB) — small enough to keep
+  no retention so operators can later widen the window past 24h.
+  Handler refactor to read from the CAGG ships in a follow-up
+  commit (this commit lands the migration first so the CAGG can
+  materialize cleanly before the handler depends on it). After
+  refactor, #23's SWR becomes a latency nicety rather than
+  load-bearing.
+
 ### Changed
 
 - **node-exporter consolidation: legacy → Debian package (#33).**
