@@ -1165,6 +1165,20 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Response-cache check. Drift-safe by construction — the cached
+	// entry was produced by this same handler within the last 30s.
+	// Covers the full F2 chain (Volume24hUSDForAsset / supply.LatestSupply
+	// / 2× lookupUSDPrice / fetchSupplySnapshot / populateMarketCap)
+	// plus applySep1Overlay + applyCoinExtensionFields + the verified-
+	// currency overlay. Each of those costs ~50-200ms warm; together
+	// they dominate the ~700-900ms warm latency observed pre-cache
+	// (rc.63 on r1, 2026-05-21).
+	cacheKey := parsed.String()
+	if entry, ok := s.assetDetailCache.get(cacheKey); ok {
+		writeCachedAssetDetail(w, entry)
+		return
+	}
+
 	detail, served := s.resolveAssetDetail(w, r, parsed)
 	if served {
 		return
@@ -1212,7 +1226,22 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// when the asset code matches a verified Stellar ticker but the
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
-	writeJSON(w, detail, s.verifiedCurrencyFlags(&detail, parsed))
+	flags := s.verifiedCurrencyFlags(&detail, parsed)
+
+	// Render to bytes once, cache them, write them. The cache check at
+	// the top of this function short-circuits subsequent requests for
+	// the same asset_id within the TTL window — see [assetDetailResponseCache].
+	body, err := renderAssetDetailEnvelope(detail, flags)
+	if err != nil {
+		// Marshal failure is exceedingly rare (AssetDetail is plain
+		// struct tags); fall back to writeJSON so client still gets a
+		// (potentially less-optimal) response rather than a 500.
+		s.logger.Debug("asset detail envelope render failed; falling back to direct write", "asset_id", cacheKey, "err", err)
+		writeJSON(w, detail, flags)
+		return
+	}
+	s.assetDetailCache.put(cacheKey, body, flags)
+	writeCachedAssetDetail(w, &assetDetailEntry{body: body, flags: flags, cachedAt: time.Now()})
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed: from the
