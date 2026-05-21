@@ -23,12 +23,51 @@ import (
 // rozo-intent-bridge) rather than renaming this one.
 const SourceName = "rozo"
 
-// MainnetPaymentContract is the verified deployment of the
-// v1 Payment contract on Stellar pubnet. Verified
-// 2026-05-20 via stellar.expert.
+// MainnetPaymentContract is the original verified deployment of the
+// v1 Payment contract on Stellar pubnet. Verified 2026-05-20 via
+// stellar.expert. Now part of [MainnetPaymentContracts] which lists
+// every C-wallet Rozo uses for bridge-out flows.
 //
 // Source: https://github.com/RozoAI/rozo-intents-contracts (v1).
 const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL"
+
+// MainnetPaymentContracts is the full set of Rozo bridge-out C
+// contracts on Stellar pubnet. Confirmed by RozoAI 2026-05-21 — all
+// three emit the same PaymentEvent / FlushEvent schemas. The decoder
+// matches PaymentEvent / FlushEvent by topic[0], so adding a contract
+// here is a watchlist concern (cross-validation + scoping), not a
+// decoder-shape change.
+//
+// User flows: most bridge-out volume flows through C wallets when
+// the user can't supply a memo (memo-less wallets, contract callers).
+// G-wallet relayer flows handle the memo-bearing path — see
+// [MainnetRelayerAccounts].
+var MainnetPaymentContracts = []string{
+	"CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
+	"CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE",
+	"CAQPKW5AUPEA4C7OERZRUCBWT5RZDSETO4PR5REVRC5MT4CF3PBSKXQC",
+}
+
+// MainnetRelayerAccounts is the set of CLASSIC Stellar accounts
+// Rozo's relayer infrastructure uses to handle USDC / EURC bridge
+// flows. Confirmed by RozoAI 2026-05-21 — "those 2 addresses should
+// cover most of the txs on usdc/eurc".
+//
+// These are G-strkey accounts (classic accounts), not contracts.
+// They show up as either the SOURCE or DESTINATION of classic
+// `payment` operations carrying USDC / EURC. They don't emit Soroban
+// contract events.
+//
+// Tracking pattern (when wired): add to the supply observer's
+// watched-account set or to a bridge-specific observer that records
+// balance-change deltas into a bridge_relayer_balances hypertable.
+// Useful for: (a) reconciling bridge inflow vs outflow, (b) flagging
+// stuck relayer balances, (c) deriving USDC / EURC bridge volume
+// independent of on-Soroban contract events.
+var MainnetRelayerAccounts = []string{
+	"GADDIYCVR2Z6H46YWZE53LICP56ZBNEUUT2QAG4QHSWVIYE44HS7W3XY",
+	"GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4",
+}
 
 // Event names — these are the `symbol_short!()` literals from
 // `v1/stellar/payment/src/lib.rs`:
