@@ -170,6 +170,14 @@ type ContractCallContext struct {
 	ContractID   string // C-strkey of invoked contract
 	FunctionName string // Symbol the caller invoked
 	Args         []string
+	// CallPath identifies this call's position in the op's
+	// auth tree. Empty for the top-level call; non-empty for
+	// sub-invocations (per-step indices in pre-order traversal,
+	// e.g. [0,1] = second sub-call of the first sub-call of root).
+	// Per task #48 + docs/architecture/contract-call-coverage-audit.md.
+	// Decoders that need to dedup overlapping calls in the same tx
+	// (rare) can build a stable identifier as (TxHash, OpIndex, CallPath).
+	CallPath []int
 }
 
 // LedgerEntryChangeDecoder is the contract for decoders that
@@ -463,33 +471,49 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		}
 
 		// ─── Soroban InvokeContract call routing ─────────────
-		// Runs for every successful InvokeContract op, whether
-		// or not it emitted events. Band-style sources live here.
+		// Per task #48: walks the FULL auth tree of each op (top-level
+		// invocation PLUS every transitively-nested sub-call), not
+		// just the top-level. This is the canonical source for
+		// ContractCallDecoder routing because most Soroswap traffic
+		// reaches the router as a sub-invocation of an aggregator
+		// contract — the pre-#48 top-level-only walk missed ~99.99%
+		// of router calls (see
+		// docs/architecture/contract-call-coverage-audit.md).
+		//
+		// Each decoder's Matches() runs per call in the tree; on a
+		// match, Decode() emits an event whose CallPath identifies
+		// the node's position. Decoders are stateless w.r.t. tree
+		// position — they care only about (contract_id,
+		// function_name, args).
 		if len(d.contractCallDecoders) > 0 {
-			for opIdx, call := range invokeCalls {
-				if call == nil {
+			callTrees := extractInvokeContractCallTrees(ops)
+			for opIdx, calls := range callTrees {
+				if len(calls) == 0 {
 					continue
 				}
 				opSource := ""
 				if opIdx < len(ops) && ops[opIdx].SourceAccount != nil {
 					opSource, _ = accountIDToStrkey(ops[opIdx].SourceAccount.ToAccountId())
 				}
-				ccCtx := ContractCallContext{
-					Ledger:       ledgerSeq,
-					ClosedAt:     parsedClosedAt,
-					TxHash:       txHash,
-					TxSource:     txSource,
-					OpSource:     opSource,
-					OpIndex:      opIdx,
-					ContractID:   call.ContractID,
-					FunctionName: call.FunctionName,
-					Args:         call.Args,
+				for _, call := range calls {
+					ccCtx := ContractCallContext{
+						Ledger:       ledgerSeq,
+						ClosedAt:     parsedClosedAt,
+						TxHash:       txHash,
+						TxSource:     txSource,
+						OpSource:     opSource,
+						OpIndex:      opIdx,
+						CallPath:     call.CallPath,
+						ContractID:   call.ContractID,
+						FunctionName: call.FunctionName,
+						Args:         call.Args,
+					}
+					outs, err := d.dispatchContractCall(ccCtx)
+					if err != nil {
+						continue
+					}
+					outputs = append(outputs, outs...)
 				}
-				outs, err := d.dispatchContractCall(ccCtx)
-				if err != nil {
-					continue
-				}
-				outputs = append(outputs, outs...)
 			}
 		}
 
@@ -798,10 +822,168 @@ func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash s
 // call. Contract ID is a C-strkey, function name is the raw
 // Symbol string, args are base64-encoded SCVal blobs matching
 // the events.Event.OpArgs wire format.
+//
+// CallPath identifies the position of this call in the tx's auth
+// tree. Empty == top-level (the op's direct invocation).
+// Non-empty == sub-invocation; each int is the index into the
+// parent's SubInvocations slice (e.g. [0] = first sub of root,
+// [0,1] = second sub of the first sub of root). Used by
+// ContractCallDecoder consumers to dedup or tag attribution
+// across overlapping calls in the same tx — see task #48 +
+// docs/architecture/contract-call-coverage-audit.md.
 type invokeCall struct {
 	ContractID   string
 	FunctionName string
 	Args         []string
+	CallPath     []int // empty for top-level; pre-order path for sub-invocations
+}
+
+// buildInvokeCallFromArgs projects an [xdr.InvokeContractArgs]
+// (the canonical "contract + function + args" tuple shared by the
+// top-level HostFunction and every SorobanAuthorizedInvocation
+// auth-tree node) into our internal [invokeCall]. Returns nil if
+// the contract address can't be encoded to a C-strkey (defensively
+// skip rather than emit a malformed strkey — see the original
+// extractInvokeContractCalls switch).
+//
+// `path` is copied into the returned struct so the caller can
+// safely reuse the slice across recursive walks.
+func buildInvokeCallFromArgs(ic *xdr.InvokeContractArgs, path []int) *invokeCall {
+	contractStrkey := ""
+	switch ic.ContractAddress.Type {
+	case xdr.ScAddressTypeScAddressTypeContract:
+		cid := ic.ContractAddress.MustContractId()
+		if s, err := contractIDToStrkey(cid); err == nil {
+			contractStrkey = s
+		}
+	case xdr.ScAddressTypeScAddressTypeAccount:
+		// InvokeContract against an account address is invalid at
+		// the protocol level. Defensive skip.
+		return nil
+	}
+	if contractStrkey == "" {
+		return nil
+	}
+	args := make([]string, 0, len(ic.Args))
+	argsOK := true
+	for j := range ic.Args {
+		raw, err := ic.Args[j].MarshalBinary()
+		if err != nil {
+			argsOK = false
+			break
+		}
+		args = append(args, base64.StdEncoding.EncodeToString(raw))
+	}
+	if !argsOK {
+		args = nil
+	}
+	var copyPath []int
+	if len(path) > 0 {
+		copyPath = make([]int, len(path))
+		copy(copyPath, path)
+	}
+	return &invokeCall{
+		ContractID:   contractStrkey,
+		FunctionName: string(ic.FunctionName),
+		Args:         args,
+		CallPath:     copyPath,
+	}
+}
+
+// walkAuthTree appends every InvokeContract call reachable from
+// `node` (the node itself + every transitively-nested sub-invocation)
+// to `out`, in pre-order depth-first traversal. `path` is the
+// CallPath to this node; each recursive call extends it with the
+// child index.
+//
+// CreateContract / CreateContractV2 nodes are skipped — they don't
+// represent ContractCallDecoder-relevant call shapes (no function
+// name to match). Only SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN
+// entries become invokeCalls.
+func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, out *[]*invokeCall) {
+	if node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn {
+		ic := node.Function.MustContractFn()
+		if call := buildInvokeCallFromArgs(&ic, path); call != nil {
+			*out = append(*out, call)
+		}
+	}
+	for i := range node.SubInvocations {
+		childPath := make([]int, len(path)+1)
+		copy(childPath, path)
+		childPath[len(path)] = i
+		walkAuthTree(&node.SubInvocations[i], childPath, out)
+	}
+}
+
+// extractInvokeContractCallTrees returns, per operation, the full
+// list of contract-call snapshots reachable from that op — the
+// top-level invocation PLUS every transitively-nested sub-call from
+// the op's Soroban auth tree. Result is indexed parallel to ops;
+// nil slot for non-InvokeContract ops.
+//
+// This is the canonical source for ContractCallDecoder routing per
+// task #48. The pre-existing [extractInvokeContractCalls] returns
+// top-level only (used by the events.Event.OpArgs enrichment path,
+// where we attach args to events emitted at the same op_index).
+//
+// The auth tree is the right call-tree source because:
+//   - Every contract call that requires user authorization (which
+//     includes every token transfer in a DEX flow) is in the tree.
+//   - The root of each auth entry IS the top-level call — no separate
+//     dedup needed when the auth array is non-empty.
+//   - The recursive structure mirrors the actual Soroban call tree.
+//
+// When `ihf.Auth` is empty (calls that don't require user auth —
+// rare for token-moving paths) we fall back to the top-level call
+// from [xdr.HostFunction.MustInvokeContract] so the dispatcher
+// behaviour matches the pre-#48 baseline for that case.
+//
+// Multiple auth entries (rare; co-signed multi-user txs) are walked
+// independently. Duplicate calls across entries are accepted at this
+// layer — dispatch-side dedup is the consumer's concern via the
+// CallPath identifier.
+func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
+	if len(ops) == 0 {
+		return nil
+	}
+	out := make([][]*invokeCall, len(ops))
+	for i, op := range ops {
+		if op.Body.Type != xdr.OperationTypeInvokeHostFunction {
+			continue
+		}
+		ihf, ok := op.Body.GetInvokeHostFunctionOp()
+		if !ok {
+			continue
+		}
+		if ihf.HostFunction.Type != xdr.HostFunctionTypeHostFunctionTypeInvokeContract {
+			continue
+		}
+
+		var calls []*invokeCall
+
+		if len(ihf.Auth) > 0 {
+			// Auth tree is the canonical source. Walk every entry's
+			// root; each root represents the start of one user's
+			// authorized call subtree.
+			for j := range ihf.Auth {
+				walkAuthTree(&ihf.Auth[j].RootInvocation, nil, &calls)
+			}
+		} else {
+			// No auth array — the op didn't need user auth for any
+			// downstream call (rare for token-moving paths but allowed
+			// by the protocol). Fall back to the top-level call alone,
+			// matching the pre-#48 baseline.
+			topIC := ihf.HostFunction.MustInvokeContract()
+			if call := buildInvokeCallFromArgs(&topIC, nil); call != nil {
+				calls = append(calls, call)
+			}
+		}
+
+		if len(calls) > 0 {
+			out[i] = calls
+		}
+	}
+	return out
 }
 
 // extractInvokeContractCalls returns, per operation, the full
