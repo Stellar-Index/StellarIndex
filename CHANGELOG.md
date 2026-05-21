@@ -15,6 +15,105 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.63] — 2026-05-21
+
+### Added
+
+- **Dispatcher walks the full Soroban auth tree for ContractCallDecoder
+  routing (#48 phase 1).** Pre-fix, `extractInvokeContractCalls`
+  walked only `tx.Envelope.Operations()` (top-level ops). When a user
+  hit the soroswap router via an aggregator (~60% of soroswap volume
+  per the 2026-05-21 sample of recent pair trades), the router call
+  was a sub-invocation invisible to the dispatcher. Result: ~8729×
+  undercount on the `soroswap-router` source — 22 entries in
+  `source_entry_counts` vs Stellar Expert's 192,046 events on the
+  router contract since deploy. New `extractInvokeContractCallTrees`
+  walks each op's `SorobanAuthorizedInvocation` auth tree in
+  pre-order DFS and captures every (contract_id, function_name, args)
+  tuple reachable. `ContractCallContext.CallPath` (new field)
+  identifies a call's position in the tree for downstream dedup;
+  empty = top-level, `[0,1]` = second sub-call of first sub-call of
+  root, etc. The pre-existing `extractInvokeContractCalls` (top-level
+  only) is preserved for the `events.Event.OpArgs` enrichment path
+  which needs the op's direct call args, not the tree. Falls back
+  to top-level when `ihf.Auth` is empty (rare; non-token-moving
+  calls), preserving the pre-#48 baseline for that case. Decoders
+  unchanged — `Matches(contract_id, function_name)` runs per call in
+  the tree, `Decode()` emits an event per match. Full design in
+  `docs/architecture/contract-call-coverage-audit.md`; 5 new unit
+  tests in `internal/dispatcher/extract_call_trees_test.go`
+  including the headline aggregator→router→pair scenario.
+
+- **`docs/architecture/storage-considerations.md`** — living
+  knowledge base on r1's storage. Per-dataset inventory, per-subdir
+  touchpoint maps for `/srv/history-archive`, ADR cross-refs
+  (0002 / 0015 / 0016 / 0017 / 0027 / 0011), trim trade-off register
+  covering Moves A-G with the operator-stance evaluation matrix,
+  and the operational plan + rollback steps for Move A (the trim
+  that landed on 2026-05-20). Records Move A as the approved
+  decision with 7-day observation window.
+
+- **`docs/architecture/contract-call-coverage-audit.md`** —
+  cross-check audit comparing Stellar Expert per-contract
+  metrics against our internal `source_entry_counts` across 17
+  Soroban contracts spanning every Soroban source. Captures the
+  three independent evidence lines that confirmed the #48 decoder
+  gap, the 4 sources verified working correctly, the 2 incomplete-
+  backfill candidates (redstone, blend/comet) gated on #35, and
+  the implementation plan (this RC's phase 1 + the replay-and-ADR
+  phase 2 work).
+
+- **`internal/sources/rozo/events.go`: `MainnetPaymentContracts`
+  and `MainnetRelayerAccounts`.** Operator-supplied by RozoAI
+  2026-05-21: their bridge fleet includes three v1 Payment C
+  contracts (same `PaymentEvent` / `FlushEvent` schemas) and two
+  G-strkey relayer wallets that handle most USDC / EURC volume.
+  Decoder shape unchanged — additional contracts emit the same
+  `topic[0]` symbols, so adding to the watchlist is scoping, not
+  schema work. Relayer accounts don't emit Soroban events; they
+  show up as classic `payment` op source/destination. Tracking
+  pattern documented in `docs/architecture/rozo-stellar-coverage.md`.
+
+### Fixed
+
+- **`/v1/assets/{id}` warm-after-cold still 750-890ms on native and
+  2.2s on canonical USDC post-rc.62 (#37 full).** rc.62 added
+  `prewarmAssetDetail` covering the 7 `CachedCoinsReader` SWR slots
+  the handler fans out to. But the handler also calls F2-path
+  readers (`Volume24hUSDForAsset`, `supply.LatestSupply`,
+  `lookupUSDPrice`, `populateChange24h`) with their own caches
+  that the in-process prewarm goroutine doesn't enumerate. The F2
+  readers cold-filled per request, dominating the warm-path
+  latency. Lean fix: new `selfPrewarmAssetEndpoints` goroutine
+  HTTP-GETs `/v1/assets/<id>` against our own listener every 60s
+  for native + every verified currency. Drift-safe by construction
+  — the call hits the same `Server.Handler` the user takes, so
+  every internal lookup happens with byte-identical args. Per
+  `feedback_prewarm_handler_drift` this is the canonical pattern
+  when handler fan-out is wider than the prewarm goroutine's
+  per-reader enumeration.
+
+- **Cold-tier init failure cascades into a hot-side backfill
+  abort (#7 §3 residual).** `internal/ledgerstream.streamTiered`
+  used to return any `NewDataStore(ctx, cold)` error verbatim, so a
+  wrong-region cold endpoint (the 2026-05-20 §3 enable scenario)
+  aborted every backfill at first `ListObjectsV2`. ADR-0027 has
+  cold as OPTIONAL by design; matching that posture, the cold-init
+  failure path now logs a Warn and falls back to the hot-only
+  `ingest.ApplyLedgerMetadata` single-source path. Hot-init failure
+  still propagates (real config error, not an optional-tier issue).
+
+### Notes
+
+- **Storage trim Move A executed live 2026-05-20.** 7.1 TB of
+  `/srv/history-archive/{bucket,transactions,results,scp}` removed
+  under ZFS snapshot `data/archive@pre-trim-2026-05-20` (instant
+  rollback for 7 days; commit by destroying the snapshot). Live
+  `REFER` dropped from 6.95 TB to 26.3 GB. Pool stays at 93% until
+  snapshot destroy frees the bytes (~2026-05-27). See
+  `docs/architecture/storage-considerations.md` for the trade-off
+  register, operational plan, and rollback steps.
+
 ## [v0.5.0-rc.62] — 2026-05-20
 
 ### Fixed
