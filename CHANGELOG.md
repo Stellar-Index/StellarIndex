@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Status page endpoint probe is now two-shot (#52).** The
+  per-endpoint latency matrix on the status page polls every
+  30 s / 2 min; between polls Cloudflare lets the edge→origin
+  connection pool go cold, so a single probe's first request paid
+  a full CF↔origin TCP+TLS setup (~2-3 s measured) that has
+  nothing to do with API latency — the API serves cached asset
+  detail in <10 ms. The probe now fires a throwaway warm-up fetch
+  first and measures the second request on the warm connection,
+  i.e. the latency a returning user actually experiences. Both
+  fetches keep `cache: 'no-store'` so neither the browser nor the
+  CDN serves a stale body — it's still a real round trip, just not
+  a cold-pool one. A non-2xx or thrown warm-up short-circuits
+  (reports `down`/`error` without a second request). web/status
+  frontend only — no API change.
+
 ## [v0.5.0-rc.66] — 2026-05-21
 
 ### Fixed
