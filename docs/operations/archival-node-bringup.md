@@ -323,9 +323,13 @@ via step 4. Procedure:
 
 1. Re-run the ansible role to re-template the buckets + IAM.
 2. Run step 4 (`galexie-archive-fill`) to re-mirror from AWS.
-3. Wait for galexie service to fill `galexie-live` from the
-   archive tip onward (`galexie-append.sh` queries SDF's
-   `.well-known/stellar-history.json` and starts there).
+3. Wait for galexie service to fill `galexie-live`.
+   `galexie-append.sh` probes MinIO for the highest already-exported
+   LCM and resumes from `last_exported + 1` (the path on every
+   restart of an already-running deployment — guarantees no gap).
+   On a fresh deploy with an empty bucket it falls back to querying
+   SDF's `.well-known/stellar-history.json` and starting from the
+   archive tip minus a checkpoint-margin.
 4. Update `ratesengine_live_seam_ledger` in inventory if galexie
    restarted at a different ledger than before — query the new
    process args.

@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`galexie-append.sh` no longer skips ledgers on restart (#50).**
+  The wrapper used to ALWAYS start galexie at "archive tip minus a
+  checkpoint margin," which silently created a multi-thousand-ledger
+  gap in `galexie-live` whenever the service was restarted on an
+  already-running deployment (the script's own TODO comment had
+  flagged this; the 2026-05-21 ZFS topology migration is what tripped
+  it — ledgerstream cursor was frozen at L62,669,692 for ~20 min
+  before recovery). New behaviour: the wrapper first probes MinIO
+  `galexie-live` via the existing `galexie-writer` MinIO credentials,
+  finds the highest exported LCM, and resumes from
+  `last_exported + 1`. The archive-tip-minus-margin path is preserved
+  as the fresh-deploy fallback (empty bucket). Includes
+  `docs/operations/archival-node-bringup.md` step-3 update.
+
 ## [v0.5.0-rc.64] — 2026-05-21
 
 ### Fixed
