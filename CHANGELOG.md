@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.65] — 2026-05-21
+
 ### Added
 
 - **defindex decoder now covers the vault-wrapper layer too (#49).**
