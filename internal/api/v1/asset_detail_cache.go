@@ -40,10 +40,14 @@ type assetDetailEntry struct {
 // new overlays, new readers all flow through without any
 // per-reader plumbing.
 //
-// TTL is short (typically 30s) because the underlying data updates
-// per-minute (closed-bucket prices_1m) and per-tx (volume / supply).
-// 30s staleness is well inside the "closed-bucket only" API
-// contract per ADR-0015.
+// TTL (120s in production, set in server.New) MUST exceed the
+// selfPrewarmAssetEndpoints cadence so the prewarm pass always
+// refreshes an entry before it expires — otherwise the cache is
+// cold for the gap between TTL expiry and the next prewarm, and
+// every request in that window pays the full handler cost (#52).
+// The underlying data updates per-minute (closed-bucket prices_1m)
+// and per-tx (volume / supply); 120s staleness is well inside the
+// "closed-bucket only" API contract per ADR-0015.
 type assetDetailResponseCache struct {
 	mu      sync.RWMutex
 	entries map[string]*assetDetailEntry

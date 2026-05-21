@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.67] — 2026-05-21
+
+### Fixed
+
+- **`/v1/assets/{id}` cache TTL was shorter than the prewarm
+  cadence — p95/p99 blew up (#52).** The `assetDetailResponseCache`
+  TTL was 30s but `selfPrewarmAssetEndpoints` only refreshes every
+  60s, so the cache sat expired for 30 of every 60 seconds. The
+  status page polls `/v1/assets/native` every 30s and kept landing
+  in the cold window, paying the full ~700ms handler rebuild every
+  time (inflated to ~2.8s under concurrent-backfill CPU
+  contention). Every OTHER status-page endpoint measured 1-200ms —
+  the entire API p95/p99 tail (and the three latency SLO alerts)
+  was this one endpoint's cold misses. Bumped the TTL to 120s —
+  one full prewarm interval of headroom, so a prewarm pass always
+  refreshes an entry before it expires and `native` stays
+  permanently warm. Matches the sibling F2-path caches (1–2 min
+  TTL, same 60s prewarm). 120s staleness still fits the ADR-0015
+  closed-bucket-only contract.
+
 ### Changed
 
 - **Status page endpoint probe is now two-shot (#52).** The
