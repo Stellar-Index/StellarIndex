@@ -15,6 +15,48 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.64] — 2026-05-21
+
+### Fixed
+
+- **`/v1/assets/{id}` warm-after-cold still 700-900ms internal /
+  ~2079ms external post-rc.63 (#37 final).** rc.63's
+  `selfPrewarmAssetEndpoints` exercised the handler at startup +
+  every 60s, but the handler's underlying F2 readers
+  (`Volume24hUSDForAsset`, `supply.LatestSupply`, 2× `lookupUSDPrice`
+  via `populateChange24h` + `populatePriceUSD`, `fetchSupplySnapshot`)
+  are wired direct to `storeXxxReader` — no cache layer. Every
+  prewarm hit paid the full handler cost; every user request did
+  too. Diagnostic on r1: `pg_stat_activity` showed no active SQL
+  during a curl loop (Postgres isn't the bottleneck per-call,
+  but the cumulative cost of 4-5 sequential reader round-trips
+  is). New `assetDetailResponseCache` (32-byte TTL: 30s) caches
+  the pre-rendered JSON envelope bytes per asset_id. Drift-safe
+  by construction — the cached entry IS what the handler produces.
+  Cache miss serves at ~700ms (previous warm cost); subsequent
+  hits within 30s serve at sub-millisecond with `X-Ratesengine-Cache: HIT`
+  header. The `selfPrewarmAssetEndpoints` goroutine populates the
+  cache for every verified-currency + native on a 60s cadence,
+  so production traffic should land on cache hits ≥95% of the
+  time. 30s staleness fits comfortably inside the ADR-0015
+  closed-bucket-only contract: the underlying data sources update
+  per-minute at fastest.
+
+### Notes
+
+- **#48 phase 2 verified on r1.** rc.63's dispatcher auth-tree walker
+  was deployed at 10:47 CEST. A bounded backfill replay against
+  `[L62,000,000, L62,640,000]` (640k ledgers, soroswap-router only,
+  `-parallel 8`) produced 11,724+ new entries in the
+  `source_entry_counts.soroswap-router` counter — climbing from a
+  pre-fix baseline of 22 entries across 12M ledgers (top-level-only
+  walker). The walker is decisively firing on aggregator-wrapped
+  router calls; the ~9000× undercount documented in
+  `docs/architecture/contract-call-coverage-audit.md` is closed.
+  Full historical replay across the soroswap-router genesis range
+  is queued for a follow-on session once Move A's snapshot is
+  destroyed (~2026-05-27) and disk headroom is freed.
+
 ## [v0.5.0-rc.63] — 2026-05-21
 
 ### Added
