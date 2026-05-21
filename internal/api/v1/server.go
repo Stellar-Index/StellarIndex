@@ -151,6 +151,23 @@ type Server struct {
 	// asset symbols. Nil means "operator hasn't configured the map"
 	// — the endpoint serves an empty object.
 	sacWrappers map[string]string
+	// assetDetailCache is the response-level cache for /v1/assets/{id}.
+	// Stores the pre-rendered JSON bytes + Flags per asset_id with a
+	// short TTL (30s by default). Cache hits skip the entire handler
+	// chain — resolveAssetDetail, applySep1Overlay (even on Redis
+	// hit), applyF2Fields (4 uncached DB calls: volume / 2× price /
+	// supply), applyCoinExtensionFields. Drift-safe by construction:
+	// the cached entry IS what the handler produces.
+	//
+	// Pre-cache benchmark (rc.63 internal localhost on r1): ~700-900ms
+	// warm. The 7-reader fan-out caches (CachedCoinsReader SWR) are
+	// hot from prewarmCaches + selfPrewarmAssetEndpoints, so the
+	// remaining cost is in the F2 chain. Wrapping each F2 reader is
+	// 4 new wrapper types; the response-level cache is one type.
+	//
+	// Nil-safe: a nil cache short-circuits every method to no-op +
+	// miss. ttl=0 has the same effect at config layer.
+	assetDetailCache *assetDetailResponseCache
 	// usdPeggedClassics is the operator's allow-list of classic
 	// credit assets they declare as USD-pegged stablecoins.
 	// Mirrors trades.usd_pegged_classic_assets from config. Used
@@ -694,8 +711,15 @@ func New(opts Options) *Server {
 		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:          opts.SACWrappers,
 		usdPeggedClassics:    opts.USDPeggedClassics,
-		mux:                  http.NewServeMux(),
-		started:              time.Now().UTC(),
+		// 30s TTL on /v1/assets/{id} responses. Underlying data
+		// (closed-bucket prices, supply observers, 24h volume rollup)
+		// updates per-minute at fastest; 30s staleness fits comfortably
+		// inside the ADR-0015 closed-bucket-only contract. Drift-safe
+		// by construction — the cached entry IS what the handler
+		// produces (see assetDetailResponseCache doc comment).
+		assetDetailCache: newAssetDetailResponseCache(30 * time.Second),
+		mux:              http.NewServeMux(),
+		started:          time.Now().UTC(),
 	}
 	// Load + cache the embedded incident corpus once at startup;
 	// the data is small (a few markdown files) and ships with the
