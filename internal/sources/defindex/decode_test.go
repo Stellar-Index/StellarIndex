@@ -171,6 +171,236 @@ func TestDecodeFlow_badKind(t *testing.T) {
 	}
 }
 
+// ─── Phase B (vault layer) tests ──────────────────────────────
+
+// TestClassifyVault_depositWithdraw mirrors TestClassify_depositWithdraw
+// for the vault-wrapper topic prefix. Topic[1] symbols are shared
+// between strategy + vault layers (`deposit` / `withdraw`), so the
+// reject paths here mainly cover topic[0] discrimination.
+func TestClassifyVault_depositWithdraw(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		topic     []string
+		wantClass string
+	}{
+		{
+			name:      "vault deposit",
+			topic:     []string{TopicPrefixVault, TopicSymbolDeposit},
+			wantClass: EventDeposit,
+		},
+		{
+			name:      "vault withdraw",
+			topic:     []string{TopicPrefixVault, TopicSymbolWithdraw},
+			wantClass: EventWithdraw,
+		},
+		{
+			name:      "strategy prefix routes to classify(), not classifyVault()",
+			topic:     []string{TopicPrefixStrategy, TopicSymbolDeposit},
+			wantClass: "",
+		},
+		{
+			name:      "vault prefix encoded as Symbol not String",
+			topic:     []string{mustB64Symbol(t, "DeFindexVault"), TopicSymbolDeposit},
+			wantClass: "",
+		},
+		{
+			name:      "rebalance (Phase B excluded — see audit doc)",
+			topic:     []string{TopicPrefixVault, mustB64Symbol(t, "rebalance")},
+			wantClass: "",
+		},
+		{
+			name:      "single-element topic",
+			topic:     []string{TopicPrefixVault},
+			wantClass: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := &events.Event{Topic: tc.topic}
+			got := classifyVault(ev)
+			if got != tc.wantClass {
+				t.Errorf("classifyVault = %q, want %q", got, tc.wantClass)
+			}
+		})
+	}
+}
+
+// TestDecodeVaultFlow_deposit covers the happy path for a vault
+// deposit event with the audit-doc body schema: a G-strkey
+// `depositor`, a single-element `amounts` Vec<i128>, and
+// `df_tokens_minted` i128. Verifies the User strkey round-trips,
+// amounts preserve precision (ADR-0003), and direction is set.
+func TestDecodeVaultFlow_deposit(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		Type:           "contract",
+		Ledger:         60_500_000,
+		LedgerClosedAt: "2026-05-15T08:00:00Z",
+		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
+		OperationIndex: 1,
+		TxHash:         "vault-dep-abc",
+		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "amounts", vecSCVal(t, i128SCVal(big.NewInt(10_000_000)))),
+			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))),
+			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(9_876_543))),
+		)),
+	}
+	flow, err := decodeVaultFlow(ev, EventDeposit)
+	if err != nil {
+		t.Fatalf("decodeVaultFlow: %v", err)
+	}
+	if flow.Source != SourceName {
+		t.Errorf("Source = %q, want %q", flow.Source, SourceName)
+	}
+	if flow.Direction != DirectionDeposit {
+		t.Errorf("Direction = %q, want deposit", flow.Direction)
+	}
+	if flow.User == "" || flow.User[0] != 'G' {
+		t.Errorf("User = %q, want a G-strkey depositor", flow.User)
+	}
+	if got, want := len(flow.Amounts), 1; got != want {
+		t.Fatalf("len(Amounts) = %d, want %d", got, want)
+	}
+	if got, want := flow.Amounts[0].String(), "10000000"; got != want {
+		t.Errorf("Amounts[0] = %q, want %q", got, want)
+	}
+	if got, want := flow.DfTokens.String(), "9876543"; got != want {
+		t.Errorf("DfTokens = %q, want %q", got, want)
+	}
+	if flow.Ledger != 60_500_000 || flow.OpIndex != 1 || flow.TxHash != "vault-dep-abc" {
+		t.Errorf("header fields not preserved: %+v", flow)
+	}
+}
+
+// TestDecodeVaultFlow_withdraw covers the withdraw branch and the
+// per-direction field-name swap (`withdrawer` / `amounts_withdrawn`
+// / `df_tokens_burned`). Body has a multi-asset amounts vec to
+// confirm the Vec-decode loop handles >1 element.
+func TestDecodeVaultFlow_withdraw(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		Type:           "contract",
+		Ledger:         60_500_001,
+		LedgerClosedAt: "2026-05-15T08:01:00Z",
+		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
+		Topic:          []string{TopicPrefixVault, TopicSymbolWithdraw},
+		Value: mustB64(t, mapSCVal(t,
+			// Two-asset basket exercises the Vec loop.
+			mapEntry(t, "amounts_withdrawn", vecSCVal(t,
+				i128SCVal(big.NewInt(5_000_000)),
+				i128SCVal(big.NewInt(2_500_000)),
+			)),
+			mapEntry(t, "df_tokens_burned", i128SCVal(big.NewInt(7_400_000))),
+			mapEntry(t, "withdrawer", addrSCVal(makeAccountAddress(t, 0xDD))),
+		)),
+	}
+	flow, err := decodeVaultFlow(ev, EventWithdraw)
+	if err != nil {
+		t.Fatalf("decodeVaultFlow: %v", err)
+	}
+	if flow.Direction != DirectionWithdraw {
+		t.Errorf("Direction = %q, want withdraw", flow.Direction)
+	}
+	if flow.User == "" || flow.User[0] != 'G' {
+		t.Errorf("User = %q, want a G-strkey withdrawer", flow.User)
+	}
+	if got, want := len(flow.Amounts), 2; got != want {
+		t.Fatalf("len(Amounts) = %d, want %d (multi-asset vec)", got, want)
+	}
+	if flow.Amounts[0].String() != "5000000" || flow.Amounts[1].String() != "2500000" {
+		t.Errorf("Amounts = [%s, %s], want [5000000, 2500000]",
+			flow.Amounts[0], flow.Amounts[1])
+	}
+	if got, want := flow.DfTokens.String(), "7400000"; got != want {
+		t.Errorf("DfTokens = %q, want %q", got, want)
+	}
+}
+
+// TestDecodeVaultFlow_routerDepositorContract confirms the
+// occasional case where the depositor is a router/aggregator
+// C-strkey (e.g. coming via a Soroswap-route into the vault) rather
+// than a direct user G-strkey. Both decode the same way; only the
+// User prefix differs.
+func TestDecodeVaultFlow_routerDepositorContract(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		Ledger:         60_500_002,
+		LedgerClosedAt: "2026-05-15T08:02:00Z",
+		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
+		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "amounts", vecSCVal(t, i128SCVal(big.NewInt(1_111_111)))),
+			mapEntry(t, "depositor", addrSCVal(makeContractAddress(t, 0xEE))),
+			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(1_000_000))),
+		)),
+	}
+	flow, err := decodeVaultFlow(ev, EventDeposit)
+	if err != nil {
+		t.Fatalf("decodeVaultFlow: %v", err)
+	}
+	if flow.User == "" || flow.User[0] != 'C' {
+		t.Errorf("User = %q, want a C-strkey contract address", flow.User)
+	}
+}
+
+// TestDecodeVaultFlow_missingField defends the malformed-input
+// path. The vault body has more required fields than the strategy
+// body, so we explicitly verify the per-direction field names get
+// surfaced in the error.
+func TestDecodeVaultFlow_missingField(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
+		LedgerClosedAt: "2026-05-15T08:00:00Z",
+		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))),
+			// no amounts, no df_tokens_minted
+		)),
+	}
+	_, err := decodeVaultFlow(ev, EventDeposit)
+	if !errors.Is(err, ErrMalformedPayload) {
+		t.Errorf("err = %v, want ErrMalformedPayload", err)
+	}
+}
+
+// TestDecodeVaultFlow_emptyAmountsVec covers the degenerate but
+// valid case of a zero-asset deposit — the Vec is empty rather
+// than missing. Empty Vec is legal SCVal and the decoder accepts
+// it (downstream consumers can decide what to do with no flow).
+func TestDecodeVaultFlow_emptyAmountsVec(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
+		LedgerClosedAt: "2026-05-15T08:00:00Z",
+		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "amounts", vecSCVal(t)),
+			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))),
+			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(0))),
+		)),
+	}
+	flow, err := decodeVaultFlow(ev, EventDeposit)
+	if err != nil {
+		t.Fatalf("decodeVaultFlow: %v", err)
+	}
+	if len(flow.Amounts) != 0 {
+		t.Errorf("len(Amounts) = %d, want 0", len(flow.Amounts))
+	}
+}
+
+// vecSCVal builds a Vec<ScVal>. Mirrors the helper in
+// internal/scval/scval_test.go (kept here rather than DRYed because
+// the production package doesn't export test builders).
+func vecSCVal(t *testing.T, elts ...sdkxdr.ScVal) sdkxdr.ScVal {
+	t.Helper()
+	vec := sdkxdr.ScVec(elts)
+	pv := &vec
+	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvVec, Vec: &pv}
+}
+
 // ─── SCVal builders for tests ─────────────────────────────────
 // Mirrored from internal/sources/soroswap_router/decode_test.go —
 // keeping per-package builders rather than DRYing into a shared

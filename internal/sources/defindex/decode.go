@@ -3,6 +3,7 @@ package defindex
 import (
 	"fmt"
 
+	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/events"
 	"github.com/RatesEngine/rates-engine/internal/scval"
 )
@@ -22,6 +23,31 @@ func classify(e *events.Event) string {
 		return ""
 	}
 	if e.Topic[0] != TopicPrefixStrategy {
+		return ""
+	}
+	switch e.Topic[1] {
+	case TopicSymbolDeposit:
+		return EventDeposit
+	case TopicSymbolWithdraw:
+		return EventWithdraw
+	}
+	return ""
+}
+
+// classifyVault is the vault-layer twin of classify. Topics are
+// 2-tuples:
+//
+//	topic[0] = String("DeFindexVault")     — pre-encoded, byte-equal
+//	topic[1] = Symbol("deposit"|"withdraw")
+//
+// Vault wrappers also emit `rescue`, `paused`, `unpaused`,
+// `rebalance`, fee/manager admin events — all out of Phase-B scope;
+// see the audit doc.
+func classifyVault(e *events.Event) string {
+	if len(e.Topic) < 2 {
+		return ""
+	}
+	if e.Topic[0] != TopicPrefixVault {
 		return ""
 	}
 	switch e.Topic[1] {
@@ -94,6 +120,111 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	flow.Amount, err = scval.AsAmountFromI128(amountSv)
 	if err != nil {
 		return StrategyFlow{}, fmt.Errorf("%w: %s.amount: %w", ErrMalformedPayload, kind, err)
+	}
+
+	return flow, nil
+}
+
+// decodeVaultFlow converts one classified DeFindexVault event into
+// a VaultFlow.
+//
+// Body shape (per docs/operations/wasm-audits/defindex.md "Body
+// shapes", confirmed on-chain via Soroban-RPC getEvents against an
+// active wrapper):
+//
+//	deposit:  { depositor:  Address,
+//	            amounts:           Vec<i128>,
+//	            df_tokens_minted:  i128,
+//	            total_managed_funds_before, total_supply_before }
+//	withdraw: { withdrawer: Address,
+//	            amounts_withdrawn: Vec<i128>,
+//	            df_tokens_burned:  i128,
+//	            total_managed_funds_before, total_supply_before }
+//
+// We ignore the `total_*_before` NAV-snapshot fields at Phase B —
+// they're useful for NAV reconstruction but not for flow
+// attribution. Fields are pulled by name (decode-by-name per
+// contract-schema-evolution.md), so the decoder is robust against
+// the vault contract's known mid-life WASM upgrade
+// (`ae3409a4…468b` → `07097f83…84b0`) provided the field names
+// don't change — and they haven't.
+func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
+	closedAt, err := e.EventClosedAt()
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
+	}
+
+	flow := VaultFlow{
+		Source:     SourceName,
+		Ledger:     e.Ledger,
+		ClosedAt:   closedAt,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ContractID: e.ContractID,
+	}
+
+	// Pick the per-direction field names. The vault layer uses
+	// distinct names per direction (depositor vs withdrawer,
+	// amounts vs amounts_withdrawn, df_tokens_minted vs df_tokens_burned),
+	// unlike the strategy layer which shares names across directions.
+	var userField, amountsField, tokensField string
+	switch kind {
+	case EventDeposit:
+		flow.Direction = DirectionDeposit
+		userField, amountsField, tokensField = "depositor", "amounts", "df_tokens_minted"
+	case EventWithdraw:
+		flow.Direction = DirectionWithdraw
+		userField, amountsField, tokensField = "withdrawer", "amounts_withdrawn", "df_tokens_burned"
+	default:
+		return VaultFlow{}, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)
+	}
+
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: body not a Map: %w", ErrMalformedPayload, err)
+	}
+
+	// User address (G-strkey for direct deposit, occasionally
+	// C-strkey if a router/aggregator deposited on their behalf).
+	userSv, err := scval.MustMapField(entries, userField)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, userField, err)
+	}
+	flow.User, err = scval.AsAddressStrkey(userSv)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, userField, err)
+	}
+
+	// Multi-asset amounts vector — Vec<i128>.
+	amountsSv, err := scval.MustMapField(entries, amountsField)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, amountsField, err)
+	}
+	elems, err := scval.AsVec(amountsSv)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s not a Vec: %w", ErrMalformedPayload, kind, amountsField, err)
+	}
+	flow.Amounts = make([]canonical.Amount, 0, len(elems))
+	for i, sv := range elems {
+		amt, err := scval.AsAmountFromI128(sv)
+		if err != nil {
+			return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s[%d]: %w", ErrMalformedPayload, kind, amountsField, i, err)
+		}
+		flow.Amounts = append(flow.Amounts, amt)
+	}
+
+	// Share-token delta (df_tokens_minted on deposit, df_tokens_burned on withdraw).
+	tokensSv, err := scval.MustMapField(entries, tokensField)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, tokensField, err)
+	}
+	flow.DfTokens, err = scval.AsAmountFromI128(tokensSv)
+	if err != nil {
+		return VaultFlow{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, tokensField, err)
 	}
 
 	return flow, nil

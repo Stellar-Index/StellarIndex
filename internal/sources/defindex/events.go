@@ -1,27 +1,44 @@
-// Package defindex decodes Soroban contract events emitted by the
-// Blend autocompound *strategy* contracts that back paltalabs'
-// DeFindex vaults on Stellar mainnet.
+// Package defindex decodes Soroban contract events emitted by both
+// layers of paltalabs' DeFindex protocol on Stellar mainnet:
 //
-// IMPORTANT — what this actually decodes (corrected 2026-05-19):
-// the contracts in scope publish events with topic[0] =
-// ScvString("BlendStrategy") and a 2-tuple topic
-// ("BlendStrategy", "deposit"|"withdraw"), body
-// ScvMap{ from: Address, amount: i128 }. This was verified from
-// real on-chain LCM via `ratesengine-ops scan-soroban-events`
-// (e.g. ledger 57,056,389: ("BlendStrategy","deposit"){from,amount}).
+//  1. STRATEGY layer — Blend autocompound *strategy* contracts that
+//     hold the underlying lending position. Topic[0] =
+//     ScvString("BlendStrategy"). Body { from: Address, amount: i128 }.
+//     `from` here is the VAULT contract (a C-strkey), not the end
+//     user — useful for capital-flow attribution between layers.
 //
-// The earlier revision of this package targeted a fictional
-// ("DeFindexVault", …){depositor, amounts:Vec<i128>,
-// df_tokens_minted} schema lifted from paltalabs/defindex tag
-// `1.0.0`; mainnet never deployed that. The deployed vault-address
-// WASM (`11329c24…988`) is Blend strategy code. See
-// docs/operations/wasm-audits/defindex.md "Audit result".
+//  2. VAULT layer — DeFindex *vault wrapper* contracts that users
+//     interact with directly. Topic[0] = ScvString("DeFindexVault").
+//     Body has the end-user G-strkey (`depositor` / `withdrawer`),
+//     multi-asset amounts (`amounts` / `amounts_withdrawn`,
+//     Vec<i128>) and share-token deltas (`df_tokens_minted` /
+//     `df_tokens_burned`, i128).
 //
-// We surface strategy deposit/withdraw events for flow attribution
-// only — they are NOT price-discovery events and never contribute
-// to VWAP. Dispatch is by topic (any contract emitting the
-// BlendStrategy topic), mirroring the comet / aquarius
-// shared-emitter topology — not a hand-curated contract set.
+// Phase A (2026-05-19) shipped only the strategy layer because the
+// initial WASM walk confirmed only the strategy WASM
+// (`11329c24…988`) on the 3 named "fixed strategy" vault contracts
+// in `mainnet.contracts.json`. That walk MISSED the wrapper
+// contracts deployed by the factory (different WASM `ae3409a4…468b`
+// or its upgraded `07097f83…84b0`); we now know there are 100+
+// such wrappers spawned over the protocol's life (factory
+// `CDKFHFJI…NFKI` emits one `create` event per spawn). The vault
+// wrappers ARE where end-user attribution lives, and missing them
+// is what the 2026-05-21 cross-check vs Soroban RPC revealed
+// (~27% coverage in a 12-hour sample; pre-rc.63 walker only 14%).
+//
+// Phase B (this revision, 2026-05-21) adds the DeFindexVault
+// topic-match. Dispatch is still PURELY by topic — we don't
+// hardcode any contract addresses — so any current or future
+// DeFindex vault wrapper, whether listed in mainnet.contracts.json
+// or spawned later, gets decoded automatically. This mirrors the
+// comet/aquarius shared-emitter topology elsewhere in the codebase.
+//
+// We surface vault + strategy deposit/withdraw events for flow
+// attribution only — they are NOT price-discovery events and never
+// contribute to VWAP. Out of scope here: factory `create`/`n_fee`
+// events, strategy `harvest` events, vault `rebalance`/admin events
+// — all flagged in docs/operations/wasm-audits/defindex.md as
+// Phase-B-or-later follow-ups.
 //
 // See README.md for scope.
 package defindex
@@ -46,10 +63,19 @@ const SourceName = "defindex"
 // "SoroswapPair"). Confirmed on-chain via scan-soroban-events.
 const PrefixStrategy = "BlendStrategy"
 
+// PrefixVault is topic[0] for every DeFindex vault-wrapper event
+// (user-facing layer). Also 13 chars, also ScvString-encoded.
+// Confirmed on-chain via Soroban-RPC getEvents on a known wrapper
+// (CCA2ZJP5… runs WASM ae3409a4…468b, emits this topic on every
+// user deposit/withdraw with a G-strkey `depositor`/`withdrawer`).
+const PrefixVault = "DeFindexVault"
+
 // Topic[1] symbols for the user-facing flow events we decode. The
 // strategy contract publishes more (harvest / keeper admin / …);
-// Phase A only needs deposit + withdraw — the capital flow in/out
-// of the strategy.
+// Phase A only decodes deposit + withdraw at the strategy layer.
+// The vault layer reuses the same two symbols (`deposit`,
+// `withdraw`) — they're shared between layers, so Phase B doesn't
+// need new symbol constants.
 const (
 	EventDeposit  = "deposit"
 	EventWithdraw = "withdraw"
@@ -64,6 +90,7 @@ const (
 // encoder shifts under us, that test fires before this ships.
 var (
 	TopicPrefixStrategy = scval.MustEncodeString(PrefixStrategy)
+	TopicPrefixVault    = scval.MustEncodeString(PrefixVault)
 	TopicSymbolDeposit  = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolWithdraw = scval.MustEncodeSymbol(EventWithdraw)
 )
@@ -102,8 +129,8 @@ const (
 )
 
 // Event wraps a StrategyFlow so it satisfies consumer.Event for the
-// dispatcher / pipeline path. Phase A is log-only; the persist hook
-// is a Phase-B add-on.
+// dispatcher / pipeline path. Log-only sink for now; a per-flow
+// persist hypertable is a Phase-C follow-up (see audit doc).
 type Event struct {
 	Flow StrategyFlow
 }
@@ -115,6 +142,57 @@ func (e Event) EventKind() string {
 
 // Source implements [consumer.Event].
 func (e Event) Source() string { return SourceName }
+
+// VaultFlow is the canonical wire shape for one user-facing
+// DeFindex *vault wrapper* deposit or withdraw — what end users
+// see when they interact with the protocol. Distinct from
+// StrategyFlow (the underlying strategy-layer flow that fires from
+// the strategy contract with `from` = vault address); each user
+// deposit produces one VaultFlow + one StrategyFlow + one Blend
+// Pool supply event in the same tx (correlate by tx_hash +
+// op_index).
+//
+// User is the end user moving capital — a G-strkey for direct
+// interactions, occasionally a C-strkey if the user came via
+// another aggregator/router. The vault layer is where actual
+// end-user attribution lives (the strategy layer's `from` is
+// always the vault contract).
+//
+// Amounts is a Vec because DeFindex supports multi-asset vaults
+// (one Vec entry per asset in the vault's basket). The
+// `mainnet.contracts.json` Phase-A trio (USDC / EURC / XLM blend
+// autocompound) are all single-asset (vec length 1), but the
+// etherfuse-strategy variants (cetes, ustry, tesouro) may have
+// multiple — the decoder makes no length assumption.
+//
+// DfTokens is the share-token delta — `df_tokens_minted` (deposit)
+// or `df_tokens_burned` (withdraw). i128, ADR-0003 (never
+// truncated).
+type VaultFlow struct {
+	Source     string
+	Ledger     uint32
+	ClosedAt   time.Time
+	TxHash     string
+	OpIndex    int
+	ContractID string // the DeFindex vault-wrapper contract
+	Direction  Direction
+	User       string             // depositor (G…) or withdrawer; may be C-strkey
+	Amounts    []canonical.Amount // underlying-asset delta vec (i128 each)
+	DfTokens   canonical.Amount   // share-token delta — mint on deposit, burn on withdraw
+}
+
+// VaultEvent wraps a VaultFlow for the dispatcher / pipeline path.
+type VaultEvent struct {
+	Flow VaultFlow
+}
+
+// EventKind implements [consumer.Event].
+func (e VaultEvent) EventKind() string {
+	return "defindex.vault." + string(e.Flow.Direction)
+}
+
+// Source implements [consumer.Event].
+func (e VaultEvent) Source() string { return SourceName }
 
 // Errors returned by the decode path. Callers classify via
 // errors.Is.

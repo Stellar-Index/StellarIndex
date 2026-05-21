@@ -222,6 +222,88 @@ Both gating steps satisfied:
    shared hash across all 3 vaults' on-chain lives, zero mid-life
    upgrades from the 2026-05-19 walk's `merged.json`).
 
+## Phase-B extension (2026-05-21) — vault-wrapper layer added
+
+The 2026-05-19 audit closed against the strategy WASM and the
+three named "fixed-strategy" vault contracts. A 2026-05-21
+cross-check vs Soroban-RPC `getEvents` revealed that closure was
+half the coverage: every defindex event flow goes through TWO
+contracts, and the strategy layer only sees half of them.
+
+**The two layers (now both decoded):**
+
+| layer | topic[0] | contract WASM | `from` / `user` field | purpose |
+| --- | --- | --- | --- | --- |
+| strategy | `BlendStrategy` | `11329c24…988` | vault contract C-strkey | underlying capital movement |
+| vault wrapper | `DeFindexVault` | `ae3409a4…468b` (initial) / `07097f83…84b0` (upgraded) | end-user G-strkey (occasionally aggregator C-strkey) | user-facing entry point |
+
+**Why the original audit missed the vault layer:**
+
+1. **`mainnet.contracts.json` lists strategy addresses, not vault
+   addresses.** The protocol team's public deployment manifest is
+   organised around investment products ("USDC blend autocompound
+   strategy") — each entry is a strategy contract. The vault
+   wrappers (`CCA2ZJP5…`, `CBNKCU3H…`, plus ~100 more spawned by
+   the factory `CDKFHFJI…NFKI`) are deployed on demand, one per
+   user investment, and don't appear in the manifest.
+2. **The walk that found `11329c24…988` only walked the manifest
+   addresses.** Walking the factory's `create` events (each spawns
+   a vault wrapper) was a Phase-B follow-up the original audit
+   flagged but didn't execute.
+3. **`From` field on strategy events was documented as "may be
+   contract address," not "is always contract address."** In
+   practice every strategy-layer event has a vault contract as
+   `from` — there is no direct-to-strategy user flow path in the
+   deployed protocol. The user always interacts with a vault
+   wrapper, which then delegates to a strategy.
+
+**Cross-check that surfaced the gap:**
+
+| ledger window | RPC events | indexer journal | coverage |
+| --- | --- | --- | --- |
+| pre-rc.63 (before walker fix #48 deployed 10:45 CEST 2026-05-21) | 78 | 11 | 14% |
+| post-rc.63 (walker active) | 15 | 15 | 100% (strategy-layer events only) |
+| total in 12-hour audit window | 93 | 26 | 27% |
+
+The post-rc.63 100% above is *only across strategy-layer events
+that fire as sub-invocations*. Vault-layer `DeFindexVault` events
+weren't even being filtered into the dispatcher — the decoder
+didn't list that topic prefix.
+
+**Phase B addition (decoder revision, 2026-05-21):**
+
+- Added `PrefixVault = "DeFindexVault"` to `events.go` alongside
+  the existing `PrefixStrategy`.
+- Added `classifyVault()` + `decodeVaultFlow()` to `decode.go`,
+  decoding the `{depositor|withdrawer, amounts|amounts_withdrawn,
+  df_tokens_minted|df_tokens_burned, total_*_before}` schema. The
+  `total_*_before` fields are intentionally ignored at Phase B
+  (NAV reconstruction is later scope).
+- `Decoder.Matches` returns true for either topic-prefix; `Decode`
+  routes to the appropriate decoder and emits `Event` (strategy
+  layer) or `VaultEvent` (vault layer).
+- Sink logs both with distinct `msg` tags
+  (`"defindex strategy flow"` / `"defindex vault flow"`) so
+  operators can grep either layer independently.
+- Topic-based dispatch (no contract address hardcoding) means
+  every current AND future vault wrapper the factory spawns gets
+  decoded automatically — same shared-emitter topology as
+  comet/aquarius and the strategy layer.
+
+**Still out of scope (Phase C+):**
+
+- `("BlendStrategy","harvest")` strategy-layer yield events.
+- `("DeFindexVault","rebalance")` admin/rebalance events (and the
+  four-way `rebalance_method` discriminator inside the body — see
+  "Surprising gotchas" #3 above).
+- `("DeFindexFactory","create")` vault-spawn events. (Would give
+  us live notifications when new wrappers appear; we'd still
+  capture their flows via topic-dispatch even without this.)
+- A typed `defindex_flows` hypertable so events become
+  audit-queryable post-decode (currently the counter is the only
+  after-the-fact record — which is why historical recovery
+  requires a re-backfill rather than a SQL query).
+
 `BackfillSafe: true` flipped in
 `internal/sources/external/registry.go`.
 `ratesengine-ops backfill --source=defindex` is now unblocked.

@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **defindex decoder now covers the vault-wrapper layer too (#49).**
+  Phase A (rc.58) decoded `("BlendStrategy","deposit"|"withdraw")` —
+  the *strategy* contracts. That captured the underlying capital
+  movement but `from` was always the vault contract C-strkey, not
+  the end-user. A 2026-05-21 cross-check against Soroban-RPC
+  `getEvents` showed we were at 27% coverage in a 12-hour window
+  (and only 14% pre-rc.63 walker), because every user interaction
+  flows USER → vault wrapper → strategy contract → Blend pool, and
+  we were only seeing the strategy leg. Phase B adds
+  `("DeFindexVault","deposit"|"withdraw")` decoding for the
+  user-facing wrapper layer: `depositor` / `withdrawer` (G-strkey),
+  `amounts` / `amounts_withdrawn` (Vec<i128> — multi-asset support),
+  `df_tokens_minted` / `df_tokens_burned` (share-token deltas).
+  Dispatch is still purely topic-based (no contract address
+  hardcoding) so every current AND future DeFindex vault wrapper
+  the factory spawns (100+ in lifetime per SE) is decoded
+  automatically. Audit doc updated with the two-layer model,
+  cross-check methodology, and Phase-C+ scope (harvest, rebalance,
+  factory `create`, typed flow hypertable).
+
 ### Fixed
 
 - **`galexie-append.sh` no longer skips ledgers on restart (#50).**
