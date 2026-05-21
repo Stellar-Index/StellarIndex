@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -106,7 +107,7 @@ const drainTimeout = 30 * time.Second
 // Panic-recovers so a single malformed Amount can't take the whole
 // sink down — the source-level decoder error metric has already
 // counted the upstream event by the time we get here.
-func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) { //nolint:gocyclo // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
+func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) { //nolint:gocyclo,funlen // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("panic in event sink — recovered",
@@ -162,9 +163,12 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 			"amount_out", e.Swap.AmountOut.String(),
 		)
 	case defindex.Event:
-		// Phase A: log-only sink. Phase B will tag matching same-tx
-		// Blend / Soroswap legs as `routed_via` and write to the
-		// aggregator_exposures hypertable from a separate periodic
+		// Strategy-layer flow (vault → strategy capital movement).
+		// `from` is always the vault contract C-strkey; end-user
+		// attribution lives at the vault layer (case defindex.VaultEvent
+		// below). Log-only sink; a future revision will tag matching
+		// same-tx Blend / Soroswap legs as `routed_via` and write to
+		// the aggregator_exposures hypertable from a separate periodic
 		// ticker. Until then we emit one INFO line per strategy flow
 		// so operators can verify the dispatcher routes BlendStrategy
 		// events correctly via the journal. Counter bump as for
@@ -179,6 +183,27 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 			"direction", string(e.Flow.Direction),
 			"from", e.Flow.From,
 			"amount", e.Flow.Amount.String(),
+		)
+	case defindex.VaultEvent:
+		// Vault-wrapper layer (user-facing deposit/withdraw). `user`
+		// is the end-user G-strkey for direct interactions, a router
+		// C-strkey for aggregator-routed flows. Phase B (#49) added
+		// this branch; the pre-Phase-B decoder only emitted strategy
+		// events and missed ~86% of defindex activity historically.
+		bumpEntryCount(ctx, logger, store, defindex.SourceName)
+		amounts := make([]string, 0, len(e.Flow.Amounts))
+		for _, a := range e.Flow.Amounts {
+			amounts = append(amounts, a.String())
+		}
+		logger.Info("defindex vault flow",
+			"source", defindex.SourceName,
+			"tx_hash", e.Flow.TxHash,
+			"ledger", e.Flow.Ledger,
+			"contract_id", e.Flow.ContractID,
+			"direction", string(e.Flow.Direction),
+			"user", e.Flow.User,
+			"amounts", strings.Join(amounts, ","),
+			"df_tokens", e.Flow.DfTokens.String(),
 		)
 	case external.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)

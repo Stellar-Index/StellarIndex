@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.66] — 2026-05-21
+
+### Fixed
+
+- **defindex VaultEvent silently dropped by pipeline sink (#49 follow-up).**
+  rc.65 shipped the Phase-B decoder that matches DeFindexVault topic
+  events and produces `defindex.VaultEvent` consumer events — but
+  the pipeline's `persistEvent` type-switch only had a case for
+  `defindex.Event` (strategy layer) and not `defindex.VaultEvent`.
+  Vault events flowed all the way through Matches+Decode, then fell
+  into the unhandled-default branch and were dropped with a
+  `ratesengine_source_insert_errors_total{kind="unhandled",source="defindex"}`
+  metric bump. (Caught when 246 strategy flow log lines appeared
+  but zero vault flow lines — the metric counter was the smoking
+  gun.) Added the missing case: counter bump + INFO log
+  `"defindex vault flow"` with user, multi-asset amounts, and
+  df_tokens delta, identical in shape to the per-package Sink
+  defined in `internal/sources/defindex/consumer.go`. This is the
+  outer-router gap any new event TYPE (vs new source) will hit —
+  worth a future pass to make the dispatcher Sink interface
+  do the routing instead of a hand-curated type-switch.
+
 ## [v0.5.0-rc.65] — 2026-05-21
 
 ### Added
