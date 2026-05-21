@@ -930,6 +930,32 @@ function probeEndpoint(
   }
   const url = `${API_BASE_URL}${ep.probe.path}`;
   return async () => {
+    // Two-shot probe. The status page polls every 30 s (hot tier)
+    // or 2 min (warm tier); between polls Cloudflare lets the
+    // edge→origin connection pool go cold, so a single probe's
+    // FIRST request pays a full CF↔origin TCP+TLS setup (~2-3 s
+    // measured) that has nothing to do with API latency — the API
+    // itself serves cached asset detail in <10 ms. The first fetch
+    // below is a throwaway warm-up; the second, on the now-warm
+    // connection, is the latency a returning user actually
+    // experiences and the one we report. cache:'no-store' on both
+    // so neither the browser nor the CDN serves a stale body — we
+    // always measure a real round trip, just not a cold-pool one.
+    try {
+      const warm = await fetch(url, {
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        cache: 'no-store',
+      });
+      // A non-2xx is a real status — report it without spending a
+      // second request (and a second timeout) re-confirming it.
+      if (!warm.ok) {
+        return { kind: 'down', latencyMs: -1, status: warm.status };
+      }
+    } catch {
+      // Warm-up threw (network / abort / TLS). No point timing a
+      // second doomed request — report the error now.
+      return { kind: 'error', latencyMs: -1 };
+    }
     const start = performance.now();
     try {
       const res = await fetch(url, {
