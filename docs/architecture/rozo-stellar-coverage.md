@@ -32,11 +32,44 @@ source. It doesn't fit `ClassExchange`. Shares CCTP's
 
 ## Contracts (mainnet vs design-stage, 2026-05-20)
 
+### Soroban contracts (C-strkey)
+
 | Variant | Status | Mainnet address |
 |---|---|---|
-| v1 Payment | LIVE (mainnet) | `CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL` |
+| v1 Payment (original) | LIVE | `CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL` |
+| v1 Payment (deploy 2) | LIVE | `CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE` |
+| v1 Payment (deploy 3) | LIVE | `CAQPKW5AUPEA4C7OERZRUCBWT5RZDSETO4PR5REVRC5MT4CF3PBSKXQC` |
 | v2 Forwarder | design-stage | (not deployed) |
 | v2 IntentBridge | design-stage | (not deployed) |
+
+All three live C contracts emit the same `PaymentEvent` / `FlushEvent`
+schemas — confirmed by RozoAI 2026-05-21. The decoder matches by
+`topic[0] = symbol_short!("payment" | "flush")`, so contract-set
+expansion is a watchlist concern (cross-validation + activity
+scoping), not a decoder-shape change.
+
+Per RozoAI: "Our C wallets are mostly used when users are bridging
+out from C wallets (when memo is not supported)." Most volume flows
+through the relayer G-wallets below.
+
+### Relayer classic accounts (G-strkey)
+
+| Account | Role |
+|---|---|
+| `GADDIYCVR2Z6H46YWZE53LICP56ZBNEUUT2QAG4QHSWVIYE44HS7W3XY` | Relayer wallet — USDC / EURC |
+| `GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4` | Relayer wallet — USDC / EURC |
+
+Per RozoAI 2026-05-21: "those 2 addresses should cover most of the
+txs on usdc/eurc." Memo-bearing bridge flows route through these
+classic accounts; non-memo flows route through the C contracts.
+
+These accounts don't emit Soroban events — they show up as the
+source / destination of classic `payment` operations. Tracking
+pattern: add to the supply observer's watched-account set or to a
+bridge-specific observer recording deltas into
+`bridge_relayer_balances`. Useful for: reconciling bridge inflow
+vs outflow, flagging stuck relayer balances, deriving USDC / EURC
+bridge volume independent of on-Soroban contract events.
 
 The v1 README explicitly notes v2 is gated on Circle's CCTP
 launch on Stellar (which is now live — see #40). Rozo v2
