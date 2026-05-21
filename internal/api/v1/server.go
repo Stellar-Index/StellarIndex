@@ -711,13 +711,19 @@ func New(opts Options) *Server {
 		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:          opts.SACWrappers,
 		usdPeggedClassics:    opts.USDPeggedClassics,
-		// 30s TTL on /v1/assets/{id} responses. Underlying data
-		// (closed-bucket prices, supply observers, 24h volume rollup)
-		// updates per-minute at fastest; 30s staleness fits comfortably
-		// inside the ADR-0015 closed-bucket-only contract. Drift-safe
+		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
+		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
+		// old 30s TTL the cache expired for 30 of every 60 seconds
+		// between prewarm passes, so every probe landing in that window
+		// (the status page polls /v1/assets/native every 30s) paid the
+		// full cold-rebuild cost and inflated API p95/p99 (#52 / rc.67).
+		// 120s = one full prewarm interval of headroom; matches the
+		// sibling F2-path caches (1–2 min TTL, same 60s prewarm).
+		// Underlying data updates per-minute at fastest; 120s staleness
+		// still fits the ADR-0015 closed-bucket-only contract. Drift-safe
 		// by construction — the cached entry IS what the handler
 		// produces (see assetDetailResponseCache doc comment).
-		assetDetailCache: newAssetDetailResponseCache(30 * time.Second),
+		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
 	}
