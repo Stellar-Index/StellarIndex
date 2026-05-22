@@ -69,6 +69,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0025](0025-caddy-cloudflare-trusted-proxy.md) | Accepted | Caddy trusts Cloudflare for client-IP signal via CIDR-pinned static list | 2026-05-10 |
 | [0026](0026-stablecoin-fiat-proxy-late-binding.md) | Accepted | Stablecoin → fiat proxy is late-binding aggregator policy, not eager ingest normalisation | 2026-05-10 |
 | [0027](0027-lcm-cache-tiering.md) | *Proposed* | LCM cache tiering — local galexie-archive as hot, aws-public-blockchain as cold | 2026-05-20 |
+| [0028](0028-rwa-asset-representation.md) | *Proposed* | Tokenized real-world assets as `AssetType = "rwa"` — RedStone RWA feeds (BENJI, GILTS, …) | 2026-05-22 |
 
 ## Related
 
