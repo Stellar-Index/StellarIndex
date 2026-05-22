@@ -115,7 +115,7 @@ not active.
       (+ galexie-backfill.toml + /etc/default/galexie-backfill)
 - [x] §7 `nftables.conf.j2` → open 80/443
 - [x] §8 add verify-archive-tier-a / archive-completeness / supply-snapshot units (+ drop-ins) to the role
-- [ ] §9 deploy `galexie-archive.yml` rule to r1
+- [x] §9 deployed `galexie-archive.yml` to r1 — `ratesengine.galexie_archive_tip_lag` (3 rules) loaded, prometheus SIGHUP-reloaded 2026-05-22
       (NOT an Ansible-role change — handled on r1 directly by the operator)
 - [ ] §1 sshd — ROLE IS CORRECT (tasks/12-hardening.yml templates a hardened
       sshd_config). Drift is one-way: r1 itself never hardened. A rebuild
@@ -126,3 +126,20 @@ not active.
       refresh handled separately, per the audit scope.)
 - [x] delete stale `stellar-rpc.*.j2` (+ task 08, main.yml include,
       handler, defaults — rpc removed from our architecture 2026-04-23)
+
+## Reconciliation complete — 2026-05-22
+
+All items closed. Ansible commits `da8d5709..2aecd9a1` on `main`.
+The role now faithfully rebuilds r1. Two operator follow-ups:
+
+1. **Vault keys.** `templates/ratesengine.env.j2` + `galexie-backfill.toml.j2`
+   reference vault vars that the real (encrypted) `inventory/r1.secrets.yml`
+   must define: `postgres_pass_ratesengine`,
+   `vault_ratesengine_reader_secret_key`, `vault_massive_api_key`,
+   `vault_coingecko_demo_api_key`, `vault_chainlink_rpc_url`,
+   plus the galexie-archive-writer creds. The optional API keys have
+   `| default('')`; the DSN password + reader secret do not — a
+   playbook run fails loud if they're absent (correct fail-mode).
+2. **§1 sshd** — the role hardens sshd correctly; r1's *live* sshd is
+   still stock. Hardening live r1 is a separate r1-side change
+   (touches SSH access) — tracked as its own task.
