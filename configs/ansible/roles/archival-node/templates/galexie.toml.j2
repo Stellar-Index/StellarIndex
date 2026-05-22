@@ -26,7 +26,7 @@ files_per_partition  = {{ galexie_files_per_partition }}
 # network=pubnet|testnet triggers galexie's built-in defaults
 # (quorum + history archives). We also set captive_core_toml_path
 # so our own 7-org tier-1 quorum is used instead of the built-in one,
-# keeping this consistent with the primary stellar-core + stellar-rpc.
+# keeping this consistent with the backfill galexie's captive core.
 network                  = "{{ stellar_network }}"
 captive_core_toml_path   = "/etc/stellar/captive-core-galexie.cfg"
 stellar_core_binary_path = "/usr/bin/stellar-core"

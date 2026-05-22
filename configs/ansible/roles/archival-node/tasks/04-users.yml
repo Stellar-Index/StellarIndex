@@ -39,14 +39,6 @@
     group: stellar
     mode: "0750"
 
-- name: Ownership — stellar-rpc data dir
-  ansible.builtin.file:
-    path: /var/lib/stellar-rpc
-    state: directory
-    owner: stellar
-    group: stellar
-    mode: "0750"
-
 - name: Ownership — galexie data dir
   ansible.builtin.file:
     path: /var/lib/galexie

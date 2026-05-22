@@ -80,13 +80,14 @@ all:
     # stellar-core + stellar-rpc were REMOVED from r1 on 2026-04-23
     # — galexie carries its own embedded captive-core, the indexer
     # reads MinIO directly, and the public API is /v1/*, not /rpc.
-    # See docs/operations/r1-deployment-state.md §"Architecture
-    # after 2026-04-23 trim" for the rationale; flip to true only
-    # when validating Phase-3 validator work.
+    # The role's stellar-rpc task + templates were deleted on
+    # 2026-05-22 (no longer in our architecture); see
+    # docs/operations/r1-deployment-state.md §"Architecture after
+    # 2026-04-23 trim". run_stellar_core flips to true only when
+    # validating Phase-3 validator work.
     run_postgres:        true
     run_stellar_core:    false
     run_galexie:         true
-    run_stellar_rpc:     false
     run_minio:           true                 # local single-node MinIO
     run_observability:   true
 

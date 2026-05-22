@@ -52,7 +52,6 @@ all:
     run_postgres:        true
     run_stellar_core:    false       # Phase 3 validator track only
     run_galexie:         true        # writes the live tail
-    run_stellar_rpc:     false
     run_minio:           true        # galexie-live ONLY (see minio_buckets)
     run_observability:   true
 

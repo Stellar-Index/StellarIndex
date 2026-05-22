@@ -36,11 +36,6 @@
   when: run_galexie | bool
   tags: [galexie]
 
-- name: "stellar-rpc"
-  ansible.builtin.import_tasks: 08-stellar-rpc.yml
-  when: run_stellar_rpc | bool
-  tags: [stellar-rpc, rpc]
-
 - name: "MinIO (single-node local)"
   ansible.builtin.import_tasks: 09-minio.yml
   when: run_minio | bool
