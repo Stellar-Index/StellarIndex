@@ -1,11 +1,21 @@
 package pipeline
 
 import (
+	"time"
+
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/ledgerstream"
 )
+
+// liveTailRetryWait shortens the SDK BufferedStorageBackend's 30s
+// default RetryWait for the live-tail stream. galexie uploads a new
+// LCM roughly every ~5s; with the 30s default a caught-up fetch
+// worker sleeps a full 30s between re-checks, making end-to-end
+// ingest lag sawtooth 0→30s. 3s keeps the worker re-checking
+// promptly without hammering MinIO. See ledgerstream.Config.LiveRetryWait.
+const liveTailRetryWait = 3 * time.Second
 
 // LedgerstreamConfig builds a ledgerstream.Config pointing at one
 // galexie bucket. Pass cfg.Storage.S3BucketArchive for historical
@@ -35,6 +45,13 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 			NetworkPassphrase: cfg.Stellar.Passphrase(),
 			Compression:       "zstd",
 		},
+	}
+
+	// Live-tail latency: the live bucket is read as an unbounded
+	// stream, so shorten RetryWait (archive reads are bounded and
+	// ignore it). galexie-live is the only bucket that gets this.
+	if bucket == cfg.Storage.S3BucketLive {
+		out.LiveRetryWait = liveTailRetryWait
 	}
 
 	// Tiered-read opt-in: only attach a ColdDataStore when the
