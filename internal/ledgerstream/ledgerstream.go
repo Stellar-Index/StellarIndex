@@ -28,6 +28,7 @@ package ledgerstream
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stellar/go-stellar-sdk/ingest"
@@ -81,6 +82,19 @@ type Config struct {
 	// register under the same registry.
 	Registry          *prometheus.Registry
 	RegistryNamespace string
+
+	// LiveRetryWait overrides the BufferedStorageBackend's RetryWait
+	// for an **unbounded (live-tail)** stream only. The SDK default
+	// is 30s: when a fetch worker requests the next ledger object and
+	// it isn't in the datastore yet, the worker sleeps RetryWait
+	// before re-checking. Once the indexer has caught up to galexie's
+	// tip every next-ledger fetch misses, so a 30s default makes the
+	// end-to-end ingest lag sawtooth 0→30s even though galexie
+	// uploads the next LCM within ~5s. Setting this to a few seconds
+	// lets a caught-up worker re-check promptly. Zero leaves the
+	// SDK/derived default untouched. Ignored for bounded ranges (a
+	// missing object there is a hard error, not a wait-for-tip).
+	LiveRetryWait time.Duration
 }
 
 // tieringEnabled reports whether Config requests a tiered
@@ -135,6 +149,14 @@ func Stream(
 			lpf = 1
 		}
 		buffered = ingest.DefaultBufferedStorageBackendConfig(lpf)
+	}
+
+	// Live-tail RetryWait override — see Config.LiveRetryWait. Only
+	// an unbounded range (to == 0) waits for the tip; on a bounded
+	// range a missing object is a hard error, so the override is
+	// meaningless there and deliberately not applied.
+	if to == 0 && cfg.LiveRetryWait > 0 {
+		buffered.RetryWait = cfg.LiveRetryWait
 	}
 
 	var ledgerRange ledgerbackend.Range

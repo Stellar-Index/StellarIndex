@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Live-tail ingest lag sawtoothed 0→30s (#57).** The SDK
+  `BufferedStorageBackend` defaults `RetryWait` to 30s: once the
+  indexer catches up to galexie's tip, the fetch worker requesting
+  the next ledger object misses (galexie hasn't uploaded it yet)
+  and sleeps a full 30s before re-checking — even though galexie
+  uploads each LCM within ~5s of ledger close. The result was the
+  indexer cursor advancing in bursts of ~5 ledgers every ~30s
+  rather than tracking the tip continuously, so end-to-end ingest
+  lag oscillated between ~2s and ~30s. Added
+  `ledgerstream.Config.LiveRetryWait` — an unbounded-stream-only
+  override (a missing object on a bounded range is still a hard
+  error) — and set it to 3s for the galexie-live bucket in
+  `pipeline.LedgerstreamConfig`. A caught-up worker now re-checks
+  every 3s, collapsing the lag floor to ~3–8s.
+
 ## [v0.5.0-rc.68] — 2026-05-22
 
 ### Fixed
