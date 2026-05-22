@@ -153,9 +153,15 @@ key_rate_limit_per_min = 6000
 # starts populating market_cap_usd / fdv_usd / circulating_supply
 # / total_supply / max_supply for these.
 [supply]
+# aggregator_refresh_enabled starts the supply-refresh goroutine
+# path (2026-05-14). It emits the success metric even when no rows
+# match (no_metadata basis); without it
+# ratesengine_aggregator_supply_refresh_never_initialized fires
+# permanently. Cadence default = 5m.
 aggregator_refresh_enabled = true
 aggregator_refresh_cadence = "5m"
-watched_classic_assets = {{ ratesengine_watched_classic_assets | default([
+watched_classic_assets = [
+{% for asset in ratesengine_watched_classic_assets | default([
   "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
   "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
   "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
@@ -164,7 +170,10 @@ watched_classic_assets = {{ ratesengine_watched_classic_assets | default([
   "BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY",
   "PHO-GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO",
   "KALE-GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE",
-]) | to_json }}
+]) %}
+  "{{ asset }}",
+{% endfor %}
+]
 watched_sep41_contracts = {{ ratesengine_watched_sep41_contracts | default([]) | to_json }}
 sdf_reserve_accounts = {{ ratesengine_sdf_reserve_accounts | default([]) | to_json }}
 

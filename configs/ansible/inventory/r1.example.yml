@@ -43,7 +43,7 @@ all:
   vars:
     # ───── Region identity ─────────────────────────────────────────
     region_id:           "r1"
-    region_name:         "FSN1"
+    region_name:         "Hetzner-r1"         # = `name` in ratesengine.toml [region]; matches live r1
     home_domain:         "ratesengine.net"
 
     # ───── Stellar network ─────────────────────────────────────────
@@ -51,6 +51,15 @@ all:
     catchup_mode:        "CATCHUP_RECENT"    # RECENT | COMPLETE
     is_validator:        false                # true = SCP voter (Phase B+)
     node_is_validator:   "{{ is_validator }}"
+
+    # ───── Rates Engine ingest ─────────────────────────────────────
+    # backfill_from_ledger is PER-REGION (each region has its own
+    # galexie seam — ADR-0016). Role default is 0; r1's live value
+    # is below. Re-check at rebuild time — it's a point-in-time
+    # floor for the historical backfill, not a fixed constant.
+    # enabled_sources / aggregator / oracle config are region-
+    # invariant and live in the role defaults.
+    ratesengine_backfill_from_ledger: 62403000
 
     # ───── Storage layout ──────────────────────────────────────────
     # Typical post-installimage layout:
