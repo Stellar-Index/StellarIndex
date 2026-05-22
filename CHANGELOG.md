@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/price/batch` p99 pinned at the 10s ceiling (#64).**
+  `lookupPriceBatch` resolved its asset_ids in a **serial loop** —
+  up to 100 (GET) / 1000 (POST) — each id a `LatestPrice` + the
+  three-layer price-fallback chain, i.e. one-to-several DB
+  round-trips. A 100-id batch serially was ~5–10s, hitting the
+  handler deadline. The per-id resolution is now a bounded parallel
+  fan-out (`priceBatchConcurrency = 16`): per-id results land in an
+  index-keyed slice so the envelope still preserves first-occurrence
+  order, the first validation/internal failure in input order still
+  aborts the whole batch, and the per-row freeze lookup moved into
+  the parallel work. Race-tested.
+
 ## [v0.5.0-rc.71] — 2026-05-22
 
 ### Fixed

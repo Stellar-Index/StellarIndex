@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -834,45 +835,67 @@ func (s *Server) parsePriceBatchQuote(w http.ResponseWriter, r *http.Request, ra
 	return q, true
 }
 
-// batchRowOutcome is the per-id result of [Server.fetchBatchRow].
-// One of the three branches is always set; the others zero-valued.
-type batchRowOutcome struct {
+// priceBatchConcurrency bounds the per-request fan-out in
+// lookupPriceBatch. The batch endpoint resolves up to 100 (GET) /
+// 1000 (POST) asset_ids, each a LatestPrice + fallback-chain DB
+// round-trip; resolving them serially put p99 at the 10s handler
+// ceiling. 16-wide parallelism collapses a 100-id batch to ~7
+// rounds while staying well inside the DB connection pool's
+// headroom even with several batches in flight.
+const priceBatchConcurrency = 16
+
+// batchRowResult is the per-id outcome computed by resolveBatchRow.
+// Exactly one of {ok, skip, fail} characterises a result.
+type batchRowResult struct {
 	snap    PriceSnapshot
 	sources []string
 	stale   bool
+	frozen  bool
 	asset   canonical.Asset
 
-	skip    bool // Per-asset miss; omit from response, do not 404 the batch
-	aborted bool // Caller wrote a problem+json; lookupPriceBatch must return
+	ok   bool // a real price row — include in the envelope
+	skip bool // per-asset miss — omit, do NOT 404 the batch
+	fail *batchRowFailure
 }
 
-// fetchBatchRow resolves one (raw_id, quote) pair for the batch
-// endpoint. Three outcomes:
-//   - Success: returns a populated row (skip/aborted both false).
-//   - Per-asset miss: skip=true (caller continues to the next id).
-//   - Validation/internal failure: aborted=true after writing a
-//     problem+json (caller must return immediately).
-//
-// Extracted from [Server.lookupPriceBatch] to keep that loop's
-// cognitive complexity under the linter cap; also where the
-// Redis-VWAP fallback for aggregator-rewritten pairs lives.
-func (s *Server) fetchBatchRow(w http.ResponseWriter, r *http.Request, raw string, quote canonical.Asset) batchRowOutcome {
+// batchRowFailure means the whole batch must abort with a
+// problem+json. It is carried as a value rather than written
+// inline because resolveBatchRow runs in a worker goroutine, where
+// touching the shared http.ResponseWriter would be a data race —
+// the orchestrator writes the first failure single-threaded.
+type batchRowFailure struct {
+	status int
+	typ    string
+	title  string
+	detail string
+}
+
+// resolveBatchRow resolves one (raw_id, quote) pair for the batch
+// endpoint. Pure + goroutine-safe: it performs only reads (DB,
+// Redis) and returns a result value — it never touches w. Three
+// outcomes: ok (a row), skip (per-asset miss — omit), or fail (a
+// validation/internal error that aborts the whole batch). Also
+// where the Redis-VWAP fallback for aggregator-rewritten pairs
+// lives.
+func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw string, quote canonical.Asset) batchRowResult {
 	asset, err := canonical.ParseAsset(raw)
 	if err != nil {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			raw+": "+err.Error())
-		return batchRowOutcome{aborted: true}
+		return batchRowResult{fail: &batchRowFailure{
+			status: http.StatusBadRequest,
+			typ:    "https://api.ratesengine.net/errors/invalid-asset-id",
+			title:  "Invalid asset identifier",
+			detail: raw + ": " + err.Error(),
+		}}
 	}
 	if asset.Equal(quote) {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/identity-price",
-			"Asset and quote are the same", http.StatusBadRequest,
-			"price of an asset in itself is always 1; "+raw+" matches the quote")
-		return batchRowOutcome{aborted: true}
+		return batchRowResult{fail: &batchRowFailure{
+			status: http.StatusBadRequest,
+			typ:    "https://api.ratesengine.net/errors/identity-price",
+			title:  "Asset and quote are the same",
+			detail: "price of an asset in itself is always 1; " + raw + " matches the quote",
+		}}
 	}
-	snap, sources, stale, err := s.prices.LatestPrice(r.Context(), asset, quote)
+	snap, sources, stale, err := s.prices.LatestPrice(ctx, asset, quote)
 	if errors.Is(err, ErrPriceNotFound) {
 		// Share the full three-layer fallback chain with /v1/price
 		// (priceFallback). Pre-2026-05-10 the batch path inlined
@@ -881,50 +904,89 @@ func (s *Server) fetchBatchRow(w http.ResponseWriter, r *http.Request, raw strin
 		// X/fiat:USD via the operator's classic USD-peg list. That
 		// asymmetry caused asset_ids that returned 200 on
 		// /v1/price (e.g. USDT-G…) to be silently dropped from the
-		// batch envelope on deployments where the aggregator's
-		// stablecoin-fiat-proxy isn't enabled. R-005 in
-		// docs/review-2026-05-10.md.
-		if fs, fsrc, _, ok := s.priceFallback(r.Context(), asset, quote); ok {
+		// batch envelope. R-005 in docs/review-2026-05-10.md.
+		if fs, fsrc, _, ok := s.priceFallback(ctx, asset, quote); ok {
 			// F-1254: priceFallback responses are by definition below
 			// the closed-bucket VWAP contract (last-trade / proxy /
 			// triangulation). Mark stale so callers can tell the
-			// batch row was a fallback. Mirrors the single-asset
-			// path's stale=ok assignment above.
-			return batchRowOutcome{snap: fs, sources: fsrc, stale: true, asset: asset}
+			// batch row was a fallback.
+			return batchRowResult{
+				snap: fs, sources: fsrc, stale: true, asset: asset, ok: true,
+				frozen: s.lookupFrozen(r, asset, quote),
+			}
 		}
-		return batchRowOutcome{skip: true} // omit, do not 404 the batch
+		return batchRowResult{skip: true} // omit, do not 404 the batch
 	}
 	if err != nil {
 		if clientAborted(r, err) {
-			return batchRowOutcome{aborted: true}
+			// Client disconnected — the orchestrator detects the
+			// cancelled context after join and returns without
+			// writing. Surface as a skip so no failure is reported.
+			return batchRowResult{skip: true}
 		}
 		s.logger.Error("LatestPrice (batch) failed",
 			"err", err, "asset", asset.String(), "quote", quote.String())
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
-		return batchRowOutcome{aborted: true}
+		return batchRowResult{fail: &batchRowFailure{
+			status: http.StatusInternalServerError,
+			typ:    "https://api.ratesengine.net/errors/internal",
+			title:  "Internal error",
+		}}
 	}
-	return batchRowOutcome{snap: snap, sources: sources, stale: stale, asset: asset}
+	return batchRowResult{
+		snap: snap, sources: sources, stale: stale, asset: asset, ok: true,
+		frozen: s.lookupFrozen(r, asset, quote),
+	}
 }
 
-// lookupPriceBatch fetches the latest price for each id and writes
-// the envelope. Missing observations (ErrPriceNotFound) are omitted
-// from the response, not 404'd. Any other reader error aborts the
-// whole batch with a 500.
+// lookupPriceBatch resolves every id concurrently — bounded by
+// priceBatchConcurrency — and writes the envelope. Per-id results
+// land in an index-keyed slice so the response preserves
+// first-occurrence order regardless of which worker finished
+// first. Missing observations (ErrPriceNotFound) are omitted, not
+// 404'd; the first validation/internal failure in input order
+// aborts the whole batch with a problem+json.
 func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []string, quote canonical.Asset) {
+	ctx := r.Context()
+	results := make([]batchRowResult, len(ids))
+
+	// Bounded fan-out: each worker writes its own results[i] slot
+	// (disjoint memory — no lock needed) and the semaphore caps how
+	// many DB round-trips run at once.
+	sem := make(chan struct{}, priceBatchConcurrency)
+	var wg sync.WaitGroup
+	for i, raw := range ids {
+		wg.Add(1)
+		go func(i int, raw string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = s.resolveBatchRow(ctx, r, raw, quote)
+		}(i, raw)
+	}
+	wg.Wait()
+
+	// Client disconnected mid-batch — nothing meaningful to write.
+	if ctx.Err() != nil {
+		return
+	}
+	// First failure in INPUT order aborts the batch — deterministic
+	// regardless of worker completion order.
+	for i := range results {
+		if f := results[i].fail; f != nil {
+			writeProblem(w, r, f.typ, f.title, f.status, f.detail)
+			return
+		}
+	}
+
 	out := make([]PriceSnapshot, 0, len(ids))
 	allSources := map[string]struct{}{}
 	anyStale := false
 	anyFrozen := false
 	anySingleSource := false
-	for _, raw := range ids {
-		row := s.fetchBatchRow(w, r, raw, quote)
-		if row.aborted {
-			return
-		}
-		if row.skip {
-			continue
+	for i := range results {
+		row := results[i]
+		if !row.ok {
+			continue // skip — per-asset miss
 		}
 		if row.stale {
 			anyStale = true
@@ -932,11 +994,10 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 		for _, src := range row.sources {
 			allSources[src] = struct{}{}
 		}
-		// Per-row freeze lookup → OR into envelope flag. Same
-		// best-effort posture as the single-asset path; an absent
-		// freeze marker means "not frozen" and a Redis blip just
-		// leaves the flag at its previous value.
-		if s.lookupFrozen(r, row.asset, quote) {
+		// Per-row freeze (resolved by resolveBatchRow) → OR into the
+		// envelope flag. Best-effort: an absent freeze marker means
+		// "not frozen".
+		if row.frozen {
 			anyFrozen = true
 			anySingleSource = true // freeze implies single-source
 		} else if len(row.sources) == 1 {
