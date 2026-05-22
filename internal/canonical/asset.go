@@ -34,17 +34,26 @@ const (
 	// Reflector's CEX oracle, which publishes prices keyed on bare
 	// global tickers. Wire form: `crypto:<TICKER>`. See ADR-0014.
 	AssetCrypto AssetType = "crypto"
+
+	// AssetRWA is an off-chain tokenized real-world asset (tokenized
+	// treasuries, money-market funds, equity ETFs — BENJI, GILTS,
+	// SPXU, …). NOT a Stellar asset, and deliberately NOT AssetCrypto:
+	// a tokenized T-bill is not a cryptocurrency, and lumping it into
+	// `crypto` would mis-feed every crypto-scoped surface. Used by
+	// RedStone's RWA push feeds. Wire form: `rwa:<CODE>`. See ADR-0028.
+	AssetRWA AssetType = "rwa"
 )
 
 // Asset is a canonical identifier for any asset we price.
 //
-// The five valid shapes:
+// The six valid shapes:
 //
 //   - Native:  {Type: AssetNative}
 //   - Classic: {Type: AssetClassic, Code: "USDC", Issuer: "G..."}
 //   - Soroban: {Type: AssetSoroban, ContractID: "C..."}
 //   - Fiat:    {Type: AssetFiat,   Code: "USD"}            ADR-0010
 //   - Crypto:  {Type: AssetCrypto, Code: "BTC"}            ADR-0014
+//   - RWA:     {Type: AssetRWA,    Code: "BENJI"}          ADR-0028
 //
 // A SAC-wrapped classic asset can be represented either way —
 // canonical form is the **classic** representation; the SAC contract
@@ -141,6 +150,8 @@ func (a Asset) String() string {
 		return "fiat:" + a.Code
 	case AssetCrypto:
 		return "crypto:" + a.Code
+	case AssetRWA:
+		return "rwa:" + a.Code
 	default:
 		return "invalid-asset"
 	}
@@ -189,6 +200,14 @@ func (a Asset) Validate() error { //nolint:gocognit // dispatch-heavy; splitting
 			return fmt.Errorf("%w: unknown crypto code %q (see ADR-0014)", ErrInvalidAsset, a.Code)
 		}
 		return nil
+	case AssetRWA:
+		if a.Issuer != "" || a.ContractID != "" {
+			return fmt.Errorf("%w: rwa asset must not carry issuer/contract_id", ErrInvalidAsset)
+		}
+		if !IsKnownRWA(a.Code) {
+			return fmt.Errorf("%w: unknown rwa code %q (see ADR-0028)", ErrInvalidAsset, a.Code)
+		}
+		return nil
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalidAsset, a.Type)
 	}
@@ -225,6 +244,11 @@ func ParseAsset(s string) (Asset, error) {
 	// Crypto — unambiguous prefix dispatch (ADR-0014).
 	if rest, ok := strings.CutPrefix(s, "crypto:"); ok {
 		return NewCryptoAsset(rest)
+	}
+
+	// RWA — unambiguous prefix dispatch (ADR-0028).
+	if rest, ok := strings.CutPrefix(s, "rwa:"); ok {
+		return NewRWAAsset(rest)
 	}
 
 	// Soroban — starts with C, 56 chars
