@@ -52,6 +52,30 @@ func TestRouteFromPattern(t *testing.T) {
 	}
 }
 
+// ─── isStreamingRoute ─────────────────────────────────────────
+
+func TestIsStreamingRoute(t *testing.T) {
+	cases := []struct {
+		route string
+		want  bool
+	}{
+		{"/v1/ledger/stream", true},
+		{"/v1/price/stream", true},
+		{"/v1/price/tip/stream", true},
+		{"/v1/observations/stream", true},
+		{"/v1/price/tip", false}, // not a stream — a substring match would false-positive
+		{"/v1/ledger/tip", false},
+		{"/v1/price", false},
+		{"unmatched", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isStreamingRoute(tc.route); got != tc.want {
+			t.Errorf("isStreamingRoute(%q) = %v, want %v", tc.route, got, tc.want)
+		}
+	}
+}
+
 // ─── statusRecorder.Flush ─────────────────────────────────────
 
 // flushableRecorder is an httptest.ResponseRecorder with a Flush

@@ -315,3 +315,42 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 		t.Errorf("regression: smoke traffic counted in customer histogram")
 	}
 }
+
+// TestHTTPMetrics_StreamRouteSkipsDurationHistogram pins the
+// latency-SLO fix: an SSE / streaming route (pattern ending in
+// /stream) MUST still be counted in http_requests_total but kept
+// OUT of the http_request_duration_seconds histogram. The handler
+// returns only when the client disconnects, so its "duration" is
+// the connection lifetime — feeding that to the latency histogram
+// pins p99 at the +Inf bucket and burns the latency SLO.
+func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/streamtest/stream", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := obs.HTTPMetrics(mux)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/streamtest/stream", nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	h.ServeHTTP(rr, req)
+
+	ts := httptest.NewServer(obs.Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	s := string(body)
+
+	// The request IS counted in http_requests_total.
+	if !strings.Contains(s, `http_requests_total{method="GET",route="/v1/streamtest/stream",status="200"} 1`) {
+		t.Errorf("stream request not counted in http_requests_total; body:\n%s", s)
+	}
+	// The duration is NOT observed — no histogram series for the route.
+	if strings.Contains(s, `http_request_duration_seconds_count{method="GET",route="/v1/streamtest/stream"}`) {
+		t.Errorf("regression: stream route landed in the latency histogram")
+	}
+}
