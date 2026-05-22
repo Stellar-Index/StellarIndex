@@ -1,0 +1,43 @@
+# Galexie config — ARCHIVE BACKFILL instance. Renders from
+# defaults/main.yml + inventory. Companion to galexie.toml.j2.
+#
+# Two galexie instances run on r1 (ADR-0016 full-mirror):
+#   - the live-tail instance (galexie.toml) appends new ledgers to
+#     the galexie-live bucket as the network advances;
+#   - this backfill instance walks historical ranges into the
+#     durable galexie-archive bucket, using a captive-core that
+#     reads from the local /srv/history-archive mirror.
+#
+# admin_port + destination bucket + captive_core_toml_path differ
+# from the live instance; everything else is identical.
+
+# HTTP port for galexie's own metrics / admin endpoint (bound
+# loopback). Distinct from the live-tail instance's port so both
+# galexie processes can run side-by-side.
+admin_port = {{ galexie_backfill_admin_port }}
+
+# ──── Datastore — where exported ledger meta lands ─────────────────
+[datastore_config]
+type = "S3"
+
+[datastore_config.params]
+# S3-compatible storage (MinIO in our layout). Access + secret keys
+# come from AWS_* env vars in /etc/default/galexie-backfill.
+destination_bucket_path = "{{ galexie_s3_bucket_archive }}/"
+region                  = "{{ galexie_s3_region }}"
+endpoint_url            = "{{ galexie_s3_endpoint }}"
+
+[datastore_config.schema]
+ledgers_per_file     = {{ galexie_ledgers_per_file }}
+files_per_partition  = {{ galexie_files_per_partition }}
+
+# ──── Stellar-core — embedded captive core for ledger replay ───────
+[stellar_core_config]
+# captive-core-galexie-backfill.cfg differs from the live captive
+# config in two ways: a distinct PEER_PORT (so both captives can
+# bind) and a [HISTORY.localmirror] block pointing at
+# /srv/history-archive — replay reads checkpoints from NVMe instead
+# of downloading them, cutting backfill replay time substantially.
+network                  = "{{ stellar_network }}"
+captive_core_toml_path   = "/etc/stellar/captive-core-galexie-backfill.cfg"
+stellar_core_binary_path = "/usr/bin/stellar-core"

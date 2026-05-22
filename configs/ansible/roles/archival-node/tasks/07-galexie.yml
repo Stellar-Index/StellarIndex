@@ -152,11 +152,12 @@
     mode: "0755"
 
 - name: Template galexie-specific captive-core.cfg
-  # Galexie needs its OWN captive config because the PEER_PORT must
-  # differ from stellar-rpc's (otherwise both captive-cores race
-  # to bind the same port and whichever comes second aborts). Same
-  # validator list / history archives as stellar-rpc's captive —
-  # only PEER_PORT differs.
+  # The live-tail galexie needs its OWN captive config because the
+  # PEER_PORT must differ from the backfill galexie's captive
+  # (otherwise both captive-cores race to bind the same port and
+  # whichever comes second aborts). Same validator list / history
+  # archives as the backfill captive — only PEER_PORT differs (and
+  # the backfill cfg additionally carries [HISTORY.localmirror]).
   ansible.builtin.template:
     src: stellar-core.cfg.j2
     dest: /etc/stellar/captive-core-galexie.cfg
@@ -176,6 +177,56 @@
     group: galexie
     mode: "0640"
   notify: Restart galexie
+
+- name: Template backfill captive-core.cfg
+  # The archive-backfill galexie runs a SECOND captive-core. Its
+  # PEER_PORT (11727) must differ from the live captive's (11726)
+  # so both can bind, and it carries a [HISTORY.localmirror] block
+  # so historical replay reads checkpoints from the local
+  # /srv/history-archive mirror instead of downloading them. Same
+  # validator list / quorum as the live captive — only PEER_PORT +
+  # the localmirror block differ.
+  ansible.builtin.template:
+    src: stellar-core.cfg.j2
+    dest: /etc/stellar/captive-core-galexie-backfill.cfg
+    owner: stellar
+    group: galexie
+    mode: "0640"
+  vars:
+    cfg_mode: captive
+    captive_peer_port: "{{ captive_peer_port_backfill }}"
+    captive_history_localmirror: true
+
+- name: Template galexie-backfill.toml
+  # Config for the on-demand archive-backfill galexie process —
+  # writes historical ranges into the galexie-archive bucket.
+  # Not a systemd-managed daemon; an operator runs it for a
+  # bounded ledger range during a backfill.
+  ansible.builtin.template:
+    src: galexie-backfill.toml.j2
+    dest: /etc/galexie/galexie-backfill.toml
+    owner: galexie
+    group: galexie
+    mode: "0640"
+
+- name: Template /etc/default/galexie-backfill (S3 creds for archive writer)
+  # Env file for the archive-backfill galexie. The galexie-archive
+  # bucket has its own bucket-scoped MinIO writer user, distinct
+  # from the galexie-live writer in /etc/default/galexie. Galexie's
+  # S3 client reads the AWS_* env vars; secrets come from the vault.
+  ansible.builtin.copy:
+    dest: /etc/default/galexie-backfill
+    owner: root
+    group: galexie
+    mode: "0640"
+    content: |
+      # Rendered by Ansible. Do not edit by hand — regenerate via
+      # `ansible-playbook ... --tags galexie`.
+      AWS_ACCESS_KEY_ID={{ galexie_archive_s3_access_key }}
+      AWS_SECRET_ACCESS_KEY={{ galexie_archive_s3_secret_key }}
+      AWS_REGION={{ galexie_s3_region }}
+      AWS_ENDPOINT_URL={{ galexie_s3_endpoint }}
+  no_log: true
 
 - name: Template /etc/default/galexie (S3 credentials for captive-core export)
   # The systemd unit sources this file via EnvironmentFile. Galexie's
