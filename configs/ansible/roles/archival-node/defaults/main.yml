@@ -34,14 +34,12 @@ run_postgres:        true
 # when we're ready to become a validator (ADR-0004).
 run_stellar_core:    false
 run_galexie:         true
-# stellar-rpc. Off by default — our own indexer reads from galexie's
-# MinIO output directly via ingest.ApplyLedgerMetadata, so stellar-rpc's
-# JSON-RPC surface isn't on the Rates Engine data path. Removed from
-# r1 on 2026-04-23; see docs/operations/r1-deployment-state.md for the
-# architecture rationale. If re-enabled, operator must also re-enable
-# its captive_peer_port_rpc + data/rpc dataset + firewall port 8000
-# below (currently gated off).
-run_stellar_rpc:     false
+# stellar-rpc is NOT part of this role. Our indexer reads galexie's
+# MinIO output directly via ingest.ApplyLedgerMetadata, so
+# stellar-rpc's JSON-RPC surface isn't on the Rates Engine data
+# path. It was removed from r1 on 2026-04-23 and the role's
+# stellar-rpc task/templates were deleted on 2026-05-22 — see
+# docs/operations/r1-deployment-state.md for the rationale.
 run_minio:           true
 run_observability:   true
 
@@ -89,14 +87,6 @@ zfs_datasets:
   #     compression: "zstd"
   #     atime: "off"
   #     mountpoint: "/var/lib/stellar-core"
-  # "rpc" dataset — for stellar-rpc's SQLite + captive-core bucket dir
-  # at /var/lib/stellar-rpc. Not in this list while run_stellar_rpc=
-  # false. To re-enable, add back:
-  #   - name: "rpc"
-  #     recordsize: "16K"
-  #     compression: "zstd"
-  #     atime: "off"
-  #     mountpoint: "/var/lib/stellar-rpc"
   - name: "galexie"
     recordsize: "1M"
     compression: "zstd"
@@ -181,14 +171,31 @@ postgres_user_ratesengine:  "ratesengine"
 # ───── ratesengine-indexer / aggregator / api services ───────────────
 run_ratesengine: true
 
-# Indexer source fleet — empty array → fall back to the binary's
-# built-in default ([soroswap, aquarius, phoenix]). Keep small at
-# first; broaden as decoders earn coverage.
-ratesengine_enabled_sources: ["soroswap", "aquarius", "phoenix"]
+# Indexer source fleet. Region-INVARIANT by design (ADR-0015 closed-
+# bucket contract — every region must produce byte-equivalent
+# aggregate output from the same inputs), so the full 13-source set
+# is the default rather than a per-region knob. Matches r1's live
+# /etc/ratesengine.toml.
+ratesengine_enabled_sources:
+  - "soroswap"
+  - "soroswap-router"
+  - "defindex"
+  - "aquarius"
+  - "phoenix"
+  - "comet"
+  - "reflector-dex"
+  - "reflector-cex"
+  - "reflector-fx"
+  - "redstone"
+  - "band"
+  - "blend"
+  - "sdex"
 
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must
 # pick an explicit ledger to avoid accidental genesis re-ingest.
+# [Per-region: each region picks its own backfill floor — r1's live
+#  value is 62403000. Set in inventory.]
 ratesengine_backfill_from_ledger: 0
 
 # First ledger present in the galexie-live bucket. Below this the
@@ -374,10 +381,11 @@ stellar_peer_port:       11625
 # PEER_PORTs for captive-cores. Must be non-zero (toml marshaller
 # drops zero values with omitempty, causing stellar-core to fall back
 # to pubnet default 11625). Must also differ per captive so they don't
-# collide. Only galexie's captive is live today; _rpc is kept for
-# the case where run_stellar_rpc is flipped back to true.
-captive_peer_port_galexie: 11726
-captive_peer_port_rpc:     11725
+# collide. r1 runs two galexie captives — the live-tail (11726) and
+# the archive-backfill (11727); the latter additionally reads from
+# the local /srv/history-archive mirror via [HISTORY.localmirror].
+captive_peer_port_galexie:          11726
+captive_peer_port_backfill:         11727
 
 # ───── Galexie ───────────────────────────────────────────────────────
 # [Per-region: galexie endpoint + buckets vary per ADR-0016.
@@ -392,18 +400,21 @@ captive_peer_port_rpc:     11725
 galexie_version:         "galexie-v26.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version).
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"
+# Durable full-mirror bucket — the indexer's archive-read path +
+# the backfill galexie instance write here. galexie_s3_bucket is
+# the live-tail bucket; this is its archive counterpart.
+galexie_s3_bucket_archive: "galexie-archive"
 galexie_s3_region:       "{{ region_id }}"
-# galexie_s3_access_key ← vault
+# galexie_s3_access_key ← vault (galexie-live writer, bucket-scoped)
 # galexie_s3_secret_key ← vault
+# Archive-backfill galexie writes to the galexie-archive bucket via
+# its own bucket-scoped MinIO writer user. Secrets ← vault.
+galexie_archive_s3_access_key: "galexie-archive-writer"
+# galexie_archive_s3_secret_key ← vault
 galexie_ledgers_per_file: 1
 galexie_files_per_partition: 64000      # ~1 checkpoint per partition
-galexie_admin_port:          6061          # metrics + admin HTTP, loopback only
-
-# ───── stellar-rpc ───────────────────────────────────────────────────
-stellar_rpc_port:        8000
-stellar_rpc_admin_port:  8080
-stellar_rpc_event_retention_ledgers: 518400   # ~30 days at 5 s/ledger
-stellar_rpc_tx_retention_ledgers:    17280    # ~24 h
+galexie_admin_port:          6061          # live-tail galexie: metrics + admin HTTP, loopback only
+galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct port so both instances coexist
 
 # ───── MinIO ─────────────────────────────────────────────────────────
 # [Per-region:
@@ -452,6 +463,12 @@ ratesengine_reader_access_key: "ratesengine-reader"
 public_allow_ports: "{{ public_allow_ports_base + (public_allow_ports_primary_core if run_stellar_core | bool else []) }}"
 public_allow_ports_base:
   - { port: 22,    proto: "tcp", comment: "SSH (rate-limited)" }
+  # Caddy reverse proxy — public TLS-terminating front for the
+  # /v1/* API. Caddy listens on :80 (Let's Encrypt HTTP-01 +
+  # redirect) and :443 (HTTPS), proxying to the loopback API on
+  # :3000. A rebuild without these open firewalls off the API.
+  - { port: 80,    proto: "tcp", comment: "Caddy HTTP/HTTPS" }
+  - { port: 443,   proto: "tcp", comment: "Caddy HTTP/HTTPS" }
 public_allow_ports_primary_core:
   - { port: 11625, proto: "tcp", comment: "stellar-core SCP peer (Phase 3 validator)" }
 
@@ -460,15 +477,13 @@ allowed_ssh_cidrs:
 
 # Internal ports accessible from the LAN / VPN CIDRs only.
 # 11626 (stellar-core admin /info) only when primary daemon is running.
-internal_allow_ports: "{{ internal_allow_ports_base + (internal_allow_ports_primary_core if run_stellar_core | bool else []) + (internal_allow_ports_rpc if run_stellar_rpc | bool else []) }}"
+internal_allow_ports: "{{ internal_allow_ports_base + (internal_allow_ports_primary_core if run_stellar_core | bool else []) }}"
 internal_allow_ports_base:
   - { port: 5432,  proto: "tcp", comment: "Postgres" }
   - { port: 9000,  proto: "tcp", comment: "MinIO S3 API" }
   - { port: 9100,  proto: "tcp", comment: "node_exporter" }
 internal_allow_ports_primary_core:
   - { port: 11626, proto: "tcp", comment: "stellar-core admin HTTP (Phase 3 validator)" }
-internal_allow_ports_rpc:
-  - { port: 8000,  proto: "tcp", comment: "stellar-rpc JSON-RPC" }
 
 internal_cidrs:
   - "10.0.0.0/8"
