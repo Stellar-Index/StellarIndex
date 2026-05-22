@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.70] — 2026-05-22
+
 ### Fixed
 
 - **SSE streaming endpoints poisoned the API latency SLO (#60).**
