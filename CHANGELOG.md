@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SSE streaming endpoints poisoned the API latency SLO (#60).**
+  The `HTTPMetrics` middleware recorded `time.Since(start)` into the
+  `http_request_duration_seconds` histogram for every route. An SSE
+  handler returns only when the client disconnects, so that
+  "duration" is the connection *lifetime* (minutes-to-hours), not
+  request latency. The histogram tops out at 10s, so every closed
+  stream landed in the `+Inf` bucket and pinned p99 at 10000ms —
+  burning the latency SLO and firing `ratesengine_api_latency_p99_high`
+  / `_p95_high`. A latent bug since the first stream endpoint, it
+  became material once `/v1/ledger/stream` (#58) gave every
+  status-page viewer a long-lived connection. Fix: the middleware now
+  still counts streaming requests in `http_requests_total` but skips
+  the duration observation for `/stream` routes.
+- **`galexie-archive` tip-lag alert false-fired every partition
+  cycle (#61).** `ratesengine_galexie_archive_tip_lag_high` (`> 5000`)
+  and `_severe` (`> 50000`, a page) predated the 64,000-ledger
+  partition model: `galexie-archive-fill` mirrors only *complete*
+  partitions, so the archive tip structurally lags live by 0–64,000
+  ledgers as live works through the current partition. Both
+  thresholds sat inside that normal range. Raised `_high` to
+  `> 64000` for 90m (a completed partition stayed un-mirrored past
+  two fill cycles) and `_severe` to `> 128000` (≥2 partitions
+  behind), and corrected the rule's partition-model documentation.
+
 ## [v0.5.0-rc.69] — 2026-05-22
 
 ### Added

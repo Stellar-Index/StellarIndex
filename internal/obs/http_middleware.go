@@ -99,9 +99,32 @@ func HTTPMetrics(next http.Handler) http.Handler {
 			return
 		}
 
-		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
 		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+
+		// SSE / long-lived streaming endpoints: the handler returns
+		// only when the client disconnects, so `elapsed` is the
+		// connection LIFETIME (minutes-to-hours), not request
+		// latency. Feeding that into the latency histogram pins p99
+		// at the +Inf bucket (the histogram tops out at 10s) and
+		// burns the latency SLO — one open status-page tab on
+		// /v1/ledger/stream is enough to do it. Count the request
+		// (above) but skip the duration observation.
+		if isStreamingRoute(route) {
+			return
+		}
+		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
 	})
+}
+
+// isStreamingRoute reports whether a route pattern is an SSE /
+// long-lived streaming endpoint, identified by the conventional
+// `/stream` suffix (`/v1/price/stream`, `/v1/price/tip/stream`,
+// `/v1/observations/stream`, `/v1/ledger/stream`). Such handlers
+// must be kept out of the request-latency histogram — see the
+// caller. Suffix-matching is deliberate so any future `/stream`
+// route is excluded automatically.
+func isStreamingRoute(route string) bool {
+	return strings.HasSuffix(route, "/stream")
 }
 
 // isSyntheticUA reports whether the User-Agent identifies a
