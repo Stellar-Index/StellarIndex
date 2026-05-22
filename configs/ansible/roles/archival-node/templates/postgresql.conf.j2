@@ -48,8 +48,12 @@ wal_compression           = {{ postgres_wal_compression }}
 synchronous_commit        = on
 checkpoint_timeout        = 15min
 checkpoint_completion_target = 0.9
-max_wal_size              = 8GB
-min_wal_size              = 2GB
+# WAL sizing matches r1's live config (postgresql.auto.conf ALTER
+# SYSTEM overrides). 2GB/512MB is comfortable for the ingest +
+# CAGG-refresh write profile; a from-scratch rebuild inherits the
+# running values directly rather than the larger 8GB/2GB defaults.
+max_wal_size              = 2GB
+min_wal_size              = 512MB
 
 # ─── Planner ────────────────────────────────────────────────────────
 random_page_cost          = 1.1     # NVMe
@@ -78,4 +82,8 @@ lc_time                   = 'en_US.UTF-8'
 default_text_search_config = 'pg_catalog.english'
 
 # ─── Stats ──────────────────────────────────────────────────────────
-shared_preload_libraries  = 'pg_stat_statements'
+# `timescaledb` MUST be preloaded — the trades/oracle_updates
+# hypertables, continuous aggregates and Timescale background jobs
+# all depend on the extension being available at startup. Matches
+# r1's live config; a rebuild without it breaks every CAGG.
+shared_preload_libraries  = 'timescaledb,pg_stat_statements'
