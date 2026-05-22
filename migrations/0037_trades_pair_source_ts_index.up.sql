@@ -1,0 +1,46 @@
+-- 0037 up — composite index for LatestTradePerSource (#30).
+--
+-- Store.LatestTradePerSource (internal/storage/timescale/trades.go)
+-- powers /v1/observations. Its query is
+--
+--   SELECT DISTINCT ON (source) ...
+--     FROM trades
+--    WHERE base_asset = $1 AND quote_asset = $2
+--      AND ($3 = '' OR source = $3)
+--    ORDER BY source, ts DESC, ledger DESC
+--
+-- The existing trades_pair_ts_idx (base_asset, quote_asset, ts DESC)
+-- carries no `source` column, so the DISTINCT ON degrades to a scan
+-- of every trade in the pair followed by a sort — O(rows_in_pair).
+-- On the busy pairs that is millions of rows per request.
+--
+-- This index orders exactly as the query does within the
+-- (base_asset, quote_asset) equality prefix, so the planner walks it
+-- as a skip-scan: one index seek per source, emit that source's
+-- newest row, done — O(num_sources). The single-source variant
+-- (`source = $3`) collapses to a three-column point lookup. The
+-- trailing `ledger DESC` matches the ORDER BY tie-breaker, so even a
+-- ts collision is resolved from the index with no sort node.
+--
+-- ── APPLYING TO AN ALREADY-POPULATED DATABASE (e.g. r1) ──
+-- The `trades` hypertable holds ~2.7B rows. A plain in-transaction
+-- CREATE INDEX (what the statement below is) holds a write lock on
+-- the table for the whole build — minutes-to-hours of stalled
+-- ingest. golang-migrate runs each migration as one Exec, so
+-- CREATE INDEX CONCURRENTLY cannot live here (illegal inside a
+-- transaction block — see migration 0029's note).
+--
+-- So, ON A LIVE NODE, build the index by hand FIRST, outside the
+-- migration runner:
+--
+--   CREATE INDEX CONCURRENTLY trades_pair_source_ts_idx
+--       ON trades (base_asset, quote_asset, source, ts DESC, ledger DESC);
+--
+-- then run `ratesengine-migrate up`: the IF NOT EXISTS below sees
+-- the name already present and is a no-op. On a fresh archival-node
+-- bring-up the `trades` table is still empty when migrations run
+-- (14-ratesengine-services.yml applies migrations before the indexer
+-- starts), so the in-transaction build is instant — no hand step.
+
+CREATE INDEX IF NOT EXISTS trades_pair_source_ts_idx
+    ON trades (base_asset, quote_asset, source, ts DESC, ledger DESC);

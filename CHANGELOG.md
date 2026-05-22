@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`trades_pair_source_ts_idx` composite index (#30).** Migration
+  0037 adds `(base_asset, quote_asset, source, ts DESC, ledger DESC)`
+  on `trades`. `Store.LatestTradePerSource` (behind `/v1/observations`)
+  runs `SELECT DISTINCT ON (source) … ORDER BY source, ts DESC,
+  ledger DESC`; with only the pre-existing pair index that degraded
+  to an O(rows_in_pair) scan-then-sort. The new index orders exactly
+  as the query does within the `(base_asset, quote_asset)` prefix, so
+  the planner walks it as an O(num_sources) skip-scan. On an
+  already-populated node build it `CONCURRENTLY` by hand first — see
+  the migration header.
+
 ### Fixed
 
 - **AWS-SDK checksum-warning log flood (#62).** Since

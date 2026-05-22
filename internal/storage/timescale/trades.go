@@ -403,8 +403,9 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // layer means a single-source query is just an index point lookup.
 //
 // Implementation: DISTINCT ON (source) ordered by ts DESC, ledger DESC
-// — cheap when covered by an index on (base_asset, quote_asset,
-// source, ts DESC). The cost is ~O(num_sources) per pair rather than
+// — cheap because trades_pair_source_ts_idx (migration 0037) covers
+// the (base_asset, quote_asset, source, ts DESC, ledger DESC) order
+// exactly. The cost is ~O(num_sources) per pair rather than
 // O(rows_in_pair).
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
