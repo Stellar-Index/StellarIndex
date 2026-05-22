@@ -17,6 +17,21 @@ against.
 
 ### Added
 
+- **All 19 RedStone feeds now decode (#53).** The decoder matched
+  feed_ids against the crypto allow-list (`IsKnownCrypto`). The
+  on-chain `feed_id()` strings — captured 2026-05-22 — are not the
+  display names for 5 of 19 feeds, so EUROC (feed_id `EUROC/EUR`)
+  silently never decoded and the 11 RWA / tokenized-BTC feeds were
+  all dropped. `internal/sources/redstone/feeds.go` replaces the
+  allow-list match with an explicit 19-entry registry keyed on the
+  exact feed_id, each mapped to a canonical `(base, quote)` pair.
+  Tokenized real-world assets (BENJI, GILTS, CETES, KTB, TESOURO,
+  USTRY, SPXU, iBENJI) decode as the new `rwa` `AssetType`
+  (ADR-0028); SolvBTC variants are `crypto`. The quote is now
+  per-feed — EUROC lands as EUR-denominated instead of being
+  mislabelled USD. RedStone stays `ClassOracle` / `IncludeInVWAP=
+  false`, so NAV-quoted RWA references never feed market VWAP.
+
 - **Rozo-Stellar bridge ingest (#41).** Rozo's v1 intent-bridge is
   now a wired source. The decoder for the two v1 Payment events
   (`payment`, `flush`) had shipped earlier; this completes the
@@ -54,6 +69,12 @@ against.
   the migration header.
 
 ### Fixed
+
+- **RedStone EUROC feed never decoded (#53).** The EUROC feed's
+  on-chain feed_id is `EUROC/EUR`, which never matched the crypto
+  allow-list entry `EUROC`, so the feed was silently skipped since
+  launch. Fixed by the explicit feed registry above; EUROC now lands
+  as an EUR-denominated observation.
 
 - **AWS-SDK checksum-warning log flood (#62).** Since
   `aws-sdk-go-v2/config` v1.29.0 the SDK's default response-checksum

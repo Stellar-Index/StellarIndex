@@ -110,12 +110,4 @@ var (
 	// specific feeds. Skip the whole event rather than risk
 	// assigning a BTC price to ETH.
 	ErrFeedIDCountMismatch = errors.New("redstone: feed_ids arity doesn't match updated_feeds; cannot safely zip")
-
-	// ErrUnknownFeedID — a feed ID from the op args isn't on our
-	// known-feeds allow-list. The 19 mainnet feeds are enumerated
-	// in docs/discovery/oracles/redstone.md; extending the list is
-	// a one-line change. Per-entry skip (other feeds in the same
-	// event still land), same pattern as Reflector's
-	// ErrUnknownSymbol.
-	ErrUnknownFeedID = errors.New("redstone: feed_id not in known-feeds allow-list")
 )

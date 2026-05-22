@@ -1,7 +1,6 @@
 package redstone
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -24,35 +23,6 @@ func classify(e *events.Event) bool {
 		return false
 	}
 	return e.Topic[0] == TopicSymbolRedstone
-}
-
-// feedIDToCanonicalAsset maps a Redstone feed_id string to a
-// canonical.Asset. Returns ErrUnknownFeedID for feeds we don't yet
-// model canonically — those rows skip at the decoder, same pattern
-// as Reflector's per-entry ErrUnknownSymbol skip.
-//
-// Quote asset is always USD for the covered set — Redstone publishes
-// USD-denominated market rates (adapter docs + app.redstone.finance).
-//
-// Strategy: delegate to canonical.NewCryptoAsset which consults the
-// ADR-0014 allow-list. Anything the allow-list recognizes — majors
-// (BTC/ETH/SOL/...), stablecoins (USDT/DAI/PYUSD/USDP), Euro-pegged
-// tokens (EURC/EUROC) — decodes cleanly. RWA-style feeds (BENJI,
-// GILTS, tokenized gilts/bonds) surface as ErrUnknownFeedID until
-// they have proper canonical-asset modeling, because their "price"
-// is a NAV-quoted reference, not a market rate, and treating them
-// as regular crypto would mis-feed the aggregator.
-//
-// Adding a new canonical-decoded feed is a one-line amendment to
-// canonical/asset_crypto.go (plus an ADR-0014 note). The switch
-// below used to be a whitelist; now it's just "is it in the allow-
-// list?" since RedStone's feed-ID naming convention already matches
-// the global-ticker form we use (BTC is BTC, not btc-usd or similar).
-func feedIDToCanonicalAsset(feedID string) (canonical.Asset, error) {
-	if canonical.IsKnownCrypto(feedID) {
-		return canonical.NewCryptoAsset(feedID)
-	}
-	return canonical.Asset{}, fmt.Errorf("%w: %q", ErrUnknownFeedID, feedID)
 }
 
 // decodeWritePrices converts one REDSTONE event into a slice of
@@ -100,31 +70,19 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			len(prices), opIndexFanoutStride)
 	}
 
-	usdQuote, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		// fiat allow-list regression — init-level bug. Fail closed.
-		return nil, fmt.Errorf("redstone: USD fiat quote unavailable: %w", err)
-	}
-
 	observer := updater // relayer address from op args — strkey form already
 
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, pd := range prices {
-		asset, err := feedIDToCanonicalAsset(feedIDs[i])
-		if err != nil {
-			if errors.Is(err, ErrUnknownFeedID) {
-				// Partial-event skip: land every feed we recognize,
-				// drop the ones we don't. Matches the Reflector
-				// per-entry convention and keeps the canonical-asset
-				// allow-list a one-line amendment, not an ingest
-				// blocker. F-1234 (codex audit-2026-05-12): count
-				// the skip so operators get a signal that an
-				// upstream Redstone batch added a feed we don't
-				// yet recognise.
-				obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
-				continue
-			}
-			return nil, fmt.Errorf("feed[%d] %q: %w", i, feedIDs[i], err)
+		entry, ok := lookupFeed(feedIDs[i])
+		if !ok {
+			// Partial-event skip: land every feed in the ADR-0028
+			// registry, drop the rest. A miss means RedStone deployed
+			// a feed beyond the 19-feed registry — count it so
+			// operators get a signal (F-1234, codex audit-2026-05-12)
+			// rather than blocking the whole batch.
+			obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
+			continue
 		}
 		if pd.Price.Sign() <= 0 {
 			// Redstone publishes non-zero prices by construction —
@@ -141,11 +99,13 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// on the oracle_updates PK.
 			OpIndex:   uint32(e.OperationIndex)*opIndexFanoutStride + uint32(i),
 			Timestamp: pickTimestamp(pd.PackageTimestamp, closedAt),
-			Asset:     asset,
-			Quote:     usdQuote,
-			Price:     pd.Price,
-			Decimals:  DefaultDecimals,
-			Observer:  observer,
+			Asset:     entry.Base,
+			// Per-feed quote — USD for all but EUROC/EUR (ADR-0028).
+			// Pre-#53 this was hardcoded USD, mislabelling EUROC.
+			Quote:    entry.Quote,
+			Price:    pd.Price,
+			Decimals: DefaultDecimals,
+			Observer: observer,
 		}
 		out = append(out, u)
 	}

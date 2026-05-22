@@ -68,31 +68,38 @@ Confirmed against real mainnet event
 `349bd590c679a9d69ac0ff3eb49a673f95cf9d77016fc3d019eb654c772c7a8b`
 in the regression fixture.
 
-### Q3 — Feed-ID modelling: market rates only, NAV-priced RWAs skipped
+### Q3 — Feed-ID modelling: the 19-feed registry (ADR-0028, #53)
 
 Every feed publishes at `DECIMALS = 8`, so price-scale handling
-is uniform. The asset modelling is not.
+is uniform. The asset modelling is an explicit registry.
 
-`feedIDToCanonicalAsset` delegates to
-`canonical.IsKnownCrypto` (the ADR-0014 allow-list). RedStone's
-naming convention matches our global-ticker form (`BTC` is `BTC`,
-not `btc-usd`), so anything on the allow-list — majors
-(BTC/ETH/SOL/…), stablecoins (USDT/USDC/DAI/PYUSD/USDP),
-EUR-pegged tokens (EURC/EUROC) — decodes cleanly.
+`feeds.go` holds `feedRegistry` — all 19 mainnet feeds keyed on the
+**exact** on-chain `feed_id()` string, each mapped to a canonical
+`(base, quote)` pair. The feed_ids were captured on-chain
+2026-05-22; they are NOT always the display name —
+`EUROC` is `EUROC/EUR`, `BENJI` is `BENJI_ETHEREUM_FUNDAMENTAL`,
+the SolvBTC variants carry `_FUNDAMENTAL` suffixes.
 
-RWA-class feeds (BENJI, GILTS, TESOURO, CETES, …) surface as
-`ErrUnknownFeedID` and are skipped at the per-feed level. Their
-"price" is a NAV reference, not a market rate, and folding them
-into our crypto VWAP would mis-feed the aggregator. Adding RWA
-support is a deliberate future ADR — start with proper
-canonical-asset modelling that distinguishes NAV from market.
+Pre-#53 the decoder matched `canonical.IsKnownCrypto(feedID)`.
+Because the EUROC feed_id is `EUROC/EUR` — not the allow-list
+entry `EUROC` — **EUROC silently never decoded**, and all 11
+RWA / tokenized-BTC feeds were dropped. The registry fixes both.
 
-### Q4 — Quote asset is always USD
+RWA feeds (BENJI, GILTS, TESOURO, CETES, KTB, USTRY, SPXU, iBENJI)
+decode as the `canonical.AssetRWA` variant (ADR-0028) — deliberately
+NOT `crypto`, so a tokenized T-bill never lands in a crypto-scoped
+surface. They remain `ClassOracle` / `IncludeInVWAP=false`, so a
+NAV-quoted RWA reference never feeds market VWAP. A feed_id outside
+the registry (a future 20th feed) is skipped per-entry and counted
+on `redstone_unknown_symbols_total`.
 
-The covered set is USD-denominated (per the adapter docs +
-`app.redstone.finance` UI). Decoder hardcodes
-`Asset.QuoteAsset = canonical.NewFiatAsset("USD")` for every
-emitted update.
+### Q4 — Quote asset is per-feed (ADR-0028)
+
+RedStone publishes USD-denominated prices **unless** the feed_id
+carries an explicit `/<QUOTE>` suffix. Only `EUROC/EUR` does today —
+it is EUR-quoted. The `feedRegistry` carries the quote per feed;
+the decoder stamps `OracleUpdate.Quote` from it. Pre-#53 the
+decoder hardcoded USD for every feed, mislabelling EUROC.
 
 ### Q5 — Update cadence: 0.2% deviation OR 24h heartbeat
 
