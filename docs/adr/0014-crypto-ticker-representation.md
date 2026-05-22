@@ -138,6 +138,11 @@ ADR for an addition._
 - 2026-04-23 — initial allow-list of 22 codes (observed in CEX
   oracle traffic + top-cap global cryptos). See
   `canonical.IsKnownCrypto` for the live list.
+- 2026-05-22 (#53) — added `SolvBTC`, `SolvBTC_FUNDAMENTAL`,
+  `SolvBTC.BBN_FUNDAMENTAL` — tokenized-BTC feeds from RedStone's
+  Stellar deployment. BTC-backed crypto tokens, so `crypto` not the
+  ADR-0028 `rwa` variant. Each feed_id is its own code (market vs
+  NAV observations stay distinct).
 
 ## References
 
