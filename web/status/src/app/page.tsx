@@ -23,6 +23,14 @@ const POLL_INTERVAL_MS = 30_000;
 // the API's SLO burn rate without adding incident-detection signal.
 const WARM_PROBE_MS = 120_000;
 
+// /v1/ledger/stream (SSE) reconnect interval after a hard failure.
+// A 404 from an API binary that predates the endpoint fails the
+// EventSource without auto-reconnect (per the SSE spec a non-2xx
+// response does not retry); this slow timer lets an already-open tab
+// upgrade to streaming once the endpoint ships, without hammering
+// the 404. Transient blips are left to EventSource's own retry.
+const LEDGER_STREAM_REOPEN_MS = 60_000;
+
 type ServiceStatus = 'ok' | 'degraded' | 'down' | 'unknown';
 
 interface ServiceEntry {
@@ -1161,6 +1169,67 @@ function IngestionRegions({
   );
 }
 
+// LiveLedger is the data payload of a /v1/ledger/stream
+// `ledger_update` event (and the data field of /v1/ledger/tip).
+interface LiveLedger {
+  latest_ledger: number;
+  ingested_at: string;
+  lag_seconds: number;
+}
+
+// useLedgerStream subscribes to /v1/ledger/stream (SSE) and returns
+// the most-recent `ledger_update` payload, or null when the stream
+// is unavailable. The status page deploys (Cloudflare Pages) ahead
+// of the API release, so when an older API binary 404s the endpoint
+// this hook stays null and the caller MUST fall back to the 30s
+// /v1/diagnostics/ingestion snapshot.
+function useLedgerStream(apiBaseUrl: string): LiveLedger | null {
+  const [live, setLive] = useState<LiveLedger | null>(null);
+
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let reopenTimer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+
+    function connect() {
+      if (closed) return;
+      es = new EventSource(`${apiBaseUrl}/v1/ledger/stream`);
+      es.addEventListener('ledger_update', (ev) => {
+        try {
+          const payload = JSON.parse((ev as MessageEvent).data) as {
+            data: LiveLedger;
+          };
+          setLive(payload.data);
+        } catch {
+          // Malformed frame — keep the last good value.
+        }
+      });
+      es.onerror = () => {
+        // readyState CLOSED = a hard failure (e.g. a 404 from an API
+        // binary predating the endpoint); the browser will NOT
+        // auto-reconnect, so schedule a slow reopen. readyState
+        // CONNECTING = a transient blip the browser is already
+        // retrying — leave it alone.
+        if (es && es.readyState === EventSource.CLOSED) {
+          es = null;
+          if (!closed) {
+            reopenTimer = setTimeout(connect, LEDGER_STREAM_REOPEN_MS);
+          }
+        }
+      };
+    }
+    connect();
+
+    return () => {
+      closed = true;
+      if (reopenTimer) clearTimeout(reopenTimer);
+      es?.close();
+    };
+  }, [apiBaseUrl]);
+
+  return live;
+}
+
 function RegionPanel({
   region,
   snapshot,
@@ -1168,6 +1237,11 @@ function RegionPanel({
   region: RegionDef;
   snapshot: IngestionSnapshot | null | undefined;
 }) {
+  // Subscribe unconditionally (hooks can't be conditional) — the
+  // result is null until the first SSE event lands, and LedgerCard
+  // falls back to the snapshot while it is.
+  const liveLedger = useLedgerStream(region.apiBaseUrl);
+
   if (!snapshot) {
     return (
       <div className="rounded-md border border-surface-line bg-surface p-4 text-sm text-ink-faint">
@@ -1180,7 +1254,7 @@ function RegionPanel({
     <div className="space-y-3 rounded-md border border-surface-line bg-surface p-5">
       <RegionHeader region={region} snapshot={snapshot} />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <LedgerCard ledger={snapshot.ledger} />
+        <LedgerCard ledger={snapshot.ledger} live={liveLedger} />
         <FXBackfillCard fx={snapshot.fx_backfill} />
         <MarketCapCard mc={snapshot.market_cap} />
         <SupplyCard supply={snapshot.supply} />
@@ -1235,26 +1309,41 @@ function RegionHeader({
 
 function LedgerCard({
   ledger,
+  live,
 }: {
   ledger: IngestionSnapshot['ledger'];
+  live: LiveLedger | null;
 }) {
+  // The SSE stream (when connected) carries a fresher tip than the
+  // 30s snapshot — prefer it for the ledger number + lag, but keep
+  // the snapshot for volume / markets / assets, which the stream
+  // does not carry. Falls back to the snapshot whenever the stream
+  // is unavailable (older API binary, transient disconnect).
+  const latestLedger = live?.latest_ledger ?? ledger.latest_ledger;
+  const lagSeconds = live?.lag_seconds ?? ledger.lag_seconds;
   const lagTone =
-    ledger.lag_seconds < 15
-      ? 'ok'
-      : ledger.lag_seconds < 60
-        ? 'warn'
-        : ('bad' as const);
+    lagSeconds < 15 ? 'ok' : lagSeconds < 60 ? 'warn' : ('bad' as const);
   const lagColor = {
     ok: 'text-ok-700',
     warn: 'text-warn-700',
     bad: 'text-bad-700',
   }[lagTone];
   return (
-    <Card title="Live ledger">
-      <Row label="Latest ledger" value={ledger.latest_ledger.toLocaleString()} mono />
+    <Card
+      title="Live ledger"
+      accessory={
+        live ? (
+          <span className="flex items-center gap-1 text-[10px] font-medium text-ok-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-ok-700 animate-pulse" />
+            live
+          </span>
+        ) : null
+      }
+    >
+      <Row label="Latest ledger" value={latestLedger.toLocaleString()} mono />
       <Row
         label="Lag from tip"
-        value={`${ledger.lag_seconds}s`}
+        value={`${lagSeconds}s`}
         valueClass={lagColor}
         mono
       />
@@ -1531,15 +1620,18 @@ function SourceHealthTable({
 
 function Card({
   title,
+  accessory,
   children,
 }: {
   title: string;
+  accessory?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-md border border-surface-line bg-surface-subtle p-4">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
-        {title}
+      <h3 className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+        <span>{title}</span>
+        {accessory}
       </h3>
       <dl className="space-y-1.5 text-sm">{children}</dl>
     </div>
