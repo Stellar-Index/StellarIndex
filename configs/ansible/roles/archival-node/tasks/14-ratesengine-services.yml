@@ -99,16 +99,38 @@
 
 # ──── Indexer service ─────────────────────────────────────────────────
 
+- name: Template /etc/default/ratesengine (runtime secrets env file)
+  # EnvironmentFile loaded by the ratesengine-{indexer,aggregator,
+  # api} units. Carries the Postgres DSN (with password), the MinIO
+  # read creds, and the off-chain connector API keys — everything
+  # ratesengine.toml deliberately omits. Mode 0640, owner root.
+  ansible.builtin.template:
+    src: ratesengine.env.j2
+    dest: /etc/default/ratesengine
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify:
+    - Restart ratesengine-indexer
+    - Restart ratesengine-aggregator
+    - Restart ratesengine-api
+
 - name: Template /etc/ratesengine.toml
   # The on-disk config carries everything except secrets. Secrets
-  # come from /etc/default/ratesengine-ops via EnvironmentFile.
+  # come from /etc/default/ratesengine via EnvironmentFile (the
+  # Postgres password overrides the DSN here; S3 creds + connector
+  # keys are injected the same way).
   ansible.builtin.template:
     src: ratesengine.toml.j2
     dest: /etc/ratesengine.toml
     owner: root
     group: root
     mode: "0644"
-  notify: Restart ratesengine-indexer
+  notify:
+    - Restart ratesengine-indexer
+    - Restart ratesengine-aggregator
+    - Restart ratesengine-api
 
 - name: Install ratesengine-indexer systemd unit
   ansible.builtin.template:
@@ -148,6 +170,70 @@
     state: started
     enabled: true
     daemon_reload: true
+
+# ──── API service ─────────────────────────────────────────────────────
+# The public REST + SSE server. Caddy terminates TLS on :80/:443 and
+# proxies to this on the loopback :3000. Without this unit a rebuild
+# produces no public API surface.
+
+- name: Install ratesengine-api systemd unit
+  ansible.builtin.template:
+    src: systemd/ratesengine-api.service.j2
+    dest: /etc/systemd/system/ratesengine-api.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart ratesengine-api
+
+- name: Enable + start ratesengine-api
+  ansible.builtin.systemd:
+    name: ratesengine-api
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ──── Timer-driven oneshot units ──────────────────────────────────────
+# verify-archive Tier A (nightly chain-link integrity, ADR-0016),
+# archive-completeness (daily completeness verify, ADR-0017) and
+# supply-snapshot (daily supply writer, ADR-0011). Each is a oneshot
+# service fired by a systemd timer. R1 is the integrity leader; R2/R3
+# run verify-archive on a slower cadence (separate units, TBD).
+
+- name: Install compute-archive-to.sh helper
+  # archive-completeness.service's ExecStartPre derives ARCHIVE_TO
+  # from the indexer cursor. Without it ARCHIVE_TO stays 0 and the
+  # completeness verify is a no-op (F-1205, audit-2026-05-12).
+  ansible.builtin.copy:
+    src: compute-archive-to.sh
+    dest: /usr/local/sbin/compute-archive-to.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install verify-archive-tier-a / archive-completeness / supply-snapshot units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - verify-archive-tier-a.service
+    - verify-archive-tier-a.timer
+    - archive-completeness.service
+    - archive-completeness.timer
+    - supply-snapshot.service
+    - supply-snapshot.timer
+  notify: Reload systemd
+
+- name: Enable + start verify-archive / completeness / supply-snapshot timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - verify-archive-tier-a.timer
+    - archive-completeness.timer
+    - supply-snapshot.timer
 
 # ──── Tier D weekly cron (multi-peer fork-detection) ──────────────────
 # Per ADR-0016 §7.4: each region runs verify-archive Tier D weekly to

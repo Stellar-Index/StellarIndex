@@ -18,11 +18,6 @@
     name: galexie
     state: restarted
 
-- name: Restart stellar-rpc
-  ansible.builtin.systemd:
-    name: stellar-rpc
-    state: restarted
-
 - name: Restart minio
   ansible.builtin.systemd:
     name: minio
@@ -36,6 +31,30 @@
 - name: Restart ratesengine-aggregator
   ansible.builtin.systemd:
     name: ratesengine-aggregator
+    state: restarted
+
+- name: Restart ratesengine-api
+  ansible.builtin.systemd:
+    name: ratesengine-api
+    state: restarted
+
+# Timer-driven oneshot units (verify-archive-tier-a /
+# archive-completeness / supply-snapshot): a unit-file change is
+# picked up on the next timer fire after a daemon-reload — the
+# oneshot service itself is not restarted (it isn't running).
+- name: Restart verify-archive-tier-a.timer
+  ansible.builtin.systemd:
+    name: verify-archive-tier-a.timer
+    state: restarted
+
+- name: Restart archive-completeness.timer
+  ansible.builtin.systemd:
+    name: archive-completeness.timer
+    state: restarted
+
+- name: Restart supply-snapshot.timer
+  ansible.builtin.systemd:
+    name: supply-snapshot.timer
     state: restarted
 
 - name: Restart node_exporter

@@ -1,0 +1,65 @@
+# systemd unit: archive-completeness verify daemon.
+#
+# Rendered by Ansible. Reflects r1's EFFECTIVE running config — the
+# base unit plus the compute-to.conf + override.conf drop-ins are
+# folded directly into this template (the role runs every
+# ratesengine-* unit as root, and ARCHIVE_TO must be computed at
+# start time or the verify is a no-op).
+#
+# Per ADR-0017 §"Daily completeness cron". Runs once on each timer
+# tick (oneshot semantics); the timer file at
+# archive-completeness.timer schedules the cadence.
+
+[Unit]
+Description=Rates Engine — archive-completeness verify (daily cron per ADR-0017)
+Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/archive-completeness.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/archive-completeness
+EnvironmentFile=-/etc/default/ratesengine
+# ARCHIVE_TO is computed at start time from the indexer cursor —
+# compute-archive-to.sh writes ARCHIVE_TO=<n> to the runtime env
+# file below, which then overrides the Environment= default.
+EnvironmentFile=-/run/archive-completeness.env
+
+# Sensible defaults. Operators override via /etc/default/archive-completeness.
+Environment=ARCHIVE_FROM=2
+Environment=ARCHIVE_TO=0
+Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_completeness.prom
+Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
+Environment=WORKERS=8
+
+ExecStartPre=/usr/local/sbin/compute-archive-to.sh
+ExecStart=/usr/local/bin/ratesengine-ops archive-completeness verify \
+  -from ${ARCHIVE_FROM} \
+  -to ${ARCHIVE_TO} \
+  -workers ${WORKERS} \
+  -textfile-output ${TEXTFILE_OUTPUT} \
+  -output-file ${REPORT_OUTPUT}
+
+# Runs as root for consistency with the ratesengine-* daemons (the
+# in-repo unit set User=ratesengine but r1 has no such user yet —
+# F-1205, audit-2026-05-12).
+User=root
+Group=root
+
+# Hardening — read-only most of the filesystem, write only where we
+# need to: archive root, the textfile output dir, the report dir.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/srv/history-archive /var/lib/galexie /var/lib/node_exporter
+
+# A clean run is fast; a worst-case (lots of fallback chain
+# fetches) shouldn't exceed 30 min. Hard-cap so a hung HTTP source
+# can't wedge the timer.
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

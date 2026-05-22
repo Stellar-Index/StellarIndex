@@ -1,0 +1,91 @@
+# systemd unit: nightly verify-archive Tier A run.
+#
+# Rendered by Ansible. Reflects r1's EFFECTIVE running config (the
+# base unit + the override.conf + 10-deprioritize.conf drop-ins are
+# folded directly into this template — simpler than templating
+# drop-ins separately).
+#
+# Per docs/operations/archival-node-bringup.md §"Per-region trust +
+# verification model". Runs once per timer tick; the cadence lives
+# in verify-archive-tier-a.timer.
+#
+# This timer is intended to run on R1 only — the integrity leader
+# per ADR-0016. R2/R3 trust R1 for chain integrity and run their own
+# Tier A on a slower (weekly) cadence; that lives in a separate
+# verify-archive-tier-a-weekly.{timer,service} when those regions'
+# ansible role ships.
+
+[Unit]
+Description=Rates Engine — verify-archive Tier A (nightly chain-link integrity)
+Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/archival-node-bringup.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/ratesengine-ops
+
+# Defaults. Operators override via /etc/default/ratesengine-ops.
+# MAX_RUNTIME=0 = uncapped: the binary's graceful self-cap is
+# disabled, systemd's TimeoutStartSec is the only bound. The
+# bootstrap full pass needs to run to completion to seed the
+# -from-last-verified state file; a binary-side cap that fired
+# mid-pass meant state never seeded and every run stayed a full
+# pass (the Task #13 / 2026-05-19 incident).
+Environment=VERIFY_ARCHIVE_FROM=2
+Environment=VERIFY_ARCHIVE_WORKERS=12
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
+Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/ratesengine/verify-archive-state.json
+Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
+
+# Incremental scheme (since 2026-05-14): -from-last-verified reads
+# the prior run's high-water mark from the state file, then verifies
+# only the [last_verified - safety_overlap, tip] window. Past LCM
+# files are immutable so re-verifying them nightly is wasted compute.
+#
+# -from is the FALLBACK lower bound when the state file is missing
+# or has no prior entry for this tier — typically a fresh deployment.
+# That first-ever run is a full pass; subsequent runs are incremental.
+#
+# -to is omitted intentionally — verify-archive resolves the head
+# ledger from the manifest at start time, so we always verify up to
+# whatever the archive contained at run-launch.
+ExecStart=/usr/local/bin/ratesengine-ops verify-archive \
+  -config /etc/ratesengine.toml \
+  -from ${VERIFY_ARCHIVE_FROM} \
+  -tier chain \
+  -workers ${VERIFY_ARCHIVE_WORKERS} \
+  -max-runtime ${VERIFY_ARCHIVE_MAX_RUNTIME} \
+  -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
+  -from-last-verified \
+  -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP}
+
+User=root
+
+# Hardening. The binary reads /etc/ratesengine.toml; it doesn't
+# need write access to the filesystem (logs go to journald).
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# TimeoutStartSec MUST exceed the binary's -max-runtime so the
+# binary self-bounds and seeds the -from-last-verified state file
+# before systemd would SIGTERM it. With MAX_RUNTIME=0 (uncapped)
+# the bootstrap full pass is the long pole — ~10-14h at 12 workers.
+# 17h leaves headroom for that plus a graceful state-write, and
+# still sits well inside the 24h timer cadence. (Task #13,
+# 2026-05-19: a 4h cap SIGTERM'd the bootstrap pass before it could
+# seed state → every run a full pass → permanent unit_failed.)
+TimeoutStartSec=17h
+
+# The first-ever verify run is a full ~13.8h pass. Deprioritize so
+# it yields CPU/IO to the API + postgres during daytime hours
+# rather than dragging p99.
+CPUWeight=20
+IOWeight=20
+
+[Install]
+WantedBy=multi-user.target
