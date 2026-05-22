@@ -106,17 +106,23 @@ not active.
 
 ## Reconciliation checklist
 
-- [ ] §4 `postgresql.conf.j2` → add `timescaledb` to preload
-- [ ] §3 add `/etc/default/ratesengine` env-file template + align unit `EnvironmentFile`
-- [ ] §2 add `ratesengine-api.service.j2` + install task
-- [ ] §5 backport live `ratesengine.toml` sections
-- [ ] §6 add backfill captive-core cfg template + task + var
-- [ ] §7 `nftables.conf.j2` → open 80/443
-- [ ] §8 add verify-archive-tier-a / archive-completeness / supply-snapshot units (+ drop-ins) to the role
+- [x] §4 `postgresql.conf.j2` → add `timescaledb` to preload
+      (+ WAL sizing aligned to r1's live 2GB/512MB)
+- [x] §3 add `/etc/default/ratesengine` env-file template + align unit `EnvironmentFile`
+- [x] §2 add `ratesengine-api.service.j2` + install task
+- [x] §5 backport live `ratesengine.toml` sections
+- [x] §6 add backfill captive-core cfg template + task + var
+      (+ galexie-backfill.toml + /etc/default/galexie-backfill)
+- [x] §7 `nftables.conf.j2` → open 80/443
+- [x] §8 add verify-archive-tier-a / archive-completeness / supply-snapshot units (+ drop-ins) to the role
 - [ ] §9 deploy `galexie-archive.yml` rule to r1
+      (NOT an Ansible-role change — handled on r1 directly by the operator)
 - [ ] §1 sshd — ROLE IS CORRECT (tasks/12-hardening.yml templates a hardened
       sshd_config). Drift is one-way: r1 itself never hardened. A rebuild
       WOULD be hardened. Action = separate r1-side security task (harden live
       sshd), needs operator sign-off — NOT an Ansible-fidelity fix.
-- [ ] §10 cosmetic: refresh healthchecks scripts, rule comment drift
-- [ ] delete stale `stellar-rpc.*.j2`
+- [x] §10 rule comment drift: `deploy/monitoring/rules/storage.yml`
+      max_locks comment refreshed 256 → 4096. (healthchecks-script
+      refresh handled separately, per the audit scope.)
+- [x] delete stale `stellar-rpc.*.j2` (+ task 08, main.yml include,
+      handler, defaults — rpc removed from our architecture 2026-04-23)
