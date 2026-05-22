@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.71] — 2026-05-22
+
 ### Fixed
 
 - **`/v1/assets/{id}` cold-path latency (#63).** A cache-miss
