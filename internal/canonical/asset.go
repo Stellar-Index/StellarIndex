@@ -164,7 +164,7 @@ func (a Asset) IsZero() bool {
 
 // Validate returns nil if a is one of the three valid shapes; an
 // error otherwise.
-func (a Asset) Validate() error { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
+func (a Asset) Validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; one case per AssetType, splitting would reduce linearity
 	switch a.Type {
 	case AssetNative:
 		if a.Code != "" || a.Issuer != "" || a.ContractID != "" {
