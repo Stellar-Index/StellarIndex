@@ -5,12 +5,20 @@
       Real stellar-core daemon. Includes HTTP_PORT, PEER_PORT,
       NODE_IS_VALIDATOR, NODE_HOME_DOMAIN, DATABASE, CATCHUP_*.
 
-    mode == "captive"      → /etc/stellar/captive-core.cfg
-      Consumed by stellar-rpc's embedded (captive) core. Captive
-      core rejects NODE_IS_VALIDATOR, NODE_HOME_DOMAIN, CATCHUP_*,
-      DATABASE, HTTP_PORT, PEER_PORT — those are driven by the
-      parent process (stellar-rpc) instead. [[HOME_DOMAINS]],
-      [[VALIDATORS]], [HISTORY.*], NETWORK_PASSPHRASE are shared.
+    mode == "captive"      → /etc/stellar/captive-core-galexie*.cfg
+      Consumed by a galexie instance's embedded (captive) core.
+      Captive core rejects NODE_IS_VALIDATOR, NODE_HOME_DOMAIN,
+      CATCHUP_*, DATABASE — those are driven by the parent process
+      (galexie) instead. [[HOME_DOMAINS]], [[VALIDATORS]],
+      [HISTORY.*], NETWORK_PASSPHRASE are shared.
+
+  Captive renders take two extra knobs from the caller:
+    captive_peer_port            — the PEER_PORT (must differ per
+                                   captive so they don't collide).
+    captive_history_localmirror  — when true, emit a
+                                   [HISTORY.localmirror] get-only
+                                   block reading /srv/history-archive
+                                   (the backfill captive uses this).
 
   Rendered from roles/archival-node/defaults/main.yml + inventory.
   See https://github.com/stellar/stellar-core/blob/master/docs/stellar-core_example.cfg
@@ -36,7 +44,8 @@ PEER_PORT = {{ stellar_peer_port }}
 #
 # So we pass an explicit NON-ZERO port that's different from the
 # primary's (11625) and different per-captive. captive_peer_port
-# is injected by the caller (stellar-rpc: 11725, galexie: 11726).
+# is injected by the caller (live-tail galexie: 11726, archive-
+# backfill galexie: 11727).
 HTTP_PORT = 0
 PUBLIC_HTTP_PORT = false
 PEER_PORT = {{ captive_peer_port }}
@@ -93,6 +102,19 @@ KNOWN_PEERS = [
 get = "cp /srv/history-archive/{0} {1}"
 put = "cp {0} /srv/history-archive/{1}"
 mkdir = "mkdir -p /srv/history-archive/{0}"
+{% endif %}
+{% if captive_history_localmirror | default(false) %}
+
+# ──── Local history-archive mirror (backfill primary source) ─────
+# /srv/history-archive is our rs-stellar-archivist mirror of the
+# public network archive. Listed before any validator HISTORY so
+# captive-core reads files from NVMe instead of downloading them
+# from publicnode/lobstr/etc — cuts replay time from 24-48h to
+# ~5-12h. Falls back to the per-validator HISTORY URLs below if a
+# specific file is missing from the mirror. get-only: a captive
+# core must never publish (see the [HISTORY.ratesengine] note).
+[HISTORY.localmirror]
+get = "cp /srv/history-archive/{0} {1}"
 {% endif %}
 
 # ──── Home domain quality tiers ─────────────────────────────────────
