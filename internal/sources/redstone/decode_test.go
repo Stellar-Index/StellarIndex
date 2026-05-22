@@ -323,18 +323,18 @@ func TestDecode_MissingOpArgs(t *testing.T) {
 }
 
 func TestDecode_UnknownFeedSkipped_KnownLands(t *testing.T) {
-	// Three feeds: BTC (known), BENJI (unknown RWA — v1 doesn't model
-	// yet), ETH (known). Middle entry must be skipped while outer
-	// two land.
+	// Three feeds: BTC (known), NOTAFEED (outside the ADR-0028
+	// registry — e.g. a 20th feed RedStone deployed), ETH (known).
+	// Middle entry must be skipped while outer two land.
 	body := encodeWritePricesBody(t, relayerG,
 		[]*big.Int{
 			big.NewInt(oneBTCAt8),
-			big.NewInt(9_000_000), // synthetic BENJI price
+			big.NewInt(9_000_000), // synthetic unknown-feed price
 			big.NewInt(oneETHAt8),
 		}, 1, 2)
 	args := []string{
 		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"BTC", "BENJI", "ETH"}),
+		encodeStringVecArg(t, []string{"BTC", "NOTAFEED", "ETH"}),
 		encodePayloadArg(t),
 	}
 	ev := &events.Event{
@@ -363,7 +363,7 @@ func TestDecode_UnknownFeedSkipped_KnownLands(t *testing.T) {
 		t.Errorf("BTC OpIndex = %d, want 0", updates[0].OpIndex)
 	}
 	if updates[1].OpIndex != 2 {
-		t.Errorf("ETH OpIndex = %d, want 2 (BENJI slot 1 skipped)", updates[1].OpIndex)
+		t.Errorf("ETH OpIndex = %d, want 2 (NOTAFEED slot 1 skipped)", updates[1].OpIndex)
 	}
 }
 
@@ -373,7 +373,10 @@ func TestDecode_AllUnknown_ErrEmptyUpdates(t *testing.T) {
 		1, 2)
 	args := []string{
 		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"BENJI", "GILTS"}),
+		// Both outside the ADR-0028 registry. Note "BENJI" alone is
+		// NOT a real feed_id — the real one is
+		// "BENJI_ETHEREUM_FUNDAMENTAL" (see TestDecode_RWAFeeds).
+		encodeStringVecArg(t, []string{"BENJI", "NOTAFEED"}),
 		encodePayloadArg(t),
 	}
 	ev := &events.Event{
@@ -385,6 +388,87 @@ func TestDecode_AllUnknown_ErrEmptyUpdates(t *testing.T) {
 	_, err := decodeWritePrices(ev, time.Now())
 	if !errors.Is(err, ErrEmptyUpdates) {
 		t.Errorf("expected ErrEmptyUpdates, got %v", err)
+	}
+}
+
+func TestDecode_RWAandQuoteCurrency(t *testing.T) {
+	// Exercises the ADR-0028 feed registry: an RWA feed whose
+	// feed_id ≠ display name, the EUR-quoted EUROC feed (the pre-#53
+	// USD-hardcode bug), a plain RWA feed, and a tokenized-BTC crypto
+	// feed.
+	feedIDs := []string{
+		"BENJI_ETHEREUM_FUNDAMENTAL", // → rwa:BENJI, USD
+		"EUROC/EUR",                  // → crypto:EUROC, EUR
+		"GILTS",                      // → rwa:GILTS, USD
+		"SolvBTC",                    // → crypto:SolvBTC, USD
+	}
+	body := encodeWritePricesBody(t, relayerG,
+		[]*big.Int{
+			big.NewInt(1_00000000),
+			big.NewInt(1_05000000),
+			big.NewInt(100_00000000),
+			big.NewInt(95000_00000000),
+		}, 1, 2)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, feedIDs),
+		encodePayloadArg(t),
+	}
+	ev := &events.Event{
+		Topic:  []string{TopicSymbolRedstone},
+		Value:  body,
+		OpArgs: args,
+		TxHash: "abcd",
+	}
+	updates, err := decodeWritePrices(ev, time.Now())
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v", err)
+	}
+	if len(updates) != 4 {
+		t.Fatalf("expected 4 updates, got %d", len(updates))
+	}
+
+	wantBenji, _ := canonical.NewRWAAsset("BENJI")
+	if !updates[0].Asset.Equal(wantBenji) {
+		t.Errorf("feed_id BENJI_ETHEREUM_FUNDAMENTAL → %s, want rwa:BENJI", updates[0].Asset)
+	}
+	if updates[0].Quote.String() != "fiat:USD" {
+		t.Errorf("BENJI quote = %s, want fiat:USD", updates[0].Quote)
+	}
+
+	wantEUROC, _ := canonical.NewCryptoAsset("EUROC")
+	if !updates[1].Asset.Equal(wantEUROC) {
+		t.Errorf("feed_id EUROC/EUR → %s, want crypto:EUROC", updates[1].Asset)
+	}
+	if updates[1].Quote.String() != "fiat:EUR" {
+		t.Errorf("EUROC quote = %s, want fiat:EUR (pre-#53 this was mislabelled USD)", updates[1].Quote)
+	}
+
+	wantGILTS, _ := canonical.NewRWAAsset("GILTS")
+	if !updates[2].Asset.Equal(wantGILTS) {
+		t.Errorf("feed_id GILTS → %s, want rwa:GILTS", updates[2].Asset)
+	}
+
+	wantSolv, _ := canonical.NewCryptoAsset("SolvBTC")
+	if !updates[3].Asset.Equal(wantSolv) {
+		t.Errorf("feed_id SolvBTC → %s, want crypto:SolvBTC", updates[3].Asset)
+	}
+}
+
+func TestFeedRegistry_Has19Feeds(t *testing.T) {
+	// The ADR-0028 registry must cover exactly the 19 mainnet feeds.
+	// A drift here means a feed was added/removed without updating
+	// the ADR + this registry in lock-step.
+	if len(feedRegistry) != 19 {
+		t.Errorf("feedRegistry has %d feeds, want 19 (ADR-0028)", len(feedRegistry))
+	}
+	for feedID, entry := range feedRegistry {
+		if err := entry.Base.Validate(); err != nil {
+			t.Errorf("feed %q base asset invalid: %v", feedID, err)
+		}
+		if err := entry.Quote.Validate(); err != nil {
+			t.Errorf("feed %q quote asset invalid: %v", feedID, err)
+		}
 	}
 }
 
