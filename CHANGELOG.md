@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.69] — 2026-05-22
+
 ### Added
 
 - **`/v1/ledger/tip` + `/v1/ledger/stream` — the live-ingest
