@@ -165,8 +165,17 @@ func TOML(homeDomain string) string {
 	return "toml:" + strings.ToLower(homeDomain)
 }
 
-// TOMLTTL is the expiry for toml: keys.
-const TOMLTTL = 15 * time.Minute
+// TOMLTTL is the expiry for toml: keys — the cached SEP-1
+// `stellar.toml` overlay for /v1/assets/{id}.
+//
+// 24h, not minutes: a stellar.toml is issuer-controlled reference
+// data (org name, currency descriptions, image URLs) that changes
+// on the order of weeks-to-never. A short TTL just means every
+// cold /v1/assets/{id} for a domain whose entry has aged out pays
+// a fresh ~500ms upstream HTTPS fetch on the request path. A 24h
+// TTL collapses that to ~once per domain per day; explicit
+// busting is still available via Cache.Invalidate.
+const TOMLTTL = 24 * time.Hour
 
 // ─── Asset metadata — code/issuer/contract/decimals + SEP-1 overlay─
 //

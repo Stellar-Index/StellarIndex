@@ -123,7 +123,10 @@ func TestTOML(t *testing.T) {
 	if k := cachekeys.TOML("lobstr.co"); k != "toml:lobstr.co" {
 		t.Errorf("TOML(lobstr.co) = %q", k)
 	}
-	if cachekeys.TOMLTTL != 15*time.Minute {
+	// 24h — stellar.toml is slow-changing issuer reference data; a
+	// short TTL just makes cold /v1/assets/{id} pay a fresh ~500ms
+	// upstream fetch (#63).
+	if cachekeys.TOMLTTL != 24*time.Hour {
 		t.Errorf("TOMLTTL = %v", cachekeys.TOMLTTL)
 	}
 }

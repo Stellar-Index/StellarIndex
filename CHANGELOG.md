@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/assets/{id}` cold-path latency (#63).** A cache-miss
+  asset-detail request was 570ms–2.3s. Three mechanisms, all fixed:
+  - The F2 overlay (`applyF2Fields`) ran its four DB-bound reads —
+    24h volume, 24h change, USD price, supply snapshot —
+    **serially**, so a cold request paid their sum. They touch
+    disjoint `AssetDetail` fields and are now fanned out
+    concurrently; the wall-clock cost collapses to the slowest
+    single read.
+  - The SEP-1 `stellar.toml` overlay cache (`cachekeys.TOMLTTL`)
+    expired every **15 minutes**, so a cold request whose issuer
+    domain had aged out blocked up to 500ms on a fresh upstream
+    HTTPS fetch *on the request path*. `stellar.toml` is
+    slow-changing issuer reference data — TTL raised to **24h**, so
+    that fetch is paid ~once per domain per day rather than per
+    15-minute window.
+  - The API's `selfPrewarmAssetEndpoints` goroutine HTTP-GETs its
+    own `/v1/assets/{id}` endpoints to warm caches; those requests
+    are deliberately cold and were counted in the customer-facing
+    latency histogram, dominating p95/p99. They now carry a
+    `ratesengine-prewarm/` User-Agent and are excluded from the SLO
+    histogram alongside the existing smoke + probe synthetic
+    traffic.
+
 ## [v0.5.0-rc.70] — 2026-05-22
 
 ### Fixed

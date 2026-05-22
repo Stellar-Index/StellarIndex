@@ -127,12 +127,15 @@ func isStreamingRoute(route string) bool {
 	return strings.HasSuffix(route, "/stream")
 }
 
-// isSyntheticUA reports whether the User-Agent identifies a
-// known synthetic-monitoring probe. Currently matches
-// `ratesengine-smoke/...` (the r1-smoke.sh wrapper) and the
-// Prometheus blackbox-style `Healthchecks.io` UA when our own
-// timers ping themselves. The match is prefix-only so version
-// suffixes don't affect the decision.
+// isSyntheticUA reports whether the User-Agent identifies internal
+// synthetic / maintenance traffic that must not pollute the
+// customer-facing SLO. Matches `ratesengine-smoke/...` (the
+// r1-smoke.sh wrapper), `ratesengine-probe/...` (operator probes),
+// and `ratesengine-prewarm/...` (the API's own self-prewarm
+// goroutine, which HTTP-GETs its endpoints to warm caches — its
+// requests are deliberately cold and would otherwise dominate the
+// latency histogram). The match is prefix-only so version suffixes
+// don't affect the decision.
 func isSyntheticUA(ua string) bool {
 	if ua == "" {
 		return false
@@ -148,6 +151,7 @@ func isSyntheticUA(ua string) bool {
 var syntheticUAPrefixes = []string{
 	"ratesengine-smoke/",
 	"ratesengine-probe/",
+	"ratesengine-prewarm/",
 }
 
 // CaptureRoute writes the mux-matched route pattern into the

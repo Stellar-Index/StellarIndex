@@ -2997,6 +2997,11 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 				logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
 				continue
 			}
+			// Mark as synthetic so obs.HTTPMetrics keeps these
+			// deliberately-cold warming requests out of the
+			// customer-facing latency histogram + SLO. Without this
+			// the prewarmer's own ~570ms cold misses dominate p95/p99.
+			req.Header.Set("User-Agent", "ratesengine-prewarm/1")
 			resp, err := client.Do(req)
 			elapsed := time.Since(start)
 			if err != nil {

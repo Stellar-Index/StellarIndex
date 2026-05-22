@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/supply"
@@ -93,49 +94,56 @@ type VolumeReader interface {
 func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	key, keyErr := supply.AssetKey(asset)
 
-	// Volume path is independent of supply — even an asset without
-	// a supply snapshot has a meaningful 24h volume if it's been
-	// trading. Run it first so a missing snapshot doesn't shadow
-	// the volume field.
+	// The F2 overlay fans out to up to four independent DB-bound
+	// reads — 24h volume, 24h change, USD price, supply snapshot.
+	// They were historically run serially; each is 50ms–2s, so a
+	// cold /v1/assets/{id} paid the SUM. They touch disjoint
+	// AssetDetail fields (volume/change/price each write one field;
+	// the snapshot writes none), so they run concurrently here and
+	// the cold cost collapses to the slowest single read. Every
+	// populate* helper is individually best-effort — a failure logs
+	// and leaves its field null — so no error plumbing is needed.
 	//
-	// IMPORTANT: pass asset.String() (the canonical wire form,
-	// matching what the trades hypertable stores) — NOT
+	// IMPORTANT: pass asset.String() to populateVolume24h — the
+	// canonical wire form trades.base_asset stores — NOT
 	// supply.AssetKey(asset). The two diverge for native: AssetKey
-	// returns "XLM" (the supply-package convention per ADR-0011),
-	// trades.base_asset stores "native". A pre-2026-05-04 bug passed
-	// the supply key here and the volume lookup never matched the
-	// trade rows, returning "0" for native indefinitely.
-	s.populateVolume24h(ctx, detail, asset.String())
-
-	// change_24h_pct is independent of both volume and supply —
-	// it needs the current USD price (which the supply path also
-	// consults for market_cap) and a 24h-ago USD bucket. Run before
-	// the supply early-return so off-chain assets without a supply
-	// snapshot still get the percentage where applicable.
-	s.populateChange24h(ctx, detail, asset)
-
-	// F-1271: inline price_usd independent of supply availability,
-	// so wallet UIs that just want the current price don't pay a
-	// second /v1/price RT even for assets without a supply snapshot.
-	// populateMarketCap re-uses detail.PriceUSD when wired (no
-	// second lookup paid).
-	s.populatePriceUSD(ctx, detail, asset)
-
-	if s.supply == nil {
-		return
+	// returns "XLM" (ADR-0011), trades stores "native". A
+	// pre-2026-05-04 bug passed the supply key and the volume
+	// lookup never matched the trade rows.
+	var (
+		snap     supply.Supply
+		haveSnap bool
+		wg       sync.WaitGroup
+	)
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
 	}
-	if keyErr != nil {
-		// Off-chain assets (fiat / crypto-pure) — supply path is a
-		// silent no-op (matches the existing scope; volume path
-		// above already returned for the same reason).
-		return
+	run(func() { s.populateVolume24h(ctx, detail, asset.String()) })
+	run(func() { s.populateChange24h(ctx, detail, asset) })
+	// F-1271: inline price_usd independent of supply availability so
+	// wallet UIs that just want the price don't pay a second /v1/price
+	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD.
+	run(func() { s.populatePriceUSD(ctx, detail, asset) })
+	// Supply snapshot only when a supply reader is wired and the
+	// asset has a supply key — off-chain assets (fiat / crypto-pure)
+	// have no snapshot, matching the pre-parallelisation early-return.
+	if s.supply != nil && keyErr == nil {
+		run(func() { snap, haveSnap = s.fetchSupplySnapshot(ctx, key) })
 	}
-	snap, ok := s.fetchSupplySnapshot(ctx, key)
-	if !ok {
-		return
+	wg.Wait()
+
+	// Phase 2 — pure compute (no DB), so it runs on this goroutine
+	// once the parallel reads have joined. populateMarketCap reads
+	// detail.PriceUSD (set by populatePriceUSD) + the snapshot; the
+	// wg.Wait barrier makes both safely visible.
+	if haveSnap {
+		populateSupplyFields(detail, snap)
+		s.populateMarketCap(ctx, detail, asset, snap, key)
 	}
-	populateSupplyFields(detail, snap)
-	s.populateMarketCap(ctx, detail, asset, snap, key)
 }
 
 // populateVolume24h fills detail.VolumeUSD24h via the [VolumeReader].

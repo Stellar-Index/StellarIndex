@@ -19,9 +19,11 @@ import (
 // access pattern: many concurrent API requests for the same
 // home-domain should share one upstream fetch.
 //
-// TTL is [cachekeys.TOMLTTL] (15 minutes). Negative results are NOT
-// cached — a 404 from the issuer is a real signal callers should
-// see, and a transient one at that.
+// TTL is [cachekeys.TOMLTTL] (24h — stellar.toml is slow-changing
+// issuer reference data; a short TTL just makes cold
+// /v1/assets/{id} requests pay a fresh ~500ms upstream fetch).
+// Negative results are NOT cached — a 404 from the issuer is a
+// real signal callers should see, and a transient one at that.
 //
 // Safe for concurrent use.
 type Cache struct {
