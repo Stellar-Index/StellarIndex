@@ -120,6 +120,15 @@ all:
     allowed_ssh_cidrs:
       - "0.0.0.0/0"                            # tighten to VPN/jump host later
 
+    # ───── Firewall ────────────────────────────────────────────────
+    # r1 is a single box: Postgres / MinIO / node_exporter are
+    # consumed only over loopback (Prometheus scrapes 127.0.0.1).
+    # The role default opens 5432/9000/9100 to internal_cidrs
+    # (RFC1918) for a multi-host layout; r1 keeps them loopback-only
+    # — matches the live nftables ruleset. Re-add ports here if a
+    # private-network peer (e.g. an off-box Prometheus) is added.
+    internal_allow_ports: []
+
   children:
     archival_nodes:
       hosts:
