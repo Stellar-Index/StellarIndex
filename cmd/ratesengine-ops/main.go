@@ -2093,6 +2093,36 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	}
 	defer cancel()
 
+	// Resolve `-to=0` to the current tip when parallel chunking was
+	// asked for. `splitRange(from, 0, n)` hits the `to <= from` guard
+	// and silently returns ONE chunk — `-workers N` is then dead code,
+	// and what should be an N-way parallel walk degrades to a serial
+	// one. Bit me on a manual `-from 2 -to 0 -workers 6` bootstrap run
+	// that crawled for 22h instead of ~4h. The systemd timer's
+	// `-from-last-verified` incremental mode hit the same shape on
+	// every fresh-state bootstrap.
+	//
+	// Resolution: build a one-shot DataStore from the same DataStore
+	// config the walkers will use, query FindLatestLedgerSequence,
+	// adopt that as the upper bound for splitRange. Closed
+	// immediately — the parallel walkers each construct their own.
+	// Skipped when workers ≤ 1 (single-chunk serial walk is what
+	// `to=0` is FOR; resolving tip there would defeat the live-tail
+	// path) and when `to` already names an explicit upper bound.
+	if to == 0 && workers > 1 {
+		ds, dsErr := datastore.NewDataStore(ctx, lsCfg.DataStore)
+		if dsErr != nil {
+			return 0, "", fmt.Errorf("resolve tip for %d-way parallel split: open datastore: %w", workers, dsErr)
+		}
+		tip, tipErr := datastore.FindLatestLedgerSequence(ctx, ds)
+		_ = ds.Close()
+		if tipErr != nil {
+			return 0, "", fmt.Errorf("resolve tip for %d-way parallel split: find latest ledger: %w", workers, tipErr)
+		}
+		fmt.Fprintf(os.Stderr, "verify-archive: resolved -to=0 → tip %d for %d-way parallel split\n", tip, workers)
+		to = tip
+	}
+
 	chunks := splitRange(from, to, workers)
 	progressEvery := 10 * time.Second
 	startedAt := time.Now()

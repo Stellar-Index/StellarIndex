@@ -55,6 +55,19 @@ against.
 
 ### Fixed
 
+- **`verify-archive -workers N` silently dropped when `-to=0`.** The
+  default `-to=0` (treat as "unbounded/live") fed `splitRange(from, 0,
+  N)` which hit its `to <= from` guard and returned a single chunk —
+  an N-way parallel chain walk silently degraded to a serial one.
+  Hit by a manual `-from 2 -to 0 -workers 6` bootstrap that crawled
+  ~22h instead of ~4h, and would hit every fresh-state bootstrap of
+  the systemd `-from-last-verified` timer for the same reason.
+  Fixed: when `to == 0 && workers > 1` we now query
+  `datastore.FindLatestLedgerSequence` once at start, adopt that as
+  the upper bound for the split, and log the resolution so it's
+  visible. `to=0` with `workers ≤ 1` keeps its existing live-tail
+  semantics.
+
 - **SDEX density structurally locked at 99.99999%.** The
   `sourceGenesisLedger` map declared SDEX's earliest-possible ledger
   as 1 — but Stellar's network-genesis ledger carries zero
