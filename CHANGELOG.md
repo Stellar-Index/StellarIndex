@@ -81,6 +81,17 @@ against.
   an SDEX operation. (Soroban sources already used exact first-WASM-
   deploy ledgers and were untouched.)
 
+- **`ratesengine_source_matched_events_total` Prometheus metric**
+  (#dispatcher-events-seen follow-up). The earlier database-side fix
+  (`decoder_stats_5m.events_seen` populated correctly) made decoder
+  error-rate computable post-hoc; this exposes the same per-source
+  denominator on Prometheus, so the live dashboard
+  `rate(decode_errors[5m]) / rate(matched_events[5m])` works without
+  joining against the downstream `source_events_total` (which is a
+  different thing — that's per-source decoder OUTPUTS, not INPUTS).
+  Wired into `pipeline.emitDispatcherMetricDeltas` alongside the
+  existing decode_errors / orphan_events deltas.
+
 - **`decoder_stats_5m.events_seen` always 0.** The statsflush
   flusher stamped `EventsSeen: 0` on every row with a `dispatcher.
   Stats doesn't expose per-source events_seen yet; fill when added`

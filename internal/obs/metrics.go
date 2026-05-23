@@ -34,6 +34,7 @@ func init() {
 		SourceLagLedgers,
 		SourceLastEventUnix,
 		SourceEnabled,
+		SourceMatchedEventsTotal,
 		SourceDecodeErrorsTotal,
 		SourceUnknownSymbolsTotal,
 		SourceOrphanEventsTotal,
@@ -198,6 +199,30 @@ var SourceEnabled = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "ratesengine_source_enabled",
 		Help: "1 if source is configured enabled; 0 otherwise.",
+	},
+	[]string{"source"},
+)
+
+// SourceMatchedEventsTotal — per-source counter of inputs (events,
+// contract calls, entry changes, ops) that a decoder's Matches()
+// claimed. The DENOMINATOR of decoder error-rate; the numerator is
+// SourceDecodeErrorsTotal. Bumped pre-Decode so a decoder that
+// matches then errors still counts — error-rate stays meaningful
+// (errors / inputs_attempted) instead of tautological (errors /
+// successful_outputs).
+//
+// Distinct from SourceEventsTotal — that's a per-source count of
+// consumer.Events the SINK processes, i.e. decoder OUTPUTS. A
+// decoder that buffers (soroswap swap+sync correlation) or
+// produces zero outputs for an intermediate matched event would
+// register on this counter but not on SourceEventsTotal.
+//
+// Mirror of dispatcher.Stats.EventsSeen, emitted via the
+// pipeline.processor delta loop.
+var SourceMatchedEventsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_source_matched_events_total",
+		Help: "Inputs each source's decoder Matches() claimed (the denominator of decoder error-rate).",
 	},
 	[]string{"source"},
 )

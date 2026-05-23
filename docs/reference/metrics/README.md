@@ -89,6 +89,25 @@ lag signal exists.
 Gauge, label `source`. Unix-seconds timestamp of the most recent
 event dispatched to the sink. Dashboards use it for a last-seen clock.
 
+### `ratesengine_source_matched_events_total`
+
+Counter, label `source`.
+
+Per-source count of inputs (events, contract calls, entry changes,
+classic ops) the decoder's `Matches()` claimed. The DENOMINATOR of
+decoder error-rate — chart
+`rate(ratesengine_source_decode_errors_total[5m]) /
+rate(ratesengine_source_matched_events_total[5m])` per source.
+Bumped pre-Decode so a decoder that matches then errors still
+counts; error-rate stays interpretable (errors / attempted) rather
+than tautological (errors / successful).
+
+Distinct from `source_events_total` — that's downstream of decoding
+(decoder OUTPUT, what reaches the sink). A decoder that buffers
+(soroswap swap+sync correlation) or matches an intermediate event
+producing zero outputs would register here but not on
+`source_events_total`.
+
 ### `ratesengine_source_decode_errors_total`
 
 Counter, label `source`.
@@ -97,7 +116,8 @@ Per-event parse failures — SCVal shape mismatch, malformed XDR,
 canonical-invariant violations. Distinct from `orphan_events`
 (events were well-formed but partnerless) and `insert_errors`
 (decoded fine but persistence broke). Emitted from dispatcher stats
-deltas after each processed ledger.
+deltas after each processed ledger. Denominator is
+`ratesengine_source_matched_events_total`.
 
 ### `ratesengine_source_unknown_symbols_total`
 
