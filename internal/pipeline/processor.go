@@ -65,6 +65,13 @@ func ProcessLedger(
 }
 
 func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
+	for source, n := range after.EventsSeen {
+		delta := n - before.EventsSeen[source]
+		if delta <= 0 {
+			continue
+		}
+		obs.SourceMatchedEventsTotal.WithLabelValues(source).Add(float64(delta))
+	}
 	for source, n := range after.DecodeErrors {
 		delta := n - before.DecodeErrors[source]
 		if delta <= 0 {
