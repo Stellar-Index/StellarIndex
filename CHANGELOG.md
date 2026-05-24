@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.76] — 2026-05-24
+
 ### Fixed
 
 - **`internal/config/validate.go` `KnownSources` was missing `cctp`
