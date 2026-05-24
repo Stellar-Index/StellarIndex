@@ -427,3 +427,76 @@ func TestState_jsonRoundTripWithInProgress(t *testing.T) {
 		t.Errorf("legacy file LastVerifiedLedger = %d, want 42", legacy.Tiers["chain"].LastVerifiedLedger)
 	}
 }
+
+// TestPinnedTipFromPriorRun_returnsPriorTo confirms an in-progress
+// run's To is adopted when From + Workers match the requested values
+// — the path that makes a SIGTERMed bootstrap actually resumable.
+func TestPinnedTipFromPriorRun_returnsPriorTo(t *testing.T) {
+	t.Parallel()
+	st := VerifyArchiveState{
+		Tiers: map[string]VerifyArchiveTierState{
+			"chain": {
+				InProgress: &RunProgress{
+					From:    2,
+					To:      62656054,
+					Workers: 12,
+					Chunks: []ChunkProgress{
+						{Idx: 0, From: 2, To: 5221337, Done: true},
+					},
+				},
+			},
+		},
+	}
+	pinned, ok := pinnedTipFromPriorRun(st, "chain", 2, 12)
+	if !ok || pinned != 62656054 {
+		t.Fatalf("pinnedTipFromPriorRun = (%d,%v); want (62656054,true)", pinned, ok)
+	}
+}
+
+// TestPinnedTipFromPriorRun_noPriorReturnsFalse confirms a fresh
+// state file (no InProgress) doesn't pretend to have a pinned tip.
+func TestPinnedTipFromPriorRun_noPriorReturnsFalse(t *testing.T) {
+	t.Parallel()
+	st := VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{}}
+	if _, ok := pinnedTipFromPriorRun(st, "chain", 2, 12); ok {
+		t.Fatalf("pinnedTipFromPriorRun ok=true for empty state; want false")
+	}
+}
+
+// TestPinnedTipFromPriorRun_mismatchedFromOrWorkersReturnsFalse
+// confirms a prior in-progress run with different parameters is
+// NOT silently adopted — operator changed flags → fresh resolution.
+func TestPinnedTipFromPriorRun_mismatchedFromOrWorkersReturnsFalse(t *testing.T) {
+	t.Parallel()
+	st := VerifyArchiveState{
+		Tiers: map[string]VerifyArchiveTierState{
+			"chain": {
+				InProgress: &RunProgress{From: 2, To: 62656054, Workers: 12},
+			},
+		},
+	}
+	if _, ok := pinnedTipFromPriorRun(st, "chain", 100, 12); ok {
+		t.Errorf("From=100 vs prior From=2 should not match")
+	}
+	if _, ok := pinnedTipFromPriorRun(st, "chain", 2, 8); ok {
+		t.Errorf("Workers=8 vs prior Workers=12 should not match")
+	}
+}
+
+// TestPinnedTipFromPriorRun_zeroToReturnsFalse covers the edge case
+// where a prior InProgress was seeded with To=0 (shouldn't happen in
+// practice, but defensive): no pinned tip → fall through to live
+// resolution, don't propagate a bad tip.
+func TestPinnedTipFromPriorRun_zeroToReturnsFalse(t *testing.T) {
+	t.Parallel()
+	st := VerifyArchiveState{
+		Tiers: map[string]VerifyArchiveTierState{
+			"chain": {
+				InProgress: &RunProgress{From: 2, To: 0, Workers: 12},
+			},
+		},
+	}
+	if _, ok := pinnedTipFromPriorRun(st, "chain", 2, 12); ok {
+		t.Fatalf("To=0 should not be treated as a valid pinned tip")
+	}
+}
