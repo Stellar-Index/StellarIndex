@@ -47,7 +47,21 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+# Type=notify + WatchdogSec replaces the previous
+# Type=oneshot + fixed TimeoutStartSec pair: the binary calls
+# sd_notify(READY=1) immediately and sd_notify(WATCHDOG=1) every 30 s
+# thereafter. WatchdogSec=1h means systemd SIGTERMs only on real
+# silence (binary hung / crashed / dead-locked), not on the wall-clock
+# bound that bit us when the bootstrap walk ran serial-instead-of-
+# parallel and busted the 17h cap. The walk can legitimately take
+# 25h+ on r1 (single-chunk serial without ListBucket parallelism) —
+# WatchdogSec is liveness-relative, so 25h of progress survives 25h.
+# The matching Go integration is in cmd/ratesengine-ops/main.go's
+# verify-archive subcommand.
+Type=notify
+NotifyAccess=main
+WatchdogSec=1h
+
 EnvironmentFile=-/etc/default/ratesengine-ops
 
 # Sensible defaults. Operators override via /etc/default/ratesengine-ops.
@@ -98,36 +112,25 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# systemd's hard cap MUST exceed the binary's own -max-runtime
-# (VERIFY_ARCHIVE_MAX_RUNTIME, 0 = uncapped) AND must accommodate
-# the slowest plausible bootstrap walk. The binary self-bounds at
-# -max-runtime and exits cleanly *writing the -from-last-verified
-# state file*; only then are subsequent runs incremental (minutes).
+# With Type=notify + WatchdogSec=1h, TimeoutStartSec only governs the
+# time the binary has to send READY=1 (essentially "did the process
+# start cleanly"). Once READY=1 lands the watchdog takes over and the
+# walk can run as long as it makes progress. 10m is plenty for
+# READY=1 (it fires immediately on startup); if the binary can't
+# get to that point in 10m something is catastrophically wrong and
+# a fast SIGTERM is the right answer.
 #
-# 2026-05-19 (Task #13): TimeoutStartSec was 4h while -max-runtime
-# was 16h, so on a fresh deploy / after a state-file loss the
-# bootstrap full pass (~10-14h at 12 workers, state absent →
-# -from genesis) was SIGTERM'd at 4h before it could seed state.
-# Raised to 17h then.
-#
-# 2026-05-23 (#62 root cause): 17h was sized for the 12-worker
-# parallel walk the unit prescribes, but the parallelism never
-# actually happened on r1 — `splitRange(from, to=0, n)` hit its
-# `to <= from` guard and silently returned a single chunk
-# (rc.74's fail-soft fix documents this), AND r1's least-privilege
-# MinIO `ratesengine_reader` IAM grants `GetObject` only, so the
-# parallel path's BoundedRange PrepareRange can't run anyway until
-# `s3:ListBucket` is granted. End-to-end the walk is therefore
-# serial, ~700 ledgers/s, and the full 62.6M-ledger bootstrap pass
-# takes ~25h — comfortably past the 17h cap. The walk got SIGTERM'd
-# at 17h05m with chunk[0] at ledger 40.5M, every line "verified".
-#
-# 36h = serial-walk headroom (25h walk + grace), still inside the
-# daily timer cadence so the next fire isn't queued behind this
-# one. Once `s3:ListBucket` is granted to the reader IAM the
-# parallel walk completes in ~hours — 36h becomes overkill, but
-# the cap stays safe.
-TimeoutStartSec=36h
+# Historical context for future archaeologists:
+#   - 2026-05-19 (Task #13): TimeoutStartSec was 4h, too tight for
+#     a fresh bootstrap; raised to 17h.
+#   - 2026-05-23 (#62 root cause): 17h was sized for the 12-worker
+#     parallel walk, but parallelism never actually happened on r1
+#     (splitRange `to <= from` guard + MinIO IAM denying ListBucket).
+#     Bootstrap walked serially at ~700 ledgers/s = ~25h needed;
+#     17h cap SIGTERMed the walk at ledger 40.5M. Briefly raised to
+#     36h then replaced with Type=notify + WatchdogSec=1h — the
+#     systemd-idiomatic liveness pattern, no more wall-clock guessing.
+TimeoutStartSec=10m
 
 [Install]
 WantedBy=multi-user.target
