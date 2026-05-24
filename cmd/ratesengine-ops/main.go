@@ -39,6 +39,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -1968,6 +1969,28 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 	if doCheckpoint {
 		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor against %s\n", *archiveRoot)
 	}
+
+	// systemd Type=notify integration: signal READY=1 once at start
+	// (so the unit transitions from "activating" to "active") and
+	// then ping WATCHDOG=1 every 30s for the rest of the process's
+	// life. The matching unit sets WatchdogSec=1h, so the walk has
+	// up to an hour of true silence before systemd intervenes —
+	// orders of magnitude more headroom than the wall-clock-bound
+	// TimeoutStartSec the unit used before, and tied to liveness
+	// rather than guessed duration. SdNotify is a no-op when
+	// $NOTIFY_SOCKET isn't set (manual `ratesengine-ops verify-
+	// archive` invocations from a shell), so this is safe outside
+	// systemd too.
+	if _, err := daemon.SdNotify(false, daemon.SdNotifyReady); err != nil {
+		fmt.Fprintf(os.Stderr, "verify-archive: warn: sd_notify READY failed: %v\n", err)
+	}
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			_, _ = daemon.SdNotify(false, daemon.SdNotifyWatchdog)
+		}
+	}()
 
 	// Optional /metrics endpoint. Only the chunk walk emits metrics
 	// today (Tiers D + E are bounded-time spot checks, not the
