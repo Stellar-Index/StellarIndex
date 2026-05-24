@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Per-source density genesis ledgers now exact, not rounded
+  approximations.** `sourceGenesisLedger` per-source values were
+  rounded (e.g., 50,500,000) — under the granular-coverage
+  mission, both directions of inexactness are correctness bugs:
+  rounding LOW reports false-negative density holes for ranges
+  where no contract existed; rounding HIGH silently excludes
+  legitimate early ledgers, inflating density score. Replaced
+  with exact first-WASM-deploy ledger from each source's
+  `docs/operations/wasm-audits/<source>.md` audit log. Sources
+  without an audit yet (cctp, rozo) keep their TODO until the
+  walk lands. A new `TestSourceGenesisLedgerExact` regression
+  test in `internal/api/v1/diagnostics_ingestion_density_test.go`
+  pins every audited source to its exact audit-evidence value
+  and asserts the Soroban-activation floor (L50,457,424) — any
+  drop below it signals "someone re-rounded back to a deploy-era
+  constant". (Spans this fix + the prior 92d713a / 0966d6f3 /
+  495b79f7 follow-ups; final correctness guard for #10.)
+
 ## [v0.5.0-rc.76] — 2026-05-24
 
 ### Fixed

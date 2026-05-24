@@ -393,3 +393,94 @@ func TestComputeSourceDensity(t *testing.T) {
 		})
 	}
 }
+
+// TestSourceGenesisLedgerExact guards the per-source first-deploy
+// ledgers in `sourceGenesisLedger` against drifting back to rounded
+// approximations. Under the granular-coverage mission these values
+// are the denominator of `backfill_coverage[].density_pct`, so both
+// directions of inexactness are correctness bugs:
+//
+//   - LOW  → padding the denominator with pre-existence ledgers
+//     (100% mathematically unreachable, false-negative gaps).
+//   - HIGH → silently hiding genuine early-history ledgers,
+//     inflating the density score (false-positive coverage).
+//
+// The exact values come from per-source WASM-audits at
+// `docs/operations/wasm-audits/<src>.md` + the 2026-05-01 r1 walk
+// (`evidence/r1-walk-2026-05-01/per-source-final/<src>.json`). If a
+// new contract WASM is deployed with an earlier `create_contract`
+// ledger (e.g. a factory rebuild on a fork), update the map AND
+// this guard's `wantExact` column from the new audit doc.
+//
+// SDEX is the deliberate exception — Stellar's network-genesis
+// ledger 1 carries zero operations by design (it's the genesis
+// spec record), so the earliest possible SDEX trade lives in
+// ledger 2. The "Soroban-era floor" assertion is therefore gated
+// on src != "sdex".
+func TestSourceGenesisLedgerExact(t *testing.T) {
+	t.Parallel()
+
+	// Soroban activated at L50,457,424 (2024-02-20); no contract-
+	// hosted source can have a genesis before this ledger. The
+	// floor is a coarse drift detector — any drop below it signals
+	// "someone re-rounded back to a deploy-era constant".
+	const sorobanActivation int64 = 50_457_424
+
+	// wantExact mirrors the audit-evidence map. Keep in lock-step
+	// with `sourceGenesisLedger`. A mismatch on EITHER side
+	// (drift in production, or this guard going stale) fails CI.
+	wantExact := map[string]int64{
+		"sdex":            2,
+		"soroswap":        50_746_266,
+		"soroswap-router": 50_746_272,
+		"aquarius":        52_728_375,
+		"phoenix":         51_572_016,
+		"comet":           51_499_546,
+		"blend":           51_499_546,
+		"reflector-dex":   50_644_229,
+		"reflector-cex":   50_644_239,
+		"reflector-fx":    56_733_481,
+		"band":            50_842_736,
+		"redstone":        58_758_722,
+		"defindex":        57_056_338,
+	}
+
+	// 1. Every audited source is in the map with the exact value.
+	for src, want := range wantExact {
+		got, ok := sourceGenesisLedger[src]
+		if !ok {
+			t.Errorf("sourceGenesisLedger missing %q (expected exact first-deploy %d)", src, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("sourceGenesisLedger[%q] = %d, want %d (see docs/operations/wasm-audits/%s.md)",
+				src, got, want, src)
+		}
+	}
+
+	// 2. No surprise sources crept in without test coverage. cctp +
+	// rozo are intentionally absent (see the TODO in the map);
+	// adding either here without an audit doc is a process bug.
+	for src := range sourceGenesisLedger {
+		if _, ok := wantExact[src]; !ok {
+			t.Errorf("sourceGenesisLedger has %q but the test guard doesn't — add it to wantExact from docs/operations/wasm-audits/%s.md", src, src)
+		}
+	}
+
+	// 3. Soroban-era floor: every non-SDEX source's genesis is at
+	// or after Soroban activation. A drop below this floor is the
+	// signature of "rounded back to a deploy-era constant".
+	for src, got := range sourceGenesisLedger {
+		if src == "sdex" {
+			continue
+		}
+		if got <= 0 {
+			t.Errorf("sourceGenesisLedger[%q] = %d, want > 0 (Soroban sources need a real first-deploy ledger)", src, got)
+			continue
+		}
+		if got < sorobanActivation {
+			t.Errorf("sourceGenesisLedger[%q] = %d, below Soroban activation L%d — genesis cannot predate the platform",
+				src, got, sorobanActivation)
+		}
+	}
+}

@@ -240,6 +240,15 @@ var sourceGenesisLedger = map[string]int64{
 	// precision; an honest genesis here makes density read correctly,
 	// not falsely.
 	"defindex": 57_056_338,
+
+	// TODO(#40, #41): add `cctp` + `rozo` genesis ledgers once their
+	// per-source WASM-history walks complete. Both are brand-new
+	// cross-chain bridges on Stellar with very short on-chain history
+	// (BackfillSafe=false until audited; see registry.go). Until the
+	// walks land at docs/operations/wasm-audits/{cctp,rozo}.md they
+	// stay out of this map — the buildBackfillCoverage cache-row
+	// fallback still surfaces them as "no genesis → no density",
+	// which is the honest signal that the audit is owed.
 }
 
 // RegionInfo identifies which deployment generated this snapshot.
