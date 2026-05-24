@@ -1,0 +1,190 @@
+---
+title: Rozo WASM-history audit
+last_verified: 2026-05-24
+status: "in progress — wasm-history walk pending"
+source: rozo
+backfill_safe: false
+---
+
+# Rozo WASM audit
+
+Audit log for the `rozo` source's `BackfillSafe` flag. See
+[`README.md`](README.md) for the full procedure.
+
+## Status
+
+**Skeleton (2026-05-24).** Source decoder + wiring landed in #41
+(commit `1170cd99`); registry entry sits at `BackfillSafe: false`
+pending the wasm-history walk. The walk itself is gated on r1's
+verify-archive bootstrap finishing (ZFS-ARC + MinIO I/O
+contention — see README.md §2 "Where to run wasm-history") so
+this doc captures the per-contract / per-event expectations now,
+and the operator fills in the timeline + per-hash review
+sections once the walk lands.
+
+Rozo is an intent-bridge — users invoke `pay(from, amount, memo)`
+on a v1 Payment contract; the protocol's off-chain relayer
+fulfils the intent on the destination chain. Audit scope here is
+v1 Payment only (the only mainnet-live Rozo surface at
+2026-05-20); v2 Forwarder / IntentBridge are pre-mainnet and
+deferred per `internal/sources/rozo/events.go`'s package comment.
+The source is `ClassBridge` with `DefaultWeight: 0` and
+`IncludeInVWAP: false` in
+`internal/sources/external/registry.go` — `BackfillSafe` gates
+the operator-triggered backfill path only; aggregator output is
+unaffected either way.
+
+## Source identity
+
+| field | value |
+| --- | --- |
+| Source name (registry key) | `rozo` |
+| Registry class | `ClassBridge` |
+| Decoder file | [`internal/sources/rozo/decode.go`](../../../internal/sources/rozo/decode.go) |
+| Dispatcher hook | event-based `Decoder` (topic[0] classify; one of two `Event*` symbols) |
+| Package README | [`internal/sources/rozo/README.md`](../../../internal/sources/rozo/README.md) |
+| Wiring PR | #41 (commit `1170cd99`) |
+
+## Mainnet contracts
+
+Verbatim from
+[`internal/sources/rozo/events.go`](../../../internal/sources/rozo/events.go)
+`MainnetPaymentContracts` (confirmed by RozoAI 2026-05-21 — all
+three emit the same `PaymentEvent` / `FlushEvent` schemas):
+
+| # | role | contract address |
+| --- | --- | --- |
+| 1 | v1 Payment (original deployment, `MainnetPaymentContract`) | `CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL` |
+| 2 | v1 Payment (additional bridge-out C wallet)               | `CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE` |
+| 3 | v1 Payment (additional bridge-out C wallet)               | `CAQPKW5AUPEA4C7OERZRUCBWT5RZDSETO4PR5REVRC5MT4CF3PBSKXQC` |
+
+**Out of audit scope** — `MainnetRelayerAccounts`
+(`GADDIYCVR2Z6H46YWZE53LICP56ZBNEUUT2QAG4QHSWVIYE44HS7W3XY`,
+`GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4`) are
+classic G-strkey accounts, not contracts; they don't run WASM
+and emit no Soroban events. They appear on classic `payment`
+operations as source/destination and are tracked separately (see
+the `MainnetRelayerAccounts` block in `events.go`).
+
+The decoder matches `payment` / `flush` by `topic[0]`, so
+extending `MainnetPaymentContracts` is a watchlist concern
+(cross-validation + scoping), not a decoder-shape change — but
+each new contract still needs to land in the wasm-history walk's
+`-contracts` list to be covered by this audit.
+
+## Decoder expectations
+
+Captured from `internal/sources/rozo/{events,decode}.go` at HEAD
+on 2026-05-24. Two canonical events matched on `topic[0]` via
+pre-encoded `ScSymbol` constants (`symbol_short!` form — both
+event names are ≤ 9 chars).
+
+| event constant | topic[0] symbol | wire shape |
+| --- | --- | --- |
+| `EventPayment` | `"payment"` | 2-element topic + `ScMap` body |
+| `EventFlush`   | `"flush"`   | 1-element topic + `ScMap` body |
+
+### Topic + body details
+
+Per the schemas pinned in `events.go` (extracted from
+`v1/stellar/payment/src/lib.rs` in
+`github.com/RozoAI/rozo-intents-contracts`):
+
+- **`payment`** — user-initiated bridge-out via
+  `pay(from, amount, memo)`.
+  `topics = (symbol_short!("payment"), from: Address)`;
+  body `ScMap` with the `PaymentEvent` struct fields:
+
+  ```text
+  pub struct PaymentEvent {
+      pub from:        Address,
+      pub destination: Address,
+      pub amount:      i128,
+      pub memo:        String,
+  }
+  ```
+
+  USDC is the only token v1 handles — the contract hardcodes
+  `USDC_CONTRACT` at init and `pay` transfers via the USDC token
+  client. No `token` field on the v1 event (v2 will add one when
+  it lands).
+- **`flush`** — admin sweep of accidentally-sent non-USDC
+  balances via `flush(token)`.
+  `topics = (symbol_short!("flush"),)` (1-element);
+  body `ScMap` with the `FlushEvent` struct fields:
+
+  ```text
+  pub struct FlushEvent {
+      pub token:       Address,
+      pub destination: Address,
+      pub amount:      i128,
+  }
+  ```
+
+### Invariants
+
+- `from` (topic[1] on `payment`) duplicates the `from` field
+  inside the body — they are the same address by construction.
+- `amount` is i128 carried as decimal string per ADR-0003.
+- `memo` is free-form Soroban `String` (often a Binance /
+  Coinbase deposit address tag or a merchant order ID); no hard
+  length cap stated by the contract.
+
+## WASM timeline
+
+**PENDING** — wasm-history walk against galexie scheduled
+post-verify-archive bootstrap (2026-05-24 evening). Operator runs
+the procedure in
+[README.md §2](README.md#2-collect-the-wasm-version-timeline) with
+`-contracts` pointing at the three contract IDs from
+`MainnetPaymentContracts` above.
+
+## Per-WASM decoder review
+
+**PENDING** — fill in per-hash review per
+[README.md §3](README.md#3-per-wasm-hash-decoder-review) once the
+timeline is captured. Expected failure surface follows the table
+in README.md §3 (topic renames silently drop; body field renames
+fail-loud per event; i128 scale drift caught only by Hubble
+cross-check — which we don't have here, see next section).
+
+## Hubble cross-check
+
+Hubble does not index bridge events; cross-check via Circle /
+Rozo public stats once live mainnet traffic exists. Bridges emit
+no trades — no VWAP cross-check available either, so the
+WASM-bytes audit is the load-bearing safety check (per
+README.md §4).
+
+## Audit decision
+
+**PENDING.** Flip `BackfillSafe: true` in
+`internal/sources/external/registry.go` (`Registry["rozo"]`) in
+the same PR that fills in §WASM timeline + §Per-WASM decoder
+review.
+
+## Live-traffic verification notes
+
+Rozo v1 on Stellar is brand-new (per the
+`project_protocol_coverage_additions` memory note —
+"brand-new on Stellar so short/no historical backfill"); there
+is little-to-no on-mainnet bridge traffic to verify against at
+audit time. On-mainnet live-traffic verification deferred until
+real bridge usage starts.
+
+Because Rozo is `ClassBridge` with `DefaultWeight: 0` and
+`IncludeInVWAP: false` in
+[`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go),
+the source contributes nothing to VWAP regardless of the
+`BackfillSafe` flag. The flag gates the operator-triggered
+`ratesengine-ops backfill --source=rozo` path only.
+
+## References
+
+- Procedure: [`README.md`](README.md)
+- Decoder source: [`internal/sources/rozo/{events,decode}.go`](../../../internal/sources/rozo/)
+- Source-package README: [`internal/sources/rozo/README.md`](../../../internal/sources/rozo/README.md)
+- Architecture: [`docs/architecture/rozo-stellar-coverage.md`](../../architecture/rozo-stellar-coverage.md)
+- Schema-evolution stance: [`docs/architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- Backfill gate: `internal/sources/external/registry.go` — `Registry["rozo"].BackfillSafe`
+- Upstream contracts: <https://github.com/RozoAI/rozo-intents-contracts>
