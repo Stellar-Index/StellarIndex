@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.77] — 2026-05-24
+
 ### Fixed
 
 - **Per-source density genesis ledgers now exact, not rounded
