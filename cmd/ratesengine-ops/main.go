@@ -2170,26 +2170,40 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// parallel speedup grants `s3:ListBucket` to the reader and the
 	// next walk picks it up automatically.
 	if to == 0 && workers > 1 {
-		const listGrantHint = "verify-archive: " +
-			"falling back to single-chunk serial walk. Parallel mode " +
-			"requires bucket ListObjectsV2 (BoundedRange PrepareRange " +
-			"in the per-chunk workers needs it too, not just this tip " +
-			"resolution); grant `s3:ListBucket` to the reader IAM to " +
-			"enable -workers N parallelism."
-
-		ds, dsErr := datastore.NewDataStore(ctx, lsCfg.DataStore)
-		if dsErr != nil {
-			fmt.Fprintf(os.Stderr, "verify-archive: tip resolution failed (open datastore: %v); %s\n", dsErr, listGrantHint)
-			workers = 1
+		// First: if there's a prior in-progress run whose plan we can
+		// reuse, adopt its pinned tip and skip live-tip resolution.
+		// Without this, a SIGTERMed bootstrap discards every Done
+		// chunk on the next fire because the live tip has moved
+		// (Stellar produces ledgers every ~5s — even a 1-min relaunch
+		// gap shifts `to`, and resumeChunks fails plan-match). With
+		// pinning, the relaunch walks only the un-Done chunks against
+		// the original tip; the [old_tip, new_tip] delta is picked up
+		// by the next nightly fire's -from-last-verified increment.
+		if pinned, ok := pinnedTipFromPriorRun(priorState, tier, from, workers); ok {
+			fmt.Fprintf(os.Stderr, "verify-archive: adopting prior run's pinned tip %d (skipping live-tip resolution to enable per-chunk resume)\n", pinned)
+			to = pinned
 		} else {
-			tip, tipErr := datastore.FindLatestLedgerSequence(ctx, ds)
-			_ = ds.Close()
-			if tipErr != nil {
-				fmt.Fprintf(os.Stderr, "verify-archive: tip resolution failed (find latest ledger: %v); %s\n", tipErr, listGrantHint)
+			const listGrantHint = "verify-archive: " +
+				"falling back to single-chunk serial walk. Parallel mode " +
+				"requires bucket ListObjectsV2 (BoundedRange PrepareRange " +
+				"in the per-chunk workers needs it too, not just this tip " +
+				"resolution); grant `s3:ListBucket` to the reader IAM to " +
+				"enable -workers N parallelism."
+
+			ds, dsErr := datastore.NewDataStore(ctx, lsCfg.DataStore)
+			if dsErr != nil {
+				fmt.Fprintf(os.Stderr, "verify-archive: tip resolution failed (open datastore: %v); %s\n", dsErr, listGrantHint)
 				workers = 1
 			} else {
-				fmt.Fprintf(os.Stderr, "verify-archive: resolved -to=0 → tip %d for %d-way parallel split\n", tip, workers)
-				to = tip
+				tip, tipErr := datastore.FindLatestLedgerSequence(ctx, ds)
+				_ = ds.Close()
+				if tipErr != nil {
+					fmt.Fprintf(os.Stderr, "verify-archive: tip resolution failed (find latest ledger: %v); %s\n", tipErr, listGrantHint)
+					workers = 1
+				} else {
+					fmt.Fprintf(os.Stderr, "verify-archive: resolved -to=0 → tip %d for %d-way parallel split\n", tip, workers)
+					to = tip
+				}
 			}
 		}
 	}

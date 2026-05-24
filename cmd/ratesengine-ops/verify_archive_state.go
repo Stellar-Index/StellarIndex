@@ -256,6 +256,36 @@ func markChunkDone(st VerifyArchiveState, tier string, idx int, lastHash sdkxdr.
 	return out
 }
 
+// pinnedTipFromPriorRun returns the prior in-progress run's pinned
+// `To` ledger when a follow-up fire should adopt it instead of
+// re-resolving the live tip. Matches when the prior InProgress is
+// present for this tier, its From and Workers match the requested
+// values, and its To is non-zero.
+//
+// The point: the systemd timer omits `-to`, so verify-archive resolves
+// `-to` to the bucket's live tip at launch. Stellar adds ledgers
+// constantly, so a relaunch 30 min after a SIGTERM sees a new tip.
+// Without tip-pinning, `resumeChunks` then sees rp.To != to and
+// discards the prior state — every chunk already marked Done gets
+// re-walked from scratch.
+//
+// By adopting the prior run's tip, the relaunch uses the same chunk
+// plan, resumeChunks matches exactly, and only the unfinished
+// chunks run. The new ledgers in [old_tip, new_tip] are picked up
+// by the *next* nightly fire after this one completes
+// (`-from-last-verified` walks forward from the new high-water mark).
+func pinnedTipFromPriorRun(st VerifyArchiveState, tier string, from uint32, workers int) (uint32, bool) {
+	tierState, ok := st.Tiers[tier]
+	if !ok || tierState.InProgress == nil {
+		return 0, false
+	}
+	rp := tierState.InProgress
+	if rp.From != from || rp.Workers != workers || rp.To == 0 {
+		return 0, false
+	}
+	return rp.To, true
+}
+
 // resumeChunks filters `chunks` to just those NOT marked Done in the
 // prior in-progress state, when that state's run-plan matches the
 // current plan exactly. Returns (chunksToRun, resumeReason). The
