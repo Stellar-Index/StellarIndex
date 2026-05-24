@@ -42,6 +42,8 @@ var KnownSources = map[string]struct{}{
 	"reflector-fx":    {},
 	"redstone":        {},
 	"band":            {},
+	"cctp":            {},
+	"rozo":            {},
 }
 
 // Validate checks the loaded Config against the same constraints

@@ -15,6 +15,42 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`internal/config/validate.go` `KnownSources` was missing `cctp`
+  + `rozo` (#40 / #41).** The two new sources were wired into
+  `cmd/ratesengine-indexer/main.go::buildSources` and their
+  hypertables migrated, but the boot-time `Validate` allow-list
+  wasn't updated — so any operator who set
+  `ingestion.enabled_sources = […, "cctp", "rozo"]` got
+  `ingestion.enabled_sources has unknown source "cctp"` and a
+  systemd restart-loop. Caught on r1 mid-`/loop` while doing the
+  rc.75 follow-up rollout: indexer restart-counter hit 5 in 50 s
+  before TOML was reverted. The `KnownSources` comment block
+  ("DO NOT import source packages from config…") already calls
+  out the manual mirroring step; this is just landing the missed
+  entries.
+
+### Added
+
+- **`verify-archive` tip-pinning resume across SIGTERM (#62).**
+  Sister fix to per-chunk resume from rc.75. The per-chunk Done
+  flags were already persisted as chunks completed, but the
+  systemd unit omits `-to` and resolves it to the live bucket tip
+  at launch — so a SIGTERMed bootstrap relaunched 30 min later
+  had a new tip, `resumeChunks` failed plan-match, and every Done
+  chunk got re-walked. Now, before live-tip resolution, the
+  walker checks for a prior in-progress run on this tier; if
+  From + Workers match and To > 0, it adopts that pinned tip and
+  skips the live `FindLatestLedgerSequence` call. The
+  `resumeChunks` plan match then succeeds and only the unfinished
+  chunks run. The new ledgers in `[old_tip, new_tip]` are picked
+  up by the next nightly fire's `-from-last-verified` increment.
+  Helper: `pinnedTipFromPriorRun` in
+  `cmd/ratesengine-ops/verify_archive_state.go`. 4 unit tests
+  covering happy path, no-prior, From/Workers mismatch, and the
+  defensive To=0 case.
+
 ## [v0.5.0-rc.75] — 2026-05-24
 
 ### Changed
