@@ -18,11 +18,28 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
+	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/ledgerstream"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
+	"github.com/RatesEngine/rates-engine/internal/sources/sorobanevents"
+	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
+
+// SorobanEventsPseudoSource is the backfill-only source name that
+// populates the `soroban_events` raw-event landing zone (ADR-0029).
+// It is NOT registered with internal/sources/external.Registry —
+// soroban-events is a pseudo-source: the catch-all dispatcher hook
+// sees every event regardless of per-source decoder routing, so
+// the backfill swaps the per-source decoder chain for "no decoders,
+// raw sink only" when this name is requested.
+//
+// Used as -source soroban-events on the ops command line. Not
+// permitted alongside other sources in the same invocation (the
+// pseudo-source isn't a peer of trades / oracles — it's the
+// distinct "raw-event capture" mode of operation).
+const SorobanEventsPseudoSource = "soroban-events"
 
 // ─── ratesengine-ops backfill ──────────────────────────────────
 //
@@ -218,12 +235,70 @@ func backfill(args []string) error {
 	return nil
 }
 
+// buildChunkDispatcher constructs the per-chunk dispatcher and,
+// when the soroban-events pseudo-source is in play, wires the
+// RawEventSink (ADR-0029). Returns the dispatcher + the sink (nil
+// when not pseudo so the caller can branch on it for teardown).
+//
+// Factored out of runBackfillChunk to keep that function within
+// the funlen limit; the dispatcher-construction surface had grown
+// to ~50 lines that read linearly but blew the limit when combined
+// with the chunk lifecycle.
+func buildChunkDispatcher(
+	ctx context.Context,
+	logger *slog.Logger,
+	opts backfillOpts,
+	cfg config.Config,
+	store *timescale.Store,
+	pseudo bool,
+) (*dispatcher.Dispatcher, *sorobanevents.AsyncSink, error) {
+	realSources := filterOutSorobanEventsPseudo(opts.sources)
+
+	var soroswapOpts []soroswap.DecoderOption
+	if !pseudo && len(realSources) > 0 {
+		// Soroswap pair registry — load and arm live-upsert. Each
+		// chunk runs its own dispatcher so each calls this
+		// independently; the store is shared so chunks see each
+		// other's upserted pairs on next load. See
+		// internal/pipeline/soroswap_registry.go.
+		var err error
+		soroswapOpts, err = pipeline.SoroswapPersistenceOptions(ctx, store, logger, ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("soroswap registry: %w", err)
+		}
+	}
+	disp, err := pipeline.BuildDispatcher(realSources, cfg.Oracle, soroswapOpts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build dispatcher: %w", err)
+	}
+	if !pseudo {
+		return disp, nil, nil
+	}
+
+	// soroban-events pseudo-source: wire the RawEventSink (ADR-0029).
+	// Sink lifecycle is local to this chunk so a parallel-N backfill
+	// gets N independent sinks each with their own batch buffer.
+	// Stop()'d at chunk end to flush any partial batch.
+	rawSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
+		BufferSize:    4096,
+		BatchSize:     1000,
+		FlushInterval: time.Second,
+		WriteTimeout:  10 * time.Second,
+		Logger:        logger.With("component", "soroban-events-sink"),
+	})
+	rawSink.Start()
+	disp.SetRawEventSink(rawSink)
+	return disp, rawSink, nil
+}
+
 // runBackfillChunk processes a single chunkRange end-to-end:
 // dispatcher build → events channel → PersistEvents goroutine →
 // ledgerstream over [chunk.from, chunk.to] → cursor upsert per
 // ledger. Cursor sub_source is chunk-specific (uses chunk.from /
 // chunk.to, NOT the overall opts.from / opts.to) so concurrent
 // chunks never share a cursor row.
+//
+//nolint:gocognit // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
 func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error {
 	chunkOpts := opts
 	chunkOpts.from = chunk.from
@@ -252,17 +327,10 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		}
 	}
 
-	// Soroswap pair registry — load and arm live-upsert. Each chunk
-	// runs its own dispatcher so each calls this independently; the
-	// store is shared so chunks see each other's upserted pairs on
-	// next load. See internal/pipeline/soroswap_registry.go.
-	soroswapOpts, err := pipeline.SoroswapPersistenceOptions(ctx, store, logger, ctx)
+	pseudo := hasSorobanEventsPseudo(opts.sources)
+	disp, rawSink, err := buildChunkDispatcher(ctx, logger, opts, cfg, store, pseudo)
 	if err != nil {
-		return fmt.Errorf("soroswap registry: %w", err)
-	}
-	disp, err := pipeline.BuildDispatcher(opts.sources, cfg.Oracle, soroswapOpts...)
-	if err != nil {
-		return fmt.Errorf("build dispatcher: %w", err)
+		return err
 	}
 
 	events := make(chan consumer.Event, 256)
@@ -290,6 +358,25 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	close(events)
 	<-sinkDone
 
+	// Drain the soroban-events sink (if wired). Stop() blocks until
+	// the worker has flushed every buffered Row through the final
+	// InsertSorobanEventsBatch, with the AsyncSink's per-batch
+	// timeout capping the wait. Any rows dropped due to buffer-full
+	// during the chunk are logged via the DroppedCount fold.
+	if rawSink != nil {
+		rawSink.Stop()
+		logger.Info("soroban-events sink drained",
+			"written", rawSink.WrittenCount(),
+			"dropped", rawSink.DroppedCount(),
+			"skipped", rawSink.SkippedCount(),
+		)
+		if dropped := rawSink.DroppedCount(); dropped > 0 {
+			logger.Warn("soroban-events: rows dropped during chunk (buffer-full)",
+				"dropped", dropped,
+				"impact", "the dropped rows are NOT in soroban_events — re-run -resume to pick them up")
+		}
+	}
+
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 		return fmt.Errorf("stream: %w", streamErr)
 	}
@@ -299,6 +386,14 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		"to", chunk.to,
 		"ledgers", chunk.to-chunk.from+1,
 	)
+
+	// CAGG refresh path: skipped for the soroban-events pseudo-source
+	// (the soroban_events hypertable has no CAGGs built on top of it
+	// — future per-source decoders read from it directly via SELECT).
+	if pseudo {
+		logger.Info("skipping CAGG refresh — soroban-events has no CAGGs")
+		return nil
+	}
 
 	// Force-materialise the long-lived CAGGs over the chunk's
 	// timestamp range. Without this, historical inserts get dropped
@@ -446,6 +541,17 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		return opts, cfg, err
 	}
 
+	// The soroban-events pseudo-source is exclusive: it captures
+	// every event regardless of per-source decoder routing, so
+	// running it alongside other sources would double-bill ledger
+	// reads without changing what soroban_events sees. Refuse rather
+	// than silently merge.
+	if hasSorobanEventsPseudo(sources) && len(sources) > 1 {
+		return opts, cfg, fmt.Errorf(
+			"-source %q is exclusive — run it alone, not mixed with other source names %v",
+			SorobanEventsPseudoSource, sources)
+	}
+
 	bucket := cfg.Storage.S3BucketArchive
 	if *bucketOverride != "" {
 		bucket = *bucketOverride
@@ -468,14 +574,52 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	return opts, cfg, nil
 }
 
+// hasSorobanEventsPseudo reports whether `sources` contains the
+// `soroban-events` pseudo-source name. The pseudo-source is the
+// catch-all raw-event capture mode; it must be filtered out of
+// every BackfillSafe / KnownSources check because it isn't in any
+// of those registries — it's the dispatcher's RawEventSink seam.
+func hasSorobanEventsPseudo(sources []string) bool {
+	for _, s := range sources {
+		if strings.EqualFold(s, SorobanEventsPseudoSource) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterOutSorobanEventsPseudo returns `sources` with any
+// `soroban-events` entry removed. Used to feed the remaining
+// real-source list to BuildDispatcher / BackfillSafe checks.
+func filterOutSorobanEventsPseudo(sources []string) []string {
+	out := make([]string, 0, len(sources))
+	for _, s := range sources {
+		if strings.EqualFold(s, SorobanEventsPseudoSource) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // checkBackfillSources returns nil when every source in `sources`
 // is BackfillSafe, otherwise an error explaining which subset
 // blocked the run and why. Distinguishes supply-observer names
 // from genuinely audit-pending Soroban sources so the operator
 // gets a targeted message rather than the generic WASM-audit one.
 // F-1243 (audit-2026-05-12).
+//
+// Special-case: the `soroban-events` pseudo-source is exempt from
+// the BackfillSafe gate. It captures raw events to the
+// soroban_events landing zone without per-source decoding, so the
+// "Soroban DeFi contracts upgrade in place" concern doesn't apply —
+// the raw XDR is stored as-is for FUTURE decoders to interpret
+// against the right WASM-version mapping.
 func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
-	unsafeSources := unsafeBackfillSources(sources)
+	// Strip the pseudo-source before the BackfillSafe lookup; it
+	// isn't in external.Registry by design.
+	realSources := filterOutSorobanEventsPseudo(sources)
+	unsafeSources := unsafeBackfillSources(realSources)
 	if len(unsafeSources) == 0 {
 		return nil
 	}

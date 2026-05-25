@@ -59,6 +59,7 @@ import (
 	externalexchangerates "github.com/RatesEngine/rates-engine/internal/sources/external/exchangeratesapi"
 	externalkraken "github.com/RatesEngine/rates-engine/internal/sources/external/kraken"
 	externalpolygonforex "github.com/RatesEngine/rates-engine/internal/sources/external/polygonforex"
+	"github.com/RatesEngine/rates-engine/internal/sources/sorobanevents"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
@@ -295,6 +296,40 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 	disp.SetDiscoverySink(discoverySink)
 	logger.Info("discovery sink wired", "buffer_size", 1024)
+
+	// ─── Soroban-events raw-event landing zone (ADR-0029) ────────
+	// Every Soroban contract event the dispatcher routes is also
+	// captured to the `soroban_events` hypertable. Additive — does
+	// not replace per-source decoders (trades, oracle_updates,
+	// blend_auctions, cctp_events, rozo_events, sep41_supply_events,
+	// ...). Unblocks future per-source decoder backfills: they
+	// become SQL `INSERT ... SELECT FROM soroban_events` queries
+	// rather than hours of MinIO re-walking. See
+	// internal/sources/sorobanevents + migration 0041.
+	rawEventSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
+		BufferSize:    4096,
+		BatchSize:     1000,
+		FlushInterval: time.Second,
+		WriteTimeout:  10 * time.Second,
+		Logger:        logger.With("component", "soroban-events"),
+	})
+	rawEventSink.Start()
+	defer func() {
+		rawEventSink.Stop()
+		logger.Info("soroban-events sink drained on shutdown",
+			"written", rawEventSink.WrittenCount(),
+			"dropped", rawEventSink.DroppedCount(),
+			"skipped", rawEventSink.SkippedCount(),
+		)
+		if dropped := rawEventSink.DroppedCount(); dropped > 0 {
+			logger.Warn("soroban-events: rows dropped at shutdown — last batch may be partial",
+				"dropped", dropped)
+		}
+	}()
+	disp.SetRawEventSink(rawEventSink)
+	logger.Info("soroban-events sink wired",
+		"buffer_size", 4096, "batch_size", 1000)
+
 	setSourceEnabled(cfg.Ingestion.EnabledSources, true)
 	defer setSourceEnabled(cfg.Ingestion.EnabledSources, false)
 

@@ -79,6 +79,36 @@ func ParseBytes(raw []byte) (xdr.ScVal, error) {
 	return sv, nil
 }
 
+// EncodeArgsAsScVec wraps a slice of base64-encoded ScVal blobs
+// (the wire format used by [events.Event.OpArgs]) into a single
+// XDR-marshalled ScVal::Vec blob.
+//
+// Returns nil + nil error for an empty input (callers can map nil
+// to SQL NULL at the storage boundary). Returns a non-nil error
+// when any of the input ScVals fails to parse — the source-of-truth
+// for InvokeContract args is the dispatcher's own marshalling, so
+// a parse failure here indicates a wire corruption.
+//
+// Powers the soroban_events landing zone (ADR-0029); the sink
+// stores op_args as the marshalled ScVec bytes so downstream
+// decoders can use the standard [scval.Parse] / [AsVec] pathway.
+func EncodeArgsAsScVec(b64Args []string) ([]byte, error) {
+	if len(b64Args) == 0 {
+		return nil, nil
+	}
+	vec := make(xdr.ScVec, 0, len(b64Args))
+	for i, a := range b64Args {
+		sv, err := Parse(a)
+		if err != nil {
+			return nil, fmt.Errorf("arg[%d]: %w", i, err)
+		}
+		vec = append(vec, sv)
+	}
+	pp := &vec
+	sv := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pp}
+	return sv.MarshalBinary()
+}
+
 // MustEncodeSymbol returns the base64-encoded SCVal::Symbol(s) blob
 // used for topic matching (both in stellar-rpc getEvents filters and
 // for byte-comparison against Event.Topic entries).
