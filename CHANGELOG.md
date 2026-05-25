@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`soroban_events` raw-event landing zone (ADR-0029).** Every
+  Soroban contract event the dispatcher routes is now also
+  captured to a new `soroban_events` hypertable as a raw row
+  (contract_id + topics-as-XDR + body-as-XDR + op_args-as-XDR
+  when applicable, plus a decoded `topic_0_sym` for the common
+  Symbol/String case). Additive — existing per-source decoders
+  (trades, blend_auctions, etc.) continue to write their
+  domain-specific tables unchanged. Unblocks: future per-source
+  decoder backfills (Blend money-market, CCTP+Rozo, Comet/
+  Phoenix/Soroswap gaps, plus every protocol we add ever) are
+  now `INSERT … SELECT FROM soroban_events` SQL queries rather
+  than MinIO walks. New backfill mode:
+  `ratesengine-ops backfill -source soroban-events -from N -to M`
+  populates the table for historical ranges without per-source
+  decoding overhead. Compression after 7 days, segment-by
+  contract_id. Initial estimated volume ~100-400 GB across the
+  full Soroban era.
+
 ### Fixed
 
 - **fd-2 wrap drain-on-exit (#62a / regression in rc.77).** The

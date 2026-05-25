@@ -193,6 +193,19 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertPolicyAttached(t, db, ctx, "oracle_updates", "policy_compression")
 	assertPolicyAttached(t, db, ctx, "oracle_updates", "policy_retention")
 
+	// 0041 — soroban_events raw-event landing zone (ADR-0029).
+	// Hypertable + indexes + compression policy (no retention —
+	// granular coverage is the mission).
+	assertHypertableExists(t, db, ctx, "soroban_events")
+	for _, idx := range []string{
+		"soroban_events_contract_ts_idx",
+		"soroban_events_topic_sym_ts_idx",
+		"soroban_events_contract_topic_idx",
+	} {
+		assertIndexExists(t, db, ctx, "soroban_events", idx)
+	}
+	assertPolicyAttached(t, db, ctx, "soroban_events", "policy_compression")
+
 	// ─── Down: roll everything back ─────────────────────────────
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("migrate down: %v", err)
@@ -208,6 +221,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "trades")
 	assertTableAbsent(t, db, ctx, "ingestion_cursors")
 	assertTableAbsent(t, db, ctx, "oracle_updates")
+	assertTableAbsent(t, db, ctx, "soroban_events")
 	for _, cagg := range []string{
 		"prices_1m", "prices_15m", "prices_1h",
 		"prices_4h", "prices_1d", "prices_1w", "prices_1mo",

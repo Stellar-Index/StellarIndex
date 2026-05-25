@@ -239,6 +239,16 @@ type Dispatcher struct {
 	// weren't there. See [Dispatcher.SetDiscoverySink].
 	discoverySink DiscoverySink
 
+	// rawEventSink, when non-nil, receives EVERY Soroban contract
+	// event observed by [dispatchOne], regardless of whether a
+	// per-source decoder claimed it. Powers the `soroban_events`
+	// raw-event landing zone (ADR-0029) — every event the dispatcher
+	// routes is also captured as a row so future per-source decoder
+	// backfills become SQL queries rather than MinIO re-walks. A nil
+	// sink disables the hook; the dispatcher behaves as if it weren't
+	// there. See [Dispatcher.SetRawEventSink].
+	rawEventSink RawEventSink
+
 	// Per-source events_seen — bumped every time a decoder's
 	// Matches() claims an input (event / contract call / entry
 	// change / op). Counts the denominator of "decoder error rate"
@@ -344,6 +354,32 @@ type DiscoverySink interface {
 // with ProcessLedger; called once at startup.
 func (d *Dispatcher) SetDiscoverySink(sink DiscoverySink) {
 	d.discoverySink = sink
+}
+
+// RawEventSink is the side-effect interface the dispatcher uses to
+// notify the catch-all soroban_events landing zone (ADR-0029) about
+// every Soroban contract event it sees. PushEvent is called exactly
+// once per event observed by [dispatchOne], BEFORE the per-source
+// decoder chain runs (so an event a decoder later rejects still
+// lands in soroban_events — operators see every contract emitting
+// events, not just ones we successfully decode).
+//
+// PushEvent MUST be non-blocking. The dispatcher runs on the ingest
+// hot path; a slow PushEvent would back-pressure the entire
+// pipeline. The standard implementation buffers Rows to a channel
+// and drains them in a worker goroutine that calls
+// [timescale.Store.InsertSorobanEventsBatch] (see
+// internal/sources/sorobanevents).
+type RawEventSink interface {
+	PushEvent(ev events.Event)
+}
+
+// SetRawEventSink installs the sink the dispatcher calls on every
+// Soroban contract event. Nil disables the hook. Not safe
+// concurrent with ProcessLedger; called once at startup. See
+// ADR-0029 for the design rationale.
+func (d *Dispatcher) SetRawEventSink(sink RawEventSink) {
+	d.rawEventSink = sink
 }
 
 // Stats is a snapshot of the dispatcher's internal counters. Keyed
@@ -759,11 +795,25 @@ func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 // still appear in discovered_assets — operators want to see every
 // contract emitting SEP-41 events, not just ones we successfully
 // decode.
+//
+// Raw-event hook (ADR-0029): every event is also forwarded to the
+// configured [RawEventSink] (when set). Runs BEFORE the decoder
+// pass for the same reason as the discovery hook — and ALSO
+// regardless of whether topic[0] decodes to a SEP-41 symbol (this
+// hook is the catch-all for every Soroban contract event,
+// powering the `soroban_events` raw-event landing zone).
 func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.Sniff(ev); ok {
 			d.discoverySink.Push(hit)
 		}
+	}
+	// Raw-event capture (ADR-0029) — runs BEFORE per-source decoders
+	// so even events a decoder later rejects (malformed body, etc.)
+	// still land in soroban_events. PushEvent is non-blocking; the
+	// sink's worker batches writes off the hot path.
+	if d.rawEventSink != nil {
+		d.rawEventSink.PushEvent(ev)
 	}
 	for _, dec := range d.decoders {
 		if !dec.Matches(ev) {

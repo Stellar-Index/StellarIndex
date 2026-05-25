@@ -357,3 +357,63 @@ func TestDispatch_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 		t.Errorf("nil-sink path errored: %v", err)
 	}
 }
+
+// ─── Raw-event hook (ADR-0029) ───────────────────────────────────
+
+// recordingRawSink captures every PushEvent for assertion.
+type recordingRawSink struct {
+	evs []events.Event
+}
+
+func (r *recordingRawSink) PushEvent(ev events.Event) {
+	r.evs = append(r.evs, ev)
+}
+
+// TestDispatch_RawEventHook_FiresOnEveryEvent — when a raw sink is
+// installed, the dispatcher pushes EVERY event regardless of topic
+// shape or whether a decoder claimed it. Decoders still run.
+func TestDispatch_RawEventHook_FiresOnEveryEvent(t *testing.T) {
+	sink := &recordingRawSink{}
+	dec := &fakeDecoder{name: "alpha", topic0: scval.MustEncodeSymbol("swap")}
+	disp := New(dec)
+	disp.SetRawEventSink(sink)
+
+	// Event the decoder claims.
+	if _, err := disp.dispatchOne(events.Event{
+		Type:           "contract",
+		ContractID:     "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		LedgerClosedAt: "2026-04-28T12:00:00Z",
+		Topic:          []string{scval.MustEncodeSymbol("swap")},
+	}); err != nil {
+		t.Fatalf("dispatchOne(claimed): %v", err)
+	}
+	// Event no decoder claims.
+	if _, err := disp.dispatchOne(events.Event{
+		Type:           "contract",
+		ContractID:     "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		LedgerClosedAt: "2026-04-28T12:00:00Z",
+		Topic:          []string{scval.MustEncodeSymbol("unknown")},
+	}); err != nil {
+		t.Fatalf("dispatchOne(unclaimed): %v", err)
+	}
+
+	if len(sink.evs) != 2 {
+		t.Errorf("raw sink received %d events, want 2 (both claimed + unclaimed must fire the hook)", len(sink.evs))
+	}
+	if dec.decodeCount != 1 {
+		t.Errorf("decoder Decode called %d times, want 1 — raw-event hook must NOT short-circuit dispatch", dec.decodeCount)
+	}
+}
+
+// TestDispatch_RawEventHook_NilSinkIsNoop — without a sink installed,
+// dispatcher behaves identically.
+func TestDispatch_RawEventHook_NilSinkIsNoop(t *testing.T) {
+	disp := New(&fakeDecoder{name: "alpha", topic0: "A"})
+	if _, err := disp.dispatchOne(events.Event{
+		Type:       "contract",
+		ContractID: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		Topic:      []string{scval.MustEncodeSymbol("anything")},
+	}); err != nil {
+		t.Errorf("nil-raw-sink path errored: %v", err)
+	}
+}
