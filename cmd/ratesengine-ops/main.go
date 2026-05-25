@@ -78,7 +78,26 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/version"
 )
 
-func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case is trivial, splitting adds indirection without clarity
+// errExitSilently is a sentinel error subcommand handlers return
+// when they want the binary to exit 1 *without* the switch-case
+// wrapper printing an extra "subcommand: <err>" prefix line — they
+// already printed a more specific message themselves. Used to
+// replace bare os.Exit(1) calls inside subcommand handlers so they
+// drain the fd 2 filter via realMain's defer before exit.
+var errExitSilently = errors.New("exit silently")
+
+// main is a thin shim over realMain so deferred functions (notably
+// the SilenceSDKChecksumWarnings flush) execute on every exit
+// path. os.Exit skips defers — see SilenceSDKChecksumWarnings
+// docstring for the rc.77 regression where short-lived subcommands
+// (`backfill -dry-run`, `backfill` with an error) printed only
+// their first line then ate the rest because the consumer goroutine
+// behind fd 2's filter was killed mid-buffer.
+func main() {
+	os.Exit(realMain())
+}
+
+func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case is trivial, splitting adds indirection without clarity
 	// Wrap fd 2 with a line-filter BEFORE any aws-sdk-go-v2 code
 	// captures os.Stderr. Drops the per-S3-GET "Response has no
 	// supported checksum" WARN that floods journald during
@@ -87,19 +106,23 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 	// approach (QuietS3ChecksumWarnings) was a no-op because
 	// go-stellar-sdk's datastore/s3.go:161 hardcodes
 	// ChecksumMode: Enabled per request. Fail-soft.
-	pipeline.SilenceSDKChecksumWarnings()
+	//
+	// flush MUST be deferred so realMain's return paths drain
+	// the pipe before main() calls os.Exit with the int.
+	flush := pipeline.SilenceSDKChecksumWarnings()
+	defer flush()
 
 	args := os.Args[1:]
 	if len(args) == 0 {
 		printUsage()
-		os.Exit(2)
+		return 2
 	}
 
 	switch args[0] {
 	case "docs-config":
 		if err := config.EmitMarkdown(os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "docs-config: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "rpc-probe":
 		endpoint := "http://127.0.0.1:8000"
@@ -108,142 +131,144 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 		}
 		if err := rpcProbe(endpoint); err != nil {
 			fmt.Fprintf(os.Stderr, "rpc-probe: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "list-cursors":
 		if err := listCursors(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "list-cursors: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "detect-gaps":
 		if err := detectGaps(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "detect-gaps: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "backfill-external":
 		if err := backfillExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "backfill-external: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "backfill-chainlink":
 		if err := backfillChainlink(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "backfill-chainlink: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "verify-decoders":
 		if err := verifyDecoders(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-decoders: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "scan-soroban-events":
 		if err := scanSorobanEvents(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "scan-soroban-events: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "verify-archive":
 		if err := verifyArchive(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-archive: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "archive-completeness":
 		if err := archiveCompleteness(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "archive-completeness: %v\n", err)
-			os.Exit(1)
+			if !errors.Is(err, errExitSilently) {
+				fmt.Fprintf(os.Stderr, "archive-completeness: %v\n", err)
+			}
+			return 1
 		}
 	case "discovery":
 		if err := discoveryCmd(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "discovery: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "supply":
 		if err := supplyCmd(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "supply: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "sep1-refresh":
 		if err := sep1RefreshCmd(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "sep1-refresh: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "wasm-history":
 		if err := wasmHistory(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "wasm-history: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "wasm-history-merge-jsonl":
 		if err := wasmHistoryMergeJSONL(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "extract-wasm-from-galexie":
 		if err := extractWasmFromGalexie(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "extract-wasm-from-galexie: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "cross-region-check":
 		if err := crossRegionCheck(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "cross-region-check: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "cross-region-monitor":
 		if err := crossRegionMonitor(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "cross-region-monitor: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "backfill":
 		if err := backfill(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "backfill: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "rehydrate-galexie-archive":
 		if err := rehydrateGalexieArchive(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "rehydrate-galexie-archive: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "trim-galexie-archive":
 		if err := trimGalexieArchive(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "trim-galexie-archive: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "seed-soroswap-pairs":
 		if err := seedSoroswapPairs(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "seed-soroswap-pairs: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "seed-entry-counts":
 		if err := seedEntryCounts(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "seed-entry-counts: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "hubble-check":
 		if err := hubbleCheck(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "hubble-check: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "hubble-soroban-events":
 		if err := hubbleSorobanEvents(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "hubble-soroban-events: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "mint-key":
 		if err := mintKey(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "mint-key: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "upgrade-key":
 		if err := upgradeKey(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "upgrade-key: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "emit-incident":
 		if err := emitIncident(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "emit-incident: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "version", "--version", "-v", "-version":
 		fmt.Println(version.String())
@@ -255,8 +280,9 @@ func main() { //nolint:gocyclo,gocognit,funlen // subcommand switch; each case i
 		// own case here. Anything else prints help + exits 2.
 		fmt.Fprintf(os.Stderr, "ratesengine-ops: unknown subcommand %q\n", args[0])
 		printUsage()
-		os.Exit(2)
+		return 2
 	}
+	return 0
 }
 
 // usageBody is the static portion of `ratesengine-ops -h`. The header
@@ -2905,7 +2931,11 @@ func archiveCompletenessVerify(args []string) error {
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness verify: %d residual missing checkpoint(s); see report\n",
 			report.CrossAnchor.MissingCount)
-		os.Exit(1)
+		// errExitSilently: realMain's deferred flush MUST run before
+		// the process exits, so we return rather than os.Exit. The
+		// message above already explains the failure; the wrapper
+		// suppresses its generic "archive-completeness: <err>" prefix.
+		return errExitSilently
 	}
 	fmt.Fprintf(os.Stderr,
 		"archive-completeness verify: clean (%.1fs)\n", snapshot.RunDurationSeconds)
@@ -2998,7 +3028,8 @@ func archiveCompletenessFix(args []string) error {
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness fix: %d checkpoint(s) still missing after fallback chain — see report\n",
 			report.CrossAnchor.MissingCount)
-		os.Exit(1)
+		// errExitSilently: see archiveCompletenessVerify for rationale.
+		return errExitSilently
 	}
 	return nil
 }
@@ -3066,7 +3097,8 @@ func archiveCompletenessCheck(args []string) error {
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness check: %d missing checkpoint(s) in cross-anchor archive (range [%d, %d])\n",
 			report.CrossAnchor.MissingCount, *from, *to)
-		os.Exit(1)
+		// errExitSilently: see archiveCompletenessVerify for rationale.
+		return errExitSilently
 	}
 	return nil
 }

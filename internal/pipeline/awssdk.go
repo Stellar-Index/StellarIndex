@@ -23,8 +23,11 @@ const checksumWarnSubstring = "Response has no supported checksum"
 
 // silenceOnce guards against accidental double-install (e.g. a test
 // calling the function alongside the real main). The second call is
-// a no-op.
-var silenceOnce sync.Once
+// a no-op and returns the previously-installed flush func.
+var (
+	silenceOnce  sync.Once
+	silenceFlush func()
+)
 
 // SilenceSDKChecksumWarnings wraps the process's stderr (fd 2) with a
 // filtering pipe that drops lines containing
@@ -73,40 +76,94 @@ var silenceOnce sync.Once
 //   - Fail-soft: any error in pipe/dup2 logs to the original
 //     stderr and returns; the binary keeps running with noisy
 //     stderr, never crashes at startup over a logging filter.
-//   - sync.Once-guarded; second call is a no-op.
+//   - sync.Once-guarded; second call is a no-op (returns the
+//     same flush from the first install).
 //   - The goroutine drains the pipe continuously, so a slow real
 //     stderr (e.g. journald rate-limit) can't deadlock the
 //     writer side beyond the pipe buffer.
-func SilenceSDKChecksumWarnings() {
+//
+// # Drain-on-exit (rc.78)
+//
+// Returns a `flush func()` the caller MUST run before the process
+// exits. Without it, short-lived processes lose output: the
+// consumer goroutine reads from the pipe in the background and is
+// killed mid-buffer when the runtime tears down. This first
+// manifest in rc.77 as `ratesengine-ops backfill -dry-run`
+// printing only its first line and `ratesengine-ops backfill`
+// errors printing nothing at all.
+//
+// The flush func:
+//
+//  1. dup2's the saved real-stderr fd back onto fd 2, so any
+//     subsequent writes bypass the pipe.
+//  2. closes the pipe writer, signalling EOF to the reader.
+//  3. waits on the consumer goroutine to finish draining
+//     (sync.WaitGroup) before returning.
+//
+// Crucial design constraint: Go's `os.Exit` does NOT run deferred
+// functions. So `defer flush()` only fires when main() returns
+// normally. The canonical caller shape is therefore:
+//
+//	func main() { os.Exit(realMain()) }
+//	func realMain() int {
+//	    flush := pipeline.SilenceSDKChecksumWarnings()
+//	    defer flush()  // runs because realMain returns normally
+//	    // ...
+//	    return 0  // or 1 on error
+//	}
+//
+// This way every error path (return 1 from realMain) still
+// triggers the defer before main calls os.Exit with the int.
+//
+// Fail-soft install still returns a non-nil flush — it's a no-op
+// when no pipe was installed, so callers can defer
+// unconditionally.
+func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {
-		if err := installStderrFilter(); err != nil {
+		f, err := installStderrFilter()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "SilenceSDKChecksumWarnings: install failed, continuing with raw stderr: %v\n", err)
+			silenceFlush = func() {}
+			return
 		}
+		silenceFlush = f
 	})
+	if silenceFlush == nil {
+		// Second-or-later call before the first finished installing
+		// (unreachable in practice; sync.Once orders them) or the
+		// first call panicked before assigning. Either way, a no-op
+		// is the safe answer.
+		return func() {}
+	}
+	return silenceFlush
 }
 
 // installStderrFilter is the testable core. It dup-and-replaces fd
 // 2, then launches the filter goroutine. Returns an error if any
-// syscall fails; callers should fail-soft.
-func installStderrFilter() error {
+// syscall fails; callers should fail-soft. The returned flush
+// func tears the filter down and waits for the goroutine to drain.
+func installStderrFilter() (func(), error) {
 	return installStderrFilterTo(filteringForwarder)
 }
 
 // installStderrFilterTo is the test seam: the consumer function
 // receives the pipe reader + the real-stderr writer and is
-// responsible for draining the reader to completion.
-func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) error {
+// responsible for draining the reader to completion. The returned
+// flush func dup2's the saved real-stderr back onto fd 2, closes
+// the pipe writer, and waits on the consumer goroutine (via the
+// internal WaitGroup) to return.
+func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func(), error) {
 	// Duplicate fd 2 to a fresh fd so we can keep writing to the
 	// real stderr after we overwrite fd 2 with the pipe.
 	savedFD, err := syscall.Dup(int(os.Stderr.Fd()))
 	if err != nil {
-		return fmt.Errorf("dup fd 2: %w", err)
+		return nil, fmt.Errorf("dup fd 2: %w", err)
 	}
 
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		_ = syscall.Close(savedFD)
-		return fmt.Errorf("pipe: %w", err)
+		return nil, fmt.Errorf("pipe: %w", err)
 	}
 
 	// Replace fd 2 with the pipe's writer end. Every existing
@@ -117,21 +174,51 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) error
 		_ = pr.Close()
 		_ = pw.Close()
 		_ = syscall.Close(savedFD)
-		return fmt.Errorf("dup2 onto fd 2: %w", err)
+		return nil, fmt.Errorf("dup2 onto fd 2: %w", err)
 	}
 
 	// pw still holds a duplicate FD pointing at the pipe's writer
-	// end; close it so fd 2 is the *only* writer reference. That
-	// way, when something (e.g. a test or graceful shutdown)
-	// closes fd 2, the reader-side goroutine sees EOF and exits
-	// cleanly. Real production never closes fd 2, so this only
-	// affects test/shutdown paths.
-	_ = pw.Close()
+	// end; we keep it around so flush() can close it deterministically.
+	// Closing it before flush would mean fd 2 (the dup'd target) is
+	// the sole writer reference — that's fine for ongoing writes,
+	// but flush() needs an explicit close to signal EOF to the
+	// reader after dup2'ing the real stderr back onto fd 2.
 
 	realStderr := os.NewFile(uintptr(savedFD), "stderr-original")
 
-	go consume(pr, realStderr)
-	return nil
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		consume(pr, realStderr)
+	}()
+
+	var flushOnce sync.Once
+	flush := func() {
+		flushOnce.Do(func() {
+			// Restore real stderr on fd 2 BEFORE closing the pipe
+			// writer. Order matters: any goroutine that wakes up
+			// between these two calls and writes to os.Stderr
+			// should land on the real fd, not a half-closed pipe.
+			// dup2 closes the existing fd-2 target as part of its
+			// atomic replacement — which is the pipe writer we
+			// installed in installStderrFilterTo. That close is
+			// what signals EOF to the reader, *provided* pw (the
+			// remaining handle) is also closed; do that next.
+			_ = syscall.Dup2(savedFD, int(os.Stderr.Fd()))
+			_ = pw.Close()
+			// Wait for the consumer goroutine to drain whatever
+			// was buffered in the pipe before we returned to the
+			// caller. After this point, every byte the goroutine
+			// was going to forward has reached realStderr.
+			wg.Wait()
+			// Close our handle on the dup'd real-stderr now that
+			// no one needs it (fd 2 itself remains open as a
+			// fresh dup2 target).
+			_ = realStderr.Close()
+		})
+	}
+	return flush, nil
 }
 
 // filteringForwarder scans `r` line-by-line, drops every line that

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -74,11 +75,13 @@ func TestFilteringForwarder(t *testing.T) {
 
 // TestInstallStderrFilterTo exercises the full install path:
 // dup-replace fd 2, then verify a write to fd 2 is routed through
-// the supplied consumer.
+// the supplied consumer. Uses the returned flush to tear the
+// filter down deterministically instead of the old dup2-restore
+// trick.
 func TestInstallStderrFilterTo(t *testing.T) {
 	// Save the real fd 2 so we can restore it after the test —
 	// otherwise subsequent tests' t.Log/t.Error output goes to
-	// the pipe and vanishes.
+	// the pipe and vanishes if flush misbehaves.
 	originalStderrCopy, err := syscall.Dup(int(os.Stderr.Fd()))
 	if err != nil {
 		t.Fatalf("dup original stderr: %v", err)
@@ -91,18 +94,16 @@ func TestInstallStderrFilterTo(t *testing.T) {
 	// Capture the routed bytes via a channel; the consume callback
 	// reads the entire pipe and sends the result down the channel.
 	got := make(chan []byte, 1)
-	consume := func(r io.Reader, realStderr *os.File) {
+	consume := func(r io.Reader, _ *os.File) {
 		buf, err := io.ReadAll(r)
 		if err != nil {
 			t.Errorf("readall: %v", err)
 		}
 		got <- buf
-		// realStderr is the dup of original fd 2; close it so the
-		// FD doesn't leak.
-		_ = realStderr.Close()
 	}
 
-	if err := installStderrFilterTo(consume); err != nil {
+	flush, err := installStderrFilterTo(consume)
+	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
@@ -114,16 +115,94 @@ func TestInstallStderrFilterTo(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// Restore fd 2 so the only remaining holder of the pipe's
-	// write end is the goroutine's reference (none — fd 2 was
-	// the sole holder). dup2 closes the existing fd-2 target,
-	// shutting the pipe writer; io.ReadAll then returns.
-	if err := syscall.Dup2(originalStderrCopy, int(os.Stderr.Fd())); err != nil {
-		t.Fatalf("dup2 restore: %v", err)
-	}
+	// flush() restores fd 2, closes the pipe writer, and waits
+	// for the consumer to drain — so by the time it returns the
+	// channel is guaranteed to have received the buffer.
+	flush()
 
 	buf := <-got
 	if string(buf) != want {
 		t.Fatalf("routed bytes mismatch\n got: %q\nwant: %q", string(buf), want)
+	}
+}
+
+// TestSilenceSDKChecksumWarnings_FlushDrainsPipe is the regression
+// test for the rc.77 short-lived-process bug: without flush the
+// consumer goroutine is killed mid-buffer when the runtime tears
+// down, so multi-line output (and even single-line output once the
+// pipe-buffer ceiling is hit) gets lost on os.Exit. After flush
+// returns, every byte written to fd 2 since install MUST have
+// reached the real-stderr-side.
+//
+// The test uses installStderrFilterTo with a custom consume
+// callback that writes to a captured bytes.Buffer (via a sync
+// guard since the goroutine writes concurrently with the test
+// goroutine until flush returns). Asserts that all 5 lines arrived
+// with their original ordering preserved.
+func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
+	originalStderrCopy, err := syscall.Dup(int(os.Stderr.Fd()))
+	if err != nil {
+		t.Fatalf("dup original stderr: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Dup2(originalStderrCopy, int(os.Stderr.Fd()))
+		_ = syscall.Close(originalStderrCopy)
+	})
+
+	var (
+		mu       sync.Mutex
+		captured bytes.Buffer
+	)
+	consume := func(r io.Reader, _ *os.File) {
+		// Forward via filteringForwarder semantics so the test
+		// exercises the same code path the production wrap uses,
+		// but redirect to the in-memory buffer instead of real
+		// stderr. We don't need filtering in this test — just
+		// forward every byte verbatim so we can compare exactly.
+		buf := make([]byte, 4096)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				captured.Write(buf[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	flush, err := installStderrFilterTo(consume)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// Write 5 distinct lines via fmt.Fprintf(os.Stderr, ...). The
+	// SDK's default logger writes to os.Stderr too, so this
+	// matches the production write path.
+	want := ""
+	for i := 1; i <= 5; i++ {
+		line := fmt.Sprintf("line %d of 5: payload bytes for the drain-on-exit regression test\n", i)
+		want += line
+		if _, err := fmt.Fprint(os.Stderr, line); err != nil {
+			t.Fatalf("fprintf line %d: %v", i, err)
+		}
+	}
+
+	// The critical assertion: after flush returns, every byte
+	// must have arrived. Pre-fix this race-checked: the goroutine
+	// was killed by the runtime mid-Read and the captured buffer
+	// held only the first ~64 bytes (or nothing at all). Post-fix
+	// the wg.Wait inside flush guarantees the goroutine ran the
+	// full forwarder loop.
+	flush()
+
+	mu.Lock()
+	got := captured.String()
+	mu.Unlock()
+
+	if got != want {
+		t.Fatalf("flush did not drain pipe\n got: %q\nwant: %q", got, want)
 	}
 }
