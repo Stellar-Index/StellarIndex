@@ -121,7 +121,12 @@ CREATE TABLE soroban_events (
     -- need the op args (feed_ids) alongside the event body.
     op_args_xdr         bytea,
 
-    PRIMARY KEY (ledger, tx_hash, op_index, event_index)
+    -- PK includes ledger_close_time as required by TimescaleDB
+    -- (the partitioning column MUST be in every unique index on a
+    -- hypertable — TS103 error otherwise). Put it first for chunk-
+    -- pruning efficiency: queries that filter by time hit only the
+    -- chunks that contain that range.
+    PRIMARY KEY (ledger_close_time, ledger, tx_hash, op_index, event_index)
 );
 
 COMMENT ON TABLE soroban_events IS

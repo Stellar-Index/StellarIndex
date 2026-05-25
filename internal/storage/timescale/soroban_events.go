@@ -12,7 +12,7 @@ import (
 
 // InsertSorobanEventsBatch persists a slice of raw Soroban event
 // rows into the `soroban_events` hypertable (migration 0041,
-// ADR-0029). Idempotent on the (ledger, tx_hash, op_index,
+// ADR-0029). Idempotent on the (ledger_close_time, ledger, tx_hash, op_index,
 // event_index) PK via `ON CONFLICT DO NOTHING` — replays /
 // retries / overlapping backfill chunks are a no-op for already-
 // captured rows.
@@ -101,7 +101,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []sorobaneven
 			nullBytes(r.OpArgsXDR),
 		)
 	}
-	sb.WriteString(` ON CONFLICT (ledger, tx_hash, op_index, event_index) DO NOTHING`)
+	sb.WriteString(` ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO NOTHING`)
 
 	if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
 		return fmt.Errorf("timescale: InsertSorobanEventsBatch (%d rows): %w", len(rows), err)
