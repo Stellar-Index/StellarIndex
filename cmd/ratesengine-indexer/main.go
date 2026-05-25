@@ -70,7 +70,15 @@ import (
 // pre-165 orchestrator topology.)
 const cursorSource = "ledgerstream"
 
+// main is a thin shim over realMain so deferred functions (notably
+// the SilenceSDKChecksumWarnings flush) execute on every exit path.
+// os.Exit skips defers — see SilenceSDKChecksumWarnings docstring
+// for the regression that drove this shape.
 func main() {
+	os.Exit(realMain())
+}
+
+func realMain() int {
 	// Wrap fd 2 with a line-filter BEFORE any aws-sdk-go-v2 code
 	// captures os.Stderr (config.LoadDefaultConfig binds the
 	// default logger at that point). Drops the per-S3-GET
@@ -80,7 +88,13 @@ func main() {
 	// Enabled, so the previous env-var approach was a no-op for
 	// our use. Fail-soft: any pipe/dup2 error logs to the original
 	// stderr and startup continues with unfiltered output.
-	pipeline.SilenceSDKChecksumWarnings()
+	//
+	// The flush MUST run before the process exits or short-lived
+	// runs (e.g. -version, -dry-run failure path) lose buffered
+	// output — see the rc.77 regression documented in
+	// SilenceSDKChecksumWarnings.
+	flush := pipeline.SilenceSDKChecksumWarnings()
+	defer flush()
 
 	var (
 		cfgPath     = flag.String("config", "", "Path to TOML config file (required)")
@@ -91,19 +105,20 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(version.String())
-		return
+		return 0
 	}
 
 	if *cfgPath == "" {
 		fmt.Fprintln(os.Stderr, "ratesengine-indexer: -config is required")
 		flag.Usage()
-		os.Exit(2)
+		return 2
 	}
 
 	if err := run(*cfgPath, *dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "ratesengine-indexer: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 //nolint:funlen,gocognit,gocyclo // top-level binary lifecycle; splitting reduces readability of dependency-construction order

@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **fd-2 wrap drain-on-exit (#62a / regression in rc.77).** The
+  rc.77 `SilenceSDKChecksumWarnings` wrap (the actual fix for the
+  SDK checksum WARN flood that the rc.72 env-var fix never
+  achieved) silenced the noise for long-running daemons but
+  dropped output entirely for short-lived processes — a
+  consequence of the consumer goroutine reading from the pipe in
+  the background, never given a chance to drain before
+  `os.Exit()` killed it. Manifest: `ratesengine-ops backfill
+  -dry-run` printed only the first line then ate the rest;
+  `ratesengine-ops backfill` errors printed nothing —
+  diagnosable only by binary-rollback to rc.76. The wrap now
+  returns a `flush func()` that dup2's the saved real-stderr
+  back onto fd 2, closes the pipe writer, and waits on the
+  consumer's WaitGroup. main() in `cmd/ratesengine-indexer` and
+  `cmd/ratesengine-ops` is now a thin `os.Exit(realMain())`
+  shim — defers (including `defer flush()`) run inside realMain
+  before main calls os.Exit with the returned code, so even
+  error paths drain the pipe.
+
 ## [v0.5.0-rc.77] — 2026-05-24
 
 ### Fixed
