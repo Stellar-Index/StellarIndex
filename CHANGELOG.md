@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.78] — 2026-05-26
+
 ### Added
 
 - **`soroban_events` raw-event landing zone (ADR-0029).** Every
