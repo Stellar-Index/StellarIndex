@@ -298,7 +298,7 @@ func buildChunkDispatcher(
 // chunk.to, NOT the overall opts.from / opts.to) so concurrent
 // chunks never share a cursor row.
 //
-//nolint:gocognit // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
+//nolint:gocognit,funlen // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
 func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error {
 	chunkOpts := opts
 	chunkOpts.from = chunk.from
@@ -340,6 +340,25 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		pipeline.PersistEvents(ctx, logger, store, events)
 	}()
 
+	// Ctx-cancel safety net for the raw-event sink (ADR-0029).
+	// PushEvent applies back-pressure (blocks when the buffer is
+	// full) — required for cursor coherence — but the dispatcher's
+	// hot path has no ctx awareness, so a blocked PushEvent would
+	// pin the Stream callback even after rootCtx is cancelled. If
+	// ctx fires while the producer is mid-dispatch we early-Stop
+	// the sink so blocked PushEvent calls unblock via the stopping
+	// channel, the dispatcher returns, and ledgerstream.Stream can
+	// honour cancellation.
+	if rawSink != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				rawSink.Stop()
+			case <-sinkDone:
+			}
+		}()
+	}
+
 	streamCfg := pipeline.LedgerstreamConfig(cfg, opts.bucket)
 	streamErr := ledgerstream.Stream(ctx, streamCfg, startFrom, chunk.to,
 		func(lcm sdkxdr.LedgerCloseMeta) error {
@@ -358,11 +377,15 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	close(events)
 	<-sinkDone
 
-	// Drain the soroban-events sink (if wired). Stop() blocks until
-	// the worker has flushed every buffered Row through the final
-	// InsertSorobanEventsBatch, with the AsyncSink's per-batch
-	// timeout capping the wait. Any rows dropped due to buffer-full
-	// during the chunk are logged via the DroppedCount fold.
+	// Drain the soroban-events sink (if wired). PushEvent applies
+	// back-pressure on a full buffer so the producer above (the
+	// ledgerstream callback) slows down to match storage throughput;
+	// produced rows are durably enqueued before the cursor advances.
+	// Stop() signals the worker to drain the residual buffer and
+	// flush the final batch, with the AsyncSink's per-batch timeout
+	// capping the wait. DroppedCount only ticks up if a producer
+	// raced past the stopping signal — investigate as a bug if
+	// non-zero outside a forced shutdown.
 	if rawSink != nil {
 		rawSink.Stop()
 		logger.Info("soroban-events sink drained",
@@ -371,9 +394,9 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			"skipped", rawSink.SkippedCount(),
 		)
 		if dropped := rawSink.DroppedCount(); dropped > 0 {
-			logger.Warn("soroban-events: rows dropped during chunk (buffer-full)",
+			logger.Warn("soroban-events: rows dropped at shutdown race",
 				"dropped", dropped,
-				"impact", "the dropped rows are NOT in soroban_events — re-run -resume to pick them up")
+				"impact", "the dropped rows are NOT in soroban_events — investigate; only expected on hard kill")
 		}
 	}
 

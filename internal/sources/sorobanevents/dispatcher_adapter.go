@@ -11,19 +11,21 @@ import (
 )
 
 // RawEventSink is the contract a sink must satisfy to receive
-// captured rows from the dispatcher's raw-event hook. Mirrors the
-// shape of [dispatcher.DiscoverySink] — non-blocking Push from the
-// hot path, drain asynchronously in a worker goroutine.
+// captured rows from the dispatcher's raw-event hook.
 //
 // The dispatcher's raw-event hook (added in ADR-0029) calls
 // PushEvent for every Soroban contract event it sees, regardless
 // of whether a per-source decoder claimed it. The sink converts to
 // a [Row] via [Capture] and writes batched.
 //
-// Push MUST be non-blocking — a slow Push back-pressures the entire
-// ingest pipeline. The standard [AsyncSink] implementation drops
-// on buffer-full and increments DroppedCount; operators alert on
-// sustained climb.
+// PushEvent MAY block to apply back-pressure to the producer. The
+// [AsyncSink] implementation blocks when its channel is full so
+// produced rows are never silently lost — back-pressure propagates
+// up to the ledger walker, which is correct: cursor advance must
+// not outrun durable writes (otherwise -resume can't recover the
+// gap). The previous non-blocking buffer-full-drop semantics were
+// proved unsafe by the 2026-05-26 fill walk, which dropped ~0.43%
+// of rows across 8 chunks without a recovery path.
 type RawEventSink interface {
 	PushEvent(ev events.Event)
 }
@@ -41,7 +43,11 @@ type BatchWriter interface {
 type AsyncSinkOptions struct {
 	// BufferSize is the channel depth. Defaults to 4096. Sized so a
 	// few seconds of peak Soroban event volume (typically 100-500
-	// events/s) fits even during a Postgres write hiccup.
+	// events/s) fits even during a Postgres write hiccup. When the
+	// buffer is full PushEvent blocks (back-pressure into the
+	// producer); the buffer's only job is to smooth bursty producer
+	// rates against the worker's batched flushes — sustained
+	// over-production correctly slows the dispatcher down.
 	BufferSize int
 
 	// BatchSize is the number of rows the worker accumulates before
@@ -67,15 +73,22 @@ type AsyncSinkOptions struct {
 	Logger *slog.Logger
 }
 
-// AsyncSink is the non-blocking adapter between the dispatcher's
+// AsyncSink is the back-pressuring adapter between the dispatcher's
 // raw-event hook and a batched storage writer. Construct with
-// [NewAsyncSink] + Start; Stop drains the buffer and shuts down
-// the worker.
+// [NewAsyncSink] + Start; Stop signals shutdown, drains the buffer,
+// and shuts down the worker.
 //
-// Concurrency: PushEvent is safe for concurrent callers (the
-// dispatcher is single-threaded but parallel backfill chunks each
-// run their own dispatcher into the same sink). The worker
-// goroutine is single, so writes don't compete with each other.
+// PushEvent blocks when the channel is full (back-pressure into the
+// producer) so produced rows are never silently lost — a precondition
+// for the cursor-advance contract in the backfill driver. DroppedCount
+// only goes non-zero when Stop has been signalled and a producer
+// raced past the stopping check; in steady state it stays at zero.
+//
+// Concurrency: PushEvent is safe for concurrent callers (parallel
+// backfill chunks each run their own dispatcher into a per-chunk
+// sink; the live indexer has a single dispatcher into one sink).
+// The worker goroutine is single, so writes don't compete with each
+// other.
 type AsyncSink struct {
 	w       BatchWriter
 	logger  *slog.Logger
@@ -85,6 +98,7 @@ type AsyncSink struct {
 	flush    time.Duration
 	batchSz  int
 	stopOnce sync.Once
+	stopping chan struct{}
 	done     chan struct{}
 
 	mu      sync.Mutex
@@ -113,13 +127,14 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 		logger = slog.Default()
 	}
 	return &AsyncSink{
-		w:       w,
-		logger:  logger,
-		timeout: opts.WriteTimeout,
-		ch:      make(chan Row, opts.BufferSize),
-		flush:   opts.FlushInterval,
-		batchSz: opts.BatchSize,
-		done:    make(chan struct{}),
+		w:        w,
+		logger:   logger,
+		timeout:  opts.WriteTimeout,
+		ch:       make(chan Row, opts.BufferSize),
+		flush:    opts.FlushInterval,
+		batchSz:  opts.BatchSize,
+		stopping: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -136,9 +151,13 @@ func (s *AsyncSink) Start() {
 //     incremented). Defence in depth for non-contract events that
 //     should never reach this hook.
 //   - Capture returns any other error → logged + counted as skipped.
-//   - Channel full → dropped (DroppedCount incremented). Discovery's
-//     buffer-full pattern: dispatch never stalls.
+//   - Channel full → BLOCKS until a slot frees (back-pressure into
+//     the producer) OR until Stop signals shutdown, in which case the
+//     row is counted as dropped (DroppedCount incremented).
 //   - Otherwise → enqueued.
+//
+// Steady-state DroppedCount stays at zero; non-zero values appear
+// only on the shutdown race window after Stop is called.
 //
 // Implements [RawEventSink] (structurally — circular import means
 // dispatcher declares its own interface and this method satisfies
@@ -161,19 +180,30 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 	}
 	select {
 	case s.ch <- row:
-	default:
+	case <-s.stopping:
 		s.mu.Lock()
 		s.dropped++
 		s.mu.Unlock()
 	}
 }
 
-// Stop closes the input channel and waits for the worker to finish
-// draining. Pending rows that fit within the worker's per-batch
-// timeout are flushed; any that error are logged. Idempotent.
+// Stop signals shutdown to producers (closing the stopping channel
+// so any blocked PushEvent returns the row as dropped instead of
+// waiting forever) and waits for the worker to drain its remaining
+// buffer, flush the final batch, and exit. The input channel is
+// intentionally NOT closed — that would race with concurrent
+// producers and panic on send-to-closed; instead the worker uses
+// the stopping signal to switch into drain-then-exit mode.
+// Pending rows that fit within the worker's per-batch timeout are
+// flushed; any that error are logged. Idempotent.
+//
+// Lifecycle contract: producers that race past the stopping check
+// are unblocked via the select and counted as dropped — the drop
+// count then reflects shutdown-race row loss only, never
+// steady-state pressure loss.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
-		close(s.ch)
+		close(s.stopping)
 		<-s.done
 	})
 }
@@ -241,18 +271,38 @@ func (s *AsyncSink) run() {
 
 	for {
 		select {
-		case row, ok := <-s.ch:
-			if !ok {
-				// Channel closed — final flush and exit.
-				flush()
-				return
-			}
+		case row := <-s.ch:
 			batch = append(batch, row)
 			if len(batch) >= s.batchSz {
 				flush()
 			}
 		case <-ticker.C:
 			flush()
+		case <-s.stopping:
+			s.drainOnStop(&batch, flush)
+			return
+		}
+	}
+}
+
+// drainOnStop is the shutdown-drain branch of run. Reads any
+// remaining rows the producers managed to enqueue between the
+// stopping-close and their PushEvent-select-wakeup, accumulates
+// them into batch, and triggers a final flush. s.ch is
+// deliberately NOT closed — that would panic any in-flight
+// producer; the stopping signal already unblocked them via
+// PushEvent's select.
+func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
+	for {
+		select {
+		case row := <-s.ch:
+			*batch = append(*batch, row)
+			if len(*batch) >= s.batchSz {
+				flush()
+			}
+		default:
+			flush()
+			return
 		}
 	}
 }

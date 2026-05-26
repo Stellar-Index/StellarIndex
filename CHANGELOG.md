@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sorobanevents.AsyncSink` cursor-drop incoherence (ADR-0029,
+  superseding the original buffer-full-drop design).** The
+  2026-05-26 fill walk dropped ~13.1M rows of ~3.03B (~0.43%)
+  across 8 parallel chunks because `PushEvent` dropped rows on a
+  full channel while the backfill cursor advanced per produced
+  ledger — so the dropped rows had no recovery path (`-resume`
+  short-circuited at the "already complete" branch). The fix:
+  `PushEvent` now blocks on a full channel (back-pressure into the
+  dispatcher) so the cursor cannot outrun durable writes. Stop()
+  closes a new `stopping` channel that unblocks any in-flight
+  producers (counted as dropped — shutdown-race only). The
+  backfill driver and live indexer both watch ctx and call Stop
+  early on cancellation so a hung Postgres can't deadlock the hot
+  path past SIGTERM. ADR-0029 updated with the post-mortem; runbook
+  to reset the 12 soroban-events cursors and re-walk is in
+  follow-up rc.80 ops. Regression-tested via
+  `internal/sources/sorobanevents/dispatcher_adapter_test.go` (no
+  drops under sustained back-pressure; Stop releases blocked
+  producers; pending rows drain on shutdown without channel-close
+  panic).
+
 ## [v0.5.0-rc.79] — 2026-05-26
 
 ### Fixed

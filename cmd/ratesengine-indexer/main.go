@@ -314,6 +314,17 @@ func run(cfgPath string, dryRun bool) error {
 		Logger:        logger.With("component", "soroban-events"),
 	})
 	rawEventSink.Start()
+	// Ctx-cancel safety net (see backfill.go for rationale):
+	// PushEvent blocks under back-pressure, but the dispatcher hot
+	// path has no ctx awareness, so an unbounded postgres stall
+	// could pin the streaming loop past SIGTERM. Watch rootCtx and
+	// Stop the sink early so blocked producers unblock and the
+	// dispatcher can honour cancellation. The deferred Stop below
+	// is idempotent and will still run for the success path.
+	go func() {
+		<-rootCtx.Done()
+		rawEventSink.Stop()
+	}()
 	defer func() {
 		rawEventSink.Stop()
 		logger.Info("soroban-events sink drained on shutdown",

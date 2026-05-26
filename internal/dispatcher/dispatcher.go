@@ -364,12 +364,18 @@ func (d *Dispatcher) SetDiscoverySink(sink DiscoverySink) {
 // lands in soroban_events — operators see every contract emitting
 // events, not just ones we successfully decode).
 //
-// PushEvent MUST be non-blocking. The dispatcher runs on the ingest
-// hot path; a slow PushEvent would back-pressure the entire
-// pipeline. The standard implementation buffers Rows to a channel
-// and drains them in a worker goroutine that calls
+// PushEvent MAY block to apply back-pressure. The standard
+// implementation buffers Rows to a channel and drains them in a
+// worker goroutine that calls
 // [timescale.Store.InsertSorobanEventsBatch] (see
-// internal/sources/sorobanevents).
+// internal/sources/sorobanevents); when that buffer fills, the
+// dispatcher slows down to match the worker's drain rate so the
+// backfill cursor (which advances per produced ledger) cannot
+// outrun durable writes. The previous non-blocking buffer-full-drop
+// semantics were proved unsafe by the 2026-05-26 fill walk, which
+// dropped ~0.43% of rows across 8 chunks without a recovery path
+// (the cursor was already past the dropped ledgers, so -resume
+// short-circuited).
 type RawEventSink interface {
 	PushEvent(ev events.Event)
 }
@@ -810,8 +816,10 @@ func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 	}
 	// Raw-event capture (ADR-0029) — runs BEFORE per-source decoders
 	// so even events a decoder later rejects (malformed body, etc.)
-	// still land in soroban_events. PushEvent is non-blocking; the
-	// sink's worker batches writes off the hot path.
+	// still land in soroban_events. PushEvent applies back-pressure
+	// when the sink's buffer is full: the dispatcher slows down to
+	// match storage throughput so the producer's cursor never
+	// outruns durable writes.
 	if d.rawEventSink != nil {
 		d.rawEventSink.PushEvent(ev)
 	}
