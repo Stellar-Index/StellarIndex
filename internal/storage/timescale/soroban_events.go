@@ -109,6 +109,134 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []sorobaneven
 	return nil
 }
 
+// StreamSorobanEvents invokes `fn` once per soroban_events row
+// matching the predicate in [from, to] (inclusive), in
+// (ledger_close_time, ledger, tx_hash, op_index) order. Used by
+// per-source `ratesengine-ops <source>-backfill` subcommands to
+// re-feed historical rows through the live Go decoders without a
+// MinIO walk.
+//
+// `contractIDs` and `topic0Syms` are inclusive filters: empty means
+// "no filter on this dimension". Passing both is the common case
+// (per-source backfill scopes by both contract set + emitted topic
+// names) and pushes the filter into Postgres so we don't stream
+// billions of irrelevant rows over the network.
+//
+// The callback returning a non-nil error aborts the walk. ctx
+// cancellation is checked between rows (the underlying rows.Next()
+// blocks on network reads; cancellation propagates through the
+// driver).
+func (s *Store) StreamSorobanEvents(
+	ctx context.Context,
+	from, to uint32,
+	contractIDs []string,
+	topic0Syms []string,
+	fn func(sorobanevents.Row) error,
+) error {
+	if to < from {
+		return errors.New("timescale: StreamSorobanEvents: to < from")
+	}
+	if fn == nil {
+		return errors.New("timescale: StreamSorobanEvents: nil callback")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`
+        SELECT
+            ledger, ledger_close_time, tx_hash, op_index, event_index,
+            contract_id, contract_id_hex,
+            topic_count, topic_0_sym,
+            topic_0_xdr, topic_1_xdr, topic_2_xdr, topic_3_xdr,
+            body_xdr, op_args_xdr
+        FROM soroban_events
+        WHERE ledger BETWEEN $1 AND $2
+    `)
+	args := []any{int64(from), int64(to)}
+	if len(contractIDs) > 0 {
+		args = append(args, contractIDArgsAny(contractIDs)...)
+		fmt.Fprintf(&sb, " AND contract_id IN (%s)", placeholdersFrom(3, len(contractIDs)))
+	}
+	if len(topic0Syms) > 0 {
+		baseIdx := 3 + len(contractIDs)
+		args = append(args, topic0Args(topic0Syms)...)
+		fmt.Fprintf(&sb, " AND topic_0_sym IN (%s)", placeholdersFrom(baseIdx, len(topic0Syms)))
+	}
+	sb.WriteString(" ORDER BY ledger_close_time, ledger, tx_hash, op_index")
+
+	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return fmt.Errorf("timescale: StreamSorobanEvents query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			r                      sorobanevents.Row
+			ledger                 int64
+			opIdx                  int16
+			eventIdx               int16
+			topicCount             int16
+			topic0Sym              sql.NullString
+			topic1, topic2, topic3 []byte
+			opArgs                 []byte
+		)
+		if err := rows.Scan(
+			&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
+			&r.ContractID, &r.ContractIDHex,
+			&topicCount, &topic0Sym,
+			&r.Topic0XDR, &topic1, &topic2, &topic3,
+			&r.BodyXDR, &opArgs,
+		); err != nil {
+			return fmt.Errorf("timescale: StreamSorobanEvents scan: %w", err)
+		}
+		r.Ledger = uint32(ledger)
+		r.OpIndex = opIdx
+		r.EventIndex = eventIdx
+		r.TopicCount = topicCount
+		if topic0Sym.Valid {
+			r.Topic0Sym = topic0Sym.String
+		}
+		r.Topic1XDR = topic1
+		r.Topic2XDR = topic2
+		r.Topic3XDR = topic3
+		r.OpArgsXDR = opArgs
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func contractIDArgsAny(ids []string) []any {
+	out := make([]any, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id)
+	}
+	return out
+}
+
+func topic0Args(syms []string) []any {
+	out := make([]any, 0, len(syms))
+	for _, s := range syms {
+		out = append(out, s)
+	}
+	return out
+}
+
+// placeholdersFrom returns "$N, $N+1, …, $N+count-1" — used to
+// embed an IN-clause's placeholders mid-string for parameter-bound
+// queries.
+func placeholdersFrom(startIdx, count int) string {
+	var sb strings.Builder
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		fmt.Fprintf(&sb, "$%d", startIdx+i)
+	}
+	return sb.String()
+}
+
 // CountSorobanEventsInRange returns the row count in the ledger
 // range [from, to] inclusive. Test + diagnostic helper — not on
 // the hot path. Used by the integration test to assert

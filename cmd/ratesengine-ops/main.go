@@ -163,6 +163,16 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "scan-soroban-events: %v\n", err)
 			return 1
 		}
+	case "cctp-backfill":
+		if err := cctpBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "cctp-backfill: %v\n", err)
+			return 1
+		}
+	case "rozo-backfill":
+		if err := rozoBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rozo-backfill: %v\n", err)
+			return 1
+		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)

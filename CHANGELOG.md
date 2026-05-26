@@ -17,6 +17,24 @@ against.
 
 ### Added
 
+- **`ratesengine-ops cctp-backfill` + `rozo-backfill` subcommands
+  (ADR-0029 §"SQL-backfill from soroban_events").** First two of
+  the per-source backfill subcommands that re-feed soroban_events
+  rows through the live Go decoders to populate per-source
+  hypertables — replacing the MinIO walks earlier decoder PRs
+  named as a follow-up. CCTP + Rozo are the simplest cases
+  (stateless decoders, one consumer.Event per source row, single
+  target table); Phoenix / Blend / Comet need correlation
+  buffering and are tracked as follow-ups. Supporting machinery:
+  `sorobanevents.Reconstruct(Row)` rebuilds an `events.Event`
+  from a stored row (round-trip-tested vs Capture);
+  `Store.StreamSorobanEvents(ctx, from, to, contracts, topics,
+  fn)` is a Postgres-side filtered iterator;
+  `scval.DecodeScVecToArgs` is the inverse of `EncodeArgsAsScVec`
+  (handles the `op_args_xdr` column → `events.Event.OpArgs`
+  conversion). All idempotent via the per-source table's existing
+  `ON CONFLICT DO NOTHING`.
+
 - **`ledgerstream.Config.TolerateTrailingMissing` (with companion
   `TrailingMissingWindow`).** Closes the trailing-edge failure
   that bit both verify-archive (`project_62_diagnosis_2026_05_25`)

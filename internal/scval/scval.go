@@ -109,6 +109,45 @@ func EncodeArgsAsScVec(b64Args []string) ([]byte, error) {
 	return sv.MarshalBinary()
 }
 
+// DecodeScVecToArgs is the inverse of [EncodeArgsAsScVec]: it
+// takes the XDR-marshalled bytes of a ScVal::Vec (as stored in the
+// `soroban_events.op_args_xdr` column) and returns the slice of
+// base64-encoded ScVal blobs that [events.Event.OpArgs] expects.
+//
+// Returns (nil, nil) for empty input (the stored column was NULL).
+// Returns an error when the bytes don't unmarshal to a ScVal::Vec
+// — the schema commits to that exact shape (see EncodeArgsAsScVec)
+// so a mismatch indicates a corrupt row, not a decoder concern.
+//
+// Used by `ratesengine-ops <source>-backfill` subcommands that
+// reconstruct events.Event values from soroban_events rows and
+// feed them back through the live decoders.
+func DecodeScVecToArgs(b []byte) ([]string, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var sv xdr.ScVal
+	if err := sv.UnmarshalBinary(b); err != nil {
+		return nil, fmt.Errorf("unmarshal scval: %w", err)
+	}
+	if sv.Type != xdr.ScValTypeScvVec {
+		return nil, fmt.Errorf("decode: expected ScVal::Vec, got %v", sv.Type)
+	}
+	if sv.Vec == nil || *sv.Vec == nil {
+		return nil, nil
+	}
+	vec := **sv.Vec
+	out := make([]string, 0, len(vec))
+	for _, elem := range vec {
+		blob, err := elem.MarshalBinary()
+		if err != nil {
+			return nil, fmt.Errorf("marshal elem: %w", err)
+		}
+		out = append(out, base64.StdEncoding.EncodeToString(blob))
+	}
+	return out, nil
+}
+
 // MustEncodeSymbol returns the base64-encoded SCVal::Symbol(s) blob
 // used for topic matching (both in stellar-rpc getEvents filters and
 // for byte-comparison against Event.Topic entries).
