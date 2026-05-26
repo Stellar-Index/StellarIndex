@@ -81,53 +81,93 @@ audit time. Sources:
 Captured from `internal/sources/comet/{events,decode}.go` at HEAD
 as of 2026-04-27.
 
-### Topic structure (swap events)
+### Topic structure (all five POOL events)
 
 Verified 2026-04-23 against the public contract source
-(`comet-contracts/src/c_pool/event.rs` and `call_logic/pool.rs:21,184-191`):
+(`comet-contracts/src/c_pool/event.rs` and `call_logic/pool.rs:21,184-191`);
+re-verified 2026-05-26 for the join/exit/deposit/withdraw
+additions (#26):
 
     topic[0] = ScvSymbol("POOL")
-    topic[1] = ScvSymbol("swap")  // also "join_pool" / "exit_pool" /
-                                  // "deposit" / "withdraw" — we ignore
-    body     = ScvMap {
-        "caller":           Address,
-        "token_in":         Address,
-        "token_out":        Address,
-        "token_amount_in":  i128,
-        "token_amount_out": i128,
+    topic[1] = ScvSymbol("<kind>")
+              // "swap" | "join_pool" | "exit_pool" | "deposit" | "withdraw"
+
+    swap body     = ScvMap {
+        "caller": Address, "token_in": Address, "token_out": Address,
+        "token_amount_in": i128, "token_amount_out": i128,
+    }
+    join_pool / deposit body = ScvMap {
+        "caller": Address, "token_in": Address, "token_amount_in": i128,
+    }
+    exit_pool body = ScvMap {
+        "caller": Address, "token_out": Address, "token_amount_out": i128,
+    }
+    withdraw body  = ScvMap {
+        "caller": Address, "token_out": Address,
+        "token_amount_out": i128, "pool_amount_in": i128,
     }
 
 Classification is **byte-equal** against pre-encoded `ScvSymbol`
-constants. v1 decodes only the `swap` variant; non-swap Comet
-events return `ErrNotCometSwap` and are skipped.
+constants. Since #26 the decoder claims all five POOL kinds:
+`swap` → `canonical.Trade` (table `trades`), the other four →
+`LiquidityEvent` (table `comet_liquidity`, migration 0042). Any
+other `(POOL, *)` topic (e.g. a hypothetical `set_controller`
+event from a future contract upgrade) returns `ErrNotCometEvent`
+and is counted as an orphan event so a sustained spike alerts
+operators to add a handler.
+
+The Soroban port emits **only** these five topics under `POOL`. The
+EVM-Balancer-v1 admin events (`bind` / `rebind` / `unbind` /
+`finalize` / `gulp` / `set_swap_fee` / `set_controller` /
+`set_public_swap`) are NOT in the Stellar port — either the
+function doesn't exist or it's storage-only with no event
+publication (verified 2026-05-26 against
+`contracts/src/c_pool/{comet.rs, token_utility.rs}` upstream).
+BPT (pool-share) `transfer` events use the SEP-41 standard
+token-event surface and are claimed by
+`internal/sources/sep41_supply` when the pool is in scope.
 
 ### Body extraction
 
-Decoder pulls the 5 fields **by name** (Map-keyed). Same robust
+Decoders pull every field **by name** (Map-keyed). Same robust
 pattern as Soroswap (vs Aquarius's positional Vec) — adding a new
 field doesn't break extraction; renaming or removing a field does.
 
-| field | extracted by | invariant |
-| --- | --- | --- |
-| `token_in` | `scval.AsAddressStrkey` | valid Soroban Address |
-| `token_out` | same | same |
-| `token_amount_in` | `scval.AsAmountFromI128` | i128, sign > 0 |
-| `token_amount_out` | same | same |
-| `caller` | (extracted but not used in trade output today) | — |
+| event | field | extracted by | invariant |
+| --- | --- | --- | --- |
+| swap | `token_in` | `scval.AsAddressStrkey` | valid Soroban Address |
+| swap | `token_out` | same | same |
+| swap | `token_amount_in` | `scval.AsAmountFromI128` | i128, sign > 0 |
+| swap | `token_amount_out` | same | same |
+| swap | `caller` | `scval.AsAddressStrkey` | extracted but not used in trade today |
+| join_pool / deposit | `token_in` | `scval.AsAddressStrkey` | valid Soroban Address |
+| join_pool / deposit | `token_amount_in` | `scval.AsAmountFromI128` | i128, sign > 0 |
+| join_pool / deposit | `caller` | `scval.AsAddressStrkey` | stored as the LP user |
+| exit_pool | `token_out` | `scval.AsAddressStrkey` | valid Soroban Address |
+| exit_pool | `token_amount_out` | `scval.AsAmountFromI128` | i128, sign > 0 |
+| exit_pool | `caller` | `scval.AsAddressStrkey` | stored as the LP user |
+| withdraw | `token_out` / `token_amount_out` / `caller` | as above | as above |
+| withdraw | `pool_amount_in` | `scval.AsAmountFromI128` | i128, sign > 0 (BPT burned) |
 
-Decoder rejects with `ErrNonPositiveAmounts` if either amount is
-zero / negative. Direction is `(token_in, token_amount_in) → base`,
-`(token_out, token_amount_out) → quote`.
+Decoder rejects with `ErrNonPositiveAmounts` if any required
+amount is zero / negative. For swaps the trade direction is
+`(token_in, token_amount_in) → base`,
+`(token_out, token_amount_out) → quote`. Liquidity events stamp
+`direction = 'add'` (join_pool / deposit) or `'remove'`
+(exit_pool / withdraw) onto the row.
 
 ## Failure modes specific to Comet
 
 1. **Topic[0] symbol change** — `"POOL"` → other namespace
    (`"COMET_POOL"`?) silently drops every event.
 2. **Topic[1] symbol change for swap** — `"swap"` → `"trade"`
-   silently drops every trade. Other variants (`join_pool`,
-   `exit_pool`, …) we already skip; new variants would be
-   silently skipped — fine if they're not trades, bad if they
-   ARE trades under a new shape.
+   silently drops every trade. Same hazard applies to each of
+   `join_pool` / `exit_pool` / `deposit` / `withdraw` since #26 —
+   a rename of any of the five known kinds drops that kind from
+   `comet_liquidity` until the decoder is updated. Brand-new
+   variants (e.g. a future `(POOL, set_controller)`) return
+   `ErrNotCometEvent` and bump the orphan-events counter rather
+   than landing as a typed row.
 3. **Body field rename** — `token_in` → `tokenIn`, `token_amount_in`
    → `amount_in`, etc. Decoder fails per event with field-not-found;
    every swap dropped under the renamed WASM.
