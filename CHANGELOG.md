@@ -17,15 +17,20 @@ against.
 
 ### Added
 
-- **`ratesengine-ops cctp-backfill` + `rozo-backfill` subcommands
-  (ADR-0029 §"SQL-backfill from soroban_events").** First two of
-  the per-source backfill subcommands that re-feed soroban_events
-  rows through the live Go decoders to populate per-source
-  hypertables — replacing the MinIO walks earlier decoder PRs
-  named as a follow-up. CCTP + Rozo are the simplest cases
-  (stateless decoders, one consumer.Event per source row, single
-  target table); Phoenix / Blend / Comet need correlation
-  buffering and are tracked as follow-ups. Supporting machinery:
+- **`ratesengine-ops cctp-backfill` + `rozo-backfill` +
+  `soroswap-skim-backfill` subcommands (ADR-0029 §"SQL-backfill
+  from soroban_events").** First three of the per-source backfill
+  subcommands that re-feed soroban_events rows through the live
+  Go decoders to populate per-source hypertables — replacing the
+  MinIO walks earlier decoder PRs named as a follow-up. CCTP +
+  Rozo are the simplest cases (stateless decoders, one
+  consumer.Event per source row, single target table); Soroswap
+  skim handles the two-tuple topic shape (`SoroswapPair` prefix
+  in `topic_0_sym`, skim symbol in `topic_1_xdr` — byte-equality
+  filter in the callback). Comet (multi-row per op for
+  join/exit), Phoenix (per-action correlation buffer), and Blend
+  (18 topics across 3 tables) need more work and are tracked as
+  follow-ups. Supporting machinery:
   `sorobanevents.Reconstruct(Row)` rebuilds an `events.Event`
   from a stored row (round-trip-tested vs Capture);
   `Store.StreamSorobanEvents(ctx, from, to, contracts, topics,
