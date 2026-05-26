@@ -188,6 +188,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "phoenix-backfill: %v\n", err)
 			return 1
 		}
+	case "blend-backfill":
+		if err := blendBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "blend-backfill: %v\n", err)
+			return 1
+		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)

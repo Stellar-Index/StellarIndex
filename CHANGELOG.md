@@ -17,16 +17,16 @@ against.
 
 ### Added
 
-- **`ratesengine-ops {cctp,rozo,soroswap-skim,comet-liquidity,phoenix}-backfill`
+- **`ratesengine-ops {cctp,rozo,soroswap-skim,comet-liquidity,phoenix,blend}-backfill`
   subcommands (ADR-0029 §"SQL-backfill from soroban_events").**
-  Five of six per-source backfill subcommands that re-feed
-  soroban_events rows through the live Go decoders to populate
-  per-source hypertables — replacing the MinIO walks earlier
-  decoder PRs named as a follow-up. CCTP + Rozo are the simplest
-  cases (stateless decoders, one consumer.Event per source row,
-  single target table); Soroswap skim + Comet liquidity handle
-  the two-tuple topic shape (prefix in `topic_0_sym`, event kind
-  in `topic_1_xdr` — byte-equality filter in the callback). Comet
+  Complete per-source backfill set that re-feeds soroban_events
+  rows through the live Go decoders to populate per-source
+  hypertables — replacing the MinIO walks earlier decoder PRs
+  named as a follow-up. CCTP + Rozo are the simplest cases
+  (stateless decoders, one consumer.Event per source row, single
+  target table); Soroswap skim + Comet liquidity handle the
+  two-tuple topic shape (prefix in `topic_0_sym`, event kind in
+  `topic_1_xdr` — byte-equality filter in the callback). Comet
   also filters out swap-kind rows since they already populate
   `trades` via live ingest. Phoenix is the most complex: its
   decoder buffers 3-5 events per action across four actions
@@ -35,8 +35,12 @@ against.
   field set is complete. Feeding events in
   (ledger_close_time, ledger, tx_hash, op_index) order keeps the
   buffer's age-based eviction quiet — orphans only fire on
-  genuinely-incomplete groups. Blend (18 topics across 3 tables)
-  remains as a follow-up. Supporting machinery:
+  genuinely-incomplete groups. Blend has the widest fan-out: 20
+  topics dispatch into three target tables (blend_positions,
+  blend_emissions, blend_admin). Auction events (the legacy
+  directional-price signal already covered by blend_auctions via
+  live ingest) are deliberately NOT backfilled by `blend-backfill`.
+  Supporting machinery:
   `sorobanevents.Reconstruct(Row)` rebuilds an `events.Event`
   from a stored row (round-trip-tested vs Capture);
   `Store.StreamSorobanEvents(ctx, from, to, contracts, topics,
