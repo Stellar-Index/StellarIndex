@@ -173,6 +173,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "rozo-backfill: %v\n", err)
 			return 1
 		}
+	case "soroswap-skim-backfill":
+		if err := soroswapSkimBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "soroswap-skim-backfill: %v\n", err)
+			return 1
+		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)
