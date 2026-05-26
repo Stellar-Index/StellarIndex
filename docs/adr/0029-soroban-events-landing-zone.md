@@ -172,9 +172,12 @@ interprets these rows.
   parallel backfill chunks + replay-on-restart all collapse to
   the same final state with no de-dup work needed.
 - **Operator visibility**. The new sink exposes `WrittenCount /
-  DroppedCount / SkippedCount` counters — a sustained dropped
-  climb means the Postgres write throughput can't keep up with
-  the event rate, which surfaces cleanly in dashboards.
+  DroppedCount / SkippedCount` counters. Steady-state `DroppedCount`
+  is zero — the sink applies back-pressure on a full buffer
+  (PushEvent blocks until storage drains). Non-zero values only
+  appear in the shutdown-race window and are logged as
+  `WARN soroban-events: rows dropped at shutdown race`; investigate
+  any drops outside an intentional kill.
 
 ### Negative
 
@@ -188,12 +191,22 @@ interprets these rows.
   contract events in the ledger. Measured CPU impact is small (a
   few percent of dispatcher's total time) per local profiling;
   production confirmation comes after the rollout.
-- **Buffer-full drops are possible**. The async sink drops on
-  `len(ch) == buf` to keep the dispatcher hot path non-blocking.
-  In healthy steady-state the buffer should be near-empty (the
-  worker drains 1000-row batches every second); a sustained
-  drop counter indicates a Postgres outage or an unexpectedly
-  high event rate. Operators alert on the metric.
+- **Back-pressure can stall the dispatcher**. When the sink's
+  buffer is full PushEvent blocks (intentionally — see the
+  cursor-coherence note below); under sustained Postgres write
+  pressure the dispatcher slows down to match drain rate, which
+  manifests as a slower ledger-walk throughput rather than as
+  dropped rows. Operators should alert on ledger-walk velocity
+  falling well below archive-tip drift, not just on drop counters.
+- **Original buffer-full-drop design (superseded 2026-05-26).**
+  The first implementation dropped rows on full buffer to keep the
+  hot path non-blocking, and the backfill driver's per-ledger
+  cursor advance was independent of sink throughput. The
+  combination was unsafe: the 2026-05-26 fill walk dropped ~0.43%
+  of rows across 8 chunks (~13M rows) and the cursor advanced past
+  them, so `-resume` short-circuited and the dropped rows had no
+  recovery path. The fix made PushEvent block on full buffer so
+  the cursor cannot outrun durable writes.
 
 ### Alternatives considered
 
