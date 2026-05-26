@@ -137,6 +137,8 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		persistTrade(ctx, logger, store, e.Trade)
 	case comet.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+	case comet.LiquidityEvent:
+		persistCometLiquidity(ctx, logger, store, e)
 	case sdex.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 	case reflector.UpdateEvent:
@@ -353,6 +355,32 @@ func persistBlendDeleteAuction(ctx context.Context, logger *slog.Logger, store *
 	logger.Info("blend delete_auction ingested",
 		"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 		"ledger", e.Ledger)
+}
+
+func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e comet.LiquidityEvent) {
+	if err := store.InsertCometLiquidity(ctx, timescale.CometLiquidityEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		Kind:            timescale.CometLiquidityKind(e.Kind),
+		Caller:          e.Caller,
+		Token:           e.Token,
+		Amount:          e.Amount,
+		PoolAmountIn:    e.PoolAmountIn,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(comet.SourceName, "comet_liquidity").Inc()
+		logger.Error("insert Comet liquidity event failed",
+			"contract_id", e.ContractID, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, comet.SourceName)
+	logger.Debug("Comet liquidity event ingested",
+		"source", comet.SourceName, "kind", e.Kind,
+		"contract_id", e.ContractID, "ledger", e.Ledger,
+		"token", e.Token, "amount", e.Amount.String())
 }
 
 func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e cctp.Event) {

@@ -32,6 +32,35 @@ against.
   exclusion constraint matching ON CONFLICT specification`. Zero
   rows landed in soroban_events. rc.79 ships the matching ON
   CONFLICT clause so live ingest writes succeed.
+### Added
+
+- **Comet Balancer-v1 liquidity events end-to-end (#26).** The
+  decoder previously claimed only `(POOL, swap)` and silently
+  dropped every other Comet event under the shared `POOL`
+  namespace. It now decodes all five events the Soroban port of
+  Balancer-v1 emits — `swap` continues to land in `trades`; the
+  four liquidity-mutating kinds (`join_pool`, `exit_pool`,
+  `deposit`, `withdraw`) land in a new `comet_liquidity`
+  hypertable (migration 0042; PK includes `token` so multi-token
+  joins from the same op don't collide). Each row carries the
+  add/remove direction explicitly so dashboards `SUM(amount)
+  WHERE direction = 'add'` without re-encoding the kind mapping.
+  `withdraw` rows also carry `pool_amount_in` — the BPT (pool-
+  share) token count burned in exchange for the underlying.
+  Documented in `internal/sources/comet/README.md`. Verified
+  2026-05-26 against upstream `comet-contracts-v1` `main`: the
+  EVM-Balancer-v1 admin events (`bind` / `rebind` / `unbind` /
+  `finalize` / `gulp` / `set_swap_fee` / `set_controller` /
+  `set_public_swap`) are NOT in the Stellar port — either the
+  function doesn't exist or it's storage-only with no event
+  publication. BPT `transfer` events go through the SEP-41
+  standard token-event surface and are already claimed by
+  `internal/sources/sep41_supply` when the pool is in scope.
+  Historical fill plan: walk `soroban_events` (migration 0041,
+  rc.78) for the pre-rc back-window — a `ratesengine-ops
+  comet-backfill` subcommand wrapping `decodeLiquidityEvent` is
+  the cleanest path and is tracked as a follow-up. Updated wasm
+  audit at `docs/operations/wasm-audits/comet.md`.
 
 ## [v0.5.0-rc.78] — 2026-05-26
 

@@ -9,20 +9,42 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/scval"
 )
 
-// cometTopicArity is the topic-count on every Comet event:
-// [Symbol("POOL"), Symbol("<event_name>")]. Anything other than 2 is
-// a schema change we don't claim.
-const cometTopicArity = 2
-
-// classifySwap reports whether this is a (POOL, swap) event. The
-// decoder v1 only handles swaps; other Comet events (join_pool,
-// exit_pool, deposit, withdraw) would widen this predicate as
-// follow-ups add their own decode paths.
-func classifySwap(e *events.Event) bool {
+// classify reports the Comet event kind on a (POOL, <kind>) tuple,
+// or empty string if the topic isn't a Comet POOL event we
+// recognise. Returns one of EventSwap / EventJoinPool / EventExitPool
+// / EventDeposit / EventWithdraw on success.
+//
+// Topic[0] == POOL is the namespace; topic[1] is the event name. The
+// decoder runs this in the hot path of every Soroban event the
+// dispatcher routes, so it's pure byte-equality against the
+// pre-encoded TopicSymbol* blobs — no SCVal parsing.
+func classify(e *events.Event) string {
 	if len(e.Topic) < cometTopicArity {
-		return false
+		return ""
 	}
-	return e.Topic[0] == TopicSymbolPool && e.Topic[1] == TopicSymbolSwap
+	if e.Topic[0] != TopicSymbolPool {
+		return ""
+	}
+	switch e.Topic[1] {
+	case TopicSymbolSwap:
+		return EventSwap
+	case TopicSymbolJoinPool:
+		return EventJoinPool
+	case TopicSymbolExitPool:
+		return EventExitPool
+	case TopicSymbolDeposit:
+		return EventDeposit
+	case TopicSymbolWithdraw:
+		return EventWithdraw
+	}
+	return ""
+}
+
+// classifySwap is the legacy swap-only predicate. Retained for the
+// existing test pin set; new code uses `classify` and dispatches on
+// the returned kind.
+func classifySwap(e *events.Event) bool {
+	return classify(e) == EventSwap
 }
 
 // decodeSwap converts one (POOL, swap) Comet event into a
@@ -32,7 +54,7 @@ func classifySwap(e *events.Event) bool {
 // no pool registry.
 //
 // SwapEvent body (verified against
-// comet-contracts/contracts/src/c_pool/event.rs:6-13 +
+// comet-contracts-v1/contracts/src/c_pool/event.rs:6-13 +
 // call_logic/pool.rs:184-191):
 //
 //	Map {
@@ -95,6 +117,188 @@ type swapFields struct {
 	TokenOut  string // strkey
 	AmountIn  canonical.Amount
 	AmountOut canonical.Amount
+}
+
+// liquidityFields holds the body fields shared by the four
+// liquidity-mutating events. Not every field is present on every
+// kind — see the per-kind decode functions for which fields each
+// body actually carries. `PoolAmountIn` is withdraw-only; it stays
+// zero (an empty Amount) on the other three kinds.
+type liquidityFields struct {
+	Caller       string
+	Token        string // strkey — token_in for join/deposit, token_out for exit/withdraw
+	Amount       canonical.Amount
+	PoolAmountIn canonical.Amount // withdraw-only; BPT-share count burned
+}
+
+// decodeJoinPool converts one (POOL, join_pool) event body into a
+// liquidityFields struct. Body shape from event.rs JoinEvent:
+//
+//	Map { caller: Address, token_in: Address, token_amount_in: i128 }
+//
+// One event per token on a multi-token join — an N-token pool join
+// yields N events. The decoder treats each independently; grouping
+// is a downstream concern (the comet_liquidity table includes
+// (ledger, tx_hash) so a reserve-tracker can re-aggregate).
+func decodeJoinPool(e *events.Event) (liquidityFields, error) {
+	return decodeLiquiditySingleToken(e, "token_in", "token_amount_in")
+}
+
+// decodeExitPool converts one (POOL, exit_pool) event body. Body
+// shape from event.rs ExitEvent:
+//
+//	Map { caller: Address, token_out: Address, token_amount_out: i128 }
+//
+// Like join_pool, multi-token exit emits one event per token.
+func decodeExitPool(e *events.Event) (liquidityFields, error) {
+	return decodeLiquiditySingleToken(e, "token_out", "token_amount_out")
+}
+
+// decodeDeposit converts one (POOL, deposit) event body. Body shape
+// from event.rs DepositEvent (single-asset LP add):
+//
+//	Map { caller: Address, token_in: Address, token_amount_in: i128 }
+//
+// Identical wire shape to JoinEvent; the topic[1] is what
+// distinguishes the kind for the row.
+func decodeDeposit(e *events.Event) (liquidityFields, error) {
+	return decodeLiquiditySingleToken(e, "token_in", "token_amount_in")
+}
+
+// decodeWithdraw converts one (POOL, withdraw) event body. Body
+// shape from event.rs WithdrawEvent (single-asset LP remove):
+//
+//	Map { caller: Address, token_out: Address,
+//	      token_amount_out: i128, pool_amount_in: i128 }
+//
+// Distinct from the other three: also carries `pool_amount_in`,
+// the count of BPT (pool-share) tokens burned in exchange for the
+// withdrawn underlying. Surfaced for downstream reserve-tracking
+// + total-supply derivation.
+func decodeWithdraw(e *events.Event) (liquidityFields, error) {
+	fields, err := decodeLiquiditySingleToken(e, "token_out", "token_amount_out")
+	if err != nil {
+		return liquidityFields{}, err
+	}
+	// pool_amount_in is the BPT-share count burned. Parse and stash
+	// on the same struct; the writer column is NULL on the other
+	// kinds.
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("parse body: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("body not a Map: %w", err)
+	}
+	poolAmtSv, err := scval.MustMapField(entries, "pool_amount_in")
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("missing pool_amount_in: %w", err)
+	}
+	poolAmt, err := scval.AsAmountFromI128(poolAmtSv)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("pool_amount_in: %w", err)
+	}
+	fields.PoolAmountIn = poolAmt
+	return fields, nil
+}
+
+// decodeLiquiditySingleToken is the shared body decoder for
+// (join_pool / exit_pool / deposit / withdraw) — every variant
+// shares the (caller, <token field>, <amount field>) trio; only
+// the field names differ. Decode-by-name per
+// docs/architecture/contract-schema-evolution.md keeps us resilient
+// to future contract upgrades that add new fields.
+func decodeLiquiditySingleToken(e *events.Event, tokenField, amountField string) (liquidityFields, error) {
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("parse body: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("body not a Map: %w", err)
+	}
+
+	callerSv, err := scval.MustMapField(entries, "caller")
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("missing caller: %w", err)
+	}
+	caller, err := scval.AsAddressStrkey(callerSv)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("caller: %w", err)
+	}
+
+	tokenSv, err := scval.MustMapField(entries, tokenField)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("missing %s: %w", tokenField, err)
+	}
+	token, err := scval.AsAddressStrkey(tokenSv)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("%s: %w", tokenField, err)
+	}
+
+	amountSv, err := scval.MustMapField(entries, amountField)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("missing %s: %w", amountField, err)
+	}
+	amount, err := scval.AsAmountFromI128(amountSv)
+	if err != nil {
+		return liquidityFields{}, fmt.Errorf("%s: %w", amountField, err)
+	}
+
+	return liquidityFields{Caller: caller, Token: token, Amount: amount}, nil
+}
+
+// decodeLiquidityEvent dispatches one (POOL, <kind>) event into a
+// typed LiquidityEvent row. Returns ErrNotCometEvent if the event
+// isn't one of the four liquidity variants (swap is handled by
+// decodeSwap upstream of this).
+func decodeLiquidityEvent(e *events.Event, closedAt time.Time) (LiquidityEvent, error) {
+	kind := classify(e)
+	if kind == "" {
+		return LiquidityEvent{}, ErrNotCometEvent
+	}
+	var (
+		fields liquidityFields
+		k      LiquidityKind
+		err    error
+	)
+	switch kind {
+	case EventJoinPool:
+		k = LiquidityJoinPool
+		fields, err = decodeJoinPool(e)
+	case EventExitPool:
+		k = LiquidityExitPool
+		fields, err = decodeExitPool(e)
+	case EventDeposit:
+		k = LiquidityDeposit
+		fields, err = decodeDeposit(e)
+	case EventWithdraw:
+		k = LiquidityWithdraw
+		fields, err = decodeWithdraw(e)
+	default:
+		// swap goes through decodeSwap; anything else is not a
+		// liquidity variant.
+		return LiquidityEvent{}, ErrNotCometEvent
+	}
+	if err != nil {
+		return LiquidityEvent{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
+	}
+	if fields.Amount.Sign() <= 0 {
+		return LiquidityEvent{}, fmt.Errorf("%w: amount=%s", ErrNonPositiveAmounts, fields.Amount)
+	}
+	return LiquidityEvent{
+		ContractID:   e.ContractID,
+		Ledger:       e.Ledger,
+		TxHash:       e.TxHash,
+		OpIndex:      uint32(e.OperationIndex),
+		ObservedAt:   closedAt,
+		Kind:         k,
+		Caller:       fields.Caller,
+		Token:        fields.Token,
+		Amount:       fields.Amount,
+		PoolAmountIn: fields.PoolAmountIn,
+	}, nil
 }
 
 // ─── SCVal decoders ─────────────────────────────────────────────

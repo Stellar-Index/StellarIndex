@@ -1,13 +1,15 @@
 package comet
 
 import (
+	"time"
+
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
 )
 
 // TradeEvent is the [consumer.Event] Comet's Decoder emits on a
-// successful swap decode. The indexer's event sink type-switches on
-// this and calls store.InsertTrade — same shape as
+// successful (POOL, swap) decode. The indexer's event sink type-
+// switches on this and calls store.InsertTrade — same shape as
 // soroswap.TradeEvent / aquarius.TradeEvent / phoenix.TradeEvent.
 type TradeEvent struct {
 	Trade canonical.Trade
@@ -19,5 +21,39 @@ func (TradeEvent) EventKind() string { return "comet.trade" }
 // Source implements [consumer.Event].
 func (TradeEvent) Source() string { return SourceName }
 
-// Compile-time check.
-var _ consumer.Event = TradeEvent{}
+// LiquidityEvent is the [consumer.Event] Comet's Decoder emits on a
+// successful (POOL, join_pool | exit_pool | deposit | withdraw)
+// decode. One row per emitted event — a multi-token join_pool / exit_pool
+// produces one LiquidityEvent per participating token (Comet emits one
+// event per token in the loop, as documented in pool.rs).
+//
+// The indexer's event sink type-switches on this and calls
+// store.InsertCometLiquidity to land it in the `comet_liquidity`
+// hypertable (migration 0042). PoolAmountIn is populated only for
+// withdraw events (the count of BPT-share tokens burned for the
+// underlying withdrawn); the writer translates a zero / unset
+// Amount to SQL NULL on the other three kinds.
+type LiquidityEvent struct {
+	ContractID   string
+	Ledger       uint32
+	TxHash       string
+	OpIndex      uint32
+	ObservedAt   time.Time
+	Kind         LiquidityKind
+	Caller       string
+	Token        string
+	Amount       canonical.Amount
+	PoolAmountIn canonical.Amount // withdraw-only; zero on join/exit/deposit
+}
+
+// EventKind implements [consumer.Event].
+func (LiquidityEvent) EventKind() string { return "comet.liquidity" }
+
+// Source implements [consumer.Event].
+func (LiquidityEvent) Source() string { return SourceName }
+
+// Compile-time checks.
+var (
+	_ consumer.Event = TradeEvent{}
+	_ consumer.Event = LiquidityEvent{}
+)
