@@ -89,6 +89,20 @@ against.
   'withdraw_liquidity','bond','unbond')` fed through the same
   per-action correlation buffer — pending the per-WASM-hash decoder
   audit log being extended to enumerate the new field strings.
+### Added
+
+- **Blend money-market decoder (#25, per [[project_every_event_principle]]).**
+  Extended `internal/sources/blend/decode.go::classify()` to handle
+  the 18 event topics that were silently dropped: supply,
+  withdraw, supply_collateral, withdraw_collateral, borrow, repay,
+  flash_loan, gulp, claim, bad_debt, defaulted_debt,
+  reserve_emission_update, gulp_emissions, set_admin, update_pool,
+  queue_set_reserve, cancel_set_reserve, set_reserve, set_status,
+  deploy. New hypertables `blend_positions`, `blend_emissions`,
+  `blend_admin` via migration 0042. Live ingest captures every
+  event going forward; historical fill via `INSERT … SELECT FROM
+  soroban_events WHERE contract_id IN (<blend pool contracts>)
+  AND topic_0_sym IN (…)` once the soroban_events fill walk lands.
 
 ## [v0.5.0-rc.78] — 2026-05-26
 ### Added

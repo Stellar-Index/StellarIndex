@@ -156,6 +156,10 @@ func auctionDataScVal(bid, lot xdr.ScVal, block uint32) xdr.ScVal {
 // ─── classify ───────────────────────────────────────────────────
 
 func TestClassify(t *testing.T) {
+	// classify() is the auction-only fast path retained for the
+	// legacy auction dispatcher. Money-market / admin topics
+	// return "" through this entry point; the extended switch
+	// lives in classifyAny() (see TestClassifyAny).
 	cases := []struct {
 		name string
 		top0 string
@@ -164,7 +168,8 @@ func TestClassify(t *testing.T) {
 		{"new_auction", scval.MustEncodeSymbol("new_auction"), EventNewAuction},
 		{"fill_auction", scval.MustEncodeSymbol("fill_auction"), EventFillAuction},
 		{"delete_auction", scval.MustEncodeSymbol("delete_auction"), EventDeleteAuction},
-		{"unrelated", scval.MustEncodeSymbol("borrow"), ""},
+		{"borrow_returns_empty_in_legacy_classify", scval.MustEncodeSymbol("borrow"), ""},
+		{"unrelated", scval.MustEncodeSymbol("not_a_blend_topic"), ""},
 		{"empty", "", ""},
 	}
 	for _, tc := range cases {
@@ -354,11 +359,39 @@ func TestDecoder_Matches(t *testing.T) {
 		top0 string
 		want bool
 	}{
+		// Auction events.
 		{TopicSymbolNewAuction, true},
 		{TopicSymbolFillAuction, true},
 		{TopicSymbolDeleteAuction, true},
-		{TopicSymbolBorrow, false}, // money-market, not in this PR
-		{TopicSymbolDeploy, false}, // factory event, separate adapter
+
+		// Money-market events (#25).
+		{TopicSymbolSupply, true},
+		{TopicSymbolWithdraw, true},
+		{TopicSymbolSupplyCollateral, true},
+		{TopicSymbolWithdrawCollateral, true},
+		{TopicSymbolBorrow, true},
+		{TopicSymbolRepay, true},
+		{TopicSymbolFlashLoan, true},
+
+		// Emission / credit-risk events.
+		{TopicSymbolGulp, true},
+		{TopicSymbolClaim, true},
+		{TopicSymbolReserveEmissions, true},
+		{TopicSymbolGulpEmissions, true},
+		{TopicSymbolBadDebt, true},
+		{TopicSymbolDefaultedDebt, true},
+
+		// Admin / status / factory events.
+		{TopicSymbolSetAdmin, true},
+		{TopicSymbolUpdatePool, true},
+		{TopicSymbolQueueSetReserve, true},
+		{TopicSymbolCancelSetReserve, true},
+		{TopicSymbolSetReserve, true},
+		{TopicSymbolSetStatus, true},
+		{TopicSymbolDeploy, true},
+
+		// Non-Blend topic + empty.
+		{scval.MustEncodeSymbol("not_a_blend_topic"), false},
 		{"", false},
 	}
 	for _, tc := range cases {

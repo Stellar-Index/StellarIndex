@@ -29,30 +29,42 @@ func NewDecoder() *Decoder { return &Decoder{} }
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Returns true for any
-// auction-event topic[0] symbol — `new_auction`, `fill_auction`,
-// `delete_auction`. Money-market / admin / credit-risk events are
-// classified separately (their topic constants exist in events.go
-// but aren't matched here yet — they land in follow-up PRs).
+// Matches implements [dispatcher.Decoder]. Returns true for every
+// Blend pool / pool-factory event the decoder handles — the three
+// auction events PLUS the 18 money-market / emission / credit-risk
+// / admin events covered by #25. classifyAny() returns the
+// canonical Event* name for any matched topic[0], so a non-empty
+// classification is the match.
+//
+// The `deploy` event is included — it's emitted by the pool-factory
+// contract (a different ContractID than the pool emitters), but
+// the dispatcher's contract-id filtering is done by topic byte-
+// equality, not by contract address (consistent with how Comet's
+// shared `POOL` topic is handled per CLAUDE.md). Pool-vs-factory
+// distinction lands at the storage layer (different table).
 func (*Decoder) Matches(ev events.Event) bool {
-	switch classify(&ev) {
-	case EventNewAuction, EventFillAuction, EventDeleteAuction:
-		return true
-	default:
-		return false
-	}
+	return classifyAny(&ev) != ""
 }
 
 // Decode implements [dispatcher.Decoder]. Returns one consumer.Event
 // per successful decode. Body shape varies per event; the kind is
 // preserved in the returned struct's [Event.EventKind] string so
 // the sink can demultiplex.
-func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
+//
+// The three auction events return the legacy NewAuctionEvent /
+// FillAuctionEvent / DeleteAuctionEvent structs (sink-side
+// blend_auctions table unchanged). The 18 money-market / emission
+// / admin events return PositionEvent / EmissionEvent / AdminEvent
+// — the sink writes them to blend_positions / blend_emissions /
+// blend_admin via the migration-0042 schemas.
+func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:gocyclo,gocognit,funlen,cyclop // one case per Blend event kind; flattening makes the dispatch table easier to audit against pool/src/events.rs.
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
 		return nil, err
 	}
-	switch classify(&ev) {
+	kind := classifyAny(&ev)
+	switch kind {
+	// ─── Auction events (legacy; blend_auctions table) ────────
 	case EventNewAuction:
 		out, err := decodeNewAuction(&ev, closedAt)
 		if err != nil {
@@ -71,6 +83,99 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{out}, nil
+
+	// ─── Money-market position events (blend_positions) ───────
+	case EventSupply, EventWithdraw,
+		EventSupplyCollateral, EventWithdrawCollateral,
+		EventBorrow, EventRepay, EventFlashLoan:
+		out, err := decodePositionEvent(&ev, kind, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+
+	// ─── Emission / credit-risk events (blend_emissions) ──────
+	case EventGulp:
+		out, err := decodeGulp(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventClaim:
+		out, err := decodeClaim(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventReserveEmissions:
+		out, err := decodeReserveEmissionUpdate(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventGulpEmissions:
+		out, err := decodeGulpEmissions(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventBadDebt:
+		out, err := decodeBadDebt(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventDefaultedDebt:
+		out, err := decodeDefaultedDebt(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+
+	// ─── Admin / status / factory events (blend_admin) ────────
+	case EventSetAdmin:
+		out, err := decodeSetAdmin(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventUpdatePool:
+		out, err := decodeUpdatePool(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventQueueSetReserve:
+		out, err := decodeQueueSetReserve(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventCancelSetReserve:
+		out, err := decodeCancelSetReserve(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventSetReserve:
+		out, err := decodeSetReserve(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventSetStatus:
+		out, err := decodeSetStatus(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventDeploy:
+		out, err := decodeDeploy(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+
 	default:
 		return nil, fmt.Errorf("%w: topic[0]=%q", ErrNotBlendEvent, firstTopicHex(&ev))
 	}

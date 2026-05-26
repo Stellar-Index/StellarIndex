@@ -225,6 +225,12 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		persistBlendFillAuction(ctx, logger, store, e)
 	case blend.DeleteAuctionEvent:
 		persistBlendDeleteAuction(ctx, logger, store, e)
+	case blend.PositionEvent:
+		persistBlendPositionEvent(ctx, logger, store, e)
+	case blend.EmissionEvent:
+		persistBlendEmissionEvent(ctx, logger, store, e)
+	case blend.AdminEvent:
+		persistBlendAdminEvent(ctx, logger, store, e)
 	case cctp.Event:
 		persistCCTPEvent(ctx, logger, store, e)
 	case rozo.Event:
@@ -387,6 +393,59 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 		"source", comet.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"token", e.Token, "amount", e.Amount.String())
+}
+
+// persistBlendPositionEvent routes one money-market position event
+// (supply / withdraw / supply_collateral / withdraw_collateral /
+// borrow / repay / flash_loan) to the blend_positions hypertable.
+func persistBlendPositionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.PositionEvent) {
+	if err := store.InsertBlendPositionEvent(ctx, e); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_position").Inc()
+		logger.Error("insert blend position event failed",
+			"pool", e.Pool, "kind", e.Kind, "user", e.User, "asset", e.Asset,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, blend.SourceName)
+	logger.Debug("blend position event ingested",
+		"pool", e.Pool, "kind", e.Kind, "user", e.User, "asset", e.Asset,
+		"token_amount", e.TokenAmount.String(), "ledger", e.Ledger)
+}
+
+// persistBlendEmissionEvent routes one emission / credit-risk event
+// (gulp / claim / reserve_emission_update / gulp_emissions /
+// bad_debt / defaulted_debt) to the blend_emissions hypertable.
+func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.EmissionEvent) {
+	if err := store.InsertBlendEmissionEvent(ctx, e); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_emission").Inc()
+		logger.Error("insert blend emission event failed",
+			"pool", e.Pool, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, blend.SourceName)
+	logger.Debug("blend emission event ingested",
+		"pool", e.Pool, "kind", e.Kind, "ledger", e.Ledger)
+}
+
+// persistBlendAdminEvent routes one admin / pool-config / pool-
+// factory lifecycle event (set_admin / update_pool /
+// queue_set_reserve / cancel_set_reserve / set_reserve / set_status
+// / deploy) to the blend_admin hypertable. The deploy event from
+// the pool-factory drives runtime pool enumeration.
+func persistBlendAdminEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.AdminEvent) {
+	if err := store.InsertBlendAdminEvent(ctx, e); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_admin").Inc()
+		logger.Error("insert blend admin event failed",
+			"contract_id", e.ContractID, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, blend.SourceName)
+	logger.Info("blend admin event ingested",
+		"contract_id", e.ContractID, "kind", e.Kind,
+		"admin", e.Admin, "target", e.Target, "asset", e.Asset,
+		"ledger", e.Ledger)
 }
 
 func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e cctp.Event) {
