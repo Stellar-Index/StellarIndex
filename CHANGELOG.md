@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.81] — 2026-05-26
+
 ### Added
 
 - **`ratesengine-ops {cctp,rozo,soroswap-skim,comet-liquidity,phoenix,blend}-backfill`
