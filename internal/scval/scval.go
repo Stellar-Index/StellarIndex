@@ -239,6 +239,17 @@ func AsBytes(sv xdr.ScVal) ([]byte, error) {
 	return []byte(*sv.Bytes), nil
 }
 
+// AsBool returns the bool value from sv, wrapping ErrScValType if sv
+// is not a Bool. Used by decoders reading Soroban #[contracttype]
+// structs whose fields include a `bool` (e.g. Blend's ReserveConfig
+// `enabled` flag).
+func AsBool(sv xdr.ScVal) (bool, error) {
+	if sv.Type != xdr.ScValTypeScvBool {
+		return false, fmt.Errorf("%w: want Bool, got %s", ErrScValType, sv.Type.String())
+	}
+	return bool(*sv.B), nil
+}
+
 // NewU32 builds an ScVal wrapping a uint32, suitable for passing as
 // a contract-invocation argument (e.g. factory.all_pairs(i: u32)).
 // Sibling of the existing Encode* helpers but returns the ScVal

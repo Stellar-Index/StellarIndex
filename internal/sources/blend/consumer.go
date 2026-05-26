@@ -18,6 +18,12 @@ const (
 	NewAuctionEventKind    = "blend.new_auction"
 	FillAuctionEventKind   = "blend.fill_auction"
 	DeleteAuctionEventKind = "blend.delete_auction"
+
+	// Money-market event kinds (#25). Each carries the canonical
+	// (per-pool, per-user, per-asset) position-changing event.
+	PositionEventKind = "blend.position"
+	EmissionEventKind = "blend.emission"
+	AdminEventKind    = "blend.admin"
 )
 
 // EventKind / Source on the per-event types implements
@@ -34,9 +40,25 @@ func (FillAuctionEvent) Source() string    { return SourceName }
 func (DeleteAuctionEvent) EventKind() string { return DeleteAuctionEventKind }
 func (DeleteAuctionEvent) Source() string    { return SourceName }
 
+// Money-market event types (#25). The decoder emits one of these
+// per money-market / credit-risk / admin event; the sink's
+// type-switch routes each to the matching blend_positions /
+// blend_emissions / blend_admin writer.
+func (PositionEvent) EventKind() string { return PositionEventKind }
+func (PositionEvent) Source() string    { return SourceName }
+
+func (EmissionEvent) EventKind() string { return EmissionEventKind }
+func (EmissionEvent) Source() string    { return SourceName }
+
+func (AdminEvent) EventKind() string { return AdminEventKind }
+func (AdminEvent) Source() string    { return SourceName }
+
 // Compile-time checks that each event type satisfies consumer.Event.
 var (
 	_ consumer.Event = NewAuctionEvent{}
 	_ consumer.Event = FillAuctionEvent{}
 	_ consumer.Event = DeleteAuctionEvent{}
+	_ consumer.Event = PositionEvent{}
+	_ consumer.Event = EmissionEvent{}
+	_ consumer.Event = AdminEvent{}
 )

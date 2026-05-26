@@ -43,20 +43,33 @@ The auction-event surface — the primary signal per the proposal:
 - ✅ WASM audit for the Pool Factory + deployed pools (Task #53,
   evidence at [`docs/operations/wasm-audits/blend.md`](../../../docs/operations/wasm-audits/blend.md);
   11 contracts, 3 unique WASMs, no mid-life upgrades observed).
+- ✅ Money-market / credit-risk / admin / factory event surface
+  (Task #25, per the every-event principle). Adds the 18 topics
+  the auction-era decoder dropped: supply, withdraw,
+  supply_collateral, withdraw_collateral, borrow, repay,
+  flash_loan, gulp, claim, bad_debt, defaulted_debt,
+  reserve_emission_update, gulp_emissions, set_admin,
+  update_pool, queue_set_reserve, cancel_set_reserve,
+  set_reserve, set_status, deploy. Storage in three per-purpose
+  hypertables: `blend_positions` (the 7 position-changing
+  events), `blend_emissions` (gulp / claim / emissions /
+  bad_debt / defaulted_debt), `blend_admin` (admin / config /
+  pool-factory). Migration `0042_create_blend_money_market`.
 
 ### Still deferred
 
-- Money-market events (supply / borrow / repay / flash_loan) →
-  positions storage; credit-risk events; admin events.
+- Historical replay over `[Blend genesis, present)` — the live
+  ingest captures every event going forward; bulk-fill the
+  pre-rc.78 range via `INSERT INTO blend_positions /
+  blend_emissions / blend_admin SELECT … FROM soroban_events
+  WHERE contract_id IN (<pool contracts>) AND topic_0_sym IN
+  (…)` once the `soroban_events` walk lands (ADR-0029 — table
+  exists, walk job is in flight).
 - Reflector cross-validation (per proposal: "monitor Blend's
   oracle price consumption via Reflector to cross-validate that
   our aggregated prices are consistent with what the protocol is
   using"). Out of scope until a customer asks for the
   cross-check signal.
-
-The topic constants for every Blend event are defined in
-`events.go` already so the decoder switch + classifier expand
-without churn.
 
 ## Mainnet contracts
 
