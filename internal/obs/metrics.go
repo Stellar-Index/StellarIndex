@@ -40,6 +40,7 @@ func init() {
 		SourceOrphanEventsTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
+		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
 		DiscoverySkippedHitsTotal,
 		SourceInsertErrorsTotal,
@@ -83,6 +84,9 @@ func init() {
 		VerifyArchiveMismatchesTotal,
 
 		StripePlatformSyncErrorsTotal,
+
+		PostgresPingTotal,
+		PostgresPingFailureStreak,
 
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
@@ -279,6 +283,31 @@ var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 		Help: "External poller invocations, labelled by source and outcome (success | error | skipped).",
 	},
 	[]string{"source", "outcome"},
+)
+
+// CEXStreamDisconnectTotal — per-source, per-reason counter of CEX
+// WebSocket stream disconnects. Reason is one of:
+//
+//   - reset           — TCP RST surfaced as "connection reset by peer"
+//   - broken_pipe     — write after peer hung up
+//   - timeout         — read/handshake timed out
+//   - dial            — handshake failed (DNS, TLS, refused, etc.)
+//   - server_requested — bitstamp's bts:request_reconnect frame
+//   - other           — EOF, framing, or anything else
+//
+// F-0029 (audit-2026-05-27): r1 logs showed Binance + Bitstamp
+// reconnecting every 6-12 min with backoff pinned at 60 s. Pre-fix
+// there was no signal for the disconnect cadence — operators read
+// raw WARN lines off Loki. Sustained non-zero rate with reason="reset"
+// likely means we're missing PING/PONG (handled by coder/websocket
+// v1.8.14, but configurable to disable via OnPingReceived returning
+// false) or the host TCP keepalive is off (now enabled, F-0029).
+var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_cex_stream_disconnect_total",
+		Help: "CEX WebSocket stream disconnects by source and reason (reset | broken_pipe | timeout | dial | server_requested | other). F-0029.",
+	},
+	[]string{"source", "reason"},
 )
 
 // ExternalPollerLastSuccessUnix — per-source UNIX-seconds timestamp
@@ -1040,6 +1069,48 @@ var VerifyArchiveMismatchesTotal = prometheus.NewCounterVec(
 		Help: "Chain breaks, sequence gaps, and checkpoint mismatches per verify-archive chunk_idx + reason (chain|sequence|checkpoint).",
 	},
 	[]string{"chunk_idx", "reason"},
+)
+
+// PostgresPingTotal — counter of resilience probes the indexer's
+// `watchPostgresPing` goroutine fires (every 60 s) against the
+// Timescale pool. Outcome label is `ok` for a successful Ping and
+// `error` for any failure mode (timeout, connection refused, dead
+// pool, network blip).
+//
+// F-0151 (audit-2026-05-26): the 2026-05-26 cascade left the
+// indexer's *sql.DB pool with stale conns AFTER postgres@15-main
+// recovered. Live ingest silently stalled for ~14 h until a manual
+// restart. The pool now retires conns every `PoolConnMaxLifetime`
+// regardless of liveness; this counter is the OBSERVABILITY signal
+// so the next cascade surfaces in minutes via
+// `ratesengine_postgres_ping_failing` instead of hours of silent
+// drift.
+//
+// Alert on `rate(ratesengine_postgres_ping_total{outcome="error"}[5m]) > 0`
+// for 2 m → page. A handful of failures during postgres restart is
+// expected; a sustained non-zero rate means the pool is wedged.
+var PostgresPingTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_postgres_ping_total",
+		Help: "Indexer postgres-resilience ping outcomes. Sustained error rate ⇒ pool is dead and the lifetime safety-net hasn't refreshed yet (F-0151).",
+	},
+	[]string{"outcome"},
+)
+
+// PostgresPingFailureStreak — gauge tracking the consecutive
+// failed-ping count. Resets to 0 on a successful ping. Used by the
+// indexer's resilience goroutine to log a structured warning at
+// every 3-failure threshold, and exposed so dashboards can chart
+// the live streak length alongside the cumulative
+// [PostgresPingTotal].
+//
+// Pair with the rate-based alert: a sustained streak > 0 for >2 m
+// is the page signal. F-0151.
+var PostgresPingFailureStreak = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "ratesengine_postgres_ping_failure_streak",
+		Help: "Indexer postgres-ping consecutive failure count (resets to 0 on the next success). F-0151.",
+	},
 )
 
 // StripePlatformSyncErrorsTotal — counter of failures inside the

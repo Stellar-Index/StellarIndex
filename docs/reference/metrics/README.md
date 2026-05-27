@@ -157,6 +157,23 @@ Bitstamp). The `skipped` outcome covers the per-poller cooldown path
 so absence-of-success alerting isn't masked by the poller silently
 respecting a backoff window.
 
+### `ratesengine_cex_stream_disconnect_total`
+
+Counter, labels `source`, `reason` ∈ {reset, broken_pipe, timeout, dial, server_requested, other}.
+
+Per-source, per-reason count of CEX WebSocket stream disconnects from
+the Binance and Bitstamp streaming sources. `reset` is the most common
+on r1 (Binance proactively recycles connections every 6–12 min); a
+sustained rate of `dial` or `timeout` means the venue is unreachable
+or our keepalive isn't recovering the socket. Combined with
+`ratesengine_external_poller_last_success_unix` (when the streamer
+emits trades the runner forwards to the poller's success channel),
+operators can distinguish "stream churning but data flowing" from
+"stream stuck and we're losing the venue". F-0029 (audit-2026-05-27)
+fix landed alongside this metric — bounded 5–60 s exponential backoff
+with a healthy-connection reset path, plus TCP keepalive on the
+dialer.
+
 ### `ratesengine_external_poller_last_success_unix`
 
 Gauge, label `source`.
@@ -788,6 +805,40 @@ timeout). No alert wired today; the existing
 failing-rate signal, latency degradation surfaces in the
 dashboard.
 
+### `ratesengine_postgres_ping_total`
+
+Counter, label `outcome` (`ok` / `error`).
+
+Emitted by the indexer's `watchPostgresPing` resilience goroutine
+every 60 s. Probes the *sql.DB pool with `PingContext` (5 s
+timeout). `ok` = healthy round-trip; `error` = any failure mode
+(timeout, connection refused, dead pool, DSN misconfig).
+
+**Why this exists (F-0151 / 2026-05-26 cascade):** when
+postgres@15-main crashed and recovered during the disk-full SEV,
+the indexer's pool held stale conns and silently failed writes
+for ~14 h until a manual restart. The pool now retires conns every
+30 min via `SetConnMaxLifetime` — automatic safety-net — and this
+counter is the live observability signal so the next cascade
+surfaces in minutes via `ratesengine_postgres_ping_failing`
+instead of hours of silent drift.
+
+Alert: `rate(ratesengine_postgres_ping_total{outcome="error"}[5m]) > 0.5`
+for 2 m → page. Brief failures during a postgres restart are
+expected; sustained means the pool is wedged.
+
+### `ratesengine_postgres_ping_failure_streak`
+
+Gauge, no labels.
+
+Consecutive failed-ping count from the same `watchPostgresPing`
+goroutine. Resets to 0 on the next success. Pair with
+`ratesengine_postgres_ping_total` on dashboards to chart the live
+streak alongside the cumulative outcome counts. The indexer logs a
+structured error at `streak == 3` (`pool may be wedged`); search
+the journal for that string when triaging the
+`ratesengine_postgres_ping_failing` page. F-0151.
+
 ### `ratesengine_stripe_platform_sync_errors_total`
 
 Counter, label `operation` (`get_account` / `upsert_subscription` /
@@ -811,6 +862,15 @@ per-key rate-limit lift failure.
 
 ## Changelog
 
+- 2026-05-27 — added postgres-pool resilience metrics
+  (`ratesengine_postgres_ping_total` +
+  `ratesengine_postgres_ping_failure_streak`) emitted by the
+  indexer's `watchPostgresPing` goroutine. Closes the F-0151
+  observability gap surfaced by the 2026-05-26 cascade (dead
+  pool, ~14 h silent drift before manual restart). Pairs with
+  the new `ratesengine_postgres_ping_failing` page alert in
+  `configs/prometheus/rules.r1/storage.yml` +
+  `deploy/monitoring/rules/storage.yml`.
 - 2026-05-13 — added freeze-recovery-sweep latency histogram
   (`ratesengine_anomaly_freeze_recovery_sweep_duration_seconds`).
   Pairs with the existing `_sweeps_total` counter; surfaces
