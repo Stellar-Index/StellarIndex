@@ -325,7 +325,24 @@ F-0028 will track the soroban_events lag separately)
   - All within expected CAGG refresh windows; ADJUST: this
     finding may be `invalid` once verified against CAGG
     refresh schedule.
-- **Disposition:** `needs_evidence`
+- **Disposition:** `invalid` (verified 2026-05-28). Live r1
+  query against `timescaledb_information.continuous_aggregates`
+  ⨯ `jobs` ⨯ `job_stats` confirms every refresh job is running
+  within its `schedule_interval`:
+
+  | CAGG | schedule | last refresh | since |
+  | --- | --- | --- | --- |
+  | `prices_1m` | 30s | 23:53:19 UTC | 21s |
+  | `prices_15m` | 5m | 23:52:42 UTC | 58s |
+  | `prices_1h` | 15m | 23:42:08 UTC | 11m33s |
+  | `prices_4h` | 1h | 23:42:22 UTC | 11m18s |
+  | `prices_1d` | 6h | 21:42:01 UTC | 2h11m |
+
+  All `last_run_status = Success`. The audit observation of
+  "lag" was the CAGG's natural bucket-closure delay
+  (`end_offset` + the time until the next refresh window),
+  not a refresh-job failure. The finding's own ADJUST note
+  pre-empted this disposition.
 
 #### F-0018 — DeFindex source has documented partial-event coverage (violates project_every_event_principle)
 
