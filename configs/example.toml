@@ -174,12 +174,16 @@ cursor_store_scheme   = "postgres"
   # no data; the divergence signal stays empty until a key is
   # provisioned.
   #
-  # poll_interval = "60s" overrides the connector's built-in default
-  # cadence. CoinGecko's free tier doesn't need a higher cadence;
-  # the indexer's external poller registers the source class and
-  # the divergence service consults it at the aggregator's tick.
+  # poll_interval overrides the connector's built-in default cadence.
+  # The default is 300s (5 min) — at one batched /simple/price call
+  # per tick × 288 ticks/day this burns ~288 calls/day, well below
+  # the demo tier's 10,000-call/day ceiling (F-0030). Bump higher
+  # when sharing the IP cap with other CG consumers; the divergence
+  # signal tolerates 5-min-old references gracefully because the
+  # service caches reference quotes between polls.
   [external.coingecko]
   enabled = false   # /simple/price — needs COINGECKO_DEMO_API_KEY env (post-2024)
+  # poll_interval = "300s"   # default; demo-tier-safe
 
   [external.coinmarketcap]
   enabled = false

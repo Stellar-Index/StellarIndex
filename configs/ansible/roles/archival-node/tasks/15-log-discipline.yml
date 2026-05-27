@@ -142,3 +142,16 @@
   notify:
     - Restart systemd-journald
   tags: [log-discipline, journald]
+
+- name: Install /etc/logrotate.d/ratesengine
+  # Wave-2 fix for F-0009/F-0015 from 2026-05-26 audit. Rotates
+  # /var/log/ratesengine/*.log weekly + on 500M size. Uses
+  # copytruncate so long-running ratesengine-ops processes
+  # (backfill/replay) holding open FDs don't end up writing to the
+  # renamed file forever.
+  ansible.builtin.copy:
+    src: ratesengine.logrotate
+    dest: /etc/logrotate.d/ratesengine
+    owner: root
+    group: root
+    mode: "0644"

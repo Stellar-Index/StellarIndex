@@ -23,6 +23,10 @@ against.
 
 - 2026-05-10-redis-writes-blocked-disk-full post-mortem: checked off the Prometheus root-FS alert follow-up (shipped in #1229 as `ratesengine_node_root_disk_warning` + `_full`) and the recovery-sequence runbook follow-up (`docs/operations/runbooks/redis-write-blocked-disk-full.md` landed in #1228). Remaining open follow-ups: `postgresql-common` logrotate audit and WASM-audit stderr-capture relocation.
 
+### Fixed
+
+- CoinGecko poller default cadence bumped from 60s to 300s; the connector already uses the `/simple/price` batch endpoint, so daily call volume drops from ~1,440/day to ~288/day with ample headroom for the market-cap refresher and divergence reference under a shared demo-tier IP cap. Closes the sustained "poller error … http 429 — backing off 59m59s" loop observed live on r1 (F-0030).
+
 ## [v0.5.0-rc.82] — 2026-05-27
 
 Audit-2026-05-26 Wave-0 + Wave-1 batch. Closes the F-0039 cascade
