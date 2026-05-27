@@ -3254,3 +3254,19 @@ claim was wrong; record the corrected understanding.
   the shell.
 - **Disposition:** `open` Wave-2. Single-quote the URL more
   defensively in the smoke script.
+
+#### F-0158 — galexie-archive trailing-partition writes stuck since 2026-05-25 00:20
+
+- **Severity:** `high` (data-integrity — archive is the durable copy per ADR-0002)
+- **Title:** `/var/lib/minio/galexie-archive/FC42F7FF--62720000-62783999/` contains only **416 of 64000 expected ledger files** (62720000-62720415), all timestamped May 25 00:20. `galexie-live` for the same partition has 43,408 files covering up to current tip 62763407. Galexie service is running healthily and writing to `-live` but `-archive` writes stopped 2 days ago.
+- **Workstream:** W18, W21
+- **Impact:** the durable archive (used by verify-archive Tier A and any backfill that uses `S3BucketArchive` default) is missing 2 days of ledger LCM files. Verify-archive walks against this bucket would hit "missing file" errors past ledger 62720415.
+- **Disposition:** `open` Wave 0. Investigate galexie config for the dual-bucket-write topology — is there a separate writer per bucket? Did the archive-side writer crash silently? Either restart it or re-fill `[62720416, current_tip]` from `galexie-live` via a `mc cp --recursive` between the two buckets.
+
+#### F-0159 — `ratesengine-ops backfill` silently completes with 0-row processing when bucket has no files
+
+- **Severity:** `medium` (UX / observability of operator tool)
+- **Title:** Ran `ratesengine-ops backfill -from 62746862 -to 62757524 -parallel 2` against `-bucket galexie-archive` (default) which has no files in that range. The backfill logged `chunk complete ... ledgers=5331` and `ledgers=5332` and exited cleanly in 200ms. Reality: zero ledgers walked, zero events processed, zero cursors written. The `ledgers=N` log field is the chunk's [from,to] range size, NOT the count of ledgers actually walked from the bucket.
+- **Workstream:** W13
+- **Impact:** operator gets a false-positive "backfill complete" signal. Easy to assume the gap is filled when it isn't.
+- **Disposition:** `open` Wave 1. The chunk should fail loudly when the ledgerstream walker returns 0 callbacks across a non-zero range, OR the log field should be renamed to `chunk_size_ledgers` and a separate `ledgers_walked` counter should be reported.
