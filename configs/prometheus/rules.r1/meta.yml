@@ -38,6 +38,143 @@ groups:
             good reload are NOT live. Investigate with
             `amtool check-config`.
 
+      # ─── F-0085 (audit-2026-05-26): exporter-down meta-alerts ─────
+      # The 2026-05-10 SEV-2 cascade exposed a blindness pattern: the
+      # `ratesengine_redis_writes_blocked` alert watches
+      # `redis_rdb_last_bgsave_status == 0`, but during the cascade
+      # redis_exporter itself was DOWN — so the metric never reached
+      # Prometheus, the alert evaluated `absent_gauge == 0` (no_data),
+      # and never fired. The dependent alert was structurally unable
+      # to surface the incident.
+      #
+      # These four meta-alerts close that gap for every exporter
+      # whose absence would silence a downstream alert family:
+      #   redis_exporter      → cache.yml + redis-writes-blocked
+      #   postgres_exporter   → storage.yml pg_* + lock-table family
+      #   pgbackrest_exporter → backup-failed + backup-none-24h
+      #   minio               → galexie-archive + archive-completeness
+      #
+      # Pattern matches the F-0107 validated shape: `up == 0` catches
+      # the exporter being scraped-but-failing, and
+      # `absent_over_time(up{...}[5m]) == 1` catches the scrape target
+      # disappearing from service-discovery entirely (so the up series
+      # itself never exists). Either condition for 2m surfaces the
+      # blindness within one alert-evaluation cycle of an exporter
+      # failure — well before a downstream metric-dependent alert
+      # would otherwise notice.
+
+      - alert: ratesengine_redis_exporter_down
+        expr: |
+          up{job="redis_exporter"} == 0
+          OR
+          absent_over_time(up{job="redis_exporter"}[5m]) == 1
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: monitoring
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/exporter-down.md
+        annotations:
+          summary: "redis_exporter scrape target is down — cascade-blind for any alert that depends on it"
+          description: |
+            The redis_exporter Prometheus scrape target has been down
+            for 2+ minutes. While it is down, every alert that depends
+            on its metrics is silently blind — most importantly
+            `ratesengine_redis_writes_blocked`
+            (`redis_rdb_last_bgsave_status == 0`), the alert family in
+            `configs/prometheus/rules.r1/cache.yml`, and any
+            cache-miss / latency rule keyed on `redis_*`. This is the
+            exact failure mode F-0085 isolated from the 2026-05-10
+            SEV-2 incident: the metric-producing exporter died first,
+            so the dependent alert evaluated `absent_gauge == 0`
+            (no_data) and never fired. Follow the runbook to restart
+            and verify the exporter; once scraping resumes the
+            dependent alert families will re-evaluate on real data.
+
+      - alert: ratesengine_postgres_exporter_down
+        expr: |
+          up{job="postgres_exporter"} == 0
+          OR
+          absent_over_time(up{job="postgres_exporter"}[5m]) == 1
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: monitoring
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/exporter-down.md
+        annotations:
+          summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
+          description: |
+            The postgres_exporter Prometheus scrape target has been
+            down for 2+ minutes. While it is down, every alert that
+            depends on `pg_*` metrics in
+            `configs/prometheus/rules.r1/storage.yml` is silently
+            blind — including `ratesengine_timescale_primary_down`,
+            `ratesengine_timescale_replica_lag`,
+            `ratesengine_timescale_lock_table_pressure`, and
+            `ratesengine_timescale_connections_saturated`. This is
+            the F-0085 blindness pattern surfaced by the 2026-05-10
+            SEV-2 incident: the metric-producing exporter died first,
+            so the dependent alert evaluated `absent_gauge == 0`
+            (no_data) and never fired. Follow the runbook to restart
+            and verify the exporter.
+
+      - alert: ratesengine_pgbackrest_exporter_down
+        expr: |
+          up{job="pgbackrest_exporter"} == 0
+          OR
+          absent_over_time(up{job="pgbackrest_exporter"}[5m]) == 1
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: monitoring
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/exporter-down.md
+        annotations:
+          summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
+          description: |
+            The pgbackrest_exporter Prometheus scrape target has been
+            down for 2+ minutes. While it is down,
+            `ratesengine_timescale_backup_failed` and
+            `ratesengine_timescale_backup_none_24h`
+            (`configs/prometheus/rules.r1/storage.yml`) are silently
+            blind — both depend on
+            `ratesengine_pgbackrest_last_success_unix`, which only
+            this exporter publishes. A 24h RPO breach during exporter
+            downtime would not surface until the exporter came back.
+            This is the F-0085 blindness pattern from the 2026-05-10
+            SEV-2 incident. Follow the runbook to restart and verify
+            the exporter.
+
+      - alert: ratesengine_minio_exporter_down
+        expr: |
+          up{job="minio"} == 0
+          OR
+          absent_over_time(up{job="minio"}[5m]) == 1
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: monitoring
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/exporter-down.md
+        annotations:
+          summary: "MinIO scrape target is down — cascade-blind for any alert that depends on it"
+          description: |
+            The MinIO Prometheus scrape target has been down for 2+
+            minutes. While it is down, every alert that depends on
+            MinIO cluster metrics (galexie-archive health,
+            archive-completeness, archive-publish, and any
+            object-storage usage / capacity rule) is silently blind.
+            Because Galexie writes ledger metadata to MinIO and the
+            indexer reads it back (ADR-0002), prolonged MinIO
+            invisibility risks a repeat of the F-0085 blindness
+            pattern from the 2026-05-10 SEV-2 — the metric-producing
+            target dies first, so dependent alerts evaluate
+            `absent_gauge == 0` (no_data) and never fire. Common
+            causes here are a missing bearer-token file
+            (`/etc/prometheus/minio.token` returning 401) and MinIO
+            itself being stopped. Follow the runbook.
+
       # Deadmansswitch is inverse-logic: it fires constantly; AlertManager
       # routes it to an external receiver that watches for its heartbeat.
       # When the heartbeat stops, that receiver pages — which catches
