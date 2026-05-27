@@ -1,0 +1,34 @@
+[Unit]
+Description=pgBackRest Exporter (Prometheus)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pgbackrest_exporter
+Group=pgbackrest_exporter
+# pgbackrest_exporter shells out to the `pgbackrest info --output=json`
+# CLI to read repo state. The repo path + stanza list come from
+# /etc/pgbackrest/pgbackrest.conf (provisioned by the pgbackrest role
+# once F-1294 lands); until then the exporter still starts but reports
+# zero stanzas.
+ExecStart=/usr/local/bin/pgbackrest_exporter \
+  --web.listen-address=127.0.0.1:9854 \
+  --web.endpoint=/metrics \
+  --collect.interval=600
+
+Restart=on-failure
+RestartSec=10s
+
+# Lock it down — only reads pgbackrest CLI output + writes prometheus
+# metrics over a loopback socket.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

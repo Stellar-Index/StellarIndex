@@ -91,9 +91,12 @@ scrape_configs:
   # corresponding alert family.
 
   # redis_exporter — port 9121, installed by configs/ansible/roles/
-  # redis-sentinel/tasks/07-monitoring.yml (a redis_exporter unit
-  # runs alongside redis-server). Feeds cache.yml + the
-  # redis-writes-blocked + cache-miss-rate-high alert families.
+  # archival-node/tasks/16-prometheus-exporters.yml on r1 (single-node
+  # archival-node shape uses the `prometheus-redis-exporter` Debian
+  # package; the redis-sentinel role's own 07-monitoring.yml ships a
+  # tarball-based exporter on the Sentinel-cluster boxes). Feeds
+  # cache.yml + the redis-writes-blocked + cache-miss-rate-high alert
+  # families. Closed F-0152 on 2026-05-27.
   - job_name: redis_exporter
     static_configs:
       - targets: [localhost:9121]
@@ -112,25 +115,25 @@ scrape_configs:
         labels:
           host: r1
 
-  # postgres_exporter — port 9187 is the convention. NOT installed
-  # by ansible today; once an operator adds the role + service, this
-  # scrape job consumes its metrics for storage.yml's pg_* alerts.
-  # Listed here as a placeholder so the operator doesn't also need
-  # to edit the scrape config when adding the exporter.
+  # postgres_exporter — port 9187, installed by configs/ansible/roles/
+  # archival-node/tasks/16-prometheus-exporters.yml (Debian package
+  # `prometheus-postgres-exporter`, peer-auth on the local Unix socket
+  # as the `postgres` superuser). Feeds storage.yml's pg_* alerts.
+  # Closed F-0152 on 2026-05-27.
   - job_name: postgres_exporter
     static_configs:
       - targets: [localhost:9187]
         labels:
           host: r1
           service: postgres
-    # Don't page on this being absent — it's known-pending until the
-    # operator deploys the exporter. The metric absence alert fires
-    # via meta.yml when it matters.
     honor_labels: true
 
-  # pgbackrest_exporter — port 9854 is the upstream default. NOT
-  # installed by ansible today; placeholder slot so the existing
-  # backup-related alerts have a target name to bind to.
+  # pgbackrest_exporter — port 9854 (upstream default), installed by
+  # configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml
+  # (no Debian package; pinned upstream release from
+  # https://github.com/woblerr/pgbackrest_exporter/releases — version
+  # in `pgbackrest_exporter_version` default, SHA in inventory).
+  # Closed F-0152 on 2026-05-27.
   - job_name: pgbackrest_exporter
     static_configs:
       - targets: [localhost:9854]

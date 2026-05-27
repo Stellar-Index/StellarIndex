@@ -502,6 +502,20 @@ node_exporter_port:      9100
 
 core_exporter_port:      9473
 
+# ───── Prometheus exporters (F-0152, audit-2026-05-26) ───────────────
+# redis_exporter + postgres_exporter ship as Debian packages
+# (prometheus-redis-exporter / prometheus-postgres-exporter) — no
+# version pinning here; the apt-source distribution release governs.
+#
+# pgbackrest_exporter has no Debian package; pinned upstream tarball
+# from https://github.com/woblerr/pgbackrest_exporter/releases. SHA
+# must be set in inventory (same fail-fast pattern as F-1280/F-1285/
+# F-1291/F-1293). Bump `pgbackrest_exporter_version` here when the
+# operator wants a newer release; re-paste the matching SHA into
+# r1.secrets.yml / non-secret inventory.
+pgbackrest_exporter_version: "0.18.0"
+# pgbackrest_exporter_release_sha256: <required; set in inventory>
+
 # ───── SSH hardening ─────────────────────────────────────────────────
 admin_ssh_keys: []
 ssh_permit_root_login: "prohibit-password"
