@@ -622,6 +622,15 @@ func (r apiHistoryAdapter) HistoryPointsInRange(ctx context.Context, pair c.Pair
 	return out, nil
 }
 
+// OHLCSeries is required by v1.HistoryReader (F-0071 multi-bar). The
+// integration test for /v1/history doesn't exercise this path; the
+// stub returns an empty series so the adapter implements the full
+// interface without dragging in the production-side OHLCSeries
+// re-bucketing logic.
+func (r apiHistoryAdapter) OHLCSeries(_ context.Context, _ c.Pair, _ string, _, _ time.Time, _ int) ([]v1.OHLCSeriesBar, error) {
+	return nil, nil
+}
+
 type apiMarketsAdapter struct{ s *timescale.Store }
 
 func (r apiMarketsAdapter) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
