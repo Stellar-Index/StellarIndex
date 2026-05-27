@@ -38,7 +38,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       # The generated index.html is committed; we don't regenerate
       # here (CI drift check guards correctness). Just stage what's
