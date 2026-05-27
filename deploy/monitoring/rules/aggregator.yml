@@ -18,6 +18,8 @@ groups:
       - alert: ratesengine_aggregator_silent
         expr: |
           sum(rate(ratesengine_aggregator_vwap_writes_total[5m])) == 0
+          OR
+          absent_over_time(ratesengine_aggregator_vwap_writes_total[10m]) == 1
         for: 5m
         labels:
           severity: page

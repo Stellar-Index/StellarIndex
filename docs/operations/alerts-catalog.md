@@ -275,6 +275,12 @@ override.
 | `ratesengine_alertmanager_config_bad` | `alertmanager_config_last_reload_successful` | == 0 | P2 | [alertmanager-bad-config](runbooks/alertmanager-bad-config.md) |
 | `ratesengine_deadmansswitch` | `vector(1)` constant | MUST fire every minute | **P1** if receiver stops seeing it | [deadmansswitch](runbooks/deadmansswitch.md) |
 | `prometheus_down` (TSDB corruption) | systemd `prometheus.service` failed | exit-code != 0; runs ad-hoc, not a rule | **P1** | [prometheus-tsdb-corruption](runbooks/prometheus-tsdb-corruption.md) |
+| `ratesengine_redis_exporter_down` | `up{job="redis_exporter"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) |
+| `ratesengine_postgres_exporter_down` | `up{job="postgres_exporter"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) |
+| `ratesengine_pgbackrest_exporter_down` | `up{job="pgbackrest_exporter"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) |
+| `ratesengine_minio_exporter_down` | `up{job="minio"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) |
+
+The four `*_exporter_down` rules close the F-0085 cascade-blindness gap surfaced by the 2026-05-26 audit — each exporter feeds an alert family whose detection silently fails if the exporter dies first. Adding the meta-alert ensures any future cascade surfaces immediately even when the metric-producing exporter is the same process tree dying alongside the failure it's meant to detect.
 
 The `deadmansswitch` alert is inverse-logic: AlertManager routes it
 to a receiver that expects it every minute. If the receiver stops
