@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -224,18 +227,23 @@ func TestCompare_EvenCountMedian(t *testing.T) {
 // ─── CoinGecko reference tests ─────────────────────────────────────
 
 // TestCoinGecko_HappyPath — typical /simple/price response decodes,
-// returns the mapped price.
+// returns the mapped price. The reference batches every configured
+// (id, quote) pair into a single request, so we assert the URL
+// contains the expected id + quote (alongside others from the
+// merged defaults) rather than equality.
 func TestCoinGecko_HappyPath(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Confirm we hit the right path with the right query.
+		// Confirm we hit the right path with a batched query.
 		if r.URL.Path != "/simple/price" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if r.URL.Query().Get("ids") != "stellar" {
-			t.Errorf("ids = %q", r.URL.Query().Get("ids"))
+		ids := r.URL.Query().Get("ids")
+		quotes := r.URL.Query().Get("vs_currencies")
+		if !strings.Contains(ids, "stellar") {
+			t.Errorf("ids = %q, want to contain 'stellar'", ids)
 		}
-		if r.URL.Query().Get("vs_currencies") != "usd" {
-			t.Errorf("vs_currencies = %q", r.URL.Query().Get("vs_currencies"))
+		if !strings.Contains(quotes, "usd") {
+			t.Errorf("vs_currencies = %q, want to contain 'usd'", quotes)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"stellar": {"usd": 0.07142}}`)
@@ -291,8 +299,10 @@ func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 // silently empty even though Compare's "ok" counter incremented.
 func TestCoinGecko_DefaultIDMapCoversCommonPairs(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("ids"); got != "stellar" {
-			t.Errorf("ids = %q, want stellar (default IDMap missed XLM)", got)
+		// The batched request includes every default id; just
+		// assert stellar made it onto the wire.
+		if got := r.URL.Query().Get("ids"); !strings.Contains(got, "stellar") {
+			t.Errorf("ids = %q, want to contain stellar (default IDMap missed XLM)", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"stellar":{"usd":0.16475}}`))
@@ -379,6 +389,196 @@ func TestCoinGecko_NameStable(t *testing.T) {
 	if ref.Name() != "coingecko" {
 		t.Errorf("Name() = %q, want coingecko", ref.Name())
 	}
+}
+
+// TestCoinGecko_BatchedAcrossPairs — F-0030 follow-up. Multiple
+// per-pair LookupPrice calls within the batch TTL window MUST
+// coalesce into a single HTTP request covering every configured
+// (id, quote) pair. Before this fix, the orchestrator's per-tick
+// loop issued one HTTP call per pair (9 pairs × 2 ticks/min × 1440
+// min/day = 25,920 calls/day, well past CoinGecko's demo-tier
+// 10K/day limit). After: 1 call per tick (~2,880/day).
+func TestCoinGecko_BatchedAcrossPairs(t *testing.T) {
+	var hits int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		// Verify the batched request carries every requested id
+		// + quote in one shot.
+		ids := r.URL.Query().Get("ids")
+		quotes := r.URL.Query().Get("vs_currencies")
+		for _, want := range []string{"stellar", "bitcoin", "ethereum"} {
+			if !strings.Contains(ids, want) {
+				t.Errorf("batched ids %q missing %q", ids, want)
+			}
+		}
+		for _, want := range []string{"usd", "eur"} {
+			if !strings.Contains(quotes, want) {
+				t.Errorf("batched vs_currencies %q missing %q", quotes, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"stellar":  {"usd": 0.16, "eur": 0.14},
+			"bitcoin":  {"usd": 67000, "eur": 62000},
+			"ethereum": {"usd": 4100,  "eur": 3800}
+		}`))
+	}))
+	defer ts.Close()
+
+	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+		BaseURL: ts.URL,
+		IDMap: map[string]string{
+			"native":     "stellar",
+			"crypto:BTC": "bitcoin",
+			"crypto:ETH": "ethereum",
+		},
+		QuoteMap: map[string]string{"fiat:USD": "usd", "fiat:EUR": "eur"},
+		// Long TTL so all six lookups land in the same batch window.
+		BatchTTL: time.Hour,
+	})
+
+	usd := mustParseAsset(t, "fiat:USD")
+	eur := mustParseAsset(t, "fiat:EUR")
+	btc := mustParseAsset(t, "crypto:BTC")
+	eth := mustParseAsset(t, "crypto:ETH")
+	xlm := canonical.NativeAsset()
+
+	pairs := []canonical.Pair{
+		{Base: xlm, Quote: usd},
+		{Base: xlm, Quote: eur},
+		{Base: btc, Quote: usd},
+		{Base: btc, Quote: eur},
+		{Base: eth, Quote: usd},
+		{Base: eth, Quote: eur},
+	}
+	for _, p := range pairs {
+		price, err := ref.LookupPrice(context.Background(), p, time.Now())
+		if err != nil {
+			t.Fatalf("LookupPrice(%s): %v", p, err)
+		}
+		if price <= 0 {
+			t.Errorf("LookupPrice(%s) = %g, want > 0", p, price)
+		}
+	}
+
+	got := atomic.LoadInt64(&hits)
+	if got != 1 {
+		t.Errorf("HTTP requests = %d, want 1 (6 LookupPrice calls must batch into 1 HTTP call)", got)
+	}
+}
+
+// TestCoinGecko_LookupPricesBatched — the public LookupPrices entry
+// point is the explicit batched call site. Verify it issues a
+// single HTTP request and returns one entry per known pair.
+func TestCoinGecko_LookupPricesBatched(t *testing.T) {
+	var hits int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"stellar": {"usd": 0.16},
+			"bitcoin": {"usd": 67000}
+		}`))
+	}))
+	defer ts.Close()
+
+	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+		BaseURL:  ts.URL,
+		IDMap:    map[string]string{"native": "stellar", "crypto:BTC": "bitcoin"},
+		QuoteMap: map[string]string{"fiat:USD": "usd"},
+		BatchTTL: time.Hour,
+	})
+
+	usd := mustParseAsset(t, "fiat:USD")
+	btc := mustParseAsset(t, "crypto:BTC")
+	pairs := []canonical.Pair{
+		{Base: canonical.NativeAsset(), Quote: usd},
+		{Base: btc, Quote: usd},
+	}
+	got, err := ref.LookupPrices(context.Background(), pairs)
+	if err != nil {
+		t.Fatalf("LookupPrices: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("LookupPrices returned %d entries, want 2: %+v", len(got), got)
+	}
+	if atomic.LoadInt64(&hits) != 1 {
+		t.Errorf("HTTP requests = %d, want 1", atomic.LoadInt64(&hits))
+	}
+}
+
+// TestCoinGecko_BatchTTLExpires — once the batch TTL elapses, the
+// next LookupPrice MUST re-fetch (otherwise we'd serve stale prices
+// indefinitely on a long-running process).
+func TestCoinGecko_BatchTTLExpires(t *testing.T) {
+	var hits int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"stellar": {"usd": 0.16}}`))
+	}))
+	defer ts.Close()
+
+	// Hand-cranked clock: each call to nowFn returns the next slot.
+	clock := newFakeClock()
+	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+		BaseURL:  ts.URL,
+		IDMap:    map[string]string{"native": "stellar"},
+		QuoteMap: map[string]string{"fiat:USD": "usd"},
+		BatchTTL: 30 * time.Second,
+		NowFn:    clock.now,
+	})
+
+	// Tick 1.
+	clock.set(time.Unix(1_000, 0))
+	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now()); err != nil {
+		t.Fatalf("LookupPrice tick 1: %v", err)
+	}
+	// Within TTL — must reuse cache.
+	clock.set(time.Unix(1_010, 0))
+	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now()); err != nil {
+		t.Fatalf("LookupPrice tick 1 (cached): %v", err)
+	}
+	// Past TTL — must refetch.
+	clock.set(time.Unix(1_100, 0))
+	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now()); err != nil {
+		t.Fatalf("LookupPrice tick 2: %v", err)
+	}
+
+	if got := atomic.LoadInt64(&hits); got != 2 {
+		t.Errorf("HTTP requests = %d, want 2 (one fetch per TTL window)", got)
+	}
+}
+
+// fakeClock is a tiny hand-cranked time source for the TTL test.
+// Lives here rather than a shared helper because nothing else in
+// the divergence test suite needs deterministic time today.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{t: time.Unix(0, 0)} }
+
+func (c *fakeClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
+}
+
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func mustParseAsset(t *testing.T, s string) canonical.Asset {
+	t.Helper()
+	a, err := canonical.ParseAsset(s)
+	if err != nil {
+		t.Fatalf("ParseAsset(%q): %v", s, err)
+	}
+	return a
 }
 
 // panickingReference panics on every LookupPrice. Used to verify
