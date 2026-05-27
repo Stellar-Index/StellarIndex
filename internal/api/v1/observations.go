@@ -122,26 +122,8 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// holding the connection open until the upstream LB cuts it.
 	obsCtx, obsCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer obsCancel()
-	trades, err := s.computeObservations(obsCtx, pair, source, aggregate)
-	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(obsCtx, err) {
-			s.logger.Warn("computeObservations deadline exceeded",
-				"asset", asset.String(), "quote", quote.String(), "source", source)
-			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/observations-timeout",
-				"Observations query timed out", http.StatusServiceUnavailable,
-				"the trades hypertable scan didn't return in 8s; retry shortly.")
-			return
-		}
-		s.logger.Error("LatestTradePerSource failed",
-			"err", err, "asset", asset.String(), "quote", quote.String(),
-			"source", source)
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+	trades, ok := s.fetchObservationsOrWriteError(w, r, obsCtx, pair, source, aggregate, asset, quote)
+	if !ok {
 		return
 	}
 
@@ -194,6 +176,51 @@ func (s *Server) writeEmptyObservationsFor(w http.ResponseWriter, r *http.Reques
 		flags.Triangulated = s.observationsHaveTriangulatedPrice(triCtx, pair)
 	}
 	writeJSON(w, []TradeRow{}, flags)
+}
+
+// fetchObservationsOrWriteError runs computeObservations and translates
+// any error into the right problem+json (client-abort silent return,
+// timeout 503, cache-unavailable 503, generic internal 500). Returns
+// (trades, true) on success; (_, false) means a response was already
+// written and the caller must return. Extracted from handleObservations
+// to keep its gocognit complexity below the 20 ceiling after the
+// cache-unavailable branch was added for F-0090.
+func (s *Server) fetchObservationsOrWriteError(
+	w http.ResponseWriter, r *http.Request,
+	obsCtx context.Context,
+	pair canonical.Pair, source, aggregate string,
+	asset, quote canonical.Asset,
+) ([]canonical.Trade, bool) {
+	trades, err := s.computeObservations(obsCtx, pair, source, aggregate)
+	if err == nil {
+		return trades, true
+	}
+	if clientAborted(r, err) {
+		return nil, false
+	}
+	if handlerTimedOut(obsCtx, err) {
+		s.logger.Warn("computeObservations deadline exceeded",
+			"asset", asset.String(), "quote", quote.String(), "source", source)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/observations-timeout",
+			"Observations query timed out", http.StatusServiceUnavailable,
+			"the trades hypertable scan didn't return in 8s; retry shortly.")
+		return nil, false
+	}
+	if IsCacheUnavailable(err) {
+		s.logger.Warn("computeObservations cache unavailable",
+			"err", err, "asset", asset.String(), "quote", quote.String(),
+			"source", source)
+		writeCacheUnavailableProblem(w, r)
+		return nil, false
+	}
+	s.logger.Error("LatestTradePerSource failed",
+		"err", err, "asset", asset.String(), "quote", quote.String(),
+		"source", source)
+	writeProblem(w, r,
+		"https://api.ratesengine.net/errors/internal",
+		"Internal error", http.StatusInternalServerError, "")
+	return nil, false
 }
 
 // observationsHaveTriangulatedPrice is the best-effort lookup that

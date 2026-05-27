@@ -63,6 +63,11 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 				"the per-pool auction + user aggregates didn't return in 8s; retry shortly.")
 			return
 		}
+		if IsCacheUnavailable(err) {
+			s.logger.Warn("ListBlendPools cache unavailable", "err", err)
+			writeCacheUnavailableProblem(w, r)
+			return
+		}
 		s.logger.Error("ListBlendPools failed", "err", err)
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/internal",
