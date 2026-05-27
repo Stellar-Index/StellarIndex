@@ -153,6 +153,22 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 	logger.Info("storage connected")
 
+	// Resilience-ping goroutine. Probes the *sql.DB pool every
+	// 60 s and emits `ratesengine_postgres_ping_total` +
+	// `ratesengine_postgres_ping_failure_streak`. This is the
+	// observability signal for F-0151 (2026-05-26 cascade left
+	// dead conns in the pool for ~14 h after postgres@15-main
+	// recovered); the actual reconnect path is the pool's
+	// `PoolConnMaxLifetime` safety-net, which forces a re-dial
+	// every 30 min regardless of liveness. The two together
+	// cap a cascade-gap at the lifetime interval AND surface it
+	// to alerting in minutes.
+	postgresPingStop, postgresPingDone := watchPostgresPing(rootCtx, store, logger.With("component", "postgres-ping"))
+	defer func() {
+		postgresPingStop()
+		<-postgresPingDone
+	}()
+
 	// USD-volume quote spec — wires on-chain DEX trades into
 	// usd_volume population per launch-readiness L2.2 phase 1.
 	// Operator declares which classic credits they trust as
@@ -797,6 +813,86 @@ func emitDiscoveryDropMetricDelta(prev, current uint64, logger *slog.Logger) uin
 		)
 	}
 	return current
+}
+
+// watchPostgresPing fires a [timescale.Store.PingContext] every
+// 60 s and emits the F-0151 resilience metrics. The actual
+// reconnect path lives in database/sql via
+// [timescale.PoolConnMaxLifetime]; this goroutine is the
+// OBSERVABILITY hook so a stuck pool surfaces in minutes via the
+// `ratesengine_postgres_ping_failing` alert instead of hours of
+// silent drift.
+//
+// Logs a structured warning when the consecutive-failure streak
+// crosses 3 (≈3 min). At that point the pool is almost certainly
+// wedged; the lifetime safety-net will refresh the next conn the
+// pool hands out, but the live signal is in this log line and the
+// metric.
+//
+// Returns (cancel, done) following the [watchDiscoveryDrops]
+// shape so main's shutdown sequence is uniform.
+func watchPostgresPing(parent context.Context, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+
+		var failures int
+		// Probe once immediately so the metric is non-empty
+		// before the first 60 s tick — gives a clean scrape
+		// at process boot.
+		failures = postgresPingProbe(ctx, store, logger, failures)
+		for {
+			select {
+			case <-ticker.C:
+				failures = postgresPingProbe(ctx, store, logger, failures)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return cancel, done
+}
+
+// postgresPingProbe runs a single ping cycle and returns the new
+// consecutive-failure count. Extracted from watchPostgresPing to
+// stay under the gocognit threshold.
+func postgresPingProbe(ctx context.Context, store *timescale.Store, logger *slog.Logger, prevFailures int) int {
+	pctx, pcancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pcancel()
+	if err := store.PingContext(pctx); err != nil {
+		failures := prevFailures + 1
+		obs.PostgresPingTotal.WithLabelValues("error").Inc()
+		obs.PostgresPingFailureStreak.Set(float64(failures))
+		logPostgresPingFailure(logger, err, failures)
+		return failures
+	}
+	if prevFailures > 0 && logger != nil {
+		logger.Info("postgres ping recovered", "previous_streak", prevFailures)
+	}
+	obs.PostgresPingTotal.WithLabelValues("ok").Inc()
+	obs.PostgresPingFailureStreak.Set(0)
+	return 0
+}
+
+// logPostgresPingFailure emits the per-failure log line. The
+// `streak == 3` threshold message is what operators grep for when
+// chasing F-0151 — "pool may be wedged" is the canonical string.
+func logPostgresPingFailure(logger *slog.Logger, err error, streak int) {
+	if logger == nil {
+		return
+	}
+	if streak == 3 {
+		logger.Error("postgres ping failed 3x — pool may be wedged",
+			"err", err,
+			"streak", streak,
+			"safety_net", "ConnMaxLifetime refresh pending",
+		)
+		return
+	}
+	logger.Warn("postgres ping failed", "err", err, "streak", streak)
 }
 
 // emitDiscoverySkipMetricDelta updates the skip counter without

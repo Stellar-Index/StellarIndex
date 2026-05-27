@@ -22,6 +22,35 @@ groups:
             within 60 s — if not, follow the manual-failover path in the
             runbook.
 
+      # F-0151 (audit-2026-05-26): the indexer's *sql.DB pool
+      # silently held dead conns for ~14 h after postgres@15-main
+      # crashed + recovered, until a manual indexer restart. The
+      # pool now retires conns every 30 min via
+      # `PoolConnMaxLifetime`; this alert is the LIVE signal so
+      # the next cascade surfaces in minutes instead of hours.
+      # The indexer's `watchPostgresPing` goroutine probes the
+      # pool every 60 s and increments
+      # `ratesengine_postgres_ping_total{outcome="error"}` per
+      # failure.
+      - alert: ratesengine_postgres_ping_failing
+        expr: rate(ratesengine_postgres_ping_total{outcome="error"}[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: page
+          team: ratesengine
+          component: storage
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/postgres-ping-failing.md
+        annotations:
+          summary: "Indexer postgres pool ping failing (F-0151)"
+          description: |
+            The indexer's resilience-ping goroutine is reporting
+            sustained Postgres ping failures (rate {{ $value }}/s
+            over the last 5 m). The pool's 30 min lifetime
+            safety-net will refresh dead conns automatically, but
+            until then writes are likely stalled. Check the
+            primary postgres unit and the indexer journal for the
+            `pool may be wedged` log line.
+
       - alert: ratesengine_timescale_replica_lag
         expr: pg_replication_lag_seconds > 5
         for: 2m

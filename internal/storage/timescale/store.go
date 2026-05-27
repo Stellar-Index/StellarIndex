@@ -61,29 +61,67 @@ func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 	s.usdVolumeFXResolver = r
 }
 
+// Pool-tuning constants. Exposed so [store_test.go] can assert
+// configurePool actually set them, and so operators reading the
+// audit register (F-0151) can see the live values without grepping
+// the function body.
+//
+// See [configurePool] for the rationale on each value.
+const (
+	// PoolMaxOpenConns caps total conns held by one indexer/api/
+	// aggregator binary. 25 is conservative; tune per deployment.
+	PoolMaxOpenConns = 25
+	// PoolMaxIdleConns caps idle conns kept in the pool between
+	// uses. Keeping a small idle floor avoids the connect-storm
+	// pattern on a cold cache.
+	PoolMaxIdleConns = 5
+	// PoolConnMaxLifetime is the full re-dial ceiling — every conn
+	// is retired this often regardless of liveness. This is the
+	// resilience net behind F-0151: the 2026-05-26 cascade left
+	// dead conns in the pool for ~14 h after the underlying
+	// postgres@15-main crashed and recovered, because nothing
+	// forced them to refresh. 30 min beats Patroni's typical
+	// rolling-restart interval AND bounds the longest cascade-gap
+	// to that interval.
+	PoolConnMaxLifetime = 30 * time.Minute
+	// PoolConnMaxIdleTime bounds the window where an idle conn the
+	// DB-side has already killed (pg_terminate_backend, firewall
+	// tcp-timeout, Patroni failover) might still be handed out.
+	// Without this, an idle conn can live until ConnMaxLifetime,
+	// forcing a retry at serve-time.
+	PoolConnMaxIdleTime = 5 * time.Minute
+)
+
+// configurePool applies the standard pool tunings to a freshly-
+// opened *sql.DB. Extracted so [store_test.go] can verify the
+// settings without booting a real postgres.
+//
+// F-0151 (2026-05-27 audit) drove the explicit constant naming +
+// extraction: the previous inline magic-numbers shipped correct
+// values but were invisible to anything except a reader of this
+// file, so a future refactor could silently drop them and the
+// connection-pool resilience would regress unnoticed.
+func configurePool(db *sql.DB) {
+	db.SetMaxOpenConns(PoolMaxOpenConns)
+	db.SetMaxIdleConns(PoolMaxIdleConns)
+	db.SetConnMaxLifetime(PoolConnMaxLifetime)
+	db.SetConnMaxIdleTime(PoolConnMaxIdleTime)
+}
+
 // Open initialises a connection pool. Ping'd before returning so a
 // bad DSN fails fast.
 //
-// Configuration:
-//   - max open conns: 25 (conservative; tune per deployment).
-//   - max idle conns: 5.
-//   - conn max lifetime: 30 min — full re-dial ceiling. Beats
-//     Patroni's typical rolling-restart interval so a swapped
-//     primary never keeps a stale conn longer than this.
-//   - conn max idle time: 5 min — bound the window where an idle
-//     conn the DB-side has already killed (pg_terminate_backend,
-//     firewall tcp-timeout, Patroni failover) might still be
-//     handed out. Without this, an idle conn can live until
-//     ConnMaxLifetime, forcing a retry at serve-time.
+// Pool tuning is applied via [configurePool] — see those constants
+// for the per-setting rationale. Net effect: every conn is retired
+// at most every [PoolConnMaxLifetime], which is the resilience
+// safety-net behind F-0151 (the 2026-05-26 cascade left dead
+// conns in the pool for ~14 h after postgres@15-main recovered).
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: sql.Open: %w", err)
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	configurePool(db)
 
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -92,6 +130,23 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("timescale: ping: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// PingContext exercises the underlying *sql.DB pool. Used by the
+// indexer's periodic resilience probe (see watchPostgresPing in
+// cmd/ratesengine-indexer/main.go) to surface dead-pool conditions
+// as a metric / alert signal. The actual reconnect path is handled
+// automatically by database/sql + ConnMaxLifetime — this method is
+// the OBSERVABILITY hook, not the reconnect mechanism.
+//
+// Returns nil on a nil receiver so callers can poll a Store that
+// hasn't been wired yet during shutdown / test teardown without
+// special-casing.
+func (s *Store) PingContext(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.PingContext(ctx)
 }
 
 // Close releases the connection pool. Safe to call more than once.
