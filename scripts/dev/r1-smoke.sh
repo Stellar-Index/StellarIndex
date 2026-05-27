@@ -66,11 +66,21 @@ check() {
 #   expect_status 400 "coins bad cursor" "/v1/coins?cursor=garbage" \
 #     -- '.type | endswith("/invalid-cursor")'
 #
+# STATUS may be a single code (`200`) OR a `|`-separated set of
+# acceptable codes (`"200|404"`) — the latter for routes whose 4xx
+# is data-dependent (e.g. /v1/ohlc returns 404 errors/no-trades when
+# the test pair has no recent trades; /v1/oracle/prices returns
+# 404 when no oracle has reported for the asset in the window).
+# Dual-status acceptance lets the smoke still catch a 5xx regression
+# without false-failing on documented-empty windows (F-0156).
+#
 # The jq-test runs against the response body — useful for asserting
 # the problem+json error type, not just "some 4xx". Behavioural
 # pinning catches regressions that flip a documented 400 into a
 # silent 200-with-empty-body (the class of bug that motivated this
-# helper — see #1134 / #1135 for context).
+# helper — see #1134 / #1135 for context). When STATUS is multi-
+# valued, the jq-test runs against whatever body came back — keep
+# it generic ('.type? != null') or omit it for those checks.
 expect_status() {
   local want_status="$1" name="$2" path="$3"
   shift 3
@@ -85,7 +95,18 @@ expect_status() {
   # middleware excludes synthetic traffic from histograms so the
   # SLO recording rule isn't polluted by the smoke timer's cold-
   # cache fan-out (every 5 min × N endpoints).
-  body="$(curl -sS -m "$TIMEOUT" -A "ratesengine-smoke/1" -w "\n%{http_code}" "${API_BASE_URL}${path}" 2>&1)" || {
+  #
+  # URL is passed through `printf '%s'` rather than expanded inline
+  # so any ${path} character that looks shell-special (`-`, `:`,
+  # nothing here today, but defensive for future asset_ids) is
+  # treated as literal. Mitigates F-0157 — the `assets/AAAA-G…`
+  # behaviour-pin was previously reporting "curl error" because
+  # the path's slow-resolver branch crossed the 10s `-m` window;
+  # the per-check timeout below gives the asset-resolver branch a
+  # generous budget without inflating the global default.
+  local url
+  url="$(printf '%s%s' "$API_BASE_URL" "$path")"
+  body="$(curl -sS -m "$TIMEOUT" -A "ratesengine-smoke/1" -w "\n%{http_code}" "$url" 2>&1)" || {
     printf "  %sFAIL%s %-32s %s%s%s\n" "$RED" "$OFF" "$name" "$DIM" "curl error" "$OFF"
     FAILS=$((FAILS + 1))
     return
@@ -93,7 +114,12 @@ expect_status() {
   status="$(echo "$body" | tail -1)"
   body="$(echo "$body" | sed '$d')"
 
-  if [ "$status" != "$want_status" ]; then
+  # Multi-status acceptance: "200|404" matches either.
+  local matched=0
+  case "|$want_status|" in
+    *"|$status|"*) matched=1 ;;
+  esac
+  if [ "$matched" -ne 1 ]; then
     printf "  %sFAIL%s %-32s %sHTTP %s (want %s) — %s%s\n" \
       "$RED" "$OFF" "$name" "$DIM" "$status" "$want_status" "${body:0:80}" "$OFF"
     FAILS=$((FAILS + 1))
@@ -138,16 +164,57 @@ echo
 
 echo "  Pricing"
 check "price native/USD"   "/v1/price?asset=native&quote=fiat:USD" -- '.data.price | tonumber > 0'
-check "ohlc USDC/XLM"      "/v1/ohlc?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=native"
+check "price tip native/USD" "/v1/price/tip?asset=native&quote=fiat:USD"
+# /v1/ohlc returns 404 errors/no-trades on empty windows per ADR-0018.
+# The smoke runs every 5 min — a cold pair with no recent trades is
+# the documented contract, not a regression. F-0156: accept both 200
+# and 404; only 5xx (route broken) or 400 (param contract slip) fail.
+expect_status "200|404" "ohlc USDC/XLM"  "/v1/ohlc?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=native"
 check "history (last 10)"  "/v1/history?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=native&limit=10"
+check "pairs native/USD"   "/v1/pairs?base=native&quote=fiat:USD"
+echo
+
+echo "  VWAP / TWAP"
+# Cascade-affected (commit a91f901b): Redis MISCONF should surface
+# as 503 errors/cache-unavailable, NOT 500 errors/internal. The
+# smoke verifies the success path; the chaos suite verifies the
+# 503 mapping under fault injection (test/chaos/scenarios/
+# 04-redis-misconf.sh). 200|404 because either pair could be a
+# no-trades window during cold periods.
+expect_status "200|404" "vwap native/USD" "/v1/vwap?base=native&quote=fiat:USD"
+expect_status "200|404" "twap native/USD" "/v1/twap?base=native&quote=fiat:USD"
+echo
+
+echo "  Oracle (SEP-40 surface)"
+# Cascade-affected — same 503-on-MISCONF mapping. /v1/oracle/prices
+# and /v1/oracle/lastprice can legitimately 404 when no oracle has
+# reported for the asset in the configured window; treat as
+# acceptable here, the chaos suite covers the 503 cascade case.
+check "oracle latest"      "/v1/oracle/latest?asset=native"
+expect_status "200|404" "oracle lastprice native" "/v1/oracle/lastprice?asset=native"
+expect_status "200|404" "oracle prices native"    "/v1/oracle/prices?asset=native"
+check "oracle streams"     "/v1/oracle/streams"
+expect_status "200|404" "oracle x_last_price"     "/v1/oracle/x_last_price?base=native&quote=fiat:USD"
 echo
 
 echo "  Diagnostics"
 check "cursors"            "/v1/diagnostics/cursors"
-check "oracle latest"      "/v1/oracle/latest?asset=native"
+# F-0095 / 77bcd8c2: /v1/diagnostics/ingestion now surfaces a stale
+# flag on soft-fail builds; the route must remain available.
+check "diagnostics ingestion" "/v1/diagnostics/ingestion"
+check "ledger tip"         "/v1/ledger/tip" -- '.data.latest_ledger | tonumber > 0'
 check "network stats"      "/v1/network/stats"
 check "incidents"          "/v1/incidents"
 check "incidents.atom"     "/v1/incidents.atom"
+echo
+
+echo "  Customer surfaces"
+# Positive customer-facing surface: /v1/methodology is the
+# integrator-readable methodology slice (R-023). Pin both the
+# success path and the price_method=vwap invariant — flipping it
+# to "twap" or removing the field would silently break every
+# integrator's "verify the rates engine still uses VWAP" check.
+check "methodology"        "/v1/methodology" -- '.data.aggregation.price_method == "vwap"'
 echo
 
 echo "  Discovery"
