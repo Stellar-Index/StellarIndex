@@ -3,6 +3,7 @@ package v1_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -149,6 +150,68 @@ func TestMarkets_ReturnsPairsWithCursor(t *testing.T) {
 	}
 	if env.Pagination.Next != "next-opaque" {
 		t.Errorf("next cursor = %q, want next-opaque", env.Pagination.Next)
+	}
+}
+
+// TestMarkets_LastTradeAtVsBucketCloseAt — F-0065 fix (2026-05-27).
+// Pins the wire contract: BOTH `last_trade_at` (minute-precise) AND
+// `bucket_close_at` (daily bucket-start) ship on every row, and they
+// are distinct values. Pre-fix the `last_trade_at` field carried the
+// daily bucket-start (midnight UTC) for ALL rows; clients computing
+// staleness saw spuriously-large values. The test feeds a stub where
+// `last_trade_at` is mid-bucket and `bucket_close_at` is midnight,
+// then asserts both fields surface on the wire and are not collapsed.
+func TestMarkets_LastTradeAtVsBucketCloseAt(t *testing.T) {
+	// 2026-05-25T14:23:00Z — mid-bucket, NOT midnight.
+	lastTrade := time.Date(2026, 5, 25, 14, 23, 0, 0, time.UTC)
+	bucketClose := time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
+	reader := &stubMarketsReader{
+		pairs: []v1.Market{
+			{
+				Base: "native", Quote: "fiat:USD",
+				LastTradeAt: lastTrade, BucketCloseAt: bucketClose, TradeCount24h: 42,
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/markets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, err := readAll(resp)
+	if err != nil {
+		t.Fatalf("readAll: %v", err)
+	}
+	// Both timestamps must appear on the wire — daily-bucket midnight
+	// AND the actual mid-bucket trade time.
+	if !bytes.Contains([]byte(body), []byte(`"last_trade_at":"2026-05-25T14:23:00Z"`)) {
+		t.Errorf("expected `last_trade_at` mid-bucket value in body, got: %s", body)
+	}
+	if !bytes.Contains([]byte(body), []byte(`"bucket_close_at":"2026-05-25T00:00:00Z"`)) {
+		t.Errorf("expected `bucket_close_at` midnight value in body, got: %s", body)
+	}
+	// Decode straight from the captured body so the assertions
+	// above (grep) and below (parse) share one read of resp.Body —
+	// mustDecode would re-read the now-drained reader and fail EOF.
+	var env struct {
+		Data []v1.Market `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data) != 1 {
+		t.Fatalf("want 1 row, got %d", len(env.Data))
+	}
+	if !env.Data[0].LastTradeAt.Equal(lastTrade) {
+		t.Errorf("last_trade_at = %v, want %v", env.Data[0].LastTradeAt, lastTrade)
+	}
+	if !env.Data[0].BucketCloseAt.Equal(bucketClose) {
+		t.Errorf("bucket_close_at = %v, want %v", env.Data[0].BucketCloseAt, bucketClose)
+	}
+	if env.Data[0].LastTradeAt.Equal(env.Data[0].BucketCloseAt) {
+		t.Errorf("F-0065 regression: last_trade_at == bucket_close_at — the two should be distinct values")
 	}
 }
 
