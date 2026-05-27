@@ -39,6 +39,18 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 	if o.cfg.DivergenceRefresher == nil || len(o.cfg.Windows) == 0 {
 		return
 	}
+	// F-0030 follow-up (2026-05-27): gate the refresh behind a
+	// minimum-elapsed interval so the external-reference quota (CMC
+	// free tier = 10K/month) isn't exhausted by every-tick refreshes.
+	// Skip silently when within the interval — operators see the gap
+	// via `obs.DivergenceRefreshTotal{outcome=*}` rate going to zero
+	// during the suppressed window. Zero interval = legacy
+	// every-tick behaviour for backwards compatibility.
+	if o.cfg.DivergenceMinInterval > 0 && !o.lastDivergenceRefreshAt.IsZero() &&
+		now.Sub(o.lastDivergenceRefreshAt) < o.cfg.DivergenceMinInterval {
+		return
+	}
+	o.lastDivergenceRefreshAt = now
 	// Use the shortest configured window — gives the freshest VWAP
 	// as the divergence input. Windows are operator-supplied in
 	// increasing order (the default DefaultWindows = [5m, 1h, 24h]

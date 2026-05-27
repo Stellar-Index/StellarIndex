@@ -397,6 +397,7 @@ func run(cfgPath string, dryRun bool) error {
 		OutlierSigmaThreshold:     cfg.Aggregate.OutlierSigmaThreshold,
 		MinUSDVolume:              cfg.Aggregate.MinUSDVolume,
 		DivergenceRefresher:       divRefresher,
+		DivergenceMinInterval:     time.Duration(cfg.Aggregate.DivergenceMinIntervalSeconds) * time.Second,
 		StreamPublisher:           streamPub,
 		// Per-source contribution mirror — feeds the explorer
 		// source-donut on every price card. See migrations/0026 +

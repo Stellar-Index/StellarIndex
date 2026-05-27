@@ -336,6 +336,24 @@ type Config struct {
 	// combination per tick.
 	DivergenceRefresher DivergenceRefresher
 
+	// DivergenceMinInterval gates how often [Tick] actually invokes
+	// the divergence refresher. Tick still fires every Interval, but
+	// the divergence pass is skipped if elapsed since the last
+	// successful pass is less than this value. Zero = refresh every
+	// tick (legacy behaviour).
+	//
+	// Rationale (F-0030 follow-up, 2026-05-27): the CMC free tier is
+	// 10,000 calls / MONTH. Even with the per-tick batched lookup
+	// shipped earlier, refreshing every 30 s × 12 pairs is ~2,880
+	// calls/day = ~86,000/month — 8.6 × over cap. The
+	// `div:<asset>` Redis entry has a 5-minute TTL
+	// (cachekeys.DivergenceTTL), so a 5-minute refresh interval
+	// keeps the cache continuously populated while burning roughly
+	// one-tenth the external quota. The divergence warning is an
+	// anomaly signal, not a price input — 5-minute detection
+	// latency is acceptable per ADR-0019.
+	DivergenceMinInterval time.Duration
+
 	// StreamPublisher, when non-nil, is called once per successful
 	// closed-bucket VWAP write to fan the event out to API-side SSE
 	// subscribers (`/v1/price/stream`). Production wiring is the
@@ -477,6 +495,13 @@ type Orchestrator struct {
 	// zone. Same single-Tick-at-a-time invariant as prevVWAPs, so no
 	// lock needed.
 	lastWriteAt map[string]time.Time
+
+	// lastDivergenceRefreshAt is the wall-clock time of the most
+	// recent successful refreshDivergenceAll pass. Read +
+	// updated only inside [Tick] (single-runner invariant), so no
+	// lock needed. Zero value means "never refreshed" — the first
+	// tick after startup unconditionally runs the pass.
+	lastDivergenceRefreshAt time.Time
 
 	// Stats exposed for metrics / test assertions. Zero-copy.
 	mu             sync.Mutex

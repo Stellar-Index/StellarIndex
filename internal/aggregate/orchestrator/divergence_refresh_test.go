@@ -239,3 +239,93 @@ func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 		t.Errorf("divergence refresh duration histogram did not advance: before=%d after=%d", before, after)
 	}
 }
+
+// TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks asserts
+// the F-0030 follow-up gate: if cfg.DivergenceMinInterval is set,
+// only the first call within a window of that duration actually
+// invokes the refresher. Subsequent calls within the same window
+// are skipped silently (no metric increment, no RefreshPair call,
+// no log spam). After the window elapses, the next call is allowed.
+//
+// Without the gate the live r1 deployment hit the CMC monthly cap
+// inside 5 days; with the default 5-minute gate the quota drops
+// roughly 10× to a sustainable footprint.
+func TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks(t *testing.T) {
+	t.Parallel()
+	rdb, _ := newTestRedis(t)
+	pair := pairXLMUSD(t)
+	windows := []time.Duration{5 * time.Minute}
+
+	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
+	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+		t.Fatalf("seed redis: %v", err)
+	}
+
+	capR := &captureRefresher{}
+	o := New(nil, rdb, Config{
+		Pairs:                 []canonical.Pair{pair},
+		Windows:               windows,
+		DivergenceRefresher:   capR,
+		DivergenceMinInterval: 5 * time.Minute,
+		Logger:                silentLogger(),
+	})
+
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+
+	// First call at t0 — should refresh.
+	o.refreshDivergenceAll(context.Background(), t0)
+	if got := len(capR.calls); got != 1 {
+		t.Fatalf("after 1st tick: got %d calls, want 1", got)
+	}
+
+	// 30 s later — well inside the interval. Should skip.
+	o.refreshDivergenceAll(context.Background(), t0.Add(30*time.Second))
+	if got := len(capR.calls); got != 1 {
+		t.Fatalf("after 2nd tick (30s): got %d calls, want still 1 (gated)", got)
+	}
+
+	// 4 min 30 s after first — still inside the 5-min interval.
+	o.refreshDivergenceAll(context.Background(), t0.Add(4*time.Minute+30*time.Second))
+	if got := len(capR.calls); got != 1 {
+		t.Fatalf("after 3rd tick (4m30s): got %d calls, want still 1 (gated)", got)
+	}
+
+	// 5 min after first — interval elapsed, should refresh again.
+	o.refreshDivergenceAll(context.Background(), t0.Add(5*time.Minute))
+	if got := len(capR.calls); got != 2 {
+		t.Fatalf("after 4th tick (5m): got %d calls, want 2 (gate released)", got)
+	}
+}
+
+// TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy asserts
+// that DivergenceMinInterval=0 (the zero-value, also the legacy
+// default for callers that haven't migrated) bypasses the gate
+// entirely — every call invokes the refresher.
+func TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy(t *testing.T) {
+	t.Parallel()
+	rdb, _ := newTestRedis(t)
+	pair := pairXLMUSD(t)
+	windows := []time.Duration{5 * time.Minute}
+
+	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
+	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+		t.Fatalf("seed redis: %v", err)
+	}
+
+	capR := &captureRefresher{}
+	o := New(nil, rdb, Config{
+		Pairs:               []canonical.Pair{pair},
+		Windows:             windows,
+		DivergenceRefresher: capR,
+		// DivergenceMinInterval intentionally unset (zero).
+		Logger: silentLogger(),
+	})
+
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		o.refreshDivergenceAll(context.Background(), t0.Add(time.Duration(i)*time.Second))
+	}
+	if got := len(capR.calls); got != 3 {
+		t.Errorf("legacy mode (zero interval): got %d calls, want 3 (every tick)", got)
+	}
+}
