@@ -201,8 +201,14 @@ func TestPollOnce_TickerToIDOverride(t *testing.T) {
 
 func TestPollInterval_Default(t *testing.T) {
 	p := NewPoller()
-	if p.PollInterval() != 60*time.Second {
-		t.Errorf("default = %v want 60s", p.PollInterval())
+	if p.PollInterval() != DefaultPollInterval {
+		t.Errorf("default = %v want %v", p.PollInterval(), DefaultPollInterval)
+	}
+	// Pin the demo-tier-safe 300s default so a future cadence drop
+	// past 300s — which would push burn rate back toward the 10K/day
+	// ceiling on a shared IP — fails this test (F-0030).
+	if DefaultPollInterval != 300*time.Second {
+		t.Errorf("DefaultPollInterval = %v; expected 300s — dropping this below 300s risks tripping CoinGecko's 10K/day demo cap (F-0030)", DefaultPollInterval)
 	}
 }
 
