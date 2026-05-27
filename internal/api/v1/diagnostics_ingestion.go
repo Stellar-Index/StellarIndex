@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/currency/marketcap"
@@ -76,6 +77,19 @@ type IngestionDiagnostics struct {
 	// always-on per-source tally (source_entry_counts) that backs
 	// the `entries` column. Unexported scratchpad, never on the wire.
 	entryCounts map[string]int64 `json:"-"`
+	// degraded reports whether one or more critical readers failed
+	// (or were not wired) during the snapshot build, so the response
+	// is missing fields its consumers expect. The handler propagates
+	// this to the envelope's Flags.Stale so the client can react —
+	// pre-fix the response served zero-valued struct fields with
+	// flags.stale:false, which is a lie when every counter is zero
+	// (F-0095). Unexported scratchpad, never on the wire as data.
+	//
+	// Fillers don't write this directly: the parallel-fillers pipeline
+	// uses an atomic.Bool sidecar and copies the resolved value here
+	// after wg.Wait(), to avoid a data race on this single shared
+	// field across the filler goroutines.
+	degraded bool `json:"-"`
 	// CAGGCoverage is the time range of prices_1h — the canonical
 	// "long-lived" continuous aggregate. The raw trades hypertable
 	// has a 90-day retention so its MIN(ledger) only reports the
@@ -399,7 +413,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	// booted) so first-request-after-restart is never stuck.
 	if entry := s.ingestionSnapshot.Load(); entry != nil {
 		w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
-		writeJSON(w, entry.snap, Flags{})
+		writeJSON(w, entry.snap, ingestionFlags(entry.snap))
 		return
 	}
 
@@ -415,7 +429,20 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 
 	out := s.buildIngestionSnapshot(ctx)
 	w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, ingestionFlags(out))
+}
+
+// ingestionFlags maps a built IngestionDiagnostics onto the wire
+// Flags. flags.stale fires when any critical filler soft-failed OR
+// when LatestLedger == 0 — both signal "we're serving zero-valued
+// fields that look fresh." Pre-fix (F-0095) the handler always wrote
+// Flags{}, so an all-zeros response under the F-0039 cascade looked
+// indistinguishable from "the network has zero ledgers and zero
+// trades." Mirrors the principle of /v1/network/stats returning a
+// real error instead of zero-valued success on storage failure.
+func ingestionFlags(snap IngestionDiagnostics) Flags {
+	stale := snap.degraded || snap.Ledger.LatestLedger == 0
+	return Flags{Stale: stale}
 }
 
 // ingestionSnapshotEntry wraps a computed IngestionDiagnostics for
@@ -450,6 +477,25 @@ func (s *Server) StartIngestionSnapshotRefresh(ctx context.Context) {
 		buildCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		out := s.buildIngestionSnapshot(buildCtx)
+		// Preserve last-known-good when the new build is degraded AND
+		// effectively empty (LatestLedger == 0). Stomping a fresh
+		// snapshot with an all-zeros one is how F-0095 stayed
+		// invisible: every counter showed 0 with flags.stale:false
+		// even though /v1/network/stats (same reader, no cache layer)
+		// was returning real numbers in the same probe window. The
+		// handler will still mark flags.stale:true for the preserved
+		// snapshot via ingestionFlags so the response is honest about
+		// being a fallback, not a fresh read.
+		if out.degraded && out.Ledger.LatestLedger == 0 {
+			if prev := s.ingestionSnapshot.Load(); prev != nil && prev.snap.Ledger.LatestLedger > 0 {
+				// Mark the preserved snapshot degraded so the wire
+				// flag fires regardless of the prior build's flag.
+				keep := prev.snap
+				keep.degraded = true
+				s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: keep})
+				return
+			}
+		}
 		s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: out})
 	}
 	doRefresh()
@@ -508,6 +554,12 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 		cacheRows, _ = s.backfillCoverage.Snapshot()
 	}
 
+	// Each filler is a closure over &out's per-field write target;
+	// `degraded` is the SHARED scratchpad across fillers, so it can't
+	// live on `out` (data race) — instead it's an atomic.Bool here
+	// and copied onto out.degraded after wg.Wait(). Fillers signal
+	// via degraded.Store(true) when their critical reader soft-fails.
+	var degraded atomic.Bool
 	type filler struct {
 		name    string
 		fn      func(context.Context)
@@ -515,12 +567,12 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	}
 	fillers := []filler{
 		{"sources", func(c context.Context) { out.Sources = buildSourceHealth(c, s) }, 8 * time.Second},
-		{"ledger", func(c context.Context) { s.fillIngestionLedger(c, &out) }, 6 * time.Second},
-		{"backfill", func(c context.Context) { s.fillIngestionBackfill(c, &out) }, 5 * time.Second},
+		{"ledger", func(c context.Context) { s.fillIngestionLedger(c, &out, &degraded) }, 6 * time.Second},
+		{"backfill", func(c context.Context) { s.fillIngestionBackfill(c, &out, &degraded) }, 5 * time.Second},
 		{"fx_coverage", func(c context.Context) { s.fillIngestionFXCoverage(c, &out) }, 5 * time.Second},
 		{"supply_coverage", func(c context.Context) { s.fillIngestionSupplyCoverage(c, &out) }, 5 * time.Second},
 		{"cagg_coverage", func(c context.Context) { s.fillIngestionCAGGCoverage(c, &out) }, 5 * time.Second},
-		{"entry_counts", func(c context.Context) { s.fillIngestionEntryCounts(c, &out) }, 5 * time.Second},
+		{"entry_counts", func(c context.Context) { s.fillIngestionEntryCounts(c, &out, &degraded) }, 5 * time.Second},
 	}
 	var wg sync.WaitGroup
 	for _, f := range fillers {
@@ -533,6 +585,12 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 		}(f)
 	}
 	wg.Wait()
+	// Hoist the atomic-shared degraded sidecar onto the snapshot
+	// struct now that every goroutine has finished. Safe single
+	// writer here (we're back on the calling goroutine).
+	if degraded.Load() {
+		out.degraded = true
+	}
 
 	// Build the coverage rows cursor-first now that the parallel
 	// fillers have populated the tip (fillIngestionLedger) and the
@@ -558,14 +616,21 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 // fillIngestionLedger reads network-stats and copies the four
 // numeric fields onto out.Ledger. Soft-fail: a stuck reader leaves
 // the section at zero-valued defaults rather than erroring the
-// whole response.
-func (s *Server) fillIngestionLedger(ctx context.Context, out *IngestionDiagnostics) {
+// whole response — but signals the shared `degraded` atomic.Bool so
+// the response is marked flags.stale:true rather than passing the
+// zero defaults off as a fresh successful read (F-0095). The atomic
+// is a separate sidecar from out.degraded because the parallel
+// fillers would otherwise race on the shared field; the parent
+// goroutine hoists the resolved value onto out after wg.Wait().
+func (s *Server) fillIngestionLedger(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
 	if s.networkStats == nil {
+		degraded.Store(true)
 		return
 	}
 	ns, err := s.networkStats.GetNetworkStats(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: network_stats", "err", err)
+		degraded.Store(true)
 		return
 	}
 	out.Ledger.LatestLedger = ns.LatestLedger
@@ -580,13 +645,15 @@ func (s *Server) fillIngestionLedger(ctx context.Context, out *IngestionDiagnost
 // outputs: the per-decoder backfill state on out.Backfill, and the
 // live-stream cursor age on out.Ledger.LagSeconds. Done in one
 // helper because both derive from the same fetch.
-func (s *Server) fillIngestionBackfill(ctx context.Context, out *IngestionDiagnostics) {
+func (s *Server) fillIngestionBackfill(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
 	if s.cursors == nil {
+		degraded.Store(true)
 		return
 	}
 	rows, err := s.cursors.ListCursors(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: cursors", "err", err)
+		degraded.Store(true)
 		return
 	}
 	out.Backfill = aggregateBackfill(rows)
@@ -652,7 +719,7 @@ func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDi
 // no-ops on test fakes that don't implement SourceEntryCountReader.
 // Soft-fail: a reader error leaves entryCounts nil → the `entries`
 // column reads 0 rather than erroring the whole response.
-func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDiagnostics) {
+func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
 	reader, ok := s.fxHistory.(SourceEntryCountReader)
 	if !ok || reader == nil {
 		// Not a test fake (those inject a discard logger): in
@@ -667,6 +734,7 @@ func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDia
 	counts, err := reader.SourceEntryCounts(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: entry_counts", "err", err)
+		degraded.Store(true)
 		return
 	}
 	out.entryCounts = counts
