@@ -193,6 +193,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "blend-backfill: %v\n", err)
 			return 1
 		}
+	case "sep41-transfers-backfill":
+		if err := sep41TransfersBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "sep41-transfers-backfill: %v\n", err)
+			return 1
+		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)
