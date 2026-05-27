@@ -26,6 +26,7 @@ against.
 ### Fixed
 
 - CoinGecko poller default cadence bumped from 60s to 300s; the connector already uses the `/simple/price` batch endpoint, so daily call volume drops from ~1,440/day to ~288/day with ample headroom for the market-cap refresher and divergence reference under a shared demo-tier IP cap. Closes the sustained "poller error … http 429 — backing off 59m59s" loop observed live on r1 (F-0030).
+- `internal/divergence/coingecko.go` now batches per-tick lookups into a single `/simple/price` call instead of one HTTP call per pair. Daily call volume drops from ~25,920 (9 pairs × every-30s tick) to ~2,880 (one batched call × every-30s tick) — well within the demo-tier 10K limit (F-0030 follow-up).
 
 ## [v0.5.0-rc.82] — 2026-05-27
 
