@@ -49,6 +49,7 @@ func init() {
 		CursorLastLedger,
 		DivergenceRefreshTotal,
 		TradeInsertsTotal,
+		TradeInsertOutcomeTotal,
 		StreamPublishTotal,
 
 		PriceStalenessSeconds,
@@ -497,6 +498,27 @@ var TradeInsertsTotal = prometheus.NewCounterVec(
 		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts not unique-row inserts (ON CONFLICT DO NOTHING dedupe is invisible to this counter).",
 	},
 	[]string{"source", "usd_volume_populated"},
+)
+
+// TradeInsertOutcomeTotal — per-source counter of trade-insert
+// outcomes. Distinguishes "row actually persisted" (`new`) from
+// "ON CONFLICT DO NOTHING dedupe path" (`duplicate`).
+//
+// TradeInsertsTotal counts attempts and is silent about dedupe; on
+// a healthy live indexer the two counters track 1:1, but a stuck
+// cursor or replay loop (live evidence on r1, 2026-05-28: 157
+// SDEX insert-attempts/min while the trades hypertable's max(ts)
+// is 11 h old) produces a fast-growing `duplicate` rate with zero
+// `new`. Pairing the two lets operators alert on
+// `rate(new[5m]) == 0 AND rate(duplicate[5m]) > 0` — the exact
+// signature of a duplicate-flood. Cardinality: one source × two
+// outcomes per registered source (low-tens of series at maturity).
+var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_trade_insert_outcome_total",
+		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when ON CONFLICT DO NOTHING short-circuited (indicates cursor replay or stuck-tip).",
+	},
+	[]string{"source", "outcome"},
 )
 
 // StreamPublishTotal — per-stream counter of envelopes the API

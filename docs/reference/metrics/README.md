@@ -247,7 +247,25 @@ whether `usd_volume` was populated at insert time (per L2.2 phase 1
 Operators flipping on `[trades].usd_pegged_classic_assets` use this
 to verify their allow-list actually covers what the indexer is
 seeing. Counts attempts; the trades hypertable's `ON CONFLICT DO
-NOTHING` dedupe is invisible to this counter.
+NOTHING` dedupe is invisible to this counter — pair with
+[`ratesengine_trade_insert_outcome_total`](#ratesengine_trade_insert_outcome_total)
+below to see new-vs-duplicate.
+
+### `ratesengine_trade_insert_outcome_total`
+
+Counter, labels `source`, `outcome` (`new` | `duplicate`).
+
+Per-source counter of trade-insert outcomes. `new` = the
+`INSERT ... ON CONFLICT DO NOTHING` actually persisted a row;
+`duplicate` = the conflict short-circuit fired and no row was
+written.
+
+On a healthy live indexer `outcome=new` tracks 1:1 with attempts;
+a cursor-replay loop or stuck-tip pattern produces a fast-growing
+`outcome=duplicate` rate with zero `outcome=new`. Alert on
+`rate({outcome="new"}[5m]) == 0 AND rate({outcome="duplicate"}[5m]) > 0`
+to catch the live r1-2026-05-28 signature (157 SDEX insert
+attempts/min while the hypertable's `max(ts)` was 11 h old).
 
 ### `ratesengine_stream_publish_total`
 
