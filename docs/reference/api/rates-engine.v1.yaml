@@ -4340,12 +4340,29 @@ components:
     # `volume_24h_usd` is summed from prices_1m's per-bucket
     # volume_usd (nullable when the pair has no USD-equivalent
     # trades).
+    #
+    # `last_trade_at` vs `bucket_close_at`: prior to 2026-05-27 the
+    # `last_trade_at` field was sourced from MAX(prices_1d.bucket)
+    # (daily bucket-start), so most rows returned exactly-midnight
+    # UTC values and clients computing staleness against now() saw
+    # spuriously-large values (F-0065). Post-fix, `last_trade_at`
+    # carries the minute-precise prices_1m bucket-start for in-24h-
+    # active pairs (falling back to the daily bucket-start when no
+    # minute-precise signal exists), and `bucket_close_at` exposes
+    # the daily bucket-start explicitly for callers that want it.
     MarketRow:
       type: object
       properties:
         base:            { type: string }
         quote:           { type: string }
-        last_trade_at:   { type: string, format: date-time }
+        last_trade_at:
+          type: string
+          format: date-time
+          description: "Most recent trade timestamp for this pair (minute-precision for in-24h-active pairs via prices_1m; daily bucket-start fallback for pairs idle 24h+ but active in the 14d recency window). Use for staleness computations."
+        bucket_close_at:
+          type: string
+          format: date-time
+          description: "Start-of-day UTC of the prices_1d bucket the pair was last active in. Aligns to midnight UTC by construction. Pre-2026-05-27 (F-0065) this value was incorrectly returned as `last_trade_at`; the field is preserved for callers that want the daily bucket reference, but do NOT use it for staleness."
         trade_count_24h: { type: integer, description: "Activity count in the trailing 24h window." }
         volume_24h_usd:
           type: string
@@ -4355,7 +4372,7 @@ components:
           type: string
           nullable: true
           description: "Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price."
-      required: [base, quote, last_trade_at, trade_count_24h]
+      required: [base, quote, last_trade_at, bucket_close_at, trade_count_24h]
 
     MarketsEnvelope:
       allOf:

@@ -280,10 +280,29 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 // pair with no USD-equivalent trades emits null instead of "0"
 // — important for client-side sorting (treat null as "unknown",
 // 0 as "definitely zero").
+//
+// LastTradeAt vs BucketCloseAt:
+//   - LastTradeAt is the most recent prices_1m bucket-start that
+//     observed a trade in the pair (minute precision) when the
+//     pair traded in the trailing 24h. For pairs idle >24h but
+//     active in the 14d recency window, it falls back to the
+//     daily bucket-start. Clients computing freshness against
+//     `now()` should use this field.
+//   - BucketCloseAt is the start of the most recent prices_1d
+//     bucket the pair was active in (aligns to UTC midnight by
+//     construction). Provided for symmetry with the daily VWAP
+//     surfaces; do NOT use for staleness computations.
+//
+// F-0065 fix (2026-05-27): the field formerly named `last_trade_at`
+// was sourced from `MAX(prices_1d.bucket)` (daily bucket-start),
+// so most rows returned exactly-midnight UTC values and clients
+// saw spuriously-large staleness. The honest semantics are now
+// split across the two fields.
 type Market struct {
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
 	LastTradeAt   time.Time `json:"last_trade_at"`
+	BucketCloseAt time.Time `json:"bucket_close_at"`
 	TradeCount24h int64     `json:"trade_count_24h"`
 	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed

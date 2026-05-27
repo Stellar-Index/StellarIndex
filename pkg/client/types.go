@@ -348,10 +348,22 @@ type MethodologyReference struct {
 // Market is the data shape returned by [Client.Markets] and
 // [Client.Pair] — one (base, quote) pair the deployment has
 // observed at least one trade for, with a 24h activity summary.
+//
+// LastTradeAt is the most-recent prices_1m bucket-start that
+// observed a trade in this pair (minute precision) when the pair
+// traded in the trailing 24h, falling back to BucketCloseAt for
+// pairs idle >24h but active in the 14d recency window. Use this
+// field for staleness computations.
+//
+// BucketCloseAt is the start-of-day UTC of the prices_1d bucket
+// the pair was last active in. Aligns to UTC midnight by
+// construction; do NOT use for staleness — pre-2026-05-27 this
+// value was incorrectly served as `last_trade_at` (F-0065).
 type Market struct {
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
 	LastTradeAt   time.Time `json:"last_trade_at"`
+	BucketCloseAt time.Time `json:"bucket_close_at"`
 	TradeCount24h int64     `json:"trade_count_24h"`
 	// Volume24hUSD is the trailing-24h USD volume summed from
 	// prices_1m's per-bucket volume_usd. Decimal string per

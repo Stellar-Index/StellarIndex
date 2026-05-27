@@ -635,6 +635,7 @@ func (r apiMarketsAdapter) DistinctPairsExt(ctx context.Context, cursor string, 
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
 			LastTradeAt:   m.LastTradeAt,
+			BucketCloseAt: m.BucketCloseAt,
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 		}
@@ -651,6 +652,7 @@ func (r apiMarketsAdapter) PairMarket(ctx context.Context, base, quote c.Asset) 
 		Base:          m.Pair.Base.String(),
 		Quote:         m.Pair.Quote.String(),
 		LastTradeAt:   m.LastTradeAt,
+		BucketCloseAt: m.BucketCloseAt,
 		TradeCount24h: m.TradeCount24h,
 		Volume24hUSD:  m.Volume24hUSD,
 	}, true, nil
@@ -667,6 +669,7 @@ func (r apiMarketsAdapter) SourceMarkets(ctx context.Context, source, cursor str
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
 			LastTradeAt:   m.LastTradeAt,
+			BucketCloseAt: m.BucketCloseAt,
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 		}
@@ -685,6 +688,7 @@ func (r apiMarketsAdapter) AssetMarkets(ctx context.Context, asset, cursor strin
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
 			LastTradeAt:   m.LastTradeAt,
+			BucketCloseAt: m.BucketCloseAt,
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 		}

@@ -20,9 +20,25 @@ import (
 // computed by the aggregator). Pointer + nil-when-zero so a
 // pair with no USD-equivalent trades emits JSON null rather
 // than "0" — important for downstream filtering.
+//
+// Field semantics:
+//
+//   - LastTradeAt — minute-precise start of the most recent
+//     prices_1m bucket that observed a trade in this pair, within
+//     the 24h window. Falls back to BucketCloseAt for pairs that
+//     traded 14d-active-but-24h-idle (no minute-precise signal in
+//     the 24h scan window).
+//   - BucketCloseAt — start-of-day UTC of the prices_1d bucket the
+//     pair was last active in. Always populated. Aligns to UTC
+//     midnight by construction (`time_bucket('1 day', ts)`); pre
+//     2026-05-27 this was misnamed `last_trade_at`, but most pairs
+//     surfaced exactly-midnight values and clients computing
+//     freshness against `now()` saw spuriously-large staleness
+//     (F-0065).
 type Market struct {
 	Pair          canonical.Pair
 	LastTradeAt   time.Time
+	BucketCloseAt time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
 	// LastPrice is the last quote-per-base price observed in
@@ -433,11 +449,12 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 		var (
 			baseRaw, quoteRaw string
 			lastAt            time.Time
+			bucketCloseAt     time.Time
 			count24h          int64
 			vol24hUSD         sql.NullString
 			lastPrice         sql.NullString
 		)
-		if err := rows.Scan(&baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD, &lastPrice); err != nil {
+		if err := rows.Scan(&baseRaw, &quoteRaw, &lastAt, &bucketCloseAt, &count24h, &vol24hUSD, &lastPrice); err != nil {
 			return nil, false, fmt.Errorf("timescale: DistinctPairs scan: %w", err)
 		}
 		n++
@@ -445,7 +462,7 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 			hasMore = true
 			break
 		}
-		m, err := buildMarketRow(baseRaw, quoteRaw, lastAt, count24h, vol24hUSD)
+		m, err := buildMarketRow(baseRaw, quoteRaw, lastAt, bucketCloseAt, count24h, vol24hUSD)
 		if err != nil {
 			return nil, false, err
 		}
@@ -461,7 +478,7 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 	return out, hasMore, nil
 }
 
-func buildMarketRow(baseRaw, quoteRaw string, lastAt time.Time, count24h int64, vol24hUSD sql.NullString) (Market, error) {
+func buildMarketRow(baseRaw, quoteRaw string, lastAt, bucketCloseAt time.Time, count24h int64, vol24hUSD sql.NullString) (Market, error) {
 	base, err := canonical.ParseAsset(baseRaw)
 	if err != nil {
 		return Market{}, fmt.Errorf("timescale: DistinctPairs base %q: %w", baseRaw, err)
@@ -477,6 +494,7 @@ func buildMarketRow(baseRaw, quoteRaw string, lastAt time.Time, count24h int64, 
 	m := Market{
 		Pair:          pair,
 		LastTradeAt:   lastAt.UTC(),
+		BucketCloseAt: bucketCloseAt.UTC(),
 		TradeCount24h: count24h,
 	}
 	if vol24hUSD.Valid && vol24hUSD.String != "" && vol24hUSD.String != "0" {
@@ -605,11 +623,21 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	//     stays prices_1m-accurate. (Corrects an earlier prices_1h
 	//     variant that shipped a ~9% headline-volume understatement
 	//     under a false "Σ-associative → identical" claim.)
-	// last_trade_at rounds to the day (from prices_1d) — immaterial
+	// bucket_close_at rounds to the day (from prices_1d) — immaterial
 	// for a directory; the exact ts/price is on the detail
 	// endpoints. count_24h is COALESCE'd to 0 for
 	// 14d-active-but-24h-idle pairs (more robust than the prior
 	// FILTER-SUM, which yielded NULL for that case).
+	//
+	// last_trade_at is sourced from the SAME 24h prices_1m scan as
+	// the volume aggregate (zero added cost) — MAX(bucket) gives
+	// minute-precision for in-24h-active pairs. For pairs idle >24h
+	// (rare under volume-desc default ordering) it falls back to
+	// the daily bucket-start. F-0065 fix (2026-05-27): pre-fix the
+	// /v1/markets `last_trade_at` field was the daily bucket-start
+	// for ALL pairs, so most rows surfaced midnight UTC and clients
+	// computing staleness against `now()` saw spuriously-large
+	// values.
 	//
 	// $1 since(14d) bounds the prices_1d set; $4 source / $5 asset
 	// filter BOTH CTEs (empty short-circuits → planner skips); the
@@ -618,7 +646,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	const ctes = `
         WITH d AS (
             SELECT p.base_asset, p.quote_asset,
-                   MAX(p.bucket) AS last_trade_at,
+                   MAX(p.bucket) AS bucket_close_at,
                    (array_agg(p.last_price ORDER BY p.bucket DESC)
                       FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
               FROM prices_1d p
@@ -629,15 +657,18 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
         ),
         h AS (
             SELECT p.base_asset, p.quote_asset,
-                   SUM(p.trade_count) AS count_24h,
-                   SUM(p.volume_usd)  AS vol_24h_num
+                   MAX(p.bucket)       AS last_bucket_1m,
+                   SUM(p.trade_count)  AS count_24h,
+                   SUM(p.volume_usd)   AS vol_24h_num
               FROM prices_1m p
              WHERE p.bucket > NOW() - INTERVAL '24 hours'
                AND ($4 = '' OR $4 = ANY(p.sources))
                AND ($5 = '' OR p.base_asset = $5 OR p.quote_asset = $5)
              GROUP BY p.base_asset, p.quote_asset
         )
-        SELECT d.base_asset, d.quote_asset, d.last_trade_at,
+        SELECT d.base_asset, d.quote_asset,
+               COALESCE(h.last_bucket_1m, d.bucket_close_at) AS last_trade_at,
+               d.bucket_close_at,
                COALESCE(h.count_24h, 0)        AS count_24h,
                NULLIF(h.vol_24h_num, 0)::text  AS vol_24h_usd,
                d.last_price
@@ -693,6 +724,11 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 // pair that DistinctPairs hides should also be hidden here).
 func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error) {
 	since := time.Now().UTC().Add(-MarketsRecencyWindow)
+	// PairMarket already sources LastTradeAt from MAX(trades.ts) —
+	// exact (second-precision) since it scans the trades hypertable
+	// directly for one pair. BucketCloseAt is recomputed from the
+	// same value via time_bucket('1 day', …) so the wire shape
+	// matches /v1/markets (which sources it from prices_1d).
 	const q = `
         SELECT MAX(t.ts) AS last_trade_at,
                count(*) FILTER (WHERE t.ts > NOW() - INTERVAL '24 hours') AS count_24h,
@@ -729,9 +765,12 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 	if count24h != nil {
 		n = *count24h
 	}
+	lastAtUTC := lastAt.UTC()
+	bucketClose := time.Date(lastAtUTC.Year(), lastAtUTC.Month(), lastAtUTC.Day(), 0, 0, 0, 0, time.UTC)
 	m := Market{
 		Pair:          pair,
-		LastTradeAt:   lastAt.UTC(),
+		LastTradeAt:   lastAtUTC,
+		BucketCloseAt: bucketClose,
 		TradeCount24h: n,
 	}
 	if vol24hUSD.Valid && vol24hUSD.String != "" && vol24hUSD.String != "0" {
