@@ -79,6 +79,25 @@ const PrefixVault = "DeFindexVault"
 const (
 	EventDeposit  = "deposit"
 	EventWithdraw = "withdraw"
+	// Strategy-layer governance / yield events that don't produce a
+	// canonical Trade today but are valid topics to recognise so
+	// classify() enumerates the full upstream event surface per the
+	// EVERY-event policy (project_every_event_principle).
+	EventHarvest = "harvest"
+	// Vault-layer governance / admin events. Per Phase-B audit doc:
+	//   rescue, paused, unpaused, nreceiver, nmanager, nemanager,
+	//   rbmanager, dfees, rebalance
+	// Of these only `rebalance` is multiplexed (four bodies share the
+	// topic — discriminate by `rebalance_method` Symbol in body).
+	EventRescue    = "rescue"
+	EventPaused    = "paused"
+	EventUnpaused  = "unpaused"
+	EventNReceiver = "nreceiver"
+	EventNManager  = "nmanager"
+	EventNEManager = "nemanager"
+	EventRBManager = "rbmanager"
+	EventDFees     = "dfees"
+	EventRebalance = "rebalance"
 )
 
 // Pre-encoded base64 SCVal blobs — byte-identical to what the
@@ -93,6 +112,17 @@ var (
 	TopicPrefixVault    = scval.MustEncodeString(PrefixVault)
 	TopicSymbolDeposit  = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolWithdraw = scval.MustEncodeSymbol(EventWithdraw)
+	// Classification-only topic[1] symbols (no decoder today).
+	TopicSymbolHarvest   = scval.MustEncodeSymbol(EventHarvest)
+	TopicSymbolRescue    = scval.MustEncodeSymbol(EventRescue)
+	TopicSymbolPaused    = scval.MustEncodeSymbol(EventPaused)
+	TopicSymbolUnpaused  = scval.MustEncodeSymbol(EventUnpaused)
+	TopicSymbolNReceiver = scval.MustEncodeSymbol(EventNReceiver)
+	TopicSymbolNManager  = scval.MustEncodeSymbol(EventNManager)
+	TopicSymbolNEManager = scval.MustEncodeSymbol(EventNEManager)
+	TopicSymbolRBManager = scval.MustEncodeSymbol(EventRBManager)
+	TopicSymbolDFees     = scval.MustEncodeSymbol(EventDFees)
+	TopicSymbolRebalance = scval.MustEncodeSymbol(EventRebalance)
 )
 
 // StrategyFlow is the canonical wire shape for one Blend strategy
