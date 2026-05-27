@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- docs-lint check that fails CI when any /v1/incidents entry has unchecked `[ ]` follow-up checkboxes AND the incident is older than 30 days (F-0099 forcing function). Closes the meta-failure-mode of post-mortem action items rotting indefinitely between recurrences of the same cascade — the 2026-05-10 SEV-2 shipped with 4 `[ ]` items and the same cascade recurred on 2026-05-26 with all four still unchecked.
+
+### Changed
+
+- 2026-05-10-redis-writes-blocked-disk-full post-mortem: checked off the Prometheus root-FS alert follow-up (shipped in #1229 as `ratesengine_node_root_disk_warning` + `_full`) and the recovery-sequence runbook follow-up (`docs/operations/runbooks/redis-write-blocked-disk-full.md` landed in #1228). Remaining open follow-ups: `postgresql-common` logrotate audit and WASM-audit stderr-capture relocation.
+
 ## [v0.5.0-rc.82] — 2026-05-27
 
 Audit-2026-05-26 Wave-0 + Wave-1 batch. Closes the F-0039 cascade
