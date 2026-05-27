@@ -43,9 +43,11 @@ func TestClassify_depositWithdraw(t *testing.T) {
 			wantClass: "",
 		},
 		{
-			name:      "harvest (not Phase A)",
-			topic:     []string{TopicPrefixStrategy, mustB64Symbol(t, "harvest")},
-			wantClass: "",
+			// EVERY-event policy (2026-05-27): harvest is now classified
+			// even though we don't produce a StrategyFlow for it yet.
+			name:      "harvest (classification-only)",
+			topic:     []string{TopicPrefixStrategy, TopicSymbolHarvest},
+			wantClass: EventHarvest,
 		},
 		{
 			name:      "single-element topic",
@@ -204,11 +206,19 @@ func TestClassifyVault_depositWithdraw(t *testing.T) {
 			topic:     []string{mustB64Symbol(t, "DeFindexVault"), TopicSymbolDeposit},
 			wantClass: "",
 		},
-		{
-			name:      "rebalance (Phase B excluded — see audit doc)",
-			topic:     []string{TopicPrefixVault, mustB64Symbol(t, "rebalance")},
-			wantClass: "",
-		},
+		// EVERY-event policy (2026-05-27): the nine vault governance /
+		// admin / multiplexed-rebalance topics are now classified
+		// (still no decoder — classification only). Pre-policy these
+		// returned "" and got silently dropped.
+		{name: "vault rescue", topic: []string{TopicPrefixVault, TopicSymbolRescue}, wantClass: EventRescue},
+		{name: "vault paused", topic: []string{TopicPrefixVault, TopicSymbolPaused}, wantClass: EventPaused},
+		{name: "vault unpaused", topic: []string{TopicPrefixVault, TopicSymbolUnpaused}, wantClass: EventUnpaused},
+		{name: "vault nreceiver", topic: []string{TopicPrefixVault, TopicSymbolNReceiver}, wantClass: EventNReceiver},
+		{name: "vault nmanager", topic: []string{TopicPrefixVault, TopicSymbolNManager}, wantClass: EventNManager},
+		{name: "vault nemanager", topic: []string{TopicPrefixVault, TopicSymbolNEManager}, wantClass: EventNEManager},
+		{name: "vault rbmanager", topic: []string{TopicPrefixVault, TopicSymbolRBManager}, wantClass: EventRBManager},
+		{name: "vault dfees", topic: []string{TopicPrefixVault, TopicSymbolDFees}, wantClass: EventDFees},
+		{name: "vault rebalance (multiplexed body)", topic: []string{TopicPrefixVault, TopicSymbolRebalance}, wantClass: EventRebalance},
 		{
 			name:      "single-element topic",
 			topic:     []string{TopicPrefixVault},

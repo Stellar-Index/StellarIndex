@@ -12,12 +12,17 @@ import (
 // decode. Topics are 2-tuples:
 //
 //	topic[0] = String("BlendStrategy")     — pre-encoded, byte-equal
-//	topic[1] = Symbol("deposit"|"withdraw")
+//	topic[1] = Symbol("deposit"|"withdraw"|"harvest"|…)
 //
 // Both positions are compared as byte-equal base64 against the
 // constants computed at package init — no SCVal parsing on the
-// reject path. Returns "" for anything else (the dispatcher's
-// drop-counter handles "" cases: harvest / keeper admin / …).
+// reject path. Returns "" for non-strategy events.
+//
+// Per the EVERY-event policy (project_every_event_principle), this
+// switch enumerates every topic[1] symbol the BlendStrategy contract
+// emits — not just the ones we decode into a StrategyFlow today. The
+// audit doc (docs/operations/wasm-audits/defindex.md) is the upstream
+// reference for the topic set.
 func classify(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -30,6 +35,8 @@ func classify(e *events.Event) string {
 		return EventDeposit
 	case TopicSymbolWithdraw:
 		return EventWithdraw
+	case TopicSymbolHarvest:
+		return EventHarvest
 	}
 	return ""
 }
@@ -38,11 +45,14 @@ func classify(e *events.Event) string {
 // 2-tuples:
 //
 //	topic[0] = String("DeFindexVault")     — pre-encoded, byte-equal
-//	topic[1] = Symbol("deposit"|"withdraw")
+//	topic[1] = Symbol("deposit"|"withdraw"|<governance/admin>)
 //
-// Vault wrappers also emit `rescue`, `paused`, `unpaused`,
-// `rebalance`, fee/manager admin events — all out of Phase-B scope;
-// see the audit doc.
+// Per the EVERY-event policy: classifies all 11 vault-layer topic[1]
+// symbols enumerated by the upstream contract (audit-2026-05-14 §
+// "Topic structure"). Only deposit + withdraw drive a VaultFlow
+// today; the other 9 are governance / admin / multiplexed-rebalance
+// events with no decoder (yet) but recognising them satisfies the
+// closed-set completeness requirement before flipping BackfillSafe.
 func classifyVault(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -55,6 +65,24 @@ func classifyVault(e *events.Event) string {
 		return EventDeposit
 	case TopicSymbolWithdraw:
 		return EventWithdraw
+	case TopicSymbolRescue:
+		return EventRescue
+	case TopicSymbolPaused:
+		return EventPaused
+	case TopicSymbolUnpaused:
+		return EventUnpaused
+	case TopicSymbolNReceiver:
+		return EventNReceiver
+	case TopicSymbolNManager:
+		return EventNManager
+	case TopicSymbolNEManager:
+		return EventNEManager
+	case TopicSymbolRBManager:
+		return EventRBManager
+	case TopicSymbolDFees:
+		return EventDFees
+	case TopicSymbolRebalance:
+		return EventRebalance
 	}
 	return ""
 }
