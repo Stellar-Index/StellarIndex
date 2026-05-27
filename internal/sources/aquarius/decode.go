@@ -16,6 +16,15 @@ const aquariusTopicArity = 4
 
 // classify picks the event kind from topic[0]. Returns "" for
 // non-Aquarius events so the caller skips cheaply.
+//
+// Every topic published by aquarius-amm/liquidity_pool_events/src/lib.rs
+// (verified 2026-05-27 against the upstream Rust source) must appear
+// in this switch — the EVERY-event policy
+// (memory: project_every_event_principle) treats classify() as the
+// authoritative completeness gate for BackfillSafe. Today only
+// `trade` flows through to a canonical.Trade; the other event kinds
+// are classified here so future audits + the soroban_events landing
+// zone (ADR-0029) can rely on a closed-set enumeration.
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
@@ -29,6 +38,28 @@ func classify(e *events.Event) string {
 		return EventWithdrawLiquidity
 	case TopicSymbolUpdateReserves:
 		return EventUpdateReserves
+	case TopicSymbolReservesSync:
+		return EventReservesSync
+	case TopicSymbolSetProtocolFee:
+		return EventSetProtocolFee
+	case TopicSymbolClaimProtocolFee:
+		return EventClaimProtocolFee
+	case TopicSymbolKillDeposit:
+		return EventKillDeposit
+	case TopicSymbolUnkillDeposit:
+		return EventUnkillDeposit
+	case TopicSymbolKillSwap:
+		return EventKillSwap
+	case TopicSymbolUnkillSwap:
+		return EventUnkillSwap
+	case TopicSymbolKillClaim:
+		return EventKillClaim
+	case TopicSymbolUnkillClaim:
+		return EventUnkillClaim
+	case TopicSymbolKillGaugesClaim:
+		return EventKillGaugesClaim
+	case TopicSymbolUnkillGaugesClaim:
+		return EventUnkillGaugesClaim
 	default:
 		return ""
 	}
