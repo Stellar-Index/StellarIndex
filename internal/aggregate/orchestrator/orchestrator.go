@@ -629,19 +629,35 @@ func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 			o.lastWriteAt[asset] = last
 		}
 		stale := now.Sub(last).Seconds()
-		obs.PriceStalenessSeconds.WithLabelValues(asset).Set(stale)
+
 		// XLM appears in two canonical forms across the codebase:
 		// `native` (per-network) and `crypto:XLM` (global ticker).
 		// Customers query with `native` via /v1/price; oracles
-		// publish `crypto:XLM`. Mirror the metric under both forms
-		// so the api_price_stale alert evaluator sees whichever
-		// label the customer's /v1/price query path uses.
-		switch asset {
-		case "crypto:XLM":
+		// publish `crypto:XLM`. The customer's freshness is the
+		// freshest of the two — if EITHER form has just been written,
+		// the API will resolve the customer's lookup. We emit
+		// MIN(stale_native, stale_crypto_XLM) for BOTH labels so the
+		// api_price_stale alert isn't order-dependent on cfg.Pairs
+		// iteration. Pre-fix, the last pair iterated overwrote the
+		// other label via a one-way mirror; iteration order decided
+		// whether the alert was "always fresh" or "always stale".
+		if asset == "native" || asset == "crypto:XLM" {
+			native, nativeOK := o.lastWriteAt["native"]
+			ticker, tickerOK := o.lastWriteAt["crypto:XLM"]
+			fresh := last
+			if nativeOK && (fresh.IsZero() || native.After(fresh)) {
+				fresh = native
+			}
+			if tickerOK && (fresh.IsZero() || ticker.After(fresh)) {
+				fresh = ticker
+			}
+			stale = now.Sub(fresh).Seconds()
 			obs.PriceStalenessSeconds.WithLabelValues("native").Set(stale)
-		case "native":
 			obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM").Set(stale)
+			continue
 		}
+
+		obs.PriceStalenessSeconds.WithLabelValues(asset).Set(stale)
 	}
 }
 
