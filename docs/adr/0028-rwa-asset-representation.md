@@ -1,9 +1,9 @@
 ---
 adr: 0028
 title: Tokenized real-world assets as AssetType "rwa"
-status: Proposed
+status: Accepted
 date: 2026-05-22
-accepted: null
+accepted: 2026-05-27
 supersedes: []
 superseded_by: null
 ---

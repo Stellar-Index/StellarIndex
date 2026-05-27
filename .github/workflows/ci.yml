@@ -75,8 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci')"
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -103,8 +103,8 @@ jobs:
     name: unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -126,7 +126,7 @@ jobs:
     name: doc-code consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - name: lint-docs
         # Single script covers: doc freshness (90-day warn, 180-day
         # fail on frontmatter-dated docs), config/API/metrics
@@ -139,7 +139,7 @@ jobs:
     name: import-boundary lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - name: lint-imports
         # Enforces architectural import rules:
         # - No stellar-rpc in production ingest (removed from r1
@@ -156,7 +156,7 @@ jobs:
     name: github-actions SHA-pinning lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           fetch-depth: 0
       - name: lint-actions-pinning
@@ -181,7 +181,7 @@ jobs:
     env:
       PROM_VERSION: "2.55.1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - name: install promtool
         run: |
           # F-1294 (codex audit-2026-05-13): SHA-verified install.
@@ -207,10 +207,10 @@ jobs:
     name: govulncheck + gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -245,8 +245,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -267,12 +267,12 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - name: Spectral lint
         uses: stoplightio/spectral-action@6416fd018ae38e60136775066eb3e98172143141  # v0.8.13
         with:
           file_glob: openapi/*.yaml
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -304,7 +304,7 @@ jobs:
       run:
         working-directory: web/explorer
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093  # v6
         with:
           version: "10"
@@ -361,7 +361,7 @@ jobs:
       run:
         working-directory: web/dashboard
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093  # v6
         with:
           version: "10"
@@ -394,7 +394,7 @@ jobs:
       run:
         working-directory: web/status
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093  # v6
         with:
           version: "10"

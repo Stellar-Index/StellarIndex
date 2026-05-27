@@ -229,9 +229,19 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@promtool check rules deploy/monitoring/rules/*.yml
 	@promtool check rules configs/prometheus/rules.r1/*.yml
 
+.PHONY: vuln
+vuln: ## Run govulncheck against the module
+	@command -v govulncheck >/dev/null 2>&1 || \
+	  { echo "govulncheck not installed; run: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 2; }
+	govulncheck ./...
+
 .PHONY: verify
-verify: ## Sequential local quality gate (fmt, vet, lint, docs, test) — run before every push
+verify: vuln ## Sequential local quality gate (fmt, vet, lint, docs, vuln, test) — run before every push
 	@./scripts/dev/verify.sh
+
+.PHONY: verify-r1-sync
+verify-r1-sync: ## Compare every tracked config path against deployed copy on r1 (operator-pre-deploy check)
+	@bash scripts/dev/verify-r1-sync.sh
 
 .PHONY: verify-cross-region
 verify-cross-region: ## Cross-region byte-identical-VWAP consistency check (ADR-0015 §verification)

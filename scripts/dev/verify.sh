@@ -25,6 +25,13 @@ if command -v promtool >/dev/null 2>&1; then
 else
     echo "=== Monitoring (skipped — promtool not installed; install via 'brew install prometheus' or the Prometheus GH release) ==="
 fi
+# govulncheck (F-0057). Graceful-skip when not installed locally —
+# CI installs it via `make deps`. Mirrors the promtool pattern.
+if command -v govulncheck >/dev/null 2>&1; then
+    echo "=== Vuln ==="        && make vuln
+else
+    echo "=== Vuln (skipped — govulncheck not installed; install via 'go install golang.org/x/vuln/cmd/govulncheck@latest') ==="
+fi
 echo "=== Test ==="          && make test
 # Compile-only: catches interface-extension breakage in
 # build-tagged integration adapters without spinning testcontainers.
