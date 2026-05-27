@@ -12,6 +12,7 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
+	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 )
 
@@ -304,6 +305,17 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	).Scan(&rowsInserted); err != nil {
 		return fmt.Errorf("timescale: InsertTrade: %w", err)
 	}
+
+	// Emit per-source outcome metric (new vs duplicate) so operators
+	// can detect a cursor-replay / stuck-tip pattern via
+	// `rate(ratesengine_trade_insert_outcome_total{outcome="new"}[5m]) == 0`
+	// while attempts (TradeInsertsTotal) keep climbing. See
+	// obs.TradeInsertOutcomeTotal.
+	outcome := "new"
+	if rowsInserted == 0 {
+		outcome = "duplicate"
+	}
+	obs.TradeInsertOutcomeTotal.WithLabelValues(t.Source, outcome).Inc()
 
 	// F-1243 (codex audit-2026-05-13) second half: skip the
 	// registry hook when the trade was a duplicate (rowsInserted
