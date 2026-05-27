@@ -34,6 +34,7 @@ Scoring:
 | Image / logo | ✅ | ✅ | SEP-1 `image_url` overlay | `covered` | `assets_sep1.go` |
 | Holder distribution | ✅ | ✅ | not implemented | `gap` | Stellar Expert + horizon's `/accounts?asset=...` could feed this; current scope is price not holder topology |
 | Top holders | ✅ | ✅ | not implemented | `gap` | same as above |
+| Per-account net position (SEP-41) | ❌ | ❌ | `GET /v1/contracts/{contract_id}/transfers?from=&to=` reads from `sep41_transfers` hypertable (F-0021 closure 2026-05-27) | `covered+` | **Stellar moat:** CG/CMC structurally cannot offer — their data ingest doesn't observe on-chain transfers. `internal/sources/sep41_transfers/` decoder + migration 0047 + sibling `sep41_supply` for mint/burn/clawback give complete audit-trail coverage. |
 | Sentiment % up/down | ✅ | ✅ | not implemented | `non-goal` | community signal, not authoritative pricing surface |
 | User ratings | ✅ | ✅ | not implemented | `non-goal` | community signal |
 

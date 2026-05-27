@@ -403,25 +403,30 @@ F-0028 will track the soroban_events lag separately)
 - **Cross-ref:** F-0016 (initial discovery), W28
   (back-pressure design caveat), W30 (cold-tier interaction).
 
-#### F-0021 — sep41_supply intentionally narrow to mint/burn/clawback (CONFIRMED scope)
+#### F-0021 — sep41 partial-event scope (CLOSED by post-audit PR)
 
 - **Severity:** `note`
-- **Title:** `sep41_supply` decoder classifies only
+- **Status:** CLOSED 2026-05-27. Sibling `sep41_transfers`
+  source landed alongside `sep41_supply`; the two decoders use
+  disjoint topic[0] symbols on the same watched-contract set
+  and each event is matched by exactly one of them.
+- **Title (original):** `sep41_supply` decoder classifies only
   `mint`/`burn`/`clawback` symbols. It does NOT classify
   `transfer` / `approve` / `set_admin` / `set_authorized`.
-- **Evidence:** `internal/sources/sep41_supply/decode.go`
-  `classify()` only handles three TopicSymbol* cases;
-  `internal/sources/sep41_supply/events.go` only defines those
-  three SymbolMint/Burn/Clawback constants.
-- **Disposition:** `accepted` — intentional scope. Per the
-  package docstring: "observed mint / burn / clawback event".
-  Source name `sep41_supply` reflects its supply-derivation
-  scope (ADR-0011/0023). Other SEP-41 events still land in
-  `soroban_events` (ADR-0029 catch-all) for raw queryability;
-  if/when we need per-event structured rows for transfers,
-  add a sibling `sep41_transfers` source.
+- **Original disposition (now superseded):** `accepted` —
+  intentional supply-derivation scope. Other SEP-41 events
+  landed in `soroban_events` (ADR-0029 catch-all) but had no
+  per-event structured projection.
+- **Resolution:** new `internal/sources/sep41_transfers/`
+  package + `sep41_transfers` hypertable (migration 0047) +
+  `GET /v1/contracts/{contract_id}/transfers` endpoint +
+  `ratesengine-ops sep41-transfers-backfill` subcommand for
+  historical replay from the soroban_events landing zone.
+  Unlocks the per-account net-position Stellar moat — the
+  feature CG/CMC structurally cannot offer because their data
+  ingest doesn't observe on-chain transfers.
 - **Cross-ref:** the TSV's 2 `unknown` rows are now resolved
-  to `accepted` scope.
+  to `closed`.
 
 #### F-0022 — Postgres log volume root cause not yet identified
 

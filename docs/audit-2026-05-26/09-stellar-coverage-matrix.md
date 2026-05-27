@@ -79,7 +79,7 @@ Scoring:
 
 | Surface | Status | Evidence |
 | --- | --- | --- |
-| SEP-41 token transfer / mint / burn / clawback | `partial` (per W35 scope) | `internal/sources/sep41_supply/` covers mint/burn/clawback only; transfer/approve/set_admin/set_authorized fall through to sorobanevents catch-all (F-0021 accepted scope) |
+| SEP-41 token transfer / mint / burn / clawback | `covered+` | `internal/sources/sep41_supply/` covers mint/burn/clawback (Algorithm 3 supply); sibling `internal/sources/sep41_transfers/` covers transfer/approve/set_admin/set_authorized for per-account audit-trail (migration 0047 + `GET /v1/contracts/{id}/transfers`). F-0021 closed 2026-05-27. **Differentiator:** per-account net-position queries (CG/CMC cannot do this — they only see exchange-side flows). |
 | SEP-41 supply derivation via mint/burn delta | `covered` | `internal/supply/sep41.go` Algorithm 3 per CLAUDE.md |
 | Stablecoin fiat-proxy late binding | `covered+` | ADR-0026 + `internal/aggregate/stablecoin.go`; **Differentiator:** late binding at aggregator (not decoder) preserves depeg detection vs eager normalization |
 | Depeg detection | `covered` | `internal/divergence/depeg_test.go`; per-stablecoin tracking via verified catalogue |
