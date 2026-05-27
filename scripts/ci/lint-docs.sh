@@ -412,6 +412,58 @@ if [ -d docs/operations/runbooks ]; then
   done
 fi
 
+# ─── 15. Incident post-mortem follow-up forcing function (F-0099) ─────────
+#
+# Fail if any customer-facing incident (internal/incidents/data/*.md,
+# served by /v1/incidents) is older than 30 days AND still has
+# unchecked `[ ]` checkboxes in its body. Closes the meta-failure-
+# mode where post-mortem action items rot indefinitely: the
+# 2026-05-10 SEV-2 (redis-writes-blocked-disk-full) shipped with 4
+# `[ ]` follow-ups and 17 days later the same cascade recurred
+# (2026-05-26) with those follow-ups still unchecked. CI now
+# enforces the cadence so a future post-mortem either gets its
+# items closed within a month, or the unchecked items get
+# explicitly rewritten as accepted-debt (`[~]` is treated as
+# checked / acknowledged).
+#
+# Date is sourced from the filename slug `<YYYY-MM-DD>-<slug>.md`
+# — matches the convention enforced by `internal/incidents`
+# (frontmatter `started_at:` may be richer, but filename is the
+# stable surface and the only thing this lint reads).
+
+echo "Checking incident post-mortem follow-ups..."
+INCIDENT_DIR="internal/incidents/data"
+if [ -d "$INCIDENT_DIR" ]; then
+  NOW_EPOCH=$(date -u +%s)
+  THIRTY_DAYS_AGO=$((NOW_EPOCH - 30 * 86400))
+  for incident in "$INCIDENT_DIR"/*.md; do
+    [ -f "$incident" ] || continue
+    fname="${incident##*/}"
+    # Skip templates / underscored scratch files (mirrors
+    # internal/incidents/incidents.go Load() behaviour).
+    case "$fname" in
+      _*) continue ;;
+    esac
+    # Extract YYYY-MM-DD from the slug; bail if no leading date.
+    date_str=$(echo "$fname" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
+    [ -z "$date_str" ] && continue
+    # BSD-first date parse (matches section 6 convention).
+    incident_epoch=$(date -u -j -f "%Y-%m-%d" "$date_str" +%s 2>/dev/null || \
+                     date -u -d "$date_str" +%s 2>/dev/null || echo "")
+    [ -z "$incident_epoch" ] && continue
+    if [ "$incident_epoch" -ge "$THIRTY_DAYS_AGO" ]; then
+      # Inside the 30-day grace window — unchecked items still OK.
+      continue
+    fi
+    # Count unchecked `[ ]` checkboxes (markdown task-list shape).
+    # `[x]` / `[X]` / `[~]` are all treated as done/acknowledged.
+    unchecked=$(grep -cE '^[[:space:]]*-[[:space:]]+\[ \]' "$incident" || true)
+    if [ "$unchecked" -gt 0 ]; then
+      err "incident '$incident' is older than 30 days and has $unchecked unchecked '[ ]' follow-up checkbox(es) — close them, mark as acknowledged with '[~]', or rewrite the action item."
+    fi
+  done
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
