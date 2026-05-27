@@ -194,3 +194,44 @@ groups:
 
             Without a retry queue, these events are LOST from the pipeline.
             Escalate quickly if the rate is high.
+
+      # Live r1 evidence on 2026-05-28 surfaced a cursor-replay
+      # pattern: trade_inserts_total{source=sdex} ticked at 157/min
+      # while the trades hypertable's max(ts) was 11 h old — every
+      # attempt was an ON CONFLICT DO NOTHING short-circuit. The
+      # `_insert_errors` alert above doesn't fire (no errors); the
+      # `_source_stopped` alert above doesn't fire (events are still
+      # being decoded); but the database is silently 0% fresh.
+      #
+      # The trade_insert_outcome_total counter (added 2026-05-28)
+      # exposes the new-vs-duplicate split directly. This alert
+      # fires when a source produces a sustained dedupe-only stream:
+      # nonzero duplicate rate AND zero new rate for 10 min. Ticket
+      # severity (not page) because the symptom is degraded
+      # freshness, not outage.
+      - alert: ratesengine_ingestion_duplicate_flood
+        expr: |
+          sum by (source) (rate(ratesengine_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
+          and on (source)
+          sum by (source) (rate(ratesengine_trade_insert_outcome_total{outcome="new"}[10m])) == 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+        annotations:
+          summary: "Source {{ $labels.source }} producing duplicates only (cursor replay or stuck-tip)"
+          description: |
+            Source {{ $labels.source }} has been attempting >0.5
+            inserts/sec for ≥10 min but EVERY attempt hits
+            `ON CONFLICT DO NOTHING` — no new rows are landing in
+            the trades hypertable. The indexer cursor advances but
+            the data underneath it is stale.
+
+            Likely root causes: cursor-state corruption (cursor
+            jumped past data without persisting), a stale event
+            channel feeding the sink from an old replay loop, or a
+            back-pressure event that lost in-flight events.
+
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md

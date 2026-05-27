@@ -225,3 +225,35 @@ groups:
 
             Without a retry queue, these events are LOST from the pipeline.
             Escalate quickly if the rate is high.
+
+      # Detects cursor-replay / stuck-tip pattern via the
+      # trade_insert_outcome_total counter (added 2026-05-28).
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml;
+      # the per-host wave-96 lint requires both copies to stay in
+      # sync.
+      - alert: ratesengine_ingestion_duplicate_flood
+        expr: |
+          sum by (source) (rate(ratesengine_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
+          and on (source)
+          sum by (source) (rate(ratesengine_trade_insert_outcome_total{outcome="new"}[10m])) == 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: ingestion
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+        annotations:
+          summary: "Source {{ $labels.source }} producing duplicates only (cursor replay or stuck-tip)"
+          description: |
+            Source {{ $labels.source }} has been attempting >0.5
+            inserts/sec for ≥10 min but EVERY attempt hits
+            `ON CONFLICT DO NOTHING` — no new rows are landing in
+            the trades hypertable. The indexer cursor advances but
+            the data underneath it is stale.
+
+            Likely root causes: cursor-state corruption (cursor
+            jumped past data without persisting), a stale event
+            channel feeding the sink from an old replay loop, or a
+            back-pressure event that lost in-flight events.
+
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
