@@ -125,6 +125,15 @@ const (
 	actionWithdrawLiquidity
 	actionBond
 	actionUnbond
+	// actionAdmin / actionInitialize are governance/lifecycle events
+	// the indexer doesn't act on today — they're surfaced through
+	// classifyAny() solely to satisfy the EVERY-event policy
+	// (project_every_event_principle, 2026-05-25). The
+	// soroban_events landing zone (ADR-0029) captures them at the
+	// raw-event level; future per-event decoders can branch on
+	// these action enum values.
+	actionAdmin
+	actionInitialize
 )
 
 // classifyAny is the union of classify + liquidity / stake topic
@@ -150,6 +159,10 @@ func classifyAny(e *events.Event) (action, string) {
 		return actionBond, e.Topic[1]
 	case TopicSymbolUnbond:
 		return actionUnbond, e.Topic[1]
+	case TopicSymbolAdmin:
+		return actionAdmin, e.Topic[1]
+	case TopicSymbolInitialize:
+		return actionInitialize, e.Topic[1]
 	}
 	return actionUnknown, ""
 }

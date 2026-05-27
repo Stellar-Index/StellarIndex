@@ -57,6 +57,9 @@ func TestClassifyAny(t *testing.T) {
 		{"withdraw auto unbonded", []string{TopicSymbolWithdrawLiquidity, TopicSymbolWLAutoUnbonded}, actionWithdrawLiquidity, TopicSymbolWLAutoUnbonded},
 		{"bond user", []string{TopicSymbolBond, TopicSymbolStakeUser}, actionBond, TopicSymbolStakeUser},
 		{"unbond amount", []string{TopicSymbolUnbond, TopicSymbolStakeAmount}, actionUnbond, TopicSymbolStakeAmount},
+		// EVERY-event policy — admin + initialize were silently dropped pre-2026-05-27.
+		{"admin replacement requested", []string{TopicSymbolAdmin, "any-detail"}, actionAdmin, "any-detail"},
+		{"initialize token_a", []string{TopicSymbolInitialize, "any-detail"}, actionInitialize, "any-detail"},
 		{"unknown topic[0]", []string{"some_other_action", TopicSymbolStakeAmount}, actionUnknown, ""},
 		{"too few topics", []string{TopicSymbolBond}, actionUnknown, ""},
 	}

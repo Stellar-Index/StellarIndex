@@ -76,6 +76,21 @@ const (
 	EventActionWithdrawLiquidity = "withdraw_liquidity"
 	EventActionBond              = "bond"
 	EventActionUnbond            = "unbond"
+	// EventActionAdmin is the topic[0] of every governance/admin
+	// rotation event emitted by the XYK pool contract:
+	//   ("XYK Pool: ", "Admin replacement requested by old admin: ")
+	//   ("XYK Pool: ", "Replace with new admin: ")
+	//   ("XYK Pool: ", "Undo admin change: ")
+	//   ("XYK Pool: ", "Accepted new admin: ")
+	// The literal includes a trailing space; that's faithful to the
+	// contract source (pool/src/contract.rs:784-836). We don't
+	// produce a canonical Trade for these — classification only.
+	EventActionAdmin = "XYK Pool: "
+	// EventActionInitialize is the topic[0] of pool-init events:
+	//   ("initialize", "XYK LP token_a")
+	//   ("initialize", "XYK LP token_b")
+	// Emitted once per pool deploy. Same classification-only intent.
+	EventActionInitialize = "initialize"
 )
 
 // Field names for `provide_liquidity` (5 events per call).
@@ -152,6 +167,8 @@ var (
 	TopicSymbolWithdrawLiquidity = scval.MustEncodeString(EventActionWithdrawLiquidity) // topic[0]
 	TopicSymbolBond              = scval.MustEncodeString(EventActionBond)              // topic[0]
 	TopicSymbolUnbond            = scval.MustEncodeString(EventActionUnbond)            // topic[0]
+	TopicSymbolAdmin             = scval.MustEncodeString(EventActionAdmin)             // topic[0] for the 4 admin variants
+	TopicSymbolInitialize        = scval.MustEncodeString(EventActionInitialize)        // topic[0] for the 2 init variants
 
 	// provide_liquidity topic[1] variants.
 	TopicSymbolPLSender    = scval.MustEncodeString(FieldPLSender)
