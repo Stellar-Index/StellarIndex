@@ -3230,3 +3230,27 @@ claim was wrong; record the corrected understanding.
 - **Workstream:** W14, deployment-mechanism
 - **Evidence:** Wave-0 step 11 (2026-05-27): `ps auxww` on r1 shows `/usr/bin/prometheus-alertmanager` with the Debian default config path `/etc/prometheus/alertmanager.yml`; `/etc/alertmanager/alertmanager.yml` does not exist on r1; `configs/ansible/roles/prometheus/tasks/04-alertmanager-configure.yml` template `dest:` is `/etc/alertmanager/alertmanager.yml`. F-0139 drift was resolved via `scp configs/alertmanager/{alertmanager.r1.yml,apply.sh}` + `bash apply.sh` on r1 (amtool check-config SUCCESS, `systemctl reload prometheus-alertmanager` exit 0, service `active`).
 - **Disposition:** `open` Wave-1; either fix role target or replace with `archival-node/tasks/17-alertmanager-configure.yml` mirroring the redis_exporter pattern. Manual SCP path documented as part of F-0142 `make verify-r1-sync` work.
+
+#### F-0156 — Smoke OHLC check expects HTTP 200 but route correctly returns 404 on no-trades windows
+
+- **Severity:** `low` (smoke-script bug; not a binary defect)
+- **Title:** Live smoke run 2026-05-27 post-Wave-0-fix:
+  `check "ohlc USDC/XLM" "/v1/ohlc?base=USDC-GA5Z...&quote=native"`
+  fails because the route returns HTTP 404 `errors/no-trades`
+  when the test pair has no trades in the default window. Per
+  ADR-0018 that's the documented contract. The smoke script
+  asserts HTTP 200, which is overly strict.
+- **Disposition:** `open` Wave-2. Use `expect_status 200` only
+  on pairs with guaranteed liquidity (XLM/USDC the direction
+  with SDEX activity); otherwise `expect_status 200 OR 404`.
+
+#### F-0157 — Smoke "asset not found" behaviour pin reports curl transport error
+
+- **Severity:** `low` (smoke-script bug)
+- **Title:** `expect_status 404 "asset not found" "/v1/assets/AAAA-..."`
+  reports "curl error" rather than a clean 4xx assertion. URL-
+  escaping suspect in the smoke script's curl invocation when
+  the asset_id contains `:` or `-` characters interpreted by
+  the shell.
+- **Disposition:** `open` Wave-2. Single-quote the URL more
+  defensively in the smoke script.
