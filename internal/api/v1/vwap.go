@@ -96,17 +96,8 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// aggregator binary's pre-computed rollups feed `/v1/price`'s
 	// closed-bucket surface (ADR-0015), not this endpoint.
 	const maxTrades = 10000
-	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(r.Context(), pair, from, to, maxTrades)
-	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		s.logger.Error("TradesInRange failed for VWAP",
-			"err", err, "base", base.String(), "quote", quote.String(),
-			"from", from, "to", to)
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+	trades, triangulated, ok := s.fetchVWAPTrades(w, r, pair, from, to, maxTrades)
+	if !ok {
 		return
 	}
 
@@ -154,6 +145,38 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		OutliersFiltered: outliersFiltered,
 		Truncated:        pre == maxTrades,
 	}, Flags{Triangulated: triangulated})
+}
+
+// fetchVWAPTrades is the trade-fetch + error-dispatch wrapper extracted
+// from handleVWAP. Returns (trades, triangulated, ok); ok=false means a
+// problem+json has already been written (client-abort, cache-unavailable,
+// or generic internal error) and the caller must return immediately.
+// Pulled out to keep handleVWAP under the funlen budget while preserving
+// the cache-unavailable branch added for F-0089.
+func (s *Server) fetchVWAPTrades(
+	w http.ResponseWriter, r *http.Request,
+	pair canonical.Pair, from, to time.Time, maxTrades int,
+) ([]canonical.Trade, bool, bool) {
+	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(r.Context(), pair, from, to, maxTrades)
+	if err == nil {
+		return trades, triangulated, true
+	}
+	if clientAborted(r, err) {
+		return nil, false, false
+	}
+	if IsCacheUnavailable(err) {
+		s.logger.Warn("TradesInRange cache unavailable for VWAP",
+			"err", err, "base", pair.Base.String(), "quote", pair.Quote.String())
+		writeCacheUnavailableProblem(w, r)
+		return nil, false, false
+	}
+	s.logger.Error("TradesInRange failed for VWAP",
+		"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(),
+		"from", from, "to", to)
+	writeProblem(w, r,
+		"https://api.ratesengine.net/errors/internal",
+		"Internal error", http.StatusInternalServerError, "")
+	return nil, false, false
 }
 
 // tradesInRangeWithStablecoinFallback wraps HistoryReader.TradesInRange

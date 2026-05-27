@@ -96,6 +96,12 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
+		if IsCacheUnavailable(err) {
+			s.logger.Warn("computeTip cache unavailable",
+				"err", err, "asset", asset.String(), "quote", quote.String())
+			writeCacheUnavailableProblem(w, r)
+			return
+		}
 		s.logger.Error("computeTip failed",
 			"err", err, "asset", asset.String(), "quote", quote.String())
 		writeProblem(w, r,

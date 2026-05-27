@@ -175,6 +175,12 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 				"the oracle_updates hypertable scan didn't return in 8s; retry shortly.")
 			return
 		}
+		if IsCacheUnavailable(err) {
+			s.logger.Warn("LatestOracleUpdatesForAsset cache unavailable",
+				"err", err, "asset", asset.String(), "source", source)
+			writeCacheUnavailableProblem(w, r)
+			return
+		}
 		s.logger.Error("LatestOracleUpdatesForAsset failed",
 			"err", err, "asset", asset.String(), "source", source)
 		writeProblem(w, r,
@@ -223,6 +229,11 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 				"https://api.ratesengine.net/errors/oracle-streams-timeout",
 				"Oracle streams query timed out", http.StatusServiceUnavailable,
 				"the oracle_updates hypertable scan didn't return in 8s; retry shortly.")
+			return
+		}
+		if IsCacheUnavailable(err) {
+			s.logger.Warn("LatestOracleStreams cache unavailable", "err", err)
+			writeCacheUnavailableProblem(w, r)
 			return
 		}
 		s.logger.Error("LatestOracleStreams failed", "err", err)

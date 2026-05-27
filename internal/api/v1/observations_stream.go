@@ -99,6 +99,12 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 		if clientAborted(r, err) {
 			return
 		}
+		if IsCacheUnavailable(err) {
+			s.logger.Warn("computeObservations cache unavailable (stream prelude)",
+				"err", err, "asset", asset.String(), "quote", quote.String(), "source", source)
+			writeCacheUnavailableProblem(w, r)
+			return
+		}
 		s.logger.Error("LatestTradePerSource failed (stream prelude)",
 			"err", err, "asset", asset.String(), "quote", quote.String(), "source", source)
 		writeProblem(w, r,
