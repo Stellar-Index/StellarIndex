@@ -145,6 +145,66 @@ fetched 2026-04-23:
   galexie + minio + postgresql + node_exporter (stellar-rpc is no
   longer in the watched set since its 2026-04-23 removal).
 
+### 2026-05-27 F-0152 Prometheus-exporter installation (repo-side)
+
+The `prometheus.r1.yml` scrape jobs for redis / postgres / pgbackrest
+exporters were placeholders since the rule files landed — none of the
+three exporters had ever been installed on r1, so every alert family
+that reads from them (`cache.yml`, `storage.yml`, pgbackrest.* in
+`infra.yml`) was silently `absent_over_time` and the F-0085 meta-alert
+was the only thing surfacing the gap.
+
+Ansible tasks landed at `configs/ansible/roles/archival-node/tasks/
+16-prometheus-exporters.yml` covering all three (Debian package for
+redis_exporter + postgres_exporter, pinned upstream tarball for
+pgbackrest_exporter). The play is wired into `tasks/main.yml` after
+`10-observability.yml` and tagged `exporters`.
+
+**Operator deploy steps** (NOT applied yet — repo-side only):
+
+1. Set the pgbackrest_exporter SHA in inventory. The current default
+   is `pgbackrest_exporter_version: "0.18.0"` (in `defaults/main.yml`);
+   pull the matching SHA from
+   https://github.com/woblerr/pgbackrest_exporter/releases/tag/v0.18.0
+   and paste it into `configs/ansible/inventory/r1.secrets.yml` (or
+   non-secret vars) as `pgbackrest_exporter_release_sha256: "<64 hex>"`.
+
+2. Confirm `universe` is enabled in apt sources on r1 — the Debian
+   packages `prometheus-redis-exporter` and `prometheus-postgres-exporter`
+   live in `universe` on noble. `apt-cache policy prometheus-redis-exporter`
+   should show a candidate; if not, `add-apt-repository universe`.
+
+3. Run the play scoped to the new tag:
+   ```sh
+   ansible-playbook -i configs/ansible/inventory/r1.yml \
+     configs/ansible/playbooks/archival-node.yml \
+     --tags exporters
+   ```
+
+4. **Optional minimum-privilege follow-up for postgres_exporter.**
+   The tasks default to peer auth as the `postgres` superuser on the
+   local Unix socket — works out-of-the-box but is more privilege
+   than the exporter needs. To switch:
+   ```sql
+   CREATE USER postgres_exporter;
+   GRANT pg_monitor TO postgres_exporter;
+   GRANT CONNECT ON DATABASE ratesengine TO postgres_exporter;
+   ```
+   Then swap `user=postgres` → `user=postgres_exporter` in
+   `/etc/default/prometheus-postgres-exporter` and reload. `pg_monitor`
+   is a PostgreSQL 10+ default role granting read on `pg_stat_*`,
+   `pg_database_size()`, etc.
+
+5. Verify post-deploy:
+   ```sh
+   curl -s http://127.0.0.1:9121/metrics | head -5   # redis
+   curl -s http://127.0.0.1:9187/metrics | head -5   # postgres
+   curl -s http://127.0.0.1:9854/metrics | head -5   # pgbackrest
+   curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job | test("exporter")) | {job: .labels.job, health}'
+   ```
+   The F-0085 meta-alerts (`up{job="<exporter>"} == 0`) should clear
+   within one scrape interval.
+
 ## Known gaps / next-session priorities
 
 ### Unblocked ✓
