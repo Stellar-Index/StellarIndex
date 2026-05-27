@@ -27,6 +27,7 @@ import (
 	sac_balances "github.com/RatesEngine/rates-engine/internal/sources/sac_balances"
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	sep41_supply "github.com/RatesEngine/rates-engine/internal/sources/sep41_supply"
+	sep41_transfers "github.com/RatesEngine/rates-engine/internal/sources/sep41_transfers"
 	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
 	soroswap_router "github.com/RatesEngine/rates-engine/internal/sources/soroswap_router"
 	"github.com/RatesEngine/rates-engine/internal/sources/trustlines"
@@ -247,6 +248,8 @@ func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.S
 		persistSACBalanceObservation(ctx, logger, store, e)
 	case sep41_supply.Event:
 		persistSEP41SupplyEvent(ctx, logger, store, e)
+	case sep41_transfers.Event:
+		persistSEP41TransferEvent(ctx, logger, store, e)
 	default:
 		// A source emitted an event type the sink doesn't know how
 		// to persist. Usually means a new source was registered in
@@ -727,4 +730,36 @@ func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *ti
 	logger.Debug("SEP-41 supply event ingested",
 		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
 		"amount", e.Amount.String(), "counterparty", e.Counterparty)
+}
+
+// persistSEP41TransferEvent routes one sep41_transfers audit-trail
+// event (transfer / approve / set_admin / set_authorized) to the
+// sep41_transfers hypertable. F-0021 closure (audit-2026-05-26):
+// unlocks per-account net-position queries — the Stellar moat
+// feature CG/CMC structurally cannot offer.
+func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_transfers.Event) {
+	if err := store.InsertSEP41Transfer(ctx, timescale.SEP41TransferRow{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		ObservedAt:      e.ObservedAt,
+		Kind:            timescale.SEP41TransferKind(e.Kind),
+		FromAddr:        e.FromAddr,
+		ToAddr:          e.ToAddr,
+		Amount:          e.Amount,
+		LiveUntilLedger: e.LiveUntilLedger,
+		Authorized:      e.Authorized,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_transfers.SourceName, "sep41_transfers_event").Inc()
+		logger.Error("insert SEP-41 transfer event failed",
+			"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
+			"tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, sep41_transfers.SourceName)
+	logger.Debug("SEP-41 transfer event ingested",
+		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
+		"from", e.FromAddr, "to", e.ToAddr)
 }

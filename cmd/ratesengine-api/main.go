@@ -777,6 +777,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ChangeSummary:        store,
 		Coins:                cachedCoinsReader,
 		Issuers:              store,
+		SEP41Transfers:       store,
 		Cursors:              store,
 		NetworkStats:         store,
 		// Wrap with a 60s TTL cache. The underlying SQL aggregations
