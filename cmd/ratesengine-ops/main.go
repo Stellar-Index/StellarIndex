@@ -1347,18 +1347,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	fmt.Fprintf(os.Stderr, "verify-decoders: streaming ledgers %d..%d from %s\n",
 		*from, *to, cfg.Storage.S3Endpoint)
 
-	lsCfg := ledgerstream.Config{
-		DataStore: datastore.DataStoreConfig{
-			Type: "S3",
-			Params: map[string]string{
-				"destination_bucket_path": cfg.Storage.S3BucketLive,
-				"region":                  cfg.Storage.S3Region,
-				"endpoint_url":            cfg.Storage.S3Endpoint,
-			},
-			NetworkPassphrase: cfg.Stellar.Passphrase(),
-			Compression:       "zstd",
-		},
-	}
+	lsCfg := newBoundedLedgerStreamConfig(cfg, cfg.Storage.S3BucketLive)
 
 	type perSourceStat struct {
 		outputs int
@@ -2175,31 +2164,18 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 // verify-archive state. highestLedgerHashHex is hex-encoded;
 // callers carry it forward as -resume-from-hash on the next run.
 func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, maxRuntime time.Duration, workers int, doChain, doCheckpoint bool, archiveRoot string, failOnMissed bool, resumeFromHash string, stateFile, tier string, priorState VerifyArchiveState) (uint32, string, error) { //nolint:funlen,gocognit,gocyclo
-	lsCfg := ledgerstream.Config{
-		DataStore: datastore.DataStoreConfig{
-			Type: "S3",
-			Params: map[string]string{
-				"destination_bucket_path": bucket,
-				"region":                  cfg.Storage.S3Region,
-				"endpoint_url":            cfg.Storage.S3Endpoint,
-			},
-			NetworkPassphrase: cfg.Stellar.Passphrase(),
-			Compression:       "zstd",
-		},
-		// verify-archive's purpose is chain-check, not full-coverage
-		// delivery — at the trailing edge Galexie may not have
-		// uploaded the next 1-2 partition files yet, and the systemd
-		// timer fires every 6h so the operator can't ensure -to
-		// stays well behind the tip. Tolerate the SDK "is missing"
-		// error within 65k ledgers of -to (~one partition + slack);
-		// the chain up to the last-delivered ledger is what we'd
-		// report anyway. The 2026-05-25 incident
-		// (project_62_diagnosis_2026_05_25) was exactly this:
-		// bootstrap walked 62.64M ledgers clean, then failed on the
-		// trailing-edge missing file. With the tolerate flag set,
-		// the walk would have reported success.
-		TolerateTrailingMissing: true,
-	}
+	// verify-archive's purpose is chain-check, not full-coverage
+	// delivery — at the trailing edge Galexie may not have uploaded
+	// the next 1-2 partition files yet, and the systemd timer fires
+	// every 6h so the operator can't ensure -to stays well behind
+	// the tip. newBoundedLedgerStreamConfig opts into
+	// TolerateTrailingMissing so the SDK's "is missing" error within
+	// ~65k ledgers of -to is tolerated; the chain up to the
+	// last-delivered ledger is what we'd report anyway. The
+	// 2026-05-25 incident (project_62_diagnosis_2026_05_25) was
+	// exactly this: bootstrap walked 62.64M ledgers clean, then
+	// failed on the trailing-edge missing file.
+	lsCfg := newBoundedLedgerStreamConfig(cfg, bucket)
 
 	// maxRuntime == 0 → no cap (uncancellable parent). Operators
 	// pass 0 for full-archive runs that exceed any single-day
@@ -3235,23 +3211,12 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	fmt.Fprintf(os.Stderr, "wasm-history: watching %d contract(s), bucket=%s, range=[%d, %d], parallel=%d\n",
 		len(watch), bucketName, *from, *to, *parallel)
 
-	lsCfg := ledgerstream.Config{
-		DataStore: datastore.DataStoreConfig{
-			Type: "S3",
-			Params: map[string]string{
-				"destination_bucket_path": bucketName,
-				"region":                  cfg.Storage.S3Region,
-				"endpoint_url":            cfg.Storage.S3Endpoint,
-			},
-			NetworkPassphrase: cfg.Stellar.Passphrase(),
-			Compression:       "zstd",
-		},
-		// wasm-history walks tend to scan recent ranges (audit
-		// trailing N months). The trailing edge can be at the live
-		// tip; if -to overshoots a not-yet-uploaded partition the
-		// walk would error otherwise.
-		TolerateTrailingMissing: true,
-	}
+	// wasm-history walks tend to scan recent ranges (audit trailing N
+	// months). The trailing edge can be at the live tip; if -to
+	// overshoots a not-yet-uploaded partition the walk would error
+	// otherwise. newBoundedLedgerStreamConfig opts into
+	// TolerateTrailingMissing for us.
+	lsCfg := newBoundedLedgerStreamConfig(cfg, bucketName)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -4335,18 +4300,7 @@ func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo /
 		"scan-soroban-events: bucket=%s ledgers=%d..%d topic0=%q contract=%q limit=%d\n",
 		bucket, *from, *to, *topic0, *contract, *limit)
 
-	lsCfg := ledgerstream.Config{
-		DataStore: datastore.DataStoreConfig{
-			Type: "S3",
-			Params: map[string]string{
-				"destination_bucket_path": bucket,
-				"region":                  cfg.Storage.S3Region,
-				"endpoint_url":            cfg.Storage.S3Endpoint,
-			},
-			NetworkPassphrase: cfg.Stellar.Passphrase(),
-			Compression:       "zstd",
-		},
-	}
+	lsCfg := newBoundedLedgerStreamConfig(cfg, bucket)
 
 	var totalLedgers int
 	streamErr := ledgerstream.Stream(ctx, lsCfg, uint32(*from), uint32(*to),
