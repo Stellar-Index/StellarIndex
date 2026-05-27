@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -76,6 +77,17 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 
 			res, err := bucket.Take(r.Context(), key)
 			if err != nil {
+				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+					// Dwell-time exceeded: sustained Redis outage —
+					// fail-CLOSED with 503 + Retry-After rather than
+					// disabling the rate limiter indefinitely. F-0050 /
+					// F-0150 (audit-2026-05-27). Header MUST precede
+					// writeRateLimitProblem's WriteHeader call.
+					logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
+						"err", err, "key", key, "request_id", RequestIDFrom(r))
+					writeThrottleUnavailableProblem(w, r)
+					return
+				}
 				// Log at debug so a Redis outage doesn't flood the
 				// error log — the metric below is the alertable
 				// signal, the log is for post-mortem detail.
@@ -167,6 +179,12 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 
 			res, err := bucket.TakeN(r.Context(), key, override)
 			if err != nil {
+				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+					logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
+						"err", err, "key", key, "request_id", RequestIDFrom(r))
+					writeThrottleUnavailableProblem(w, r)
+					return
+				}
 				logger.Debug("ratelimit redis error — failing open",
 					"err", err, "key", key, "request_id", RequestIDFrom(r))
 				obs.RateLimitFailOpenTotal.Inc()
@@ -251,6 +269,33 @@ type rlProblem struct {
 	Status   int    `json:"status"`
 	Detail   string `json:"detail"`
 	Instance string `json:"instance"`
+}
+
+// writeThrottleUnavailableProblem is the 503 + Retry-After response
+// for the F-0050 / F-0150 dwell-time fail-closed branch. Mirrors
+// writeRateLimitProblem's shape but carries a different error-type
+// URL + status so operators reading access logs (and clients
+// parsing the type tag) can tell "you were rate-limited" apart
+// from "the rate limiter itself is offline."
+//
+// Retry-After is set BEFORE WriteHeader; net/http silently drops
+// headers added after the status line is committed.
+func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
+	p := rlProblem{
+		Type:     "https://api.ratesengine.net/errors/throttle-unavailable",
+		Title:    "Throttle layer unavailable",
+		Status:   http.StatusServiceUnavailable,
+		Detail:   "the abuse-prevention layer has been unreachable for an extended period; retry in a moment",
+		Instance: r.URL.RequestURI(),
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Cache-Control", "no-store")
+	// 30s matches ratelimit.DefaultDwellTime; clients that obey
+	// Retry-After will naturally space retries far enough apart to
+	// ride out a typical Redis fail-over.
+	w.Header().Set("Retry-After", "30")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter int) {

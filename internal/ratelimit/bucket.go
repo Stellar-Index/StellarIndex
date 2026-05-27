@@ -2,19 +2,52 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// DefaultDwellTime is the F-0050 / F-0150 fail-open dwell-time
+// window: how long Take is allowed to be failing-open on Redis
+// errors before flipping to fail-CLOSED via [ErrThrottleUnavailable].
+//
+// 30s matches [auth.DefaultSignupThrottleDwellTime] (kept in step
+// across the two abuse-prevention seams so operators reason about
+// one threshold, not two). Long enough for a Redis blip not to
+// take rate-limiting offline; short enough that a sustained
+// attacker-induced outage can't pivot to unbounded request volume.
+const DefaultDwellTime = 30 * time.Second
+
+// ErrThrottleUnavailable signals the rate-limiter has been failing
+// open on Redis errors for longer than the configured dwell-time
+// and the caller should switch to fail-CLOSED (HTTP 503 +
+// Retry-After). Returned by [Bucket.Take] / [Bucket.TakeN] in place
+// of the wrapped Redis error once the dwell-time threshold is
+// crossed; transient errors within the window keep returning the
+// wrapped Redis error so handlers retain their existing fail-open
+// branch for blip-class outages. F-0050 / F-0150 (audit-2026-05-27).
+var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (sustained backend errors)")
 
 // Bucket is a per-(client × window) counter.
 //
 // Safe for concurrent use. One Bucket serves many callers —
 // construct a single instance at binary startup and share it across
 // handlers.
+//
+// # Dwell-time fail-open inversion (F-0050 / F-0150)
+//
+// Take returns a wrapped Redis error on transport failure while
+// the dwell-time clock is still inside its window (default 30s,
+// see [DefaultDwellTime]); callers fall open as before. Once Redis
+// has been failing continuously for longer than the dwell-time,
+// Take returns [ErrThrottleUnavailable] and callers should switch
+// to fail-CLOSED (HTTP 503 + Retry-After). A single Redis success
+// resets the clock so transient blips never trip the threshold.
 type Bucket struct {
 	rdb    redis.Cmdable
 	max    int
@@ -27,6 +60,13 @@ type Bucket struct {
 	// nowFn is the clock source. time.Now in production; tests
 	// override via WithClock to deterministically advance windows.
 	nowFn func() time.Time
+
+	// dwellTime is the fail-open window. Negative disables the
+	// inversion (legacy fail-open-always behaviour).
+	dwellTime time.Duration
+
+	mu              sync.Mutex
+	redisErrorSince time.Time
 }
 
 // Option configures a Bucket at construction.
@@ -44,6 +84,15 @@ func WithClock(now func() time.Time) Option {
 // Exposed for completeness + test isolation.
 func WithKeyPrefix(prefix string) Option {
 	return func(b *Bucket) { b.keyPrefix = prefix }
+}
+
+// WithDwellTime overrides the F-0050 / F-0150 fail-open dwell-time
+// window. Operators with a stricter or looser Redis-availability
+// SLO tune this; a negative value disables the dwell-time
+// inversion (legacy fail-open-always). Default
+// [DefaultDwellTime] (30s).
+func WithDwellTime(d time.Duration) Option {
+	return func(b *Bucket) { b.dwellTime = d }
 }
 
 // Result carries the outcome of [Bucket.Take].
@@ -89,11 +138,40 @@ func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bu
 		window:    window,
 		keyPrefix: "rl:",
 		nowFn:     time.Now,
+		dwellTime: DefaultDwellTime,
 	}
 	for _, opt := range opts {
 		opt(b)
 	}
 	return b
+}
+
+// observeRedisFailure stamps the dwell-time clock + reports whether
+// it's elapsed. True → caller maps to [ErrThrottleUnavailable];
+// false → caller surfaces the wrapped Redis error and the handler
+// falls open. Disabled (negative dwellTime) always returns false.
+func (b *Bucket) observeRedisFailure() bool {
+	if b.dwellTime < 0 {
+		return false
+	}
+	now := b.nowFn()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.redisErrorSince.IsZero() {
+		b.redisErrorSince = now
+		return false
+	}
+	return now.Sub(b.redisErrorSince) > b.dwellTime
+}
+
+// observeRedisSuccess clears the dwell-time clock. One successful
+// round-trip is sufficient to flip back to the fail-open window —
+// the post-incident timeline marker operators want is "first OK
+// after outage" not "DwellTime of consecutive OKs."
+func (b *Bucket) observeRedisSuccess() {
+	b.mu.Lock()
+	b.redisErrorSince = time.Time{}
+	b.mu.Unlock()
 }
 
 // Max returns the configured per-window limit. Useful for surfacing
@@ -188,8 +266,12 @@ func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, erro
 		ttlSeconds, effectiveMax,
 	).Result()
 	if err != nil {
+		if b.observeRedisFailure() {
+			return Result{}, ErrThrottleUnavailable
+		}
 		return Result{}, fmt.Errorf("ratelimit: eval: %w", err)
 	}
+	b.observeRedisSuccess()
 
 	arr, ok := resRaw.([]any)
 	if !ok || len(arr) != 2 {

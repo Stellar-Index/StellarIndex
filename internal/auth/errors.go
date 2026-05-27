@@ -50,4 +50,23 @@ var (
 	// 429 so the handler can ship a more specific error envelope.
 	// F-1232 (audit-2026-05-12).
 	ErrSignupRateLimited = errors.New("auth: signup rate limited for this IP")
+
+	// ErrThrottleUnavailable — the throttle layer has been failing
+	// long enough that fail-open is no longer safe; the handler must
+	// return 503 + Retry-After. Returned by abuse-prevention seams
+	// ([RedisSignupIPThrottle.CheckIP] + [ratelimit.Bucket.Take]) once
+	// their dwell-time threshold is crossed on a sustained Redis
+	// outage.
+	//
+	// Dwell-time inversion (F-0049 / F-0050 / F-0149 / F-0150,
+	// audit-2026-05-27): transient Redis blips (< dwell-time, default
+	// 30s) still fall open so a single MISCONF / network hiccup
+	// doesn't take signup or the rate limiter offline. Sustained
+	// outages — the J40 adversarial vector where an attacker holds
+	// Redis down to disable abuse prevention — flip to fail-CLOSED
+	// once the dwell-time elapses. The 30s window preserves the
+	// existing UX defence (better to accept unthrottled briefly than
+	// reject every request during a blip) while closing the
+	// indefinitely-disabled-throttle attack surface.
+	ErrThrottleUnavailable = errors.New("auth: throttle layer unavailable (sustained backend errors)")
 )

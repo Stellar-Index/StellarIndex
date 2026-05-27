@@ -2,6 +2,7 @@ package ratelimit_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -323,6 +324,202 @@ func TestBucket_TakeN_ZeroOverrideUsesBucketDefault(t *testing.T) {
 	r, _ := b.TakeN(ctx, "default-cust", 0)
 	if r.Allowed {
 		t.Errorf("3rd hit should be denied — override=0 must defer to bucket.max=2")
+	}
+}
+
+// TestBucket_DwellTime_FailsOpenInsideWindow pins F-0050 / F-0150:
+// errors inside the dwell-time window still surface as wrapped
+// Redis errors (caller falls open).
+func TestBucket_DwellTime_FailsOpenInsideWindow(t *testing.T) {
+	rdb, _ := newRedis(t)
+	if err := rdb.Close(); err != nil {
+		t.Fatalf("close redis: %v", err)
+	}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(rdb, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+
+	_, err := b.Take(context.Background(), "k")
+	if err == nil {
+		t.Fatal("first error: want wrapped Redis err, got nil")
+	}
+	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("first error: clock just armed — must NOT be ErrThrottleUnavailable: %v", err)
+	}
+
+	fakeNow = fakeNow.Add(20 * time.Second)
+	_, err = b.Take(context.Background(), "k")
+	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("err at t+20s: must remain fail-open, got ErrThrottleUnavailable")
+	}
+	if err == nil {
+		t.Fatal("err at t+20s: want wrapped Redis err, got nil")
+	}
+}
+
+// TestBucket_DwellTime_FailsClosedAfterWindow pins the J40 vector:
+// past dwell-time, Take returns ErrThrottleUnavailable.
+func TestBucket_DwellTime_FailsClosedAfterWindow(t *testing.T) {
+	rdb, _ := newRedis(t)
+	if err := rdb.Close(); err != nil {
+		t.Fatalf("close redis: %v", err)
+	}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(rdb, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+
+	if _, err := b.Take(context.Background(), "k"); err == nil {
+		t.Fatal("arm: want err, got nil")
+	}
+	fakeNow = fakeNow.Add(31 * time.Second)
+	_, err := b.Take(context.Background(), "k")
+	if !errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("after dwell-time: want ErrThrottleUnavailable, got %v", err)
+	}
+}
+
+// TestBucket_DwellTime_SuccessResetsClock pins the recovery
+// semantic: a single Redis success after the clock arms wipes it,
+// so a later error starts a fresh window.
+//
+// We can't toggle a real Redis connection mid-test, so this uses
+// a faultInjector wrapping the redis.Cmdable interface — phases
+// of the test flip its `fail` flag to drive error / success
+// sequences deterministically.
+func TestBucket_DwellTime_SuccessResetsClock(t *testing.T) {
+	rdb, _ := newRedis(t)
+	fi := &faultInjector{Cmdable: rdb}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(fi, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+
+	// Phase 1: force error to arm the clock.
+	fi.fail = true
+	if _, err := b.Take(context.Background(), "k"); err == nil {
+		t.Fatal("step 1: want injected err, got nil")
+	}
+
+	// Phase 2: heal Redis + run a success.
+	fi.fail = false
+	if _, err := b.Take(context.Background(), "k"); err != nil {
+		t.Fatalf("step 2: want nil after heal, got %v", err)
+	}
+
+	// Phase 3: re-break + advance past original dwell window.
+	// Step 2's success cleared the clock, so this error starts a
+	// fresh window and must fail-OPEN (wrapped Redis err), not 503.
+	fi.fail = true
+	fakeNow = fakeNow.Add(45 * time.Second)
+	_, err := b.Take(context.Background(), "k")
+	if err == nil {
+		t.Fatal("step 3: want injected err, got nil")
+	}
+	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("step 3: success in step 2 should have reset the dwell-clock; got ErrThrottleUnavailable")
+	}
+}
+
+// faultInjector wraps a redis.Cmdable. When fail is true every Eval
+// call (which is what the Lua script driver invokes) returns
+// redis.ErrClosed; otherwise calls pass through.
+//
+// Bucket.Take only uses EvalSha + Eval (script.Run), so overriding
+// those two is sufficient to drive errors deterministically without
+// closing the underlying connection.
+type faultInjector struct {
+	redis.Cmdable
+	fail bool
+}
+
+func (f *faultInjector) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	if f.fail {
+		c := redis.NewCmd(ctx)
+		c.SetErr(redis.ErrClosed)
+		return c
+	}
+	return f.Cmdable.Eval(ctx, script, keys, args...)
+}
+
+func (f *faultInjector) EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	if f.fail {
+		c := redis.NewCmd(ctx)
+		c.SetErr(redis.ErrClosed)
+		return c
+	}
+	return f.Cmdable.EvalSha(ctx, sha1, keys, args...)
+}
+
+func (f *faultInjector) ScriptLoad(ctx context.Context, script string) *redis.StringCmd {
+	if f.fail {
+		c := redis.NewStringCmd(ctx)
+		c.SetErr(redis.ErrClosed)
+		return c
+	}
+	return f.Cmdable.ScriptLoad(ctx, script)
+}
+
+func (f *faultInjector) ScriptExists(ctx context.Context, hashes ...string) *redis.BoolSliceCmd {
+	if f.fail {
+		c := redis.NewBoolSliceCmd(ctx)
+		c.SetErr(redis.ErrClosed)
+		return c
+	}
+	return f.Cmdable.ScriptExists(ctx, hashes...)
+}
+
+// TestBucket_DwellTime_Disabled pins that a negative dwell-time
+// preserves fail-open-always (legacy behaviour, operator opt-in).
+func TestBucket_DwellTime_Disabled(t *testing.T) {
+	rdb, _ := newRedis(t)
+	if err := rdb.Close(); err != nil {
+		t.Fatalf("close redis: %v", err)
+	}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(rdb, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(-1),
+	)
+
+	if _, err := b.Take(context.Background(), "k"); err == nil {
+		t.Fatal("arm: want err, got nil")
+	}
+	fakeNow = fakeNow.Add(10 * time.Minute)
+	_, err := b.Take(context.Background(), "k")
+	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Errorf("disabled: must never return ErrThrottleUnavailable, got %v", err)
+	}
+}
+
+// TestBucket_DwellTime_DefaultIs30s pins the default-applied
+// behaviour with no WithDwellTime override.
+func TestBucket_DwellTime_DefaultIs30s(t *testing.T) {
+	rdb, _ := newRedis(t)
+	if err := rdb.Close(); err != nil {
+		t.Fatalf("close redis: %v", err)
+	}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(rdb, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		// No WithDwellTime: must default to 30s.
+	)
+
+	if _, err := b.Take(context.Background(), "k"); err == nil {
+		t.Fatal("arm: want err, got nil")
+	}
+	fakeNow = fakeNow.Add(29 * time.Second)
+	if _, err := b.Take(context.Background(), "k"); errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatal("t+29s: must fail-open under default 30s")
+	}
+	fakeNow = fakeNow.Add(5 * time.Second)
+	_, err := b.Take(context.Background(), "k")
+	if !errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("t+34s: want ErrThrottleUnavailable under default 30s, got %v", err)
 	}
 }
 

@@ -329,6 +329,25 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 			"too many signups from this IP recently; wait an hour and try again, or contact support if you're a legitimate operator bulk-onboarding a team")
 		return false
 	}
+	if errors.Is(err, auth.ErrThrottleUnavailable) {
+		// Sustained Redis outage: fail-CLOSED rather than disabling
+		// abuse-prevention indefinitely. Retry-After MUST be set
+		// BEFORE writeProblem because writeProblem calls
+		// w.WriteHeader(status) internally — headers added after
+		// that point are silently dropped by net/http. The 30s
+		// hint matches [auth.DefaultSignupThrottleDwellTime];
+		// clients that obey Retry-After will naturally space
+		// retries far enough apart to ride out a typical Redis
+		// fail-over. F-0049 / F-0149 (audit-2026-05-27).
+		w.Header().Set("Retry-After", "30")
+		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
+			"err", err, "ip", ip)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/throttle-unavailable",
+			"Throttle layer unavailable", http.StatusServiceUnavailable,
+			"the abuse-prevention layer has been unreachable for an extended period; retry in a moment")
+		return false
+	}
 	s.logger.Warn("signup IP throttle check failed; falling open",
 		"err", err, "ip", ip)
 	// Fall open — Redis blip shouldn't take signup offline, and the
