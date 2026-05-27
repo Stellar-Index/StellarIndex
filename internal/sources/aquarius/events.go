@@ -29,6 +29,28 @@ const (
 	EventDepositLiquidity  = "deposit_liquidity"
 	EventWithdrawLiquidity = "withdraw_liquidity"
 	EventUpdateReserves    = "update_reserves"
+	// ReservesSync is per-asset reserve delta, emitted in addition
+	// to update_reserves on every state-changing path. Body carries
+	// (old_reserve, new_reserve) for the single asset in topic[1].
+	EventReservesSync = "reserves_sync"
+	// SetProtocolFee / ClaimProtocolFee are governance/treasury events
+	// — fee schedule changes + claim destinations. No trade impact;
+	// classification only so we audit the full topic set.
+	EventSetProtocolFee   = "set_protocol_fee"
+	EventClaimProtocolFee = "claim_protocol_fee"
+	// kill_* / unkill_* are pool-circuit-breaker events. We don't act
+	// on them in the indexer today; if a pool is killed we'll see
+	// trades simply stop. Classifying keeps the audit invariant
+	// honest and leaves a path for a future "exclude killed pools
+	// from VWAP" feature.
+	EventKillDeposit       = "kill_deposit"
+	EventUnkillDeposit     = "unkill_deposit"
+	EventKillSwap          = "kill_swap"
+	EventUnkillSwap        = "unkill_swap"
+	EventKillClaim         = "kill_claim"
+	EventUnkillClaim       = "unkill_claim"
+	EventKillGaugesClaim   = "kill_gauges_claim"
+	EventUnkillGaugesClaim = "unkill_gauges_claim"
 )
 
 // Mainnet contract addresses — verified during Phase-1 audit against
@@ -81,6 +103,17 @@ var (
 	TopicSymbolDepositLiquidity  = scval.MustEncodeSymbol(EventDepositLiquidity)
 	TopicSymbolWithdrawLiquidity = scval.MustEncodeSymbol(EventWithdrawLiquidity)
 	TopicSymbolUpdateReserves    = scval.MustEncodeSymbol(EventUpdateReserves)
+	TopicSymbolReservesSync      = scval.MustEncodeSymbol(EventReservesSync)
+	TopicSymbolSetProtocolFee    = scval.MustEncodeSymbol(EventSetProtocolFee)
+	TopicSymbolClaimProtocolFee  = scval.MustEncodeSymbol(EventClaimProtocolFee)
+	TopicSymbolKillDeposit       = scval.MustEncodeSymbol(EventKillDeposit)
+	TopicSymbolUnkillDeposit     = scval.MustEncodeSymbol(EventUnkillDeposit)
+	TopicSymbolKillSwap          = scval.MustEncodeSymbol(EventKillSwap)
+	TopicSymbolUnkillSwap        = scval.MustEncodeSymbol(EventUnkillSwap)
+	TopicSymbolKillClaim         = scval.MustEncodeSymbol(EventKillClaim)
+	TopicSymbolUnkillClaim       = scval.MustEncodeSymbol(EventUnkillClaim)
+	TopicSymbolKillGaugesClaim   = scval.MustEncodeSymbol(EventKillGaugesClaim)
+	TopicSymbolUnkillGaugesClaim = scval.MustEncodeSymbol(EventUnkillGaugesClaim)
 )
 
 // Errors returned by the decode path.

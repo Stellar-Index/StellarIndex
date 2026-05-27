@@ -19,6 +19,17 @@ func TestClassify(t *testing.T) {
 		{"deposit_liquidity", []string{TopicSymbolDepositLiquidity}, EventDepositLiquidity},
 		{"withdraw_liquidity", []string{TopicSymbolWithdrawLiquidity}, EventWithdrawLiquidity},
 		{"update_reserves", []string{TopicSymbolUpdateReserves}, EventUpdateReserves},
+		{"reserves_sync", []string{TopicSymbolReservesSync}, EventReservesSync},
+		{"set_protocol_fee", []string{TopicSymbolSetProtocolFee}, EventSetProtocolFee},
+		{"claim_protocol_fee", []string{TopicSymbolClaimProtocolFee}, EventClaimProtocolFee},
+		{"kill_deposit", []string{TopicSymbolKillDeposit}, EventKillDeposit},
+		{"unkill_deposit", []string{TopicSymbolUnkillDeposit}, EventUnkillDeposit},
+		{"kill_swap", []string{TopicSymbolKillSwap}, EventKillSwap},
+		{"unkill_swap", []string{TopicSymbolUnkillSwap}, EventUnkillSwap},
+		{"kill_claim", []string{TopicSymbolKillClaim}, EventKillClaim},
+		{"unkill_claim", []string{TopicSymbolUnkillClaim}, EventUnkillClaim},
+		{"kill_gauges_claim", []string{TopicSymbolKillGaugesClaim}, EventKillGaugesClaim},
+		{"unkill_gauges_claim", []string{TopicSymbolUnkillGaugesClaim}, EventUnkillGaugesClaim},
 		{"unknown", []string{"AAAAsomething-else"}, ""},
 		{"empty", nil, ""},
 	}
@@ -27,6 +38,45 @@ func TestClassify(t *testing.T) {
 			e := &events.Event{Topic: tc.topics}
 			if got := classify(e); got != tc.want {
 				t.Errorf("classify(%v) = %q, want %q", tc.topics, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassify_completenessVsUpstream is a forcing function: if a
+// future agent adds an Event* constant without also wiring its
+// TopicSymbol* into classify(), this test fails. It enumerates every
+// exported Event* string and asserts classify() recognises the
+// matching TopicSymbol*. The test fixture also acts as documentation
+// of the closed set of topics aquarius emits (verified against
+// aquarius-amm/liquidity_pool_events/src/lib.rs).
+func TestClassify_completenessVsUpstream(t *testing.T) {
+	pairs := []struct {
+		name   string
+		event  string
+		symbol string
+	}{
+		{"trade", EventTrade, TopicSymbolTrade},
+		{"deposit_liquidity", EventDepositLiquidity, TopicSymbolDepositLiquidity},
+		{"withdraw_liquidity", EventWithdrawLiquidity, TopicSymbolWithdrawLiquidity},
+		{"update_reserves", EventUpdateReserves, TopicSymbolUpdateReserves},
+		{"reserves_sync", EventReservesSync, TopicSymbolReservesSync},
+		{"set_protocol_fee", EventSetProtocolFee, TopicSymbolSetProtocolFee},
+		{"claim_protocol_fee", EventClaimProtocolFee, TopicSymbolClaimProtocolFee},
+		{"kill_deposit", EventKillDeposit, TopicSymbolKillDeposit},
+		{"unkill_deposit", EventUnkillDeposit, TopicSymbolUnkillDeposit},
+		{"kill_swap", EventKillSwap, TopicSymbolKillSwap},
+		{"unkill_swap", EventUnkillSwap, TopicSymbolUnkillSwap},
+		{"kill_claim", EventKillClaim, TopicSymbolKillClaim},
+		{"unkill_claim", EventUnkillClaim, TopicSymbolUnkillClaim},
+		{"kill_gauges_claim", EventKillGaugesClaim, TopicSymbolKillGaugesClaim},
+		{"unkill_gauges_claim", EventUnkillGaugesClaim, TopicSymbolUnkillGaugesClaim},
+	}
+	for _, p := range pairs {
+		t.Run(p.name, func(t *testing.T) {
+			got := classify(&events.Event{Topic: []string{p.symbol}})
+			if got != p.event {
+				t.Fatalf("classify(symbol for %s) = %q, want %q — extend classify() switch", p.name, got, p.event)
 			}
 		})
 	}
