@@ -86,6 +86,7 @@ type Server struct {
 	changesum            ChangeSummaryReader
 	coins                CoinsReader
 	issuers              IssuersReader
+	sep41Transfers       SEP41TransfersReader
 	cursors              CursorsReader
 	networkStats         NetworkStatsReader
 	sourcesStats         SourcesStatsReader
@@ -371,6 +372,14 @@ type Options struct {
 	// Production wiring is timescale.Store directly. Nil makes
 	// the endpoint return 503.
 	Issuers IssuersReader
+
+	// SEP41Transfers, when non-nil, backs GET
+	// /v1/contracts/{contract_id}/transfers. Production wiring is
+	// timescale.Store directly (it implements ListSEP41Transfers).
+	// Nil makes the endpoint return 503. F-0021 closure
+	// (audit-2026-05-26): per-account net-position queries — the
+	// Stellar moat feature CG/CMC structurally cannot offer.
+	SEP41Transfers SEP41TransfersReader
 
 	// Cursors, when non-nil, backs GET /v1/diagnostics/cursors.
 	// Production wiring is timescale.Store directly (it implements
@@ -676,6 +685,7 @@ func New(opts Options) *Server {
 		changesum:            opts.ChangeSummary,
 		coins:                opts.Coins,
 		issuers:              opts.Issuers,
+		sep41Transfers:       opts.SEP41Transfers,
 		cursors:              opts.Cursors,
 		networkStats:         opts.NetworkStats,
 		sourcesStats:         opts.SourcesStats,
@@ -920,6 +930,15 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// middleware — infra (k8s probes, load balancers) hits these.
 	s.mux.HandleFunc("GET /v1/issuers", s.handleIssuersList)
 	s.mux.HandleFunc("GET /v1/issuers/{g_strkey}", s.handleIssuer)
+
+	// Per-contract SEP-41 transfer audit-trail. F-0021 closure
+	// (audit-2026-05-26): every transfer / approve / set_admin /
+	// set_authorized event for a watched SEP-41 contract, with
+	// optional ?from= / ?to= address filters. Unlocks per-account
+	// net-position queries — the Stellar moat feature CG/CMC
+	// structurally cannot offer.
+	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/transfers", s.handleSEP41Transfers)
+
 	s.mux.HandleFunc("GET /v1/changes/{entity_type}/{id}", s.handleChangeSummary)
 	s.mux.HandleFunc("GET /v1/diagnostics/cursors", s.handleCursors)
 	s.mux.HandleFunc("GET /v1/diagnostics/ingestion", s.handleDiagnosticsIngestion)

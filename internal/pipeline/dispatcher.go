@@ -46,6 +46,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/sources/sac_balances"
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	sep41supply "github.com/RatesEngine/rates-engine/internal/sources/sep41_supply"
+	sep41transfers "github.com/RatesEngine/rates-engine/internal/sources/sep41_transfers"
 	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
 	soroswap_router "github.com/RatesEngine/rates-engine/internal/sources/soroswap_router"
 	"github.com/RatesEngine/rates-engine/internal/sources/trustlines"
@@ -299,6 +300,19 @@ func RegisterSupplyEventDecoders(disp *dispatcher.Dispatcher, sup config.SupplyC
 		}
 		disp.AddDecoder(dec)
 		registered = append(registered, sep41supply.SourceName)
+
+		// sep41_transfers — F-0021 closure (audit-2026-05-26).
+		// Same watched-set as sep41_supply; the two decoders'
+		// topic[0] symbols are disjoint (this one handles
+		// transfer/approve/set_admin/set_authorized; the supply
+		// observer handles mint/burn/clawback) so each event is
+		// matched by exactly one of them.
+		tdec, terr := sep41transfers.NewDecoder(sup.WatchedSEP41Contracts)
+		if terr != nil {
+			return nil, fmt.Errorf("sep41_transfers decoder: %w", terr)
+		}
+		disp.AddDecoder(tdec)
+		registered = append(registered, sep41transfers.SourceName)
 	}
 	return registered, nil
 }
