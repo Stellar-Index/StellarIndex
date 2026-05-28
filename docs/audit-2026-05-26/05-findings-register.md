@@ -2189,8 +2189,24 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   exactly when they most need it.
 - **Workstream:** W11, W13
 - **Evidence:** raw curl EV-0045.
-- **Disposition:** `open` Wave 1. Make this endpoint
-  cache-aside (or DB-only) so it survives Redis MISCONF.
+- **Disposition:** `closed` (2026-05-28). The endpoint was
+  already DB-only (it does NOT touch Redis — `ListCursors`
+  hits Postgres directly), so the audit's "make this endpoint
+  cache-aside" suggestion was based on a misread of the
+  handler. The actual fix the original "exactly when they
+  most need it" line was asking for is shipped: the handler
+  now distinguishes operator-actionable transient errors from
+  permanent ones. 5s ctx-timeout on the ListCursors call;
+  `handlerTimedOut` returns 503 `cursors-timeout`;
+  `transientStorageErr` (covers Postgres-down, driver-bad-
+  connection, 57014 cancel, broken pipe, EOF — i.e. exactly the
+  postgres-down scenarios that the cascade window contains)
+  returns 503 `cursors-transient`; client-aborted is filtered;
+  the residual 500 is reserved for genuinely-unknown errors.
+  Two regression tests pin transient → 503 and non-transient
+  → 500. Error-map extracted into
+  `writeCursorsListError` to keep `handleCursors` under the
+  gocognit ceiling.
 
 #### F-0095 — `/v1/diagnostics/ingestion` reports all-zeros but other endpoints show healthy state — inconsistency
 

@@ -119,13 +119,11 @@ func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 
 	sourceFilter := r.URL.Query().Get("source")
 
-	rows, err := s.cursors.ListCursors(r.Context())
+	listCtx, listCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer listCancel()
+	rows, err := s.cursors.ListCursors(listCtx)
 	if err != nil {
-		s.logger.Warn("cursors list", "err", err)
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/cursors-error",
-			"Cursors listing failed", http.StatusInternalServerError,
-			"Storage layer returned an error.")
+		s.writeCursorsListError(w, r, listCtx, err)
 		return
 	}
 
@@ -154,4 +152,41 @@ func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// writeCursorsListError maps a ListCursors error to the appropriate
+// Problem+JSON response. F-0094 closure: under cascade the
+// /v1/diagnostics/cursors endpoint is exactly the operator's
+// must-have view, but the generic 500 it used to emit didn't
+// distinguish "postgres briefly stalled" (retry now) from "endpoint
+// permanently broken" (escalate). Mapping transient + timeout
+// shapes to 503 lets operators read the response without ambiguity.
+//
+// Extracted from handleCursors to keep that function under the
+// gocognit ceiling — the seven-branch error map pushed it past 20.
+func (s *Server) writeCursorsListError(w http.ResponseWriter, r *http.Request, listCtx context.Context, err error) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(listCtx, err) {
+		s.logger.Warn("cursors list: deadline exceeded", "err", err)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/cursors-timeout",
+			"Cursors listing timed out", http.StatusServiceUnavailable,
+			"the ingestion_cursors scan didn't return in 5s; retry shortly.")
+		return
+	}
+	if transientStorageErr(err) {
+		s.logger.Warn("cursors list: transient storage error", "err", err)
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/cursors-transient",
+			"Cursors temporarily unavailable", http.StatusServiceUnavailable,
+			"the storage layer hit a transient error; retry shortly.")
+		return
+	}
+	s.logger.Warn("cursors list", "err", err)
+	writeProblem(w, r,
+		"https://api.ratesengine.net/errors/cursors-error",
+		"Cursors listing failed", http.StatusInternalServerError,
+		"Storage layer returned an error.")
 }

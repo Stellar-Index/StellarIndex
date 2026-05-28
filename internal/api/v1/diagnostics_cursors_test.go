@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -333,5 +334,40 @@ func TestHandleCursors_StatusActiveCombinesWithMaxAge(t *testing.T) {
 	}
 	if env.Data[0].SubSource != "fresh" {
 		t.Errorf("sub_source = %q, want fresh", env.Data[0].SubSource)
+	}
+}
+
+// F-0094 closure (2026-05-28): under the cascade, /v1/diagnostics/cursors
+// returned a generic 500 that didn't distinguish "postgres briefly
+// stalled" from "endpoint permanently broken." Operators couldn't tell
+// whether to retry or escalate. Map transient + timeout shapes to
+// 503 with a clearer detail string.
+func TestHandleCursors_TransientStorageError_Returns503(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Cursors: &stubCursorsReader{
+			err: errors.New("driver: bad connection"),
+		},
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/diagnostics/cursors")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (transient storage err)", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "cursors-transient") {
+		t.Errorf("body should mention cursors-transient; got %s", string(body))
+	}
+}
+
+func TestHandleCursors_NonTransientError_Returns500(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Cursors: &stubCursorsReader{
+			err: errors.New("malformed SQL"),
+		},
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/diagnostics/cursors")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (non-transient err)", resp.StatusCode)
 	}
 }
