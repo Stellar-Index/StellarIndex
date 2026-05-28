@@ -795,6 +795,27 @@ type SupplyConfig struct {
 	// never fail-open under steady-state load — typically post-
 	// launch, after a few weeks of green snapshot timers.
 	StrictFreshnessRequired bool `toml:"strict_freshness_required" doc:"F-1236: when true, supply snapshots without a MinComponentLedger anchor (i.e. zero-value freshness, the static-XLM fallback or a transiently-failing producer) are rejected rather than published. Default false preserves backwards-compatible permissive behaviour; flip true after the freshness producers are confirmed wired in steady state." default:"false"`
+
+	// StaleComponentLedgersByAsset maps asset_key (canonical wire
+	// form — `CODE-ISSUER` for classic assets, bare contract id
+	// for SEP-41) to a per-asset stale-component threshold
+	// override in ledgers. F-0040 (audit-2026-05-26): the global
+	// 1000-ledger F-1236 default rejects low-activity assets like
+	// PHO (~1200-ledger lag between trustline observations is
+	// normal). Per-asset overrides relax the gate without
+	// loosening it for high-activity XLM/USDC. Empty map preserves
+	// the global default for every asset.
+	//
+	// Concrete deployment example:
+	//
+	//   [supply.stale_component_ledgers_by_asset]
+	//   "PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6" = 5000
+	//
+	// A zero per-asset value disables the gate for that asset
+	// alone — useful for assets where the trustline-observer
+	// cadence isn't yet wired and the operator wants to publish
+	// snapshots while accepting unbounded staleness.
+	StaleComponentLedgersByAsset map[string]uint32 `toml:"stale_component_ledgers_by_asset" doc:"Per-asset override of the F-1236 stale-component-ledger threshold. Map keys are asset_key (CODE-ISSUER for classic, bare contract id for SEP-41); values are ledger counts. Empty map (default) keeps every asset on the global 1000-ledger threshold. F-0040 (audit-2026-05-26)." default:"{}"`
 }
 
 // Validate reports inconsistencies in the supply block. Currently
