@@ -43,6 +43,39 @@ Out of scope (report to the relevant upstream instead):
 - Operational issues with third-party Stellar validators, oracles,
   DEXes, or lending protocols we index.
 
+## Public surfaces we intentionally expose
+
+Some endpoints under `/v1/diagnostics/*` return operational
+state that, in isolation, could be considered an information
+leak. These are public **by design** so that operators (and the
+public explorer at <https://ratesengine.net/diagnostics>) can
+see the same ingest health a paying customer would — credibility
+through transparency. Specifically:
+
+- `/v1/diagnostics/cursors` — per-source ingest-cursor table,
+  including completed backfill ranges and their lag. Reveals
+  which sources we index, how far back each is hydrated, and
+  which ranges are currently mid-fill. **Not gated.**
+- `/v1/diagnostics/ingestion` — per-class entry counts +
+  freshness. **Not gated.**
+- `/v1/diagnostics/density` — coverage roll-up. **Not gated.**
+
+Risk model: an adversary who scrapes these endpoints learns no
+more than they can already infer from the price/markets/network
+endpoints' wire shape (which sources contribute to which pairs;
+where data starts; whether the live tip is fresh). The
+operational benefit — every customer can verify our claimed
+freshness in real time without filing a support ticket — is
+worth the disclosure cost. Findings F-0026 / F-0034
+(audit-2026-05-26) reviewed this surface and accepted it as
+intentional transparency.
+
+If you find a `/v1/diagnostics/*` endpoint that exposes
+**secrets** (credentials, API keys, internal IPs, customer
+account state), please report it as a vulnerability per this
+file's reporting section — that would be a leak, not the
+intentional-transparency posture documented here.
+
 ## Responsible disclosure
 
 Embargo period: up to **90 days** after we acknowledge receipt, or

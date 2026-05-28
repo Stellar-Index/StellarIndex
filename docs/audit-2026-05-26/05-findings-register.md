@@ -1217,11 +1217,24 @@ F-0028 will track the soroban_events lag separately)
   - identify which backfill ranges are stuck
   - learn what sources we're indexing
   - time their attacks for moments when ingest is degraded
-- **Disposition:** `open` Wave 0. Remediation: either
-  (a) gate behind dashboard admin auth, OR
-  (b) reduce payload to just "alive/dead/lagged" health
-      signal without exposing internal lag-seconds /
-      sub_source names.
+- **Disposition:** `closed-as-accepted` (2026-05-28). Took
+  option (c) from the related F-0026 disposition (explicit
+  transparency). `SECURITY.md` now has a "Public surfaces we
+  intentionally expose" section that lists the
+  `/v1/diagnostics/*` endpoints, names the risk model
+  (adversary learns no more than they can infer from the
+  price/markets/network endpoints anyway), and frames the
+  operational benefit (customers can verify our freshness
+  claims in real time without filing a support ticket) as
+  worth the disclosure cost. The explorer
+  `https://ratesengine.net/diagnostics` page reads the same
+  endpoint, so gating it behind auth would also break the
+  public proof-of-freshness story. Audits flagging this
+  surface in the future should reference the SECURITY.md
+  section rather than re-opening the question. If an
+  endpoint under `/v1/diagnostics/*` ever exposes secrets
+  (credentials, customer state, internal IPs), THAT is in
+  scope per the regular vulnerability-reporting path.
 
 #### F-0035 — Apex domain TLS investigation (resolved as invalid)
 
@@ -1431,10 +1444,17 @@ F-0028 will track the soroban_events lag separately)
 - **Adversarial vector:** information disclosure — attackers
   learn our internal ingest state, backfill ranges, ledger
   history.
-- **Disposition:** `open`. Either: (a) gate diagnostics
-  endpoints behind admin auth, (b) make them less verbose
-  (omit historical backfill cursors from the response), or
-  (c) explicitly document this is intentional transparency.
+- **Disposition:** `closed-as-accepted` (2026-05-28). Took
+  option (c): explicit transparency. `SECURITY.md` now has a
+  "Public surfaces we intentionally expose" section that
+  lists every `/v1/diagnostics/*` endpoint, names the risk
+  model (an adversary scraping cursors learns no more than
+  the price/markets/network endpoints' wire shape already
+  reveals), and documents the tradeoff (customers verifying
+  freshness in real time vs information disclosure cost).
+  Bundled with F-0034 disposition. The cursor table is also
+  what the public `/diagnostics` explorer page reads, so
+  gating it would break the public proof-of-freshness story.
 
 #### F-0023 — F-0017 prices_1h CAGG lag may be invalid (within expected refresh window)
 
