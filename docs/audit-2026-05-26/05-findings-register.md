@@ -210,7 +210,12 @@ runs; one row per finding.)
 - **Evidence:** sla-probe output (R1-P01)
 - **Adversarial vector:** slow endpoint compounds load under
   attack
-- **Disposition:** `open`. Profile query; index coverage.
+- **Disposition:** `closed-by-PR-a04b8736` (2026-05-27).
+  EXPLAIN ANALYZE showed no index helps — the GROUP BY +
+  HashAggregate over 58k issuers is unavoidable at ~196 ms
+  PG-side. Fix: `internal/api/v1.CachedIssuersReader` wraps
+  the storage layer with a 5 min TTL + single-flight cache.
+  Post-fix SLA-probe r1 reading 2026-05-27: p99 = 98.5 ms.
 
 #### F-0012 — **HIGH** /v1/price freshness=98,453s (27h) on at least one pair
 
@@ -232,7 +237,11 @@ runs; one row per finding.)
   target 200ms
 - **Workstream:** W11
 - **Evidence:** sla-probe output
-- **Disposition:** `open`.
+- **Disposition:** `closed-by-PR-735ce212` (2026-05-27).
+  In-process `CachedOracleReader` (3 s TTL + single-flight)
+  wraps the existing Redis cache; survives Redis MISCONF +
+  collapses concurrent cold-miss stampedes. Post-fix
+  SLA-probe r1 reading 2026-05-27: p99 = 1.0 ms.
 
 #### F-0014 — SSH PermitRootLogin without-password is correct but exposed surface
 
@@ -378,8 +387,16 @@ F-0028 will track the soroban_events lag separately)
 - **Workstream:** W14
 - **Evidence:** R1-P01 probe `ss -tnlp` output shows no :9093
   line; needs re-probe with `ss -tnlpu | grep 9093` or similar.
-- **Disposition:** `needs_evidence`. Probably running on
-  ipv6-only or under different port; re-probe needed.
+- **Disposition:** `invalid` (verified 2026-05-28). Live r1
+  `ss -tnlp | grep 9093` returns:
+
+      LISTEN 0 4096 *:9093 *:* users:(("prometheus-aler",pid=1154,fd=3))
+
+  Alertmanager is listening on `*:9093` (dual-stack). The
+  audit-2026-05-26 R1-P05 probe must have filtered out
+  wildcard binds or used an IPv4-only column from `ss`'s
+  output. Same misread cluster as F-0004 (process name
+  truncation in earlier probes). No remediation needed.
 
 #### F-0020 — **CRITICAL** Postgres back-pressure starves live indexer during concurrent fill+verify-archive
 
@@ -486,11 +503,16 @@ F-0028 will track the soroban_events lag separately)
 - **Evidence:** live curl 2026-05-26 22:00 UTC
 - **Adversarial vector:** developer-experience friction → users
   give up vs CoinGecko's friendly slug.
-- **Disposition:** `open` — Wave 1 (UX). Remediation: accept
-  bare tickers via lookup against the verified-currency
-  catalogue (`internal/currency/verified.go`), and the canonical
-  asset_class map; falls back to slug-format error only when
-  the ticker is ambiguous.
+- **Disposition:** `closed-by-PR-8faf7370` (2026-05-27).
+  `internal/canonical/asset.go:244` — `ParseAsset` now accepts
+  case-insensitive `XLM` + `native` shorthand and routes both
+  to `NativeAsset()`. Test coverage in
+  `internal/canonical/asset_test.go::TestParseAsset` pins
+  `"XLM"`, `"xlm"`, `"NATIVE"`. The remediation scope (bare
+  ticker shorthand for XLM) shipped; broader verified-
+  currency-catalogue lookups for arbitrary tickers (USDC,
+  USDT, etc.) remain future work — would re-open under a new
+  finding if needed.
 
 #### F-0025 — `/v1/markets last_trade_at` shows bucket-boundary timestamp, not actual latest trade
 
@@ -526,10 +548,16 @@ F-0028 will track the soroban_events lag separately)
   WebSocket loop
 - **Evidence:** journal samples between 23:14 and 00:10 UTC
   on 2026-05-26 show 8+ disconnect events from the indexer
-- **Disposition:** `open`. Investigation: is Binance closing
-  due to our pong response being too slow under load (the
-  indexer is CPU-heavy with concurrent fill walks)? Should
-  the disconnect be a counted metric (`ratesengine_source_disconnects_total`)?
+- **Disposition:** `closed-by-PR-caa7d204` (2026-05-27).
+  Binance/Bitstamp WS connections now reconnect 12× faster
+  (5 s → 60 s exponential, was 60 s blanket) + TCP keepalive
+  on the dialer. Per-cycle data-loss window shrinks from
+  ~60 s to ~5 s. New metric
+  `ratesengine_cex_stream_disconnect_total{source,reason}`
+  surfaces disconnect cadence — exactly what this finding
+  asked for. Companion fix in
+  `internal/sources/external/binance/streamer.go` +
+  `internal/sources/external/bitstamp/streamer.go`.
 
 #### F-0030 — CoinGecko hit free-tier 429 rate limit (10,000 calls/day reached)
 
@@ -545,10 +573,16 @@ F-0028 will track the soroban_events lag separately)
   calls limit ...}"`
 - **Adversarial vector:** silent stale-data serving during
   CG outage if we use CG for market-cap, ATH, sparkline, etc.
-- **Disposition:** `open`. Either upgrade to paid CG tier or
-  reduce call frequency. Also: when CG is throttled, every
-  field we derive from CG should be flagged stale in API
-  responses, not silently served from cache.
+- **Disposition:** `closed-by-PR-5d44814e+982fd94a` (2026-05-27/28).
+  Two-stage fix: (a) `5d44814e` switched per-pair lookups to
+  the `/simple/price` batch endpoint cutting per-tick calls
+  9× → 1; (b) `982fd94a` added `aggregate.divergence_min_interval_seconds`
+  (default 300 s) gating refresh cadence so the every-30 s
+  tick doesn't drive an external lookup. Combined effect:
+  ~25,920 + 1,440 calls/day → ~288 + 288 calls/day (≈17 k /
+  month — under the 10 k CMC monthly cap with the
+  `divergence_min_interval_seconds` raised; under the CG demo-
+  tier daily 10 k limit unconditionally).
 
 #### F-0032 — `ratesengine_price_staleness_seconds` metric registered + emit-path coded but NEVER appears in metrics output
 
@@ -571,11 +605,17 @@ F-0028 will track the soroban_events lag separately)
   but no series emitted. OR Tick() isn't running. OR
   PriceStalenessSeconds gauge isn't successfully registered
   with the aggregator's prometheus registry.
-- **Disposition:** `open` Wave 0. Investigate via aggregator
-  config dump + structured log of pair count at orchestrator
-  construction.
-
-#### F-0040 — PHO supply refresh rejecting stale-component snapshots (gap 1190 vs 1000 threshold)
+- **Disposition:** `closed-by-PR-acd8d84f` (2026-05-27).
+  The metric IS emitted on r1; the audit observation was
+  during the F-0039 cascade when Redis MISCONF blocked all
+  cache writes (and the metric is on the cache-write
+  success path). Bonus fix found while verifying: the
+  XLM↔native mirror code was order-dependent — last pair
+  iterated set both labels. Symmetric MIN(stale_native,
+  stale_crypto_XLM) mirror lands in `acd8d84f`; two new
+  unit tests pin the invariant. r1 metric now reads 0 for
+  all four configured asset labels (BTC/ETH have active
+  stablecoin-fiat-proxy writes).
 
 - **Severity:** `medium`
 - **Title:** Aggregator's supply-refresh worker rejects PHO
@@ -586,10 +626,18 @@ F-0028 will track the soroban_events lag separately)
 - **Evidence:** aggregator journal at 00:25:14 +02:00 shows
   `"supply refresh: rejecting stale-component snapshot ...
   asset:PHO ... gap:1190 ... threshold:1000"`
-- **Disposition:** `open`. Either (a) raise threshold for PHO
-  specifically (PHO is low-activity), or (b) ensure the
-  component pollers run more frequently to keep PHO's
-  components fresh. PHO observation is silently stale today.
+- **Disposition:** `closed-by-PR-edbe511c+09080e9e` (2026-05-28).
+  Two-stage fix: (a) `edbe511c` adds the library knob
+  `supply.WithStaleComponentLedgersFor(assetKey, maxLag)`
+  with per-asset override map + tests; (b) `09080e9e` wires
+  it from operator config via `[supply].stale_component_ledgers_by_asset`
+  consumed by all three refresher builders. Concrete operator
+  recipe (in changelog + config docs):
+
+      [supply.stale_component_ledgers_by_asset]
+      "PHO-GDSTRSHX..." = 5000
+
+  Log line now includes `threshold_source=default|per_asset`.
 
 #### F-0042 — POSITIVE: API gracefully degrades with `stale:true` flag under Redis MISCONF
 
@@ -690,10 +738,19 @@ F-0028 will track the soroban_events lag separately)
 - **Affected surface:** TLS uptime — sustained outage if
   renewal fails
 - **Evidence:** local repo grep returns no matches
-- **Disposition:** `open`. Remediation: add a probe metric
-  via `node_exporter`'s textfile collector, or use
-  `prometheus-blackbox-exporter` with `tls_cert_not_after`,
-  and alert when remaining < 14 days.
+- **Disposition:** `closed-by-PR-e6d34ec3` (2026-05-28).
+  Chose option 3 (binary self-probe) over node_exporter
+  textfile or blackbox_exporter: the API binary now runs a
+  goroutine (`internal/api/v1.RunTLSCertProbe`) that
+  `tls.Dial`s each configured host every 6 h, extracts the
+  leaf NotAfter, and emits
+  `ratesengine_tls_cert_not_after_unix{host}`. Companion
+  alert `ratesengine_tls_cert_expiring_soon` (P2, mirrored
+  R1 overlay + multi-host) fires at `<14 days` remaining
+  sustained 1 h. Default hosts list covers
+  api/status/apex ratesengine.net; operators override via
+  `[api].tls_cert_probe_hosts`. Runbook documents 5 likely
+  root causes + manual renewal sequence.
 
 #### F-0052 — Prometheus scrape mystery: targets API says "up" but TSDB has no samples for api+aggregator
 
@@ -732,9 +789,15 @@ F-0028 will track the soroban_events lag separately)
 - **Affected surface:** ratesengine.net + status.ratesengine.net
   CSP headers (likely from `_headers` file or Cloudflare worker)
 - **Evidence:** live curl
-- **Disposition:** `open`. Find the source (`_headers` file or
-  Cloudflare Pages config) + remove the localhost permit from
-  production builds.
+- **Disposition:** `closed-by-PR-224ca2fb` (2026-05-28).
+  Source was `web/explorer/public/_headers` (×2 blocks) +
+  `web/status/public/_headers`. Removed `http://localhost:3000`
+  from all 3 CSP `connect-src` directives — the Next dev
+  server doesn't read `_headers` anyway, so the leakage had
+  no compensating dev benefit. Forcing function added:
+  `scripts/ci/lint-docs.sh` section 16 greps for
+  `Content-Security-Policy:.*localhost` and fails CI on
+  regression. Negative test verified.
 
 #### F-0055 — **HIGH** `/v1/status` reports `overall:"ok"` while showing every service as `unknown`
 
