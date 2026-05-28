@@ -1766,8 +1766,20 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   expecting `window=24h` get a 1h-default 404 with no
   explanation. Either accept the param (alias) or 400 on
   unknown params.
-- **Disposition:** `open` Wave 2. Bundle with F-0073/F-0061
-  param-naming cleanup.
+- **Disposition:** `closed` (2026-05-28). Implemented in
+  `internal/api/v1/ohlc.go::parseFromTo`, which every aggregated
+  rate endpoint flows through via `parseFromToClamped`. New
+  `window=` query param: when supplied, `from = to - window`,
+  with the same Go-duration grammar as `time.ParseDuration`
+  (ns/us/ms/s/m/h plus compound forms) extended with a
+  trailing-`d` shortcut for days. Combining `window=` with an
+  explicit `from` returns 400 (`window and from are mutually
+  exclusive`) — louder than the pre-this-change silent ignore.
+  Three new internal tests
+  (`closed_bucket_internal_test.go::TestParseFromTo_Window*`)
+  pin happy-path, conflict rejection, and reject-malformed.
+  `/v1/twap?window=24h` now answers over the actual 24h window
+  instead of the 1h default that previously surprised customers.
 
 #### F-0073 — `/v1/price/batch` parameter is `asset_ids`, not `pairs`
 

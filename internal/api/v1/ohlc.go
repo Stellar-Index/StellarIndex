@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"net/http"
@@ -253,6 +254,16 @@ func (s *Server) ohlcTradesWithStablecoinFallback(
 // stated range — the API mustn't quietly snap their range to a
 // boundary. For aggregated rate endpoints (VWAP/TWAP/OHLC) use
 // [parseFromToClamped] instead, per ADR-0015.
+//
+// `window` is an optional convenience for CG-style customers who
+// don't want to compute `from = now - duration` themselves. Accepted
+// formats follow [time.ParseDuration] (ns/us/ms/s/m/h) plus a
+// trailing-`d` shortcut for days (e.g. `7d`). When supplied, `from`
+// is set to `to - window`. Combining `window` with an explicit
+// `from` is a 400 — they're conflicting controls for the same value;
+// rejecting it loudly catches the F-0072 "I asked for 24h and got a
+// 1h default" surprise. Combining `window` with an explicit `to` is
+// fine — gives an arbitrary-anchored window of the requested length.
 func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {
 	to = time.Now().UTC()
 	if raw := r.URL.Query().Get("to"); raw != "" {
@@ -267,8 +278,34 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 		to = parsed.UTC()
 	}
 	from = to.Add(-time.Hour)
-	if raw := r.URL.Query().Get("from"); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
+	windowRaw := r.URL.Query().Get("window")
+	fromRaw := r.URL.Query().Get("from")
+	if windowRaw != "" {
+		if fromRaw != "" {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-time",
+				"`window` and `from` are mutually exclusive", http.StatusBadRequest,
+				"pass one or the other — `window=24h` is shorthand for `from=to-24h`")
+			return time.Time{}, time.Time{}, false
+		}
+		d, err := parseWindowDuration(windowRaw)
+		if err != nil {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-time",
+				"Invalid `window` duration", http.StatusBadRequest,
+				err.Error())
+			return time.Time{}, time.Time{}, false
+		}
+		if d <= 0 {
+			writeProblem(w, r,
+				"https://api.ratesengine.net/errors/invalid-time",
+				"`window` must be positive", http.StatusBadRequest,
+				"got "+windowRaw)
+			return time.Time{}, time.Time{}, false
+		}
+		from = to.Add(-d)
+	} else if fromRaw != "" {
+		parsed, err := time.Parse(time.RFC3339, fromRaw)
 		if err != nil {
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/invalid-time",
@@ -285,6 +322,26 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 		return time.Time{}, time.Time{}, false
 	}
 	return from, to, true
+}
+
+// parseWindowDuration accepts the same units as [time.ParseDuration]
+// (ns/us/ms/s/m/h) and additionally a trailing-`d` shortcut for days
+// (e.g. `7d` = 168h). Multiple units in one string are NOT supported
+// for the `d` shortcut (`1d12h` is rejected) — that ambiguity is
+// best avoided in user-facing query params; clients wanting odd
+// durations can express them in hours.
+func parseWindowDuration(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if last := s[len(s)-1]; last == 'd' || last == 'D' {
+		days, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil {
+			return 0, fmt.Errorf("invalid day count %q: %w", s, err)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 // closedBucketWindow is the boundary granularity used by

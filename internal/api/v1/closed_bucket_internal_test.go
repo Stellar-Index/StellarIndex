@@ -127,3 +127,69 @@ func TestParseFromToClamped_ExplicitFromNotShifted(t *testing.T) {
 			from.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
 	}
 }
+
+// TestParseFromTo_WindowParam covers F-0072 closure: the `window=`
+// shortcut sets `from = to - duration` so CG-style customers don't
+// have to compute it. Pre-F-0072 the param was silently ignored,
+// users got the 1h default, and a 24h-window request returned a
+// confusing 404 over the wrong range.
+func TestParseFromTo_WindowParam(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		wantDur time.Duration
+	}{
+		{"hours", "?window=24h", 24 * time.Hour},
+		{"minutes", "?window=30m", 30 * time.Minute},
+		{"days shortcut", "?window=7d", 7 * 24 * time.Hour},
+		{"compound", "?window=1h30m", 90 * time.Minute},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/twap"+tc.query, nil)
+			rec := httptest.NewRecorder()
+			from, to, ok := parseFromTo(rec, req)
+			if !ok {
+				t.Fatalf("parse failed: %s", rec.Body.String())
+			}
+			got := to.Sub(from)
+			if got != tc.wantDur {
+				t.Errorf("window=%s → to-from = %s, want %s",
+					tc.query, got, tc.wantDur)
+			}
+		})
+	}
+}
+
+// TestParseFromTo_WindowAndFrom_Conflict pins F-0072's loud-rejection
+// rule. Passing both `window` and `from` is ambiguous (they both
+// control the start time); a 400 is louder than picking one
+// silently — which is what pre-F-0072 did when `window` was ignored.
+func TestParseFromTo_WindowAndFrom_Conflict(t *testing.T) {
+	url := "/v1/twap?window=24h&from=2026-01-01T00:00:00Z"
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	if _, _, ok := parseFromTo(rec, req); ok {
+		t.Fatal("parse succeeded; want 400 mutually-exclusive")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestParseFromTo_InvalidWindow rejects malformed `window` values.
+func TestParseFromTo_InvalidWindow(t *testing.T) {
+	cases := []string{"garbage", "1x", "1d2h", "-5h", "0"}
+	for _, q := range cases {
+		t.Run(q, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/twap?window="+q, nil)
+			rec := httptest.NewRecorder()
+			if _, _, ok := parseFromTo(rec, req); ok {
+				t.Fatalf("parse succeeded on %q; want 400", q)
+			}
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("window=%q status = %d, want 400", q, rec.Code)
+			}
+		})
+	}
+}
