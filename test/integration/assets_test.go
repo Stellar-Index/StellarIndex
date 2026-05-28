@@ -97,6 +97,27 @@ func TestAssetsReader(t *testing.T) {
 	if has, _ := store.HasAsset(ctx, notInDB); has {
 		t.Error("HasAsset(EUR) should be false")
 	}
+
+	// F-0157 perf: an unknown classic asset must route through
+	// classic_assets PK lookup and return false. The classic_assets
+	// table is populated by InsertTrade's registerClassicAssetSeen
+	// hook; an asset_id never seen by that hook (e.g. a random
+	// 4-char code against a real-but-unrelated G-strkey) must be
+	// known-unknown without touching the trades hypertable.
+	bogusClassic, err := c.NewClassicAsset(
+		"ZZZZ",
+		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+	)
+	if err != nil {
+		t.Fatalf("NewClassicAsset(ZZZZ-G...): %v", err)
+	}
+	has, hasErr := store.HasAsset(ctx, bogusClassic)
+	if hasErr != nil {
+		t.Fatalf("HasAsset(ZZZZ-G...): %v", hasErr)
+	}
+	if has {
+		t.Errorf("HasAsset(%s) = true, want false (bogus classic asset)", bogusClassic.String())
+	}
 }
 
 func TestAssetsReaderPagination(t *testing.T) {

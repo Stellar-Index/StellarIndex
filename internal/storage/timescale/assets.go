@@ -99,7 +99,50 @@ func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([
 //
 // Returns (true, nil) for known asset; (false, nil) for unknown;
 // (_, err) for a query failure.
+//
+// Dispatch:
+//
+//   - AssetClassic: PK lookup on `classic_assets`. The registry table
+//     has one row per (code, issuer) ever observed and a primary key
+//     on `asset_id`; an unknown classic asset costs one index seek.
+//     Bypasses the trades hypertable entirely. F-0157 perf
+//     (audit-2026-05-26): pre-fix `/v1/assets/AAAA-G…` cold path was
+//     4-5 s because the `WHERE base_asset = $1 OR quote_asset = $1`
+//     across 2.7 B trades rows had to seek every chunk's index.
+//   - All other types (native / soroban / fiat / crypto / rwa): fall
+//     back to the original trades-scan path. Native + fiat/crypto/rwa
+//     canonical forms are always-known so the scan finds matches
+//     fast; Soroban contracts hit the same OR scan but typical r1
+//     contract count is bounded.
 func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
+	if a.Type == canonical.AssetClassic {
+		return s.hasClassicAsset(ctx, a)
+	}
+	return s.hasAssetByTradesScan(ctx, a)
+}
+
+// hasClassicAsset is the F-0157-perf fast path: PK lookup on
+// classic_assets. The registry was specifically designed (migration
+// 0023) as "the catalogue of every classic asset ever observed,"
+// populated by the trade-insert hook via
+// `Store.registerClassicAssetSeen`. So the asset's presence in
+// classic_assets is a strict subset of its presence in trades —
+// which means an asset_id NOT in classic_assets has no trades
+// either, and we can short-circuit without touching the hypertable.
+func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
+	const q = `SELECT EXISTS (SELECT 1 FROM classic_assets WHERE asset_id = $1)`
+	var exists bool
+	err := s.db.QueryRowContext(ctx, q, a.String()).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("timescale: hasClassicAsset: %w", err)
+	}
+	return exists, nil
+}
+
+func (s *Store) hasAssetByTradesScan(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `
         SELECT EXISTS (
             SELECT 1 FROM trades
