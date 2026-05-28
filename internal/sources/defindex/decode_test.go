@@ -236,6 +236,86 @@ func TestClassifyVault_depositWithdraw(t *testing.T) {
 	}
 }
 
+// TestClassifyFactory_createNfee covers the factory layer added per
+// EVERY-event policy (project_every_event_principle). Factory events
+// are classified-only — Decode returns (nil, nil) on a factory match
+// so the dispatcher's drop-counter doesn't file them as unmatched.
+func TestClassifyFactory_createNfee(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		topic     []string
+		wantClass string
+	}{
+		{
+			name:      "factory create",
+			topic:     []string{TopicPrefixFactory, TopicSymbolCreate},
+			wantClass: EventCreate,
+		},
+		{
+			name:      "factory n_fee",
+			topic:     []string{TopicPrefixFactory, TopicSymbolNFee},
+			wantClass: EventNFee,
+		},
+		{
+			name:      "strategy prefix routes to classify(), not classifyFactory()",
+			topic:     []string{TopicPrefixStrategy, TopicSymbolCreate},
+			wantClass: "",
+		},
+		{
+			name:      "vault prefix routes to classifyVault(), not classifyFactory()",
+			topic:     []string{TopicPrefixVault, TopicSymbolCreate},
+			wantClass: "",
+		},
+		{
+			name:      "factory prefix encoded as Symbol not String",
+			topic:     []string{mustB64Symbol(t, "DeFindexFactory"), TopicSymbolCreate},
+			wantClass: "",
+		},
+		{
+			name:      "factory with deposit symbol (wrong topic[1])",
+			topic:     []string{TopicPrefixFactory, TopicSymbolDeposit},
+			wantClass: "",
+		},
+		{
+			name:      "single-element topic",
+			topic:     []string{TopicPrefixFactory},
+			wantClass: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := &events.Event{Topic: tc.topic}
+			got := classifyFactory(ev)
+			if got != tc.wantClass {
+				t.Errorf("classifyFactory = %q, want %q", got, tc.wantClass)
+			}
+		})
+	}
+}
+
+// TestDecode_factoryEvent_isClassifiedButEmits0Events verifies that
+// the dispatcher's Decode entrypoint returns (nil, nil) — not the
+// `ErrUnknownEvent` sentinel — for a factory match. This is the
+// closed-loop completeness check: Matches() returns true → Decode()
+// returns no error and no events, the event is consumed cleanly
+// rather than recorded as an unmatched-topic drop.
+func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolCreate}}
+	if !d.Matches(ev) {
+		t.Fatal("Matches(factory create) = false, want true")
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Errorf("Decode(factory create) err = %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("Decode(factory create) emitted %d events, want 0", len(out))
+	}
+}
+
 // TestDecodeVaultFlow_deposit covers the happy path for a vault
 // deposit event with the audit-doc body schema: a G-strkey
 // `depositor`, a single-element `amounts` Vec<i128>, and

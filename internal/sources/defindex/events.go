@@ -70,6 +70,21 @@ const PrefixStrategy = "BlendStrategy"
 // user deposit/withdraw with a G-strkey `depositor`/`withdrawer`).
 const PrefixVault = "DeFindexVault"
 
+// PrefixFactory is topic[0] for the DeFindex *factory* contract's
+// events. The factory (`CDKFHFJI…NFKI`) emits `create` once per
+// vault spawn and `n_fee` on protocol-fee-recipient governance
+// updates. 15 chars → ScvString-encoded (same shape as
+// PrefixStrategy / PrefixVault).
+//
+// We classify these but do NOT decode bodies today — they don't
+// drive a Trade or a flow record. Recognising them is what the
+// EVERY-event policy requires (project_every_event_principle):
+// classify() must enumerate every topic the source can emit so the
+// dispatcher's drop-counter doesn't silently file factory events as
+// "unmatched topic." Body decode is Phase-C scope (would give us a
+// live notification feed for new wrapper deployments).
+const PrefixFactory = "DeFindexFactory"
+
 // Topic[1] symbols for the user-facing flow events we decode. The
 // strategy contract publishes more (harvest / keeper admin / …);
 // Phase A only decodes deposit + withdraw at the strategy layer.
@@ -98,6 +113,12 @@ const (
 	EventRBManager = "rbmanager"
 	EventDFees     = "dfees"
 	EventRebalance = "rebalance"
+	// Factory-layer events. `create` fires once per vault spawn
+	// (body holds roles / vault_fee / assets but NOT the new vault
+	// address — see audit doc "Surprising gotcha #2"); `n_fee`
+	// fires on protocol-fee-recipient governance updates.
+	EventCreate = "create"
+	EventNFee   = "n_fee"
 )
 
 // Pre-encoded base64 SCVal blobs — byte-identical to what the
@@ -110,6 +131,7 @@ const (
 var (
 	TopicPrefixStrategy = scval.MustEncodeString(PrefixStrategy)
 	TopicPrefixVault    = scval.MustEncodeString(PrefixVault)
+	TopicPrefixFactory  = scval.MustEncodeString(PrefixFactory)
 	TopicSymbolDeposit  = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolWithdraw = scval.MustEncodeSymbol(EventWithdraw)
 	// Classification-only topic[1] symbols (no decoder today).
@@ -123,6 +145,8 @@ var (
 	TopicSymbolRBManager = scval.MustEncodeSymbol(EventRBManager)
 	TopicSymbolDFees     = scval.MustEncodeSymbol(EventDFees)
 	TopicSymbolRebalance = scval.MustEncodeSymbol(EventRebalance)
+	TopicSymbolCreate    = scval.MustEncodeSymbol(EventCreate)
+	TopicSymbolNFee      = scval.MustEncodeSymbol(EventNFee)
 )
 
 // StrategyFlow is the canonical wire shape for one Blend strategy

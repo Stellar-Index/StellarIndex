@@ -61,11 +61,11 @@ defindex	(any strategy WASM)	BlendStrategy (String)	deposit	yes	defindex	unit	rc
 defindex	(any strategy WASM)	BlendStrategy (String)	withdraw	yes	defindex	unit	phase A
 defindex	(any vault WASM)	DeFindexVault (String)	deposit	yes	defindex	unit	rc.63 phase B
 defindex	(any vault WASM)	DeFindexVault (String)	withdraw	yes	defindex	unit	phase B
-defindex	(any strategy WASM)	BlendStrategy (String)	harvest	**NO**	—	—	**GAP** out of scope per events.go doc; project_every_event_principle violation (F-0018)
-defindex	(any vault WASM)	DeFindexVault (String)	rebalance	**NO**	—	—	**GAP**: out of scope per events.go (F-0018)
-defindex	(any vault WASM)	DeFindexVault (String)	admin (set_*)	**NO**	—	—	**GAP**: out of scope (F-0018)
-defindex	factory	(create)	—	**NO**	—	—	**GAP**: factory create events out of scope; would tell us about new vaults (F-0018)
-defindex	factory	(n_fee)	—	**NO**	—	—	**GAP**: out of scope (F-0018)
+defindex	(any strategy WASM)	BlendStrategy (String)	harvest	yes (classification-only)	defindex	unit	classify() per EVERY-event policy (F-0018 closed 2026-05-28); body decode Phase C
+defindex	(any vault WASM)	DeFindexVault (String)	rebalance	yes (classification-only)	defindex	unit	classifyVault() per EVERY-event policy (F-0018 closed 2026-05-28); body decode Phase C
+defindex	(any vault WASM)	DeFindexVault (String)	admin (rescue/paused/unpaused/n*/dfees)	yes (classification-only)	defindex	unit	classifyVault() enumerates all 8 admin topics (F-0018 closed 2026-05-28)
+defindex	factory	DeFindexFactory (String)	create	yes (classification-only)	defindex	unit	classifyFactory() (F-0018 closed 2026-05-28); body decode Phase C
+defindex	factory	DeFindexFactory (String)	n_fee	yes (classification-only)	defindex	unit	classifyFactory() (F-0018 closed 2026-05-28); body decode Phase C
 sep41_supply	(any SEP-41 contract)	transfer (Symbol)	—	yes	sep41_supply_events	unit	CAP-67 + pre-CAP-67 shapes
 sep41_supply	(any SEP-41 contract)	mint (Symbol)	—	yes	sep41_supply_events	unit	—
 sep41_supply	(any SEP-41 contract)	burn (Symbol)	—	yes	sep41_supply_events	unit	—

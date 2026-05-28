@@ -395,9 +395,22 @@ F-0028 will track the soroban_events lag separately)
   signals) and rebalance events (composition changes).
   Factory create events miss the spawning of new vault wrappers
   — our contract allowlist drifts behind reality without these.
-- **Disposition:** `open`. Remediation: Phase B per the source
-  comment OR explicit `note`-class "we deliberately don't
-  cover these" decision (with operator sign-off).
+- **Disposition:** `closed` (2026-05-28). Resolved via
+  classification-only coverage:
+  `internal/sources/defindex/{events,decode,dispatcher_adapter,decode_test}.go`
+  now adds `PrefixFactory = "DeFindexFactory"` + a
+  `classifyFactory()` covering `create` / `n_fee`. The existing
+  `classify()` already enumerated strategy `harvest`; the existing
+  `classifyVault()` already enumerated `rebalance` and all 8 admin
+  topics. All 5 previously-`**NO**` rows in
+  `inventory/every-event-coverage.tsv` are now classified. Body
+  decode for these events remains Phase C (factory-create body
+  lacks the new vault address per
+  `docs/operations/wasm-audits/defindex.md` Surprising-gotcha #2 —
+  would require plumbing `events.Event.OpArgs` from the
+  InvokeContract op the way Band/Redstone do). The dispatcher's
+  drop-counter no longer files these as "unmatched topic", which
+  is what EVERY-event policy requires.
 
 #### F-0019 — alertmanager listener :9093 not observed in R1-P05 probe
 
@@ -1397,7 +1410,7 @@ W35's `every-event-coverage.tsv` register now carries 80 rows;
 the original "candidate" finding seeds have been resolved into
 concrete TSV rows with terminal status per row. Confirmed gaps:
 
-- DeFindex: 5 gap rows (→ F-0018)
+- DeFindex: 0 gap rows (F-0018 closed 2026-05-28 — 5 rows promoted to `classification-only` coverage)
 - sep41_supply: 2 unknown rows (→ F-0021)
 - All other sources (soroswap, soroswap_router, phoenix,
   aquarius, comet, blend, reflector, redstone, band, cctp,

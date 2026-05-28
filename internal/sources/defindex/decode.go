@@ -87,6 +87,35 @@ func classifyVault(e *events.Event) string {
 	return ""
 }
 
+// classifyFactory is the factory-layer twin of classify /
+// classifyVault. Topics are 2-tuples:
+//
+//	topic[0] = String("DeFindexFactory")    — pre-encoded, byte-equal
+//	topic[1] = Symbol("create"|"n_fee")
+//
+// We recognise factory events so the dispatcher's drop-counter
+// doesn't file them as "unmatched topic" — EVERY-event policy
+// (project_every_event_principle). Body decode is Phase C; today
+// classifyFactory returning non-empty just means "we own this
+// event, no decode needed yet." Decoder.Decode returns no
+// consumer.Event on a factory match (drops cleanly without
+// counting against ErrUnknownEvent).
+func classifyFactory(e *events.Event) string {
+	if len(e.Topic) < 2 {
+		return ""
+	}
+	if e.Topic[0] != TopicPrefixFactory {
+		return ""
+	}
+	switch e.Topic[1] {
+	case TopicSymbolCreate:
+		return EventCreate
+	case TopicSymbolNFee:
+		return EventNFee
+	}
+	return ""
+}
+
 // decodeFlow converts one classified strategy event into a
 // StrategyFlow.
 //

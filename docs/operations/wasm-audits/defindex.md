@@ -292,13 +292,25 @@ didn't list that topic prefix.
 
 **Still out of scope (Phase C+):**
 
-- `("BlendStrategy","harvest")` strategy-layer yield events.
-- `("DeFindexVault","rebalance")` admin/rebalance events (and the
-  four-way `rebalance_method` discriminator inside the body — see
-  "Surprising gotchas" #3 above).
-- `("DeFindexFactory","create")` vault-spawn events. (Would give
-  us live notifications when new wrappers appear; we'd still
-  capture their flows via topic-dispatch even without this.)
+- Body decode for `("BlendStrategy","harvest")` strategy-layer
+  yield events. (Topic now classified per EVERY-event policy —
+  F-0018 closed 2026-05-28 — but the harvest body has not yet been
+  modelled as a `StrategyFlow`.)
+- Body decode for `("DeFindexVault","rebalance")` admin/rebalance
+  events (and the four-way `rebalance_method` discriminator inside
+  the body — see "Surprising gotchas" #3 above). Topic now
+  classified.
+- Body decode for `("DeFindexVault", rescue|paused|unpaused|nreceiver|
+  nmanager|nemanager|rbmanager|dfees)` admin events. Topics now
+  classified per EVERY-event policy.
+- Body decode for `("DeFindexFactory","create"|"n_fee")` vault-spawn
+  events (topic now classified per EVERY-event policy — F-0018 closed
+  2026-05-28 — `Decode` returns `(nil, nil)` on a factory match
+  rather than `ErrUnknownEvent`). The actually-useful signal (new
+  wrapper address) needs `events.Event.OpArgs` from the
+  InvokeContract op since the event body itself doesn't carry the
+  new address (Surprising-gotcha #2). Same plumbing pattern Band's
+  `relay()` and Redstone's `write_prices()` use.
 - A typed `defindex_flows` hypertable so events become
   audit-queryable post-decode (currently the counter is the only
   after-the-fact record — which is why historical recovery
