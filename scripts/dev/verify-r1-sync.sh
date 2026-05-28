@@ -36,8 +36,29 @@ for f in configs/prometheus/rules.r1/*.yml; do
     FAILS=$((FAILS + 1))
   fi
 done
+# Pre-deploy migration check (added 2026-05-28).
+#
+# deploy.yml syncs binaries only — Postgres migrations are operator-
+# manual per feedback_migrations_not_auto_deployed. A binary release
+# that adds a column / table will crash on its first DB write if the
+# matching migration hasn't been applied. Compare local
+# migrations/NNNN_*.up.sql versus the schema_migrations table on r1.
+# Pending = local has it, r1 doesn't.
+LOCAL_LATEST_MIG=$(ls migrations/[0-9]*_*.up.sql 2>/dev/null | sed -E 's|migrations/0*([0-9]+)_.*|\1|' | sort -n | tail -1)
+R1_LATEST_MIG=$(ssh -o ConnectTimeout=5 "$R1_HOST" "sudo -u postgres psql -tA -d ratesengine -c 'SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1;' 2>/dev/null" | tr -d '[:space:]')
+if [ -n "$LOCAL_LATEST_MIG" ] && [ -n "$R1_LATEST_MIG" ]; then
+  if [ "$LOCAL_LATEST_MIG" -gt "$R1_LATEST_MIG" ]; then
+    pending=$((LOCAL_LATEST_MIG - R1_LATEST_MIG))
+    echo "DRIFT: migrations — local latest is $LOCAL_LATEST_MIG, r1 schema_migrations.version is $R1_LATEST_MIG ($pending pending)"
+    echo "       scp migrations/00*.sql root@r1:/tmp/ && ssh root@r1 'cd /tmp && ratesengine-migrate up -database \$RE_PG_DSN -path .'"
+    FAILS=$((FAILS + 1))
+  fi
+else
+  echo "WARN: migration check skipped — local latest='$LOCAL_LATEST_MIG' r1 latest='$R1_LATEST_MIG'"
+fi
+
 if [ "$FAILS" -gt 0 ]; then
-  echo "FAIL: $FAILS file(s) drifted on r1"
+  echo "FAIL: $FAILS drift(s) on r1"
   exit "$FAILS"
 fi
-echo "OK: all tracked files in sync"
+echo "OK: all tracked files + migrations in sync"
