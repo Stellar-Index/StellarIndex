@@ -29,6 +29,44 @@ func IsContractID(s string) bool {
 	return err == nil
 }
 
+// IsMuxedAccount reports whether s is a valid Stellar muxed
+// account address (M-strkey), CRC-checked. Added in CAP-67 / P23
+// — SEP-41 transfer destinations can be M-addresses post-Whisk.
+func IsMuxedAccount(s string) bool {
+	_, err := strkey.Decode(strkey.VersionByteMuxedAccount, s)
+	return err == nil
+}
+
+// IsClaimableBalance reports whether s is a valid Stellar
+// claimable-balance address (B-strkey), CRC-checked. CAP-67 / P23
+// extended SEP-41 transfer destinations to include claimable
+// balances.
+func IsClaimableBalance(s string) bool {
+	_, err := strkey.Decode(strkey.VersionByteClaimableBalance, s)
+	return err == nil
+}
+
+// IsLiquidityPool reports whether s is a valid Stellar
+// liquidity-pool address (L-strkey), CRC-checked. CAP-67 / P23
+// extended SEP-41 transfer destinations to include LP addresses
+// — the cascade-window drain dry-run on 2026-05-28 surfaced this
+// as the dominant decoder-failure mode.
+func IsLiquidityPool(s string) bool {
+	_, err := strkey.Decode(strkey.VersionByteLiquidityPool, s)
+	return err == nil
+}
+
+// IsAnyHolder reports whether s is a valid Stellar address that
+// can plausibly hold a SEP-41 balance: G (account), C (contract),
+// M (muxed), B (claimable balance), or L (liquidity pool). Used
+// at the /v1/sep41_transfers handler boundary for from/to
+// validation — pre-CAP-67 only G was accepted, which rejected
+// legitimate post-P23 destinations as invalid input.
+func IsAnyHolder(s string) bool {
+	return IsAccountID(s) || IsContractID(s) || IsMuxedAccount(s) ||
+		IsClaimableBalance(s) || IsLiquidityPool(s)
+}
+
 // validateAccountID returns an error describing why s is not a
 // valid account/issuer strkey, or nil on success.
 func validateAccountID(s string) error {

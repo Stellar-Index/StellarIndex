@@ -179,6 +179,72 @@ func TestAsAddressStrkey_contract(t *testing.T) {
 	}
 }
 
+// TestAsAddressStrkey_muxed pins the CAP-67 / P23 muxed-account
+// strkey encoding. SEP-41 transfers with a destination Muxed
+// Account hit this path; pre-fix the decoder tripped
+// "unknown ScAddress type 2" and dropped the row.
+func TestAsAddressStrkey_muxed(t *testing.T) {
+	var ed xdr.Uint256
+	m := xdr.MuxedEd25519Account{Id: xdr.Uint64(0x80), Ed25519: ed}
+	scAddr := xdr.ScAddress{
+		Type:         xdr.ScAddressTypeScAddressTypeMuxedAccount,
+		MuxedAccount: &m,
+	}
+	sv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddr}
+	got, err := AsAddressStrkey(sv)
+	if err != nil {
+		t.Fatalf("AsAddressStrkey: %v", err)
+	}
+	if len(got) == 0 || got[0] != 'M' {
+		t.Errorf("got %q, expected M-strkey", got)
+	}
+}
+
+// TestAsAddressStrkey_claimableBalance pins the CAP-67 / P23
+// claimable-balance strkey encoding (B-…) — a SEP-41 transfer
+// whose destination is a CB ID must round-trip cleanly.
+func TestAsAddressStrkey_claimableBalance(t *testing.T) {
+	var h xdr.Hash
+	cb := xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+		V0:   &h,
+	}
+	scAddr := xdr.ScAddress{
+		Type:               xdr.ScAddressTypeScAddressTypeClaimableBalance,
+		ClaimableBalanceId: &cb,
+	}
+	sv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddr}
+	got, err := AsAddressStrkey(sv)
+	if err != nil {
+		t.Fatalf("AsAddressStrkey: %v", err)
+	}
+	if len(got) == 0 || got[0] != 'B' {
+		t.Errorf("got %q, expected B-strkey", got)
+	}
+}
+
+// TestAsAddressStrkey_liquidityPool pins the CAP-67 / P23 LP
+// strkey encoding (L-…). This was the live-r1 cascade-drain
+// dry-run failure case on 2026-05-28: every SEP-41 transfer
+// targeting an LP destination tripped "unknown ScAddress type 4"
+// (LP is type 4 in the SDK enum despite the SEP-41 / strkey doc
+// ordering).
+func TestAsAddressStrkey_liquidityPool(t *testing.T) {
+	var lp xdr.PoolId
+	scAddr := xdr.ScAddress{
+		Type:            xdr.ScAddressTypeScAddressTypeLiquidityPool,
+		LiquidityPoolId: &lp,
+	}
+	sv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddr}
+	got, err := AsAddressStrkey(sv)
+	if err != nil {
+		t.Fatalf("AsAddressStrkey: %v", err)
+	}
+	if len(got) == 0 || got[0] != 'L' {
+		t.Errorf("got %q, expected L-strkey", got)
+	}
+}
+
 // ─── Map-field lookup ────────────────────────────────────────────
 
 func TestMapField_byName(t *testing.T) {

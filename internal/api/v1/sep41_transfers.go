@@ -166,22 +166,24 @@ func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (cont
 
 	fromAddr = r.URL.Query().Get("from")
 	toAddr = r.URL.Query().Get("to")
-	// SEP-41 from/to participants are Stellar accounts (G-strkey).
-	// A bad input would otherwise reach the SQL layer and return an
-	// empty result set indistinguishable from "no matching transfers"
-	// — actively misleading for the operator-debugging use case.
-	if fromAddr != "" && !canonical.IsAccountID(fromAddr) {
+	// SEP-41 from/to participants can be any address that holds a
+	// balance: G (account), C (contract), and post-CAP-67 also M
+	// (muxed), B (claimable balance), or L (liquidity pool). A bad
+	// input would otherwise reach the SQL layer and return an empty
+	// result set indistinguishable from "no matching transfers" —
+	// actively misleading for the operator-debugging use case.
+	if fromAddr != "" && !canonical.IsAnyHolder(fromAddr) {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/invalid-address",
 			"Invalid from address", http.StatusBadRequest,
-			"from must be a Stellar account G-strkey (56 chars starting with G). Got "+fromAddr)
+			"from must be a valid Stellar address (G/C/M/B/L strkey). Got "+fromAddr)
 		return "", "", "", false
 	}
-	if toAddr != "" && !canonical.IsAccountID(toAddr) {
+	if toAddr != "" && !canonical.IsAnyHolder(toAddr) {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/invalid-address",
 			"Invalid to address", http.StatusBadRequest,
-			"to must be a Stellar account G-strkey (56 chars starting with G). Got "+toAddr)
+			"to must be a valid Stellar address (G/C/M/B/L strkey). Got "+toAddr)
 		return "", "", "", false
 	}
 	return contractID, fromAddr, toAddr, true

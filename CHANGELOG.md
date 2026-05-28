@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.88] — 2026-05-28
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: api + ops binary restart. No migrations.
+
+### Fixed
+
+- **`scval.AsAddressStrkey` now handles CAP-67 / Protocol-23 address variants** (Muxed Account M-…, Claimable Balance B-…, Liquidity Pool L-…). Pre-fix the decoder tripped `unknown ScAddress type N` on every SEP-41 transfer event whose destination wasn't a plain account or contract — the rc.87 cascade-window drain dry-run surfaced this against the [62,642,781, 62,735,517] window where LP-destination transfers dominated. Strkey payload shapes are pinned by tests against the SDK strkey/decode_test.go fixtures: M = 32-byte ed25519 + 8-byte big-endian id, B = 1-byte type prefix + 32-byte hash, L = 32-byte PoolId. The cascade-drain orchestrator should now succeed where rc.87 silently dropped these rows.
+- **`/v1/contracts/{contract_id}/transfers` accepts every CAP-67 holder strkey** for `from` / `to` query params (G/C/M/B/L). Pre-rc.88 only G-strkeys were accepted; the broader set lives behind a new `canonical.IsAnyHolder` predicate. Five-variant happy-path test pins handler-side acceptance; an existing "wrong shape → 400" test narrows from "G-only" to "valid-strkey-or-400".
+
 ## [v0.5.0-rc.87] — 2026-05-28
 
 Tested against Stellar Protocol 23 (Whisk).

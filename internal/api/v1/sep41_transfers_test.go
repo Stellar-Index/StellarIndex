@@ -83,15 +83,18 @@ func TestSEP41Transfers_InvalidContractID_Returns400(t *testing.T) {
 }
 
 func TestSEP41Transfers_InvalidFromOrTo_Returns400(t *testing.T) {
+	// Post-CAP-67 the SEP-41 from/to accepts every valid holder strkey
+	// (G/C/M/B/L). The 400-rejected set is now narrower: only
+	// genuinely-invalid strings are bad input; a C-strkey is a
+	// legitimate Soroban-contract destination per the rc.88 SEP-41
+	// fix bundle.
 	cases := []struct {
 		name string
 		q    string
 		want string
 	}{
-		{"from garbage", "from=NOTAGSTRKEY", "from must be a Stellar account G-strkey"},
-		{"to garbage", "to=NOTAGSTRKEY", "to must be a Stellar account G-strkey"},
-		{"from C-strkey", "from=" + validContractID, "from must be a Stellar account G-strkey"},
-		{"to C-strkey", "to=" + validContractID, "to must be a Stellar account G-strkey"},
+		{"from garbage", "from=NOTAGSTRKEY", "from must be a valid Stellar address"},
+		{"to garbage", "to=NOTAGSTRKEY", "to must be a valid Stellar address"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,6 +104,48 @@ func TestSEP41Transfers_InvalidFromOrTo_Returns400(t *testing.T) {
 			}
 			if !strings.Contains(rec.Body.String(), tc.want) {
 				t.Errorf("body missing %q; got: %s", tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestSEP41Transfers_AllHolderTypesAccepted_ReachReader ensures
+// the post-CAP-67 widening (G/C/M/B/L) reaches the reader rather
+// than 400-ing at the validation boundary. Each valid strkey gets
+// a query that the stub reader returns empty for; what matters is
+// that we *get* to the reader.
+func TestSEP41Transfers_AllHolderTypesAccepted_ReachReader(t *testing.T) {
+	// One representative of each post-CAP-67 holder type — the
+	// canonical.Is*-test fixtures pin the underlying strkey
+	// validators; this test pins the handler-side acceptance.
+	cases := []struct {
+		name string
+		addr string
+	}{
+		{"G account", validAccountG},
+		{"C contract", validContractID},
+		// M/B/L: SDK strkey-decode-tested fixtures so we know the CRC
+		// is right. Compact base32 forms taken from the SDK's
+		// strkey/decode_test.go.
+		{"M muxed", "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK"},
+		{"L liquidity pool", "LA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUPJN"},
+		{"B claimable balance", "BAAD6DBUX6J22DMZOHIEZTEQ64CVCHEDRKWZONFEUL5Q26QD7R76RGR4TU"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &stubSEP41TransfersReader{}
+			srv := serverWithSEP41Reader(reader)
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/contracts/{contract_id}/transfers", srv.handleSEP41Transfers)
+			url := "/v1/contracts/" + validContractID + "/transfers?from=" + tc.addr + "&limit=10"
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			if reader.calledN != 1 {
+				t.Errorf("reader called %d times, want 1", reader.calledN)
 			}
 		})
 	}

@@ -18,6 +18,7 @@ package scval
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 
@@ -337,11 +338,26 @@ func AsAmountFromU256(sv xdr.ScVal) (canonical.Amount, error) {
 	), nil
 }
 
-// AsAddressStrkey returns the strkey-encoded (G… / C…) form of an
-// ScVal::Address. Delegates checksum + format to the SDK's strkey
-// package — no shortcuts like "first char is G so it's an account";
-// this is the path that catches a malformed address before it
-// reaches the database.
+// AsAddressStrkey returns the strkey-encoded form of an
+// ScVal::Address (G… / C… / M… / B… / L…). Delegates checksum +
+// format to the SDK's strkey package — no shortcuts like "first
+// char is G so it's an account"; this is the path that catches a
+// malformed address before it reaches the database.
+//
+// CAP-67 / Protocol 23 (mainnet 2025-09-03) extended ScAddress
+// from the original two variants (Account, Contract) to five:
+// added Muxed Account, Claimable Balance, and Liquidity Pool. A
+// SEP-41 transfer event's `to` field can carry any of these —
+// the cascade-window drain dry-run on 2026-05-28 found that every
+// transfer event hitting a liquidity-pool destination tripped
+// `unknown ScAddress type 4` and was silently dropped.
+//
+// Strkey payload shapes are pinned by the SDK's strkey/decode_test.go
+// table:
+//   - Muxed (M-…): 40 bytes = 32-byte ed25519 || 8-byte big-endian id
+//   - Claimable Balance (B-…): 33 bytes = 1-byte type prefix (0x00 = V0)
+//     || 32-byte hash
+//   - Liquidity Pool (L-…): 32 bytes = PoolId hash directly
 func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 	if sv.Type != xdr.ScValTypeScvAddress {
 		return "", fmt.Errorf("%w: want Address, got %s", ErrScValType, sv.Type.String())
@@ -354,6 +370,24 @@ func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 	case xdr.ScAddressTypeScAddressTypeContract:
 		raw := addr.MustContractId()
 		return strkey.Encode(strkey.VersionByteContract, raw[:])
+	case xdr.ScAddressTypeScAddressTypeMuxedAccount:
+		m := addr.MustMuxedAccount()
+		raw := make([]byte, 40)
+		copy(raw, m.Ed25519[:])
+		binary.BigEndian.PutUint64(raw[32:], uint64(m.Id))
+		return strkey.Encode(strkey.VersionByteMuxedAccount, raw)
+	case xdr.ScAddressTypeScAddressTypeClaimableBalance:
+		cb := addr.MustClaimableBalanceId()
+		if cb.V0 == nil {
+			return "", fmt.Errorf("%w: claimable balance V0 hash is nil", ErrScValType)
+		}
+		raw := make([]byte, 33)
+		raw[0] = byte(cb.Type) // V0 = 0
+		copy(raw[1:], cb.V0[:])
+		return strkey.Encode(strkey.VersionByteClaimableBalance, raw)
+	case xdr.ScAddressTypeScAddressTypeLiquidityPool:
+		lp := addr.MustLiquidityPoolId()
+		return strkey.Encode(strkey.VersionByteLiquidityPool, lp[:])
 	default:
 		return "", fmt.Errorf("%w: unknown ScAddress type %d", ErrScValType, addr.Type)
 	}
