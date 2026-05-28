@@ -34,6 +34,19 @@ Histogram, labels `method`, `route`.
 Handler latency including time-in-middleware. Buckets 1ms – 10s with
 extra resolution at the 200ms / 500ms SLO boundaries.
 
+### `http_request_success_duration_seconds`
+
+Histogram, labels `method`, `route`.
+
+The non-5xx twin of `http_request_duration_seconds`. The HTTP
+middleware records into this histogram only when the response status
+is < 500 (and not 499 / client-aborted). Pair with
+`http_request_duration_seconds_count` for the latency-SLO ratio so a
+fast 5xx burns budget: numerator counts fast successes; denominator
+counts all requests including errors. Added in 2026-05-28 to close
+F-0105 (audit 2026-05-26) — pre-this-PR the SLO ratio reported a
+5ms 500 as a "good fast" response.
+
 ### `ratesengine_api_cache_ops_total`
 
 Counter, labels `cache`, `op`, `result`.

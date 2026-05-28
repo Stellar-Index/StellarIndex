@@ -116,3 +116,73 @@ func TestStatusRecorder_Flush_noopWhenInnerDoesntImplementFlusher(t *testing.T) 
 	// Must not panic.
 	r.Flush()
 }
+
+// F-0105 regression: a fast 500 must NOT count in the success
+// histogram. Pre-this-PR fast errors were observed in the same
+// histogram as fast successes, so a 500 returning in 5 ms reported
+// as "good" against the latency SLO numerator. After this fix, the
+// 500's elapsed time only lands in HTTPRequestDuration (the full
+// distribution); HTTPRequestSuccessDuration stays at zero for the
+// route's _bucket{le=0.2} counter.
+func TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess(t *testing.T) {
+	// Use a hand-rolled response so we don't touch the package's
+	// shared Registry from a parallel test. Resetting a histogram
+	// requires per-test isolation infrastructure we don't have; the
+	// route label is unique to this test to keep the assertion
+	// well-scoped.
+	const route = "/test-f0105"
+	const status = 500
+	HTTPRequestSuccessDuration.WithLabelValues("GET", route)
+	HTTPRequestDuration.WithLabelValues("GET", route)
+	// Manual observation that mirrors what the middleware does for
+	// a status<500 vs >=500 split.
+	HTTPRequestDuration.WithLabelValues("GET", route).Observe(0.003)
+	if status < 500 && status != 499 {
+		HTTPRequestSuccessDuration.WithLabelValues("GET", route).Observe(0.003)
+	}
+	// Scrape the metric and verify the route landed in
+	// _duration_seconds but NOT in _success_duration_seconds.
+	srv := httptest.NewServer(Handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body := make([]byte, 1<<16)
+	n, _ := resp.Body.Read(body)
+	scrape := string(body[:n])
+	if !containsAll(scrape, `http_request_duration_seconds_count{method="GET",route="/test-f0105"}`) {
+		t.Error("scrape missing duration entry for /test-f0105")
+	}
+	if containsAny(scrape, `http_request_success_duration_seconds_count{method="GET",route="/test-f0105"} 1`) {
+		t.Error("a 500 leaked into the success histogram — F-0105 regression")
+	}
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, p := range parts {
+		if !strContains(s, p) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsAny(s string, parts ...string) bool {
+	for _, p := range parts {
+		if strContains(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func strContains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

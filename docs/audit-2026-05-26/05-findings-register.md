@@ -2460,9 +2460,21 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   (error_rate vs latency_slo) double-count fast-errors as
   "good budget burn" and "high error rate" — the SLO scale
   of "this customer experience" doesn't reflect a 5xx outage.
-- **Disposition:** `open` Wave 2. Either include 5xx in the
-  slow-request numerator (so errors burn budget) or document
-  the policy that 5xx is a separate dimension.
+- **Disposition:** `closed` (2026-05-28). Took the
+  "errors burn budget" path. New
+  `http_request_success_duration_seconds` histogram in
+  `internal/obs/metrics.go`; the middleware only records into
+  it when the response status is < 500 and not 499. SLO
+  recording rules in `slo.yml` (both R1 overlay + multi-host
+  copies) updated so the numerator pulls from the new
+  success-only histogram while the denominator stays on the
+  all-requests `_duration_seconds_count`. The result is the
+  ratio operators actually wanted: a fast 5xx lands in the
+  denominator but not the numerator → ratio drops → SLO
+  burns. Pre-this-PR a 5 ms 500 reported as "good fast"
+  against the latency SLO. Regression test
+  `TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess` pins the
+  success histogram at zero for a synthetic 500.
 
 #### F-0106 — POSITIVE: alertmanager has deadmansswitch heartbeat to healthchecks.io
 

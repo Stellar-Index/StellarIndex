@@ -28,6 +28,7 @@ func init() {
 	Registry.MustRegister(
 		HTTPRequestsTotal,
 		HTTPRequestDuration,
+		HTTPRequestSuccessDuration,
 		APICacheOpsTotal,
 
 		SourceEventsTotal,
@@ -162,6 +163,36 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 		Help: "Request latency histogram, labelled by method + route pattern.",
 		// Matches Freighter SLA: p95 ≤ 200ms, p99 ≤ 500ms. Buckets
 		// are picked so the .2 + .5 boundaries land exactly.
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2.5, 5, 10},
+	},
+	[]string{"method", "route"},
+)
+
+// HTTPRequestSuccessDuration is the success-only twin of
+// HTTPRequestDuration: same buckets / labels, but the middleware
+// only records into this histogram when the response status is NOT
+// 5xx. Pair the two metrics in the SLO ratio so a fast-5xx burns
+// the latency budget (numerator excludes the error; denominator
+// counts everything):
+//
+//	api_slow_request_ratio =
+//	  sum(rate(http_request_success_duration_seconds_bucket{le="0.2",...}[w]))
+//	  / sum(rate(http_request_duration_seconds_count{...}[w]))
+//
+// Before this metric existed, both numerator and denominator used
+// the same `_duration_seconds` series — a fast 500 landed in both
+// and reported as "good" against the latency SLO even though the
+// customer experience was a hard outage (F-0105, audit-2026-05-26).
+// The availability SLO (http_requests_total{status_class="5xx"})
+// is unchanged — it stays the authority for 5xx rate, and this
+// metric is only about getting the latency SLO right.
+//
+// Same buckets as HTTPRequestDuration so the
+// `le="0.2"` filter lands on the identical boundary across both.
+var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "http_request_success_duration_seconds",
+		Help:    "Request latency histogram for non-5xx responses only. Pair with http_request_duration_seconds_count for SLO ratios that burn budget on fast 5xx.",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2.5, 5, 10},
 	},
 	[]string{"method", "route"},
