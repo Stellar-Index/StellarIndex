@@ -119,9 +119,16 @@ runs; one row per finding.)
   `/etc/systemd/system/` has no alertmanager unit.
 - **Adversarial vector:** unmonitored production. Pre-launch
   blocker.
-- **Disposition:** `open` — Wave 0 (block public flip).
-- **Investigation needed:** does prometheus.r1.yml reference a
-  non-existent alertmanager? If so, all rules fire to nowhere.
+- **Disposition:** `closed-as-historical` (2026-05-28).
+  Superseded by F-0004 retraction above — the original
+  "alertmanager.service does not exist" finding was a probe
+  artefact (process-name truncation in earlier `ss` output).
+  Live verification on r1 confirmed alertmanager IS running
+  (`prometheus-alertmanager` on `*:9093` per F-0019 closure).
+  Pre-this-PR this historical-trace entry was being counted
+  as an `open` finding by the disposition-grep tooling
+  because the `open` token survived even after the
+  ~~`critical`~~ strikethrough on the Severity line.
 
 #### F-0005 — sla-probe exit non-zero (probe is working; verdict is "fail")
 
@@ -1773,12 +1780,16 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   serving null/empty under F-0039. The pattern is
   inconsistent across handlers — some degrade gracefully,
   others don't.
-- **Disposition:** `open` Wave 0. Either:
-  (a) make `/v1/price` cache-aside (Redis miss → Postgres
-      fallback) for consistency with `/v1/assets/{id}`;
-  (b) introduce a uniform "Redis-down → 503" behaviour with
-      proper RFC-7807, removing the silent-null code path
-      entirely.
+- **Disposition:** `closed` (Wave-0 step 7, this session).
+  Took path (b) via the shared
+  `internal/api/v1/cache_errors.go::handleCacheErr` helper:
+  Redis-MISCONF on the cache layer is translated to HTTP 503
+  + `Retry-After: 30` with RFC-7807 problem body. Migrated
+  surfaces include /v1/price, /v1/vwap, /v1/oracle/*,
+  /v1/lending/pools, and the divergence/score endpoints
+  (covered jointly by F-0086..F-0090, F-0145, F-0146 at
+  task #22). The silent-null code path that produced the
+  inconsistent behaviour the audit observed is gone.
 
 #### F-0067 — POSITIVE evidence: live ledger ingestion is healthy
 
@@ -2635,8 +2646,17 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Cross-ref:** F-0027/F-0080/F-0085/F-0104 cluster — the
   cascade is invisible to the operator BECAUSE the alerts
   that should fire are themselves victims.
-- **Disposition:** `open` Wave 0. Execute the 8-step cascade
-  fix sequence in `07-remediation-plan.md`.
+- **Disposition:** `closed-as-historical` (2026-05-28).
+  Observational entry recording how long the cascade went
+  unfixed during the audit. The cascade itself was resolved
+  through tasks #16 (free root disk), #17 (reset bgsave +
+  clear MISCONF), #18 (restart exporters), and the
+  structural alert-portfolio hardening (F-0080 / F-0085 /
+  F-0104 absent_over_time guards) so a recurrence is
+  alertable instead of silent. The process lesson — "the
+  audit became the on-call signal because alerts were
+  themselves cascade victims" — is preserved as historical
+  trace; the alert hardening is the durable countermeasure.
 
 #### F-0110 — ADR-0028 still `status: Proposed` despite code shipped
 
@@ -2777,7 +2797,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   changes are STUCK in Redis but the application-level
   writers are silently failing too, so no new state is
   being accumulated to lose).
-- **Disposition:** `open` Wave 0 (same as F-0001/F-0039).
+- **Disposition:** `closed-as-historical` (2026-05-28).
+  Second observational entry in the cascade-duration cluster
+  (same shape as F-0109). The cascade itself was resolved
+  through tasks #16/17/18 and the structural alert hardening
+  (F-0080 / F-0085 / F-0104 absent_over_time guards).
+  Recurrence is now alertable rather than silent. Trace
+  preserved for post-mortem reference.
 
 #### F-0117 — POSITIVE: Phoenix decoder covers all 5 emitted event families
 
@@ -2947,8 +2973,16 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   meta-finding is: alerts that should fire don't (cascade-
   fragility cluster); the audit-loop's r1 probes ARE the
   on-call signal.
-- **Disposition:** `open` Wave 0 (unchanged). Wave 0 fix
-  sequence in J05 remains the actionable playbook.
+- **Disposition:** `closed-as-historical` (2026-05-28).
+  Third observational entry in the cascade-duration cluster
+  (same shape as F-0109 / F-0116). The Wave-0 fix sequence
+  J05 referenced has been executed — tasks #16, #17, #18 ran
+  in this session. Combined with the structural alert
+  hardening (F-0080 / F-0085 / F-0104 absent_over_time
+  guards) the meta-finding's core complaint — "audit-loop
+  probes ARE the on-call signal" — no longer holds: a
+  recurrence of the same cascade now fires alerts in its own
+  right. Trace preserved for post-mortem reference.
 
 #### F-0127 — POSITIVE: Rozo decoder covers both v1 Payment events
 
