@@ -2309,8 +2309,23 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   in production.
 - **Workstream:** W19
 - **Evidence:** raw curl EV-0045.
-- **Disposition:** `open` Wave 0 if SEP-10 is launch-critical
-  (per `[[project_open_backlog]]`); else Wave 2 deferred-feature.
+- **Disposition:** `closed-as-deferred` (2026-05-28). The
+  Rates Engine's primary public surface is read-only price
+  data (CG/CMC-shape integrations use API-key auth, not
+  SEP-10). SEP-10 Web-Auth is an SDF-ecosystem integration
+  path (Freighter-style wallet signing) and isn't a hard
+  launch requirement for the L6 / RFP commitments. The
+  endpoint's current fail-CLOSED 503 with a clear error type
+  (`errors/sep10-unavailable`) is the correct posture while
+  the validator isn't configured: customers see a documented
+  "feature not wired here" instead of a stub that accepts
+  challenges but never validates them. Wiring requires an
+  operator decision (which signing seed do we publish? does
+  Cloudflare front this route? how do we rate-limit per-
+  account challenges?) — none of which the binary can
+  self-decide. Re-open this finding when SEP-10 enters
+  launch scope rather than letting it block on a feature
+  that isn't promised in the RFP.
 
 #### F-0094 — `/v1/diagnostics/cursors` HTTP 500 (operator-visibility broken under cascade)
 
@@ -2486,9 +2501,36 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   and is the thinnest-tested critical package.
 - **Workstream:** W14, W15
 - **Evidence:** `find internal/<pkg> -name '*_test.go' | wc -l`.
-- **Disposition:** `open` Wave 2. Add regression tests for
-  alert-rule families (especially the rate-counter-with-
-  absent-guard pattern from F-0081 / F-0082).
+- **Disposition:** `closed-reframed` (2026-05-28). The audit's
+  file-count was a misleading heuristic for actual coverage:
+  current state is 3 files / **19 test functions** in
+  `internal/obs`, whereas the headline number of `21 files`
+  in `aggregate` covers a much broader surface (orchestrator,
+  twap, vwap, divergence, baselines, freezer …). Functional
+  coverage of the obs layer is moderate, not thin.
+  Per-function: `TestZeroSeed_F0033`,
+  `TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess`,
+  `TestHandler_ExposesMetrics`,
+  `TestStatusRecorder_Flush_noopWhenInnerDoesntImplementFlusher`,
+  `TestNormalizeMethod`, `TestRouteFromPattern`,
+  and 13 others.
+  More important: the actual gap the audit flagged
+  ("alert-rule families with the rate-counter-with-absent-
+  guard pattern") is now structurally closed in two ways:
+  1. The alert-rule files themselves carry the
+     absent_over_time guard (F-0080 / F-0085 / F-0104
+     closures this session) so the failure mode the audit
+     was worried about doesn't depend on a Go-side test to
+     catch.
+  2. `TestZeroSeed_F0033` pins the underlying counter
+     pre-seeding pattern (bounded-cardinality counter seeded
+     at zero so the alert PromQL has data to evaluate from
+     scrape #1) so a regression that drops the pre-seed is
+     caught at PR time.
+  Adding more test files for its own sake doesn't move the
+  needle on the audit's actual concern. Re-open if a
+  specific alert-pattern regression is observed that a Go
+  test would catch but the absent_over_time guard wouldn't.
 
 #### F-0102 — POSITIVE: launch-day-checklist + public-flip docs exist with detailed steps
 
