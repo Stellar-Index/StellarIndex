@@ -2440,9 +2440,22 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   Similar to F-0085 (redis_writes_blocked depends on
   redis_exporter which dies in the cascade) and F-0080
   (aggregator_silent rule is unguarded).
-- **Disposition:** `open` Wave 0. Add `OR
-  absent_over_time(ratesengine_price_staleness_seconds[10m])
-  == 1` to the expr.
+- **Disposition:** `closed` (2026-05-28). Both
+  `configs/prometheus/rules.r1/api.yml:92-117` and
+  `deploy/monitoring/rules/api.yml:104-129` now use the OR'd
+  expr:
+  ```yaml
+  expr: |
+    ratesengine_price_staleness_seconds > 120
+    OR
+    absent_over_time(ratesengine_price_staleness_seconds[10m]) == 1
+  ```
+  The cascade-wedge case (aggregator stops emitting → series
+  goes stale → bare `> 120` sees no-data) now fires on the
+  absent_over_time branch. Annotation updated to redirect
+  operators when the gauge is absent: see the
+  aggregator-silent runbook (the wedge), not the price-stale
+  runbook (the freshness gap).
 
 #### F-0105 — SLO budget calc only counts successful-response latency; HTTP 500s don't burn budget
 
