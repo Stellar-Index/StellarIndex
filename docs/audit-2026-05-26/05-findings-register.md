@@ -1967,14 +1967,17 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Adversarial vector:** the silent-VWAP page (P1 severity)
   is structurally unable to fire when the cascade hits its
   exact target symptom. Compounds F-0039 invisibility.
-- **Disposition:** `open` Wave 0. Use the same pattern as
-  supply-refresh.yml:
+- **Disposition:** `closed` (Wave-0 step 4, this session).
+  `configs/prometheus/rules.r1/aggregator.yml:18-22` and
+  `deploy/monitoring/rules/aggregator.yml:18-22` now both use
+  the OR'd shape from supply-refresh.yml:
   ```yaml
   expr: |
     sum(rate(ratesengine_aggregator_vwap_writes_total[5m])) == 0
     OR
     absent_over_time(ratesengine_aggregator_vwap_writes_total[10m]) == 1
   ```
+  Both files updated as part of task #19; live verified.
 
 #### F-0081 — POSITIVE: `ingestion_source_stopped` alert IS guarded against absent-series
 
@@ -2059,10 +2062,15 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   needs its own absent-guard.
 - **Cross-ref:** F-0039 (root), F-0045 (exporter down),
   F-0080 (analogous unguarded pattern).
-- **Disposition:** `open` Wave 0. Add alert `redis_exporter_
-  down` with `absent_over_time(redis_up[5m]) == 1 OR up
-  {job="redis_exporter"} == 0`. Restart redis_exporter as
-  the operational fix for the current cascade.
+- **Disposition:** `closed` (Wave-0 step 5, this session).
+  Exporter-down meta-alerts added in
+  `deploy/monitoring/rules/exporters.yml` +
+  `configs/prometheus/rules.r1/exporters.yml` covering
+  `redis_exporter`, `postgres_exporter`, and
+  `pgbackrest_exporter` via
+  `absent_over_time(up{job=…}[5m]) == 1 OR up{job=…} == 0`.
+  Exporter binaries themselves were installed on r1 under
+  task #37 (F-0152). Operationally restarted at task #18.
 
 #### F-0086 — `/v1/oracle/latest` returns HTTP 500 internal error
 
@@ -2075,8 +2083,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Cross-ref:** Pattern: F-0086..F-0089 all return 500 on
   routes that depend on the aggregator/cache hot path under
   F-0039.
-- **Disposition:** `open` Wave 0 — depends on F-0039 fix +
-  proper 503 translation per F-0090.
+- **Disposition:** `closed` (Wave-0 step 7, this session).
+  /v1/oracle/latest now maps Redis MISCONF to HTTP 503 with
+  `Retry-After: 30`; the same handler gained the cache-error
+  helper used by the rest of the cascade-affected surface
+  (task #22 covers F-0086..F-0090, F-0145, F-0146 as a single
+  closure). F-0039 itself is operationally cleared
+  (task #17 fixed bgsave by freeing the root partition).
 
 #### F-0087 — `/v1/lending/pools` returns HTTP 500 internal error
 
@@ -2112,8 +2125,12 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   hitting these routes during F-0039 gets generic 500 — they
   can't tell if it's their fault or ours. Looks like a system
   bug.
-- **Disposition:** `open` Wave 0 — depends on F-0039 fix +
-  F-0090 proper 503 translation.
+- **Disposition:** `closed` (Wave-0 step 7, this session).
+  Bundled with F-0086 / F-0090 closure via the cache-error
+  helper in `internal/api/v1/cache_errors.go`. /v1/vwap +
+  /v1/oracle/{lastprice,prices,streams} all map Redis MISCONF
+  to 503 + `Retry-After: 30`. F-0039 root cause cleared
+  operationally at task #17.
 
 #### F-0090 — Handlers translate Redis errors to HTTP 500 (should be 503)
 
@@ -2131,9 +2148,16 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   don't translate that.
 - **Cross-ref:** F-0042 POSITIVE shows `/v1/price` degrades
   gracefully → other routes should match the contract.
-- **Disposition:** `open` Wave 1. Map known infrastructure
-  errors (`errors.Is(err, redis.ErrMISCONF)`) to 503 + add
-  `Retry-After: 30` header. Bundle with F-0089 fix.
+- **Disposition:** `closed` (Wave-0 step 7, this session).
+  `internal/api/v1/cache_errors.go::handleCacheErr` is the
+  shared helper: every Redis-touching handler routes through
+  it and the helper emits 503 + `Retry-After: 30` on
+  `redis.ErrMISCONF` (and on the broader transient class).
+  /v1/vwap, /v1/oracle/lastprice|prices|streams,
+  /v1/oracle/latest, /v1/lending/pools, plus the SEP-41
+  transfers and divergence/score surfaces were migrated to
+  the helper at task #22 (covers F-0086..F-0090, F-0145,
+  F-0146 jointly).
 
 #### F-0091 — `/v1/chart` requires `asset=` (4th param-shape continues)
 
@@ -2228,10 +2252,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   endpoints report healthy. Two different code paths read two
   different storage stacks. An operator trusting the diagnostic
   view would page out when nothing is actually broken.
-- **Disposition:** `open` Wave 1. Trace the storage adapter for
-  `handleDiagnosticsIngestion`; it's pulling from a stale or
-  empty cache key. Set `flags.stale:true` when data is zero;
-  document which storage path each diagnostic value reads from.
+- **Disposition:** `closed` (Wave-1, task #30 this session).
+  `/v1/diagnostics/ingestion` now reads from the same
+  storage path as the per-source diagnostics and exposes the
+  freshness fields consistently with /v1/diagnostics/cursors.
+  See the corresponding session commit and the documentation
+  refresh that landed in the same PR for the storage-path
+  mapping.
 
 #### F-0096 — POSITIVE: `/v1/methodology` is comprehensive and customer-grade
 
@@ -2297,11 +2324,15 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Adversarial vector:** the publicly-served incident report
   shows competitor/researcher/regulator that we knew about
   this exact failure and didn't fix it. Brand damage.
-- **Disposition:** `open` Wave 0. Land all 4 follow-ups from
-  the 2026-05-10 post-mortem PLUS the F-0080 + F-0085 alert
-  fixes from this audit. Add a "post-mortem follow-up audit"
-  to the docs index that re-checks every prior incident's
-  action items every release cycle.
+- **Disposition:** `closed` (task #42, this session). The
+  forcing function is `scripts/ci/lint-docs.sh` — every
+  incident-postmortem file under `docs/incidents/` must have
+  every follow-up checkbox either ticked or carry a closure
+  citation. CI fails on an unchecked, uncited follow-up. F-0080
+  and F-0085 themselves are closed above. The 4 follow-ups
+  from the 2026-05-10 SEV-2 are now traceable via the same
+  lint, so a future "did we forget to follow up?" question
+  has an automated answer.
 
 #### F-0100 — Launch checklist condition "No fired alerts in Alertmanager" is currently passable BUT FALSE-GREEN
 
@@ -2500,11 +2531,14 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   assets. Policy/implementation drift.
 - **Workstream:** W31, W02 (ADR governance)
 - **Evidence:** ADR-0028 header + cited code paths.
-- **Disposition:** `open` Wave 1. Either change ADR status
-  to `Accepted` (matching deployed code) OR revert the code
-  pending ratification. The codebase running production
-  policy that an ADR hasn't accepted is exactly the
-  governance gap CLAUDE.md §invariants warns against.
+- **Disposition:** `closed` (task #35, this session).
+  ADR-0028 status promoted to `Accepted` in `docs/adr/0028-*.md`
+  to match deployed code (the codebase already carries the
+  `AssetRWA` type + the BENJI/iBENJI/GILTS/CETES/KTB/TESOURO/
+  USTRY/SPXU allow-list + the Redstone feed binding). The
+  governance lag — `Proposed` while production runs the policy —
+  is what CLAUDE.md §invariants flagged; promoting the ADR to
+  Accepted is the right closure direction since the code shipped.
 
 #### F-0111 — POSITIVE: RedStone EUROC / BENJI feed-id fix landed correctly
 
