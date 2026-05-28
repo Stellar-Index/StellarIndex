@@ -1745,9 +1745,31 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   curl of `/v1/changes?asset=xlm&quote=usd` returns 404.
 - **Cross-ref:** Parity matrix row "24h price change" was
   marked `covered?` — INCORRECT, should be `gap`.
-- **Disposition:** `open` Wave 2. Either add a `/v1/price/change`
-  endpoint or document that callers must compute it from
-  `/v1/history`.
+- **Disposition:** `closed-reframed` (2026-05-28). The
+  parity-matrix claim was true ONLY about endpoint NAME —
+  the actual price-change data ships on
+  **`/v1/assets/{id}`** (and on `/v1/coins` per CG/CMC
+  convention):
+  - `change_24h_pct` — populated by
+    `internal/api/v1/assets_f2.go::populateChange24h` from
+    the latest closed `prices_1m` bucket ≤ now-24h.
+  - `change_7d_pct` — same shape, 7-day window.
+  - `change_1h_pct` — same shape, 1-hour window.
+  Wire-format proof: OpenAPI `Price` schema at
+  `openapi/rates-engine.v1.yaml:4118-4140` includes the
+  three change fields; `internal/api/v1/assets.go:571-572`
+  shows the assets-detail handler populating them. Live
+  evidence: F-0066b's parallel-curl
+  observed `change_7d_pct: 5.60` on `/v1/assets/native`
+  during the same probe window the audit was running.
+  The audit's "no dedicated price-change endpoint" reading
+  was on `/v1/price` (which is a current-price endpoint by
+  design) and `/v1/changes` (which is an entity-change-log
+  endpoint, not a market-change endpoint). The customer-
+  facing CG-shape `24h_change` lives on
+  `/v1/assets/{id}` and has since the F2-fields landing.
+  No code change needed; parity-matrix update is the only
+  outstanding work, which lives in the customer-docs queue.
 
 #### F-0063 — `/v1/markets` ranks CEX feeds above Stellar-native markets (downgrade from HIGH to LOW)
 
