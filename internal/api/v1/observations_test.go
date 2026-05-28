@@ -379,3 +379,23 @@ func TestObservations_FiatCryptoQuoteShortCircuit(t *testing.T) {
 		t.Fatalf("LatestTradePerSource called %d times; short-circuit must NOT call storage for fiat:/crypto: quotes", n)
 	}
 }
+
+// F-0068 closure (2026-05-28): /v1/observations accepts `base=` as
+// alias for `asset=` so URLs from /v1/twap don't 400 on first try.
+func TestObservations_BaseParamAcceptedAsAssetAlias(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	tsv := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, tsv.URL+"/v1/observations?base=native&quote=fiat:USD")
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("base= alias rejected (400); want it accepted as asset= alias")
+	}
+}
+
+func TestObservations_BothAssetAndBase400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	tsv := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&base=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d want 400 (both asset+base)", resp.StatusCode)
+	}
+}

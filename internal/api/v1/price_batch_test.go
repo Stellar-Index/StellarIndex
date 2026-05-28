@@ -469,3 +469,24 @@ func TestPriceBatchPost_DefaultQuoteFiatUSD(t *testing.T) {
 		t.Errorf("default quote not applied; got data=%+v", env.Data)
 	}
 }
+
+// F-0073 closure (2026-05-28): /v1/price/batch accepts `pairs=` as
+// alias for `asset_ids=` so CG-style callers using `pairs` reach
+// the endpoint without a 400 detour.
+func TestPriceBatch_PairsAcceptedAsAssetIdsAlias(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
+	ts := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, ts.URL+"/v1/price/batch?pairs=native")
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("pairs= alias rejected (400); want it accepted as asset_ids= alias")
+	}
+}
+
+func TestPriceBatch_AssetIdsAndPairsBoth_Returns400(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
+	ts := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&pairs=native")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d want 400 (both asset_ids+pairs)", resp.StatusCode)
+	}
+}
