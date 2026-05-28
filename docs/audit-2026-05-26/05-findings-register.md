@@ -770,9 +770,13 @@ F-0028 will track the soroban_events lag separately)
 - **Adversarial vector:** silent backup failure → no recovery
   point objective met under DR scenario.
 - **Evidence:** Prometheus targets API
-- **Disposition:** `open` Wave 0. Remediation: install
-  pgbackrest_exporter or remove the scrape stanza if backups
-  are intentionally manual.
+- **Disposition:** `closed` (task #37, this session).
+  pgbackrest_exporter installed on r1 alongside
+  redis_exporter + postgres_exporter via the Wave-0
+  promoted-to-Wave-1 install pass. Scrape target now `up`;
+  the existing pgbackrest alert rules in
+  `configs/prometheus/rules.r1/storage.yml` evaluate against
+  real series instead of no-data.
 
 #### F-0047 — **HIGH** postgres_exporter DOWN — no internal Postgres metrics
 
@@ -789,7 +793,15 @@ F-0028 will track the soroban_events lag separately)
   symptom (F-0016) we struggled to disambiguate during this
   audit because no Postgres-internal metrics are available.
 - **Evidence:** Prometheus targets API
-- **Disposition:** `open` Wave 0. Install postgres_exporter.
+- **Disposition:** `closed` (task #37, this session).
+  postgres_exporter installed on r1 as part of the Wave-0
+  exporter-install pass (alongside redis_exporter +
+  pgbackrest_exporter). Target now `up` on `localhost:9187`;
+  Postgres connection counts, query duration, replication
+  state, lock contention, autovacuum activity, and table
+  sizes are now scraped. The future F-0016-shaped diagnostic
+  the audit named ("disambiguate the 7h+ ingest stall
+  symptom") now has data behind it.
 
 #### F-0051 — **HIGH** No TLS cert expiry alert exists
 
@@ -834,10 +846,16 @@ F-0028 will track the soroban_events lag separately)
 - **Evidence:** Prometheus targets API claims success;
   `scrape_samples_scraped{job="ratesengine-api"}` empty;
   `up{job="ratesengine-aggregator"}` empty.
-- **Disposition:** `open` Wave 0. Investigate after F-0001
-  remediation; the disk-pressure issue may have triggered
-  Prometheus into a half-broken state. Restart prometheus
-  + verify samples land for all jobs.
+- **Disposition:** `closed` (resolved by task #16 root-disk
+  recovery, this session). F-0001 was the root cause —
+  Prometheus's TSDB on the cascade-impacted root partition
+  was throttled on its sample-appending path. Once root was
+  freed (task #16) Prometheus's append path recovered;
+  `scrape_samples_scraped{job=~"ratesengine_(api|aggregator)"}`
+  returns non-empty vectors and the regular alert portfolio
+  evaluates against real series. Long-term cascade
+  amplification is also closed under F-0053 (Prometheus TSDB
+  partition placement) below.
 
 #### F-0054 — CSP allows `http://localhost:3000` in production response headers
 
@@ -997,7 +1015,17 @@ F-0028 will track the soroban_events lag separately)
   itself not running. This was discoverable only by
   manually inspecting Prometheus's target health.
 - **Evidence:** Prometheus targets API
-- **Disposition:** `open` Wave 0. Install redis_exporter.
+- **Disposition:** `closed` (task #37, this session).
+  redis_exporter installed on r1 as part of the Wave-0
+  exporter-install pass (alongside postgres_exporter +
+  pgbackrest_exporter). Target now `up` on `localhost:9121`;
+  `redis_rdb_last_bgsave_status`, `redis_memory_used_bytes`,
+  `redis_connected_clients`, `redis_evicted_keys_total`, and
+  the full standard surface are scraped. F-0039's "silent for
+  hours" property is now structurally impossible — task #20
+  added the redis_exporter-down meta-alert (F-0085), so even
+  if the exporter itself dies, Prometheus pages on its
+  absence rather than going quiet.
 - **Cross-ref:** F-0001, F-0039, F-0027, F-0036.
 
 #### F-0044 — `/v1/healthz` doesn't check Redis (only Postgres)
@@ -2582,8 +2610,15 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   of cache state. Recovery requires aggregator re-warm
   from CAGGs.
 - **Cross-ref:** F-0039 root cause.
-- **Disposition:** `open` Wave 0. Free disk → bgsave →
-  `rdb_changes_since_last_save` returns to 0.
+- **Disposition:** `closed` (tasks #16 + #17, this session).
+  Root cause was F-0039 (Redis MISCONF blocked bgsave because
+  the root partition was at 100 %). Task #16 freed root;
+  task #17 reset bgsave and cleared MISCONF. Post-fix
+  verification: `rdb_changes_since_last_save` returned to 0
+  and `rdb_last_bgsave_status` flipped to `ok`. The
+  redis_exporter installed at task #37 means a future
+  recurrence is now alertable rather than discoverable only
+  by manual `redis-cli info persistence`.
 
 #### F-0109 — Cascade unfixed 16+ hours after first audit probe
 
