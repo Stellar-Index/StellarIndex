@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
 
@@ -55,17 +56,10 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 			"This deployment hasn't wired the sep41 transfers reader yet.")
 		return
 	}
-	contractID := r.PathValue("contract_id")
-	if contractID == "" {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-contract-id",
-			"Invalid contract_id", http.StatusBadRequest,
-			"contract_id path segment is required")
+	contractID, fromAddr, toAddr, ok := parseSEP41TransferIdentifiers(w, r)
+	if !ok {
 		return
 	}
-
-	fromAddr := r.URL.Query().Get("from")
-	toAddr := r.URL.Query().Get("to")
 
 	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -144,4 +138,51 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		Transfers:  entries,
 	}
 	writeJSON(w, resp, Flags{})
+}
+
+// parseSEP41TransferIdentifiers parses + validates the path
+// contract_id and optional ?from / ?to query params as Stellar
+// strkeys. Returns (contractID, from, to, true) on success;
+// writes a 400 Problem and returns ok=false on any validation
+// failure. Extracted from handleSEP41Transfers to keep that
+// function under the gocognit threshold (cognitive complexity
+// goes from 21 → 9 after the extraction).
+func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (contractID, fromAddr, toAddr string, ok bool) {
+	contractID = r.PathValue("contract_id")
+	if contractID == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-contract-id",
+			"Invalid contract_id", http.StatusBadRequest,
+			"contract_id path segment is required")
+		return "", "", "", false
+	}
+	if !canonical.IsContractID(contractID) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-contract-id",
+			"Invalid contract_id", http.StatusBadRequest,
+			"contract_id must be a 56-char C-strkey (e.g. CDB2WMKQQNVZMEBY...). Got "+contractID)
+		return "", "", "", false
+	}
+
+	fromAddr = r.URL.Query().Get("from")
+	toAddr = r.URL.Query().Get("to")
+	// SEP-41 from/to participants are Stellar accounts (G-strkey).
+	// A bad input would otherwise reach the SQL layer and return an
+	// empty result set indistinguishable from "no matching transfers"
+	// — actively misleading for the operator-debugging use case.
+	if fromAddr != "" && !canonical.IsAccountID(fromAddr) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-address",
+			"Invalid from address", http.StatusBadRequest,
+			"from must be a Stellar account G-strkey (56 chars starting with G). Got "+fromAddr)
+		return "", "", "", false
+	}
+	if toAddr != "" && !canonical.IsAccountID(toAddr) {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-address",
+			"Invalid to address", http.StatusBadRequest,
+			"to must be a Stellar account G-strkey (56 chars starting with G). Got "+toAddr)
+		return "", "", "", false
+	}
+	return contractID, fromAddr, toAddr, true
 }
