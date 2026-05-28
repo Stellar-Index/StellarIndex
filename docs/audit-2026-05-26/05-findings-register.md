@@ -129,8 +129,20 @@ runs; one row per finding.)
   by the probe itself: "issuers: p95=404.1ms > target 200.0ms",
   "price: freshness=98453.1s > target 30.0s",
   "oracle-latest: p95=271.0ms > target 200.0ms"
-- **Disposition:** `open` — investigate underlying SLA
-  breaches (F-0011..F-0013).
+- **Disposition:** `partial-close` (verified 2026-05-28).
+  Two of three SLA breaches resolved in-session; the
+  remaining one is downstream of the live on-chain ingest
+  stall and tracked under F-0012.
+
+  Live r1 SLA probe (post-rc.82, pre-rc.83):
+
+      issuers       p95 91 ms    (was 404 ms)  → FIXED via F-0011 (a04b8736)
+      oracle-latest p95 0 ms     (was 271 ms)  → FIXED via F-0013 (735ce212)
+      price         freshness 56 k s (was 98 k s) → improving but still failing
+                                  → tracked under F-0012 (on-chain ingest)
+
+  All availability_pct at 100%. The meta-finding (probe exits
+  1 when verdict fails) is itself accepted as designed.
 
 #### F-0006 — postgresql-15-main.log accumulates 11G in one cycle
 
@@ -3350,13 +3362,16 @@ claim was wrong; record the corrected understanding.
   escaping suspect in the smoke script's curl invocation when
   the asset_id contains `:` or `-` characters interpreted by
   the shell.
-- **Disposition:** `closed` (verified 2026-05-28). Root cause
-  was the slow-resolver branch crossing the 10s `-m` timeout,
-  not shell-escaping. `scripts/dev/r1-smoke.sh:99-108` now
-  builds the URL via `printf '%s%s'` defensively (mitigates the
-  shell-escaping risk too) and the asset-resolver path budget
-  was inflated. Live smoke run on r1 returned `ok asset not
-  found` against `/v1/assets/AAAA-GA5Z...` with HTTP 404.
+- **Disposition:** `closed-by-PR-<next>` (re-verified 2026-05-28).
+  Initial closure was premature — the comment in
+  `expect_status` claimed per-check timeout support but the
+  code passed the global `$TIMEOUT` (10 s) unconditionally.
+  Live smoke run reopened the finding (`FAIL asset not found —
+  curl error`) when the cold-cache resolver path crossed 10 s.
+  This pass: (a) actually implements `--timeout N` flag
+  parsing in `expect_status`; (b) bumps the behaviour-pin to
+  20 s. Verified via direct r1 smoke run — `ok asset not found`
+  against `/v1/assets/AAAA-GA5Z...` HTTP 404.
 - **Disposition:** `open` Wave-2. Single-quote the URL more
   defensively in the smoke script.
 

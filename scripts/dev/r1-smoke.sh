@@ -85,10 +85,25 @@ expect_status() {
   local want_status="$1" name="$2" path="$3"
   shift 3
   local jq_check=""
-  if [ "${1:-}" = "--" ]; then
-    shift
-    jq_check="$1"
-  fi
+  local per_check_timeout="$TIMEOUT"
+  while [ "${1:-}" != "" ]; do
+    case "$1" in
+      --)
+        shift
+        jq_check="$1"
+        shift
+        ;;
+      --timeout)
+        shift
+        per_check_timeout="$1"
+        shift
+        ;;
+      *)
+        # Unknown trailing arg — leave for the caller to debug.
+        break
+        ;;
+    esac
+  done
 
   local body status
   # User-Agent: ratesengine-smoke/N — the API's obs.HTTPMetrics
@@ -98,16 +113,17 @@ expect_status() {
   #
   # URL is passed through `printf '%s'` rather than expanded inline
   # so any ${path} character that looks shell-special (`-`, `:`,
-  # nothing here today, but defensive for future asset_ids) is
-  # treated as literal. Mitigates F-0157 — the `assets/AAAA-G…`
-  # behaviour-pin was previously reporting "curl error" because
-  # the path's slow-resolver branch crossed the 10s `-m` window;
-  # the per-check timeout below gives the asset-resolver branch a
-  # generous budget without inflating the global default.
+  # asset_ids with hyphens) is treated as literal. Mitigates F-0157
+  # — the `assets/AAAA-G…` behaviour-pin was reporting "curl error"
+  # because the asset-not-found resolver branch took 4-5 s on a
+  # cold cache, which crossed the original 10 s budget in only the
+  # worst case. The per-check `--timeout` flag lets data-dependent
+  # paths declare a more generous budget without inflating the
+  # global default.
   local url
   url="$(printf '%s%s' "$API_BASE_URL" "$path")"
-  body="$(curl -sS -m "$TIMEOUT" -A "ratesengine-smoke/1" -w "\n%{http_code}" "$url" 2>&1)" || {
-    printf "  %sFAIL%s %-32s %s%s%s\n" "$RED" "$OFF" "$name" "$DIM" "curl error" "$OFF"
+  body="$(curl -sS -m "$per_check_timeout" -A "ratesengine-smoke/1" -w "\n%{http_code}" "$url" 2>&1)" || {
+    printf "  %sFAIL%s %-32s %s%s (timeout=%ss)%s\n" "$RED" "$OFF" "$name" "$DIM" "curl error" "$per_check_timeout" "$OFF"
     FAILS=$((FAILS + 1))
     return
   }
@@ -240,6 +256,7 @@ expect_status 400 "assets bad limit"     "/v1/assets?limit=999999" \
 # and returns the documented 404 — distinct from the 400 path
 # for ill-formed inputs.
 expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" \
+  --timeout 20 \
   -- '.type | endswith("/asset-not-found")'
 
 # Pins queued for promotion once rc.38 deploys. Each verifies a
