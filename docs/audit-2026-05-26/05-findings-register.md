@@ -3059,8 +3059,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   No fallback to closed-bucket LKG.
 - **Workstream:** W11, W10
 - **Evidence:** raw curl 2026-05-27 EV-0093.
-- **Disposition:** `open` Wave 0 (with F-0090 fix to map
-  Redis errors to HTTP 503).
+- **Disposition:** `closed` (verified 2026-05-28).
+  `internal/api/v1/price_tip.go:99-102` now calls
+  `IsCacheUnavailable(err)` and `writeCacheUnavailable
+  Problem(w, r)` — same shape Wave-0 step 7 applied to
+  the other cascade-affected handlers. Cache-unavailable
+  errors now map to HTTP 503 with Retry-After per
+  F-0090. Closed by Wave-0 task #22.
 
 #### F-0146 — `/v1/observations/stream` returns HTTP 500 (SSE init failure under cascade)
 
@@ -3078,7 +3083,12 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Cross-ref:** F-0090 (503 mapping) + F-0049/F-0050
   (rate-limit fail-open under same cascade = no protection
   against retry storms).
-- **Disposition:** `open` Wave 0 (with F-0090 fix).
+- **Disposition:** `closed` (verified 2026-05-28).
+  `internal/api/v1/observations.go:210-214` calls
+  `IsCacheUnavailable(err)` → `writeCacheUnavailable
+  Problem(w, r)` for Redis/cache outages, mapping to
+  HTTP 503 with Retry-After per F-0090. Closed by
+  Wave-0 task #22 (same shape as F-0145 fix).
 
 #### F-0147 — POSITIVE: Oracle handler already ships a 503 path; F-0090 fix is precisely scoped
 
