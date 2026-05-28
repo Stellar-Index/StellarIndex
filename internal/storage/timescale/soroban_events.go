@@ -237,6 +237,94 @@ func placeholdersFrom(startIdx, count int) string {
 	return sb.String()
 }
 
+// LedgerGap is one contiguous block of ledgers with no
+// soroban_events row. Produced by [FindSorobanEventsLedgerGaps]
+// and consumed by the operator-facing `ratesengine-ops
+// find-data-gaps` subcommand + future periodic gap-detection
+// metric.
+//
+// Start and End are inclusive. Size = End - Start + 1. JSON
+// tags use snake_case so the subcommand's `--output json` mode
+// emits the same shape an operator-facing plan would (consumed
+// by shell scripts piping into `ratesengine-ops backfill`).
+type LedgerGap struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+	Size  int64 `json:"size"`
+}
+
+// FindSorobanEventsLedgerGaps scans the soroban_events.ledger column
+// in [from, to] and returns every contiguous gap of size >=
+// minGapSize. Used as the **data-derived** alternative to the
+// cursor-derived density projection: cursor coverage counts "did
+// we walk this ledger" (process measurement); this query counts
+// "is the data we should have actually in the table" (reality).
+//
+// The two diverge under failure modes the cursor inventory can't
+// see — the F-0020 cascade-window soroban_events writer halt being
+// the canonical example: cursors recorded "advanced past this
+// ledger" but the writer's sink had back-pressured to a stop, so
+// no rows landed. The honest signal of that failure is the gap in
+// distinct-ledger coverage, not the cursor record.
+//
+// minGapSize filters out the expected event-free gaps (Soroban
+// activity is dense but not gap-free — many blocks emit no events).
+// Operator-facing usage typically sets minGapSize to ~1000 to
+// surface only structurally-significant gaps (a few seconds of
+// no-Soroban-activity at the network level is common; ~1.5 h of
+// it is the F-0020 cascade signature).
+//
+// Implementation uses the LAG() window-function pattern: order
+// distinct ledgers, compare each row to its predecessor, emit a
+// gap when the difference > 1 AND the gap size meets the
+// threshold. Cheap on a hypertable with a btree on (ledger_close_time,
+// ledger) — postgres uses the index for the ORDER BY scan and
+// streams rows through the window function without sorting in
+// memory.
+func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGapSize int64) ([]LedgerGap, error) {
+	if to < from {
+		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps: to (%d) < from (%d)", to, from)
+	}
+	if minGapSize < 1 {
+		minGapSize = 1
+	}
+	const q = `
+        WITH ledgers AS (
+          SELECT DISTINCT ledger
+            FROM soroban_events
+           WHERE ledger BETWEEN $1 AND $2
+        ),
+        ordered AS (
+          SELECT ledger, LAG(ledger) OVER (ORDER BY ledger) AS prev_l
+            FROM ledgers
+        )
+        SELECT prev_l + 1 AS gap_start,
+               ledger - 1 AS gap_end,
+               ledger - prev_l - 1 AS gap_size
+          FROM ordered
+         WHERE prev_l IS NOT NULL
+           AND ledger - prev_l - 1 >= $3
+         ORDER BY gap_start
+    `
+	rows, err := s.db.QueryContext(ctx, q, from, to, minGapSize)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps [%d,%d, min %d]: %w", from, to, minGapSize, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []LedgerGap
+	for rows.Next() {
+		var g LedgerGap
+		if err := rows.Scan(&g.Start, &g.End, &g.Size); err != nil {
+			return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps scan: %w", err)
+		}
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps rows: %w", err)
+	}
+	return out, nil
+}
+
 // CountSorobanEventsInRange returns the row count in the ledger
 // range [from, to] inclusive. Test + diagnostic helper — not on
 // the hot path. Used by the integration test to assert
