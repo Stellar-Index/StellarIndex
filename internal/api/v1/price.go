@@ -227,6 +227,35 @@ type TriangulatedPriceLooker interface {
 
 // ─── Handler ──────────────────────────────────────────────────────
 
+// parsePriceAssetParam resolves the `asset=` query param on
+// /v1/price, accepting `base=` as an alias for clients copying URLs
+// from /v1/twap (F-0061). Returns (asset, true) on success; writes
+// a 400 Problem and returns ok=false on missing/conflicting params.
+// Extracted from handlePrice to keep that handler under the
+// gocognit ceiling.
+func parsePriceAssetParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	rawAsset := r.URL.Query().Get("asset")
+	rawBase := r.URL.Query().Get("base")
+	if rawAsset != "" && rawBase != "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-parameter",
+			"`asset` and `base` are mutually exclusive", http.StatusBadRequest,
+			"both query parameters refer to the same value — pick one (this endpoint's canonical form is `asset=`; `base=` is accepted as an alias for /v1/twap compatibility)")
+		return "", false
+	}
+	if rawAsset == "" {
+		rawAsset = rawBase
+	}
+	if rawAsset == "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/missing-asset",
+			"Missing asset parameter", http.StatusBadRequest,
+			"asset query parameter is required (or `base=` as an alias for /v1/twap compatibility)")
+		return "", false
+	}
+	return rawAsset, true
+}
+
 // handlePrice serves GET /v1/price?asset=<id>&quote=<id>.
 // `quote` defaults to "fiat:USD" if omitted (ADR-0010).
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
@@ -239,12 +268,8 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawAsset := r.URL.Query().Get("asset")
-	if rawAsset == "" {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-asset",
-			"Missing asset parameter", http.StatusBadRequest,
-			"asset query parameter is required")
+	rawAsset, ok := parsePriceAssetParam(w, r)
+	if !ok {
 		return
 	}
 	asset, err := canonical.ParseAsset(rawAsset)

@@ -192,22 +192,34 @@ func TestHistory_MissingBase400(t *testing.T) {
 	}
 }
 
-// When `asset` is supplied (the /v1/price/chart param convention)
-// and `base` is missing, the error detail nudges callers to the
-// right param name. Pin the hint shape so a refactor can't silently
-// drop it — that hint is the difference between a confused 400 and
-// a self-explanatory one.
-func TestHistory_MissingBaseWithAssetHint(t *testing.T) {
+// F-0061 closure (2026-05-28): `asset=` is now accepted as an
+// alias for `base=` on endpoints that flow through parseBaseQuote,
+// so clients copying /v1/price URLs into /v1/history (or twap/vwap/
+// ohlc) don't hit a 400 on their first try. Pin both halves of the
+// new contract: alias works for valid input, AND mixing both is a
+// 400 with a self-explanatory message.
+func TestHistory_AssetParamAcceptedAsBaseAlias(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/history?asset=native&quote=fiat:USD")
+	if resp.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("asset= alias rejected (400); want it accepted as base= alias. body=%s", string(body))
+	}
+}
+
+func TestHistory_BaseAndAssetBothPresent_Rejected(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=native&asset=native&quote=fiat:USD")
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
+		t.Fatalf("status = %d, want 400 (both base+asset)", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "base/quote") || !strings.Contains(string(body), "/v1/price") {
-		t.Errorf("body should mention base/quote and /v1/price; got %q", string(body))
+	if !strings.Contains(string(body), "mutually exclusive") {
+		t.Errorf("body should mention 'mutually exclusive'; got %q", string(body))
 	}
 }
 
