@@ -34,10 +34,12 @@ func NewDecoder() *Decoder { return &Decoder{} }
 func (d *Decoder) Name() string { return SourceName }
 
 // Matches implements [dispatcher.Decoder]. Cheap predicate: the
-// topic shape is a BlendStrategy or DeFindexVault deposit/withdraw.
-// The dispatcher only calls Decode() when this returns true.
+// topic shape is a BlendStrategy, DeFindexVault, or DeFindexFactory
+// event. The dispatcher only calls Decode() when this returns true.
+// Factory events return ([], nil) from Decode — they're recognised
+// for EVERY-event-policy completeness, not decoded into a flow.
 func (d *Decoder) Matches(ev events.Event) bool {
-	return classify(&ev) != "" || classifyVault(&ev) != ""
+	return classify(&ev) != "" || classifyVault(&ev) != "" || classifyFactory(&ev) != ""
 }
 
 // Decode implements [dispatcher.Decoder]. Emits one Event per
@@ -60,6 +62,14 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{VaultEvent{Flow: flow}}, nil
+	}
+	if classifyFactory(&ev) != "" {
+		// Factory create / n_fee — recognised so the dispatcher's
+		// drop-counter doesn't file them as "unmatched topic", but
+		// no consumer.Event yet (body decode is Phase C). Returning
+		// (nil, nil) is the dispatcher's "match, nothing to emit"
+		// shape.
+		return nil, nil
 	}
 	// Defensive — Matches should have filtered.
 	return nil, ErrUnknownEvent
