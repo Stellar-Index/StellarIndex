@@ -362,10 +362,18 @@ F-0028 will track the soroban_events lag separately)
   writes have stopped — likely postgres write throughput
   starvation from concurrent soroban-events fill + verify-
   archive walks.
-- **Disposition:** `open` Wave 0. Immediate: check indexer
-  cursor advance; check whether the live indexer's
-  RawEventSink is back-pressuring due to fill walk hogging
-  postgres.
+- **Disposition:** `closed-as-historical` (2026-05-28). The
+  original 7 h Stellar-DEX freeze observed during the audit
+  is the same symptom F-0020 names as "Postgres back-
+  pressure starves live indexer during concurrent fill +
+  verify-archive". Operationally resolved by reducing fill
+  parallelism in this session's runs + the
+  `ratesengine_ingestion_duplicate_flood` and
+  `source_last_insert_unix` alerts (task #61 / #62 / #67)
+  which now surface a recurrence of this exact pattern as
+  pageable signals. Trace preserved for post-mortem
+  reference; the durable countermeasures are the new alerts
+  and the back-pressure design itself (W28).
 - **Cross-ref:** F-0012; W28 (back-pressure) — this is the
   worst-case scenario the back-pressure design was meant to
   surface.
@@ -1163,12 +1171,14 @@ F-0028 will track the soroban_events lag separately)
   silent alert pipeline is silently neutered by config gap.
   Pre-launch product surface that doesn't serve aggregated
   prices.
-- **Disposition:** `open` Wave 0. Investigate:
-  1. Should `pairs` be auto-derived from
-     `[ingestion].enabled_sources` + `[supply].watched_classic_assets`?
-  2. Or should it be explicit?
-  3. What was the last successful VWAP write timestamp
-     (per status.go's `max(timestamp(ratesengine_aggregator_vwap_writes_total))`)?
+- **Disposition (final):** `invalid` — superseded by F-0039
+  (Redis MISCONF was the actual failure; F-0039 is operationally
+  cleared via tasks #16 + #17 this session and recurrence
+  detection ships via F-0085 redis_exporter-down meta-alert at
+  task #20). The stale "open Wave 0 — investigate pairs"
+  duplicate-disposition above was a re-investigation artefact
+  that didn't strip the original disposition; flagged as
+  `invalid` per the first disposition.
 - **Cross-ref:** F-0027, F-0032, F-0036.
 
 #### F-0036 (REVISED) — counters DO get incremented; "empty-vector" symptoms were PromQL-staleness, not non-emission
@@ -1235,16 +1245,17 @@ F-0028 will track the soroban_events lag separately)
   but never actually increment the counter in any
   code path → silent observability gap that promtool
   cannot detect.
-- **Disposition:** `open` Wave 0. Remediation:
-  1. For each "never-incremented" counter: trace why no
-     code path calls .Inc(). It's either a metric we
-     decided not to populate (delete it) or a code-path
-     bug.
-  2. Alert hygiene: alerts using `rate() == 0` need a
-     secondary "the metric must exist" guard, OR a
-     hand-init `.WithLabelValues(<canonical-labels>).Add(0)`
-     at process start so the series is registered with
-     zero from the beginning.
+- **Disposition (final):** `closed-as-historical` (2026-05-28).
+  Superseded by F-0036 (REVISED) immediately above: the
+  counters DID exist in Prometheus TSDB; the audit's
+  "empty vector" was actually a 5-minute instant-query
+  staleness window artefact. Subsequent investigation under
+  F-0032 / F-0033 confirmed the .Inc() paths fire correctly.
+  Remediation (2) from this original disposition — pre-seed
+  bounded counters at zero so PromQL has data before the first
+  .Inc — was shipped at task #73 (F-0033 closure). Remediation
+  (1) — trace never-incremented counters — was reframed under
+  F-0033's per-metric trace.
 - **Cross-ref:** F-0027, F-0032, F-0033.
 
 #### F-0034 — `/v1/diagnostics/cursors` is intentionally public (verified) — review whether scope is right
@@ -1661,9 +1672,14 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   CHOOSES to render all-nulls instead of erroring (vs.
   `/v1/twap` + `/v1/ohlc` which correctly 404 with
   `errors/no-trades`).
-- **Disposition:** `open` Wave 0 (post-F-0039). Either return
-  HTTP 503 with proper RFC-7807 problem details, OR mirror
-  the /v1/ohlc 404 contract for "no trades in window".
+- **Disposition (final):** `invalid` — RETRACTED. The header
+  already marks this **RETRACTED INVALID**; the trailing
+  "open Wave 0" was a duplicate-disposition left over from
+  the initial draft before the retraction. The under-cascade
+  silent-null behaviour itself was the topic of F-0066b
+  (closed under task #22's shared cache-error helper →
+  HTTP 503 + Retry-After: 30 across every cache-aside
+  surface).
 
 #### F-0061 — `/v1/price` vs `/v1/twap` + `/v1/ohlc` parameter inconsistency
 
@@ -3245,15 +3261,19 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   cascade-blindness, all designed to catch this exact mode,
   all silent.
 - **Cross-ref:** F-0099, F-0100, F-0080, F-0085, F-0104.
-- **Disposition:** `open` Wave 0. Two actions:
-  1. SCP `scripts/dev/r1-smoke.sh` → `/opt/ratesengine/
-     healthchecks/smoke.sh` on r1 to align dev + deployed.
-  2. Add the cascade-affected route family
-     (`/v1/oracle/latest`, `/v1/lending/pools`, `/v1/vwap`)
-     to whichever smoke version runs in production.
-  3. Add docs-lint check that asserts deployed smoke ==
-     repo-tracked smoke (the doc-vs-code drift rule from
-     F-0113 applies to ops scripts too).
+- **Disposition:** `closed` (Wave-0 step 9, task #24 this
+  session). Three actions shipped:
+  1. `configs/healthchecks/install.sh` re-run on r1 syncs
+     `scripts/dev/r1-smoke.sh` → `/opt/ratesengine/
+     healthchecks/smoke.sh`; md5 matches post-install.
+  2. The repo smoke ALREADY covers the cascade-affected route
+     family (`/v1/oracle/*`, `/v1/lending/pools`, `/v1/vwap`)
+     at the multi-status-acceptance level; once aligned to r1
+     the gap disappears.
+  3. Drift detection shipped via Wave-1 task #28
+     `make verify-r1-sync` (F-0142 closure) which md5-diffs
+     deployed smoke against repo. CI surrogate.
+  Cross-ref F-0136 / F-0142 for the meta-finding.
 
 #### F-0134 — **HIGH** Deployed `r1-smoke.sh` is significantly behind repo (13 vs 23 checks; ~100 LOC short; md5 mismatch)
 
@@ -3284,10 +3304,18 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   accumulator isn't actually counting failures. Probably
   worth a 5min `bash -x` run on the deployed copy.
 - **Cross-ref:** F-0133, F-0099, F-0100, F-0080.
-- **Disposition:** `open` Wave 0. Replace deployed
-  `r1-smoke.sh` with repo copy via Ansible
-  `roles/healthchecks/` (likely already exists; sync
-  may have stalled).
+- **Disposition:** `closed` (Wave-0 step 9, task #24 +
+  Wave-1 task #27 this session). Operationally: ran
+  `configs/healthchecks/install.sh` on r1 which copies
+  `scripts/dev/r1-smoke.sh` to
+  `/opt/ratesengine/healthchecks/smoke.sh` — md5 matches
+  post-install; the 504-LOC repo smoke is now what fires
+  every 5 min via `ratesengine-smoke.timer`. Structural:
+  Wave-1 task #27 wired the install.sh into the Ansible
+  `archival-node` role so the next provisioning pass
+  matches repo without manual SCP (F-0137 closure).
+  `/v1/coins` 404 false-positive from the old smoke is gone
+  because the new file doesn't reference that route.
 
 #### F-0135 — `ledgerstream-tier.yml` rule file MISSING from deployed `/etc/prometheus/rules.r1/`
 
@@ -3364,13 +3392,17 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   goes dark.
 - **Cross-ref:** F-0133, F-0134, F-0135, F-0136 are all
   symptoms of this.
-- **Disposition:** `open` Wave 0 (paired with F-0134 fix).
-  Either:
-  1. Add `install.sh` invocation to an Ansible task that
-     runs on every healthchecks/ change
-  2. Wire `install.sh` into the GitHub Actions deploy
-     workflow as a post-step
-  3. Replace install.sh with a fully Ansible-managed role
+- **Disposition:** `closed` (Wave-1 task #27 this session).
+  Took option (1): `configs/healthchecks/install.sh` is now
+  invoked by the Ansible `archival-node` role on every
+  healthchecks/ deploy pass. Subsequent binary releases keep
+  the deployed smoke in lockstep with the repo copy
+  without operator SCP. Recurrence detection ships via
+  `make verify-r1-sync` (task #28) which md5-diffs the
+  deployed smoke against the repo path — if a future
+  Ansible run breaks the install step, the drift surfaces
+  before the next deploy. Symptoms F-0133 / F-0134 / F-0135
+  are closed under tasks #24 / #25 above.
 
 #### F-0138 — Caddyfile drift-free — BUT BY COINCIDENCE, NOT BY MECHANISM (downgraded from POSITIVE to NOTE)
 
@@ -3424,9 +3456,20 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   `/etc/prometheus/alertmanager.yml` (Debian package
   default). Possible path mismatch: Ansible renders to one
   path; daemon reads from another.
-- **Disposition:** `open` Wave 0 (paired with F-0137 fix).
-  Verify which path the running daemon reads + align
-  Ansible task to render to the same path.
+- **Disposition:** `closed` (Wave-0 step 11, task #26 this
+  session). The path-mismatch root cause was confirmed: r1's
+  `prometheus-alertmanager` reads `/etc/prometheus/
+  alertmanager.yml` (Debian default), not the
+  `/etc/alertmanager/alertmanager.yml` the Ansible role
+  rendered to. Operationally resolved via
+  `scp configs/alertmanager/{alertmanager.r1.yml,apply.sh}`
+  + `bash apply.sh` on r1 → amtool check-config SUCCESS,
+  `systemctl reload prometheus-alertmanager` exit 0,
+  service `active`. Recurrence detection: `make
+  verify-r1-sync` (task #28) md5-diffs the deployed
+  alertmanager config. The Ansible role path mismatch is
+  tracked under F-0155 for a future cleanup pass; runtime
+  is correct today via the apply.sh path.
 
 #### F-0140 — Ansible `prometheus_pair` role targets HA-pair multi-host, not r1 single-host
 
@@ -3447,9 +3490,18 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Cross-ref:** F-0139 may stem from this — if the role
   doesn't run against r1, neither does the
   alertmanager.yml.j2 templating.
-- **Disposition:** `open` Wave 1. Verify whether the
-  `prometheus_pair` role runs against r1's playbook OR
-  whether r1 has its own (manual) Prometheus setup.
+- **Disposition:** `closed-as-investigated` (2026-05-28).
+  Verified during Wave-0 step 11 (task #26): r1's
+  Prometheus + Alertmanager use the Debian-default config
+  paths (`/etc/prometheus/alertmanager.yml`,
+  `/etc/prometheus/prometheus.r1.yml`), not the HA-pair
+  paths the `prometheus_pair` role renders to. Operationally
+  r1 is managed via the apply.sh patterns (alertmanager) +
+  manual scp (prometheus.r1.yml) — these are documented in
+  F-0142's cross-walk table and drift-detected by `make
+  verify-r1-sync`. Refactoring the Ansible role to a single-
+  host shape is a clean-up item tracked under F-0155;
+  doesn't block any function today.
 
 #### F-0141 — POSITIVE: Prometheus.yml is in sync (md5 match)
 
@@ -3653,12 +3705,16 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Evidence:** `internal/api/v1/signup.go:307-336` +
   `internal/auth/signup_ip_throttle.go:75-77` comment.
 - **Cross-ref:** F-0049, F-0050, J40 adversarial trace.
-- **Disposition:** `open` Wave 0 step 6 — refined design.
-  Implementation: add a `redisErrorSince` timestamp to
-  the throttle struct; when current err lasts > 30s,
-  return ErrThrottleUnavailable (new sentinel error) which
-  the handler maps to 503. Effort: ~1h dev (vs. ~30min
-  for naive invert).
+- **Disposition:** `closed` (Wave-0 step 6, task #21 this
+  session). Dwell-time inversion shipped as recommended.
+  The throttle structs carry a `redisErrorSince`-shaped
+  state so the first N seconds (configurable; default 30 s)
+  of Redis errors fail-OPEN to preserve the transient-blip
+  UX, then flip fail-CLOSED → 503 + Retry-After after the
+  dwell-time elapses. Adversarial fail-CLOSED tests
+  (task #34) pin the post-dwell behaviour so regressions are
+  caught at PR time. Same pattern applied to the
+  rate-limit bucket per the recommendation.
 
 #### F-0150 — POSITIVE: signup IP throttle has clean error-classification at the handler layer
 
