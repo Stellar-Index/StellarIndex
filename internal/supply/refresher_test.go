@@ -319,3 +319,69 @@ func TestRefresher_WriteError(t *testing.T) {
 		t.Errorf("inserter should have been called once before failing")
 	}
 }
+
+// TestRefresher_PerAssetStaleComponentOverride pins F-0040
+// behaviour: a known-low-activity asset (PHO governance token)
+// passes the gate at a more permissive threshold while the
+// global default still rejects high-activity assets at the same
+// component lag.
+//
+// Real r1 measurement (aggregator journal 2026-05-26T00:25 +02:00):
+// PHO supply rows lagged by gap=1190 ledgers > global threshold
+// of 1000. Per-asset override of 5000 (≈7 h) accepts the legitimate
+// snapshot without loosening the gate for XLM.
+func TestRefresher_PerAssetStaleComponentOverride(t *testing.T) {
+	inserter := &stubInserter{}
+	r := NewRefresher(
+		stubLedgers{ledger: 50_001_500, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+		stubComputer{out: Supply{
+			AssetKey:           "PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6",
+			TotalSupply:        big.NewInt(1_000_000),
+			CirculatingSupply:  big.NewInt(900_000),
+			Basis:              BasisXLMSDFReserveExclusion,
+			LedgerSequence:     50_001_500,
+			MinComponentLedger: 50_000_310, // gap = 1190 ledgers
+		}},
+		inserter,
+		discardLogger(),
+		WithStaleComponentLedgers(1000), // global default — would reject
+		WithStaleComponentLedgersFor("PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6", 5000),
+	)
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindOK {
+		t.Fatalf("kind=%s want ok (per-asset override should have accepted gap=1190 under PHO's 5000 threshold; err=%v)", out.Kind, out.Err)
+	}
+	if inserter.calls != 1 {
+		t.Errorf("inserter calls = %d, want 1 (snapshot should have been inserted)", inserter.calls)
+	}
+}
+
+// TestRefresher_PerAssetStaleComponentDoesNotLoosenOthers pins the
+// inverse invariant: the per-asset override for PHO must NOT
+// relax the gate for a different asset (XLM here) which still
+// uses the global threshold.
+func TestRefresher_PerAssetStaleComponentDoesNotLoosenOthers(t *testing.T) {
+	inserter := &stubInserter{}
+	r := NewRefresher(
+		stubLedgers{ledger: 50_001_500, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+		stubComputer{out: Supply{
+			AssetKey:           "XLM",
+			TotalSupply:        big.NewInt(1_000_000),
+			CirculatingSupply:  big.NewInt(900_000),
+			Basis:              BasisXLMSDFReserveExclusion,
+			LedgerSequence:     50_001_500,
+			MinComponentLedger: 50_000_000, // gap = 1500 > global 1000
+		}},
+		inserter,
+		discardLogger(),
+		WithStaleComponentLedgers(1000),
+		WithStaleComponentLedgersFor("PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6", 5000),
+	)
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("kind=%s want %s (XLM should still hit the global threshold; per-asset override is for PHO only)", out.Kind, OutcomeKindStaleComponent)
+	}
+	if inserter.calls != 0 {
+		t.Errorf("inserter called on stale-component snapshot (want 0, got %d)", inserter.calls)
+	}
+}

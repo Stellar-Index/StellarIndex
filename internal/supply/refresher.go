@@ -76,6 +76,7 @@ type Refresher struct {
 	inserter                SnapshotInserter
 	logger                  *slog.Logger
 	staleComponentLedger    uint32
+	staleComponentByAsset   map[string]uint32
 	strictFreshnessRequired bool
 }
 
@@ -91,6 +92,30 @@ type RefresherOption func(*Refresher)
 func WithStaleComponentLedgers(maxLag uint32) RefresherOption {
 	return func(r *Refresher) {
 		r.staleComponentLedger = maxLag
+	}
+}
+
+// WithStaleComponentLedgersFor sets a per-asset override of the
+// stale-component threshold. F-0040 (audit-2026-05-26):
+// low-activity governance tokens like PHO see their trustline
+// observer lag the snapshot ledger by ~1200 ledgers (~100 min) —
+// past the 1000-ledger global default. A per-asset override lets
+// operators relax the gate for known-low-activity assets without
+// loosening it for high-traffic XLM / USDC. Pass assetKey as the
+// `canonical.Asset.String()` form (e.g. "PHO-GDSTRSHX..." for a
+// classic asset). Repeated calls layer additively; the last
+// per-asset value wins. assetKey lookup is exact-match, so the
+// caller is responsible for normalising via canonical.ParseAsset.
+//
+// A zero per-asset value disables the gate for that asset alone
+// (the global default still applies to other assets); use the
+// option twice to mix relaxed + tightened per-asset thresholds.
+func WithStaleComponentLedgersFor(assetKey string, maxLag uint32) RefresherOption {
+	return func(r *Refresher) {
+		if r.staleComponentByAsset == nil {
+			r.staleComponentByAsset = make(map[string]uint32)
+		}
+		r.staleComponentByAsset[assetKey] = maxLag
 	}
 }
 
@@ -186,18 +211,32 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 	// means the computer didn't populate the field (legacy
 	// path); we don't gate in that case so deployments without
 	// freshness-aware computers stay on the pre-F-1236 posture.
-	if r.staleComponentLedger > 0 && snap.MinComponentLedger > 0 {
+	//
+	// F-0040 (audit-2026-05-26): per-asset overrides via
+	// staleComponentByAsset[snap.AssetKey] win over the global
+	// staleComponentLedger when present. A zero per-asset value
+	// disables the gate for that asset alone.
+	threshold := r.staleComponentLedger
+	thresholdSource := "default"
+	if r.staleComponentByAsset != nil {
+		if perAsset, ok := r.staleComponentByAsset[snap.AssetKey]; ok {
+			threshold = perAsset
+			thresholdSource = "per_asset"
+		}
+	}
+	if threshold > 0 && snap.MinComponentLedger > 0 {
 		if snap.LedgerSequence > snap.MinComponentLedger &&
-			snap.LedgerSequence-snap.MinComponentLedger > r.staleComponentLedger {
+			snap.LedgerSequence-snap.MinComponentLedger > threshold {
 			err := fmt.Errorf("supply: stale component — snapshot ledger %d, min component ledger %d, gap %d > threshold %d",
 				snap.LedgerSequence, snap.MinComponentLedger,
-				snap.LedgerSequence-snap.MinComponentLedger, r.staleComponentLedger)
+				snap.LedgerSequence-snap.MinComponentLedger, threshold)
 			r.logger.Warn("supply refresh: rejecting stale-component snapshot",
 				"asset", snap.AssetKey,
 				"snapshot_ledger", snap.LedgerSequence,
 				"min_component_ledger", snap.MinComponentLedger,
 				"gap", snap.LedgerSequence-snap.MinComponentLedger,
-				"threshold", r.staleComponentLedger)
+				"threshold", threshold,
+				"threshold_source", thresholdSource)
 			return Outcome{Kind: OutcomeKindStaleComponent, Err: err, Snapshot: snap}
 		}
 	}
