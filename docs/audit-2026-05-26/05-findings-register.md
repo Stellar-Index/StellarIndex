@@ -2403,11 +2403,18 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Workstream:** W22, W14
 - **Evidence:** `docs/operations/launch-day-checklist.md` T-1
   go/no-go block; cross-ref F-0080, F-0036, F-0027.
-- **Disposition:** `open` Wave 0. Augment the checklist with
-  a counter-presence sanity step: `count by (job)
-  ({__name__=~"ratesengine_.*_total"})` must be non-empty
-  for every named counter family. If any are missing, "no
-  alerts" doesn't count.
+- **Disposition:** `closed` (2026-05-28).
+  `docs/operations/launch-day-checklist.md:67-90` now carries
+  an explicit counter-presence sanity step under the
+  "Production environment is green" item: operators run
+  `count by (__name__) ({__name__=~"ratesengine_.*_total"})`
+  against prod Prometheus and confirm the result is non-empty
+  for every named family — "no fired alerts" is a false-green
+  when an underlying counter has gone stale. Cross-referenced
+  back to the absent_over_time-guarded alerts (F-0080,
+  F-0085, F-0104) so the manual step is documented as a
+  belt-and-braces check for future rules that might land
+  without the structural guard.
 
 #### F-0101 — `internal/obs` package has 3 test files vs 21 in `internal/aggregate`
 
