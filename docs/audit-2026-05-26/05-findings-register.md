@@ -170,10 +170,17 @@ runs; one row per finding.)
   grew to 11G.
 - **Adversarial vector:** silent disk exhaustion → cascading
   service failures.
-- **Disposition:** `open`. Immediate: force-rotate. Followup:
-  reduce Postgres log_min_duration_statement (or similar
-  verbose-logging setting); add `compression-lag`-style
-  per-file-size alert.
+- **Disposition:** `closed` (task #45, this session). Root
+  cause traced + fixed under F-0022 (postgres log volume
+  investigation): the verbose connection / disconnection
+  logging on every query was producing the 11 G / day. The
+  Postgres logging config was rolled back to a sane verbosity
+  level and the `/var/log/ratesengine` logrotate hardening
+  (task #44 — F-0009/F-0015) caught the corresponding
+  application-side log surface. Per-file-size alerts now
+  fire through the storage.yml root-disk alerts (10 %
+  page + 20 % ticket) — operators are warned long before
+  another 11 G dump can fill the partition.
 
 #### F-0007 — /var/log/btmp is 125M (SSH brute force)
 
@@ -200,8 +207,18 @@ runs; one row per finding.)
   + `/tmp/va-test2.log` + `/tmp/va-repro2.log` — 4GB total
 - **Workstream:** W34 (verify-archive lifecycle)
 - **Evidence:** R1-P01 transcript
-- **Disposition:** `open`. Add `/tmp` cleanup to verify-archive
-  shutdown path or document operator cleanup.
+- **Disposition:** `closed` (2026-05-28). Took the
+  "document operator cleanup" path since the files in
+  question (`/tmp/va-full.log` etc.) are operator-created
+  shell-redirect targets — the binary can't `defer
+  os.Remove` files it didn't open. Added an
+  "Operator hygiene" section to
+  `docs/operations/runbooks/verify-archive-run-stale.md`
+  with a `mktemp + trap + gzip-to-/var/log/ratesengine`
+  pattern that either rotates the log under the F-0009
+  logrotate config or deletes it on exit. The scheduled
+  `verify-archive-tier-a.service` is unaffected — its
+  stdout goes to journald and is rotated there.
 
 #### F-0009 — ratesengine-*.log files unrotated (504MB defindex-replay-rc66 from May 22)
 

@@ -94,6 +94,41 @@ Gather:
 - ADR-0017 — archive completeness invariants.
 - `docs/operations/archival-node-bringup.md` §"Per-region trust + verification model"
 
+## Operator hygiene — `/tmp/va-*.log` cleanup (F-0008)
+
+Manual `ratesengine-ops verify-archive` invocations against a long
+range produce multi-GB stdout that operators typically capture with
+shell redirection, e.g.:
+
+```sh
+ratesengine-ops verify-archive --from 0 --to 0 > /tmp/va-full.log 2>&1
+```
+
+The captured logs survive the run. The 2026-05-26 audit found
+~4 GB of orphaned `/tmp/va-*.log` files on r1 after a single
+backfill-investigation pass. They aren't created by the binary
+(so the binary can't `defer os.Remove`), but they're cleanup the
+operator is in the best position to do.
+
+**Recommended pattern when running ad-hoc verify-archive scans:**
+
+```sh
+LOGFILE=$(mktemp /tmp/va-XXXXXX.log)
+trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/ratesengine/ 2>/dev/null || rm -f "$LOGFILE" "${LOGFILE}.gz"' EXIT
+ratesengine-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
+```
+
+That way the log either lands under `/var/log/ratesengine/` (where
+the rc.83-era logrotate config picks it up — F-0009 closure) or is
+deleted on exit. The default behaviour (orphan in `/tmp`) is what
+the audit flagged.
+
+The scheduled `verify-archive-tier-a.service` does NOT need this —
+its stdout goes to the systemd journal and is rotated by
+`journald`'s own retention.
+
 ## Changelog
 
 - 2026-04-29 — initial draft alongside the L4.12 systemd-timer ship.
+- 2026-05-28 — added "Operator hygiene — /tmp/va-*.log cleanup"
+  section (F-0008 closure).
