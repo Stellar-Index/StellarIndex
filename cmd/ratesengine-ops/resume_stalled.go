@@ -67,6 +67,100 @@ type stalledCursorPlan struct {
 	skipReason string
 }
 
+// soroban-aware source list. A stalled cursor whose decoder CSV
+// contains any of these names is gated against the data-gap list
+// from FindSorobanEventsLedgerGaps. SDEX (classic) is intentionally
+// NOT in this list — its gap detection is a follow-up and requires
+// a different statistical threshold (SDEX trade density across
+// history is bursty in a way Soroban activity isn't).
+var sorobanDecoderNames = map[string]struct{}{
+	"aquarius":        {},
+	"band":            {},
+	"blend":           {},
+	"cctp":            {},
+	"comet":           {},
+	"defindex":        {},
+	"phoenix":         {},
+	"redstone":        {},
+	"reflector-cex":   {},
+	"reflector-dex":   {},
+	"reflector-fx":    {},
+	"rozo":            {},
+	"soroban-events":  {},
+	"soroswap":        {},
+	"soroswap-router": {},
+}
+
+// planHasSorobanDecoder reports whether any decoder in the plan's
+// sources is Soroban-era — i.e. the plan's remaining range can be
+// gated against the FindSorobanEventsLedgerGaps result. Mixed-set
+// plans (containing both Soroban + SDEX decoders) count as Soroban
+// for this gate: if the Soroban portion has no real gap, the SDEX
+// portion is either (a) also clean (sibling cursor covered it) or
+// (b) a real SDEX gap that the operator can find with future SDEX
+// gap detection. Either way, walking the whole range to be safe is
+// the F-0020 multi-day mistake; better to skip + flag for follow-up.
+func planHasSorobanDecoder(sources []string) bool {
+	for _, s := range sources {
+		if _, ok := sorobanDecoderNames[s]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// gateAgainstDataGaps narrows the actionable plan list to those
+// whose remaining range overlaps a real data-gap. For Soroban-era
+// plans we have data-derived ground truth (soroban_events
+// FindSorobanEventsLedgerGaps); for SDEX-only plans we currently
+// don't, so they're skipped with `data-gap detection not available
+// for SDEX` unless --force-classic-cursors is set.
+//
+// This is the F-0020 follow-up fix to resume-stalled: the original
+// dry-run on r1 surfaced 50 "actionable" plans, most of which were
+// false positives — sibling cursors had already completed the work
+// and the data was in trades / soroban_events. Walking them would
+// have been days of redundant LCM I/O.
+func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, forceClassic bool) []stalledCursorPlan {
+	out := make([]stalledCursorPlan, len(plans))
+	copy(out, plans)
+	for i := range out {
+		if out[i].skip {
+			continue
+		}
+		hasSoroban := planHasSorobanDecoder(out[i].sources)
+		if !hasSoroban {
+			if forceClassic {
+				continue // operator opt-in: trust cursor inventory for SDEX
+			}
+			out[i].skip = true
+			out[i].skipReason = "data-derived gap detection not yet implemented for non-Soroban decoders (SDEX). Pass --force-classic-cursors to act on cursor inventory alone."
+			continue
+		}
+		if !overlapsAnyDataGap(out[i].rangeFrom, out[i].rangeTo, gaps) {
+			out[i].skip = true
+			out[i].skipReason = "remaining range fully covered by sibling cursors (no soroban_events gap overlap) — cursor inventory false-positive"
+		}
+	}
+	return out
+}
+
+// overlapsAnyDataGap returns true if [from, to] intersects any gap
+// in the sorted slice. O(n) linear scan — gaps slices are tiny
+// (single-digit count in steady state) so a sort + binary-search
+// would be premature.
+func overlapsAnyDataGap(from, to uint32, gaps []timescale.LedgerGap) bool {
+	planFrom := int64(from)
+	planTo := int64(to)
+	for _, g := range gaps {
+		if g.End < planFrom || g.Start > planTo {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // parseStalledCursor extracts the from/to/decoder triple from a
 // backfill cursor's sub_source ("<from>-<to>:<decoders>") and
 // computes the remaining resume range. Returns a plan with
@@ -119,56 +213,74 @@ func parseStalledCursor(c timescale.Cursor) stalledCursorPlan {
 }
 
 // resumeStalled is the subcommand entry point.
-func resumeStalled(args []string) error {
+type resumeStalledOpts struct {
+	cfgPath        string
+	minLag         time.Duration
+	maxResumes     int
+	sourceFilter   string
+	bucket         string
+	dryRun         bool
+	parallel       int
+	refreshCAGGs   bool
+	forceClassic   bool
+	dataGapMinSize int64
+}
+
+func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, error) {
+	var opts resumeStalledOpts
+	var cfg config.Config
 	fs := flag.NewFlagSet("resume-stalled", flag.ContinueOnError)
-	cfgPath := fs.String("config", "", "path to ratesengine.toml (required)")
-	minLag := fs.Duration("min-lag", time.Hour,
+	fs.StringVar(&opts.cfgPath, "config", "", "path to ratesengine.toml (required)")
+	fs.DurationVar(&opts.minLag, "min-lag", time.Hour,
 		"only resume cursors stalled longer than this (lag = now - last_updated)")
-	maxResumes := fs.Int("max-resumes", 0,
-		"cap on cursors resumed in this run (0 = no cap). Safety knob "+
-			"for large stall populations; operators typically pass 1-5 "+
-			"first to validate behaviour, then 0 for the full sweep.")
-	sourceFilter := fs.String("source-filter", "",
-		"only resume cursors whose decoder CSV contains this source name "+
-			"as a substring (e.g. \"defindex\" to resume just defindex stalls). "+
-			"Empty = all stalled cursors.")
+	fs.IntVar(&opts.maxResumes, "max-resumes", 0,
+		"cap on cursors resumed in this run (0 = no cap)")
+	fs.StringVar(&opts.sourceFilter, "source-filter", "",
+		"only resume cursors whose decoder CSV contains this source name")
 	bucketOverride := fs.String("bucket", "",
 		"galexie bucket override; default = cfg.Storage.S3BucketArchive")
-	dryRun := fs.Bool("dry-run", false,
+	fs.BoolVar(&opts.dryRun, "dry-run", false,
 		"print the resume plan + exit without invoking backfill")
-	parallel := fs.Int("parallel", 1,
-		"per-cursor backfill parallelism (default 1 = sequential within "+
-			"each cursor). The outer loop across cursors is always "+
-			"sequential — concurrent operator invocations against disjoint "+
-			"`--source-filter` values are the parallel-across-cursors path.")
-	refreshCAGGs := fs.Bool("refresh-caggs", true,
-		"forward to runBackfillChunk's CAGG-refresh path (same default as "+
-			"the regular `backfill` subcommand). Disable only when debugging "+
-			"a specific refresh failure.")
+	fs.IntVar(&opts.parallel, "parallel", 1,
+		"per-cursor backfill parallelism (default 1 = sequential)")
+	fs.BoolVar(&opts.refreshCAGGs, "refresh-caggs", true,
+		"forward to runBackfillChunk's CAGG-refresh path")
+	fs.BoolVar(&opts.forceClassic, "force-classic-cursors", false,
+		"act on SDEX-only stalled cursors using cursor-inventory alone, "+
+			"bypassing the data-derived gap gate")
+	fs.Int64Var(&opts.dataGapMinSize, "data-gap-min-size", int64(timescale.GapDetectorMinGapSize),
+		"threshold passed to FindSorobanEventsLedgerGaps for the data-gap gate")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return opts, cfg, err
 	}
-	if *cfgPath == "" {
-		return errors.New("-config required")
+	if opts.cfgPath == "" {
+		return opts, cfg, errors.New("-config required")
 	}
-	if *minLag < 0 {
-		return fmt.Errorf("-min-lag (%s) must be >= 0", *minLag)
+	if opts.minLag < 0 {
+		return opts, cfg, fmt.Errorf("-min-lag (%s) must be >= 0", opts.minLag)
 	}
-	if *parallel < 1 {
-		return fmt.Errorf("-parallel (%d) must be >= 1", *parallel)
+	if opts.parallel < 1 {
+		return opts, cfg, fmt.Errorf("-parallel (%d) must be >= 1", opts.parallel)
 	}
-
-	cfg, err := config.LoadWithEnv(*cfgPath)
+	loaded, err := config.LoadWithEnv(opts.cfgPath)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return opts, cfg, fmt.Errorf("load config: %w", err)
 	}
-
-	bucket := cfg.Storage.S3BucketArchive
+	cfg = loaded
+	opts.bucket = cfg.Storage.S3BucketArchive
 	if *bucketOverride != "" {
-		bucket = *bucketOverride
+		opts.bucket = *bucketOverride
 	}
-	if bucket == "" {
-		return errors.New("no bucket — set -bucket or cfg.Storage.S3BucketArchive")
+	if opts.bucket == "" {
+		return opts, cfg, errors.New("no bucket — set -bucket or cfg.Storage.S3BucketArchive")
+	}
+	return opts, cfg, nil
+}
+
+func resumeStalled(args []string) error {
+	opts, cfg, err := parseResumeStalledFlags(args)
+	if err != nil {
+		return err
 	}
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -182,10 +294,26 @@ func resumeStalled(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	plans, err := planResumeStalled(rootCtx, store, *minLag, *sourceFilter, *maxResumes)
+	plans, err := planResumeStalled(rootCtx, store, opts.minLag, opts.sourceFilter, opts.maxResumes)
 	if err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
+
+	// Gate Soroban-era plans against the data-derived soroban_events
+	// gap list. Cursors whose remaining range is fully covered by
+	// sibling cursors (no gap overlap) are skipped here as
+	// false-positives — the F-0020 follow-up fix. Resolve the live
+	// cursor's tip the same way find-data-gaps does so the gate
+	// matches the diagnostic CLI exactly.
+	tipCursor, err := store.GetCursor(rootCtx, "ledgerstream", "")
+	if err != nil {
+		return fmt.Errorf("resolve tip for data-gap gate: %w", err)
+	}
+	dataGaps, err := store.FindSorobanEventsLedgerGaps(rootCtx, 0, int64(tipCursor.LastLedger), opts.dataGapMinSize)
+	if err != nil {
+		return fmt.Errorf("find data gaps for gate: %w", err)
+	}
+	plans = gateAgainstDataGaps(plans, dataGaps, opts.forceClassic)
 
 	actionable := 0
 	for _, p := range plans {
@@ -197,19 +325,21 @@ func resumeStalled(args []string) error {
 		"candidates", len(plans),
 		"actionable", actionable,
 		"skipped", len(plans)-actionable,
-		"min_lag", minLag.String(),
-		"source_filter", *sourceFilter,
-		"dry_run", *dryRun,
+		"min_lag", opts.minLag.String(),
+		"source_filter", opts.sourceFilter,
+		"data_gaps", len(dataGaps),
+		"force_classic_cursors", opts.forceClassic,
+		"dry_run", opts.dryRun,
 	)
 
-	if *dryRun || actionable == 0 {
+	if opts.dryRun || actionable == 0 {
 		for _, p := range plans {
 			printResumePlan(p)
 		}
 		return nil
 	}
 
-	failures := executeResumePlans(rootCtx, logger, plans, *cfgPath, bucket, *parallel, *refreshCAGGs, cfg, store)
+	failures := executeResumePlans(rootCtx, logger, plans, opts.cfgPath, opts.bucket, opts.parallel, opts.refreshCAGGs, cfg, store)
 	if len(failures) > 0 {
 		return fmt.Errorf("resume-stalled: %d of %d cursors failed: %w",
 			len(failures), actionable, errors.Join(failures...))
