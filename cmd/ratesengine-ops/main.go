@@ -265,6 +265,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "resume-stalled: %v\n", err)
 			return 1
 		}
+	case "find-data-gaps":
+		if err := findDataGaps(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "find-data-gaps: %v\n", err)
+			return 1
+		}
 	case "rehydrate-galexie-archive":
 		if err := rehydrateGalexieArchive(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "rehydrate-galexie-archive: %v\n", err)

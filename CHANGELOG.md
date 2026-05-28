@@ -15,6 +15,10 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- `ratesengine-ops find-data-gaps` subcommand. Scans `soroban_events` directly for contiguous ledger-coverage gaps and emits a targeted backfill plan. **Data-derived alternative to cursor-derived density** — cursor coverage measures process state ("did we walk this ledger") and can read 100% while data is missing; this subcommand measures reality. Flags: `--min-gap-size` (default 1000, filters out legitimate no-Soroban-activity stretches), `--from` / `--to` (range scope; default = first ledger in table → live cursor tip), `--output text|json` (text emits ready-to-paste `ratesengine-ops backfill` commands; json emits a plan-shaped document for `jq` piping). New store helper `timescale.Store.FindSorobanEventsLedgerGaps` uses a LAG() window function over `SELECT DISTINCT ledger` — cheap on the (ledger_close_time, ledger) btree. Live r1 run found the two F-0020 cascade-window gaps (62,642,781 → 62,735,517 = 92,737 ledgers + 62,746,866 → 62,757,524 = 10,659 ledgers; 103,396 missing total) — exact-match to the manual probe. Future periodic gap-detection metric + alert (`ratesengine_ingest_gap_ledgers{source}`) is the next layer; this CLI is the immediate operator utility. Four tests pin happy/empty paths + JSON snake_case contract + text-mode operator-facing format.
+
 ### Fixed
 
 - Density metric no longer falls back to `sourceGenesisLedger` when the live cursor's `first_ledger` is NULL. The fallback had been inflating per-source density to a dishonest 100% on the status page, hiding genuine ingest gaps (notably the F-0020 cascade-window soroban_events gap, ~103 K ledgers across two contiguous ranges). The pre-fix premise — "the UPDATE branch flips first_ledger on next write" — was wrong: the UPDATE branch left first_ledger untouched, so the NULL persisted forever and the fallback became a permanent lie. After this fix, a NULL live cursor contributes no historical span; the projection credits only the backfill-cursor union until the live cursor's first_ledger is populated.
