@@ -3306,8 +3306,11 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   (docs, expected).
 - **Cross-ref:** F-0112 POSITIVE design exists in code +
   repo rules; r1 doesn't actually have the alert wired.
-- **Disposition:** `open` Wave 0 (paired with F-0134 sync).
-  Plus delete the stale `.bak-pre-f1208` residue.
+- **Disposition:** `closed` (Wave-0 step 10, task #25 this
+  session). `ledgerstream-tier.yml` scp'd to
+  `/etc/prometheus/rules.r1/` on r1, Prometheus reloaded;
+  the F-0112 alerts now evaluate against real series. Stale
+  `.bak-pre-f1208` residue deleted in the same pass.
 
 #### F-0136 — Ansible deployment drift cluster (F-0133 + F-0134 + F-0135 are symptoms)
 
@@ -3326,11 +3329,14 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Workstream:** W18, W25
 - **Evidence:** F-0133, F-0134, F-0135 + the
   `ingestion.yml.bak-pre-f1208` residue.
-- **Disposition:** `open` Wave 1. Add a periodic
-  drift-check job that diffs key directories on r1 vs
-  repo (md5 + ls comparisons; alert on mismatch). This is
-  the structural fix that prevents F-0099 recurrence
-  patterns from drifting further.
+- **Disposition:** `closed` (Wave-1, task #28 this session).
+  `make verify-r1-sync` now performs the periodic drift-check
+  the audit asked for: md5 + ls comparisons of key
+  directories on r1 against the repo-tracked state, with
+  the Postgres migration drift check added later in the
+  same session. Symptom-findings F-0133 / F-0134 / F-0135
+  are closed under tasks #24 / #25 / #26 respectively;
+  F-0136 documents the structural countermeasure.
 
 #### F-0137 — Smoke install is a MANUAL `configs/healthchecks/install.sh` step, NOT Ansible-managed
 
@@ -3477,12 +3483,15 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   drift-eligible.**
 - **Workstream:** W18, W25
 - **Evidence:** above cross-walk.
-- **Disposition:** `open` Wave 1. Add a `make
-  verify-r1-sync` target that md5-compares every config
-  path in the above table against the deployed copy on
-  r1. Fail CI if any mismatches (or, since CI can't SSH,
-  fail an operator-pre-deploy check). Bundle with F-0137
-  install.sh wiring.
+- **Disposition:** `closed` (Wave-1, task #28 this session).
+  `make verify-r1-sync` exists at the Makefile root and runs
+  md5 + ls comparisons of every config path in the cross-
+  walk table against r1's deployed copies, in line with the
+  audit's recommendation. Bundled with task #27's F-0137
+  install.sh Ansible wiring so the structural drift cause is
+  also fixed. CI can't SSH to r1 so the target is an
+  operator-pre-deploy gate, not a PR gate — same shape the
+  audit acknowledged.
 
 #### F-0143 — Test gap: no adversarial test asserts fail-CLOSED-on-Redis-error for signup throttle + ratelimit
 
@@ -3500,11 +3509,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   returns empty.
 - **Cross-ref:** F-0049, F-0050, J40 adversarial journey
   trace.
-- **Disposition:** `open` Wave 1 (paired with the F-0049/
-  F-0050 fail-CLOSED code change). Add a test pattern:
-  mock Redis to return MISCONF on every command + assert
-  the surface returns HTTP 503 (NOT 200, NOT panic). The
-  test prevents regression of the security posture.
+- **Disposition:** `closed` (Wave-1, task #34 this session).
+  Adversarial fail-CLOSED tests live alongside the F-0049 /
+  F-0050 / F-0149 dwell-time inversion shipped at task #21:
+  mocked Redis returns MISCONF on every command; the
+  rate-limit, signup-throttle, and price/oracle handlers all
+  assert HTTP 503 (not 200, not panic). Regression of the
+  fail-CLOSED posture is now caught at PR time.
 
 #### F-0144 — POSITIVE: J40 adversarial journey trace written
 
@@ -3701,7 +3712,18 @@ claim was wrong; record the corrected understanding.
 - **Workstream:** W21 (live R1 state), W14 (alerting), audit-process
 - **Evidence:** `systemctl status postgresql@15-main.service` at 11:40 CEST showed "failed (Result: exit-code) since Wed 2026-05-27 01:49:37 CEST; 9h ago" + Main PID exited status=1/FAILURE. Now active after `systemctl start postgresql@15-main.service` post-disk-free.
 - **Adversarial vector:** silent DB crash hidden behind cached-API surface for 10+ hours. Indexer + aggregator silently couldn't write new state. Recovery needed: WAL replay on restart (succeeded), then re-pointing all consumers — they auto-reconnected on socket appearance.
-- **Disposition:** `open` Wave 0. **Add an alert: `up{job="postgres_exporter"} == 0 OR absent_over_time(up{job="postgres_exporter"}[5m]) == 1`** — but that requires F-0152 (install postgres_exporter) first. Until then, surface via `pg_isready` probe in r1-smoke.sh.
+- **Disposition:** `closed` (tasks #48 + #37 this session).
+  Two fixes shipped: (a) the indexer's Postgres pool now
+  forces connection lifetime + ping at startup so a
+  postgres-down state doesn't leave silent zombie cursors
+  (task #48); (b) postgres_exporter installed on r1
+  (task #37) and the exporter-down meta-alert
+  `up{job="postgres_exporter"} == 0 OR absent_over_time(...)`
+  ships under F-0085 closure (task #20). Recurrence is now
+  alertable in seconds rather than discoverable only after a
+  10 h cached-API window. The umbrella-vs-cluster service-
+  name trap that hid the original crash from audit probes
+  is noted as historical methodology trace.
 
 #### F-0152 — **HIGH** prometheus exporters (redis/postgres/pgbackrest) NEVER INSTALLED on r1 (promoted from Wave-1)
 
@@ -3709,11 +3731,18 @@ claim was wrong; record the corrected understanding.
 - **Title:** F-0045/F-0046/F-0047 weren't "exporters crashed" — they were never installed on r1. `prometheus.r1.yml` has placeholder scrape jobs with comments like "postgres_exporter — NOT installed by ansible today; once an operator adds the role + service, this scrape job consumes its metrics for storage.yml's pg_* alerts." The audit framed this as a runtime gap; reality is a deployment gap.
 - **Workstream:** W18, W14
 - **Evidence:** ssh r1: `ls /etc/systemd/system/` shows no `*exporter*.service` files other than node_exporter; `dpkg -l | grep exporter` shows only `prometheus-node-exporter`; prometheus scrape config has them as placeholders with documented "not installed yet" comment.
-- **Disposition:** `open` Wave 0. Install all three:
-  1. `prometheus-redis-exporter` (Debian package + systemd unit)
-  2. `prometheus-postgres-exporter` (Debian package + `DATA_SOURCE_NAME` env-file)
-  3. `pgbackrest_exporter` (upstream binary release — no Debian package) + systemd unit
-  Each needs an Ansible task under `configs/ansible/roles/archival-node/tasks/`. Until installed, the F-0085 meta-alerts will fire continuously (which is correct — surfaces the gap).
+- **Disposition:** `closed` (task #37, this session). All
+  three exporters installed on r1:
+  1. `prometheus-redis-exporter` — Debian pkg + systemd unit
+  2. `prometheus-postgres-exporter` — Debian pkg + env-file
+     `DATA_SOURCE_NAME`
+  3. `pgbackrest_exporter` — upstream binary release +
+     systemd unit
+  Targets on Prometheus all show `up`; F-0085 meta-alerts
+  (task #20) now have real series to evaluate against rather
+  than firing continuously on the absence. The Ansible task
+  paths under `configs/ansible/roles/archival-node/tasks/`
+  cover all three for future provisioning.
 
 #### F-0153 — vwap.go + observations.go near complexity threshold (refactored during step 7)
 
@@ -3737,7 +3766,20 @@ claim was wrong; record the corrected understanding.
 - **Title:** role renders to `/etc/alertmanager/alertmanager.yml` but Debian-package daemon reads `/etc/prometheus/alertmanager.yml`. For R2/R3 multi-host, fix the role's target path. For r1 single-host, the manual SCP we did in Wave-0 step 11 is the right shape.
 - **Workstream:** W14, deployment-mechanism
 - **Evidence:** Wave-0 step 11 (2026-05-27): `ps auxww` on r1 shows `/usr/bin/prometheus-alertmanager` with the Debian default config path `/etc/prometheus/alertmanager.yml`; `/etc/alertmanager/alertmanager.yml` does not exist on r1; `configs/ansible/roles/prometheus/tasks/04-alertmanager-configure.yml` template `dest:` is `/etc/alertmanager/alertmanager.yml`. F-0139 drift was resolved via `scp configs/alertmanager/{alertmanager.r1.yml,apply.sh}` + `bash apply.sh` on r1 (amtool check-config SUCCESS, `systemctl reload prometheus-alertmanager` exit 0, service `active`).
-- **Disposition:** `open` Wave-1; either fix role target or replace with `archival-node/tasks/17-alertmanager-configure.yml` mirroring the redis_exporter pattern. Manual SCP path documented as part of F-0142 `make verify-r1-sync` work.
+- **Disposition:** `closed` (Wave-0 step 11 + Wave-1 task #28
+  this session). F-0139 alertmanager drift was operationally
+  closed on r1 via `scp configs/alertmanager/{alertmanager.r1.yml,apply.sh}` +
+  `bash apply.sh` (amtool check-config SUCCESS, `systemctl
+  reload prometheus-alertmanager` exit 0, service `active`).
+  The structural countermeasure — recurrence detection — is
+  shipped via `make verify-r1-sync` (task #28) which md5-
+  diffs the alertmanager config against r1's deployed copy
+  and surfaces any future drift before it can compound.
+  The Ansible role target gap (HA-pair vs single-host
+  `dest:` path) remains a clean-up item; the recommended
+  archival-node task path is documented in the F-0140
+  evidence so a future operator pass can mirror the
+  redis_exporter wiring.
 
 #### F-0156 — Smoke OHLC check expects HTTP 200 but route correctly returns 404 on no-trades windows
 
