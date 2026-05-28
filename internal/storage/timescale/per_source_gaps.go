@@ -109,11 +109,13 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 	}
 
 	// Identifier interpolation is safe-by-construction (callers pass
-	// a compile-time const). #nosec G201.
+	// a compile-time const from DefaultGapDetectorTargets; ADR-0030
+	// makes this invariant load-bearing).
 	filter := ""
 	if target.WhereFilter != "" {
 		filter = " AND (" + target.WhereFilter + ")"
 	}
+	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
 	query := fmt.Sprintf(`
 		WITH ledgers AS (
 		    SELECT DISTINCT %[1]s AS ledger
