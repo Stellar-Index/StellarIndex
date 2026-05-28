@@ -200,6 +200,7 @@ the `env:` column.
 | `supply.sac_wrappers` | `map` | `{}` | — | SAC wrapper contract C-strkey → supply.AssetKey (CODE:ISSUER) map. Drives the SAC balance observer's watched-contract filter. Pure SEP-41 contracts reuse this map by mapping contract_id → contract_id. |
 | `supply.watched_sep41_contracts` | `[]string` | `[]` | — | Operator-curated SEP-41 Soroban contract C-strkeys to track for Algorithm 3 supply per ADR-0023. Empty leaves the SEP-41 supply pipeline off. |
 | `supply.strict_freshness_required` | `bool` | `false` | — | F-1236: when true, supply snapshots without a MinComponentLedger anchor (i.e. zero-value freshness, the static-XLM fallback or a transiently-failing producer) are rejected rather than published. Default false preserves backwards-compatible permissive behaviour; flip true after the freshness producers are confirmed wired in steady state. |
+| `supply.stale_component_ledgers_by_asset` | `map` | `{}` | — | Per-asset override of the F-1236 stale-component-ledger threshold. Map keys are asset_key (CODE-ISSUER for classic, bare contract id for SEP-41); values are ledger counts. Empty map (default) keeps every asset on the global 1000-ledger threshold. F-0040 (audit-2026-05-26). |
 
 ### `[trades]`
 

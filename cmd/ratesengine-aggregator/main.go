@@ -615,12 +615,26 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *s
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", raw),
-				supply.WithStrictFreshnessRequired(cfg.Supply.StrictFreshnessRequired),
+				supplyRefresherOptions(cfg, assetKey)...,
 			),
 			assetKey: assetKey,
 		})
 	}
 	return out, nil
+}
+
+// supplyRefresherOptions builds the per-asset RefresherOption list.
+// Includes the global strict-freshness toggle and (if the operator
+// has configured one for this assetKey) the per-asset stale-
+// component threshold override. F-0040 (audit-2026-05-26).
+func supplyRefresherOptions(cfg config.Config, assetKey string) []supply.RefresherOption {
+	opts := []supply.RefresherOption{
+		supply.WithStrictFreshnessRequired(cfg.Supply.StrictFreshnessRequired),
+	}
+	if maxLag, ok := cfg.Supply.StaleComponentLedgersByAsset[assetKey]; ok {
+		opts = append(opts, supply.WithStaleComponentLedgersFor(assetKey, maxLag))
+	}
+	return opts
 }
 
 func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
@@ -648,7 +662,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slo
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", contractID),
-				supply.WithStrictFreshnessRequired(cfg.Supply.StrictFreshnessRequired),
+				supplyRefresherOptions(cfg, contractID)...,
 			),
 			assetKey: contractID, // supply.AssetKey form for SEP-41 is the bare contract id
 		})
@@ -674,7 +688,7 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.L
 		computer,
 		supplyAggregatorInserter{s: store},
 		logger.With("asset", "native"),
-		supply.WithStrictFreshnessRequired(cfg.Supply.StrictFreshnessRequired),
+		supplyRefresherOptions(cfg, "native")...,
 	), nil
 }
 
