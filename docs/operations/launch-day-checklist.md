@@ -71,6 +71,23 @@ The week before the cut. Done while everything is still calm.
         configured source (`source_enabled=1`).
       - `ratesengine_aggregator_vwap_writes_total` rising.
       - No fired alerts in Alertmanager.
+      - **Counter-presence sanity** (F-0100, audit-2026-05-26):
+        "no fired alerts" by itself is a false-green when an
+        underlying counter has gone stale and the rule sees
+        no-data. Run this PromQL against the prod Prometheus
+        and confirm the result is non-empty for every named
+        family:
+        ```promql
+        count by (__name__) ({__name__=~"ratesengine_.*_total"})
+        ```
+        If a counter family is missing from the result, treat
+        "no alerts" as silence-not-success and investigate
+        before declaring green. The post-2026-05-26 alert
+        portfolio now uses `absent_over_time(...)` guards on
+        every cascade-fragile rule (F-0080, F-0085, F-0104) so
+        a missing counter SHOULD trigger an alert in its own
+        right — this step is the manual belt-and-braces check
+        in case a new rule lands without the guard.
 - [ ] **SLA probe latest pass.** `cmd/ratesengine-sla-probe`
       against the staging URL ran in the last 4 h with `verdict:
       pass`. (Or run it manually now — see "Smoke test" below.)
