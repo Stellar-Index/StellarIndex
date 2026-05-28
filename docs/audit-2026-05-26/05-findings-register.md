@@ -1558,9 +1558,22 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Adversarial vector:** developer copying `/v1/price` URLs
   to other endpoints gets two-step rejection (param name +
   slug format). Friction.
-- **Disposition:** `open` Wave 2. Either accept slugs on all
-  endpoints (with a centralized resolver) or reject slugs
-  consistently on `/v1/price` too. Pick one.
+- **Disposition:** `closed` (2026-05-28). Resolved the param-name
+  half of the inconsistency via bidirectional alias:
+  `internal/api/v1/price.go::parsePriceAssetParam` now accepts
+  `base=` as an alias for `asset=`; `internal/api/v1/history.go::
+  parseBaseQuote` now accepts `asset=` as an alias for `base=`.
+  Either name reaches the same `canonical.ParseAsset` path. The
+  slug half (the audit's secondary point: `xlm` rejection) was
+  already handled at the canonical layer —
+  `canonical.ParseAsset("xlm")` returns NativeAsset via the
+  case-insensitive `XLM`/`native` alias (`asset.go:244`), so all
+  endpoints already accept `xlm` consistently; the audit
+  evidence appears to have predated that addition.
+  Mutually-exclusive 400 prevents silent precedence picks when a
+  client passes both. Two new tests pin alias-accepted + both-
+  supplied-rejected. `parsePriceAssetParam` extraction keeps
+  `handlePrice` under the gocognit ceiling.
 
 #### F-0062 — `/v1/changes` is NOT a price-change endpoint
 
