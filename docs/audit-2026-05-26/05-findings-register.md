@@ -56,8 +56,13 @@ runs; one row per finding.)
 - **Evidence:** to be captured: psql `SELECT job_id, scheduled
   FROM timescaledb_information.jobs WHERE job_id = 1000` returns
   `t` (verified 2026-05-26 ~20:00 CEST during session).
-- **Disposition:** `open`; remediation = delete the memory entry
-  or mark it obsolete.
+- **Disposition:** `closed` (2026-05-28). Verified live on r1:
+  `SELECT job_id, scheduled FROM timescaledb_information.jobs
+  WHERE job_id = 1000` → `1000 | t | Columnstore Policy [1000]`.
+  Job is already scheduled — the memory entry was stale guidance
+  from a prior backfill window. Deleted
+  `~/.claude/projects/.../memory/feedback_reenable_trades_compression.md`
+  and the corresponding line in `MEMORY.md`.
 
 #### F-0003 — Migration deploy is operator-manual, not workflow-automated
 
