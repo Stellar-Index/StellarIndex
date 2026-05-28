@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.87] — 2026-05-28
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Per-source coverage bundle. The rc.85/rc.86 series shipped data-derived gap detection against the single `soroban_events` landing zone. This release generalises that signal to every per-source hypertable, adds the orchestrator that closes a cascade in one operator command, and locks the discipline in with an ADR + lint guard so future per-source tables can't slip past the detector.
+
+Pre-deploy operator note: api + aggregator + ops binaries together. No migrations. The aggregator restart triggers a fresh first-cycle scan that emits the new per-(source, table) gauges within ~5-7 min.
+
+### Added
+
+- **`ratesengine-ops drain-cascade-window` orchestrator subcommand.** One operator command runs all seven existing per-source `*-backfill` subcommands (sep41-transfers, cctp, rozo, soroswap-skim, comet-liquidity, blend, phoenix) over a `[from, to]` range in series, with `{--output text|json}` per-source result. Default `--halt-on-error=false` keeps a single decoder failure from stranding the other six; `--sources blend,phoenix` restricts to a subset. Replaces the seven-subcommand copy-paste loop currently required to repair a cascade window. New runbook `docs/operations/runbooks/cascade-window-drain.md` and cross-link from `ingest-gap-detected.md`. Sources without a dedicated subcommand (aquarius, reflector-*, redstone, soroswap-main, soroswap-router, defindex) need their own subcommands in a future PR; out of scope here.
+- **Per-source data-derived gap detection (14 targets).** The gap-detector goroutine now iterates every registered per-source hypertable each cycle, not just `soroban_events`. New `internal/storage/timescale/per_source_gaps.go` exports `GapDetectorTarget` + `DefaultGapDetectorTargets` (the registry) + `FindPerSourceLedgerGaps` (the parameterised LAG()-over-DISTINCT scan). 13 Soroban-era targets + SDEX (filtered via the new `WhereFilter` field on `GapDetectorTarget` so the trades hypertable's SDEX slice scans cleanly). Per-target 15-min timeout means one slow scan can't poison the rest of the cycle; each target emits its own `runs_total{table=...,outcome=...}` counter so operators can tell "this one target wedged" from "the whole worker died." `find-data-gaps --source <name|all|csv>` now scans the chosen target set.
+- **SDEX data-derived coverage signal.** Closes the only remaining unmonitored data path — the classic-DEX ingest pipeline doesn't flow through `soroban_events` and previously had zero data-derived coverage. New runbook `docs/operations/runbooks/sdex-gap-detected.md`.
+- **ADR-0030 per-source coverage invariant + lint guard.** `TestGapDetectorTargetsCoverAllPerSourceHypertables` introspects `migrations/*.up.sql` for `CREATE TABLE` statements matching the per-source naming pattern and fails CI if any are unregistered. Caught two real bugs on first run: `sdex_offer_events` (now registered as the `sdex-offers` target) and `api_usage_events` (exempted as HTTP usage logging, not Stellar-network ingest). The ADR codifies three sub-decisions: data-derived headline density (separate PR), `{source, table}` label set, and identifier-interpolation safety contract. `CONTRIBUTING.md` + `AGENTS.md` get the discipline as a connector-addition checklist.
+
+### Changed
+
+- Metric labels on `ratesengine_ingest_gap_{ledgers,count,max_size_ledgers}` and the detector meta-metrics extended from `{source}` to `{source, table}`. Alert rule `ratesengine_ingest_gap_detected` now aggregates via `max by (source)` so paging dedup behaviour is unchanged. Histogram buckets for `ratesengine_ingest_gap_detector_duration_seconds` extended to 600s — the live r1 soroban_events scan is ~300s and the old 60s cap put every healthy scan in the overflow bucket.
+
 ## [v0.5.0-rc.86] — 2026-05-28
 
 Tested against Stellar Protocol 23 (Whisk).
