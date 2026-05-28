@@ -90,7 +90,20 @@ groups:
             SEV-1 and follow the api-5xx runbook.
 
       - alert: ratesengine_api_price_stale
-        expr: ratesengine_price_staleness_seconds > 120
+        # F-0104: the staleness gauge is emitted by the aggregator
+        # at end-of-tick. Under cascade the aggregator tick wedges,
+        # the gauge stops being scraped, and a bare `> 120` would
+        # see no-data and never fire — i.e. the alert designed to
+        # catch exactly this cascade was itself a victim of it. The
+        # absent_over_time() branch fires the alert when the series
+        # has been missing for 10 m, surfacing the wedge as a
+        # staleness signal in its own right. Same pattern as
+        # aggregator_silent (F-0080) and the exporter-down meta-
+        # alerts (F-0085).
+        expr: |
+          ratesengine_price_staleness_seconds > 120
+          OR
+          absent_over_time(ratesengine_price_staleness_seconds[10m]) == 1
         for: 5m
         labels:
           severity: ticket
@@ -103,7 +116,9 @@ groups:
             The most recent aggregated price observation is older than 2 min
             (Freighter SLA is 30 s freshness; we alarm at 4× SLA). Usually
             means the source for this asset has stopped or the aggregator
-            isn't writing.
+            isn't writing. If the gauge is ABSENT (the absent_over_time
+            branch fires alone), the aggregator is wedged — see the
+            aggregator-silent runbook instead.
 
       # Per-(cache, op) miss rate. Set this against the in-memory
       # cache wrappers (`v1.CachedMarketsReader`, etc) — when miss
