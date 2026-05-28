@@ -709,6 +709,24 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 
+	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
+	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
+	// before expiry, but a silent renewal failure (DNS, rate limit,
+	// ACME quota) would otherwise only surface at cert expiry. The
+	// probe emits `ratesengine_tls_cert_not_after_unix{host}` on a
+	// 6h cadence; the matching alert in
+	// deploy/monitoring/rules/api.yml fires at < 14 days remaining.
+	if len(cfg.API.TLSCertProbeHosts) > 0 {
+		go func() {
+			if err := v1.RunTLSCertProbe(rootCtx, cfg.API.TLSCertProbeHosts, logger.With("component", "tls-cert-probe")); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn("tls cert probe exited", "err", err)
+			}
+		}()
+		logger.Info("tls cert probe wired",
+			"hosts", cfg.API.TLSCertProbeHosts,
+			"cadence", v1.TLSCertProbeInterval.String())
+	}
+
 	// Per-source backfill coverage cache. The underlying SQL is 2-3s
 	// on a populated trades hypertable so it can't run inline from
 	// /v1/diagnostics/ingestion's request path. First refresh runs

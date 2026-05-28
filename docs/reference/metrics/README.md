@@ -857,6 +857,30 @@ structured error at `streak == 3` (`pool may be wedged`); search
 the journal for that string when triaging the
 `ratesengine_postgres_ping_failing` page. F-0151.
 
+### `ratesengine_tls_cert_not_after_unix`
+
+Gauge, label `host`.
+
+Unix-seconds NotAfter timestamp of the leaf TLS cert observed at
+the configured host. Emitted by the API binary's self-probe
+(`internal/api/v1/tls_probe.go::RunTLSCertProbe`) on a 6 h cadence.
+Probe failures keep the last-known value in place — the probe
+counter below is the freshness signal. F-0051.
+
+Alert `ratesengine_tls_cert_expiring_soon` fires when
+`(not_after_unix - time()) < 14 * 24 * 3600` sustained 1 h.
+
+### `ratesengine_tls_cert_probe_total`
+
+Counter, labels `host`, `outcome` (`ok` / `dial_error` /
+`timeout` / `no_cert`).
+
+TLS cert self-probe outcomes per host. A growing `ok` rate while
+`ratesengine_tls_cert_not_after_unix` stays flat is the success
+signal; a sustained non-`ok` rate alongside a stale gauge means
+the probe itself is failing — investigate before the gauge ages
+out via the alert rule's 14-day threshold. F-0051.
+
 ### `ratesengine_stripe_platform_sync_errors_total`
 
 Counter, label `operation` (`get_account` / `upsert_subscription` /

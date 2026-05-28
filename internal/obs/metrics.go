@@ -88,6 +88,8 @@ func init() {
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
+		TLSCertNotAfterUnix,
+		TLSCertProbeTotal,
 
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
@@ -1133,6 +1135,46 @@ var PostgresPingFailureStreak = prometheus.NewGauge(
 		Name: "ratesengine_postgres_ping_failure_streak",
 		Help: "Indexer postgres-ping consecutive failure count (resets to 0 on the next success). F-0151.",
 	},
+)
+
+// TLSCertNotAfterUnix — per-host gauge of the public TLS cert's
+// NotAfter timestamp (Unix seconds). Set by the API binary's
+// self-probe goroutine on a 6 h cadence: a `tls.Dial(host:443)`
+// captures the cert chain, the leaf's NotAfter is emitted here.
+//
+// F-0051 (audit-2026-05-26): Caddy auto-renews Let's Encrypt 30 d
+// before expiry, but if renewal fails (DNS, rate limit, ACME
+// quota) we historically discovered only at cert expiry. This
+// gauge gives the alert rule a producer: fire on
+// `(TLSCertNotAfterUnix - time()) < 14*24*3600` to catch a stuck
+// renewal cycle with 2-week head room.
+//
+// Cardinality: one host per series; the operator-curated list is
+// typically the apex + 1–2 subdomains (api / status). Probe
+// failures DO NOT clear the gauge — the last-known value stays in
+// place until the next successful probe, so a transient outage
+// doesn't blank the alert input. Separate counter
+// [TLSCertProbeTotal] tracks probe outcome.
+var TLSCertNotAfterUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "ratesengine_tls_cert_not_after_unix",
+		Help: "Unix-seconds NotAfter timestamp of the leaf TLS cert observed at the configured host. Set by the API binary's self-probe (F-0051). Probe failures keep the last-known value; pair with ratesengine_tls_cert_probe_total{outcome=error} to detect a stuck probe.",
+	},
+	[]string{"host"},
+)
+
+// TLSCertProbeTotal — per-(host, outcome) probe outcome counter.
+// outcome ∈ {ok, dial_error, no_cert, timeout}. A growing `ok`
+// rate while [TLSCertNotAfterUnix] stays flat is the success
+// signal; an `error` outcome alongside a stale gauge means the
+// probe is failing and the operator should investigate before
+// the gauge ages out via the alert rule's `14 day` threshold.
+var TLSCertProbeTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_tls_cert_probe_total",
+		Help: "TLS cert self-probe outcomes per host. outcome ∈ {ok, dial_error, no_cert, timeout}. F-0051.",
+	},
+	[]string{"host", "outcome"},
 )
 
 // StripePlatformSyncErrorsTotal — counter of failures inside the

@@ -243,6 +243,7 @@ override.
 | `ratesengine_customer_webhook_delivery_failing` | `rate(ratesengine_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.1/s for ≥ 15 min | P3 | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `ratesengine_customer_webhook_delivery_exhausted` | `rate(ratesengine_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0 for ≥ 1h | informational | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `ratesengine_stripe_platform_sync_errors` | `rate(ratesengine_stripe_platform_sync_errors_total[15m])` | > 0 for ≥ 15 min | P3 | [stripe-platform-sync-errors](runbooks/stripe-platform-sync-errors.md) |
+| `ratesengine_tls_cert_expiring_soon` | `ratesengine_tls_cert_not_after_unix - time()` per host | < 14 days for ≥ 1 h | P2 | [tls-cert-expiring-soon](runbooks/tls-cert-expiring-soon.md) |
 
 ## Supply alerts
 

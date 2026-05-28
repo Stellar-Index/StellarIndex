@@ -198,3 +198,27 @@ groups:
             Per-`operation` label isolates the failing layer
             (get_account / upsert_subscription / account_update /
             list_keys / key_update). Follow the runbook.
+
+      # F-0051 (audit-2026-05-26). Mirror of the rule in
+      # deploy/monitoring/rules/api.yml; wave-96 pair lint
+      # requires both copies to stay in sync.
+      - alert: ratesengine_tls_cert_expiring_soon
+        expr: |
+          ratesengine_tls_cert_not_after_unix - time() < 14 * 24 * 3600
+          and ratesengine_tls_cert_not_after_unix > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: ratesengine
+          component: api
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+        annotations:
+          summary: "TLS cert for {{ $labels.host }} expires in <14 days"
+          description: |
+            The leaf certificate for {{ $labels.host }} expires at
+            {{ $value | humanizeTimestamp }}. Caddy's Let's Encrypt
+            auto-renewal normally triggers 30 days before expiry;
+            this alert firing means the renewal hasn't happened
+            (rate limit, DNS issue, ACME quota, Caddy stuck).
+
+            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
