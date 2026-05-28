@@ -1702,8 +1702,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   `base=`, `/v1/observations` uses `asset=` again.
 - **Workstream:** W11
 - **Evidence:** EV-0030 live curl.
-- **Disposition:** `open` Wave 2 — bundle with F-0061
-  remediation.
+- **Disposition:** `closed` (2026-05-28). Bundled with F-0061
+  closure on the asset/base aliasing pass. `parseObservationsAssetQuote`
+  now delegates to `resolveAssetOrBaseParam` so `/v1/observations`
+  accepts both `asset=` (canonical) and `base=` (alias);
+  both-supplied returns 400 `invalid-parameter`. Two new tests
+  (`TestObservations_BaseParamAcceptedAsAssetAlias`,
+  `TestObservations_BothAssetAndBase400`) pin the contract.
 
 #### F-0069 — `cmd/ratesengine-api/main.go` is 3,106 LOC in one file
 
@@ -1806,8 +1811,16 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
 - **Workstream:** W11
 - **Evidence:** raw curl 2026-05-27 EV-0035.
 - **Cross-ref:** F-0061, F-0068 — same family.
-- **Disposition:** `open` Wave 2. Unify param-naming on a
-  single convention; document migrations.
+- **Disposition:** `closed` (2026-05-28). `/v1/price/batch`
+  now accepts `pairs=` as an alias for `asset_ids=`;
+  both-supplied returns 400 `invalid-parameter`. Two new tests
+  pin the contract. Full param-name convergence (one canonical
+  name across every endpoint) is still a bigger refactor —
+  this PR closes the friction half ("URL copy-paste from one
+  endpoint to another should work") which is what the original
+  finding emphasised. Cross-endpoint canonical-name unification
+  remains a potential Wave-3 cleanup if customer telemetry shows
+  it's worth a breaking change.
 
 #### F-0074 — `/v1/twap` + `/v1/ohlc` lack LKG fallback chain (404 instead of stale-marked LKG)
 
@@ -2100,8 +2113,13 @@ concrete TSV rows with terminal status per row. Confirmed gaps:
   the F-0061 / F-0068 / F-0073 cluster.
 - **Workstream:** W11
 - **Evidence:** raw curl EV-0043.
-- **Disposition:** `open` Wave 2 — bundle with param-naming
-  cleanup.
+- **Disposition:** `closed` (2026-05-28). Bundled with F-0061
+  closure. `parseChartAssetQuote` now delegates to
+  `resolveAssetOrBaseParam` so `/v1/chart` accepts both
+  `asset=` (canonical) and `base=` (alias); both-supplied
+  returns 400. Two new tests
+  (`TestChart_BaseParamAcceptedAsAssetAlias`,
+  `TestChart_BothAssetAndBase400`) pin the contract.
 
 #### F-0092 — POSITIVE: `/v1/sac-wrappers` exposes 40+ SAC contract ID ↔ SEP-23 asset mappings
 

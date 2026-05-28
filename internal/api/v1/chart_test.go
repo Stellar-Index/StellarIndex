@@ -539,3 +539,23 @@ func TestChart_MarketCap_QuoteMustBeUSD_400(t *testing.T) {
 		t.Errorf("status=%d want 400", resp.StatusCode)
 	}
 }
+
+// F-0091 closure (2026-05-28): /v1/chart accepts `base=` as alias
+// for `asset=` so URLs from /v1/twap don't 400 on first try.
+func TestChart_BaseParamAcceptedAsAssetAlias(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/chart?base=native&timeframe=24h")
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("base= alias rejected (400); want it accepted as asset= alias")
+	}
+}
+
+func TestChart_BothAssetAndBase400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&base=native")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d want 400 (both asset+base)", resp.StatusCode)
+	}
+}

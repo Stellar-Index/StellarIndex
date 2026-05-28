@@ -436,12 +436,8 @@ func parseChartParams(w http.ResponseWriter, r *http.Request) (string, chartTime
 // fiat:USD per defaultPriceQuote) from the chart request. Returns
 // ok=false after writing a problem response on any parse error.
 func parseChartAssetQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, canonical.Asset, bool) {
-	rawAsset := r.URL.Query().Get("asset")
-	if rawAsset == "" {
-		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-asset",
-			"Missing asset parameter", http.StatusBadRequest,
-			"asset query parameter is required")
+	rawAsset, ok := resolveAssetOrBaseParam(w, r)
+	if !ok {
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
 	asset, err := canonical.ParseAsset(rawAsset)

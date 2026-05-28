@@ -227,13 +227,18 @@ type TriangulatedPriceLooker interface {
 
 // ─── Handler ──────────────────────────────────────────────────────
 
-// parsePriceAssetParam resolves the `asset=` query param on
-// /v1/price, accepting `base=` as an alias for clients copying URLs
-// from /v1/twap (F-0061). Returns (asset, true) on success; writes
-// a 400 Problem and returns ok=false on missing/conflicting params.
-// Extracted from handlePrice to keep that handler under the
-// gocognit ceiling.
-func parsePriceAssetParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+// resolveAssetOrBaseParam reads `asset` and `base` from the query
+// string with `asset=` canonical (F-0061/F-0068/F-0091 closure). On
+// the `asset=`-canonical endpoints (/v1/price, /v1/observations,
+// /v1/chart) this accepts `base=` as an alias so clients copying
+// URLs from /v1/twap (which uses `base=`) don't hit a 400 on their
+// first try. Passing both is a 400 to avoid silent precedence
+// picks. The dual is `parseBaseQuote` in history.go, which is
+// `base=`-canonical and accepts `asset=` as the alias.
+//
+// Returns (raw, true) on success; writes a 400 Problem and returns
+// ok=false on missing/conflicting params.
+func resolveAssetOrBaseParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	rawAsset := r.URL.Query().Get("asset")
 	rawBase := r.URL.Query().Get("base")
 	if rawAsset != "" && rawBase != "" {
@@ -254,6 +259,12 @@ func parsePriceAssetParam(w http.ResponseWriter, r *http.Request) (string, bool)
 		return "", false
 	}
 	return rawAsset, true
+}
+
+// parsePriceAssetParam preserves the historic name for /v1/price's
+// handler while delegating to the shared `asset=`-canonical resolver.
+func parsePriceAssetParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return resolveAssetOrBaseParam(w, r)
 }
 
 // handlePrice serves GET /v1/price?asset=<id>&quote=<id>.
@@ -730,12 +741,29 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) boo
 // returned price is stale, the envelope flag is set. This matches
 // the single-asset /v1/price contract.
 func (s *Server) handlePriceBatch(w http.ResponseWriter, r *http.Request) {
+	// F-0073 closure: `pairs=` is accepted as an alias for
+	// `asset_ids=` so clients arriving via cross-endpoint
+	// extrapolation (CG-style sites that call a quotes endpoint
+	// "pairs") don't hit a confusing 400 on their first try.
+	// Passing both is a 400 — silent precedence is the same
+	// anti-pattern F-0061 closes elsewhere.
 	rawIDs := r.URL.Query().Get("asset_ids")
+	rawPairs := r.URL.Query().Get("pairs")
+	if rawIDs != "" && rawPairs != "" {
+		writeProblem(w, r,
+			"https://api.ratesengine.net/errors/invalid-parameter",
+			"`asset_ids` and `pairs` are mutually exclusive", http.StatusBadRequest,
+			"both query parameters refer to the same value — pick one (this endpoint's canonical form is `asset_ids=`; `pairs=` is accepted as an alias for cross-endpoint compatibility)")
+		return
+	}
+	if rawIDs == "" {
+		rawIDs = rawPairs
+	}
 	if rawIDs == "" {
 		writeProblem(w, r,
 			"https://api.ratesengine.net/errors/missing-asset-ids",
 			"Missing asset_ids parameter", http.StatusBadRequest,
-			"asset_ids query parameter is required (comma-separated)")
+			"asset_ids query parameter is required (comma-separated; `pairs=` is accepted as an alias)")
 		return
 	}
 	s.runPriceBatch(w, r, strings.Split(rawIDs, ","), r.URL.Query().Get("quote"), priceBatchMaxAssets)
