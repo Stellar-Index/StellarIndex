@@ -3438,8 +3438,21 @@ claim was wrong; record the corrected understanding.
   parsing in `expect_status`; (b) bumps the behaviour-pin to
   20 s. Verified via direct r1 smoke run — `ok asset not found`
   against `/v1/assets/AAAA-GA5Z...` HTTP 404.
-- **Disposition:** `open` Wave-2. Single-quote the URL more
-  defensively in the smoke script.
+- **Disposition (Wave-2 hardening follow-up):** `closed` (2026-05-28).
+  Verified by inspection at `scripts/dev/r1-smoke.sh::expect_status`:
+  the URL is built via `url="$(printf '%s%s' "$API_BASE_URL"
+  "$path")"` and passed to curl as `"$url"` — both `$API_BASE_URL`
+  and `$path` are in double-quote context, so the `-`, `:`, and
+  asset-id hyphen characters the original report flagged are
+  treated as literals (no word-splitting, no globbing, no shell
+  interpretation). `$path` only originates from string literals
+  at every `expect_status` call site, so there is no
+  untrusted-input vector either. The defensive quoting the
+  follow-up asked for is already in place; the actual root cause
+  (a 4-5 s cold-cache resolver crossing the 10 s budget) was
+  resolved structurally by the HasAsset PK fast-path in
+  `internal/storage/timescale/assets.go::hasClassicAsset`
+  (commit `3b36fbee`).
 
 #### F-0158 — galexie-archive trailing-partition writes stuck since 2026-05-25 00:20
 
