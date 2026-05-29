@@ -70,5 +70,5 @@ Soroban-era sources have dedicated `*-backfill` subcommands because they can str
 ## Related
 
 - [ingest-gap-detected.md](ingest-gap-detected.md) — the parent alert (matches any `source=` label)
-- [cascade-window-drain.md](cascade-window-drain.md) — Soroban equivalent for the seven per-source classifier tables
+- [projector-replay.md](projector-replay.md) — Soroban equivalent for the per-source projection tables (ADR-0032 supersedes the former `cascade-window-drain` subcommand)
 - ADR-0030 — per-source coverage invariant; SDEX target is the canonical example of a non-Soroban source registered in the same scheme

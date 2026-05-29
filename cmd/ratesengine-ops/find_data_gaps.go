@@ -220,18 +220,25 @@ func writeFindDataGapsText(r findDataGapsReport) {
 	_, _ = fmt.Fprintln(os.Stdout, "    Targeted backfill plan:")
 	for i, g := range r.Gaps {
 		// soroban-events uses the binary `backfill` subcommand (re-walk
-		// MinIO). Per-source classifier tables use their dedicated
-		// `<source>-backfill` subcommand (stream from soroban_events).
-		// The orchestrator `drain-cascade-window` covers all of the
-		// per-source subcommands in one shot.
-		if r.Source == "soroban-events" {
+		// MinIO into the soroban_events raw landing zone). Per-source
+		// classifier tables (trades, blend_*, phoenix_*, …) are
+		// projected from soroban_events by the projector
+		// (ADR-0032); operators rewind the per-source projector
+		// cursor with `projector-replay`. Non-projected sources
+		// (sdex, external) still use their own backfill paths.
+		switch r.Source {
+		case "soroban-events":
 			_, _ = fmt.Fprintf(os.Stdout,
 				"      %2d  ratesengine-ops backfill --config /etc/ratesengine.toml --from %d --to %d --source soroban-events\n",
 				i+1, g.Start, g.End)
-		} else {
+		case "sdex":
 			_, _ = fmt.Fprintf(os.Stdout,
-				"      %2d  ratesengine-ops drain-cascade-window --config /etc/ratesengine.toml --from %d --to %d --sources %s\n",
-				i+1, g.Start, g.End, r.Source)
+				"      %2d  ratesengine-ops backfill --config /etc/ratesengine.toml --from %d --to %d --source sdex\n",
+				i+1, g.Start, g.End)
+		default:
+			_, _ = fmt.Fprintf(os.Stdout,
+				"      %2d  ratesengine-ops projector-replay --config /etc/ratesengine.toml --source %s --from %d\n",
+				i+1, r.Source, g.Start)
 		}
 	}
 }
