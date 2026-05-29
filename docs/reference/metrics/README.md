@@ -69,6 +69,36 @@ Size of the largest contiguous gap per source at the detector's
 most recent cycle. Drives the `ratesengine_ingest_gap_detected`
 P1 alert (fires when > 1000 sustained 15 min).
 
+### `ratesengine_ingest_source_distinct_ledgers`
+
+Gauge, labels `source`, `table`.
+
+Count-distinct of ledgers in the per-source hypertable at the
+most recent gap-detector cycle. The **numerator** of the ADR-0031
+data-derived density signal:
+
+```
+density(source) = ratesengine_ingest_source_distinct_ledgers / (tip - genesis + 1)
+```
+
+Where `tip` comes from
+`ratesengine_ingest_gap_detector_tip_ledger` and `genesis` is the
+per-source first-deploy ledger (hard-coded in the diagnostic
+handler's source-genesis map). Dense sources (SDEX, Soroswap)
+approach the [genesis, tip] span; sparse-by-design sources (Blend
+auctions, CCTP) are naturally lower because the contract doesn't
+emit per ledger.
+
+### `ratesengine_ingest_gap_detector_tip_ledger`
+
+Gauge (no labels).
+
+The live ledgerstream cursor's `last_ledger` at the most recent
+gap-detector cycle's start — the upper bound used by every scan.
+ADR-0031 consumers subtract per-source genesis from this to
+compute the density denominator. One gauge for the whole detector
+because every target uses the same tip in the same cycle.
+
 ### `ratesengine_ingest_gap_detector_runs_total`
 
 Counter, labels `source`, `outcome`.

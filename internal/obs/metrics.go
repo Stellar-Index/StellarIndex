@@ -32,6 +32,8 @@ func init() {
 		IngestGapLedgers,
 		IngestGapCount,
 		IngestGapMaxSize,
+		IngestSourceDistinctLedgers,
+		IngestGapDetectorTip,
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
 		APICacheOpsTotal,
@@ -247,6 +249,41 @@ var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 		Help: "Periodic data-gap detector runs, by (source, table, outcome). Rate goes to zero if the worker has wedged.",
 	},
 	[]string{"source", "table", "outcome"},
+)
+
+// IngestSourceDistinctLedgers is the **data-derived covered-
+// ledgers** signal: COUNT(DISTINCT ledger) per (source, table)
+// over [genesis, tip]. Together with `IngestGapMaxSize` powers
+// the ADR-0031 data-derived coverage projection.
+//
+// Density = IngestSourceDistinctLedgers / (tip - genesis + 1).
+// Gap-free = 1 - IngestGapMaxSize / (tip - genesis + 1).
+//
+// Emitted by the gap detector at the same cadence as the gap
+// gauges (one COUNT query alongside the LAG-over-DISTINCT scan
+// per target per cycle).
+var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "ratesengine_ingest_source_distinct_ledgers",
+		Help: "Distinct-ledger count per (source, table) at the most recent gap-detector cycle. Numerator of the ADR-0031 data-derived density signal.",
+	},
+	[]string{"source", "table"},
+)
+
+// IngestGapDetectorTip is the live ledgerstream cursor's
+// `last_ledger` value at the most recent gap-detector cycle's
+// start — the upper bound used by every per-target scan. The
+// ADR-0031 coverage consumer subtracts the per-source genesis
+// from this to compute the density denominator.
+//
+// Single-vector gauge (no `source`/`table` labels) because every
+// target uses the same tip in the same cycle; emitting per-target
+// would be redundant + the consumer needs only one read.
+var IngestGapDetectorTip = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "ratesengine_ingest_gap_detector_tip_ledger",
+		Help: "Live ledgerstream tip ledger at the most recent gap-detector cycle. Upper bound of the [genesis, tip] window used by ADR-0031's density computation.",
+	},
 )
 
 // IngestGapDetectorDurationSeconds measures detector-cycle latency.
