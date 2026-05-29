@@ -127,7 +127,16 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// SDEX had zero data-derived coverage signal — a symmetric F-
 	// 0020-class incident in the classic-DEX path would have gone
 	// undetected. (See ADR-0030.)
-	{Source: "sdex", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sdex'"},
+	//
+	// 1M-ledger threshold: live r1 (2026-05-29) measurement showed
+	// 35.86M distinct ledgers across the 61.9M-ledger span from
+	// SDEX inception → tip (~58% density). Pre-2024 SDEX was very
+	// thinly traded — the largest natural-sparsity contiguous gap
+	// at the time of measurement was 574,674 ledgers, so the 1K
+	// default would page constantly on historical data. A 1M-ledger
+	// gap (~1.5 weeks of network time) on SDEX still pages because
+	// recent SDEX is densely active (>1M trades / day on 2026-05-27).
+	{Source: "sdex", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sdex'", MinGapSizeOverride: 1000000},
 	// SDEX offer-state events (OfferCreated/OfferUpdated/OfferRemoved)
 	// land in their own hypertable — complement to the trade flow.
 	// An offer-events writer halt would not show up in the trades
