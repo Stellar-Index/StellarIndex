@@ -98,16 +98,23 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// "writer wedged for >1.5 days" pages.
 	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", MinGapSizeOverride: 100000},
 	{Source: "rozo", Table: "rozo_events", LedgerColumn: "ledger", MinGapSizeOverride: 100000},
-	{Source: "comet-liquidity", Table: "comet_liquidity", LedgerColumn: "ledger"},
+	// comet_liquidity: pool-events are sparse; 2026-05-29 find-data-
+	// gaps showed 17 natural gaps across cascade-era data with max
+	// 7826 ledgers (~11h of natural pool silence). 50K threshold.
+	{Source: "comet-liquidity", Table: "comet_liquidity", LedgerColumn: "ledger", MinGapSizeOverride: 50000},
 	{Source: "soroswap-skim", Table: "soroswap_skim_events", LedgerColumn: "ledger"},
 	{Source: "phoenix-liquidity", Table: "phoenix_liquidity", LedgerColumn: "ledger"},
 	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger"},
-	// blend_auctions: live r1 measurement showed 8049 distinct
+	// blend_auctions: live r1 (2026-05-28) showed 8049 distinct
 	// ledgers across a 5.9M-ledger span = one event per ~735
-	// ledgers. 50K-ledger threshold = ~70 events worth of expected
-	// gap; still pages when the auction stream wedges.
-	{Source: "blend-auctions", Table: "blend_auctions", LedgerColumn: "ledger", MinGapSizeOverride: 50000},
-	{Source: "blend-positions", Table: "blend_positions", LedgerColumn: "ledger"},
+	// ledgers. 2026-05-29 measurement bumped the 50K override to
+	// 100K because the observed max gap (53515) was just over the
+	// previous threshold — pages on natural sparsity.
+	{Source: "blend-auctions", Table: "blend_auctions", LedgerColumn: "ledger", MinGapSizeOverride: 100000},
+	// blend_positions: live ingest only started 2026-05-28 (rc.83
+	// migration); 7635-ledger max gap = pre-history boundary +
+	// natural sparsity. 50K threshold.
+	{Source: "blend-positions", Table: "blend_positions", LedgerColumn: "ledger", MinGapSizeOverride: 50000},
 	// blend_emissions: emissions update on operator action (rare).
 	// blend_admin: admin actions are rare by design.
 	{Source: "blend-emissions", Table: "blend_emissions", LedgerColumn: "ledger", MinGapSizeOverride: 100000},
