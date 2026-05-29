@@ -15,6 +15,12 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.99] — 2026-05-29
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: api + ops binary restart. Indexer + aggregator unchanged (projector is opt-in and defaults to off). After api restart, run `ratesengine-ops sep1-refresh -older-than 0` once to repopulate every issuer's `sep1_payload` JSONB column with the new Currencies shape; until then the per-asset overlay fields are empty.
+
 ### Changed
 
 - **`/v1/assets/{id}` SEP-1 overlay reads from DB instead of live
