@@ -36,6 +36,10 @@ func init() {
 		IngestGapDetectorTip,
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
+		ProjectorLagLedgers,
+		ProjectorRunsTotal,
+		ProjectorEventsDecoded,
+		ProjectorCycleDurationSeconds,
 		APICacheOpsTotal,
 
 		SourceEventsTotal,
@@ -299,6 +303,58 @@ var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
 	},
 	[]string{"source", "table", "outcome"},
+)
+
+// ProjectorLagLedgers is how far behind tip each projector source
+// currently is, in ledgers. The projector reads soroban_events
+// (raw) and writes per-source classifier tables; this gauge =
+// tip - last_projected_ledger. ADR-0032.
+//
+// Steady-state value is 0-few-ledgers when the projector is
+// keeping up. A sustained > 1000 value means the projector is
+// falling behind (decoder error storm, downstream sink saturated,
+// or projector stopped). Paging alert
+// `ratesengine_projector_lag_high` fires on sustained drift.
+var ProjectorLagLedgers = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "ratesengine_projector_lag_ledgers",
+		Help: "Per-source projector lag in ledgers (tip - last_projected). 0 = caught up. Sustained > 1000 = falling behind.",
+	},
+	[]string{"source"},
+)
+
+// ProjectorRunsTotal counts projector cycle outcomes per source.
+// `outcome` ∈ {ok, error, idle}; rate is the alive-check (zero
+// rate sustained 5+ minutes means the source's loop wedged).
+var ProjectorRunsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_projector_runs_total",
+		Help: "Per-source projector cycle outcomes (ok, error, idle). Rate goes to zero if the source's loop has wedged.",
+	},
+	[]string{"source", "outcome"},
+)
+
+// ProjectorEventsDecoded counts events the projector emitted
+// through the sink (or that failed decode). `outcome` ∈ {ok,
+// decode_error}. Operators chart `rate(ok[5m])` against the
+// equivalent dispatcher counter during Phase 3 parallel mode to
+// verify the projector keeps pace with live ingest.
+var ProjectorEventsDecoded = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_projector_events_decoded_total",
+		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
+	},
+	[]string{"source", "outcome"},
+)
+
+// ProjectorCycleDurationSeconds measures wall-clock per cycle.
+var ProjectorCycleDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "ratesengine_projector_cycle_duration_seconds",
+		Help:    "Wall-clock duration of one projector cycle per source.",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	},
+	[]string{"source"},
 )
 
 // HTTPRequestSuccessDuration is the success-only twin of

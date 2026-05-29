@@ -66,7 +66,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 			if !ok {
 				return
 			}
-			handleOneEvent(ctx, logger, store, ev)
+			HandleEvent(ctx, logger, store, ev)
 		}
 	}
 }
@@ -90,7 +90,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 			if !ok {
 				return
 			}
-			handleOneEvent(drainCtx, logger, store, ev)
+			HandleEvent(drainCtx, logger, store, ev)
 		case <-drainCtx.Done():
 			logger.Warn("PersistEvents drain deadline exceeded — buffered events dropped",
 				"buffered", len(in))
@@ -106,11 +106,16 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 // a concurrent VACUUM) before giving up.
 const drainTimeout = 30 * time.Second
 
-// handleOneEvent dispatches one event to its hypertable insert.
+// HandleEvent dispatches one event to its hypertable insert.
 // Panic-recovers so a single malformed Amount can't take the whole
 // sink down — the source-level decoder error metric has already
 // counted the upstream event by the time we get here.
-func handleOneEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) { //nolint:gocyclo,funlen // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
+//
+// Exported for use by the ADR-0032 projector (`internal/projector`),
+// which invokes this function per decoded event as its sink during
+// Phase 3 parallel mode. The drain-from-channel pattern in
+// [PersistEvents] still uses this as its per-event handler.
+func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) { //nolint:gocyclo,funlen // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("panic in event sink — recovered",

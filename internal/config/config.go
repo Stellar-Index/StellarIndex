@@ -464,6 +464,25 @@ type IngestionConfig struct {
 	// the running process args. 0 = no seam configured; indexer
 	// reads only galexie-live (the pre-2026-04-26 default).
 	LiveSeamLedger uint32 `toml:"live_seam_ledger" doc:"First ledger in the live bucket. Below this, indexer reads from galexie-archive. 0 disables the archive bucket entirely." default:"0"`
+
+	// Projector is the ADR-0032 projection loop. When enabled it
+	// runs in parallel with the dispatcher's per-source sinks
+	// (Phase 3 mode); Phase 4 will flip it to be the sole writer.
+	// Off by default until rc.95 deploys + soak completes.
+	Projector ProjectorConfig `toml:"projector" doc:"ADR-0032 projector — tails soroban_events and writes per-source rows. Phase 3 runs in parallel with the dispatcher's existing per-source sinks; Phase 4 will flip it primary."`
+}
+
+// ProjectorConfig governs the ADR-0032 projection loop.
+//
+// The projector tails the `soroban_events` raw-event landing zone
+// (ADR-0029) and writes per-source classifier rows by invoking each
+// protocol's existing Go decoder. During Phase 3 it runs in parallel
+// with the dispatcher's existing per-source sinks; both write to the
+// same per-source PKs and `ON CONFLICT DO NOTHING` absorbs the
+// duplicates so projector lag (vs the live tip) can be measured
+// before flipping the writer primary.
+type ProjectorConfig struct {
+	Enabled bool `toml:"enabled" doc:"Master switch. When false the projector goroutines are not started." default:"false"`
 }
 
 // AnomalyConfig configures both phases of ADR-0019 anomaly

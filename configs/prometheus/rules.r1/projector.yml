@@ -1,0 +1,45 @@
+---
+# R1 single-host overlay of projector alerts (ADR-0032). Same rules
+# as deploy/monitoring/rules/projector.yml — duplicated here for
+# the R1 single-host prometheus config per the wave-96 monitoring-
+# rules CI dual-validation pattern.
+
+groups:
+  - name: ratesengine.projector
+    interval: 30s
+    rules:
+
+      - alert: ratesengine_projector_lag_high
+        expr: |
+          max by (source) (ratesengine_projector_lag_ledgers) > 256
+        for: 10m
+        labels:
+          severity: ticket
+          component: projector
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+        annotations:
+          summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
+          description: |
+            The ADR-0032 projector's per-source cursor for {{ $labels.source }}
+            is {{ $value }} ledgers behind the ledgerstream tip. Sustained lag
+            means the projector cannot keep up with raw soroban_events writes,
+            so per-source projections (trades, blend_*, phoenix_*, ...) will
+            increasingly diverge from the raw store.
+
+            Runbook: docs/operations/runbooks/projector-lag.md
+
+      - alert: ratesengine_projector_error_rate_high
+        expr: |
+          sum by (source) (rate(ratesengine_projector_runs_total{outcome="error"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: ticket
+          component: projector
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+        annotations:
+          summary: "Projector source {{ $labels.source }} cycle errors sustained"
+          description: |
+            The projector for {{ $labels.source }} is failing > 5% of cycles
+            for 15+ minutes. Cursor is not advancing — backlog is growing.
+
+            Runbook: docs/operations/runbooks/projector-lag.md

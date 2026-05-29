@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ADR-0032 Phase 3 — projector scaffold in parallel mode.** New
+  `internal/projector` component tails `soroban_events` (the
+  ADR-0029 raw-event landing zone) and invokes each protocol's
+  existing Go decoder, then routes decoded `consumer.Event`s
+  through `pipeline.HandleEvent` (newly exported) to the same
+  per-source persisters the dispatcher uses. Phase 3 runs in
+  parallel with the dispatcher's existing per-source sinks — both
+  writers race for the same per-source PKs and ON CONFLICT DO
+  NOTHING absorbs duplicates, so projector lag versus the live
+  tip can be measured before Phase 4 flips the writer primary.
+  New `[ingestion.projector] enabled` config knob defaults to off;
+  `cmd/ratesengine-indexer/main.go` wires + drains the goroutine
+  on shutdown.
+- **Projector observability.** Four new metrics
+  (`ratesengine_projector_lag_ledgers`, `_runs_total`,
+  `_events_decoded_total`, `_cycle_duration_seconds`) plus a
+  paired alert (`ratesengine_projector_lag_high` +
+  `ratesengine_projector_error_rate_high`, both P3) and the
+  `projector-lag` runbook.
+
 ## [v0.5.0-rc.89] — 2026-05-29
 
 Tested against Stellar Protocol 23 (Whisk).
