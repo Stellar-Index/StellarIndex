@@ -2,28 +2,33 @@ package v1_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"testing"
 
 	v1 "github.com/RatesEngine/rates-engine/internal/api/v1"
-	"github.com/RatesEngine/rates-engine/internal/metadata"
+	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
 
-// stubMetaResolver implements v1.MetadataResolver in-memory.
-type stubMetaResolver struct {
-	byDomain map[string]*metadata.SEP1
+// stubSep1Cache implements v1.Sep1CachedReader in-memory. Mirrors
+// `Store.GetIssuerSep1Cached` semantics: returns the cached payload
+// for known issuers, (nil, nil) when the row exists but has no
+// payload yet, (nil, sql.ErrNoRows) for unknown issuers, or a
+// configured error to exercise the error branch.
+type stubSep1Cache struct {
+	byIssuer map[string]*timescale.IssuerSep1Cached
 	err      error
 }
 
-func (r *stubMetaResolver) Resolve(_ context.Context, domain string) (*metadata.SEP1, error) {
-	if r.err != nil {
-		return nil, r.err
+func (s *stubSep1Cache) GetIssuerSep1Cached(_ context.Context, gStrkey string) (*timescale.IssuerSep1Cached, error) {
+	if s.err != nil {
+		return nil, s.err
 	}
-	if sep, ok := r.byDomain[domain]; ok {
-		return sep, nil
+	if payload, ok := s.byIssuer[gStrkey]; ok {
+		return payload, nil
 	}
-	return nil, errors.New("no such domain")
+	return nil, sql.ErrNoRows
 }
 
 func TestAssetGet_Sep1OverlayVerified(t *testing.T) {
@@ -41,11 +46,11 @@ func TestAssetGet_Sep1OverlayVerified(t *testing.T) {
 			},
 		},
 	}
-	meta := &stubMetaResolver{
-		byDomain: map[string]*metadata.SEP1{
-			"circle.com": {
+	sep1 := &stubSep1Cache{
+		byIssuer: map[string]*timescale.IssuerSep1Cached{
+			testUSDCIssuer: {
 				OrgName: "Circle Internet Financial Limited",
-				Currencies: []metadata.Currency{{
+				Currencies: []timescale.IssuerSep1Currency{{
 					Code:            "USDC",
 					Issuer:          testUSDCIssuer,
 					Name:            "USD Coin",
@@ -60,7 +65,7 @@ func TestAssetGet_Sep1OverlayVerified(t *testing.T) {
 		},
 	}
 
-	srv := v1.New(v1.Options{Assets: reader, Meta: meta})
+	srv := v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
@@ -85,7 +90,6 @@ func TestAssetGet_Sep1OverlayVerified(t *testing.T) {
 		t.Errorf("anchor_asset not overlaid: %+v", env.Data.AnchorAsset)
 	}
 	if env.Data.Decimals != 2 {
-		// display_decimals preferred over canonical default.
 		t.Errorf("decimals = %d, want 2 (display_decimals)", env.Data.Decimals)
 	}
 }
@@ -115,15 +119,15 @@ func TestAssetGet_Sep1OverlayRejectsHostileImageURL(t *testing.T) {
 		"//protocol-relative.example.com/x.png",
 		"   not a url   ",
 	} {
-		meta := &stubMetaResolver{
-			byDomain: map[string]*metadata.SEP1{
-				domain: {Currencies: []metadata.Currency{{
+		sep1 := &stubSep1Cache{
+			byIssuer: map[string]*timescale.IssuerSep1Cached{
+				testUSDCIssuer: {Currencies: []timescale.IssuerSep1Currency{{
 					Code: "USDC", Issuer: testUSDCIssuer,
 					Name: "X", Image: badImage,
 				}}},
 			},
 		}
-		srv := v1.New(v1.Options{Assets: reader, Meta: meta})
+		srv := v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})
 		ts := httpTestServer(t, srv)
 
 		resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
@@ -135,8 +139,6 @@ func TestAssetGet_Sep1OverlayRejectsHostileImageURL(t *testing.T) {
 			t.Errorf("image = %q; hostile URL %q should have been dropped",
 				*env.Data.Image, badImage)
 		}
-		// Other overlay fields should still land — the guard is
-		// image-specific, not a full overlay bail-out.
 		if env.Data.Name == nil {
 			t.Errorf("name dropped alongside hostile image %q — guard should be image-only", badImage)
 		}
@@ -155,18 +157,18 @@ func TestAssetGet_Sep1OverlayNoMatch(t *testing.T) {
 			},
 		},
 	}
-	meta := &stubMetaResolver{
-		byDomain: map[string]*metadata.SEP1{
-			"example.com": {
+	sep1 := &stubSep1Cache{
+		byIssuer: map[string]*timescale.IssuerSep1Cached{
+			testUSDCIssuer: {
 				OrgName: "Someone Else",
-				Currencies: []metadata.Currency{{
+				Currencies: []timescale.IssuerSep1Currency{{
 					Code: "USDC", Issuer: "GSOMEONEELSEXXXXXXX", Name: "Fake",
 				}},
 			},
 		},
 	}
 
-	srv := v1.New(v1.Options{Assets: reader, Meta: meta})
+	srv := v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
@@ -182,18 +184,14 @@ func TestAssetGet_Sep1OverlayNoMatch(t *testing.T) {
 		t.Errorf("should NOT overlay currency fields on issuer mismatch")
 	}
 	if env.Data.OrgName == nil || *env.Data.OrgName != "Someone Else" {
-		// OrgName still surfaces — the domain resolved, we just can't
-		// vouch for the specific issuer.
 		t.Errorf("org_name should be surfaced even on no_match: %+v", env.Data.OrgName)
 	}
 }
 
 func TestAssetGet_Sep1OverlayRefusesNonClassicMatch(t *testing.T) {
-	// Regression: Soroban / native / fiat assets must NOT match any
-	// SEP-1 currency entry by accident. Previously findMatchingCurrency
-	// fell through the (empty code, empty issuer) checks and returned
-	// the FIRST entry — silently attaching random USDC metadata to
-	// any Soroban contract with the same home-domain.
+	// Soroban / native / fiat assets must NOT match any SEP-1 currency
+	// entry — the cached overlay short-circuits on non-classic types
+	// before even hitting the lookup.
 	domain := "circle.com"
 	sorobanContract := "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 	reader := &stubAssetReader{
@@ -207,18 +205,18 @@ func TestAssetGet_Sep1OverlayRefusesNonClassicMatch(t *testing.T) {
 			},
 		},
 	}
-	meta := &stubMetaResolver{
-		byDomain: map[string]*metadata.SEP1{
-			"circle.com": {
+	sep1 := &stubSep1Cache{
+		byIssuer: map[string]*timescale.IssuerSep1Cached{
+			testUSDCIssuer: {
 				OrgName: "Circle",
-				Currencies: []metadata.Currency{{
+				Currencies: []timescale.IssuerSep1Currency{{
 					Code: "USDC", Issuer: testUSDCIssuer, Name: "USD Coin",
 				}},
 			},
 		},
 	}
 
-	srv := v1.New(v1.Options{Assets: reader, Meta: meta})
+	srv := v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets/"+sorobanContract)
@@ -227,15 +225,17 @@ func TestAssetGet_Sep1OverlayRefusesNonClassicMatch(t *testing.T) {
 	}
 	mustDecode(t, resp, &env)
 
-	if env.Data.Sep1Status != "no_match" {
-		t.Errorf("sep1_status = %q, want no_match (Soroban can't match classic entries)", env.Data.Sep1Status)
+	if env.Data.Sep1Status != "not_applicable" {
+		t.Errorf("sep1_status = %q, want not_applicable (Soroban has no issuer to look up)", env.Data.Sep1Status)
 	}
 	if env.Data.Name != nil {
 		t.Errorf("Soroban asset should NOT inherit USDC's Name: %v", env.Data.Name)
 	}
 }
 
-func TestAssetGet_Sep1OverlayUnreachable(t *testing.T) {
+func TestAssetGet_Sep1NotFetchedWhenIssuerNotInCache(t *testing.T) {
+	// Issuer hasn't been visited by the sep1-refresh cron yet — handler
+	// surfaces "not_fetched" without crashing or stalling.
 	issuer := testUSDCIssuer
 	domain := "offline.example"
 	reader := &stubAssetReader{
@@ -246,28 +246,27 @@ func TestAssetGet_Sep1OverlayUnreachable(t *testing.T) {
 			},
 		},
 	}
-	meta := &stubMetaResolver{err: errors.New("dns: nxdomain")}
+	sep1 := &stubSep1Cache{err: errors.New("dns: nxdomain")}
 
-	srv := v1.New(v1.Options{Assets: reader, Meta: meta})
+	srv := v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (unreachable is not fatal)", resp.StatusCode)
+		t.Fatalf("status = %d, want 200 (cache miss is not fatal)", resp.StatusCode)
 	}
 	var env struct {
 		Data v1.AssetDetail `json:"data"`
 	}
 	mustDecode(t, resp, &env)
-	if env.Data.Sep1Status != "unreachable" {
-		t.Errorf("sep1_status = %q, want unreachable", env.Data.Sep1Status)
+	if env.Data.Sep1Status != "not_fetched" {
+		t.Errorf("sep1_status = %q, want not_fetched", env.Data.Sep1Status)
 	}
 }
 
-func TestAssetGet_Sep1NotFetchedWhenMetaUnwired(t *testing.T) {
-	// Reader provides HomeDomain but server has no Meta resolver —
-	// sep1_status should say so rather than lying with "verified"
-	// or "not_applicable".
+func TestAssetGet_Sep1NotFetchedWhenCacheUnwired(t *testing.T) {
+	// Reader provides HomeDomain but server has no Sep1Cache —
+	// handler reports "not_fetched", same as the live-fetch era.
 	issuer := testUSDCIssuer
 	domain := "circle.com"
 	reader := &stubAssetReader{
@@ -275,12 +274,11 @@ func TestAssetGet_Sep1NotFetchedWhenMetaUnwired(t *testing.T) {
 			"USDC-" + testUSDCIssuer: {
 				AssetID: "USDC-" + testUSDCIssuer, Type: "classic", Code: "USDC",
 				Issuer: &issuer, HomeDomain: &domain, Decimals: 7,
-				// Sep1Status left blank — handler should populate.
 			},
 		},
 	}
 
-	srv := v1.New(v1.Options{Assets: reader}) // No Meta.
+	srv := v1.New(v1.Options{Assets: reader}) // No Sep1Cache.
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)

@@ -29,6 +29,8 @@ import (
 //
 // Once a payload is written, /v1/issuers list responses surface
 // `org_name` from `sep1_payload->>'OrgName'`.
+//
+//nolint:gocognit // linear refresh loop; per-issuer fetch + marshal + write reads better inline.
 func sep1RefreshCmd(args []string) error {
 	fs := flag.NewFlagSet("sep1-refresh", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -81,16 +83,36 @@ func sep1RefreshCmd(args []string) error {
 			failed++
 			continue
 		}
-		// Compact payload — store the fields we surface today plus
-		// the documentation map so future code can read more without
-		// re-fetching. Currencies + Raw are excluded; per-asset
-		// SEP-1 surfaces via /v1/assets's own overlay path.
+		// Compact payload — OrgName/Documentation for /v1/issuers,
+		// Currencies for the per-asset SEP-1 overlay on /v1/assets/{id}
+		// (the latter used to live-fetch per request; this cron is now
+		// the source of truth so the handler is a DB lookup). Raw +
+		// NetworkPassphrase excluded — nothing reads them.
+		currencies := make([]map[string]any, 0, len(sep.Currencies))
+		for _, c := range sep.Currencies {
+			currencies = append(currencies, map[string]any{
+				"Code":            c.Code,
+				"Issuer":          c.Issuer,
+				"Decimals":        c.Decimals,
+				"DisplayDecimals": c.DisplayDecimals,
+				"Name":            c.Name,
+				"Description":     c.Description,
+				"Conditions":      c.Conditions,
+				"Image":           c.Image,
+				"FixedNumber":     c.FixedNumber,
+				"MaxNumber":       c.MaxNumber,
+				"IsUnlimited":     c.IsUnlimited,
+				"AnchorAsset":     c.AnchorAsset,
+				"AnchorAssetType": c.AnchorAssetType,
+				"Status":          c.Status,
+			})
+		}
 		payload, jerr := json.Marshal(map[string]any{
-			"OrgName":           sep.OrgName,
-			"Version":           sep.Version,
-			"NetworkPassphrase": sep.NetworkPassphrase,
-			"Documentation":     sep.Documentation,
-			"FetchedAt":         sep.FetchedAt.UTC().Format(time.RFC3339),
+			"OrgName":       sep.OrgName,
+			"Version":       sep.Version,
+			"Documentation": sep.Documentation,
+			"Currencies":    currencies,
+			"FetchedAt":     sep.FetchedAt.UTC().Format(time.RFC3339),
 		})
 		if jerr != nil {
 			fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)

@@ -256,13 +256,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		checks = append(checks, redisChecker{rdb: rdb})
 	}
 
-	// SEP-1 resolver + cache. AllowPrivateIPs left false — production
-	// must refuse private/loopback dials. Cache is tolerant of a nil
-	// rdb (falls through to the resolver every call).
-	sep1Resolver := metadata.NewResolver(metadata.Options{
-		Timeout: 8 * time.Second,
-	})
-	sep1Cache := metadata.NewCache(sep1Resolver, rdb)
+	// SEP-1 payloads are populated by `ratesengine-ops sep1-refresh`
+	// (cron) into `issuers.sep1_payload`. The API reads from there
+	// instead of fetching live HTTPS per request — see ADR-0033 + the
+	// 2026-05-29 incident where /v1/assets/{id} p95 was 4+s with the
+	// live-fetch path.
 
 	// Trusted-proxy CIDRs — F-0009 remediation. The middleware
 	// package's `requestCameViaTrustedProxy` consults this allow-list
@@ -792,7 +790,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// freshness is plenty for trade-volume aggregates.
 		Markets:             cachedMarketsReader,
 		Oracle:              oracleReader,
-		Meta:                sep1Cache,
+		Sep1Cache:           store,
 		Accounts:            accountStore,
 		Signups:             signupTracker,
 		SignupIPThrottle:    signupIPThrottle,

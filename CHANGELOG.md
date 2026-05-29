@@ -17,6 +17,17 @@ against.
 
 ### Changed
 
+- **`/v1/assets/{id}` SEP-1 overlay reads from DB instead of live
+  HTTPS.** Pre-rc.99 the asset-detail handler called
+  `metadata.Cache.Resolve(home_domain)` on every uncached request,
+  which dominated p95 (~4s long tail on cold issuers — drove the
+  `slo_latency_burn_medium` page 2026-05-29 11:30). The handler now
+  reads the `issuers.sep1_payload` JSONB column populated by the
+  `ratesengine-ops sep1-refresh` cron, which is what /v1/issuers
+  already did. The `sep1-refresh` cron is extended to persist
+  Currencies (per-asset metadata) so the overlay's Name /
+  Description / Image / AnchorAsset fields stay populated on the
+  next cron run.
 - **ADR-0029, ADR-0031, ADR-0032 promoted to Accepted.** Phase 6
   of the projection-architecture rollout completes the
   documentation contract — three ADRs now describe the single

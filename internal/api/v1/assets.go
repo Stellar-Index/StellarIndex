@@ -14,22 +14,22 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/currency"
-	"github.com/RatesEngine/rates-engine/internal/metadata"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
 
-// MetadataResolver is the narrow dependency the assets handler needs
-// from [internal/metadata]. Both [*metadata.Resolver] and
-// [*metadata.Cache] satisfy it.
-type MetadataResolver interface {
-	Resolve(ctx context.Context, domain string) (*metadata.SEP1, error)
+// Sep1CachedReader is the narrow dependency /v1/assets/{id} uses to
+// apply the SEP-1 overlay. Returns the parsed payload the
+// `ratesengine-ops sep1-refresh` cron persisted in `issuers.sep1_payload`.
+//
+// Pre-2026-05-29 the assets handler resolved SEP-1 live via HTTPS
+// (capped at 500ms via [sep1OverlayTimeout]) on every uncached
+// request. That call dominated /v1/assets/{id} p95 (4+s on cold
+// issuers) and triggered the slo_latency_burn alerts. The handler
+// now uses the cron-populated DB column instead; the live-fetch
+// path lives only in `cmd/ratesengine-ops/sep1_refresh.go`.
+type Sep1CachedReader interface {
+	GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*timescale.IssuerSep1Cached, error)
 }
-
-// sep1OverlayTimeout caps how long a single /v1/assets/{id} request
-// will wait on a SEP-1 fetch. Above this budget we return the core
-// asset detail with sep1_status="unreachable" rather than blocking
-// the caller.
-const sep1OverlayTimeout = 500 * time.Millisecond
 
 // AssetReader is the storage-side interface for asset reads.
 // Implementations:
@@ -1199,10 +1199,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// SEP-1 overlay — only for assets with a home-domain and only if
-	// the operator has wired a metadata resolver. Budgeted with a
-	// short timeout so a slow issuer domain doesn't stall the API.
-	if s.meta != nil && detail.HomeDomain != nil && *detail.HomeDomain != "" {
+	// SEP-1 overlay — reads the cached payload `sep1-refresh` cron
+	// persisted in `issuers.sep1_payload`. NO live HTTPS fetch.
+	if s.sep1Cache != nil {
 		s.applySep1Overlay(r.Context(), &detail, parsed)
 	} else if detail.HomeDomain != nil && *detail.HomeDomain != "" && detail.Sep1Status == "" {
 		detail.Sep1Status = "not_fetched"
@@ -1454,7 +1453,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.meta != nil && detail.HomeDomain != nil && *detail.HomeDomain != "" {
+	if s.sep1Cache != nil {
 		s.applySep1Overlay(r.Context(), &detail, parsed)
 	} else if detail.HomeDomain != nil && *detail.HomeDomain != "" && detail.Sep1Status == "" {
 		detail.Sep1Status = "not_fetched"
@@ -1478,26 +1477,40 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// applySep1Overlay resolves the issuer's stellar.toml and attaches
-// the matching [[CURRENCIES]] entry's fields to detail. On any
-// failure it sets sep1_status="unreachable" and leaves the core
-// fields untouched.
+// applySep1Overlay attaches the issuer's cached SEP-1 metadata to
+// detail by reading `issuers.sep1_payload` (populated by the
+// `sep1-refresh` cron). Sets `sep1_status` to one of: `verified`
+// (cached payload matched a [[CURRENCIES]] entry), `no_match`
+// (issuer cached but no per-asset currency entry), `not_fetched`
+// (no cached payload yet — cron hasn't visited), `not_applicable`
+// (asset has no issuer to look up).
+//
+// Pre-2026-05-29 this method resolved SEP-1 via live HTTPS on every
+// uncached request. That call dominated /v1/assets/{id} p95
+// (~4s long tail on cold issuers); it now lives only in the
+// `sep1-refresh` cron, which the API reads from.
+//
+//nolint:gocyclo // linear field-overlay sequence; splitting would scatter the per-field nil checks across helpers.
 func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
-	ctx, cancel := context.WithTimeout(ctx, sep1OverlayTimeout)
-	defer cancel()
-
-	sep, err := s.meta.Resolve(ctx, *detail.HomeDomain)
+	// Soroban + native assets have no issuer row to look up. Mark
+	// not_applicable so the response is shaped consistently.
+	if asset.Type != canonical.AssetClassic || asset.Issuer == "" {
+		detail.Sep1Status = "not_applicable"
+		return
+	}
+	sep, err := s.sep1Cache.GetIssuerSep1Cached(ctx, asset.Issuer)
 	if err != nil {
-		s.logger.Debug("sep1 overlay failed", "asset_id", asset.String(),
-			"home_domain", *detail.HomeDomain, "err", err)
-		detail.Sep1Status = "unreachable"
+		s.logger.Debug("sep1 cached lookup failed", "asset_id", asset.String(),
+			"issuer", asset.Issuer, "err", err)
+		detail.Sep1Status = "not_fetched"
+		return
+	}
+	if sep == nil {
+		detail.Sep1Status = "not_fetched"
 		return
 	}
 
-	// Find matching currency: classic asset matches on (code, issuer);
-	// Soroban asset matches on (code) alone since SEP-1 doesn't
-	// currently specify contract_id per-currency.
-	match := findMatchingCurrency(sep, asset)
+	match := findMatchingCachedCurrency(sep, asset)
 	if match == nil {
 		detail.Sep1Status = "no_match"
 		if name := strings.TrimSpace(sep.OrgName); name != "" {
@@ -1525,8 +1538,6 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	if v := strings.TrimSpace(match.AnchorAssetType); v != "" {
 		detail.AnchorAssetType = &v
 	}
-	// SEP-1 issuance declarations (issuer's own stated commitments,
-	// distinct from live-ledger / operator-policy F2 fields above).
 	if v := strings.TrimSpace(match.Conditions); v != "" {
 		detail.Conditions = &v
 	}
@@ -1536,25 +1547,43 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	if v := strings.TrimSpace(match.MaxNumber); v != "" {
 		detail.MaxNumber = &v
 	}
-	// IsUnlimited: TOML doesn't distinguish "absent" from
-	// "explicitly false" (parser zero-value is false either way),
-	// so stamping `false` whenever the issuer omitted the field
-	// would over-claim. Project the bool only when the issuer
-	// addressed supply at all — i.e. set it to true OR declared
-	// at least one of fixed_number / max_number alongside.
+	// IsUnlimited: TOML doesn't distinguish "absent" from "explicitly
+	// false" (parser zero-value is false either way). Project the bool
+	// only when the issuer addressed supply at all.
 	if match.IsUnlimited || match.FixedNumber != "" || match.MaxNumber != "" {
 		unlim := match.IsUnlimited
 		detail.IsUnlimited = &unlim
 	}
 
-	// Prefer issuer-declared display_decimals over our canonical
-	// default (7) — it's the value Freighter + wallets will surface
-	// to users. Fall back to decimals if display_decimals is zero.
 	if match.DisplayDecimals > 0 {
 		detail.Decimals = match.DisplayDecimals
 	} else if match.Decimals > 0 {
 		detail.Decimals = match.Decimals
 	}
+}
+
+// findMatchingCachedCurrency is the cached-payload twin of
+// [findMatchingCurrency] — same matching rules, walks the
+// [timescale.IssuerSep1Cached] currencies slice instead of the
+// live-fetched [metadata.SEP1].
+func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical.Asset) *timescale.IssuerSep1Currency {
+	if asset.Type != canonical.AssetClassic {
+		return nil
+	}
+	if asset.Code == "" || asset.Issuer == "" {
+		return nil
+	}
+	for i := range sep.Currencies {
+		c := &sep.Currencies[i]
+		if !strings.EqualFold(c.Code, asset.Code) {
+			continue
+		}
+		if c.Issuer == "" || c.Issuer != asset.Issuer {
+			continue
+		}
+		return c
+	}
+	return nil
 }
 
 // isSafeImageURL reports whether s is a plausible http(s) image
@@ -1569,44 +1598,4 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 // rule out script-execution vectors.
 func isSafeImageURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
-}
-
-// findMatchingCurrency finds the [[CURRENCIES]] entry that matches
-// asset. Returns nil if no entry matches.
-//
-// Matching is strict — we refuse to guess. Specifically:
-//
-//   - Classic assets match on (code, issuer) exactly. SEP-1 entries
-//     with empty issuers are malformed and skipped.
-//   - Soroban assets can't be matched today: our Currency struct
-//     doesn't carry contract_id (SEP-1 added it in a later revision
-//     we haven't caught up to). Return nil so the caller surfaces
-//     sep1_status="no_match" rather than attaching random metadata
-//     from the first entry in the TOML.
-//   - Fiat and native assets never have a home-domain to overlay
-//     from; callers shouldn't be calling this for them. Return nil
-//     defensively.
-func findMatchingCurrency(sep *metadata.SEP1, asset canonical.Asset) *metadata.Currency {
-	// Only classic assets have enough identity (code + issuer) to
-	// match a SEP-1 currency entry safely. Everything else — Soroban,
-	// native, fiat — can't be matched without contract_id support.
-	if asset.Type != canonical.AssetClassic {
-		return nil
-	}
-	if asset.Code == "" || asset.Issuer == "" {
-		return nil
-	}
-	for i := range sep.Currencies {
-		c := &sep.Currencies[i]
-		if !strings.EqualFold(c.Code, asset.Code) {
-			continue
-		}
-		// SEP-1 entry MUST have a non-empty issuer that matches —
-		// otherwise we can't confidently attribute metadata.
-		if c.Issuer == "" || c.Issuer != asset.Issuer {
-			continue
-		}
-		return c
-	}
-	return nil
 }

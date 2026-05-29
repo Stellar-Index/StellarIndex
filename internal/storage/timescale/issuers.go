@@ -213,6 +213,64 @@ func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Du
 	return out, nil
 }
 
+// IssuerSep1Cached is the parsed shape of the `sep1_payload` JSONB
+// column. Subset of [metadata.SEP1] limited to the fields the
+// `sep1-refresh` cron persists. Returned by [GetIssuerSep1Cached]
+// so the API can apply the SEP-1 overlay without making a live
+// HTTPS fetch to the issuer's home_domain.
+type IssuerSep1Cached struct {
+	OrgName       string               `json:"OrgName,omitempty"`
+	Version       string               `json:"Version,omitempty"`
+	Documentation map[string]string    `json:"Documentation,omitempty"`
+	Currencies    []IssuerSep1Currency `json:"Currencies,omitempty"`
+	FetchedAt     string               `json:"FetchedAt,omitempty"`
+}
+
+// IssuerSep1Currency mirrors [metadata.Currency] — fields the
+// /v1/assets/{id} handler overlays per-asset.
+type IssuerSep1Currency struct {
+	Code            string `json:"Code,omitempty"`
+	Issuer          string `json:"Issuer,omitempty"`
+	Decimals        int    `json:"Decimals,omitempty"`
+	DisplayDecimals int    `json:"DisplayDecimals,omitempty"`
+	Name            string `json:"Name,omitempty"`
+	Description     string `json:"Description,omitempty"`
+	Conditions      string `json:"Conditions,omitempty"`
+	Image           string `json:"Image,omitempty"`
+	FixedNumber     string `json:"FixedNumber,omitempty"`
+	MaxNumber       string `json:"MaxNumber,omitempty"`
+	IsUnlimited     bool   `json:"IsUnlimited,omitempty"`
+	AnchorAsset     string `json:"AnchorAsset,omitempty"`
+	AnchorAssetType string `json:"AnchorAssetType,omitempty"`
+	Status          string `json:"Status,omitempty"`
+}
+
+// GetIssuerSep1Cached returns the cached SEP-1 payload for an issuer
+// G-strkey, parsed from the `issuers.sep1_payload` JSONB column. Returns
+// (nil, nil) when the issuer row exists but has no payload yet (the
+// sep1-refresh cron hasn't visited it). Returns (nil, sql.ErrNoRows)
+// when the issuer is completely unknown.
+//
+// Replaces the live HTTPS fetch the API used to do per-request via
+// [metadata.Resolver.Resolve] — that fetch dominated /v1/assets/{id}
+// p95 (4+ seconds on cold issuers). The DB-cached path is one indexed
+// SELECT.
+func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*IssuerSep1Cached, error) {
+	const q = `SELECT sep1_payload FROM issuers WHERE g_strkey = $1`
+	var payload sql.NullString
+	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&payload); err != nil {
+		return nil, err
+	}
+	if !payload.Valid || payload.String == "" {
+		return nil, nil
+	}
+	var out IssuerSep1Cached
+	if err := json.Unmarshal([]byte(payload.String), &out); err != nil {
+		return nil, fmt.Errorf("timescale: GetIssuerSep1Cached: parse: %w", err)
+	}
+	return &out, nil
+}
+
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
 // issuers row — sep1_payload (jsonb) + sep1_resolved_at = now().
 // Caller is responsible for serialising the payload.

@@ -70,7 +70,7 @@ type Server struct {
 	history              HistoryReader
 	markets              MarketsReader
 	oracle               OracleReader
-	meta                 MetadataResolver
+	sep1Cache            Sep1CachedReader
 	accounts             AccountStore
 	signups              SignupTracker
 	signupIPThrottle     SignupIPThrottle
@@ -229,10 +229,13 @@ type Options struct {
 	// Oracle, when non-nil, backs /v1/oracle/latest. Leave nil to
 	// return 503 on that path.
 	Oracle OracleReader
-	// Meta, when non-nil, enables the SEP-1 overlay on
-	// /v1/assets/{id}. Typically a *metadata.Cache wrapping a
-	// *metadata.Resolver backed by Redis.
-	Meta MetadataResolver
+	// Sep1Cache, when non-nil, enables the SEP-1 overlay on
+	// /v1/assets/{id}. The handler reads from the `issuers.sep1_payload`
+	// JSONB column populated by `ratesengine-ops sep1-refresh`.
+	// Pre-2026-05-29 this was a live HTTPS fetch (MetadataResolver);
+	// the live path dominated /v1/assets/{id} p95 (~4s long tail) so
+	// it's now cron-only.
+	Sep1Cache Sep1CachedReader
 
 	// CORS, when non-nil, is inserted above RateLimit in the
 	// middleware stack. Preflight OPTIONS requests short-circuit
@@ -680,7 +683,7 @@ func New(opts Options) *Server {
 		history:              opts.History,
 		markets:              opts.Markets,
 		oracle:               opts.Oracle,
-		meta:                 opts.Meta,
+		sep1Cache:            opts.Sep1Cache,
 		accounts:             opts.Accounts,
 		signups:              opts.Signups,
 		signupIPThrottle:     opts.SignupIPThrottle,
