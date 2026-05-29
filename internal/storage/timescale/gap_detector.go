@@ -113,6 +113,13 @@ func runOneGapDetectorCycle(ctx context.Context, store *Store, logger *slog.Logg
 		return
 	}
 
+	// ADR-0031: emit tip as a gauge so the consumer (diagnostics
+	// handler) can compute density denominator without a DB hit.
+	// Set once per cycle BEFORE the per-target scans so the
+	// consumer always reads a tip consistent with the
+	// distinct-ledger gauges that follow.
+	obs.IngestGapDetectorTip.Set(float64(tip))
+
 	for _, target := range targets {
 		scanOneGapDetectorTarget(ctx, store, logger, target, tip)
 	}
@@ -143,6 +150,19 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 		return
 	}
 
+	// ADR-0031: alongside the gap scan, count distinct ledgers so
+	// the data-derived density signal has its numerator. One extra
+	// SELECT per target per cycle — cheap relative to the LAG scan.
+	// If this query fails we don't poison the gap signal: emit the
+	// gap gauges anyway and skip the distinct/expected emission so
+	// the data-derived projection just reads as "stale" until the
+	// next cycle.
+	distinct, distinctErr := store.CountDistinctLedgers(scanCtx, target, 0, tip)
+	if distinctErr != nil {
+		logger.Warn("gap-detector: count-distinct failed (gap signal unaffected)",
+			"source", target.Source, "table", target.Table, "err", distinctErr, "tip", tip)
+	}
+
 	var totalMissing, largest int64
 	for _, g := range gaps {
 		totalMissing += g.Size
@@ -154,6 +174,9 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	obs.IngestGapLedgers.WithLabelValues(target.Source, target.Table).Set(float64(totalMissing))
 	obs.IngestGapCount.WithLabelValues(target.Source, target.Table).Set(float64(len(gaps)))
 	obs.IngestGapMaxSize.WithLabelValues(target.Source, target.Table).Set(float64(largest))
+	if distinctErr == nil {
+		obs.IngestSourceDistinctLedgers.WithLabelValues(target.Source, target.Table).Set(float64(distinct))
+	}
 	obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok").Inc()
 	obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "ok").
 		Observe(time.Since(start).Seconds())
