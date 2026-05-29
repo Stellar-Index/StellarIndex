@@ -1,7 +1,7 @@
 ---
 adr: 0032
 title: Per-source tables are projections of soroban_events
-status: Proposed
+status: Accepted
 date: 2026-05-29
 supersedes: []
 superseded_by: null

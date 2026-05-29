@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **ADR-0029, ADR-0031, ADR-0032 promoted to Accepted.** Phase 6
+  of the projection-architecture rollout completes the
+  documentation contract — three ADRs now describe the single
+  writer per data domain (projector for Soroban-derived, direct
+  for trades), the single data-derived coverage signal, and the
+  raw `soroban_events` landing zone they share. CLAUDE.md gains
+  Invariant 7 ("One writer per data domain") summarising the
+  contract for future agents.
+
 ### Added
 
 - **ADR-0032 Phase 5 — `projector-replay` operator subcommand.**

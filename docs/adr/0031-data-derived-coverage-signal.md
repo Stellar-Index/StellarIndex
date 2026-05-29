@@ -1,7 +1,7 @@
 ---
 adr: 0031
 title: Coverage signal is data-derived from authoritative stores
-status: Proposed
+status: Accepted
 date: 2026-05-29
 supersedes: []
 superseded_by: null

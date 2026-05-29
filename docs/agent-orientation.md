@@ -191,6 +191,30 @@ method is wrong.
 
 Full picture + binding rules: [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md).
 
+### 7. One writer per data domain (ADR-0031 + ADR-0032)
+
+**Soroban-derived events** (`trades`, `blend_*`, `phoenix_*`,
+`comet_*`, `soroswap_skim`, `cctp_events`, `rozo_events`,
+`sep41_*`, `reflector`/`redstone` `oracle_updates`) are written
+by **`internal/projector`** — and ONLY by the projector — from
+the `soroban_events` raw landing zone (ADR-0029). Adding a new
+Soroban source means adding a case in
+`internal/projector/registry.go::buildSource` AND an arm in
+`internal/pipeline/sink.go::IsProjectedEvent`. Catch-up after a
+missing window is `ratesengine-ops projector-replay -source <name>
+-from <ledger>` — never a bespoke `<source>-backfill` subcommand
+(those were deleted in rc.97 / ADR-0032 Phase 5).
+
+**Non-projected events** (`sdex`, external CEX/FX, `band`, supply
+observers) continue writing through the dispatcher's events
+goroutine — they don't flow through `soroban_events` and have
+their own catch-up paths.
+
+**Coverage signal** is data-derived from the authoritative store,
+not cursor-derived (ADR-0031). The single source of truth is the
+gap-detector's `source_coverage_snapshots` table. Cursor-derived
+coverage helpers under `internal/api/v1` were deleted in rc.93/94.
+
 ---
 
 ## Things that will surprise you
