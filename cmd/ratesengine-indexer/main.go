@@ -47,6 +47,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/ledgerstream"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
+	"github.com/RatesEngine/rates-engine/internal/projector"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 	externalbinance "github.com/RatesEngine/rates-engine/internal/sources/external/binance"
 	externalbitstamp "github.com/RatesEngine/rates-engine/internal/sources/external/bitstamp"
@@ -383,6 +384,39 @@ func run(cfgPath string, dryRun bool) error {
 		pipeline.PersistEvents(rootCtx, logger, store, events)
 	}()
 
+	// ─── Projector (ADR-0032) ──────────────────────────────────
+	// Phase 3: parallel-mode — projector tails soroban_events and
+	// writes per-source rows alongside the dispatcher's existing
+	// per-source sinks. ON CONFLICT DO NOTHING means whichever
+	// writer reaches the row first wins; the other no-ops. Phase 4
+	// (ADR-0032) will flip [persist_per_source]=false so the
+	// projector becomes sole writer.
+	var projectorDone chan struct{}
+	if cfg.Ingestion.Projector.Enabled {
+		registry, perr := projector.BuildRegistry(cfg.Ingestion.EnabledSources, cfg.Oracle, soroswapOpts...)
+		if perr != nil {
+			return fmt.Errorf("projector registry: %w", perr)
+		}
+		// Sink wraps the same pipeline.HandleEvent the events
+		// goroutine uses; decoded rows take the same per-source
+		// write path. See internal/pipeline/sink.go.
+		sinkFn := func(ctx context.Context, ev consumer.Event) {
+			pipeline.HandleEvent(ctx, logger, store, ev)
+		}
+		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
+		projectorDone = make(chan struct{})
+		go func() {
+			defer close(projectorDone)
+			if err := proj.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn("projector exited with error", "err", err)
+			}
+		}()
+		logger.Info("projector wired (Phase 3 parallel mode)",
+			"sources", len(registry.Sources))
+	} else {
+		logger.Info("projector disabled — dispatcher per-source sinks remain primary")
+	}
+
 	// Verified-currency catalogue (R-018 Phase 1.1 / 1.2). Drives
 	// the CG poller's ticker map and the aggregator pair set — so
 	// adding a verified currency to `internal/currency/data/seed.yaml`
@@ -452,6 +486,18 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Info("clean shutdown")
 	case <-shutdownCtx.Done():
 		logger.Warn("drain timeout exceeded — hard exit")
+	}
+
+	// Wait for projector goroutines to exit. Each cycle is bounded
+	// by PerSourceTimeout (60s) so this returns promptly under
+	// rootCtx cancellation.
+	if projectorDone != nil {
+		select {
+		case <-projectorDone:
+			logger.Info("projector drained")
+		case <-shutdownCtx.Done():
+			logger.Warn("projector drain timeout — hard exit")
+		}
 	}
 	return nil
 }

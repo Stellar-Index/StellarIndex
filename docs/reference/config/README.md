@@ -69,6 +69,7 @@ the `env:` column.
 | `ingestion.backfill_batch_size` | `uint32` | `64` | — | Ledgers per backfill fetch batch. |
 | `ingestion.cursor_store_scheme` | `string` | `postgres` | — | Where per-source cursors live — postgres / redis. |
 | `ingestion.live_seam_ledger` | `uint32` | `0` | — | First ledger in the live bucket. Below this, indexer reads from galexie-archive. 0 disables the archive bucket entirely. |
+| `ingestion.projector.enabled` | `bool` | `false` | — | Master switch. When false the projector goroutines are not started. |
 
 ### `[oracle]`
 

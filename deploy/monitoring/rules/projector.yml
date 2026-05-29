@@ -1,0 +1,57 @@
+---
+# Projector alerts (ADR-0032). The projector tails soroban_events
+# and writes per-source rows; Phase 3 runs in parallel with the
+# dispatcher's existing per-source sinks. Lag (live-tip minus the
+# projector's per-source cursor) is the canonical health signal.
+#
+# Every alert here has a runbook at docs/operations/runbooks/.
+
+groups:
+  - name: ratesengine.projector
+    interval: 30s
+    rules:
+
+      # Projector keeping up: lag should normally be 0 — once a
+      # source catches up, the per-source cursor is set to the
+      # ledgerstream tip every Interval. Sustained > 256 ledgers
+      # (≈21 minutes of bucket time) is the first sign that a
+      # decode is hot-looping or that postgres writes are slow.
+      - alert: ratesengine_projector_lag_high
+        expr: |
+          max by (source) (ratesengine_projector_lag_ledgers) > 256
+        for: 10m
+        labels:
+          severity: ticket
+          component: projector
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+        annotations:
+          summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
+          description: |
+            The ADR-0032 projector's per-source cursor for {{ $labels.source }}
+            is {{ $value }} ledgers behind the ledgerstream tip. Sustained lag
+            means the projector cannot keep up with raw soroban_events writes,
+            so per-source projections (trades, blend_*, phoenix_*, ...) will
+            increasingly diverge from the raw store.
+
+            Runbook: docs/operations/runbooks/projector-lag.md
+
+      # Cycle failures bumping `outcome="error"`. Single hiccups
+      # (postgres restart, MinIO blip) are harmless — the projector
+      # retries next cycle. Sustained error rate means the source
+      # is stuck (decoder panic, bad row in landing zone, downstream
+      # PK constraint failure).
+      - alert: ratesengine_projector_error_rate_high
+        expr: |
+          sum by (source) (rate(ratesengine_projector_runs_total{outcome="error"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: ticket
+          component: projector
+          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+        annotations:
+          summary: "Projector source {{ $labels.source }} cycle errors sustained"
+          description: |
+            The projector for {{ $labels.source }} is failing > 5% of cycles
+            for 15+ minutes. Cursor is not advancing — backlog is growing.
+
+            Runbook: docs/operations/runbooks/projector-lag.md

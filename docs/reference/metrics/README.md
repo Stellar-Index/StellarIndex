@@ -117,6 +117,42 @@ Wall-clock latency of one detector cycle. The LAG()-over-DISTINCT
 scan against ~12 M Soroban-era ledgers takes ~2-3 s on r1; the
 60s scan timeout is the upper bound.
 
+### `ratesengine_projector_lag_ledgers`
+
+Gauge, labels `source`.
+
+Distance (in ledgers) between the projector's per-source cursor
+and the live ledgerstream tip at the end of the last cycle. 0 =
+caught up. Drives the `ratesengine_projector_lag_high` alert (P3
+ticket: > 256 ledgers sustained 10 min). See ADR-0032.
+
+### `ratesengine_projector_runs_total`
+
+Counter, labels `source`, `outcome`.
+
+Per-cycle outcome counter. Outcomes: `ok` (cursor advanced),
+`idle` (caught up, no rows in scan range), `error` (scan / cursor
+read / cursor write failed; cursor not advanced — retried next
+cycle). Drives the `ratesengine_projector_error_rate_high` alert.
+
+### `ratesengine_projector_events_decoded_total`
+
+Counter, labels `source`, `outcome`.
+
+Number of consumer.Events the projector emitted to its sink.
+Outcomes: `ok` (decode succeeded) and `decode_error` (Reconstruct
+or Decoder.Decode returned non-nil; row skipped, cursor still
+advances).
+
+### `ratesengine_projector_cycle_duration_seconds`
+
+Histogram, labels `source`.
+
+Wall-clock latency of one projector cycle (scan + decode + sink).
+Each cycle is bounded by `PerSourceTimeout=60s`. Sustained p99 >
+30s for one source is the first sign that the sink is the
+bottleneck.
+
 ### `http_request_success_duration_seconds`
 
 Histogram, labels `method`, `route`.
