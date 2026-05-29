@@ -304,9 +304,10 @@ groups:
 
             Resolve via:
               ratesengine-ops find-data-gaps --config /etc/ratesengine.toml --source {{ $labels.source }} --output text
-            for per-source diagnosis, then either
-              ratesengine-ops drain-cascade-window --from F --to T  (if every per-source table is short)
-              ratesengine-ops <source>-backfill --from F --to T     (if only one source is short)
+            for per-source diagnosis, then for Soroban-derived sources:
+              ratesengine-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
+            For non-projected sources (sdex / soroban-events):
+              ratesengine-ops backfill --source <name> --from F --to T
 
             Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 

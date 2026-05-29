@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ADR-0032 Phase 5 — `projector-replay` operator subcommand.**
+  Single SQL cursor-rewind:
+  `ratesengine-ops projector-replay -source <name> -from <ledger>`.
+  The projector goroutine catches up on its next cycle (≤ 5 s)
+  and re-projects forward to the live tip. Replaces the family of
+  `*-backfill` subcommands deleted in this release. New
+  [projector-replay](docs/operations/runbooks/projector-replay.md)
+  runbook captures the new operator flow.
+
+### Removed
+
+- **ADR-0032 Phase 5 — dead-code deletion.** Removed eight
+  redundant `ratesengine-ops` subcommands (~1500 LoC):
+  `cctp-backfill`, `rozo-backfill`, `soroswap-skim-backfill`,
+  `comet-liquidity-backfill`, `phoenix-backfill`, `blend-backfill`,
+  `sep41-transfers-backfill`, `drain-cascade-window`. All replaced
+  by `projector-replay` + the projector goroutine. Also removed
+  the `cascade-window-drain` runbook (superseded by
+  `projector-replay`). Runbook + alert references updated.
+
 ### Changed
 
 - **ADR-0032 Phase 4 — projector becomes sole writer for Soroban-

@@ -163,44 +163,9 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "scan-soroban-events: %v\n", err)
 			return 1
 		}
-	case "cctp-backfill":
-		if err := cctpBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "cctp-backfill: %v\n", err)
-			return 1
-		}
-	case "rozo-backfill":
-		if err := rozoBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "rozo-backfill: %v\n", err)
-			return 1
-		}
-	case "soroswap-skim-backfill":
-		if err := soroswapSkimBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "soroswap-skim-backfill: %v\n", err)
-			return 1
-		}
-	case "comet-liquidity-backfill":
-		if err := cometLiquidityBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "comet-liquidity-backfill: %v\n", err)
-			return 1
-		}
-	case "phoenix-backfill":
-		if err := phoenixBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "phoenix-backfill: %v\n", err)
-			return 1
-		}
-	case "blend-backfill":
-		if err := blendBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "blend-backfill: %v\n", err)
-			return 1
-		}
-	case "sep41-transfers-backfill":
-		if err := sep41TransfersBackfill(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "sep41-transfers-backfill: %v\n", err)
-			return 1
-		}
-	case "drain-cascade-window":
-		if err := drainCascadeWindow(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "drain-cascade-window: %v\n", err)
+	case "projector-replay":
+		if err := projectorReplay(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "projector-replay: %v\n", err)
 			return 1
 		}
 	case "verify-external":
