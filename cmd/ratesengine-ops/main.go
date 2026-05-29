@@ -2088,7 +2088,24 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 	effectiveResumeHash := *resumeFromHash
 	if *fromLastVerified && *stateFile != "" {
 		effectiveFrom = resolveIncrementalFrom(priorState, *tier, uint32(*from), uint32(*safetyOverlap))
-		if effectiveResumeHash == "" {
+		// Resume-from-hash semantics with safety-overlap:
+		//   - safety-overlap > 0 means we walk safety-overlap ledgers
+		//     BEFORE last-verified to re-validate the seam region.
+		//     The resume-hash check compares the FIRST chunk's
+		//     FirstPrevHash (= hash of effectiveFrom-1) against the
+		//     supplied expected hash. The state file's last_verified_hash
+		//     is the hash AT last-verified, not at last-verified -
+		//     safety-overlap - 1. Those are different ledgers; the
+		//     check tripped on 2026-05-29 ("resume-from-hash boundary
+		//     mismatch at ledger 62637780").
+		//   - When safety-overlap > 0, the overlap re-walk already
+		//     validates chain continuity by stitching chunks; the
+		//     explicit resume-hash check is redundant + wrong. Skip
+		//     it.
+		//   - When safety-overlap == 0 (operator opted into a strict
+		//     cross-run boundary check), continue to use the saved
+		//     hash — that's the original strict-mode contract.
+		if effectiveResumeHash == "" && *safetyOverlap == 0 {
 			effectiveResumeHash = resolveIncrementalResumeHash(priorState, *tier)
 		}
 		fmt.Fprintf(os.Stderr, "verify-archive: incremental run, prior state high-water=%d → effective -from=%d (safety overlap %d)\n",
