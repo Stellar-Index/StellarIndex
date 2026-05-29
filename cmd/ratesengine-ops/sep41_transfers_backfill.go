@@ -82,6 +82,26 @@ func sep41TransfersBackfill(args []string) error {
 		sep41transfers.SymbolSetAuthorized,
 	}
 
+	// Decode-error dedupe: every contract emitting non-SEP-41-compliant
+	// events (e.g. one r1-observed mainnet contract that puts a U32
+	// in the approve.spender slot) used to spam a fresh per-event
+	// ERROR line per occurrence — easily 100K+ lines during a
+	// drain of a multi-day cascade window. Keep one line per
+	// (contract, error-kind) tuple, plus a final tally.
+	seenErr := make(map[string]int)
+	errKindOf := func(err error) string {
+		s := err.Error()
+		// "sep41_transfers: approve.spender: scval: ..." -> "approve.spender"
+		// We trim the package prefix + everything after the second ": ".
+		if i := strings.Index(s, "sep41_transfers: "); i >= 0 {
+			s = s[i+len("sep41_transfers: "):]
+		}
+		if i := strings.Index(s, ": "); i > 0 {
+			return s[:i]
+		}
+		return s
+	}
+
 	err = store.StreamSorobanEvents(ctx, uint32(*from), uint32(*to),
 		contractList, topic0Syms,
 		func(row sorobanevents.Row) error {
@@ -96,8 +116,12 @@ func sep41TransfersBackfill(args []string) error {
 			outs, derr := dec.Decode(ev)
 			if derr != nil {
 				decodeErrors++
-				fmt.Fprintf(os.Stderr, "  decode ledger=%d contract=%s tx=%s: %v\n",
-					row.Ledger, row.ContractID, ev.TxHash, derr)
+				key := row.ContractID + ":" + errKindOf(derr)
+				seenErr[key]++
+				if seenErr[key] == 1 {
+					fmt.Fprintf(os.Stderr, "  decode (first per contract+kind) ledger=%d contract=%s kind=%s: %v\n",
+						row.Ledger, row.ContractID, errKindOf(derr), derr)
+				}
 				return nil
 			}
 			for _, out := range outs {
@@ -138,6 +162,16 @@ func sep41TransfersBackfill(args []string) error {
 		"sep41-transfers-backfill: done in %s — rows_scanned=%d events_emitted=%d decode_errors=%d insert_errors=%d dry_run=%v\n",
 		time.Since(startedAt).Round(time.Second),
 		rowsScanned, eventsEmitted, decodeErrors, insertErrors, *dryRun)
+	if len(seenErr) > 0 {
+		// Tally is more useful than the per-event flood: operators
+		// scanning the stderr see exactly which (contract, errkind)
+		// pairs failed and how often, so a single non-SEP-41-compliant
+		// contract is one line, not 100K.
+		fmt.Fprintln(os.Stderr, "  decode-error tally (contract:kind = count):")
+		for key, count := range seenErr {
+			fmt.Fprintf(os.Stderr, "    %s = %d\n", key, count)
+		}
+	}
 	if decodeErrors > 0 || insertErrors > 0 {
 		return fmt.Errorf("sep41-transfers-backfill: %d decode errors + %d insert errors", decodeErrors, insertErrors)
 	}
