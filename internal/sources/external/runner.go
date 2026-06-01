@@ -168,11 +168,20 @@ func runPoller(
 		}
 		// (nil trades, nil updates, nil err) is the convention for
 		// "poller skipped this tick" — used by per-poller cooldown
-		// after rate-limit (e.g. coingecko backoff). Don't conflate
-		// with success; operators alerting on `outcome="success"`
-		// staleness need a true silence here.
+		// after rate-limit (e.g. coingecko backoff) AND by sources
+		// like chainlink that frequently see "no new round" between
+		// 1-hour feed updates. Pre-2026-06-01 this branch returned
+		// without updating LastSuccessUnix, so a healthy chainlink
+		// poller (polling every 30s, but feeds updating hourly)
+		// looked stale to `ratesengine_external_poller_stale`
+		// within ~10-15 min. The outcome counter still bumps
+		// "skipped" so operators can tell skip from success; but
+		// the timestamp bumps too because the poller is alive +
+		// reaching upstream — a skip means "we polled and there
+		// was nothing new", not "we couldn't poll."
 		if trades == nil && updates == nil {
 			obs.ExternalPollerPollsTotal.WithLabelValues(name, "skipped").Inc()
+			obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
 			return
 		}
 		obs.ExternalPollerPollsTotal.WithLabelValues(name, "success").Inc()

@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.105] — 2026-06-01
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: indexer restart picks up the poller skip-doesn't-mean-stale fix.
+
+### Fixed
+
+- **`ratesengine_external_poller_stale` falsely firing on
+  chainlink.** Live-r1 incident 2026-06-01: chainlink poller
+  reports ~36 min stale shortly after every indexer restart,
+  even though it's polling correctly every 30s. Root cause:
+  the runner's "skipped" branch (when the poller returns
+  `nil, nil, nil` — by convention meaning "polled successfully
+  but no new feed data") did NOT update
+  `ratesengine_external_poller_last_success_unix`. Chainlink's
+  Ethereum feeds update at most every 1 hour, so the vast
+  majority of its 30-second polls naturally take the skip path.
+  The alert read this as "the poller hasn't successfully
+  reached upstream in 30+ min" — wrong: the poller IS
+  reaching upstream, just finding nothing new.
+  Fix: bump LastSuccessUnix on the skipped path too — the
+  `outcome="skipped"` counter still distinguishes skip from
+  success, but the timestamp tracks "last time we polled at all"
+  not "last time we got an event."
+
 ## [v0.5.0-rc.104] — 2026-06-01
 
 Tested against Stellar Protocol 23 (Whisk).
