@@ -132,10 +132,12 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 
 // PersistWorkers is the count of concurrent drain goroutines run by
 // PersistEvents. Sized to balance PG-pool capacity (25) and worker
-// throughput. Each worker holds at most one in-flight INSERT batch,
-// so 4 workers × ~2 conns peak ≈ 8 PG conns out of 25 — well below
-// the ceiling.
-const PersistWorkers = 4
+// throughput. Live r1 2026-06-01: 4 workers gave ~5 ledgers/min vs
+// the ~10 ledgers/min network rate. 8 workers lifts processing
+// rate above the network rate so the cursor's last_updated stays
+// fresh enough for the SLA-freshness threshold. Peak PG-conn use
+// is still well under the 25-conn pool ceiling.
+const PersistWorkers = 8
 
 //nolint:gocognit // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants.
 func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, workerID int) {
