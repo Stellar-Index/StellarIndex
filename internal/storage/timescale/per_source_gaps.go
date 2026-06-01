@@ -147,6 +147,25 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// 7826 ledgers (~11h of natural pool silence). 50K threshold.
 	{Source: "comet-liquidity", Table: "comet_liquidity", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
 	{Source: "soroswap-skim", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266},
+	// soroswap-router: router invocations dispatched via
+	// dispatcher.ContractCallDecoder (router itself emits no
+	// Soroban events, hence no soroban_events landing). Per-source
+	// gap signal lives on the new soroswap_router_swaps hypertable
+	// (migration 0049). Router activity is dense on r1 (multiple
+	// swaps per minute) so the default 1000-ledger threshold would
+	// produce false-positive pages on natural quiet stretches —
+	// 100k matches the trades-table aquarius/soroswap thresholds
+	// (~5.8 days, well above any observed natural quiet stretch).
+	{Source: "soroswap-router", Table: "soroswap_router_swaps", LedgerColumn: "ledger", Genesis: 50_746_272, MinGapSizeOverride: 100000},
+	// defindex: dual-layer protocol (strategy + vault) persisted to
+	// defindex_flows (migration 0050). Both layers emit on capital
+	// movement; vault layer mirrors strategy ~1:1 in the same tx so
+	// real "no activity" stretches are scarce but the protocol is
+	// young (genesis 57_056_338) and user-action-triggered so
+	// multi-hour quiet windows can happen. 100k threshold
+	// (~5.8 days) matches the soroswap-router cadence — past
+	// observed natural sparsity, well below "writer wedged" pages.
+	{Source: "defindex", Table: "defindex_flows", LedgerColumn: "ledger", Genesis: 57_056_338, MinGapSizeOverride: 100000},
 	// phoenix-liquidity / phoenix-stake: events are user-action-triggered
 	// (provide/withdraw liquidity, bond/unbond stake) — multi-hour
 	// quiet windows are normal protocol behaviour, not data loss.

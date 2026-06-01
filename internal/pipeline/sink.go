@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -388,67 +387,89 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case band.UpdateEvent:
 		persistOracle(ctx, logger, store, e.Update)
 	case soroswap_router.Event:
-		// Phase A: log-only sink. Phase B will tag matching same-tx
-		// trades.routed_via and (TBD) write to a dedicated
-		// router_swaps table. Until then this just records the
-		// dispatcher correctly routed the call so operators can
-		// validate via journal. Counter bump surfaces decoded
-		// activity on /v1/diagnostics/ingestion's `entries` even
-		// without a per-protocol storage table.
+		// Persist to the soroswap_router_swaps hypertable (migration
+		// 0049). Pre-Phase-B this was log-only — the source had no
+		// per-source gap-detector signal because there was no row
+		// to count. Now we write a row per router invocation; the
+		// gap-detector target on the hypertable measures honest
+		// coverage. Counter bump still surfaces activity on the
+		// `entries` column of /v1/diagnostics/ingestion.
 		bumpEntryCount(ctx, logger, store, soroswap_router.SourceName)
-		logger.Info("soroswap-router swap routed",
-			"source", soroswap_router.SourceName,
-			"tx_hash", e.Swap.TxHash,
-			"ledger", e.Swap.Ledger,
-			"function", e.Swap.Function,
-			"path_len", len(e.Swap.Path),
-			"recipient", e.Swap.Recipient,
-			"amount_in", e.Swap.AmountIn.String(),
-			"amount_out", e.Swap.AmountOut.String(),
-		)
+		row := timescale.SoroswapRouterSwap{
+			Ledger:          e.Swap.Ledger,
+			LedgerCloseTime: e.Swap.ClosedAt,
+			TxHash:          e.Swap.TxHash,
+			OpIndex:         uint32(e.Swap.OpIndex),
+			ContractID:      e.Swap.ContractID,
+			FunctionName:    e.Swap.Function,
+			OpSource:        e.Swap.OpSource,
+			TxSource:        e.Swap.TxSource,
+			Recipient:       e.Swap.Recipient,
+			Path:            e.Swap.Path,
+			AmountIn:        e.Swap.AmountIn.String(),
+			AmountOut:       e.Swap.AmountOut.String(),
+		}
+		if !e.Swap.DeadlineTs.IsZero() {
+			row.DeadlineTS = &e.Swap.DeadlineTs
+		}
+		if err := store.InsertSoroswapRouterSwap(ctx, row); err != nil {
+			logger.Warn("soroswap-router persist failed",
+				"source", soroswap_router.SourceName,
+				"tx_hash", e.Swap.TxHash, "ledger", e.Swap.Ledger,
+				"err", err)
+		}
 	case defindex.Event:
 		// Strategy-layer flow (vault → strategy capital movement).
-		// `from` is always the vault contract C-strkey; end-user
-		// attribution lives at the vault layer (case defindex.VaultEvent
-		// below). Log-only sink; a future revision will tag matching
-		// same-tx Blend / Soroswap legs as `routed_via` and write to
-		// the aggregator_exposures hypertable from a separate periodic
-		// ticker. Until then we emit one INFO line per strategy flow
-		// so operators can verify the dispatcher routes BlendStrategy
-		// events correctly via the journal. Counter bump as for
-		// soroswap-router above — surfaces decoded activity on
-		// /v1/diagnostics/ingestion's `entries`.
+		// Persists to defindex_flows with layer='strategy' (migration
+		// 0050). `actor` here is the vault contract C-strkey
+		// (the strategy contract's `from` field); end-user attribution
+		// lives at the vault layer (case defindex.VaultEvent below).
 		bumpEntryCount(ctx, logger, store, defindex.SourceName)
-		logger.Info("defindex strategy flow",
-			"source", defindex.SourceName,
-			"tx_hash", e.Flow.TxHash,
-			"ledger", e.Flow.Ledger,
-			"contract_id", e.Flow.ContractID,
-			"direction", string(e.Flow.Direction),
-			"from", e.Flow.From,
-			"amount", e.Flow.Amount.String(),
-		)
+		strategyRow := timescale.DefindexFlow{
+			Ledger:          e.Flow.Ledger,
+			LedgerCloseTime: e.Flow.ClosedAt,
+			TxHash:          e.Flow.TxHash,
+			OpIndex:         uint32(e.Flow.OpIndex),
+			ContractID:      e.Flow.ContractID,
+			Layer:           timescale.DefindexLayerStrategy,
+			Direction:       timescale.DefindexDirection(e.Flow.Direction),
+			Actor:           e.Flow.From,
+			Amount:          e.Flow.Amount.String(),
+		}
+		if err := store.InsertDefindexFlow(ctx, strategyRow); err != nil {
+			logger.Warn("defindex strategy persist failed",
+				"source", defindex.SourceName,
+				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,
+				"err", err)
+		}
 	case defindex.VaultEvent:
-		// Vault-wrapper layer (user-facing deposit/withdraw). `user`
-		// is the end-user G-strkey for direct interactions, a router
-		// C-strkey for aggregator-routed flows. Phase B (#49) added
-		// this branch; the pre-Phase-B decoder only emitted strategy
-		// events and missed ~86% of defindex activity historically.
+		// Vault-wrapper layer (user-facing deposit/withdraw).
+		// Persists to defindex_flows with layer='vault'. `actor` here
+		// is the end-user G-strkey (or routing C-strkey if the user
+		// came via an aggregator).
 		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		amounts := make([]string, 0, len(e.Flow.Amounts))
 		for _, a := range e.Flow.Amounts {
 			amounts = append(amounts, a.String())
 		}
-		logger.Info("defindex vault flow",
-			"source", defindex.SourceName,
-			"tx_hash", e.Flow.TxHash,
-			"ledger", e.Flow.Ledger,
-			"contract_id", e.Flow.ContractID,
-			"direction", string(e.Flow.Direction),
-			"user", e.Flow.User,
-			"amounts", strings.Join(amounts, ","),
-			"df_tokens", e.Flow.DfTokens.String(),
-		)
+		vaultRow := timescale.DefindexFlow{
+			Ledger:          e.Flow.Ledger,
+			LedgerCloseTime: e.Flow.ClosedAt,
+			TxHash:          e.Flow.TxHash,
+			OpIndex:         uint32(e.Flow.OpIndex),
+			ContractID:      e.Flow.ContractID,
+			Layer:           timescale.DefindexLayerVault,
+			Direction:       timescale.DefindexDirection(e.Flow.Direction),
+			Actor:           e.Flow.User,
+			AmountsVec:      amounts,
+			DfTokens:        e.Flow.DfTokens.String(),
+		}
+		if err := store.InsertDefindexFlow(ctx, vaultRow); err != nil {
+			logger.Warn("defindex vault persist failed",
+				"source", defindex.SourceName,
+				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,
+				"err", err)
+		}
 	case external.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 	case external.UpdateEvent:
