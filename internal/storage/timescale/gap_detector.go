@@ -185,7 +185,13 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	scanCtx, cancel := context.WithTimeout(ctx, gapDetectorPerTargetTimeout)
 	defer cancel()
 
-	gaps, err := store.FindPerSourceLedgerGaps(scanCtx, target, 0, tip, target.EffectiveMinGapSize())
+	// Scan for gaps within [genesis, tip] only. Scanning from ledger 0
+	// counted "pre-genesis gaps" (ranges where the source protocol
+	// didn't exist yet) against gap_free_pct, deflating the metric.
+	// Concrete case (aquarius 2026-06-01): a 551,779-ledger pre-genesis
+	// gap dragged gap_free_pct from 100% down to 94.5% even though
+	// every ledger in [genesis, tip] had been processed.
+	gaps, err := store.FindPerSourceLedgerGaps(scanCtx, target, target.Genesis, tip, target.EffectiveMinGapSize())
 	if err != nil {
 		obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "error").Inc()
 		obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "error").
