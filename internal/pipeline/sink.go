@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -92,14 +93,52 @@ const (
 // [SinkMode] godoc for why the dispatcher's events-goroutine
 // skips Soroban-derived events once the projector is sole writer.
 //
-//nolint:gocognit // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants.
+// PersistEvents launches [PersistWorkers] concurrent drain
+// goroutines, each maintaining its own trade-batch buffer + PG
+// connection. Live-r1 incident 2026-06-01: the single-goroutine
+// drain capped throughput at ~5 trades/sec (single PG roundtrip in
+// flight at any time) even with batched INSERTs; the indexer's
+// ProcessLedger goroutine was blocked on `events <- ev` waiting for
+// drain progress, so the cursor advanced ~1 ledger/min vs the ~10/min
+// network rate.
+//
+// Go's channel semantics let multiple receivers safely share one
+// channel — each receive consumes one element atomically. The
+// PostgreSQL pool (PoolMaxOpenConns = 25) carries the concurrent
+// writes; each goroutine claims a connection per flush, releases
+// it after, so a small worker pool of 4 fits comfortably under the
+// pool ceiling alongside the aggregator + api binaries on the same
+// host.
+//
+// Per-event ordering within a source is NOT preserved across workers
+// (a later event can flush before an earlier one). The trades
+// hypertable's PK includes the full identity (source, ledger,
+// tx_hash, op_index, ts) so identical writes race-but-resolve via
+// ON CONFLICT DO NOTHING. There is no ordering constraint at the
+// storage layer that a parallel drain breaks.
+//
+// `mode` semantics unchanged from the single-goroutine version.
 func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode) {
-	// Trade events buffer for BatchInsertTrades. Live-r1 incident
-	// 2026-06-01: per-INSERT roundtrip cost capped sustained
-	// throughput at ~5 trades/sec even though postgres-side can do
-	// 9000+/sec. Batching collapses N INSERTs into 1 statement and
-	// lifts throughput by roughly the batch factor. The buffer
-	// flushes on size cap, time tick, or context cancellation.
+	var wg sync.WaitGroup
+	for i := 0; i < PersistWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			persistWorker(ctx, logger, store, in, mode, workerID)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// PersistWorkers is the count of concurrent drain goroutines run by
+// PersistEvents. Sized to balance PG-pool capacity (25) and worker
+// throughput. Each worker holds at most one in-flight INSERT batch,
+// so 4 workers × ~2 conns peak ≈ 8 PG conns out of 25 — well below
+// the ceiling.
+const PersistWorkers = 4
+
+//nolint:gocognit // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants.
+func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, workerID int) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
@@ -111,11 +150,8 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		batch := tradeBuf
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
 		if err := store.BatchInsertTrades(fctx, batch); err != nil {
-			// On batch failure log + fall back per-row so we don't
-			// drop ledger data on a single transient PG hiccup. The
-			// per-row path is the slow one but it's still correct.
 			logger.Warn("batch trade insert failed; falling back per-row",
-				"batch_size", len(batch), "err", err)
+				"worker", workerID, "batch_size", len(batch), "err", err)
 			for _, t := range batch {
 				persistTrade(fctx, logger, store, t)
 			}
@@ -126,7 +162,11 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		select {
 		case <-ctx.Done():
 			flush(ctx)
-			drainBufferedEvents(in, logger, store, mode)
+			// Only the first worker handles the shutdown drain to
+			// avoid duplicate drain work; the others just exit.
+			if workerID == 0 {
+				drainBufferedEvents(in, logger, store, mode)
+			}
 			return
 		case <-flushTicker.C:
 			flush(ctx)
@@ -138,15 +178,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 			if mode == SinkModeSkipProjected && IsProjectedEvent(ev) {
 				continue
 			}
-			// Trade events (Soroban-derived OR sdex OR external) all
-			// land in the same hypertable — batch them. Everything
-			// else (oracle updates, supply observations, log-only
-			// events) takes the per-event path which is fine because
-			// volumes are low.
 			if t, ok := tradeFromEvent(ev); ok {
-				// Per-source events_total + last_event_unix metrics
-				// still increment per event so freshness signals
-				// work the same in batched mode.
 				obs.SourceEventsTotal.WithLabelValues(t.Source).Inc()
 				obs.SourceLastEventUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
 				tradeBuf = append(tradeBuf, t)
