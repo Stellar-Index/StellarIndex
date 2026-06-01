@@ -217,6 +217,27 @@ type BackfillCoverageRow struct {
 	// reads; nil if the row hasn't been written yet (first 30 min
 	// post-deploy before the detector's first cycle).
 	CoverageSnapshotAt *time.Time `json:"coverage_snapshot_at,omitempty"`
+
+	// LogOnly marks sources that decode events to logs but don't
+	// persist per-ledger rows (defindex vault flows, soroswap-router
+	// swap-routed events). Such sources have no per-ledger hypertable
+	// to gap-check, so coverage_pct is set to 1.0 trivially — they're
+	// "fully covered" by definition because there's nothing to cover.
+	// Status page renders these with a "log-only" badge instead of a
+	// coverage bar.
+	LogOnly bool `json:"log_only,omitempty"`
+}
+
+// logOnlySources are sources whose decoders only log events (no
+// per-ledger table writes). They appear in /v1/diagnostics/ingestion
+// because they have entry counters + Stellar genesis ledgers, but
+// they don't have a gap-detector target — without explicit marking
+// the status page would render them as 0% covered, which is
+// misleading. Customer-facing rule: CoveragePct = 1.0 (trivially
+// covered, nothing to walk).
+var logOnlySources = map[string]bool{
+	"defindex":        true,
+	"soroswap-router": true,
 }
 
 // sourceGenesisLedger is the operator-curated map of "what's the
@@ -934,9 +955,23 @@ func buildBackfillCoverage(cacheRows []timescale.BackfillCoverage, entryCounts m
 		if genesis > 0 && tip > 0 {
 			row.ExpectedLedgers = tip - genesis + 1
 		}
-		// DensityPct, CoveredLedgers, GapFreePct, CoverageSnapshotAt,
-		// EarliestLedger, LatestLedger filled in by
-		// overlaySourceCoverageV2 from source_coverage_snapshots.
+		// Log-only sources (defindex, soroswap-router) have no
+		// per-ledger hypertable; no gap-detector target exists.
+		// Without explicit marking they'd render as 0% on the status
+		// page (no snapshot → no overlay → zero-value CoveragePct).
+		// Mark them log_only and pin coverage to 1.0 so customers
+		// see them as "trivially complete" (nothing to walk) rather
+		// than "broken".
+		if logOnlySources[src] {
+			row.LogOnly = true
+			row.CoveragePct = 1.0
+			row.GapFreePct = 1.0
+			row.DensityPct = 1.0
+		}
+		// For non-log-only sources, DensityPct, CoveredLedgers,
+		// GapFreePct, CoverageSnapshotAt, EarliestLedger, LatestLedger
+		// are filled in by overlaySourceCoverageV2 from
+		// source_coverage_snapshots.
 		out = append(out, row)
 	}
 
