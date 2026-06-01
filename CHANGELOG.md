@@ -15,6 +15,30 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.102] — 2026-06-01
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: indexer restart picks up the
+4-worker parallel drain. No migrations.
+
+### Fixed
+
+- **PersistEvents parallel drain (4 workers).** Live-r1 incident
+  2026-06-01: even after rc.101's batch-INSERT fix, the indexer
+  cursor advanced at ~1 ledger/min vs ~10/min network rate.
+  Root cause: the single-goroutine drain meant only one PG
+  roundtrip in flight at a time; the indexer's ProcessLedger
+  goroutine was blocked on `events <- ev` waiting for that one
+  worker to drain. With 4 worker goroutines sharing the same
+  channel (Go's channel semantics handle concurrent receive
+  safely), the events channel drains 4× faster; the existing
+  PG pool of 25 conns carries the concurrent INSERTs. Each worker
+  maintains its own 200-row trade batch + 200ms flush ticker.
+  Per-event ordering within a source is not preserved across
+  workers; the trades hypertable's PK `(source, ledger, tx_hash,
+  op_index, ts)` makes that irrelevant for correctness.
+
 ## [v0.5.0-rc.101] — 2026-06-01
 
 Tested against Stellar Protocol 23 (Whisk).
