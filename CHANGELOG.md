@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.103] — 2026-06-01
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: indexer restart picks up 8 workers from 4. No migrations.
+
+### Fixed
+
+- **PersistWorkers bumped 4 → 8.** rc.102 with 4 workers gave
+  ~5 ledgers/min on r1 vs the ~10 ledgers/min network rate;
+  doubling the concurrent drain lifts processing throughput above
+  the network rate so the live cursor catches up and stays close
+  to the SLA-freshness threshold.
+
 ## [v0.5.0-rc.102] — 2026-06-01
 
 Tested against Stellar Protocol 23 (Whisk).
