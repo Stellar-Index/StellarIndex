@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.106] — 2026-06-01
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: api restart picks up the coverage_pct
+semantic fix. No migrations.
+
+### Fixed
+
+- **`coverage_pct` now reflects gap-free-ness, not event-density.**
+  ADR-0031 Phase 2 deprecated the legacy cursor-derived
+  `coverage_pct` and the status page fell back to rendering
+  `density_pct`. `density_pct = distinct_ledgers / expected_ledgers`
+  over `[genesis, tip]` — for sparse sources (Soroban oracles
+  pushing once per hour, low-volume DEXes), density is naturally
+  <1% and the UI was reading that as "1% covered". User feedback
+  on r1 2026-06-01: that's a misleading metric.
+  Fix: `coverage_pct = gap_free_pct = 1 - max_gap_ledgers /
+  expected_ledgers`. 1.0 means the indexer hasn't skipped any
+  ledger in this source's window — what "coverage" intuitively
+  means. Sparse sources hit 100% as long as ingest is healthy.
+
 ## [v0.5.0-rc.105] — 2026-06-01
 
 Tested against Stellar Protocol 23 (Whisk).
