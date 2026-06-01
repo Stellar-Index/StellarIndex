@@ -135,6 +135,7 @@ interface IngestionSnapshot {
     entries: number;
     coverage_pct?: number;
     density_pct?: number;
+    gap_free_pct?: number;
     covered_ledgers?: number;
     expected_ledgers?: number;
   }>;
@@ -1473,12 +1474,13 @@ function BackfillCoverageTable({
         )}
       </div>
       <p className="mb-2 text-[11px] text-ink-faint">
-        <strong>Density</strong> = % of ledgers in the source&apos;s
-        expected range we&apos;ve actually processed (union of
-        completed backfill cursor intervals, clamped to [genesis,
-        tip]). Hits 100% only when backfill ranges fully cover the
-        interval — sparse sources no longer score 100% just because
-        they have endpoint trades far apart with gaps between.
+        <strong>Coverage</strong> = % of ledgers in the source&apos;s
+        expected range [genesis, tip] that we&apos;ve processed
+        without gaps. Hits 100% when the indexer has fully walked
+        the range. Independent of how many events the protocol
+        actually emits — sparse protocols (band, blend, etc. that
+        emit once per hour) score 100% as long as every ledger
+        between their genesis and tip has been processed.
       </p>
       <div className="overflow-hidden rounded-md border border-surface-line">
         <table className="w-full text-xs">
@@ -1488,13 +1490,20 @@ function BackfillCoverageTable({
               <th className="px-3 py-2 text-right font-medium">Genesis</th>
               <th className="px-3 py-2 text-right font-medium">Earliest</th>
               <th className="px-3 py-2 text-right font-medium">Latest</th>
-              <th className="px-3 py-2 text-right font-medium">Density</th>
+              <th className="px-3 py-2 text-right font-medium">Coverage</th>
               <th className="px-3 py-2 text-right font-medium">Entries</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-line">
             {onChain.map((r) => {
-              const pct = (r.density_pct ?? 0) * 100;
+              // Display coverage_pct (= gap_free_pct, set server-side by rc.106)
+              // rather than density_pct. The card description below claims
+              // "% of ledgers in the source's expected range we've actually
+              // processed" — that's coverage/gap-free, not density (which is
+              // data-derived "fraction of ledgers with at least one event"
+              // and is naturally near-zero for sparse protocols like
+              // band/blend/comet that emit once per hour).
+              const pct = (r.coverage_pct ?? r.gap_free_pct ?? r.density_pct ?? 0) * 100;
               const tone = pct >= 99 ? 'ok' : pct >= 50 ? 'warn' : ('bad' as const);
               const colors = {
                 ok: 'bg-ok-500 text-ok-700',
