@@ -178,9 +178,20 @@ type BackfillCoverageRow struct {
 	// structurally always-0 for oracle sources, which never write
 	// to `trades`). Renamed trade_count → entries 2026-05-15.
 	Entries int64 `json:"entries"`
-	// CoveragePct — see godoc on the type. Endpoint-span metric.
-	// Deprecated; retained as a transitional field. Status page
-	// renders DensityPct.
+	// CoveragePct is the customer-facing "are we walking this
+	// source completely?" signal — currently sourced from
+	// gap_free_pct (1 - max_gap / expected). 1.0 means no
+	// contiguous gap above the per-target threshold; sparse
+	// sources (oracles updating hourly) still hit 1.0 here,
+	// because "100% covered" should mean "the indexer hasn't
+	// skipped any ledger", not "the contract emits constantly".
+	// See overlaySourceCoverageV2 for the wiring.
+	//
+	// Pre-2026-06-01 this field was zeroed (Phase 2 deprecation)
+	// and the UI fell back to DensityPct — which is the OPPOSITE
+	// signal (event-density-over-walked-window) and showed 0%
+	// for any source that legitimately emits sparsely. Reversed
+	// after user feedback.
 	CoveragePct float64 `json:"coverage_pct,omitempty"`
 	// DensityPct is the honest "what fraction of ledgers have we
 	// processed" measurement based on the union of backfill cursor
@@ -709,6 +720,26 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		(*rows)[i].CoveredLedgers = covered
 		(*rows)[i].GapFreePct = gapFree
 		(*rows)[i].CoverageSnapshotAt = &oldest
+		// `coverage_pct` is what the customer-facing status page
+		// renders. It must answer "are we walking this source
+		// completely (no gaps)?" — NOT "how dense is the source's
+		// event stream over [genesis, tip]?". For a sparse oracle
+		// pushing one event per hour, density is naturally ~0.001
+		// but coverage should be 100% as long as the indexer hasn't
+		// missed any ledger.
+		//
+		// `gap_free_pct = 1 - max_gap / expected` from the gap
+		// detector is exactly that signal: 1.0 means no contiguous
+		// gap above the per-target threshold (ADR-0030). Render it
+		// AS coverage_pct so customers see "100% covered" for healthy
+		// sources regardless of natural sparsity.
+		//
+		// Reversed in r1 incident 2026-06-01 — pre-this-fix the
+		// status page rendered density_pct as the headline, which
+		// shows 0% for sparse but healthy sources (oracles, light
+		// DEXes, bridge events). User feedback was unambiguous: the
+		// metric was wrong.
+		(*rows)[i].CoveragePct = gapFree
 	}
 }
 
