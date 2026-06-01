@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.107] — 2026-06-01
+
+Tested against Stellar Protocol 23 (Whisk).
+
+Pre-deploy operator note: aggregator restart picks up new oracle gap-detector targets. Coverage_pct values populate after the first 30-min cycle.
+
+### Fixed
+
+- **Oracle sources (band, redstone, reflector-dex/cex/fx) now have
+  gap-detector targets** sliced from the unified `oracle_updates`
+  hypertable. Pre-rc.107 these sources showed n/a on the
+  `backfill_coverage` listing because no per-source target existed.
+  Same shape as the rc.104 Soroban-DEX trade targets: shared
+  hypertable + per-source `WhereFilter`. Result: customer-facing
+  coverage_pct now populates for ALL Soroban sources with a
+  per-source hypertable. defindex + soroswap-router remain n/a
+  because they're log-only sinks (no per-ledger hypertable rows
+  to scan).
+
 ## [v0.5.0-rc.106] — 2026-06-01
 
 Tested against Stellar Protocol 23 (Whisk).

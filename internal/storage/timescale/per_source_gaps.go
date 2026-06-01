@@ -205,6 +205,22 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	{Source: "soroswap", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'soroswap'", Genesis: 50_746_266, MinGapSizeOverride: 100000},
 	{Source: "phoenix", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'phoenix'", Genesis: 51_572_016, MinGapSizeOverride: 100000},
 	{Source: "comet", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'comet'", Genesis: 51_499_546, MinGapSizeOverride: 100000},
+	// Oracle sources (reflector, band, redstone) write into the
+	// unified `oracle_updates` hypertable, sliced by `source`.
+	// Same pattern as the Soroban-DEX trades targets — per-source
+	// WhereFilter on the shared table. Genesis values match each
+	// oracle's pubnet deploy ledger.
+	{Source: "band", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'band'", Genesis: 50_842_736, MinGapSizeOverride: 100000},
+	{Source: "redstone", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'redstone'", Genesis: 58_758_722, MinGapSizeOverride: 100000},
+	{Source: "reflector-dex", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'reflector-dex'", Genesis: 50_644_229, MinGapSizeOverride: 100000},
+	{Source: "reflector-cex", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'reflector-cex'", Genesis: 50_644_239, MinGapSizeOverride: 100000},
+	{Source: "reflector-fx", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'reflector-fx'", Genesis: 56_733_481, MinGapSizeOverride: 100000},
+	// defindex + soroswap-router are intentionally NOT registered:
+	// both are log-only sinks today (see pipeline/sink.go), they
+	// bump source_entry_counts but don't write to a hypertable
+	// per-ledger. A gap-detector LAG-scan needs ledger-keyed rows
+	// to find gaps; without those, coverage % stays n/a on the
+	// API listing (the customer sees the entry-count instead).
 }
 
 // FindPerSourceLedgerGaps finds contiguous ledger-coverage gaps
