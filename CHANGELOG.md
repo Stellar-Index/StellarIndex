@@ -95,6 +95,21 @@ against.
   (sep41/band/soroswap-router remain out of scope — documented in the
   catalogue.) Also chunk-prunes those queries via `SorobanEventsTimeBound`.
 
+### Changed
+
+- **Status-page on-chain coverage is now honest about what it's
+  measuring (ADR-0033).** A source's coverage figure is only shown as a
+  trustworthy bar once its completeness watermark (`completeness_pct`)
+  has been computed — the substrate+projection-verified signal. Until
+  then the page falls back to `gap_free_pct`, a *liveness* proxy ("no
+  large interior gap detected") that reads ~100% for sources that are
+  merely sparse or only partially indexed (e.g. phoenix-liquidity at
+  18 of 11.3M ledgers). Those unverified figures are now rendered muted
+  and tagged **"unverified · N% gap-free"** with an explanatory tooltip,
+  instead of a green ~100% bar that overstated completeness. Because we
+  cannot distinguish "sparse-but-complete" from "incomplete" without the
+  watermark, we never dress an unverified figure up as verified coverage.
+
 ### Fixed
 
 - **`trades` no longer silently drops multi-trade-per-op trades

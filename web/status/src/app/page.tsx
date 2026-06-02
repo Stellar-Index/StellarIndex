@@ -1502,21 +1502,33 @@ function BackfillCoverageTable({
           </thead>
           <tbody className="divide-y divide-surface-line">
             {onChain.map((r) => {
-              // Prefer the ADR-0033 completeness watermark when present:
-              // it's the proven "substrate + projection verified from
-              // genesis" signal with NO sparsity threshold. Fall back to
-              // coverage_pct (= gap_free_pct) then density for sources that
-              // don't yet have a computed completeness verdict. coverage_pct
-              // (gap-free) is "indexer hasn't skipped a ledger above the
-              // per-target threshold"; density is "fraction of ledgers with
-              // an event" (near-zero for sparse protocols) — neither proves
-              // completeness the way the watermark does.
-              const pct = (r.completeness_pct ?? r.coverage_pct ?? r.gap_free_pct ?? r.density_pct ?? 0) * 100;
-              const tone = pct >= 99 ? 'ok' : pct >= 50 ? 'warn' : ('bad' as const);
+              // ADR-0033 truthfulness: a source's coverage is only TRUSTWORTHY
+              // once its completeness watermark (completeness_pct) is computed —
+              // that's the substrate+projection-verified signal. Until then the
+              // only other number is gap_free_pct, a LIVENESS proxy ("no large
+              // gap detected"), which is NOT completeness: it reads ~100% for
+              // sources that are merely sparse OR only recently/partially
+              // indexed (e.g. 18 of 11.3M ledgers). Crucially we cannot tell
+              // "sparse-but-complete" from "incomplete" without the watermark,
+              // so we never dress an unverified figure up as a trustworthy
+              // coverage bar — it's shown muted + tagged "unverified".
+              const verified = r.completeness_pct != null;
+              const pct =
+                (verified
+                  ? (r.completeness_pct as number)
+                  : (r.coverage_pct ?? r.gap_free_pct ?? r.density_pct ?? 0)) * 100;
+              const tone = !verified
+                ? ('pending' as const)
+                : pct >= 99
+                  ? 'ok'
+                  : pct >= 50
+                    ? 'warn'
+                    : ('bad' as const);
               const colors = {
                 ok: 'bg-ok-500 text-ok-700',
                 warn: 'bg-warn-500 text-warn-700',
                 bad: 'bg-bad-500 text-bad-700',
+                pending: 'bg-surface-line text-ink-muted',
               };
               return (
                 <tr key={r.source}>
@@ -1538,17 +1550,29 @@ function BackfillCoverageTable({
                         : undefined
                     }
                   >
-                    <div className="inline-flex items-center justify-end gap-2">
-                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-line">
-                        <div
-                          className={`h-full ${colors[tone].split(' ')[0]}`}
-                          style={{ width: `${Math.max(2, pct)}%` }}
-                        />
+                    {verified ? (
+                      <div className="inline-flex items-center justify-end gap-2">
+                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-line">
+                          <div
+                            className={`h-full ${colors[tone].split(' ')[0]}`}
+                            style={{ width: `${Math.max(2, pct)}%` }}
+                          />
+                        </div>
+                        <span className={`tabular-nums ${colors[tone].split(' ')[1]}`}>
+                          {pct.toFixed(1)}%
+                        </span>
                       </div>
-                      <span className={`tabular-nums ${colors[tone].split(' ')[1]}`}>
-                        {pct.toFixed(1)}%
+                    ) : (
+                      <span
+                        className="inline-flex items-center justify-end gap-1.5 text-ink-muted"
+                        title="Completeness not yet verified (ADR-0033). The figure is a gap-free liveness signal — no large gap detected — which can read ~100% for sparse or only-partially-indexed sources. Verified completeness is pending the data-recovery backfills."
+                      >
+                        <span className="rounded bg-surface-line px-1 py-0.5 text-[10px] uppercase tracking-wide">
+                          unverified
+                        </span>
+                        <span className="tabular-nums">{pct.toFixed(1)}% gap-free</span>
                       </span>
-                    </div>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
                     {r.entries.toLocaleString()}
