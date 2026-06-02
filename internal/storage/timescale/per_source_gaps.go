@@ -68,6 +68,16 @@ type GapDetectorTarget struct {
 	// less monitored — it just shifts the page threshold to a
 	// number that distinguishes "natural sparsity" from "writer
 	// halted." A 500K-ledger gap on blend_auctions still pages.
+	//
+	// ADR-0033 (Phase 6) DEMOTES this from the confidence path to
+	// ALERTING CADENCE ONLY. It is a heuristic that guesses a
+	// sparsity envelope; it can mask a real gap that lands just under
+	// the threshold, so it is NOT a 100%-confidence signal. The
+	// completeness WATERMARK (completeness_snapshots, computed by
+	// `ratesengine-ops compute-completeness`) is the confidence
+	// signal: it proves quiet-vs-gap from the LCM census + hash chain
+	// with NO threshold. Keep MinGapSizeOverride for "page me if a
+	// dense source goes quiet" tripwires; do not read it as coverage.
 	MinGapSizeOverride int64
 
 	// ScanCadence overrides [GapDetectorInterval] for this target.

@@ -65,6 +65,20 @@ against.
   first). The existing `hubble-check` (per-ledger SDEX-vs-Hubble counts
   + amount cross-check) remains the external defense-in-depth anchor.
 
+- **Completeness watermark verdict (ADR-0033 Phase 6 / headline).**
+  `ratesengine-ops compute-completeness` derives the per-source
+  completeness WATERMARK — the highest ledger where substrate continuity
+  + hash chain (Claim 1) AND projection reconciliation (Claim 2b) both
+  hold from genesis — plus a system recognition verdict (Claim 2a), and
+  writes them to the new `completeness_snapshots` table (migration 0052).
+  `/v1/diagnostics/ingestion` overlays `completeness_pct` /
+  `completeness_watermark` / `completeness_complete` onto each source
+  row, and the status page renders `completeness_pct` as the headline
+  (falling back to gap-free coverage when not yet computed). Unlike
+  density/gap_free this uses NO sparsity threshold — a single proven gap
+  pins it — so it is the honest 100%-confidence signal. `MinGapSizeOverride`
+  is now documented as alerting-cadence only, off the confidence path.
+
 ### Fixed
 
 - **`soroban_events` no longer silently drops events from multi-event

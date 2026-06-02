@@ -128,6 +128,16 @@ type SourceCoverageReader interface {
 	ListSourceCoverage(ctx context.Context) ([]timescale.SourceCoverage, error)
 }
 
+// CompletenessReader is the ADR-0033 Phase 6 read seam for the
+// per-source watermark verdict. Production wiring is
+// timescale.Store.ListCompletenessSnapshots, populated by
+// `ratesengine-ops compute-completeness` (cron). Nil reader / empty
+// slice → the completeness_* fields stay absent and the UI falls back
+// to the gap_free coverage signal; never a regression.
+type CompletenessReader interface {
+	ListCompletenessSnapshots(ctx context.Context) ([]timescale.CompletenessSnapshot, error)
+}
+
 // BackfillCoverageRow is the per-source coverage projection.
 //
 // Post-ADR-0031 (Phase 2): DensityPct is the **data-derived**
@@ -217,6 +227,24 @@ type BackfillCoverageRow struct {
 	// reads; nil if the row hasn't been written yet (first 30 min
 	// post-deploy before the detector's first cycle).
 	CoverageSnapshotAt *time.Time `json:"coverage_snapshot_at,omitempty"`
+
+	// CompletenessPct is the ADR-0033 Phase 6 watermark coverage:
+	// (watermark - genesis + 1) / (tip - genesis + 1), where the
+	// watermark is the highest ledger with substrate continuity +
+	// hash chain AND projection reconciliation both verified from
+	// genesis. Unlike GapFreePct it uses NO sparsity threshold — a
+	// single PROVEN gap pins it — so it is the honest 100%-confidence
+	// signal that supersedes density/gap_free as the headline.
+	// Populated by overlayCompleteness from completeness_snapshots
+	// (written by `ratesengine-ops compute-completeness`); absent when
+	// not yet computed for this source.
+	CompletenessPct float64 `json:"completeness_pct,omitempty"`
+	// CompletenessWatermark is the highest fully-verified ledger.
+	CompletenessWatermark int64 `json:"completeness_watermark,omitempty"`
+	// CompletenessComplete is true when the watermark reached tip.
+	CompletenessComplete bool `json:"completeness_complete,omitempty"`
+	// CompletenessComputedAt is when compute-completeness last ran.
+	CompletenessComputedAt *time.Time `json:"completeness_computed_at,omitempty"`
 }
 
 // sourceGenesisLedger is the operator-curated map of "what's the
@@ -650,6 +678,7 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	// run yet, not a misleading 100% (which is what the
 	// cursor-derived path used to claim).
 	s.overlaySourceCoverageV2(ctx, &out.BackfillCoverage)
+	s.overlayCompleteness(ctx, &out.BackfillCoverage)
 	if len(out.BackfillCoverage) > 0 {
 		// Assembled this request from live cursors — the headline
 		// density is as-of-now, not the (possibly stale/failed)
@@ -740,6 +769,39 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		// DEXes, bridge events). User feedback was unambiguous: the
 		// metric was wrong.
 		(*rows)[i].CoveragePct = gapFree
+	}
+}
+
+// overlayCompleteness fills the ADR-0033 Phase 6 watermark fields from
+// completeness_snapshots. Additive: only the completeness_* fields are
+// touched, and only for sources that have a snapshot — every other
+// field (and every source without a verdict yet) is left exactly as
+// the coverage overlay set it. The system "recognition" snapshot has
+// no matching per-source row, so it is simply not overlaid here
+// (operators read it from the table / a dedicated surface).
+func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCoverageRow) {
+	if s.completenessReader == nil {
+		return
+	}
+	snaps, err := s.completenessReader.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		s.logger.Warn("diagnostics/ingestion: completeness_snapshots read failed (completeness_* absent)", "err", err)
+		return
+	}
+	bySource := make(map[string]timescale.CompletenessSnapshot, len(snaps))
+	for _, sn := range snaps {
+		bySource[sn.Source] = sn
+	}
+	for i := range *rows {
+		sn, ok := bySource[(*rows)[i].Source]
+		if !ok {
+			continue
+		}
+		computedAt := sn.ComputedAt
+		(*rows)[i].CompletenessPct = sn.CoveragePct
+		(*rows)[i].CompletenessWatermark = int64(sn.Watermark)
+		(*rows)[i].CompletenessComplete = sn.Complete
+		(*rows)[i].CompletenessComputedAt = &computedAt
 	}
 }
 
