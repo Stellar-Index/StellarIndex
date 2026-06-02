@@ -179,6 +179,44 @@ func (s *Store) VerifyLedgerHashChain(ctx context.Context, from, to uint32) ([]C
 	return breaks, nil
 }
 
+// ClassicTradeEffectCountsByLedger returns the LCM-derived
+// classic-trade-effect count per ledger in [from, to] — the "expected"
+// side of the SDEX projection reconciliation (ADR-0033 Claim 2b,
+// classic). SDEX predates Soroban so there is no soroban_events to
+// re-derive from; this census (one ClaimAtom = one SDEX trade) is the
+// decoder-independent oracle instead. Ledgers with zero trade effects
+// are omitted (ReconcileCounts treats absent as 0).
+//
+// Reads ledger_ingest_log, so it is only meaningful where the substrate
+// record covers the range — callers should verify continuity
+// (FindLedgerIngestGaps) first.
+func (s *Store) ClassicTradeEffectCountsByLedger(ctx context.Context, from, to uint32) (map[uint32]int, error) {
+	if to < from {
+		return nil, fmt.Errorf("timescale: ClassicTradeEffectCountsByLedger: to (%d) < from (%d)", to, from)
+	}
+	const q = `
+        SELECT ledger_seq, classic_trade_effect_count
+        FROM ledger_ingest_log
+        WHERE ledger_seq BETWEEN $1 AND $2 AND classic_trade_effect_count > 0`
+	rows, err := s.db.QueryContext(ctx, q, int64(from), int64(to))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ClassicTradeEffectCountsByLedger [%d,%d]: %w", from, to, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[uint32]int)
+	for rows.Next() {
+		var seq, n int64
+		if err := rows.Scan(&seq, &n); err != nil {
+			return nil, fmt.Errorf("timescale: ClassicTradeEffectCountsByLedger scan: %w", err)
+		}
+		out[uint32(seq)] = int(n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ClassicTradeEffectCountsByLedger rows: %w", err)
+	}
+	return out, nil
+}
+
 // LedgerIngestExtent returns the min and max ledger_seq present in the
 // table (ok=false when the table is empty). Used to bound watermark
 // computation without scanning trades.

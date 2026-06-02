@@ -56,6 +56,15 @@ against.
   `Store.CountRowsByLedger`. Correlation sources reconcile correctly
   because each logical record's events share one (ledger, tx, op).
 
+- **SDEX / classic reconciliation (ADR-0033 Phase 5 / Claim 2b classic).**
+  `verify-reconciliation` now also covers SDEX, which predates Soroban
+  and has no `soroban_events`: its expected count comes from the
+  LCM-derived `classic_trade_effect_count` census in `ledger_ingest_log`
+  (one ClaimAtom = one trade), gated on the substrate record being
+  continuous over the range (else it tells you to run `census-backfill`
+  first). The existing `hubble-check` (per-ledger SDEX-vs-Hubble counts
+  + amount cross-check) remains the external defense-in-depth anchor.
+
 ### Fixed
 
 - **`soroban_events` no longer silently drops events from multi-event
