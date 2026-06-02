@@ -174,7 +174,8 @@ func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) 
 	if !ok {
 		r = &RawSwap{
 			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
-			Pool: e.ContractID, ClosedAt: closedAt,
+			EventIndex: e.EventIndex,
+			Pool:       e.ContractID, ClosedAt: closedAt,
 		}
 		b.m[k] = r
 	}

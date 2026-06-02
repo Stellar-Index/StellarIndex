@@ -14,11 +14,18 @@ import (
 // is NOT guaranteed; we populate slots by field-name and check
 // completeness via [SwapFieldCount].
 type RawSwap struct {
-	Ledger   uint32
-	TxHash   string
-	OpIndex  uint32
-	Pool     string // event.ContractID of the first arriving event
-	ClosedAt time.Time
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
+	// EventIndex is the in-op index of the FIRST field event of this
+	// swap. A router multi-hop emits several 8-field swaps in one op;
+	// the buffer emits-and-clears each before the next, so each swap's
+	// first-field index is distinct — used to fan out the trade
+	// op_index so the multiple trades don't collide on the trades PK
+	// (ADR-0033, same as aquarius/comet/soroswap).
+	EventIndex int
+	Pool       string // event.ContractID of the first arriving event
+	ClosedAt   time.Time
 
 	// Populated slots. A nil-valued slot means we haven't seen that
 	// field yet.
@@ -212,10 +219,13 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	}
 
 	return canonical.Trade{
-		Source:      SourceName,
-		Ledger:      r.Ledger,
-		TxHash:      r.TxHash,
-		OpIndex:     r.OpIndex,
+		Source: SourceName,
+		Ledger: r.Ledger,
+		TxHash: r.TxHash,
+		// Fan out by the swap's first-field event index so router
+		// multi-hop (several 8-field swaps in one op) doesn't collide
+		// on the trades PK (ADR-0033, same as aquarius/comet/soroswap).
+		OpIndex:     canonical.FanoutOpIndex(int(r.OpIndex), r.EventIndex),
 		Timestamp:   r.ClosedAt,
 		Pair:        pair,
 		BaseAmount:  offer,
