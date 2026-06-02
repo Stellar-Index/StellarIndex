@@ -142,6 +142,43 @@ func TestLedgerIngestLog(t *testing.T) {
 	if !ok || lo != 100 || hi != 115 {
 		t.Errorf("LedgerIngestExtent = (%d,%d,%v), want (100,115,true)", lo, hi, ok)
 	}
+
+	// ─── Completeness snapshot round-trip (Phase 6): insert, update
+	// (idempotent), list.
+	if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
+		Source: "soroswap", Genesis: 100, Tip: 200, Watermark: 175,
+		CoveragePct: 0.75, Complete: false, FirstProblem: 176,
+		SubstrateOK: true, RecognitionOK: true, ProjectionOK: false, Detail: "projection: 1 mismatch",
+	}); err != nil {
+		t.Fatalf("UpsertCompletenessSnapshot: %v", err)
+	}
+	if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
+		Source: "soroswap", Genesis: 100, Tip: 200, Watermark: 180,
+		CoveragePct: 0.80, Complete: false, FirstProblem: 181,
+		SubstrateOK: true, RecognitionOK: true, ProjectionOK: false, Detail: "projection: 1 mismatch",
+	}); err != nil {
+		t.Fatalf("UpsertCompletenessSnapshot (update): %v", err)
+	}
+	snaps, err := store.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("ListCompletenessSnapshots: %v", err)
+	}
+	var found bool
+	for _, sn := range snaps {
+		if sn.Source != "soroswap" {
+			continue
+		}
+		found = true
+		if sn.Watermark != 180 || sn.CoveragePct != 0.80 || sn.ProjectionOK || sn.FirstProblem != 181 {
+			t.Errorf("snapshot = %+v, want Watermark=180 CoveragePct=0.80 ProjectionOK=false FirstProblem=181", sn)
+		}
+		if sn.ComputedAt.IsZero() {
+			t.Error("ComputedAt is zero, want now()")
+		}
+	}
+	if !found {
+		t.Error("ListCompletenessSnapshots missing soroswap row")
+	}
 }
 
 func assertGaps(t *testing.T, label string, got, want []timescale.LedgerGap) {

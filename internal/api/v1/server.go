@@ -89,6 +89,7 @@ type Server struct {
 	sep41Transfers       SEP41TransfersReader
 	cursors              CursorsReader
 	coverageReader       SourceCoverageReader
+	completenessReader   CompletenessReader
 	networkStats         NetworkStatsReader
 	sourcesStats         SourcesStatsReader
 	lending              LendingReader
@@ -401,6 +402,11 @@ type Options struct {
 	// signal during the Phase 1 shadow window.
 	CoverageReader SourceCoverageReader
 
+	// CompletenessReader, when non-nil, backs the ADR-0033 Phase 6
+	// completeness_* fields on /v1/diagnostics/ingestion. Nil leaves
+	// them absent (UI falls back to the gap_free coverage signal).
+	CompletenessReader CompletenessReader
+
 	// NetworkStats, when non-nil, backs GET /v1/network/stats —
 	// the consolidated home-page aggregate (24h volume, markets,
 	// assets indexed, latest ledger). Production wiring is
@@ -702,6 +708,7 @@ func New(opts Options) *Server {
 		sep41Transfers:       opts.SEP41Transfers,
 		cursors:              opts.Cursors,
 		coverageReader:       opts.CoverageReader,
+		completenessReader:   opts.CompletenessReader,
 		networkStats:         opts.NetworkStats,
 		sourcesStats:         opts.SourcesStats,
 		lending:              opts.Lending,

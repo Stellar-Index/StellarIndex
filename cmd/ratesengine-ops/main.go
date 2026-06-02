@@ -188,6 +188,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "verify-reconciliation: %v\n", err)
 			return 1
 		}
+	case "compute-completeness":
+		if err := computeCompleteness(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "compute-completeness: %v\n", err)
+			return 1
+		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)
@@ -674,7 +679,16 @@ Subcommands:
                           trades table. Lists ledgers where projected rows
                           went missing (or phantom rows appeared) and exits
                           non-zero. Covers soroswap/aquarius/phoenix/comet
-                          (seeds soroswap pairs via RPC for accurate decode).
+                          (re-derive) + sdex (LCM census). Seeds soroswap
+                          pairs via RPC for accurate decode.
+  compute-completeness -config PATH [-to N] [-source S]
+                          ADR-0033 Phase 6: compute the per-source
+                          completeness WATERMARK (substrate continuity +
+                          hash chain ∧ projection reconciliation) and a
+                          system recognition verdict, and write them to
+                          completeness_snapshots for the API + status page.
+                          -to defaults to the live ledgerstream tip. Run on
+                          a cron; the headline replaces density/gap_free.
   seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the

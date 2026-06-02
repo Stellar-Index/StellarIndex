@@ -138,6 +138,12 @@ interface IngestionSnapshot {
     gap_free_pct?: number;
     covered_ledgers?: number;
     expected_ledgers?: number;
+    // ADR-0033 Phase 6: watermark-based completeness (substrate +
+    // projection verified, no sparsity threshold). Preferred headline
+    // when present; falls back to gap_free coverage otherwise.
+    completeness_pct?: number;
+    completeness_watermark?: number;
+    completeness_complete?: boolean;
   }>;
   backfill_coverage_as_of?: string;
   fx_backfill: {
@@ -1496,14 +1502,16 @@ function BackfillCoverageTable({
           </thead>
           <tbody className="divide-y divide-surface-line">
             {onChain.map((r) => {
-              // Display coverage_pct (= gap_free_pct, set server-side by rc.106)
-              // rather than density_pct. The card description below claims
-              // "% of ledgers in the source's expected range we've actually
-              // processed" — that's coverage/gap-free, not density (which is
-              // data-derived "fraction of ledgers with at least one event"
-              // and is naturally near-zero for sparse protocols like
-              // band/blend/comet that emit once per hour).
-              const pct = (r.coverage_pct ?? r.gap_free_pct ?? r.density_pct ?? 0) * 100;
+              // Prefer the ADR-0033 completeness watermark when present:
+              // it's the proven "substrate + projection verified from
+              // genesis" signal with NO sparsity threshold. Fall back to
+              // coverage_pct (= gap_free_pct) then density for sources that
+              // don't yet have a computed completeness verdict. coverage_pct
+              // (gap-free) is "indexer hasn't skipped a ledger above the
+              // per-target threshold"; density is "fraction of ledgers with
+              // an event" (near-zero for sparse protocols) — neither proves
+              // completeness the way the watermark does.
+              const pct = (r.completeness_pct ?? r.coverage_pct ?? r.gap_free_pct ?? r.density_pct ?? 0) * 100;
               const tone = pct >= 99 ? 'ok' : pct >= 50 ? 'warn' : ('bad' as const);
               const colors = {
                 ok: 'bg-ok-500 text-ok-700',
