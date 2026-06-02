@@ -107,11 +107,14 @@ against.
   event_index)` (op in the high 16 bits, the Phase-1 event_index in the
   low 16), matching the stride pattern SDEX already used. Forward fix;
   historical collided ops need re-backfill (delete-then-replay) to
-  recover. **soroswap** now also fanned out (via the swap event's index
-  from the correlation buffer's `RawPair.Swap`). **phoenix** is still
-  pending: its 8-field `RawSwap` buffer may *merge* two swaps in one op
-  (router multi-hop) rather than just collide, so it needs buffer
-  analysis before the same fanout is applied.
+  recover. All four event-based trade sources are now fanned out:
+  aquarius/comet by the event's own index, **soroswap** by the swap
+  event's index (`RawPair.Swap`), **phoenix** by the swap's first-field
+  event index (`RawSwap.EventIndex`). Phoenix's 8-field buffer
+  emits-and-clears on completion, so router multi-hop segments into
+  separate swaps correctly — it was the same op_index collision, not a
+  merge (the old "multihops split on op_index naturally" assumption was
+  wrong).
 
 - **`soroban_events` no longer silently drops events from multi-event
   operations.** `event_index` was hardcoded to 0 at capture, so every
