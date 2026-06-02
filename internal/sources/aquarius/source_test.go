@@ -140,6 +140,7 @@ func TestDecodeTrade_withFakeDecoders(t *testing.T) {
 		Ledger:         100,
 		TxHash:         "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
 		OperationIndex: 7,
+		EventIndex:     3,
 		LedgerClosedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	closedAt, _ := time.Parse(time.RFC3339, e.LedgerClosedAt)
@@ -159,8 +160,8 @@ func TestDecodeTrade_withFakeDecoders(t *testing.T) {
 	if tr.Taker != "GTAKER" {
 		t.Errorf("taker = %q", tr.Taker)
 	}
-	if tr.OpIndex != 7 {
-		t.Errorf("op_index = %d, want 7 (preserved from event)", tr.OpIndex)
+	if want := canonical.FanoutOpIndex(7, 3); tr.OpIndex != want {
+		t.Errorf("op_index = %d, want %d (op 7 fanned out by event index 3)", tr.OpIndex, want)
 	}
 	if tr.Source != SourceName {
 		t.Errorf("source = %q", tr.Source)

@@ -123,10 +123,14 @@ func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	}
 
 	return canonical.Trade{
-		Source:      SourceName,
-		Ledger:      e.Ledger,
-		TxHash:      e.TxHash,
-		OpIndex:     uint32(e.OperationIndex),
+		Source: SourceName,
+		Ledger: e.Ledger,
+		TxHash: e.TxHash,
+		// Fan out by event index: one op can emit several trade events
+		// (multi-pool swap), which otherwise collide on the trades PK and
+		// get dropped (ADR-0033 — confirmed via reconciliation: 5 events
+		// → 2 rows at ledger 62848858).
+		OpIndex:     canonical.FanoutOpIndex(e.OperationIndex, e.EventIndex),
 		Timestamp:   closedAt,
 		Pair:        pair,
 		BaseAmount:  amounts.SoldAmount,

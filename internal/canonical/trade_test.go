@@ -161,3 +161,25 @@ func TestTrade_LargeAmounts(t *testing.T) {
 		t.Fatalf("i128 round-trip lost precision: got %s", got.BaseAmount.String())
 	}
 }
+
+func TestFanoutOpIndex(t *testing.T) {
+	// Distinct (op, event) pairs must map to distinct op_index values.
+	seen := map[uint32]struct{}{}
+	for op := 0; op < 4; op++ {
+		for ev := 0; ev < 10; ev++ {
+			v := c.FanoutOpIndex(op, ev)
+			if _, dup := seen[v]; dup {
+				t.Fatalf("collision: op=%d ev=%d -> %d already seen", op, ev, v)
+			}
+			seen[v] = struct{}{}
+		}
+	}
+	// Encoding: op in high 16 bits, event in low 16.
+	if got := c.FanoutOpIndex(7, 3); got != 7<<16|3 {
+		t.Errorf("c.FanoutOpIndex(7,3) = %d, want %d", got, 7<<16|3)
+	}
+	// op=0,ev=0 stays 0 (single-trade op-0 unchanged-ish).
+	if c.FanoutOpIndex(0, 0) != 0 {
+		t.Errorf("c.FanoutOpIndex(0,0) = %d, want 0", c.FanoutOpIndex(0, 0))
+	}
+}

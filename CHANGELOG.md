@@ -97,6 +97,19 @@ against.
 
 ### Fixed
 
+- **`trades` no longer silently drops multi-trade-per-op trades
+  (aquarius, comet).** The ADR-0033 projection reconciliation found
+  aquarius emitting 5 trade events in one operation (a multi-pool swap)
+  but only 2 rows landing — the decoders keyed the row on the raw
+  `op_index`, so every trade after the first in an op collided on the
+  `trades` PK `(source, ledger, tx_hash, op_index, ts)` and was dropped
+  by `ON CONFLICT`. They now fan out via `canonical.FanoutOpIndex(op,
+  event_index)` (op in the high 16 bits, the Phase-1 event_index in the
+  low 16), matching the stride pattern SDEX already used. Forward fix;
+  historical aquarius/comet trades in collided ops need re-backfill
+  (delete-then-replay) to recover. (soroswap/phoenix group by
+  (ledger,tx,op) and need separate multi-hop analysis — not changed.)
+
 - **`soroban_events` no longer silently drops events from multi-event
   operations.** `event_index` was hardcoded to 0 at capture, so every
   contract event in one operation collided on the

@@ -97,10 +97,12 @@ func decodeSwap(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	}
 
 	return canonical.Trade{
-		Source:      SourceName,
-		Ledger:      e.Ledger,
-		TxHash:      e.TxHash,
-		OpIndex:     uint32(e.OperationIndex),
+		Source: SourceName,
+		Ledger: e.Ledger,
+		TxHash: e.TxHash,
+		// Fan out by event index so multiple swaps in one op don't
+		// collide on the trades PK (ADR-0033, same as aquarius).
+		OpIndex:     canonical.FanoutOpIndex(e.OperationIndex, e.EventIndex),
 		Timestamp:   closedAt,
 		Pair:        pair,
 		BaseAmount:  fields.AmountIn,
