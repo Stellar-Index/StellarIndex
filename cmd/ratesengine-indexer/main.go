@@ -1138,6 +1138,13 @@ func processAndPersistCursor(
 	if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, networkPassphrase); err != nil {
 		return err
 	}
+	// ADR-0033 Phase 2: write the substrate-continuity record AFTER
+	// the ledger's events have persisted, so ledger_ingest_log is an
+	// authoritative "this ledger is fully done" marker — unlike the
+	// cursor below, which is operational resume state. Best-effort:
+	// a write failure here must not stall ingest (the gap surfaces in
+	// the substrate continuity check, which is the whole point).
+	recordLedgerIngest(ctx, store, logger, lcm, networkPassphrase)
 	if err := store.UpsertCursor(ctx, cursorSource, "", lcm.LedgerSequence()); err != nil {
 		logger.Warn("cursor upsert",
 			"ledger", lcm.LedgerSequence(),
@@ -1146,6 +1153,46 @@ func processAndPersistCursor(
 	}
 	recordCursorMetric(lcm.LedgerSequence())
 	return nil
+}
+
+// recordLedgerIngest computes the decoder-independent LCM census and
+// writes the ledger_ingest_log substrate record (ADR-0033 Phase 2).
+// The census is a SECOND, independent walk of the LCM (not the decode
+// walk) on purpose: a bug in the dispatch walk cannot then hide itself
+// in the census it's reconciled against. Cost is a cheap structural
+// re-parse (no body decode); DB writes dominate the per-ledger budget.
+func recordLedgerIngest(
+	ctx context.Context,
+	store *timescale.Store,
+	logger *slog.Logger,
+	lcm sdkxdr.LedgerCloseMeta,
+	networkPassphrase string,
+) {
+	census, err := dispatcher.CensusLedger(lcm, networkPassphrase)
+	if err != nil {
+		logger.Warn("ledger census", "ledger", lcm.LedgerSequence(), "err", err)
+		return
+	}
+	if census.TxReadErrors > 0 {
+		// A malformed tx means the census may undercount this ledger's
+		// primitives. Don't write an authoritative substrate row we
+		// can't stand behind — leave the ledger as a substrate gap so
+		// it's re-examined rather than silently recorded wrong.
+		logger.Warn("ledger census tx read errors; skipping substrate record",
+			"ledger", census.LedgerSeq, "tx_read_errors", census.TxReadErrors)
+		return
+	}
+	row := timescale.LedgerIngestRow{
+		LedgerSeq:               census.LedgerSeq,
+		LedgerCloseTime:         census.LedgerCloseTime,
+		LedgerHash:              census.LedgerHash[:],
+		PrevLedgerHash:          census.PrevLedgerHash[:],
+		SorobanEventCount:       census.SorobanEventCount,
+		ClassicTradeEffectCount: census.ClassicTradeEffectCount,
+	}
+	if err := store.UpsertLedgerIngestLog(ctx, row); err != nil {
+		logger.Warn("ledger ingest log upsert", "ledger", census.LedgerSeq, "err", err)
+	}
 }
 
 func recordCursorMetric(ledger uint32) {

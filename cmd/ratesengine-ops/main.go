@@ -173,6 +173,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "backfill-router: %v\n", err)
 			return 1
 		}
+	case "census-backfill":
+		if err := censusBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "census-backfill: %v\n", err)
+			return 1
+		}
 	case "verify-external":
 		if err := verifyExternal(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-external: %v\n", err)
@@ -634,6 +639,16 @@ Subcommands:
                               -config /etc/ratesengine.toml \
                               -from 21000000 -to 25000000 \
                               -source soroswap,aquarius
+  census-backfill -config PATH -from N -to N [-bucket NAME] [-resume]
+                          Populate ledger_ingest_log (ADR-0033 substrate
+                          record) for a historical range. Pure structural
+                          walk — counts contract events + classic trade
+                          effects per ledger and records the header
+                          hash-chain anchors, no decoders run. The live
+                          indexer writes this going forward; this fills
+                          history so substrate continuity + hash-chain
+                          checks cover [genesis, tip]. Idempotent
+                          (ON CONFLICT DO UPDATE); checkpoints for resume.
   seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the

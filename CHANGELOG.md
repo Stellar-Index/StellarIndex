@@ -22,6 +22,19 @@ against.
   reconciliation) replace threshold-based coverage as the
   100%-confidence signal. See `docs/adr/0033-completeness-verification-model.md`.
 
+- **`ledger_ingest_log` substrate-continuity record (ADR-0033 Phase 2).**
+  Migration 0051. One row per fully-processed ledger, written
+  post-persist by the live indexer, carrying the LCM-derived census
+  (`soroban_event_count`, `classic_trade_effect_count` — counted
+  decoder-independently from the LedgerCloseMeta) plus the header
+  hash-chain anchors. New `ratesengine-ops census-backfill -from -to`
+  populates history. Storage queries `FindLedgerIngestGaps` (contiguity)
+  and `VerifyLedgerHashChain` (cryptographic linkage) are Claim 1 of the
+  completeness model — both run over the narrow record, never a trades
+  scan. Once a ledger is recorded with its census, "zero events for
+  contract C here" is a *proven* quiet period, which is what lets the
+  confidence signal stop guessing sparsity thresholds.
+
 ### Fixed
 
 - **`soroban_events` no longer silently drops events from multi-event
