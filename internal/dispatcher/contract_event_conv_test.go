@@ -39,7 +39,7 @@ func makeBasicContractEvent(t *testing.T) (xdr.ContractEvent, xdr.ContractId) {
 func TestContractEventToEventsEvent_happyPath(t *testing.T) {
 	ce, cid := makeBasicContractEvent(t)
 
-	got := contractEventToEventsEvent(ce, 52_000_000, "abcd", 3, "2026-04-23T12:00:00Z", []string{"arg-b64"})
+	got := contractEventToEventsEvent(ce, 52_000_000, "abcd", 3, 5, "2026-04-23T12:00:00Z", []string{"arg-b64"})
 	if got == nil {
 		t.Fatal("expected non-nil events.Event")
 	}
@@ -51,6 +51,9 @@ func TestContractEventToEventsEvent_happyPath(t *testing.T) {
 	}
 	if got.OperationIndex != 3 {
 		t.Errorf("OperationIndex = %d, want 3", got.OperationIndex)
+	}
+	if got.EventIndex != 5 {
+		t.Errorf("EventIndex = %d, want 5", got.EventIndex)
 	}
 	if got.TxHash != "abcd" {
 		t.Errorf("TxHash = %q, want \"abcd\"", got.TxHash)
@@ -93,7 +96,7 @@ func TestContractEventToEventsEvent_wrongType(t *testing.T) {
 	// produces a wire event.
 	ce, _ := makeBasicContractEvent(t)
 	ce.Type = xdr.ContractEventTypeSystem
-	if got := contractEventToEventsEvent(ce, 1, "abcd", 0, "ts", nil); got != nil {
+	if got := contractEventToEventsEvent(ce, 1, "abcd", 0, 0, "ts", nil); got != nil {
 		t.Errorf("ContractEventTypeSystem should return nil, got %+v", got)
 	}
 }
@@ -101,7 +104,7 @@ func TestContractEventToEventsEvent_wrongType(t *testing.T) {
 func TestContractEventToEventsEvent_nilContractID(t *testing.T) {
 	ce, _ := makeBasicContractEvent(t)
 	ce.ContractId = nil
-	if got := contractEventToEventsEvent(ce, 1, "abcd", 0, "ts", nil); got != nil {
+	if got := contractEventToEventsEvent(ce, 1, "abcd", 0, 0, "ts", nil); got != nil {
 		t.Errorf("nil ContractId should return nil, got %+v", got)
 	}
 }
@@ -113,7 +116,7 @@ func TestContractEventToEventsEvent_unknownBodyVersion(t *testing.T) {
 	ce, _ := makeBasicContractEvent(t)
 	ce.Body.V = 99
 	ce.Body.V0 = nil
-	if got := contractEventToEventsEvent(ce, 1, "abcd", 0, "ts", nil); got != nil {
+	if got := contractEventToEventsEvent(ce, 1, "abcd", 0, 0, "ts", nil); got != nil {
 		t.Errorf("unknown body version should return nil, got %+v", got)
 	}
 }

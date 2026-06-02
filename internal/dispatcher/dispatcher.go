@@ -519,8 +519,8 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 				if opIdx < len(invokeCalls) && invokeCalls[opIdx] != nil {
 					args = invokeCalls[opIdx].Args
 				}
-				for _, ce := range opEvents {
-					ev := contractEventToEventsEvent(ce, ledgerSeq, txHash, opIdx, closedAt, args)
+				for evIdx, ce := range opEvents {
+					ev := contractEventToEventsEvent(ce, ledgerSeq, txHash, opIdx, evIdx, closedAt, args)
 					if ev == nil {
 						continue
 					}
@@ -847,7 +847,14 @@ func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 // opArgs carries the base64-encoded SCVal arguments of the
 // InvokeContract call that produced this op's events, if any; left
 // empty for non-InvokeContract ops.
-func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash string, opIdx int, closedAt string, opArgs []string) *events.Event {
+//
+// evIdx is the position of this event within the operation's
+// contract-event list (the caller's range index). It becomes
+// events.Event.EventIndex and ultimately the soroban_events
+// event_index column, making (ledger, tx_hash, op_index, event_index)
+// unique per event — without it multi-event ops collide on the PK
+// (ADR-0033).
+func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash string, opIdx, evIdx int, closedAt string, opArgs []string) *events.Event {
 	if ce.Type != xdr.ContractEventTypeContract {
 		return nil
 	}
@@ -893,6 +900,7 @@ func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash s
 		LedgerClosedAt:           closedAt,
 		ContractID:               contractID,
 		OperationIndex:           opIdx,
+		EventIndex:               evIdx,
 		TxHash:                   txHash,
 		InSuccessfulContractCall: true,
 		Topic:                    topic,

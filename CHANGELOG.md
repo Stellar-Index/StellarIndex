@@ -15,7 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ADR-0033 — completeness verification model.** Three independently
+  provable claims (substrate continuity, recognition, projection
+  reconciliation) replace threshold-based coverage as the
+  100%-confidence signal. See `docs/adr/0033-completeness-verification-model.md`.
+
 ### Fixed
+
+- **`soroban_events` no longer silently drops events from multi-event
+  operations.** `event_index` was hardcoded to 0 at capture, so every
+  contract event in one operation collided on the
+  `(ledger_close_time, ledger, tx_hash, op_index, event_index)` PK and
+  the writer's `ON CONFLICT DO NOTHING` kept only the first — Phoenix
+  (8 events per swap in one op) was archiving 1 of 8. A real
+  `event_index` is now threaded from the dispatcher's per-op event walk
+  through `events.Event` into `Capture`/`Reconstruct`, and
+  `StreamSorobanEvents` orders by it for deterministic replay. This is
+  the precondition for using `soroban_events` as a completeness oracle
+  (ADR-0033 Phase 1). Note: rows captured before this fix are missing
+  the collided events; affected ranges need re-backfilling — the
+  ADR-0033 reconciliation will surface exactly which.
 
 - **/v1/markets no longer returns 500 on unparseable trades rows.**
   A single stray row with `base_asset='test'` 500ed every markets

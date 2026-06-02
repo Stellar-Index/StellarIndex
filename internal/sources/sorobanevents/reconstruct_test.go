@@ -35,6 +35,7 @@ func TestReconstruct_RoundTripsCapture(t *testing.T) {
 		LedgerClosedAt: "2026-05-20T14:00:00Z",
 		ContractID:     contractID,
 		OperationIndex: 2,
+		EventIndex:     4,
 		TxHash:         txHash,
 		Topic:          []string{topicSwap, topicAddr},
 		Value:          body,
@@ -66,6 +67,12 @@ func TestReconstruct_RoundTripsCapture(t *testing.T) {
 	}
 	if roundTripped.OperationIndex != original.OperationIndex {
 		t.Errorf("OperationIndex = %d, want %d", roundTripped.OperationIndex, original.OperationIndex)
+	}
+	if row.EventIndex != 4 {
+		t.Errorf("Capture: row.EventIndex = %d, want 4", row.EventIndex)
+	}
+	if roundTripped.EventIndex != original.EventIndex {
+		t.Errorf("EventIndex = %d, want %d", roundTripped.EventIndex, original.EventIndex)
 	}
 	if roundTripped.TxHash != original.TxHash {
 		t.Errorf("TxHash = %q, want %q", roundTripped.TxHash, original.TxHash)

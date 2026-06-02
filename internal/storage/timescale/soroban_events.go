@@ -111,7 +111,10 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []sorobaneven
 
 // StreamSorobanEvents invokes `fn` once per soroban_events row
 // matching the predicate in [from, to] (inclusive), in
-// (ledger_close_time, ledger, tx_hash, op_index) order. Used by
+// (ledger_close_time, ledger, tx_hash, op_index, event_index) order
+// — event_index makes the per-op replay order deterministic so
+// multi-event ops (Phoenix's 8-events-per-swap) reconstruct stably
+// (ADR-0033). Used by
 // per-source `ratesengine-ops <source>-backfill` subcommands to
 // re-feed historical rows through the live Go decoders without a
 // MinIO walk.
@@ -161,7 +164,7 @@ func (s *Store) StreamSorobanEvents(
 		args = append(args, topic0Args(topic0Syms)...)
 		fmt.Fprintf(&sb, " AND topic_0_sym IN (%s)", placeholdersFrom(baseIdx, len(topic0Syms)))
 	}
-	sb.WriteString(" ORDER BY ledger_close_time, ledger, tx_hash, op_index")
+	sb.WriteString(" ORDER BY ledger_close_time, ledger, tx_hash, op_index, event_index")
 
 	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
 	if err != nil {
