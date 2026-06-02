@@ -164,6 +164,21 @@ func (s *Store) StreamSorobanEvents(
 		args = append(args, topic0Args(topic0Syms)...)
 		fmt.Fprintf(&sb, " AND topic_0_sym IN (%s)", placeholdersFrom(baseIdx, len(topic0Syms)))
 	}
+	// Chunk-pruning (ADR-0033): soroban_events is partitioned by
+	// ledger_close_time, so `WHERE ledger BETWEEN` alone scans every
+	// chunk. When ledger_ingest_log fully covers [from,to] we can bound
+	// ledger_close_time exactly (see SorobanEventsTimeBound) and prune.
+	// The fullyCovered guard preserves correctness — a partial bound
+	// could exclude in-range rows — so without full coverage we keep the
+	// (correct, slower) unpruned scan. Sources that pass a contract /
+	// topic prefilter already use those indexes; this helps the
+	// match-by-topic sources (soroswap/aquarius/phoenix/comet) that
+	// pass no prefilter.
+	if lo, hi, covered, terr := s.SorobanEventsTimeBound(ctx, from, to); terr == nil && covered {
+		next := len(args) + 1
+		args = append(args, lo, hi)
+		fmt.Fprintf(&sb, " AND ledger_close_time BETWEEN $%d AND $%d", next, next+1)
+	}
 	sb.WriteString(" ORDER BY ledger_close_time, ledger, tx_hash, op_index, event_index")
 
 	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
