@@ -68,6 +68,29 @@ type Trade struct {
 	Taker string `json:"taker,omitempty"`
 }
 
+// FanoutOpIndex packs an operation index and an in-operation event
+// index into the single uint32 OpIndex slot, so multiple trades emitted
+// by ONE operation (a multi-pool / multi-hop swap fires several trade
+// events in one op) get distinct trade identities instead of colliding
+// on the (source, ledger, tx_hash, op_index, ts) key and being silently
+// dropped by the writer's ON CONFLICT.
+//
+// Encoding: opIndex in the high 16 bits, eventIndex in the low 16. Both
+// are smallint on the wire (≤ 32767) so neither overflows its half, and
+// the result is stable + deterministic (the projection re-derive
+// reproduces it exactly).
+//
+// Sources whose op emits at most one trade — or that already space
+// op_index themselves (SDEX's *1024 stride) — need not use this. Sources
+// that emit one trade per Soroban contract-event within an op (aquarius,
+// comet) MUST: the op index alone is not unique per trade. Found by the
+// ADR-0033 projection reconciliation (aquarius was dropping the 2nd+
+// trade of every multi-pool op). Requires events.Event.EventIndex
+// (threaded in ADR-0033 Phase 1).
+func FanoutOpIndex(opIndex, eventIndex int) uint32 {
+	return uint32(opIndex)<<16 | (uint32(eventIndex) & 0xFFFF)
+}
+
 // ID is the stable unique identifier used as the primary key in the
 // trades hypertable and as the dedup key across region replicas.
 //
