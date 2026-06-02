@@ -114,6 +114,26 @@ func TestLedgerIngestLog(t *testing.T) {
 		t.Fatalf("expected exactly one break at 105, got %+v", breaks)
 	}
 
+	// ─── Classic-trade-effect census (SDEX reconciliation, Phase 5).
+	// Inserted rows carry ClassicTradeEffectCount = seq%3; only >0 are
+	// returned. 105's update above left its count at 0 (already absent
+	// since 105%3==0), so it doesn't affect this.
+	census, err := store.ClassicTradeEffectCountsByLedger(ctx, 100, 115)
+	if err != nil {
+		t.Fatalf("ClassicTradeEffectCountsByLedger: %v", err)
+	}
+	if census[100] != 1 || census[101] != 2 || census[113] != 2 || census[115] != 1 {
+		t.Errorf("census sample wrong: 100=%d(want1) 101=%d(want2) 113=%d(want2) 115=%d(want1)",
+			census[100], census[101], census[113], census[115])
+	}
+	if _, present := census[102]; present { // 102%3==0 → omitted
+		t.Errorf("census should omit ledger 102 (zero trade effects), got %d", census[102])
+	}
+	// 100,101,103,104,106,107,109,113,115 have seq%3>0 → 9 entries.
+	if len(census) != 9 {
+		t.Errorf("census has %d entries, want 9", len(census))
+	}
+
 	// ─── Extent.
 	lo, hi, ok, err := store.LedgerIngestExtent(ctx)
 	if err != nil {

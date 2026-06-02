@@ -18,30 +18,30 @@ import (
 )
 
 // verifyReconciliation implements ADR-0033 Claim 2b (projection
-// reconciliation) for the Soroban trade sources: it re-derives, per
-// ledger, how many canonical.Trade rows the decoder WOULD emit from
-// soroban_events (the deterministic recomputation), and compares that
-// to the rows actually present in `trades`. Any ledger where the two
-// disagree is a projection gap — a row the projector dropped, or a
-// phantom row with no backing event.
+// reconciliation): per ledger, the rows a source SHOULD have produced
+// must equal the rows actually in its table.
 //
-// Scope: the four event-based trade sources (soroswap, aquarius,
-// phoenix, comet). SDEX is reconciled differently (Claim 2b classic,
-// ADR-0033 Phase 5) because it predates Soroban and has no
-// soroban_events. Oracle / liquidity / supply sources are out of scope
-// for this command for now (1:N output arity is reconciled the same
-// way; adding them is mechanical).
+// Two oracles for "should have produced", by source class:
 //
-// Soroswap's swap event omits token identities, so its decoder needs
-// the pair registry seeded from the factory; we seed via RPC the same
-// way verify-decoders does. Without a seed, soroswap counts undercount
-// pairs created before -from — the command warns and proceeds.
+//   - Soroban trade sources (soroswap, aquarius, phoenix, comet) —
+//     re-derive by running the real decoder over soroban_events
+//     (deterministic recomputation). Correlation sources reconcile
+//     correctly because each logical record's events share one
+//     (ledger, tx, op).
+//   - SDEX — predates Soroban, so there is no soroban_events to
+//     re-derive from. Use the LCM-derived classic_trade_effect_count
+//     census in ledger_ingest_log (one ClaimAtom = one trade). This is
+//     gated on the substrate record covering the range; if it has gaps,
+//     run `census-backfill` first. The external Hubble anchor
+//     (`hubble-check`) is the defense-in-depth cross-check.
+//
+// Exits non-zero if any mismatch is found. Cron/CI-gateable.
 func verifyReconciliation(args []string) error {
 	fs := flag.NewFlagSet("verify-reconciliation", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
-	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet); default: all four")
+	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet|sdex); default: all")
 	maxList := fs.Int("max-list", 50, "Max gap ledgers to print per source")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -64,60 +64,77 @@ func verifyReconciliation(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// Build the trade-source decoders directly (rather than via the
-	// projector registry) so we hold the soroswap decoder handle for
-	// seeding. ContractIDs/Topic0Syms prefilters are empty for all
-	// four — they match by topic across every contract.
+	lo, hi := uint32(*from), uint32(*to)
+
+	// Build a reconciliation job per source. Each yields (expected,
+	// actual) per-ledger count maps; the diff + report is common.
+	type job struct {
+		name     string
+		expected func() (map[uint32]int, error)
+	}
 	soroswapDec := soroswap.NewDecoder()
-	all := []struct {
-		name string
-		dec  completeness.Decoder
-	}{
-		{"soroswap", soroswapDec},
-		{"aquarius", aquarius.NewDecoder()},
-		{"phoenix", phoenix.NewDecoder()},
-		{"comet", comet.NewDecoder()},
+	sorobanJob := func(name string, dec completeness.Decoder) job {
+		return job{name: name, expected: func() (map[uint32]int, error) {
+			return completeness.ReDeriveOutputCounts(ctx, store, dec, nil, nil, lo, hi)
+		}}
+	}
+	jobs := []job{
+		sorobanJob("soroswap", soroswapDec),
+		sorobanJob("aquarius", aquarius.NewDecoder()),
+		sorobanJob("phoenix", phoenix.NewDecoder()),
+		sorobanJob("comet", comet.NewDecoder()),
+		{name: "sdex", expected: func() (map[uint32]int, error) {
+			// SDEX expected comes from the substrate census, which is
+			// only trustworthy where ledger_ingest_log is continuous.
+			gaps, gerr := store.FindLedgerIngestGaps(ctx, lo, hi)
+			if gerr != nil {
+				return nil, gerr
+			}
+			if len(gaps) > 0 {
+				return nil, fmt.Errorf("ledger_ingest_log has %d gap(s) in [%d,%d] — run `census-backfill` first (first gap %d-%d)",
+					len(gaps), lo, hi, gaps[0].Start, gaps[0].End)
+			}
+			return store.ClassicTradeEffectCountsByLedger(ctx, lo, hi)
+		}},
 	}
 
-	// Seed soroswap pairs (token identities) so its re-derive matches
-	// the projector's view.
+	// Seed soroswap pairs so its re-derive resolves token identities.
 	if *only == "" || *only == "soroswap" {
 		if err := seedSoroswapForRecon(ctx, cfg, soroswapDec); err != nil {
-			fmt.Fprintf(os.Stderr, "verify-reconciliation: soroswap seed failed (%v) — soroswap counts may undercount pre-%d pairs\n", err, *from)
+			fmt.Fprintf(os.Stderr, "verify-reconciliation: soroswap seed failed (%v) — soroswap counts may undercount pre-%d pairs\n", err, lo)
 		}
 	}
 
 	anyGaps := false
-	for _, src := range all {
-		if *only != "" && src.name != *only {
+	for _, j := range jobs {
+		if *only != "" && j.name != *only {
 			continue
 		}
-		expected, err := completeness.ReDeriveOutputCounts(ctx, store, src.dec, nil, nil, uint32(*from), uint32(*to))
+		expected, err := j.expected()
 		if err != nil {
-			return fmt.Errorf("%s: re-derive: %w", src.name, err)
+			return fmt.Errorf("%s: expected counts: %w", j.name, err)
 		}
-		actual, err := store.CountRowsByLedger(ctx, "trades", "ledger", "source='"+src.name+"'", uint32(*from), uint32(*to))
+		actual, err := store.CountRowsByLedger(ctx, "trades", "ledger", "source='"+j.name+"'", lo, hi)
 		if err != nil {
-			return fmt.Errorf("%s: actual counts: %w", src.name, err)
+			return fmt.Errorf("%s: actual counts: %w", j.name, err)
 		}
 		gaps := completeness.ReconcileCounts(expected, actual)
-
 		expTotal, actTotal := sumCounts(expected), sumCounts(actual)
 		if len(gaps) == 0 {
 			fmt.Fprintf(os.Stderr, "verify-reconciliation: %-9s OK — expected=%d actual=%d across [%d,%d]\n",
-				src.name, expTotal, actTotal, *from, *to)
+				j.name, expTotal, actTotal, lo, hi)
 			continue
 		}
 		anyGaps = true
 		fmt.Fprintf(os.Stderr, "verify-reconciliation: %-9s %d MISMATCHED ledger(s) (expected=%d actual=%d):\n",
-			src.name, len(gaps), expTotal, actTotal)
+			j.name, len(gaps), expTotal, actTotal)
 		for i, g := range gaps {
 			if i >= *maxList {
 				fmt.Fprintf(os.Stdout, "  … %d more (raise -max-list to see)\n", len(gaps)-*maxList)
 				break
 			}
 			fmt.Fprintf(os.Stdout, "  source=%s ledger=%d expected=%d actual=%d (delta %+d)\n",
-				src.name, g.Ledger, g.Expected, g.Actual, g.Actual-g.Expected)
+				j.name, g.Ledger, g.Expected, g.Actual, g.Actual-g.Expected)
 		}
 	}
 
