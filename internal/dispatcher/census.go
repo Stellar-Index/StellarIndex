@@ -53,7 +53,7 @@ type Census struct {
 // only successful transactions contribute (ProcessLedger skips
 // failed txs), contract events must be capture-eligible
 // (see captureEligible), and trade ops must have succeeded.
-func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) {
+func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) { //nolint:gocognit,gocyclo // linear LCM walk; splitting reduces clarity (same as ProcessLedger).
 	c := Census{
 		LedgerSeq:       lcm.LedgerSequence(),
 		LedgerCloseTime: lcm.ClosedAt().UTC(),
