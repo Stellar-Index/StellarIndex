@@ -143,6 +143,23 @@ func TestLedgerIngestLog(t *testing.T) {
 		t.Errorf("LedgerIngestExtent = (%d,%d,%v), want (100,115,true)", lo, hi, ok)
 	}
 
+	// ─── SorobanEventsTimeBound (chunk-pruning helper): fully-covered
+	// contiguous range reports covered=true with the exact close-time
+	// span; a range with gaps reports covered=false.
+	lo2, hi2, covered, err := store.SorobanEventsTimeBound(ctx, 100, 109)
+	if err != nil {
+		t.Fatalf("SorobanEventsTimeBound [100,109]: %v", err)
+	}
+	if !covered {
+		t.Errorf("SorobanEventsTimeBound [100,109]: covered=false, want true (contiguous)")
+	}
+	if !lo2.Equal(t0.Add(100*time.Second)) || !hi2.Equal(t0.Add(109*time.Second)) {
+		t.Errorf("SorobanEventsTimeBound [100,109] span = [%s,%s], want [+100s,+109s]", lo2, hi2)
+	}
+	if _, _, covered2, err := store.SorobanEventsTimeBound(ctx, 100, 120); err != nil || covered2 {
+		t.Errorf("SorobanEventsTimeBound [100,120]: covered=%v err=%v, want covered=false (has gaps)", covered2, err)
+	}
+
 	// ─── Completeness snapshot round-trip (Phase 6): insert, update
 	// (idempotent), list.
 	if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{

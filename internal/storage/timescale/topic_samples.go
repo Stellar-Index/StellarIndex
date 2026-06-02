@@ -34,7 +34,18 @@ func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32
 	if to < from {
 		return nil, errors.New("timescale: DistinctSorobanTopicSamples: to < from")
 	}
-	const q = `
+
+	// Chunk-pruning: when ledger_ingest_log fully covers [from,to], add a
+	// ledger_close_time bound so this aggregate hits only the relevant
+	// chunks instead of scanning the whole hypertable (see
+	// SorobanEventsTimeBound). Falls back to the unpruned scan otherwise.
+	args := []any{int64(from), int64(to)}
+	timeFilter := ""
+	if lo, hi, covered, terr := s.SorobanEventsTimeBound(ctx, from, to); terr == nil && covered {
+		args = append(args, lo, hi)
+		timeFilter = " AND ledger_close_time BETWEEN $3 AND $4"
+	}
+	q := `
         SELECT DISTINCT ON (contract_id, topic_0_sym)
             ledger, ledger_close_time, tx_hash, op_index, event_index,
             contract_id, contract_id_hex, topic_count, topic_0_sym,
@@ -44,10 +55,10 @@ func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32
             min(ledger) OVER (PARTITION BY contract_id, topic_0_sym) AS grp_min,
             max(ledger) OVER (PARTITION BY contract_id, topic_0_sym) AS grp_max
         FROM soroban_events
-        WHERE ledger BETWEEN $1 AND $2
+        WHERE ledger BETWEEN $1 AND $2` + timeFilter + `
         ORDER BY contract_id, topic_0_sym, ledger`
 
-	rows, err := s.db.QueryContext(ctx, q, int64(from), int64(to))
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: DistinctSorobanTopicSamples query: %w", err)
 	}

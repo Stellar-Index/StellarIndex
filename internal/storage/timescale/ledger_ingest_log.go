@@ -217,6 +217,43 @@ func (s *Store) ClassicTradeEffectCountsByLedger(ctx context.Context, from, to u
 	return out, nil
 }
 
+// SorobanEventsTimeBound returns the [lo, hi] ledger_close_time span of
+// the ledgers [from, to] as recorded in ledger_ingest_log, plus whether
+// the log FULLY covers that range (one row per ledger). It exists to
+// make soroban_events ledger-range queries prune chunks: that table is
+// partitioned by ledger_close_time, so a `WHERE ledger BETWEEN` filter
+// alone scans every chunk. Adding `AND ledger_close_time BETWEEN lo AND
+// hi` restores pruning.
+//
+// The fullyCovered guard is a correctness requirement, not just an
+// optimization: a soroban_events row's ledger_close_time equals its
+// ledger's close time exactly (same LCM), so [lo, hi] over a FULLY
+// covered range bounds every soroban_events row whose ledger is in
+// [from, to]. If the log is missing ledgers in the range, a partial
+// [lo, hi] could exclude rows whose ledger is in range — so callers
+// MUST only apply the bound when fullyCovered is true, and otherwise
+// fall back to the (correct, slower) unpruned scan.
+func (s *Store) SorobanEventsTimeBound(ctx context.Context, from, to uint32) (lo, hi time.Time, fullyCovered bool, err error) {
+	if to < from {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("timescale: SorobanEventsTimeBound: to (%d) < from (%d)", to, from)
+	}
+	const q = `
+        SELECT min(ledger_close_time), max(ledger_close_time), count(*)
+        FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2`
+	var (
+		loN, hiN sql.NullTime
+		cnt      int64
+	)
+	if err := s.db.QueryRowContext(ctx, q, int64(from), int64(to)).Scan(&loN, &hiN, &cnt); err != nil {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("timescale: SorobanEventsTimeBound [%d,%d]: %w", from, to, err)
+	}
+	if !loN.Valid || !hiN.Valid {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	expected := int64(to) - int64(from) + 1
+	return loN.Time, hiN.Time, cnt == expected, nil
+}
+
 // LedgerIngestExtent returns the min and max ledger_seq present in the
 // table (ok=false when the table is empty). Used to bound watermark
 // computation without scanning trades.
