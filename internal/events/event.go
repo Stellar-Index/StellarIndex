@@ -34,6 +34,24 @@ type Event struct {
 	TxHash                   string `json:"txHash"`
 	InSuccessfulContractCall bool   `json:"inSuccessfulContractCall"`
 
+	// EventIndex is the position of this event within its operation's
+	// contract-event list — the slice index the dispatcher walked when
+	// flattening tx meta (internal/dispatcher/dispatcher.go). Combined
+	// with (Ledger, TxHash, OperationIndex) it uniquely identifies the
+	// event, which is exactly the soroban_events PK
+	// (ledger_close_time, ledger, tx_hash, op_index, event_index).
+	//
+	// CRITICAL: without this, an operation that emits ≥2 contract
+	// events (Phoenix emits 8 per swap) collapses to one row in
+	// soroban_events under ON CONFLICT DO NOTHING — the raw landing
+	// zone silently loses 7 of 8. See ADR-0033.
+	//
+	// Populated only by the production dispatcher path from the LCM.
+	// NOT part of the stellar-rpc getEvents wire shape (RPC encodes
+	// position in the opaque `ID` string instead), so it's never
+	// marshalled — `json:"-"` keeps RPC fixture replays byte-identical.
+	EventIndex int `json:"-"`
+
 	// Topic entries are base64-encoded SCVal. Decoders parse via
 	// internal/scval.
 	Topic []string `json:"topic"`

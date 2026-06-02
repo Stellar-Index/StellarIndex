@@ -54,6 +54,7 @@ func Reconstruct(row Row) (events.Event, error) {
 		LedgerClosedAt: row.LedgerCloseTime.UTC().Format(time.RFC3339),
 		ContractID:     row.ContractID,
 		OperationIndex: int(row.OpIndex),
+		EventIndex:     int(row.EventIndex),
 		TxHash:         hex.EncodeToString(row.TxHash),
 		Topic:          topics,
 		Value:          base64.StdEncoding.EncodeToString(row.BodyXDR),

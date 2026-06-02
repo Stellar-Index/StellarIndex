@@ -154,6 +154,58 @@ func TestCapture_SymbolTopic(t *testing.T) {
 	}
 }
 
+// TestCapture_EventIndexDistinguishesSameOpEvents is the regression
+// guard for the ADR-0033 silent-loss bug: before event_index was
+// threaded, every contract event in one operation captured with
+// event_index=0, so a multi-event op (Phoenix emits 8 per swap)
+// collided on the (ledger, tx_hash, op_index, event_index) PK and
+// the writer's ON CONFLICT DO NOTHING dropped all but the first.
+// With event_index threaded, the eight events of one op produce
+// eight distinct PKs.
+func TestCapture_EventIndexDistinguishesSameOpEvents(t *testing.T) {
+	t.Parallel()
+
+	contractID := mkContractStrkey(t, 0x55)
+	txHash := mkTxHashHex(0x99)
+	body := b64SV(t, i128SV(big.NewInt(1)))
+
+	type pk struct {
+		op, ev int16
+	}
+	seen := make(map[pk]bool)
+
+	// One operation (op_index=0), eight events — the Phoenix shape.
+	for evIdx := 0; evIdx < 8; evIdx++ {
+		ev := events.Event{
+			Type:           "contract",
+			Ledger:         62_800_000,
+			LedgerClosedAt: "2026-05-21T00:00:00Z",
+			ContractID:     contractID,
+			OperationIndex: 0,
+			EventIndex:     evIdx,
+			TxHash:         txHash,
+			Topic:          []string{b64SV(t, symbolSV("swap"))},
+			Value:          body,
+		}
+		row, err := Capture(ev)
+		if err != nil {
+			t.Fatalf("Capture(evIdx=%d): %v", evIdx, err)
+		}
+		if int(row.EventIndex) != evIdx {
+			t.Errorf("evIdx=%d: row.EventIndex = %d, want %d", evIdx, row.EventIndex, evIdx)
+		}
+		key := pk{op: row.OpIndex, ev: row.EventIndex}
+		if seen[key] {
+			t.Errorf("evIdx=%d: PK collision on (op=%d, event=%d) — multi-event op would drop rows",
+				evIdx, key.op, key.ev)
+		}
+		seen[key] = true
+	}
+	if len(seen) != 8 {
+		t.Errorf("got %d distinct (op, event) PKs, want 8", len(seen))
+	}
+}
+
 // TestCapture_StringTopic verifies that a String-typed topic[0] is
 // also surfaced through topic_0_sym (the convenience column covers
 // both Symbol and String).

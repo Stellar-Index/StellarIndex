@@ -183,18 +183,15 @@ func Capture(ev events.Event) (Row, error) {
 		LedgerCloseTime: observedAt.UTC(),
 		TxHash:          txHashRaw,
 		OpIndex:         int16(ev.OperationIndex),
-		// event_index — not on events.Event today; default to 0 and
-		// rely on (ledger, tx_hash, op_index) being unique with
-		// event_index=0 for now. The dispatcher walks topics in
-		// order so a per-op event_index is conceptually the slice
-		// index; threading it through events.Event is a follow-up
-		// captured in ADR-0029 §future-work. event_index participates
-		// in the PK so duplicate-event rows from the same op would
-		// collide — that has not been observed in production, but if
-		// it does, the duplicate-key insert returns and the
-		// `INSERT ... ON CONFLICT DO NOTHING` in the writer keeps
-		// the batch flowing.
-		EventIndex:    0,
+		// event_index is the event's position within its operation's
+		// contract-event list, threaded from the dispatcher
+		// (ADR-0033). It is the final component of the soroban_events
+		// PK; without it an op emitting ≥2 events (Phoenix: 8 per
+		// swap) collides on (ledger, tx_hash, op_index, 0) and the
+		// writer's ON CONFLICT DO NOTHING silently drops all but the
+		// first. RPC-sourced events leave it 0, but only the
+		// dispatcher populates soroban_events in production.
+		EventIndex:    int16(ev.EventIndex),
 		ContractID:    ev.ContractID,
 		ContractIDHex: contractIDRaw,
 		TopicCount:    int16(len(ev.Topic)),
