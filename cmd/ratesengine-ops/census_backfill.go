@@ -30,7 +30,7 @@ import (
 // Resume: checkpoints into ingestion_cursors as
 // (source='census-backfill', sub_source='<from>-<to>'). Re-running the
 // same -from/-to resumes from the last processed ledger. Restart-safe.
-func censusBackfill(args []string) error {
+func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear walk + checkpoint loop; splitting reduces clarity (same as backfillRouter).
 	fs := flag.NewFlagSet("census-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")

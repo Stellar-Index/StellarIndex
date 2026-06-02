@@ -36,7 +36,7 @@ import (
 //     (`hubble-check`) is the defense-in-depth cross-check.
 //
 // Exits non-zero if any mismatch is found. Cron/CI-gateable.
-func verifyReconciliation(args []string) error {
+func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funlen // linear per-source loop; splitting reduces clarity (same as backfillRouter).
 	fs := flag.NewFlagSet("verify-reconciliation", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
@@ -130,10 +130,10 @@ func verifyReconciliation(args []string) error {
 			j.name, len(gaps), expTotal, actTotal)
 		for i, g := range gaps {
 			if i >= *maxList {
-				fmt.Fprintf(os.Stdout, "  … %d more (raise -max-list to see)\n", len(gaps)-*maxList)
+				_, _ = fmt.Fprintf(os.Stdout, "  … %d more (raise -max-list to see)\n", len(gaps)-*maxList)
 				break
 			}
-			fmt.Fprintf(os.Stdout, "  source=%s ledger=%d expected=%d actual=%d (delta %+d)\n",
+			_, _ = fmt.Fprintf(os.Stdout, "  source=%s ledger=%d expected=%d actual=%d (delta %+d)\n",
 				j.name, g.Ledger, g.Expected, g.Actual, g.Actual-g.Expected)
 		}
 	}

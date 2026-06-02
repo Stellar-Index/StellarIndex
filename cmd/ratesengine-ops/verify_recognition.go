@@ -74,7 +74,7 @@ func verifyRecognition(args []string) error {
 		if sym == "" {
 			sym = "(non-symbol topic[0])"
 		}
-		fmt.Fprintf(os.Stdout, "  contract=%s topic0=%q count=%d ledgers=[%d,%d] — %s\n",
+		_, _ = fmt.Fprintf(os.Stdout, "  contract=%s topic0=%q count=%d ledgers=[%d,%d] — %s\n",
 			g.ContractID, sym, g.Count, g.MinLedger, g.MaxLedger, g.Reason)
 	}
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))

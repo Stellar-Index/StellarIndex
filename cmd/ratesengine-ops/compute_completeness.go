@@ -147,7 +147,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 
 		// Bound projection to the substrate-verified region.
 		srW := completeness.ComputeWatermark(genesis, tip, problems)
-		projOK := true
+		var projOK bool
 		if srW.Ledger >= genesis {
 			projHi := srW.Ledger
 			expected, actual, perr := projectionCounts(ctx, store, name, decoders[name], genesis, projHi)
