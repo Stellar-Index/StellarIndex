@@ -1199,24 +1199,33 @@ func projectMarketCapState(c *marketcap.Cache) MarketCapState {
 // rather than absent — operators want to see "binance had 0
 // trades in 24h", which is a signal not a hidden row.
 func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
+	// Entries-24h from the universal per-source event counter
+	// (Prometheus) — runs FIRST and under its own short deadline. The
+	// trades aggregation below is slow + IO-contended under backfill
+	// load and can consume the entire sources-filler budget; running
+	// it first left this query no deadline so every source read 0
+	// (observed on r1 2026-06-04). Soft-fail to empty.
+	entries24h := map[string]int64{}
+	if s.statusBackend != nil {
+		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		m, err := s.statusBackend.SourceEntries24h(ectx)
+		cancel()
+		if err == nil {
+			entries24h = m
+		} else {
+			s.logger.Warn("diagnostics/ingestion: source entries_24h", "err", err)
+		}
+	}
+	// Trades/volume/markets — best-effort enrichment. Its error is
+	// intentionally swallowed: under backfill load this scan can time
+	// out, leaving trade_count/volume 0/empty while entries_24h above
+	// still reflects real per-source activity.
 	statsBySource := map[string]timescale.SourceStats{}
 	if s.sourcesStats != nil {
 		if rows, err := s.sourcesStats.GetSourceStats(ctx); err == nil {
 			for _, r := range rows {
 				statsBySource[r.Source] = r
 			}
-		}
-	}
-	// Entries-24h from the universal per-source event counter
-	// (Prometheus), independent of the trades aggregation above so it
-	// stays populated for non-trade sources and survives a trades-scan
-	// timeout. Soft-fail to empty — a missing backend leaves entries 0.
-	entries24h := map[string]int64{}
-	if s.statusBackend != nil {
-		if m, err := s.statusBackend.SourceEntries24h(ctx); err == nil {
-			entries24h = m
-		} else {
-			s.logger.Warn("diagnostics/ingestion: source entries_24h", "err", err)
 		}
 	}
 	out := make([]SourceHealthRow, 0, len(external.Registry))
