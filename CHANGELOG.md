@@ -97,6 +97,19 @@ against.
 
 ### Changed
 
+- **Sources panel shows "Entries 24h" instead of "Trades 24h".** The
+  old column came from a `GROUP BY source` scan over the `trades`
+  hypertable whose error was swallowed — so any timeout under load
+  silently rendered every source 0, and it was structurally 0 for the
+  many registered sources that don't write trades (oracles, bridges,
+  FX). It's replaced by a universal per-source trailing-24h event count
+  sourced from `increase(ratesengine_source_events_total[24h])` (the
+  same counter that backs `active_sources`) via a new
+  `StatusBackend.SourceEntries24h` — cheap, reliable, and non-zero for
+  every active source whether on-chain or external. New `entries_24h`
+  field on `/v1/diagnostics/ingestion` `sources[]`; the silent-VWAP
+  highlight now keys off it too.
+
 - **Status-page on-chain coverage is now honest about what it's
   measuring (ADR-0033).** A source's coverage figure is only shown as a
   trustworthy bar once its completeness watermark (`completeness_pct`)

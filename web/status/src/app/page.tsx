@@ -170,6 +170,10 @@ interface IngestionSnapshot {
     include_in_vwap: boolean;
     backfill_safe: boolean;
     trade_count_24h: number;
+    // entries_24h: universal trailing-24h per-source event count
+    // (ratesengine_source_events_total). Non-zero for every active
+    // source, unlike trade_count_24h (trades-table only).
+    entries_24h: number;
     volume_24h_usd?: string;
     markets_count_24h: number;
   }>;
@@ -1618,7 +1622,7 @@ function SourceHealthTable({
             <tr>
               <th className="px-3 py-2 text-left font-medium">Source</th>
               <th className="px-3 py-2 text-left font-medium">Class</th>
-              <th className="px-3 py-2 text-right font-medium">Trades 24h</th>
+              <th className="px-3 py-2 text-right font-medium">Entries 24h</th>
               <th className="px-3 py-2 text-right font-medium">Volume 24h</th>
               <th className="px-3 py-2 text-right font-medium">Markets</th>
               <th className="px-3 py-2 text-center font-medium">VWAP</th>
@@ -1627,7 +1631,7 @@ function SourceHealthTable({
           <tbody className="divide-y divide-surface-line">
             {safeRows.map((r) => {
               const classLabel = r.subclass ? `${r.class}/${r.subclass}` : r.class;
-              const silent = r.include_in_vwap && r.trade_count_24h === 0;
+              const silent = r.include_in_vwap && r.entries_24h === 0;
               return (
                 <tr key={r.name}>
                   <td className="px-3 py-2 font-mono">{r.name}</td>
@@ -1637,7 +1641,7 @@ function SourceHealthTable({
                       silent ? 'text-bad-700' : ''
                     }`}
                   >
-                    {r.trade_count_24h.toLocaleString()}
+                    {r.entries_24h.toLocaleString()}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
                     {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}

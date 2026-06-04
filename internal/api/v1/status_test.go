@@ -20,7 +20,9 @@ type fakeStatusBackend struct {
 	freshness  StatusFreshness
 	incidents  StatusIncidents
 
-	hbErr, latErr, freErr, incErr error
+	sourceEntries24h map[string]int64
+
+	hbErr, latErr, freErr, incErr, entriesErr error
 }
 
 func (f *fakeStatusBackend) Heartbeats(context.Context) (map[string]time.Time, error) {
@@ -37,6 +39,10 @@ func (f *fakeStatusBackend) Freshness(context.Context) (StatusFreshness, error) 
 
 func (f *fakeStatusBackend) Incidents(context.Context) (StatusIncidents, error) {
 	return f.incidents, f.incErr
+}
+
+func (f *fakeStatusBackend) SourceEntries24h(context.Context) (map[string]int64, error) {
+	return f.sourceEntries24h, f.entriesErr
 }
 
 func TestStatus_NoBackend_DegradedSurface(t *testing.T) {

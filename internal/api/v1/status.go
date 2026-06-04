@@ -127,6 +127,14 @@ type StatusBackend interface {
 	// Incidents returns the count of currently-firing alerts
 	// grouped by severity label.
 	Incidents(ctx context.Context) (StatusIncidents, error)
+
+	// SourceEntries24h returns the per-source count of events
+	// ingested in the trailing 24h, from the same per-source counter
+	// (ratesengine_source_events_total) that backs active_sources.
+	// Universal across on-chain and external sources and cheap (a
+	// Prometheus range-increase, not a trades-hypertable scan).
+	// Sources with no events in the window are absent from the map.
+	SourceEntries24h(ctx context.Context) (map[string]int64, error)
 }
 
 // PrometheusStatusBackend hits a local Prometheus' HTTP query
@@ -314,6 +322,26 @@ func (s promSample) Float() (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// SourceEntries24h implements [StatusBackend]. See the interface doc.
+func (p *PrometheusStatusBackend) SourceEntries24h(ctx context.Context) (map[string]int64, error) {
+	const q = `sum by (source) (increase(ratesengine_source_events_total[24h]))`
+	res, err := p.queryVector(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(res))
+	for _, sample := range res {
+		src, _ := sample.Labels["source"].(string)
+		if src == "" {
+			continue
+		}
+		if v, ok := sample.Float(); ok && v > 0 {
+			out[src] = int64(v + 0.5) // round to nearest whole event
+		}
+	}
+	return out, nil
 }
 
 func (p *PrometheusStatusBackend) queryVector(ctx context.Context, expr string) ([]promSample, error) {

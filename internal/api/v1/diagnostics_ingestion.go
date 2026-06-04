@@ -448,12 +448,18 @@ type SupplyStateView struct {
 // operators can see at a glance which sources are silent vs
 // actively ingesting. Sorted by name for deterministic responses.
 type SourceHealthRow struct {
-	Name            string `json:"name"`
-	Class           string `json:"class"`
-	Subclass        string `json:"subclass,omitempty"`
-	IncludeInVWAP   bool   `json:"include_in_vwap"`
-	BackfillSafe    bool   `json:"backfill_safe"`
-	TradeCount24h   int64  `json:"trade_count_24h"`
+	Name          string `json:"name"`
+	Class         string `json:"class"`
+	Subclass      string `json:"subclass,omitempty"`
+	IncludeInVWAP bool   `json:"include_in_vwap"`
+	BackfillSafe  bool   `json:"backfill_safe"`
+	TradeCount24h int64  `json:"trade_count_24h"`
+	// Entries24h is the trailing-24h per-source event count from the
+	// universal ratesengine_source_events_total counter (Prometheus) —
+	// non-zero for every active source, on-chain or external, unlike
+	// trade_count_24h which is trades-table-only (and 0 for oracles,
+	// bridges, FX) and which a trades-scan timeout can silently zero.
+	Entries24h      int64  `json:"entries_24h"`
 	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
 	MarketsCount24h int64  `json:"markets_count_24h"`
 }
@@ -1201,6 +1207,18 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			}
 		}
 	}
+	// Entries-24h from the universal per-source event counter
+	// (Prometheus), independent of the trades aggregation above so it
+	// stays populated for non-trade sources and survives a trades-scan
+	// timeout. Soft-fail to empty — a missing backend leaves entries 0.
+	entries24h := map[string]int64{}
+	if s.statusBackend != nil {
+		if m, err := s.statusBackend.SourceEntries24h(ctx); err == nil {
+			entries24h = m
+		} else {
+			s.logger.Warn("diagnostics/ingestion: source entries_24h", "err", err)
+		}
+	}
 	out := make([]SourceHealthRow, 0, len(external.Registry))
 	for name, meta := range external.Registry {
 		row := SourceHealthRow{
@@ -1217,6 +1235,7 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 				row.VolumeUSD24h = st.VolumeUSD24h.String
 			}
 		}
+		row.Entries24h = entries24h[name]
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
