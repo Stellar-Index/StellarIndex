@@ -86,13 +86,13 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	})
 	ext.Ledger.TxCount++
 
-	extractOps(ext, tx, seq, closeTime, txHash, txSource, txIndex)
+	extractOps(ext, tx, seq, closeTime, txHash, txSource, txIndex, tx.Result.Successful())
 	extractEvents(ext, tx, seq, closeTime, txHash)
 }
 
 // extractOps appends one tx's operation + operation_result rows and updates
 // the op + classic-trade-effect counts.
-func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash, txSource string, txIndex uint32) {
+func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash, txSource string, txIndex uint32, successful bool) {
 	ops := tx.Envelope.Operations()
 	opResults, hasResults := tx.Result.OperationResults()
 	for i := range ops {
@@ -117,8 +117,13 @@ func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clo
 		})
 		ext.Ledger.OpCount++
 		if hasResults && i < len(opResults) {
-			appendOpResult(ext, seq, txHash, uint32(i), opResults[i])
-			ext.Ledger.ClassicTradeEffectCount += uint32(claimAtomCount(op, opResults[i]))
+			appendOpResult(ext, seq, txHash, uint32(i), opResults[i]) // capture all op results (incl. failed) for the lake
+			if successful {
+				// classic_trade_effect_count mirrors the census/SDEX count,
+				// which only counts trades in SUCCESSFUL txs (rolled-back ops
+				// in a failed tx show success codes but never happened).
+				ext.Ledger.ClassicTradeEffectCount += uint32(claimAtomCount(op, opResults[i]))
+			}
 		}
 	}
 }
