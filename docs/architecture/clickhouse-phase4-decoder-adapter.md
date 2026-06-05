@@ -95,6 +95,40 @@ Re-projection correctness reuses the census/reconciliation oracle:
 3. Only after the rebuilt Postgres tables pass do we cut the API over and
    drop the old tables (plan §10e clean-cutover guarantee).
 
+## 4a. Validation result (2026-06-05, `ch-reproject` on 62,700,000–62,710,000)
+
+`ratesengine-ops ch-reproject` re-derives a range from the CH lake with the
+existing decoders and diffs against the served Postgres tables. Run on the
+dense partition-62 sample:
+
+- **Decoders re-derive identically from CH** where the served tables are
+  complete: `reflector-dex/cex/fx` (7872 / 2723 / 3456 — exact), `comet/trades`
+  (16), `blend_auctions` (17). This proves the input-adapter thesis: CH rows
+  feed the decoders and reproduce the served output exactly.
+- **CH recovers silently-dropped / never-projected rows** (the migration's
+  point): `aquarius/trades` 3143 vs 1947 served (**+61%**), `blend_positions`
+  +162, `comet_liquidity` +13, `phoenix/trades` +6, and whole sources absent
+  from the served tables — `defindex_flows` 254 vs 0, `blend_emissions` 19 vs 0,
+  `cctp_events` 8 vs 0. aquarius is 1 event → 1 trade (no correlation) and CH's
+  event totals are census-verified, so CH cannot over-count here — the served
+  table genuinely under-counts (the `event_index` collision class).
+- **Two CH-side items:**
+  - `redstone` 0 vs 474 — **the extractor leaves `op_args_xdr` nil**
+    (`extract.go`), and redstone needs op-args (feed_ids live in the
+    `write_prices` op args, not the event body). The running Phase-3 backfill
+    is NOT capturing op-args, so redstone/band are not re-derivable from the
+    lake until the extractor captures op-args + a targeted re-backfill. Scoped
+    to redstone/band only; everything else re-derives correctly.
+  - `soroswap` 0 vs 266 — `ch-reproject` runs the soroswap decoder unseeded
+    (no RPC pair registry), so it can't resolve pre-range pairs. Tool
+    limitation, not a lake gap; seed the decoder (as verify-reconciliation
+    does) to compare soroswap.
+
+Tooling note: each oracle variant shares one `EventKind` but routes under a
+distinct source filter, so `ch-reproject` buckets re-derived output **per
+source** (and applies each source's `contractIDs` prefilter) — otherwise the
+three reflector variants merge into one count.
+
 ## 5. Sequencing / non-goals
 
 - Built **after** Phase 3 (full historic backfill) is census-verified, so the
