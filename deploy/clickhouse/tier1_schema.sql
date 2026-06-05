@@ -1,0 +1,127 @@
+-- Tier-1 raw lake schema (ADR-0034 / docs/architecture/clickhouse-migration-plan.md §5).
+-- Structural, decoder-INDEPENDENT decode of every ledger; raw XDR blobs retained
+-- so any protocol decoder (event / op / contract-call / ledger-entry-change) can
+-- run from ClickHouse without re-touching galexie.
+--
+-- Engine: ReplacingMergeTree(ingested_at) -> idempotent re-ingest (latest wins on
+-- merge; NO ON CONFLICT silent-drop like the Postgres soroban_events bug). Query
+-- with FINAL / GROUP BY for read-time dedup until merges settle.
+-- Partitioned by 1M-ledger ranges; ORDER BY = each row's natural unique identity.
+
+CREATE DATABASE IF NOT EXISTS stellar;
+
+-- One row per ledger (also serves the ADR-0033 substrate/census role).
+CREATE TABLE IF NOT EXISTS stellar.ledgers
+(
+    ledger_seq                 UInt32,
+    close_time                 DateTime('UTC'),
+    ledger_hash                String,
+    prev_hash                  String,
+    protocol_version           UInt32,
+    bucket_list_hash           String,
+    tx_count                   UInt32,
+    op_count                   UInt32,
+    soroban_event_count        UInt32,
+    classic_trade_effect_count UInt32,
+    total_coins                Int64,
+    fee_pool                   Int64,
+    base_fee                   UInt32,
+    base_reserve               UInt32,
+    ingested_at                DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY ledger_seq;
+
+CREATE TABLE IF NOT EXISTS stellar.transactions
+(
+    ledger_seq      UInt32,
+    close_time      DateTime('UTC'),
+    tx_hash         String,
+    tx_index        UInt32,
+    source_account  String,
+    fee_charged     Int64,
+    max_fee         Int64,
+    operation_count UInt16,
+    successful      UInt8,
+    result_code     Int32,
+    memo_type       LowCardinality(String),
+    memo            String,
+    ingested_at     DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (ledger_seq, tx_index);
+
+-- body_xdr (base64) lets any OpDecoder (SDEX claim-atoms, Rozo classic payments,
+-- change_trust, …) run from ClickHouse.
+CREATE TABLE IF NOT EXISTS stellar.operations
+(
+    ledger_seq     UInt32,
+    close_time     DateTime('UTC'),
+    tx_hash        String,
+    tx_index       UInt32,
+    op_index       UInt32,
+    op_type        LowCardinality(String),
+    source_account String,
+    body_xdr       String,
+    ingested_at    DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (ledger_seq, tx_index, op_index);
+
+-- Per-op results — SDEX claim atoms, path-payment fills.
+CREATE TABLE IF NOT EXISTS stellar.operation_results
+(
+    ledger_seq  UInt32,
+    tx_hash     String,
+    op_index    UInt32,
+    result_code Int32,
+    result_xdr  String,
+    ingested_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (ledger_seq, tx_hash, op_index);
+
+-- The soroban_events replacement. Retains topic/body/arg XDR for any event decoder.
+CREATE TABLE IF NOT EXISTS stellar.contract_events
+(
+    ledger_seq         UInt32,
+    close_time         DateTime('UTC'),
+    tx_hash            String,
+    op_index           UInt32,
+    event_index        UInt32,
+    contract_id        String,
+    event_type         LowCardinality(String),
+    topic_count        UInt8,
+    topic_0_sym        String,
+    topics_xdr         Array(String),
+    data_xdr           String,
+    op_args_xdr        Array(String),
+    in_successful_call UInt8,
+    ingested_at        DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (ledger_seq, tx_hash, op_index, event_index);
+
+-- State deltas — supply/account/trustline/offer/contract-data observers.
+-- op_index = -1 for fee-meta / tx-level changes.
+CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
+(
+    ledger_seq   UInt32,
+    close_time   DateTime('UTC'),
+    tx_hash      String,
+    op_index     Int32,
+    change_index UInt32,
+    change_type  LowCardinality(String),
+    entry_type   LowCardinality(String),
+    key_xdr      String,
+    entry_xdr    String,
+    ingested_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (ledger_seq, tx_hash, op_index, change_index);

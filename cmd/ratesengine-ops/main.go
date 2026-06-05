@@ -178,6 +178,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "census-backfill: %v\n", err)
 			return 1
 		}
+	case "ch-backfill":
+		if err := chBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ch-backfill: %v\n", err)
+			return 1
+		}
 	case "verify-recognition":
 		if err := verifyRecognition(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-recognition: %v\n", err)
