@@ -46,7 +46,13 @@ $out
 EOF
 
   free_tib=$(awk -v b="${free:-0}" 'BEGIN{printf "%.2f", b/1099511627776}')
-  echo "PROGRESS windows=${done:-0}/${total_windows} at=[${cur:-?}] lake=${lake:-?} pool_free=${free_tib}TiB driver_alive=${alive:-0}"
+  # Only emit a progress line when a window actually completes (≈one per
+  # window, not one per poll) — keeps notifications proportional over a
+  # multi-day run. Alerts + terminal states below always emit.
+  if [ "${done:-0}" != "$last_done" ]; then
+    echo "PROGRESS windows=${done:-0}/${total_windows} at=[${cur:-?}] lake=${lake:-?} pool_free=${free_tib}TiB driver_alive=${alive:-0}"
+    last_done=${done:-0}
+  fi
 
   # Disk-pressure guard — the CH lake shares the ZFS pool with Postgres + MinIO.
   if awk -v f="$free_tib" -v m="$MIN_FREE_TIB" 'BEGIN{exit !(f < m)}'; then
