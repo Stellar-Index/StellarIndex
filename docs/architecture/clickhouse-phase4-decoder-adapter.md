@@ -113,12 +113,14 @@ dense partition-62 sample:
   event totals are census-verified, so CH cannot over-count here — the served
   table genuinely under-counts (the `event_index` collision class).
 - **Two CH-side items:**
-  - `redstone` 0 vs 474 — **the extractor leaves `op_args_xdr` nil**
-    (`extract.go`), and redstone needs op-args (feed_ids live in the
-    `write_prices` op args, not the event body). The running Phase-3 backfill
-    is NOT capturing op-args, so redstone/band are not re-derivable from the
-    lake until the extractor captures op-args + a targeted re-backfill. Scoped
-    to redstone/band only; everything else re-derives correctly.
+  - `redstone` 0 vs 474 — was a real gap: the extractor left `op_args_xdr` nil
+    and redstone needs op-args (feed_ids live in the `write_prices` op args, not
+    the event body). **FIXED 2026-06-05** (`opArgsByIndex` in extract.go):
+    re-backfilling 62.7M with op-args, `ch-reproject` re-derives redstone
+    474 == 474 served. The op-args binary was deployed to the live backfill at
+    window 32, ahead of the redstone era (ledger 58.7M ≈ window 58), so the
+    forward walk captures it with no re-backfill. (Windows 2–31 lack op-args but
+    pre-date redstone/band, which is the only op-args consumer.)
   - `soroswap` 0 vs 266 — `ch-reproject` runs the soroswap decoder unseeded
     (no RPC pair registry), so it can't resolve pre-range pairs. Tool
     limitation, not a lake gap; seed the decoder (as verify-reconciliation
