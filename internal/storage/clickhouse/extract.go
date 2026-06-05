@@ -87,7 +87,44 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	ext.Ledger.TxCount++
 
 	extractOps(ext, tx, seq, closeTime, txHash, txSource, txIndex, tx.Result.Successful())
-	extractEvents(ext, tx, seq, closeTime, txHash)
+	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()))
+}
+
+// opArgsByIndex returns the base64-SCVal InvokeContract args per operation
+// index (nil for non-InvokeContract ops). Mirrors the OpArgs side of
+// dispatcher.extractInvokeContractCalls exactly (same MarshalBinary +
+// base64.Std), so an event's op_args_xdr equals events.Event.OpArgs — which
+// decoders that need the invoking call's args read (Redstone zips feed_ids
+// from here; the event body carries none).
+func opArgsByIndex(ops []xdr.Operation) [][]string {
+	out := make([][]string, len(ops))
+	for i := range ops {
+		if ops[i].Body.Type != xdr.OperationTypeInvokeHostFunction {
+			continue
+		}
+		ihf, ok := ops[i].Body.GetInvokeHostFunctionOp()
+		if !ok || ihf.HostFunction.Type != xdr.HostFunctionTypeHostFunctionTypeInvokeContract {
+			continue
+		}
+		ic, ok := ihf.HostFunction.GetInvokeContract()
+		if !ok {
+			continue
+		}
+		args := make([]string, 0, len(ic.Args))
+		argsOK := true
+		for j := range ic.Args {
+			raw, merr := ic.Args[j].MarshalBinary()
+			if merr != nil {
+				argsOK = false
+				break
+			}
+			args = append(args, base64.StdEncoding.EncodeToString(raw))
+		}
+		if argsOK && len(args) > 0 {
+			out[i] = args
+		}
+	}
+	return out
 }
 
 // extractOps appends one tx's operation + operation_result rows and updates
@@ -142,15 +179,21 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 	})
 }
 
-// extractEvents appends one tx's eligible contract-event rows.
-func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string) {
+// extractEvents appends one tx's eligible contract-event rows. opArgs holds
+// the InvokeContract args per operation index (from opArgsByIndex); events of
+// op i carry opArgs[i] so Redstone/Band-class decoders can read them from CH.
+func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs [][]string) {
 	txEvents, terr := tx.GetTransactionEvents()
 	if terr != nil {
 		return
 	}
 	for opIdx, opEvents := range txEvents.OperationEvents {
+		var args []string
+		if opIdx < len(opArgs) {
+			args = opArgs[opIdx]
+		}
 		for evIdx := range opEvents {
-			row, ok := eventRow(opEvents[evIdx], seq, closeTime, txHash, opIdx, evIdx)
+			row, ok := eventRow(opEvents[evIdx], seq, closeTime, txHash, opIdx, evIdx, args)
 			if !ok {
 				continue
 			}
@@ -164,7 +207,7 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 // capture-eligibility gate as dispatcher.captureEligible (Type=Contract,
 // ContractId set, body V0, ≥1 topic). Returns ok=false to skip ineligible
 // events so the row count matches the census oracle.
-func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash string, opIdx, evIdx int) (ContractEventRow, bool) {
+func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash string, opIdx, evIdx int, opArgs []string) (ContractEventRow, bool) {
 	if ce.Type != xdr.ContractEventTypeContract || ce.ContractId == nil || ce.Body.V != 0 {
 		return ContractEventRow{}, false
 	}
@@ -204,7 +247,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		Topic0Sym:        topic0Sym,
 		TopicsXDR:        topics,
 		DataXDR:          base64.StdEncoding.EncodeToString(dataRaw),
-		OpArgsXDR:        nil, // op args plumbed in a later pass (RedStone/Band)
+		OpArgsXDR:        opArgs, // InvokeContract args of the producing op (Redstone feed_ids, etc.)
 		InSuccessfulCall: 1,
 	}, true
 }
