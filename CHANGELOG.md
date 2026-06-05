@@ -23,10 +23,25 @@ against.
   infeasible. Ships the Tier-1 schema (`deploy/clickhouse/tier1_schema.sql`),
   the `internal/storage/clickhouse` structural sink + LCM extractor (reuses
   the proven `ingest`/`CensusLedger`/`sorobanevents.Capture` walk; stores raw
-  XDR, no SCVal decoding), and the `ratesengine-ops ch-backfill` command.
-  Gated: a 100k-ledger sample must pass throughput + completeness-vs-census
-  before any full historic walk. See `docs/architecture/clickhouse-migration-plan.md`
-  + `docs/architecture/clickhouse-tier1-decoder.md`.
+  XDR, no SCVal decoding), and the `ratesengine-ops ch-backfill` command
+  (`-parallel N` for concurrent range-walkers — the historic-backfill
+  throughput unlock). The `ratesengine-ops ch-gate` command runs the §6 gates
+  over a backfilled range: it census-walks galexie, asserts the extractor
+  matches the decoder-independent census oracle, then reads the range back out
+  of ClickHouse and asserts the stored + actual row counts both equal the
+  census; it also reports compressed bytes/ledger + a full-history footprint
+  projection. Gated: a 100k-ledger sample must pass throughput +
+  completeness-vs-census before any full historic walk. See
+  `docs/architecture/clickhouse-migration-plan.md` +
+  `docs/architecture/clickhouse-tier1-decoder.md` +
+  `docs/architecture/clickhouse-phase4-decoder-adapter.md`.
+  - **Fixed** an extractor bug before any full walk: `claimAtomCount` decoded
+    `CreatePassiveSellOffer` via the wrong `OperationResultTr` union arm
+    (`GetManageSellOfferResult`, always `ok=false` for that op type) and
+    silently undercounted `classic_trade_effect_count` vs the census on every
+    crossing passive offer. Now uses `GetCreatePassiveSellOfferResult`,
+    matching `sdex.decode` + `dispatcher.census`; covered by a new
+    per-op-variant test.
 
 - **ADR-0033 — completeness verification model.** Three independently
   provable claims (substrate continuity, recognition, projection
