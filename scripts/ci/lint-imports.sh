@@ -105,6 +105,7 @@ RULES = [
             "internal/ledgerstream/",           # transport layer — exposes xdr.LedgerCloseMeta
             "internal/dispatcher/",             # routes tx / events (PR 165b)
             "internal/pipeline/",               # shared ledger-meta plumbing (indexer + backfill)
+            "internal/storage/clickhouse/",     # Tier-1 raw-lake structural decoder: walks LCM, stores raw XDR blobs (NOT SCVal decoding) (ADR-0034)
             "internal/sources/sdex/",           # SDEX decodes non-SCVal xdr (classic ops) (PR 165c)
             "internal/sources/accounts/",       # AccountEntry observer reads ledger-meta deltas (ADR-0021)
             "internal/sources/trustlines/",     # TrustlineEntry observer reads ledger-meta deltas (ADR-0022)

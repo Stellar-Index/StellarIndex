@@ -17,6 +17,17 @@ against.
 
 ### Added
 
+- **ClickHouse Tier-1 raw lake (ADR-0034, migration in progress).** New
+  columnar storage tier for the OLAP-scale firehose (every ledger/tx/op/
+  event), moving it off Postgres where billion-row bulk reprocessing was
+  infeasible. Ships the Tier-1 schema (`deploy/clickhouse/tier1_schema.sql`),
+  the `internal/storage/clickhouse` structural sink + LCM extractor (reuses
+  the proven `ingest`/`CensusLedger`/`sorobanevents.Capture` walk; stores raw
+  XDR, no SCVal decoding), and the `ratesengine-ops ch-backfill` command.
+  Gated: a 100k-ledger sample must pass throughput + completeness-vs-census
+  before any full historic walk. See `docs/architecture/clickhouse-migration-plan.md`
+  + `docs/architecture/clickhouse-tier1-decoder.md`.
+
 - **ADR-0033 — completeness verification model.** Three independently
   provable claims (substrate continuity, recognition, projection
   reconciliation) replace threshold-based coverage as the
