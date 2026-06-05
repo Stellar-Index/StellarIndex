@@ -233,7 +233,11 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int {
 		}
 		return len(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		r, ok := tr.GetManageSellOfferResult()
+		// CreatePassiveSellOffer occupies its OWN union arm
+		// (CreatePassiveSellOfferResult), not ManageSellOfferResult —
+		// GetManageSellOfferResult returns ok=false here and silently
+		// drops the claim atoms. Mirror sdex.decode + dispatcher.census.
+		r, ok := tr.GetCreatePassiveSellOfferResult()
 		if !ok || r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 			return 0
 		}
