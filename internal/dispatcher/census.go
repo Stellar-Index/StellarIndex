@@ -143,7 +143,7 @@ func captureEligible(ce xdr.ContractEvent) bool {
 // same success gating) so the census equals the SDEX trade-row count.
 // Returns the count rather than the slice to avoid allocation in the
 // hot per-ledger census walk.
-func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int {
+func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return 0
 	}
@@ -165,11 +165,23 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int {
 		}
 		return len(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		r, ok := tr.GetCreatePassiveSellOfferResult()
-		if !ok || r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
-			return 0
+		// stellar-core emits passive-offer results under the ManageSellOffer
+		// arm, so GetCreatePassiveSellOfferResult returns ok=false on real
+		// data. Try the passive arm, fall back to manage-sell. Must mirror
+		// sdex.extractClaimAtoms exactly so the census equals the SDEX count.
+		if r, ok := tr.GetCreatePassiveSellOfferResult(); ok {
+			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
+				return 0
+			}
+			return len(r.MustSuccess().OffersClaimed)
 		}
-		return len(r.MustSuccess().OffersClaimed)
+		if r, ok := tr.GetManageSellOfferResult(); ok {
+			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
+				return 0
+			}
+			return len(r.MustSuccess().OffersClaimed)
+		}
+		return 0
 	case xdr.OperationTypePathPaymentStrictReceive:
 		r, ok := tr.GetPathPaymentStrictReceiveResult()
 		if !ok || r.Code != xdr.PathPaymentStrictReceiveResultCodePathPaymentStrictReceiveSuccess {

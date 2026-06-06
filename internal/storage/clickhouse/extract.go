@@ -254,7 +254,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 
 // claimAtomCount mirrors dispatcher.claimAtomCount exactly (same op types +
 // success gating) so classic_trade_effect_count equals the SDEX trade count.
-func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int {
+func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return 0
 	}
@@ -276,15 +276,25 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int {
 		}
 		return len(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		// CreatePassiveSellOffer occupies its OWN union arm
-		// (CreatePassiveSellOfferResult), not ManageSellOfferResult —
-		// GetManageSellOfferResult returns ok=false here and silently
-		// drops the claim atoms. Mirror sdex.decode + dispatcher.census.
-		r, ok := tr.GetCreatePassiveSellOfferResult()
-		if !ok || r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
-			return 0
+		// stellar-core emits passive-offer results under the ManageSellOffer
+		// arm (passive offers are processed as manage-sell-offers), so
+		// GetCreatePassiveSellOfferResult returns ok=false on real on-chain
+		// data — confirmed vs Hubble at ledger 62701151. Try the passive arm
+		// (XDR spec) first, then fall back to manage-sell (what core emits).
+		// Mirror sdex.extractClaimAtoms + dispatcher.census exactly.
+		if r, ok := tr.GetCreatePassiveSellOfferResult(); ok {
+			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
+				return 0
+			}
+			return len(r.MustSuccess().OffersClaimed)
 		}
-		return len(r.MustSuccess().OffersClaimed)
+		if r, ok := tr.GetManageSellOfferResult(); ok {
+			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
+				return 0
+			}
+			return len(r.MustSuccess().OffersClaimed)
+		}
+		return 0
 	case xdr.OperationTypePathPaymentStrictReceive:
 		r, ok := tr.GetPathPaymentStrictReceiveResult()
 		if !ok || r.Code != xdr.PathPaymentStrictReceiveResultCodePathPaymentStrictReceiveSuccess {

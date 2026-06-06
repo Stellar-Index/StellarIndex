@@ -32,6 +32,7 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
 	bucket := fs.String("bucket", "", "override storage bucket (default cfg.Storage.S3BucketLive)")
 	examples := fs.Int("examples", 20, "max example drops to print")
+	dumpOps := fs.Bool("dump-ops", false, "dump every trade op (type, result codes, claim count) — diagnostic for non-extraction")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -88,6 +89,11 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 						break
 					}
 					claims, drops := sdex.AuditOp(ops[i], opResults[i])
+					if *dumpOps && isTradeOpType(ops[i].Body.Type) {
+						inner, hasInner := innerTradeCode(ops[i], opResults[i])
+						fmt.Printf("ledger=%d tx=%d op=%d type=%s outerCode=%d innerCode=%d(%v) claims=%d emitted=%d\n",
+							seq, tx.Index, i, ops[i].Body.Type.String(), opResults[i].Code, inner, hasInner, claims, claims-len(drops))
+					}
 					totalClaims += claims
 					for _, d := range drops {
 						totalDrops++
@@ -143,6 +149,52 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		}
 	}
 	return nil
+}
+
+// isTradeOpType reports whether an op type can emit ClaimAtoms.
+func isTradeOpType(t sdkxdr.OperationType) bool {
+	switch t {
+	case sdkxdr.OperationTypeManageSellOffer, sdkxdr.OperationTypeManageBuyOffer,
+		sdkxdr.OperationTypeCreatePassiveSellOffer, sdkxdr.OperationTypePathPaymentStrictReceive,
+		sdkxdr.OperationTypePathPaymentStrictSend:
+		return true
+	}
+	return false
+}
+
+// innerTradeCode returns the op's inner result code (the per-type result arm's
+// Code) for diagnosing why claim extraction yields nothing.
+func innerTradeCode(op sdkxdr.Operation, r sdkxdr.OperationResult) (int32, bool) {
+	if r.Code != sdkxdr.OperationResultCodeOpInner {
+		return 0, false
+	}
+	tr, ok := r.GetTr()
+	if !ok {
+		return 0, false
+	}
+	switch op.Body.Type {
+	case sdkxdr.OperationTypeManageSellOffer:
+		if x, ok := tr.GetManageSellOfferResult(); ok {
+			return int32(x.Code), true
+		}
+	case sdkxdr.OperationTypeManageBuyOffer:
+		if x, ok := tr.GetManageBuyOfferResult(); ok {
+			return int32(x.Code), true
+		}
+	case sdkxdr.OperationTypeCreatePassiveSellOffer:
+		if x, ok := tr.GetCreatePassiveSellOfferResult(); ok {
+			return int32(x.Code), true
+		}
+	case sdkxdr.OperationTypePathPaymentStrictReceive:
+		if x, ok := tr.GetPathPaymentStrictReceiveResult(); ok {
+			return int32(x.Code), true
+		}
+	case sdkxdr.OperationTypePathPaymentStrictSend:
+		if x, ok := tr.GetPathPaymentStrictSendResult(); ok {
+			return int32(x.Code), true
+		}
+	}
+	return 0, false
 }
 
 // classifyDrop buckets a decoder error string into a stable reason category.

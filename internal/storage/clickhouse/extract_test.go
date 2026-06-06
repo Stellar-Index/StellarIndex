@@ -60,9 +60,8 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 			want: 3,
 		},
 		{
-			// Regression: this op uses the CreatePassiveSellOfferResult
-			// union arm, NOT ManageSellOfferResult. Pre-fix this returned 0.
-			name: "CreatePassiveSellOffer",
+			// CreatePassiveSellOffer encoded under its own (spec) arm.
+			name: "CreatePassiveSellOffer (passive arm)",
 			op:   xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeCreatePassiveSellOffer}},
 			result: xdr.OperationResult{
 				Code: xdr.OperationResultCodeOpInner,
@@ -75,6 +74,25 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 				},
 			},
 			want: 4,
+		},
+		{
+			// REAL on-chain encoding: stellar-core emits passive-offer results
+			// under the MANAGE_SELL_OFFER arm. GetCreatePassiveSellOfferResult
+			// returns ok=false here; the fallback must still count the claims.
+			// Confirmed vs Hubble at ledger 62701151 (these were dropped).
+			name: "CreatePassiveSellOffer (manage-sell arm — real)",
+			op:   xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeCreatePassiveSellOffer}},
+			result: xdr.OperationResult{
+				Code: xdr.OperationResultCodeOpInner,
+				Tr: &xdr.OperationResultTr{
+					Type: xdr.OperationTypeManageSellOffer,
+					ManageSellOfferResult: &xdr.ManageSellOfferResult{
+						Code:    xdr.ManageSellOfferResultCodeManageSellOfferSuccess,
+						Success: &xdr.ManageOfferSuccessResult{OffersClaimed: mkClaims(2)},
+					},
+				},
+			},
+			want: 2,
 		},
 		{
 			name: "PathPaymentStrictReceive",

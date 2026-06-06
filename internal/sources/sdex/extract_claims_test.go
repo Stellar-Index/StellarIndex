@@ -138,6 +138,34 @@ func TestExtractClaimAtoms_createPassiveSellOffer_returnsClaims(t *testing.T) {
 	}
 }
 
+// TestExtractClaimAtoms_createPassiveSellOffer_manageSellArm covers the REAL
+// on-chain encoding: stellar-core emits passive-offer results under the
+// MANAGE_SELL_OFFER union arm (not CREATE_PASSIVE_SELL_OFFER), so
+// GetCreatePassiveSellOfferResult returns ok=false and the fallback to
+// GetManageSellOfferResult must still surface the claims. Pre-fix these were
+// silently dropped (confirmed vs Hubble at ledger 62701151).
+func TestExtractClaimAtoms_createPassiveSellOffer_manageSellArm(t *testing.T) {
+	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
+	claim := mkOrderBookClaim(t, 0x20, 1, xlm, usdc, 1, 1)
+
+	op := xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeCreatePassiveSellOffer}}
+	result := xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypeManageSellOffer, // core's real discriminant for passive offers
+			ManageSellOfferResult: &xdr.ManageSellOfferResult{
+				Code:    xdr.ManageSellOfferResultCodeManageSellOfferSuccess,
+				Success: &xdr.ManageOfferSuccessResult{OffersClaimed: []xdr.ClaimAtom{claim}},
+			},
+		},
+	}
+	got := extractClaimAtoms(op, result)
+	if len(got) != 1 {
+		t.Fatalf("got %d claims, want 1 (manage-sell arm fallback)", len(got))
+	}
+}
+
 func TestExtractClaimAtoms_pathPaymentStrictReceive_returnsClaims(t *testing.T) {
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
