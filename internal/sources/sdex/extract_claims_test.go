@@ -256,6 +256,32 @@ func TestDecodeClaimAtom_unknownClaimType_returnsError(t *testing.T) {
 	}
 }
 
+// One-side-zero fills (one leg rounds to 0) are REAL trades Hubble records; we
+// capture them for completeness (pricing skips zero legs separately). Only the
+// both-zero no-op atoms are dropped.
+func TestDecodeClaimAtom_zeroAmountPolicy(t *testing.T) {
+	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
+
+	// one-side-zero (bought rounds to 0) → emitted.
+	oneSide := mkOrderBookClaim(t, 0x20, 1, xlm, usdc, 5, 0)
+	if tr, err := decodeClaimAtom(oneSide, 1, time.Now(), "tx", 0, 0, "GT"); err != nil {
+		t.Fatalf("one-side-zero should be captured, got error: %v", err)
+	} else if tr.QuoteAmount.BigInt().Sign() != 0 {
+		t.Errorf("expected QuoteAmount 0, got %s", tr.QuoteAmount.BigInt())
+	}
+
+	// one-side-zero (sold rounds to 0) → emitted.
+	if _, err := decodeClaimAtom(mkOrderBookClaim(t, 0x21, 2, xlm, usdc, 0, 7), 1, time.Now(), "tx", 0, 0, "GT"); err != nil {
+		t.Fatalf("one-side-zero (sold=0) should be captured, got error: %v", err)
+	}
+
+	// both-zero no-op → dropped.
+	if _, err := decodeClaimAtom(mkOrderBookClaim(t, 0x22, 3, xlm, usdc, 0, 0), 1, time.Now(), "tx", 0, 0, "GT"); err == nil {
+		t.Error("both-zero no-op claim should be dropped, got nil error")
+	}
+}
+
 // ─── xdrAssetToCanonical: native + alphanum12 paths ────────────
 
 func TestXdrAssetToCanonical_native(t *testing.T) {

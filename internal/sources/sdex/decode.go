@@ -167,8 +167,14 @@ func decodeClaimAtom(
 		return canonical.Trade{}, fmt.Errorf("%w: type=%d", ErrUnknownClaimAtomType, atom.Type)
 	}
 
-	if soldAmount <= 0 || boughtAmount <= 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: non-positive amounts sold=%d bought=%d",
+	// Drop only the both-zero no-op claim atoms stellar-core occasionally emits
+	// (Hubble drops those too). KEEP one-side-zero fills — a rounding artifact
+	// where one leg rounds to 0: these are real trades Hubble records, so we
+	// capture them for completeness. They carry no price (one leg is 0), but the
+	// aggregator/OHLC/outlier paths already skip zero legs (Sign()<=0) and
+	// tradeUSDVolume returns NULL, so pricing is unaffected.
+	if soldAmount <= 0 && boughtAmount <= 0 {
+		return canonical.Trade{}, fmt.Errorf("%w: both-zero no-op claim sold=%d bought=%d",
 			ErrMalformedClaimAtom, soldAmount, boughtAmount)
 	}
 
