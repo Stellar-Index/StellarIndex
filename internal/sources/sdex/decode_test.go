@@ -284,13 +284,25 @@ func TestDecoder_v0ClaimAtom_decodedAsOrderBook(t *testing.T) {
 	}
 }
 
-func TestDecoder_negativeAmount_rejected(t *testing.T) {
+// One-side-zero fills are captured (real trades Hubble records; pricing skips
+// the zero leg separately); only both-zero no-op atoms are dropped.
+func TestDecoder_zeroAmountPolicy(t *testing.T) {
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
-	claim := mkOrderBookClaim(t, 0x20, 1, xlm, usdc, 0 /*bad*/, 12_000_000)
-	op, result := mkManageSellOfferOp([]xdr.ClaimAtom{claim})
+
+	// one-side-zero (sold rounds to 0) → captured.
+	oneSide := mkOrderBookClaim(t, 0x20, 1, xlm, usdc, 0, 12_000_000)
+	op, result := mkManageSellOfferOp([]xdr.ClaimAtom{oneSide})
 	outs, _ := NewDecoder().Decode(dispatcher.OpContext{Op: op, OpResult: result})
-	if len(outs) != 0 {
-		t.Errorf("got %d outputs, want 0 (zero-amount claim skipped)", len(outs))
+	if len(outs) != 1 {
+		t.Errorf("got %d outputs, want 1 (one-side-zero captured)", len(outs))
+	}
+
+	// both-zero no-op → dropped.
+	both := mkOrderBookClaim(t, 0x21, 2, xlm, usdc, 0, 0)
+	op2, result2 := mkManageSellOfferOp([]xdr.ClaimAtom{both})
+	outs2, _ := NewDecoder().Decode(dispatcher.OpContext{Op: op2, OpResult: result2})
+	if len(outs2) != 0 {
+		t.Errorf("got %d outputs, want 0 (both-zero dropped)", len(outs2))
 	}
 }
