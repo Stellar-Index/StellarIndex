@@ -64,7 +64,7 @@ import (
 // with roles/bigquery.dataViewer + roles/bigquery.jobUser on the
 // supplied -bigquery-project.
 
-func hubbleCheck(args []string) error {
+func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag parse + several diagnostic early-exit modes; linear, splitting reduces clarity.
 	fs := flag.NewFlagSet("hubble-check", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to ratesengine.toml (required)")
 	from := fs.Uint("from", 0, "starting ledger sequence, inclusive (required)")
@@ -75,6 +75,15 @@ func hubbleCheck(args []string) error {
 		"cap on number of divergent ledgers reported; the rest are summarised")
 	dryRunBytes := fs.Bool("dry-run-bytes", false,
 		"print the BigQuery dry-run byte estimate, then exit (no real query)")
+	zeroAmounts := fs.Bool("zero-amounts", false,
+		"diagnostic: count Hubble trades with a zero selling/buying amount in the "+
+			"range (one-side-zero vs both-zero), then exit — explains SDEX off-by-one")
+	dupCheck := fs.Bool("dup-check", false,
+		"diagnostic: compare COUNT(*) vs COUNT(DISTINCT op_id,order) in the range to "+
+			"detect duplicate Hubble rows (batch-load dups), then exit")
+	detail := fs.Bool("detail", false,
+		"diagnostic: dump each Hubble trade in the range (ledger, op_id, order, "+
+			"trade_type, sell/buy asset_id + amount), then exit")
 	withAmounts := fs.Bool("with-amounts", false,
 		"in addition to per-ledger COUNT(*), compare SUM(selling_amount) + "+
 			"SUM(buying_amount). Catches per-trade amount errors that net to "+
@@ -123,6 +132,35 @@ func hubbleCheck(args []string) error {
 		_, _ = fmt.Fprintf(os.Stderr,
 			"hubble-check dry-run: would scan ~%d bytes (~$%.4f at $5/TB on-demand)\n",
 			bytes, float64(bytes)/1e12*5.0)
+		return nil
+	}
+
+	if *zeroAmounts {
+		oneSide, both, anyZero, err := hubbleZeroAmountCounts(ctx, bqClient, uint32(*from), uint32(*to))
+		if err != nil {
+			return fmt.Errorf("zero-amounts: %w", err)
+		}
+		_, _ = fmt.Fprintf(os.Stderr,
+			"hubble zero-amount trades %d..%d: one_side_zero=%d both_zero=%d any_zero=%d\n",
+			*from, *to, oneSide, both, anyZero)
+		return nil
+	}
+
+	if *detail {
+		if err := hubbleTradeDetail(ctx, bqClient, uint32(*from), uint32(*to)); err != nil {
+			return fmt.Errorf("detail: %w", err)
+		}
+		return nil
+	}
+
+	if *dupCheck {
+		total, distinct, err := hubbleDupCheck(ctx, bqClient, uint32(*from), uint32(*to))
+		if err != nil {
+			return fmt.Errorf("dup-check: %w", err)
+		}
+		_, _ = fmt.Fprintf(os.Stderr,
+			"hubble dup-check %d..%d: rows=%d distinct(op_id,order)=%d duplicates=%d\n",
+			*from, *to, total, distinct, total-distinct)
 		return nil
 	}
 
@@ -393,6 +431,104 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 		out[ledger] = ledgerStats{Count: n, SumSell: sb, SumBuy: sq}
 	}
 	return out, rows.Err()
+}
+
+// hubbleZeroAmountCounts counts Hubble history_trades in the range with a zero
+// amount: oneSide (exactly one of selling/buying is 0), both (both 0), anyZero
+// (either). Diagnoses the SDEX off-by-one: our decoder's
+// soldAmount<=0||boughtAmount<=0 guard drops all of these, while Hubble records
+// them — so anyZero should equal the per-ledger trade-count shortfall.
+func hubbleZeroAmountCounts(ctx context.Context, client *bigquery.Client, from, to uint32) (oneSide, both, anyZero int64, err error) {
+	q := client.Query("SELECT " +
+		"COUNTIF((selling_amount = 0) != (buying_amount = 0)) AS one_side, " +
+		"COUNTIF(selling_amount = 0 AND buying_amount = 0) AS both, " +
+		"COUNTIF(selling_amount = 0 OR buying_amount = 0) AS any_zero " +
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to")
+	q.Parameters = []bigquery.QueryParameter{
+		{Name: "from", Value: int64(from) << 32},
+		{Name: "to", Value: (int64(to)+1)<<32 - 1},
+	}
+	it, qerr := q.Read(ctx)
+	if qerr != nil {
+		return 0, 0, 0, qerr
+	}
+	var row struct {
+		OneSide int64 `bigquery:"one_side"`
+		Both    int64 `bigquery:"both"`
+		AnyZero int64 `bigquery:"any_zero"`
+	}
+	if e := it.Next(&row); e != nil && !errors.Is(e, iterator.Done) {
+		return 0, 0, 0, e
+	}
+	return row.OneSide, row.Both, row.AnyZero, nil
+}
+
+// hubbleTradeDetail dumps each Hubble trade in the range to stdout — used to
+// identify the exact trades behind a per-ledger count discrepancy.
+func hubbleTradeDetail(ctx context.Context, client *bigquery.Client, from, to uint32) error {
+	q := client.Query("SELECT history_operation_id >> 32 AS ledger, history_operation_id AS opid, `order` AS ord, " +
+		"trade_type, selling_asset_id, buying_asset_id, " +
+		"CAST(selling_amount AS STRING) AS sell, CAST(buying_amount AS STRING) AS buy " +
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to " +
+		"ORDER BY history_operation_id, `order`")
+	q.Parameters = []bigquery.QueryParameter{
+		{Name: "from", Value: int64(from) << 32},
+		{Name: "to", Value: (int64(to)+1)<<32 - 1},
+	}
+	it, err := q.Read(ctx)
+	if err != nil {
+		return err
+	}
+	for {
+		var row struct {
+			Ledger    int64  `bigquery:"ledger"`
+			Opid      int64  `bigquery:"opid"`
+			Ord       int64  `bigquery:"ord"`
+			TradeType int64  `bigquery:"trade_type"`
+			SellAsset int64  `bigquery:"selling_asset_id"`
+			BuyAsset  int64  `bigquery:"buying_asset_id"`
+			Sell      string `bigquery:"sell"`
+			Buy       string `bigquery:"buy"`
+		}
+		e := it.Next(&row)
+		if errors.Is(e, iterator.Done) {
+			break
+		}
+		if e != nil {
+			return e
+		}
+		fmt.Printf("ledger=%d opid=%d order=%d type=%d sellAsset=%d buyAsset=%d sell=%s buy=%s\n",
+			row.Ledger, row.Opid, row.Ord, row.TradeType, row.SellAsset, row.BuyAsset, row.Sell, row.Buy)
+	}
+	return nil
+}
+
+// hubbleDupCheck returns total row count and distinct (history_operation_id,
+// order) count for the range. A gap means Hubble carries duplicate trade rows
+// (overlapping batch loads) — the same artifact seen in history_contract_events.
+func hubbleDupCheck(ctx context.Context, client *bigquery.Client, from, to uint32) (total, distinct int64, err error) {
+	q := client.Query("SELECT COUNT(*) AS total, " +
+		"COUNT(DISTINCT CONCAT(CAST(history_operation_id AS STRING), '-', CAST(`order` AS STRING))) AS distinct_trades " +
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to")
+	q.Parameters = []bigquery.QueryParameter{
+		{Name: "from", Value: int64(from) << 32},
+		{Name: "to", Value: (int64(to)+1)<<32 - 1},
+	}
+	it, qerr := q.Read(ctx)
+	if qerr != nil {
+		return 0, 0, qerr
+	}
+	var row struct {
+		Total    int64 `bigquery:"total"`
+		Distinct int64 `bigquery:"distinct_trades"`
+	}
+	if e := it.Next(&row); e != nil && !errors.Is(e, iterator.Done) {
+		return 0, 0, e
+	}
+	return row.Total, row.Distinct, nil
 }
 
 // fetchHubbleStats is the -with-amounts counterpart of
