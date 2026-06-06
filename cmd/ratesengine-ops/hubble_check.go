@@ -23,7 +23,7 @@ import (
 // ─── ratesengine-ops hubble-check ──────────────────────────────────
 //
 // Compares our SDEX trades hypertable against SDF's published
-// `hubble-public.crypto_stellar.history_trades` BigQuery table for
+// `crypto-stellar.crypto_stellar.history_trades` BigQuery table for
 // the same ledger range. Reports every ledger where our row count
 // disagrees with Hubble's.
 //
@@ -196,13 +196,16 @@ func fetchOurSDEXCounts(ctx context.Context, store *timescale.Store, from, to ui
 // are both included — our SDEX decoder handles both ClaimAtom kinds
 // and stamps both as source='sdex'.
 func fetchHubbleCounts(ctx context.Context, client *bigquery.Client, from, to uint32) (map[uint32]int, error) {
-	q := client.Query("SELECT ledger_sequence, COUNT(*) AS n " +
-		"FROM `hubble-public.crypto_stellar.history_trades` " +
-		"WHERE ledger_sequence BETWEEN @from AND @to " +
+	q := client.Query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to " +
 		"GROUP BY ledger_sequence")
 	q.Parameters = []bigquery.QueryParameter{
-		{Name: "from", Value: int64(from)},
-		{Name: "to", Value: int64(to)},
+		// Hubble history_trades has no ledger_sequence column — the ledger is
+		// the high 32 bits of history_operation_id (TOID). Filter + group by
+		// the TOID range so [from,to] maps to [from<<32, ((to+1)<<32)-1].
+		{Name: "from", Value: int64(from) << 32},
+		{Name: "to", Value: (int64(to)+1)<<32 - 1},
 	}
 	it, err := q.Read(ctx)
 	if err != nil {
@@ -230,13 +233,16 @@ func fetchHubbleCounts(ctx context.Context, client *bigquery.Client, from, to ui
 // count-only query. Used by -dry-run-bytes to give operators a cost
 // preview before running for real.
 func hubbleDryRun(ctx context.Context, client *bigquery.Client, from, to uint32) (int64, error) {
-	q := client.Query("SELECT ledger_sequence, COUNT(*) AS n " +
-		"FROM `hubble-public.crypto_stellar.history_trades` " +
-		"WHERE ledger_sequence BETWEEN @from AND @to " +
+	q := client.Query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to " +
 		"GROUP BY ledger_sequence")
 	q.Parameters = []bigquery.QueryParameter{
-		{Name: "from", Value: int64(from)},
-		{Name: "to", Value: int64(to)},
+		// Hubble history_trades has no ledger_sequence column — the ledger is
+		// the high 32 bits of history_operation_id (TOID). Filter + group by
+		// the TOID range so [from,to] maps to [from<<32, ((to+1)<<32)-1].
+		{Name: "from", Value: int64(from) << 32},
+		{Name: "to", Value: (int64(to)+1)<<32 - 1},
 	}
 	q.DryRun = true
 	job, err := q.Run(ctx)
@@ -393,15 +399,18 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 // fetchHubbleCounts. Per-ledger (count, sum(selling_amount),
 // sum(buying_amount)).
 func fetchHubbleStats(ctx context.Context, client *bigquery.Client, from, to uint32) (map[uint32]ledgerStats, error) {
-	q := client.Query("SELECT ledger_sequence AS ledger, COUNT(*) AS n, " +
+	q := client.Query("SELECT history_operation_id >> 32 AS ledger, COUNT(*) AS n, " +
 		"COALESCE(CAST(SUM(selling_amount) AS STRING), '0') AS sum_sell, " +
 		"COALESCE(CAST(SUM(buying_amount)  AS STRING), '0') AS sum_buy " +
-		"FROM `hubble-public.crypto_stellar.history_trades` " +
-		"WHERE ledger_sequence BETWEEN @from AND @to " +
-		"GROUP BY ledger_sequence")
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to " +
+		"GROUP BY ledger")
 	q.Parameters = []bigquery.QueryParameter{
-		{Name: "from", Value: int64(from)},
-		{Name: "to", Value: int64(to)},
+		// Hubble history_trades has no ledger_sequence column — the ledger is
+		// the high 32 bits of history_operation_id (TOID). Filter + group by
+		// the TOID range so [from,to] maps to [from<<32, ((to+1)<<32)-1].
+		{Name: "from", Value: int64(from) << 32},
+		{Name: "to", Value: (int64(to)+1)<<32 - 1},
 	}
 	it, err := q.Read(ctx)
 	if err != nil {
