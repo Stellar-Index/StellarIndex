@@ -15,11 +15,33 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/events"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
+	"github.com/RatesEngine/rates-engine/internal/sources/aquarius"
+	"github.com/RatesEngine/rates-engine/internal/sources/comet"
+	"github.com/RatesEngine/rates-engine/internal/sources/phoenix"
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
 	"github.com/RatesEngine/rates-engine/internal/storage/clickhouse"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
+
+// tradeOf extracts the canonical.Trade from a trade-shaped event so the rebuild
+// can batch-insert trades (the bulk of the projected output). Mirrors
+// pipeline.tradeFromEvent for the projected trade sources.
+func tradeOf(ev consumer.Event) (canonical.Trade, bool) {
+	switch e := ev.(type) {
+	case aquarius.TradeEvent:
+		return e.Trade, true
+	case soroswap.TradeEvent:
+		return e.Trade, true
+	case phoenix.TradeEvent:
+		return e.Trade, true
+	case comet.TradeEvent:
+		return e.Trade, true
+	case sdex.TradeEvent:
+		return e.Trade, true
+	}
+	return canonical.Trade{}, false
+}
 
 // seedSoroswapFromPG seeds the soroswap decoder's pair registry from the
 // persisted soroswap_pairs table (fast, no RPC). Mirrors the seeding half of
@@ -193,15 +215,43 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX read done in %s\n", time.Since(sStart).Round(time.Second))
 	}
 
-	// ─── write the buffered events to Postgres ───────────────────────────
+	// ─── write the buffered events to Postgres (trades batched) ──────────
+	// Per-row HandleEvent does 2 PG round-trips per trade (WouldPopulateUSDVolume
+	// + InsertTrade); at dense-window volume (175k events/window) that's hours.
+	// Batch trade-shaped events via BatchInsertTrades (one multi-row INSERT per
+	// batch); everything else (protocol entities, fewer rows) stays per-row.
 	wStart := time.Now()
+	const tradeBatchN = 1000
+	batch := make([]canonical.Trade, 0, tradeBatchN)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := store.BatchInsertTrades(ctx, batch); err != nil {
+			logger.Warn("batch trade insert failed; per-row fallback", "n", len(batch), "err", err)
+			for _, t := range batch {
+				if ierr := store.InsertTrade(ctx, t); ierr != nil {
+					logger.Error("per-row trade insert failed", "err", ierr)
+				}
+			}
+		}
+		batch = batch[:0]
+	}
 	for _, ev := range buf {
 		if *write {
-			pipeline.HandleEvent(ctx, logger, store, ev)
+			if t, ok := tradeOf(ev); ok {
+				batch = append(batch, t)
+				if len(batch) >= tradeBatchN {
+					flush()
+				}
+			} else {
+				pipeline.HandleEvent(ctx, logger, store, ev)
+			}
 		}
 		written[ev.Source()]++
 	}
 	if *write {
+		flush()
 		fmt.Fprintf(os.Stderr, "ch-rebuild: wrote %d events in %s\n", len(buf), time.Since(wStart).Round(time.Second))
 	}
 
