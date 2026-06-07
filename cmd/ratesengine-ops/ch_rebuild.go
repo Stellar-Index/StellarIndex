@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -8,15 +9,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/config"
 	"github.com/RatesEngine/rates-engine/internal/consumer"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/events"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
+	"github.com/RatesEngine/rates-engine/internal/sources/soroswap"
 	"github.com/RatesEngine/rates-engine/internal/storage/clickhouse"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
+
+// seedSoroswapFromPG seeds the soroswap decoder's pair registry from the
+// persisted soroswap_pairs table (fast, no RPC). Mirrors the seeding half of
+// pipeline.SoroswapPersistenceOptions.
+func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *soroswap.Decoder) (int, error) {
+	rows, err := store.LoadSoroswapPairRegistry(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range rows {
+		t0, err := canonical.NewSorobanAsset(r.Token0Strkey)
+		if err != nil {
+			continue
+		}
+		t1, err := canonical.NewSorobanAsset(r.Token1Strkey)
+		if err != nil {
+			continue
+		}
+		dec.SeedPair(r.PairStrkey, t0, t1)
+		n++
+	}
+	return n, nil
+}
 
 // chRebuild is the ADR-0034 Phase-4 write path: it re-derives a ledger range's
 // protocol output from the ClickHouse Tier-1 lake using the EXISTING decoders
@@ -78,8 +105,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	lo, hi := uint32(*from), uint32(*to)
 
 	cat, soroswapDec := buildReconciliationCatalogue(cfg)
-	if serr := seedSoroswapForRecon(ctx, cfg, soroswapDec); serr != nil {
-		fmt.Fprintf(os.Stderr, "ch-rebuild: soroswap seed failed (%v) — soroswap may undercount\n", serr)
+	// Seed soroswap pairs from the PG registry (NOT the RPC factory seed —
+	// per-window invocations would each pay a ~200s RPC round-trip + depend on
+	// an external endpoint). The live indexer persists every new_pair to
+	// soroswap_pairs, so the registry covers all historical pairs; pairs created
+	// within a window are also self-discovered from in-range new_pair events.
+	if n, serr := seedSoroswapFromPG(ctx, store, soroswapDec); serr != nil {
+		fmt.Fprintf(os.Stderr, "ch-rebuild: soroswap PG seed failed (%v) — soroswap may undercount\n", serr)
+	} else {
+		fmt.Fprintf(os.Stderr, "ch-rebuild: seeded %d soroswap pairs from PG\n", n)
 	}
 
 	srcFilter := map[string]bool{}
