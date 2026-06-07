@@ -8,7 +8,9 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/completeness"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/events"
+	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	"github.com/RatesEngine/rates-engine/internal/storage/clickhouse"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
@@ -112,6 +114,35 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	}
 	fmt.Fprintf(os.Stderr, "ch-reproject: ClickHouse pass done in %s\n", time.Since(chStart).Round(time.Second))
 
+	// ─── SDEX side: op-based re-derivation ───────────────────────────────
+	// SDEX trades are op-derived (operations + operation_results), NOT
+	// event-derived, so they don't flow through StreamContractEvents. A
+	// separate op pass feeds each trade-bearing op to the SDEX decoder; the
+	// passive-offer + one-side-zero fixes recover here for all history, so
+	// CH > served is expected (the live path dropped them).
+	sdexByLedger := make(map[uint32]int)
+	sdexDec := sdex.NewDecoder()
+	sdexStart := time.Now()
+	serr := clickhouse.StreamSDEXOps(ctx, *chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
+		// SDEX Decode never returns a non-nil error — it soft-fails per claim
+		// atom internally (drops malformed/both-zero, keeps the rest).
+		outs, _ := sdexDec.Decode(dispatcher.OpContext{
+			Ledger:   op.Ledger,
+			ClosedAt: op.ClosedAt,
+			TxHash:   op.TxHash,
+			TxSource: op.Source,
+			OpIndex:  int(op.OpIndex),
+			Op:       op.Op,
+			OpResult: op.OpResult,
+		})
+		sdexByLedger[op.Ledger] += len(outs)
+		return nil
+	})
+	if serr != nil {
+		return fmt.Errorf("ch-reproject: sdex op stream: %w", serr)
+	}
+	fmt.Fprintf(os.Stderr, "ch-reproject: SDEX op pass done in %s\n", time.Since(sdexStart).Round(time.Second))
+
 	// ─── compare CH re-derive vs the served protocol tables, per target ──
 	fmt.Printf("\n=== ch-reproject: rebuild-from-ClickHouse vs served tables (ADR-0034 Phase 4) ===\n")
 	fmt.Printf("range: %d..%d  (CH > served ⇒ lake recovers silently-dropped rows; CH < served ⇒ CH-side gap)\n\n", lo, hi)
@@ -120,7 +151,33 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	anyDiff := false
 	for _, src := range cat {
 		if src.dec == nil {
-			continue // sdex: op-based (not in contract_events) — not re-derivable from the event lake
+			// sdex: op-based re-derivation (sdexByLedger, above). One target
+			// (trades WHERE source='sdex'); CH > served = recovered fills.
+			if src.name == "sdex" {
+				for _, tgt := range src.targets {
+					actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+					if aerr != nil {
+						return fmt.Errorf("ch-reproject: %s/%s served counts: %w", src.name, tgt.table, aerr)
+					}
+					gaps := completeness.ReconcileCounts(actual, sdexByLedger)
+					label := src.name + "/" + tgt.table
+					chTotal, servedTotal := sumCounts(sdexByLedger), sumCounts(actual)
+					if len(gaps) == 0 {
+						fmt.Printf("%-34s %12d %12d  OK\n", label, chTotal, servedTotal)
+						continue
+					}
+					anyDiff = true
+					fmt.Printf("%-34s %12d %12d  %d ledger(s) differ\n", label, chTotal, servedTotal, len(gaps))
+					for i, g := range gaps {
+						if i >= *maxList {
+							fmt.Printf("    … %d more (raise -max-list)\n", len(gaps)-*maxList)
+							break
+						}
+						fmt.Printf("    ledger=%d served=%d CH=%d (delta %+d)\n", g.Ledger, g.Expected, g.Actual, g.Actual-g.Expected)
+					}
+				}
+			}
+			continue
 		}
 		for _, tgt := range src.targets {
 			expected := completeness.SumKinds(chBySrc[src.name], tgt.kinds...) // CH-re-derived per ledger, this source only
