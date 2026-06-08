@@ -1,0 +1,14 @@
+[Unit]
+Description=Rates Engine — ClickHouse Tier-1 live fan-out catch-up (ADR-0034)
+After=clickhouse-server.service network-online.target
+Wants=clickhouse-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ch-live-catchup.sh
+# Catch-up over the new gap only; idempotent (ReplacingMergeTree dedups).
+# Modest niceness — good neighbour to the live indexer/aggregator/api +
+# Postgres + MinIO on the shared host.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
