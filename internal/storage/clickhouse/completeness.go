@@ -40,10 +40,16 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 	// row's own value for the last row in the partition, so the final ledger
 	// never registers a spurious trailing gap. min() over an empty gap set
 	// returns 0 (UInt default), which we read as "no hole".
+	// Both columns are wrapped toUInt64(ifNull(…, 0)) so they scan as plain
+	// non-nullable uint64 regardless of CH's promotion rules: scalar subqueries
+	// are Nullable, max(ledger_seq) is UInt32 but min(ledger_seq+1) widens to
+	// UInt64, and an empty set yields NULL. ifNull(…,0) maps "no gap" / "empty
+	// lake" to 0; toUInt64 unifies the width. The driver rejects type
+	// mismatches, so this normalization is load-bearing.
 	const q = `
 		SELECT
-			(SELECT max(ledger_seq) FROM stellar.ledgers) AS ch_max,
-			(SELECT min(gap_start) FROM (
+			toUInt64(ifNull((SELECT max(ledger_seq) FROM stellar.ledgers), 0)) AS ch_max,
+			toUInt64(ifNull((SELECT min(gap_start) FROM (
 				SELECT ledger_seq + 1 AS gap_start
 				FROM (
 					SELECT ledger_seq,
@@ -53,13 +59,14 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 					FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq >= ?)
 				)
 				WHERE nxt > ledger_seq + 1
-			)) AS first_gap_start`
+			)), 0)) AS first_gap_start`
 
-	var chMax, firstGap uint32
+	var chMax, firstGap uint64
 	if err := conn.QueryRow(ctx, q, from).Scan(&chMax, &firstGap); err != nil {
 		return 0, fmt.Errorf("clickhouse: contiguous watermark from %d: %w", from, err)
 	}
-	return watermark(from, chMax, firstGap), nil
+	// Ledger sequences are always well within uint32.
+	return watermark(from, uint32(chMax), uint32(firstGap)), nil
 }
 
 // watermark is the pure interpretation of a ContiguousWatermark query result:
