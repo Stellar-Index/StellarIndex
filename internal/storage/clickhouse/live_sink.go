@@ -84,6 +84,12 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	if err != nil {
 		return nil, err
 	}
+	// The decode-at-ingest supply path writes stellar.supply_flows in every
+	// flush; ensure it exists before the worker starts (idempotent).
+	if err := EnsureSupplyFlowsTable(ctx, addr); err != nil {
+		_ = sink.Close(ctx)
+		return nil, err
+	}
 	return &LiveSink{
 		sink:     sink,
 		logger:   logger,

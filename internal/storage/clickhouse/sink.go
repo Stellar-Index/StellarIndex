@@ -8,6 +8,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -101,15 +102,34 @@ type LedgerEntryChangeRow struct {
 	EntryXDR    string
 }
 
+// SupplyFlowRow mirrors stellar.supply_flows: one decoded supply-affecting
+// event (CAP-67 classic / SEP-41 mint/burn/clawback). The amount is decoded
+// from the event body AT INGEST (DecodeSupplyAmount) — the i128 magnitude as a
+// *big.Int (ADR-0003) — so per-token supply is a pure SQL sum over this table
+// (Σmint − Σburn − Σclawback) with no XDR decode at read time and no periodic
+// rollup refresh. Keyed (in the ReplacingMergeTree ORDER BY) by the event
+// identity so the lake's drop→heal / re-backfill re-inserts are idempotent.
+type SupplyFlowRow struct {
+	ContractID string
+	LedgerSeq  uint32
+	CloseTime  time.Time
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	Kind       string // "mint" | "burn" | "clawback"
+	Amount     *big.Int
+}
+
 // LedgerExtract is one ledger's full structural decode — all rows produced
 // from a single LedgerCloseMeta.
 type LedgerExtract struct {
-	Ledger  LedgerRow
-	Txs     []TransactionRow
-	Ops     []OperationRow
-	Results []OperationResultRow
-	Events  []ContractEventRow
-	Changes []LedgerEntryChangeRow
+	Ledger      LedgerRow
+	Txs         []TransactionRow
+	Ops         []OperationRow
+	Results     []OperationResultRow
+	Events      []ContractEventRow
+	Changes     []LedgerEntryChangeRow
+	SupplyFlows []SupplyFlowRow
 }
 
 // Sink buffers extracts and flushes them to ClickHouse in batches. Not safe
@@ -119,12 +139,13 @@ type Sink struct {
 	conn       driver.Conn
 	flushEvery int
 
-	ledgers []LedgerRow
-	txs     []TransactionRow
-	ops     []OperationRow
-	results []OperationResultRow
-	events  []ContractEventRow
-	changes []LedgerEntryChangeRow
+	ledgers     []LedgerRow
+	txs         []TransactionRow
+	ops         []OperationRow
+	results     []OperationResultRow
+	events      []ContractEventRow
+	changes     []LedgerEntryChangeRow
+	supplyFlows []SupplyFlowRow
 }
 
 // Open dials ClickHouse (native protocol) at addr (e.g. "127.0.0.1:9300")
@@ -165,6 +186,7 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	s.results = append(s.results, e.Results...)
 	s.events = append(s.events, e.Events...)
 	s.changes = append(s.changes, e.Changes...)
+	s.supplyFlows = append(s.supplyFlows, e.SupplyFlows...)
 	if len(s.ledgers) >= s.flushEvery {
 		return s.Flush(ctx)
 	}
@@ -204,6 +226,9 @@ func (s *Sink) Flush(ctx context.Context) error {
 	if err := s.flushChanges(ctx); err != nil {
 		return err
 	}
+	if err := s.flushSupplyFlows(ctx); err != nil {
+		return err
+	}
 	// ledgers LAST — the commit marker. See the ORDERING note above.
 	if err := s.flushLedgers(ctx); err != nil {
 		return err
@@ -219,6 +244,7 @@ func (s *Sink) reset() {
 	s.results = s.results[:0]
 	s.events = s.events[:0]
 	s.changes = s.changes[:0]
+	s.supplyFlows = s.supplyFlows[:0]
 }
 
 // Close flushes any remaining rows and closes the connection.
@@ -307,6 +333,26 @@ func (s *Sink) flushChanges(ctx context.Context) error {
 		}
 	}
 	return wrapSend(b.Send(), "ledger_entry_changes")
+}
+
+func (s *Sink) flushSupplyFlows(ctx context.Context) error {
+	if len(s.supplyFlows) == 0 {
+		return nil
+	}
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.supply_flows (contract_id, ledger_seq, close_time, tx_hash, op_index, event_index, kind, amount)")
+	if err != nil {
+		return fmt.Errorf("clickhouse: prepare supply_flows: %w", err)
+	}
+	for _, r := range s.supplyFlows {
+		amt := r.Amount
+		if amt == nil {
+			amt = big.NewInt(0)
+		}
+		if err := b.Append(r.ContractID, r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.EventIndex, r.Kind, amt); err != nil {
+			return fmt.Errorf("clickhouse: append supply_flow %s/%s/%d/%d: %w", r.ContractID, r.TxHash, r.OpIndex, r.EventIndex, err)
+		}
+	}
+	return wrapSend(b.Send(), "supply_flows")
 }
 
 func wrapSend(err error, table string) error {

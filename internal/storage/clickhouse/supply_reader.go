@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // MintBurnFlow is one supply-affecting token event from the lake: a CAP-67
@@ -11,7 +12,11 @@ import (
 // or a map for some SEP-41 variants) — the caller decodes it.
 type MintBurnFlow struct {
 	Ledger     uint32
+	CloseTime  time.Time
 	ContractID string
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
 	Kind       string // "mint" | "burn" | "clawback"
 	DataXDR    string
 }
@@ -42,7 +47,7 @@ func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useF
 		final = "FINAL"
 	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(`
-		SELECT ledger_seq, contract_id, topic_0_sym, data_xdr
+		SELECT ledger_seq, close_time, contract_id, tx_hash, op_index, event_index, topic_0_sym, data_xdr
 		FROM stellar.contract_events %s
 		WHERE ledger_seq BETWEEN ? AND ?
 		  AND topic_0_sym IN ('mint','burn','clawback')`, final), from, to)
@@ -54,14 +59,21 @@ func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useF
 	for rows.Next() {
 		var (
 			ledger     uint32
+			closeTime  time.Time
 			contractID string
+			txHash     string
+			opIndex    uint32
+			eventIndex uint32
 			kind       string
 			dataXDR    string
 		)
-		if err := rows.Scan(&ledger, &contractID, &kind, &dataXDR); err != nil {
+		if err := rows.Scan(&ledger, &closeTime, &contractID, &txHash, &opIndex, &eventIndex, &kind, &dataXDR); err != nil {
 			return fmt.Errorf("clickhouse: scan mint/burn flow: %w", err)
 		}
-		if err := fn(MintBurnFlow{Ledger: ledger, ContractID: contractID, Kind: kind, DataXDR: dataXDR}); err != nil {
+		if err := fn(MintBurnFlow{
+			Ledger: ledger, CloseTime: closeTime, ContractID: contractID,
+			TxHash: txHash, OpIndex: opIndex, EventIndex: eventIndex, Kind: kind, DataXDR: dataXDR,
+		}); err != nil {
 			return err
 		}
 	}
