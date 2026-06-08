@@ -23,23 +23,29 @@ type MintBurnFlow struct {
 // total supply for EVERY token (baseline = 0 at asset/contract genesis), per
 // docs/architecture/clickhouse-supply-from-ch.md.
 //
-// FINAL dedups the ReplacingMergeTree parts (the sample/validation re-run
-// partitions 25/45/62 carry duplicate events that would double-count supply).
-// The topic_0_sym IN filter keeps the scan to the ~570 M supply flows, not the
-// ~12 B total contract_events.
-func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, fn func(MintBurnFlow) error) error {
+// useFinal toggles FINAL: with it, ReplacingMergeTree parts dedup at read time
+// (correct, but the all-history merge over 12 B rows is ~40× slower). Without
+// it, the scan streams parts directly (fast) but double-counts the sample/
+// validation re-run partitions 25/45/62 — acceptable for a quick all-token
+// estimate (<0.2% error for tokens active across history; only test-tokens
+// confined to those partitions inflate). The topic_0_sym IN filter keeps the
+// scan to the ~570 M supply flows, not the ~12 B total contract_events.
+func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useFinal bool, fn func(MintBurnFlow) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
 
-	rows, err := conn.Query(ctx, `
+	final := ""
+	if useFinal {
+		final = "FINAL"
+	}
+	rows, err := conn.Query(ctx, fmt.Sprintf(`
 		SELECT ledger_seq, contract_id, topic_0_sym, data_xdr
-		FROM stellar.contract_events FINAL
+		FROM stellar.contract_events %s
 		WHERE ledger_seq BETWEEN ? AND ?
-		  AND topic_0_sym IN ('mint','burn','clawback')
-		ORDER BY ledger_seq`, from, to)
+		  AND topic_0_sym IN ('mint','burn','clawback')`, final), from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query mint/burn flows [%d,%d]: %w", from, to, err)
 	}
