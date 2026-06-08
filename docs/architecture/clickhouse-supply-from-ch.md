@@ -1,6 +1,6 @@
 ---
 title: Supply derivation from the ClickHouse lake (every token)
-last_verified: 2026-06-06
+last_verified: 2026-06-08
 status: design
 ---
 
@@ -99,3 +99,39 @@ ADR-0034 plan §10a ("drop + rebuild supply tables from CH") is now achievable
   (the Phase-4 adapter) instead of the live dispatcher for re-derivation.
 - Reconcile the rolled-forward number against the live tier at cutover (they
   must agree at `t0`), then serve.
+
+## 7. Implemented (2026-06-08) — `ch-supply` + `stellar.token_supply`
+
+Supply-for-every-token is **derived + materialized**:
+
+- **`ratesengine-ops ch-supply`** (`cmd/ratesengine-ops/ch_supply.go` +
+  `internal/storage/clickhouse/{supply_reader,token_supply}.go`) streams the
+  lake's mint/burn/clawback flows (`StreamMintBurnFlows`: `topic_0_sym IN
+  ('mint','burn','clawback')`), decodes the amount (bare i128 **or** the
+  SEP-41/CAP-67 map-variant `amount` field — type-tested), and sums
+  `total = Σmint − Σburn − Σclawback` per `contract_id`.
+- **`-write`** persists to a CH `ReplacingMergeTree` table
+  **`stellar.token_supply`** (`contract_id`, `total_supply`, mint/burn/clawback
+  components, `flow_count`, `last_ledger`; amounts as decimal strings per
+  ADR-0003). The explorer queries this table; per-token decimals are applied at
+  display.
+- **Result (2026-06-08):** 401,502 tokens, all history, current to the live tip
+  (the indexer's real-time CH dual-sink keeps `contract_events` fresh — #18).
+  ~99.997% of flows decode; the rest are odd edge bodies (U32/Vec/Void).
+- **Keying:** `contract_id` (SAC for classic, token contract for SEP-41) — a
+  unique per-token identity; classic↔CODE-ISSUER mapping is a display concern.
+- **Correctness caveat:** the v1 populate ran `-final=false` (fast/light). The
+  three sample/validation re-run partitions (25/45/62) are still duplicated
+  (ledger dup ≈ 88 k; a full `FINAL` over `contract_events` is ~10 h, and
+  `uniqExact`-dedup OOMs at CH's memory cap), so tokens active in those ledger
+  ranges (25 M / 45 M / 62.7 M) are supply-inflated — ≲0.14 % for tokens active
+  across history, more for tokens concentrated there. **Correct refresh:** once
+  those partitions are deduped (a one-time `OPTIMIZE … PARTITION FINAL`
+  off-hours, or as part of the §10 decommission cleanup), re-run `ch-supply
+  -write`.
+- **Freshness:** the table is a snapshot from the `-write` run; a periodic
+  refresh (a `ch-supply -write` timer, sibling to `ch-live-catchup`) keeps it
+  current, or — once the extractor decodes the amount/asset into a CH column —
+  a `MATERIALIZED VIEW` could maintain it incrementally + real-time.
+- **XLM** (native): total from `ledgers.total_coins`; not part of the
+  mint/burn flows (still to wire).
