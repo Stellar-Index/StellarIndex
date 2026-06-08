@@ -67,6 +67,7 @@ func chSupply(args []string) error {
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	topN := fs.Int("top", 25, "print the top-N contracts by absolute supply")
+	useFinal := fs.Bool("final", true, "FINAL-dedup reads (correct but ~40x slower over all history; -final=false for a fast all-token estimate)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -91,8 +92,8 @@ func chSupply(args []string) error {
 		lastLog      = time.Now()
 	)
 
-	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s\n", lo, hi, *chAddr)
-	err := clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, func(f clickhouse.MintBurnFlow) error {
+	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v)\n", lo, hi, *chAddr, *useFinal)
+	err := clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
 		flows++
 		v, skipType, ok := decodeFlowAmount(f.DataXDR)
 		if !ok {
