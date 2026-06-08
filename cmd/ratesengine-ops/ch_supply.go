@@ -60,7 +60,7 @@ func decodeFlowAmount(dataXDR string) (*big.Int, string, bool) {
 // Defaults to a report (top-N contracts by supply + coverage count). Window
 // [from,to] per partition for the full-history run; a single all-history pass
 // holds one in-memory map (thousands of contracts — bounded).
-func chSupply(args []string) error {
+func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional write, report; splitting hurts clarity.
 	fs := flag.NewFlagSet("ch-supply", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to ratesengine.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
@@ -68,6 +68,7 @@ func chSupply(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	topN := fs.Int("top", 25, "print the top-N contracts by absolute supply")
 	useFinal := fs.Bool("final", true, "FINAL-dedup reads (correct but ~40x slower over all history; -final=false for a fast all-token estimate)")
+	write := fs.Bool("write", false, "persist per-token supply to the stellar.token_supply CH table")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -82,8 +83,12 @@ func chSupply(args []string) error {
 	defer cancel()
 	lo, hi := uint32(*from), uint32(*to)
 
-	supplyByContract := make(map[string]*big.Int)
-	flowsByContract := make(map[string]int)
+	type acc struct {
+		mint, burn, clawback *big.Int
+		flows                uint64
+		lastLedger           uint32
+	}
+	tokens := make(map[string]*acc)
 	skipByType := make(map[string]int)
 	var (
 		flows        uint64
@@ -92,7 +97,7 @@ func chSupply(args []string) error {
 		lastLog      = time.Now()
 	)
 
-	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v)\n", lo, hi, *chAddr, *useFinal)
+	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v write=%v)\n", lo, hi, *chAddr, *useFinal, *write)
 	err := clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
 		flows++
 		v, skipType, ok := decodeFlowAmount(f.DataXDR)
@@ -103,23 +108,26 @@ func chSupply(args []string) error {
 			skipByType[skipType]++
 			return nil
 		}
-		acc := supplyByContract[f.ContractID]
-		if acc == nil {
-			acc = big.NewInt(0)
-			supplyByContract[f.ContractID] = acc
+		a := tokens[f.ContractID]
+		if a == nil {
+			a = &acc{mint: big.NewInt(0), burn: big.NewInt(0), clawback: big.NewInt(0)}
+			tokens[f.ContractID] = a
 		}
 		switch f.Kind {
 		case "mint":
-			acc.Add(acc, v)
-		case "burn", "clawback":
-			acc.Sub(acc, v)
+			a.mint.Add(a.mint, v)
+		case "burn":
+			a.burn.Add(a.burn, v)
+		case "clawback":
+			a.clawback.Add(a.clawback, v)
 		}
-		flowsByContract[f.ContractID]++
-
+		a.flows++
+		if f.Ledger > a.lastLedger {
+			a.lastLedger = f.Ledger
+		}
 		if time.Since(lastLog) >= 15*time.Second {
 			rate := float64(flows) / time.Since(start).Seconds()
-			fmt.Fprintf(os.Stderr, "ch-supply: %d flows, %d contracts (%.0f flows/s)\n",
-				flows, len(supplyByContract), rate)
+			fmt.Fprintf(os.Stderr, "ch-supply: %d flows, %d tokens (%.0f flows/s)\n", flows, len(tokens), rate)
 			lastLog = time.Now()
 		}
 		return nil
@@ -128,25 +136,71 @@ func chSupply(args []string) error {
 		return fmt.Errorf("ch-supply: stream: %w", err)
 	}
 
+	net := func(a *acc) *big.Int {
+		n := new(big.Int).Set(a.mint)
+		n.Sub(n, a.burn)
+		n.Sub(n, a.clawback)
+		return n
+	}
+
+	// ─── write (optional) ─────────────────────────────────────────────────
+	if *write {
+		if eerr := clickhouse.EnsureTokenSupplyTable(ctx, *chAddr); eerr != nil {
+			return fmt.Errorf("ch-supply: ensure table: %w", eerr)
+		}
+		const batchN = 5000
+		rows := make([]clickhouse.TokenSupplyRow, 0, batchN)
+		var wrote int
+		flushRows := func() error {
+			if len(rows) == 0 {
+				return nil
+			}
+			if werr := clickhouse.WriteTokenSupplies(ctx, *chAddr, rows); werr != nil {
+				return werr
+			}
+			wrote += len(rows)
+			rows = rows[:0]
+			return nil
+		}
+		for cid, a := range tokens {
+			rows = append(rows, clickhouse.TokenSupplyRow{
+				ContractID:    cid,
+				TotalSupply:   net(a).String(),
+				MintTotal:     a.mint.String(),
+				BurnTotal:     a.burn.String(),
+				ClawbackTotal: a.clawback.String(),
+				FlowCount:     a.flows,
+				LastLedger:    a.lastLedger,
+			})
+			if len(rows) >= batchN {
+				if ferr := flushRows(); ferr != nil {
+					return fmt.Errorf("ch-supply: write: %w", ferr)
+				}
+			}
+		}
+		if ferr := flushRows(); ferr != nil {
+			return fmt.Errorf("ch-supply: write: %w", ferr)
+		}
+		fmt.Fprintf(os.Stderr, "ch-supply: wrote %d token supplies to stellar.token_supply\n", wrote)
+	}
+
 	// ─── report ──────────────────────────────────────────────────────────
-	type row struct {
+	type rrow struct {
 		contract string
 		supply   *big.Int
-		flows    int
+		flows    uint64
 	}
-	rows := make([]row, 0, len(supplyByContract))
-	for c, s := range supplyByContract {
-		rows = append(rows, row{c, s, flowsByContract[c]})
+	rows := make([]rrow, 0, len(tokens))
+	for c, a := range tokens {
+		rows = append(rows, rrow{c, net(a), a.flows})
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		ai := new(big.Int).Abs(rows[i].supply)
-		aj := new(big.Int).Abs(rows[j].supply)
-		return ai.Cmp(aj) > 0
+		return new(big.Int).Abs(rows[i].supply).Cmp(new(big.Int).Abs(rows[j].supply)) > 0
 	})
 
 	fmt.Printf("\n=== ch-supply [%d,%d] ===\n", lo, hi)
 	fmt.Printf("flows: %d  decode-skipped: %d  tokens (distinct contracts): %d\n",
-		flows, decodeErrors, len(supplyByContract))
+		flows, decodeErrors, len(tokens))
 	fmt.Printf("skip-by-type: %v\n\n", skipByType)
 	fmt.Printf("%-58s %30s %12s\n", "contract", "supply (raw)", "flows")
 	for i, r := range rows {
