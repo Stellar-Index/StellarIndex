@@ -198,6 +198,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "ch-rebuild: %v\n", err)
 			return 1
 		}
+	case "ch-supply":
+		if err := chSupply(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ch-supply: %v\n", err)
+			return 1
+		}
 	case "sdex-claim-audit":
 		if err := sdexClaimAudit(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "sdex-claim-audit: %v\n", err)
