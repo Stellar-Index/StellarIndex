@@ -8,44 +8,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/xdr"
-
 	"github.com/RatesEngine/rates-engine/internal/config"
-	"github.com/RatesEngine/rates-engine/internal/scval"
 	"github.com/RatesEngine/rates-engine/internal/storage/clickhouse"
 )
-
-// decodeFlowAmount extracts the amount from a mint/burn/clawback event's data
-// body. Returns ok=false on an undecodable body (with a short reason for skip
-// diagnostics) so the supply scan can skip-and-continue without an err-return.
-func decodeFlowAmount(dataXDR string) (*big.Int, string, bool) {
-	sv, err := scval.Parse(dataXDR)
-	if err != nil {
-		return nil, "parse-error", false
-	}
-	// Bare i128 (common shape).
-	if amt, err := scval.AsAmountFromI128(sv); err == nil {
-		return amt.BigInt(), "", true
-	}
-	// Map variant {amount, to_muxed_id, ...} — SEP-41/CAP-67 carry the amount in
-	// an `amount` field when a muxed destination is present (CLAUDE.md SEP-41
-	// note). Mirror sep41_transfers' type-test.
-	if sv.Type == xdr.ScValTypeScvMap {
-		entries, merr := scval.AsMap(sv)
-		if merr != nil {
-			return nil, "map-parse-error", false
-		}
-		amtVal, ok := scval.MapField(entries, "amount")
-		if !ok {
-			return nil, "map-no-amount", false
-		}
-		if amt, aerr := scval.AsAmountFromI128(amtVal); aerr == nil {
-			return amt.BigInt(), "", true
-		}
-		return nil, "map-amount-not-i128", false
-	}
-	return nil, sv.Type.String(), false
-}
 
 // chSupply derives total supply for EVERY token from the ClickHouse lake by
 // summing CAP-67 classic + SEP-41 mint/burn/clawback flows per contract:
@@ -68,7 +33,8 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	topN := fs.Int("top", 25, "print the top-N contracts by absolute supply")
 	useFinal := fs.Bool("final", true, "FINAL-dedup reads (correct but ~40x slower over all history; -final=false for a fast all-token estimate)")
-	write := fs.Bool("write", false, "persist per-token supply to the stellar.token_supply CH table")
+	write := fs.Bool("write", false, "persist the per-token rollup to the stellar.token_supply CH table")
+	seedFlows := fs.Bool("seed-flows", false, "seed stellar.supply_flows: write one decoded row per mint/burn/clawback event (the decode-at-ingest history backfill; idempotent)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -97,10 +63,35 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 		lastLog      = time.Now()
 	)
 
-	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v write=%v)\n", lo, hi, *chAddr, *useFinal, *write)
+	// seed-flows: write one decoded supply_flows row per event, batched during
+	// the stream (570M rows can't be held in memory like the rollup map).
+	const flowBatchN = 20000
+	var (
+		flowBatch  []clickhouse.SupplyFlowRow
+		flowsWrote int
+	)
+	if *seedFlows {
+		if eerr := clickhouse.EnsureSupplyFlowsTable(ctx, *chAddr); eerr != nil {
+			return fmt.Errorf("ch-supply: ensure supply_flows: %w", eerr)
+		}
+		flowBatch = make([]clickhouse.SupplyFlowRow, 0, flowBatchN)
+	}
+	flushFlows := func() error {
+		if len(flowBatch) == 0 {
+			return nil
+		}
+		if werr := clickhouse.WriteSupplyFlows(ctx, *chAddr, flowBatch); werr != nil {
+			return werr
+		}
+		flowsWrote += len(flowBatch)
+		flowBatch = flowBatch[:0]
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v write=%v seed-flows=%v)\n", lo, hi, *chAddr, *useFinal, *write, *seedFlows)
 	err := clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
 		flows++
-		v, skipType, ok := decodeFlowAmount(f.DataXDR)
+		v, skipType, ok := clickhouse.DecodeSupplyAmountXDR(f.DataXDR)
 		if !ok {
 			// Undecodable / non-i128 body (some SEP-41 variants carry a map);
 			// skip rather than misparse. skipType pinpoints the shape to handle.
@@ -125,15 +116,38 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 		if f.Ledger > a.lastLedger {
 			a.lastLedger = f.Ledger
 		}
+		if *seedFlows {
+			flowBatch = append(flowBatch, clickhouse.SupplyFlowRow{
+				ContractID: f.ContractID,
+				LedgerSeq:  f.Ledger,
+				CloseTime:  f.CloseTime,
+				TxHash:     f.TxHash,
+				OpIndex:    f.OpIndex,
+				EventIndex: f.EventIndex,
+				Kind:       f.Kind,
+				Amount:     v,
+			})
+			if len(flowBatch) >= flowBatchN {
+				if ferr := flushFlows(); ferr != nil {
+					return ferr
+				}
+			}
+		}
 		if time.Since(lastLog) >= 15*time.Second {
 			rate := float64(flows) / time.Since(start).Seconds()
-			fmt.Fprintf(os.Stderr, "ch-supply: %d flows, %d tokens (%.0f flows/s)\n", flows, len(tokens), rate)
+			fmt.Fprintf(os.Stderr, "ch-supply: %d flows, %d tokens, %d flow-rows written (%.0f flows/s)\n", flows, len(tokens), flowsWrote, rate)
 			lastLog = time.Now()
 		}
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("ch-supply: stream: %w", err)
+	}
+	if *seedFlows {
+		if ferr := flushFlows(); ferr != nil {
+			return fmt.Errorf("ch-supply: seed-flows write: %w", ferr)
+		}
+		fmt.Fprintf(os.Stderr, "ch-supply: seeded %d supply_flows rows\n", flowsWrote)
 	}
 
 	net := func(a *acc) *big.Int {

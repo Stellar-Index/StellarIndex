@@ -199,6 +199,26 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 			}
 			ext.Events = append(ext.Events, row)
 			ext.Ledger.SorobanEventCount++
+			// Decode-at-ingest (ADR-0034): for supply-affecting events
+			// (mint/burn/clawback) decode the i128 amount now and emit a
+			// supply_flows row, so per-token supply is a pure SQL sum with no
+			// read-time XDR decode and no rollup refresh. An undecodable body
+			// (skipped here) just doesn't contribute — the raw event is still
+			// in contract_events for audit.
+			if IsSupplyFlowSym(row.Topic0Sym) {
+				if amt, _, okAmt := DecodeSupplyAmountXDR(row.DataXDR); okAmt {
+					ext.SupplyFlows = append(ext.SupplyFlows, SupplyFlowRow{
+						ContractID: row.ContractID,
+						LedgerSeq:  seq,
+						CloseTime:  closeTime,
+						TxHash:     txHash,
+						OpIndex:    row.OpIndex,
+						EventIndex: row.EventIndex,
+						Kind:       row.Topic0Sym,
+						Amount:     amt,
+					})
+				}
+			}
 		}
 	}
 }

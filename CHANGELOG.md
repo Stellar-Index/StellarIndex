@@ -17,6 +17,23 @@ against.
 
 ### Added
 
+- **Real-time per-token supply via decode-at-ingest (ADR-0034).** Token supply
+  is now a pure SQL sum over a new `stellar.supply_flows` table instead of a
+  periodically-refreshed rollup. The blocker for real-time supply was that the
+  amount lives in the event body as a raw i128 XDR scval that ClickHouse can't
+  decode — so supply required a 16-min Go batch recompute (`ch-supply`), stale
+  by up to the refresh interval. Now the indexer **decodes the i128 amount at
+  ingest** (`DecodeSupplyAmount`) for every mint/burn/clawback event and writes
+  a decoded row to `supply_flows` (`ReplacingMergeTree`, ORDER BY `contract_id`
+  first for fast per-token reads; event-identity suffix → idempotent under the
+  lake's drop→heal / re-backfill). The real-time dual-sink feeds it inline, so
+  a token's supply (`Σmint − Σburn − Σclawback`, `SupplyForContract`) is always
+  current with **no refresh job** and no read-time XDR decode. History is
+  seeded once from the existing lake via `ratesengine-ops ch-supply -seed-flows`
+  (decode CH `contract_events` → `supply_flows`); thereafter the dual-sink keeps
+  it live. The decode logic is shared between ingest and the seed so both
+  produce identical amounts.
+
 - **ClickHouse Tier-1 raw lake (ADR-0034, migration in progress).** New
   columnar storage tier for the OLAP-scale firehose (every ledger/tx/op/
   event), moving it off Postgres where billion-row bulk reprocessing was

@@ -125,3 +125,27 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (ledger_seq, tx_hash, op_index, change_index);
+
+-- Per-token supply events (CAP-67 classic SAC + SEP-41 mint/burn/clawback) with
+-- the i128 amount DECODED at ingest (decode-at-ingest, ADR-0034). Total supply
+-- for a token is a pure SQL sum over this table:
+--   Σ amount WHERE kind='mint' − Σ amount WHERE kind IN ('burn','clawback')
+-- — no XDR decode at read time and no periodic rollup refresh (the dual-sink
+-- keeps it real-time; ch-backfill re-fills holes). ORDER BY contract_id first
+-- so a per-token read is a fast PK-prefix scan; the (ledger,tx,op,event) suffix
+-- is the event identity, so re-ingest (drop→heal / re-backfill) is idempotent.
+CREATE TABLE IF NOT EXISTS stellar.supply_flows
+(
+    contract_id  String,
+    ledger_seq   UInt32,
+    close_time   DateTime('UTC'),
+    tx_hash      String,
+    op_index     UInt32,
+    event_index  UInt32,
+    kind         LowCardinality(String),
+    amount       Int128,
+    ingested_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
