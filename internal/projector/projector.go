@@ -292,7 +292,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 		// events.Event, no Reconstruct). No FINAL — small forward window +
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,
-			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms,
+			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms, false, // no FINAL: idempotent writes absorb dups
 			func(ev events.Event) error {
 				rowsScanned++
 				if ev.Ledger > lastSeenLedger {

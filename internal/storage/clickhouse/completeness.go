@@ -14,10 +14,11 @@ import (
 type ReconcileEventStreamer struct{ Addr string }
 
 // StreamContractEvents streams events.Event for [from,to] narrowed by the
-// source's prefilter — no FINAL (the projector's downstream writes are
-// idempotent; the reconcile only counts).
+// source's prefilter, with FINAL — the reconcile COUNTS, so un-merged
+// ReplacingMergeTree duplicate parts (the re-run partitions 25/45/62) must be
+// deduped or they inflate the expected count into false projection mismatches.
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
-	return StreamContractEventsFiltered(ctx, s.Addr, from, to, contractIDs, topic0Syms, nil, fn)
+	return StreamContractEventsFiltered(ctx, s.Addr, from, to, contractIDs, topic0Syms, nil, true, fn)
 }
 
 // ContiguousWatermark returns the highest ledger L such that stellar.ledgers

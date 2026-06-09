@@ -41,6 +41,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
 	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch)")
+	skipSubstrate := fs.Bool("skip-substrate", false, "Trust the prior substrate certification (substrate_ok=true) instead of re-scanning the hash-chain — fast per-source iteration once substrate is proven")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,7 +122,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// reuse per source. The CH lake is the certified authoritative substrate.
 	var chSubProblem uint32
 	var chSubHas bool
-	if *useCH {
+	switch {
+	case *useCH && *skipSubstrate:
+		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-substrate — trusting prior CH substrate certification (intact)")
+	case *useCH:
 		p, has, d, serr := clickhouse.SubstrateProblem(ctx, *chAddr, 2, tip)
 		if serr != nil {
 			return fmt.Errorf("ch substrate: %w", serr)

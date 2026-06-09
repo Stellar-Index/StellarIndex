@@ -71,7 +71,15 @@ func sqlQuoteList(ss []string) string {
 // CAP-67 classic-token firehose at the SQL layer instead of streaming it all
 // and discarding it via Decoder.Matches (see ClassicTokenTopic0Syms; matters
 // for a far-behind source's wide catch-up window).
-func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, fn func(events.Event) error) error {
+//
+// useFinal toggles FINAL. The live projector passes false: it reads small
+// forward windows and its downstream writes are idempotent (ON CONFLICT DO
+// NOTHING), so a duplicate ReplacingMergeTree part decodes to the same row and
+// is absorbed — FINAL would be pure overhead. A COUNTING consumer (the
+// completeness reconcile) MUST pass true: without FINAL, un-merged duplicate
+// parts (e.g. the footprint-sample / validation re-run partitions 25/45/62)
+// are double-counted, producing false projection mismatches.
+func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal bool, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
@@ -88,13 +96,17 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 	if len(excludeTopic0Syms) > 0 {
 		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0Syms) + ")"
 	}
+	final := ""
+	if useFinal {
+		final = "FINAL"
+	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(`
 		SELECT ledger_seq, close_time, tx_hash, op_index, event_index,
 		       contract_id, event_type, topics_xdr, data_xdr, op_args_xdr,
 		       in_successful_call
-		FROM stellar.contract_events
+		FROM stellar.contract_events %s
 		%s
-		ORDER BY ledger_seq, tx_hash, op_index, event_index`, where), from, to)
+		ORDER BY ledger_seq, tx_hash, op_index, event_index`, final, where), from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
 	}
