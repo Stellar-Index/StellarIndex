@@ -17,6 +17,19 @@ against.
 
 ### Added
 
+- **`GET /v1/assets/{asset_id}/supply` + explorer supply panel (ADR-0034).**
+  Exposes the live decode-at-ingest supply: `Σmint − Σburn − Σclawback` from the
+  `supply_flows` lake, current to the latest ledger with no rollup refresh.
+  Resolves a Soroban contract id (`C…`) directly, a classic asset via the
+  operator's SAC wrappers (404 if unmapped), and `native`/`XLM` from the ledger
+  header `total_coins` (`source=ledger_total_coins`). Amounts are decimal
+  strings (ADR-0003). The API server gains a pooled `clickhouse.SupplyReader`
+  (nil when ClickHouse isn't configured → endpoint 503s; non-fatal at boot).
+  The explorer's Supply tab now leads with a live "On-chain supply" section
+  (total + mint/burn/clawback breakdown) for **every** token — not just the
+  handful with an ADR-0011 `asset_supply_history` snapshot — degrading
+  gracefully (section omitted) when the endpoint 404s/503s.
+
 - **Real-time per-token supply via decode-at-ingest (ADR-0034).** Token supply
   is now a pure SQL sum over a new `stellar.supply_flows` table instead of a
   periodically-refreshed rollup. The blocker for real-time supply was that the

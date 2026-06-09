@@ -416,6 +416,33 @@ paths:
               schema: { $ref: "#/components/schemas/AssetMetadataEnvelope" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /assets/{asset_id}/supply:
+    get:
+      tags: [assets]
+      summary: Live per-token supply (mint − burn − clawback).
+      description: |
+        Real-time total supply for any token, summed from the ClickHouse
+        `supply_flows` lake (decode-at-ingest, ADR-0034): Σmint − Σburn −
+        Σclawback over all history, kept current by the indexer's dual-sink
+        with no rollup refresh. Amounts are decimal strings in the asset's
+        smallest unit (ADR-0003); clients apply per-asset decimals for display.
+
+        Resolution: a Soroban contract id (`C…`) is used directly; a classic
+        asset (`CODE-ISSUER`) resolves to its Stellar-Asset-Contract via the
+        operator's configured SAC wrappers (404 if unmapped); `native` / `XLM`
+        returns the ledger header's `total_coins`
+        (`source=ledger_total_coins`), since XLM has no SAC mint/burn events.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: Live supply.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetSupplyEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /price:
     get:
       tags: [price]
@@ -4105,6 +4132,33 @@ components:
         - type: object
           properties:
             data: { $ref: "#/components/schemas/AssetMetadata" }
+          required: [data]
+
+    AssetSupply:
+      type: object
+      description: |
+        Live per-token supply from the decode-at-ingest supply_flows lake
+        (ADR-0034). Amounts are decimal strings in the asset's smallest unit.
+      properties:
+        asset_id:       { type: string, description: "The requested asset_id, echoed back." }
+        contract_id:    { type: string, description: "The contract (Soroban token or classic SAC) supply is keyed by. Omitted for native XLM." }
+        total_supply:   { type: string, description: "Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003)." }
+        mint_total:     { type: string, description: "Decimal string: Σ mint. Omitted for native." }
+        burn_total:     { type: string, description: "Decimal string: Σ burn. Omitted for native." }
+        clawback_total: { type: string, description: "Decimal string: Σ clawback. Omitted for native." }
+        flow_count:     { type: integer, format: int64, description: "Number of supply-affecting events summed." }
+        source:
+          type: string
+          enum: [mint_burn_flows, ledger_total_coins]
+          description: "How total_supply was derived: mint/burn/clawback flows, or the ledger header total_coins (native XLM)."
+      required: [asset_id, total_supply, flow_count, source]
+
+    AssetSupplyEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AssetSupply" }
           required: [data]
 
     # Price

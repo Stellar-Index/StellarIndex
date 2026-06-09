@@ -83,6 +83,7 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/ratelimit"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 	"github.com/RatesEngine/rates-engine/internal/sources/forex"
+	"github.com/RatesEngine/rates-engine/internal/storage/clickhouse"
 	"github.com/RatesEngine/rates-engine/internal/storage/redisclient"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 	"github.com/RatesEngine/rates-engine/internal/supply"
@@ -772,6 +773,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 
+	// Live per-token supply from the decode-at-ingest supply_flows lake
+	// (ADR-0034) backs GET /v1/assets/{id}/supply. Optional: when ClickHouse
+	// isn't configured, the reader stays nil and the endpoint 503s. A failed
+	// dial is non-fatal — the rest of the API still serves.
+	var tokenSupplyReader v1.TokenSupplyReader
+	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		sr, err := clickhouse.NewSupplyReader(rootCtx, addr)
+		if err != nil {
+			logger.Warn("token supply reader unavailable; /v1/assets/{id}/supply will 503", "addr", addr, "err", err)
+		} else {
+			defer func() { _ = sr.Close() }()
+			tokenSupplyReader = sr
+			logger.Info("token supply reader wired (ClickHouse supply_flows)", "addr", addr)
+		}
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -807,6 +824,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Triangulated:         redisTriangulatedLooker{rdb: rdb},
 		Freeze:               freezeLooker,
 		Supply:               storeSupplyLooker{s: store},
+		TokenSupply:          tokenSupplyReader,
 		Volume:               storeVolumeReader{s: store},
 		Change24h:            storeChange24hReader{s: store, pegs: usdPegs},
 		ChangeSummary:        store,

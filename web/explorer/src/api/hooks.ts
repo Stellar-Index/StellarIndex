@@ -779,3 +779,42 @@ export function useAsset(assetID: string | undefined) {
     staleTime: 60_000,
   });
 }
+
+/**
+ * AssetSupply — live per-token supply from `/v1/assets/{id}/supply`,
+ * summed from the decode-at-ingest supply_flows lake (ADR-0034).
+ * Amounts are smallest-unit decimal strings (divide by 10^decimals to
+ * display). `source` distinguishes mint/burn/clawback flows from the
+ * native XLM ledger total_coins.
+ */
+export type AssetSupply = {
+  asset_id: string;
+  contract_id?: string;
+  total_supply: string;
+  mint_total?: string;
+  burn_total?: string;
+  clawback_total?: string;
+  flow_count: number;
+  source: 'mint_burn_flows' | 'ledger_total_coins';
+};
+
+/**
+ * useAssetSupply — live on-chain supply (mint − burn − clawback),
+ * always current (the indexer dual-sink feeds it; no rollup refresh).
+ * 404s for a classic asset without a configured SAC wrapper, in which
+ * case the caller degrades gracefully (omits the section).
+ */
+export function useAssetSupply(assetID: string | undefined) {
+  return useQuery<AssetSupply>({
+    queryKey: ['/v1/assets/{id}/supply', assetID],
+    enabled: !!assetID,
+    retry: false,
+    queryFn: async () => {
+      const env = await apiGet<{ data: AssetSupply }>(
+        `/v1/assets/${encodeURIComponent(assetID ?? '')}/supply`,
+      );
+      return env.data;
+    },
+    staleTime: 30_000,
+  });
+}
