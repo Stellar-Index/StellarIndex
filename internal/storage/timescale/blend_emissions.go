@@ -44,18 +44,18 @@ func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e blend.EmissionEv
 
 	const q = `
         INSERT INTO blend_emissions (
-            pool, ledger, tx_hash, op_index, ledger_close_time,
+            pool, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, amount, asset, user_address,
             attributes
         ) VALUES (
-            $1, $2, $3, $4, $5,
-            $6, $7, $8, $9,
-            $10
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10,
+            $11
         )
-        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, ledger_close_time) DO NOTHING
+        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO NOTHING
     `
 	_, err = s.db.ExecContext(ctx, q,
-		e.Pool, int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
+		e.Pool, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.Timestamp.UTC(),
 		e.Kind,
 		nullNumeric(bigIntOrEmpty(e.Amount)),
 		nullString(e.Asset), nullString(e.User),

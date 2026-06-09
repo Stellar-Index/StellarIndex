@@ -46,18 +46,18 @@ func (s *Store) InsertBlendAdminEvent(ctx context.Context, e blend.AdminEvent) e
 
 	const q = `
         INSERT INTO blend_admin (
-            contract_id, ledger, tx_hash, op_index, ledger_close_time,
+            contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, admin, asset, target,
             attributes
         ) VALUES (
-            $1, $2, $3, $4, $5,
-            $6, $7, $8, $9,
-            $10
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10,
+            $11
         )
-        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_kind, ledger_close_time) DO NOTHING
+        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO NOTHING
     `
 	_, err = s.db.ExecContext(ctx, q,
-		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
+		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.Timestamp.UTC(),
 		e.Kind,
 		nullString(e.Admin), nullString(e.Asset), nullString(e.Target),
 		attrsJSON,
