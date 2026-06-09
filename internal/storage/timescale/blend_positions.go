@@ -49,7 +49,7 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e blend.PositionEv
             $9::numeric, $10::numeric,
             $11
         )
-        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, ledger_close_time) DO NOTHING
+        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, asset, user_address, ledger_close_time) DO NOTHING
     `
 	var counterparty sql.NullString
 	if e.Counterparty != "" {

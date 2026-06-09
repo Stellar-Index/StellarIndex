@@ -57,7 +57,33 @@ func (*Decoder) Matches(ev events.Event) bool {
 // / admin events return PositionEvent / EmissionEvent / AdminEvent
 // — the sink writes them to blend_positions / blend_emissions /
 // blend_admin via the migration-0042 schemas.
-func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:gocyclo,gocognit,funlen,cyclop // one case per Blend event kind; flattening makes the dispatch table easier to audit against pool/src/events.rs.
+// Decode routes the event by kind (decodeByKind) and stamps EventIndex onto the
+// emission/admin outputs — the per-event discriminator that distinguishes
+// multiple same-kind events emitted in a single operation. Without it those rows
+// collide on the blend_emissions / blend_admin primary key and all but one are
+// silently dropped (the coarse-PK data-loss bug fixed in migration 0053).
+// Position events carry (asset, user_address) for the same purpose, so they
+// don't need EventIndex.
+func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	outs, err := d.decodeByKind(ev)
+	if err != nil {
+		return nil, err
+	}
+	ei := uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
+	for i, o := range outs {
+		switch e := o.(type) {
+		case EmissionEvent:
+			e.EventIndex = ei
+			outs[i] = e
+		case AdminEvent:
+			e.EventIndex = ei
+			outs[i] = e
+		}
+	}
+	return outs, nil
+}
+
+func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //nolint:gocyclo,gocognit,funlen,cyclop // one case per Blend event kind; flattening makes the dispatch table easier to audit against pool/src/events.rs.
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
 		return nil, err

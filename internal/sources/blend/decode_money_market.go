@@ -97,10 +97,11 @@ type EmissionEvent struct {
 	// claim extras (NULL for everything else).
 	ReserveTokenIDs []uint32
 
-	Ledger    uint32
-	TxHash    string
-	OpIndex   uint32
-	Timestamp time.Time
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32 // distinguishes multiple same-kind emission events in one op (PK component)
+	Timestamp  time.Time
 }
 
 // AdminEvent is the decoded shape of every pool-config / admin /
@@ -144,10 +145,11 @@ type AdminEvent struct {
 	// event kind doesn't carry a ReserveConfig.
 	ReserveConfig map[string]any
 
-	Ledger    uint32
-	TxHash    string
-	OpIndex   uint32
-	Timestamp time.Time
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32 // distinguishes multiple same-kind admin events in one op (PK component)
+	Timestamp  time.Time
 }
 
 // ─── classify (extended) ───────────────────────────────────────
