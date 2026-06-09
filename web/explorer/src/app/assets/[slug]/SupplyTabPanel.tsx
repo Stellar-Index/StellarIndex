@@ -2,7 +2,7 @@
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { useAsset } from '@/api/hooks';
+import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 
 /**
@@ -18,6 +18,9 @@ import { formatCompact } from '@/lib/format';
  */
 export function SupplyTabPanel({ assetID }: { assetID: string }) {
   const asset = useAsset(assetID);
+  // Live on-chain supply (ADR-0034 supply_flows). Independent of the F2
+  // snapshot below; 404s for unmapped classic assets → section omitted.
+  const onchain = useAssetSupply(assetID);
 
   if (asset.isError) {
     return (
@@ -70,10 +73,12 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
       bodyClassName="space-y-4"
     >
+      {onchain.data && <OnChainSupply data={onchain.data} decimals={decimals} />}
       {noSupply ? (
         <p className="text-sm text-slate-500">
-          No supply snapshot available for this asset. The supply
-          observer may not have backfilled it yet.
+          {onchain.data
+            ? 'No ADR-0011 circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
+            : 'No supply snapshot available for this asset. The supply observer may not have backfilled it yet.'}
         </p>
       ) : (
         <>
@@ -165,6 +170,49 @@ function MarketCapChartEmpty() {
         Coming once the supply-history hypertable backfills join up
         with the per-asset USD price track. Today we surface only the
         latest snapshot above.
+      </p>
+    </div>
+  );
+}
+
+// OnChainSupply renders the live decode-at-ingest supply (ADR-0034):
+// Σmint − Σburn − Σclawback from the supply_flows lake, current to the
+// latest ledger with no rollup refresh. This is the universal supply
+// number available for every token (vs the ADR-0011 F2 fields below,
+// which only exist for tracked assets). For native XLM the source is the
+// ledger header's total_coins (no mint/burn breakdown).
+function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number }) {
+  const native = data.source === 'ledger_total_coins';
+  const total = parseSmallest(data.total_supply, decimals);
+  const mint = parseSmallest(data.mint_total, decimals);
+  const burn = parseSmallest(data.burn_total, decimals);
+  const clawback = parseSmallest(data.clawback_total, decimals);
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+        On-chain supply (live)
+      </h4>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric
+          label="Total"
+          value={total != null ? formatCompact(total) : '—'}
+          sublabel={native ? 'ledger total_coins' : `${data.flow_count.toLocaleString()} flows`}
+        />
+        {!native && (
+          <>
+            <Metric label="Minted" value={mint != null ? formatCompact(mint) : '—'} />
+            <Metric label="Burned" value={burn != null ? formatCompact(burn) : '—'} />
+            <Metric
+              label="Clawed back"
+              value={clawback != null ? formatCompact(clawback) : '—'}
+            />
+          </>
+        )}
+      </div>
+      <p className="mt-2 text-[11px] text-emerald-700/80 dark:text-emerald-400/70">
+        {native
+          ? 'Native XLM total from the ledger header — current to the latest ledger.'
+          : 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.'}
       </p>
     </div>
   );

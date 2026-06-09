@@ -81,6 +81,7 @@ type Server struct {
 	divergence           DivergenceLooker
 	freeze               FrozenLooker
 	supply               SupplyLooker
+	tokenSupply          TokenSupplyReader
 	volume               VolumeReader
 	change24h            Change24hReader
 	changesum            ChangeSummaryReader
@@ -338,6 +339,13 @@ type Options struct {
 	// some other process populating asset_supply_history; this repo
 	// snapshot only wires the read path.
 	Supply SupplyLooker
+
+	// TokenSupply, when non-nil, backs GET /v1/assets/{asset_id}/supply with
+	// the live decode-at-ingest supply_flows lake (ADR-0034) — the raw
+	// Σmint−Σburn−Σclawback total for EVERY token (vs Supply's ADR-0011
+	// circulating/max policy over the 9-asset asset_supply_history). Production
+	// wiring is *clickhouse.SupplyReader. Nil → the endpoint 503s.
+	TokenSupply TokenSupplyReader
 
 	// Volume, when non-nil, populates the `volume_24h_usd` field on
 	// /v1/assets/{id} (trailing-24h USD-denominated trade volume
@@ -700,6 +708,7 @@ func New(opts Options) *Server {
 		divergence:           opts.Divergence,
 		freeze:               opts.Freeze,
 		supply:               opts.Supply,
+		tokenSupply:          opts.TokenSupply,
 		volume:               opts.Volume,
 		change24h:            opts.Change24h,
 		changesum:            opts.ChangeSummary,
@@ -1010,6 +1019,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// wildcard); Go's mux handles the precedence, but listing the
 	// literal route first keeps the ordering obvious.
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
+	// Live per-token supply from the decode-at-ingest supply_flows lake
+	// (ADR-0034). Literal "supply" beats the {network} wildcard below.
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
 	// Per-network drill-down (R-018 assets-unification step 3). When
 	// {asset_id} is a verified-currency slug, the handler dispatches
 	// per network: Stellar redirects to the canonical asset_id view;

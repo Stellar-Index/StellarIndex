@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // supplyFlowsDDL is the canonical stellar.supply_flows definition (kept in sync
@@ -87,30 +91,23 @@ type TokenSupply struct {
 	FlowCount  uint64
 }
 
-// SupplyForContract returns a token's current supply by summing its
-// supply_flows directly — always current (the dual-sink feeds the table in real
-// time), no rollup refresh. FINAL dedups the ReplacingMergeTree parts for the
-// contract's (small) key range. Sums are taken as Int256 to avoid overflow when
-// Σmint alone exceeds i128, then returned as *big.Int (ADR-0003). A token with
-// no flows returns zeros (Total=0), not an error.
-func SupplyForContract(ctx context.Context, addr, contractID string) (TokenSupply, error) {
-	conn, err := openRead(ctx, addr)
-	if err != nil {
-		return TokenSupply{}, err
-	}
-	defer func() { _ = conn.Close() }()
+// supplySumQuery sums a contract's supply_flows. FINAL dedups the
+// ReplacingMergeTree parts for the contract's (small, contract_id-ordered) key
+// range; sums are Int256 to avoid overflow when Σmint alone exceeds i128, then
+// returned as *big.Int (ADR-0003). A contract with no flows scans to zeros.
+const supplySumQuery = `
+	SELECT
+		toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
+		toString(sum(toInt256(if(kind = 'burn', amount, toInt128(0))))) AS burn,
+		toString(sum(toInt256(if(kind = 'clawback', amount, toInt128(0))))) AS clawback,
+		count() AS flows
+	FROM stellar.supply_flows FINAL
+	WHERE contract_id = ?`
 
-	const q = `
-		SELECT
-			toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
-			toString(sum(toInt256(if(kind = 'burn', amount, toInt128(0))))) AS burn,
-			toString(sum(toInt256(if(kind = 'clawback', amount, toInt128(0))))) AS clawback,
-			count() AS flows
-		FROM stellar.supply_flows FINAL
-		WHERE contract_id = ?`
+func querySupply(ctx context.Context, conn driver.Conn, contractID string) (TokenSupply, error) {
 	var mintS, burnS, clawbackS string
 	var flows uint64
-	if err := conn.QueryRow(ctx, q, contractID).Scan(&mintS, &burnS, &clawbackS, &flows); err != nil {
+	if err := conn.QueryRow(ctx, supplySumQuery, contractID).Scan(&mintS, &burnS, &clawbackS, &flows); err != nil {
 		return TokenSupply{}, fmt.Errorf("clickhouse: supply for %s: %w", contractID, err)
 	}
 	mint := mustBig(mintS)
@@ -126,6 +123,68 @@ func SupplyForContract(ctx context.Context, addr, contractID string) (TokenSuppl
 		FlowCount:  flows,
 	}, nil
 }
+
+// SupplyForContract returns a token's current supply by summing its
+// supply_flows directly — always current (the dual-sink feeds the table in real
+// time), no rollup refresh. Opens a connection per call; for a hot path (the
+// API) hold a [SupplyReader] instead.
+func SupplyForContract(ctx context.Context, addr, contractID string) (TokenSupply, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return TokenSupply{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	return querySupply(ctx, conn, contractID)
+}
+
+// SupplyReader is a persistent ClickHouse connection for serving per-token
+// supply from supply_flows on a request hot path (the API). Construct once at
+// startup, reuse across requests, Close at shutdown.
+type SupplyReader struct {
+	conn driver.Conn
+}
+
+// NewSupplyReader dials ClickHouse with a request-sized pool and pings it.
+func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
+	conn, err := clickhouse.Open(&clickhouse.Options{
+		Addr:            []string{addr},
+		Auth:            clickhouse.Auth{Database: "stellar"},
+		Settings:        clickhouse.Settings{"max_execution_time": 30},
+		DialTimeout:     10 * time.Second,
+		ReadTimeout:     30 * time.Second,
+		MaxOpenConns:    8,
+		MaxIdleConns:    4,
+		ConnMaxLifetime: time.Hour,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: open supply reader %s: %w", addr, err)
+	}
+	if err := conn.Ping(ctx); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("clickhouse: ping supply reader %s: %w", addr, err)
+	}
+	return &SupplyReader{conn: conn}, nil
+}
+
+// TokenSupply returns a contract's live supply (Σmint − Σburn − Σclawback).
+func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (TokenSupply, error) {
+	return querySupply(ctx, r.conn, contractID)
+}
+
+// NativeTotalCoins returns XLM's total supply (in stroops, 7 decimals) and the
+// ledger it was read from — the ledger header's total_coins, which is the
+// authoritative native supply (XLM is not minted/burned via SAC mint/burn
+// events, so it has no supply_flows). Reads the latest ledger.
+func (r *SupplyReader) NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error) {
+	const q = `SELECT total_coins, ledger_seq FROM stellar.ledgers ORDER BY ledger_seq DESC LIMIT 1`
+	if err := r.conn.QueryRow(ctx, q).Scan(&totalCoins, &ledger); err != nil {
+		return 0, 0, fmt.Errorf("clickhouse: native total_coins: %w", err)
+	}
+	return totalCoins, ledger, nil
+}
+
+// Close releases the connection pool.
+func (r *SupplyReader) Close() error { return r.conn.Close() }
 
 // mustBig parses a base-10 integer string into a *big.Int, returning 0 on an
 // empty/invalid value (CH sum() of an empty set yields "0").
