@@ -17,7 +17,24 @@ import (
 func mkClaims(n int) []xdr.ClaimAtom {
 	claims := make([]xdr.ClaimAtom, n)
 	for i := range claims {
-		claims[i] = xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook}
+		// Real trades carry non-zero amounts; realTradeCount keeps these.
+		claims[i] = xdr.ClaimAtom{
+			Type:      xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
+			OrderBook: &xdr.ClaimOfferAtom{AmountSold: 100, AmountBought: 200},
+		}
+	}
+	return claims
+}
+
+// mkClaimsMixed builds `real` value-moving claims followed by `zero` both-zero
+// no-op crosses (the dust/rounding artifacts the decoder + census must drop).
+func mkClaimsMixed(real, zero int) []xdr.ClaimAtom {
+	claims := mkClaims(real)
+	for i := 0; i < zero; i++ {
+		claims = append(claims, xdr.ClaimAtom{
+			Type:      xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
+			OrderBook: &xdr.ClaimOfferAtom{AmountSold: 0, AmountBought: 0},
+		})
 	}
 	return claims
 }
@@ -129,6 +146,24 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 			op:     xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypePayment}},
 			result: xdr.OperationResult{Code: xdr.OperationResultCodeOpInner, Tr: &xdr.OperationResultTr{Type: xdr.OperationTypePayment}},
 			want:   0,
+		},
+		{
+			// Both-zero no-op crosses (dust/rounding) are dropped — the census
+			// must equal COUNT(trades), not the raw claim count. 3 real + 2
+			// both-zero ⇒ 3 (mirrors sdex.decodeClaimAtom's both-zero drop).
+			name: "both-zero no-ops dropped",
+			op:   xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeManageSellOffer}},
+			result: xdr.OperationResult{
+				Code: xdr.OperationResultCodeOpInner,
+				Tr: &xdr.OperationResultTr{
+					Type: xdr.OperationTypeManageSellOffer,
+					ManageSellOfferResult: &xdr.ManageSellOfferResult{
+						Code:    xdr.ManageSellOfferResultCodeManageSellOfferSuccess,
+						Success: &xdr.ManageOfferSuccessResult{OffersClaimed: mkClaimsMixed(3, 2)},
+					},
+				},
+			},
+			want: 3,
 		},
 	}
 
