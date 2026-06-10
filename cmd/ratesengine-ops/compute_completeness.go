@@ -377,6 +377,20 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	var details []string
 
 	if src.census {
+		// Floor at the ACTUAL retained boundary. trades is drop_chunks-managed
+		// (~90d) and can retain LESS than retentionStart: tip-1.5M is ~100d at the
+		// current ledger rate, ~10d / 150k ledgers below the oldest retained chunk
+		// (min served ≈ 2026-03-12). Counting census>0 vs served=0 for those
+		// retention-dropped ledgers is a false gap — scope to where served begins.
+		for _, tgt := range src.targets {
+			minL, ok, merr := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+			if merr != nil {
+				return 0, "", merr
+			}
+			if ok && minL > lo {
+				lo = minL
+			}
+		}
 		expected, eerr := store.ClassicTradeEffectCountsByLedger(ctx, lo, hi)
 		if eerr != nil {
 			return 0, "", eerr
