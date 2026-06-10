@@ -58,6 +58,24 @@ func TestCaptureEligible(t *testing.T) {
 func TestClaimAtomCount(t *testing.T) {
 	t.Parallel()
 
+	// realClaims builds n value-moving claims (non-zero amounts) — realTradeCount
+	// keeps these. mixedClaims appends `zero` both-zero no-op crosses (dust /
+	// rounding artifacts the census must drop to equal COUNT(trades)).
+	realClaims := func(n int) []xdr.ClaimAtom {
+		c := make([]xdr.ClaimAtom, n)
+		for i := range c {
+			c[i] = xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{AmountSold: 100, AmountBought: 200}}
+		}
+		return c
+	}
+	mixedClaims := func(real, zero int) []xdr.ClaimAtom {
+		c := realClaims(real)
+		for i := 0; i < zero; i++ {
+			c = append(c, xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{AmountSold: 0, AmountBought: 0}})
+		}
+		return c
+	}
+
 	mkSellOffer := func(n int) (xdr.Operation, xdr.OperationResult) {
 		return xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeManageSellOffer}},
 			xdr.OperationResult{
@@ -66,7 +84,7 @@ func TestClaimAtomCount(t *testing.T) {
 					Type: xdr.OperationTypeManageSellOffer,
 					ManageSellOfferResult: &xdr.ManageSellOfferResult{
 						Code:    xdr.ManageSellOfferResultCodeManageSellOfferSuccess,
-						Success: &xdr.ManageOfferSuccessResult{OffersClaimed: make([]xdr.ClaimAtom, n)},
+						Success: &xdr.ManageOfferSuccessResult{OffersClaimed: realClaims(n)},
 					},
 				},
 			}
@@ -79,7 +97,7 @@ func TestClaimAtomCount(t *testing.T) {
 					Type: xdr.OperationTypePathPaymentStrictSend,
 					PathPaymentStrictSendResult: &xdr.PathPaymentStrictSendResult{
 						Code:    xdr.PathPaymentStrictSendResultCodePathPaymentStrictSendSuccess,
-						Success: &xdr.PathPaymentStrictSendResultSuccess{Offers: make([]xdr.ClaimAtom, n)},
+						Success: &xdr.PathPaymentStrictSendResultSuccess{Offers: realClaims(n)},
 					},
 				},
 			}
@@ -96,6 +114,23 @@ func TestClaimAtomCount(t *testing.T) {
 	op, res = mkSellOffer(0)
 	if got := claimAtomCount(op, res); got != 0 {
 		t.Errorf("ManageSellOffer no claims: got %d, want 0", got)
+	}
+
+	// Both-zero no-op crosses are dropped (census MUST equal COUNT(trades)):
+	// 4 real + 3 both-zero ⇒ 4.
+	op2 := xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeManageSellOffer}}
+	res2 := xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypeManageSellOffer,
+			ManageSellOfferResult: &xdr.ManageSellOfferResult{
+				Code:    xdr.ManageSellOfferResultCodeManageSellOfferSuccess,
+				Success: &xdr.ManageOfferSuccessResult{OffersClaimed: mixedClaims(4, 3)},
+			},
+		},
+	}
+	if got := claimAtomCount(op2, res2); got != 4 {
+		t.Errorf("4 real + 3 both-zero claims: got %d, want 4", got)
 	}
 
 	// Non-trade op (valid inner result, no claim-bearing arm) → 0.
