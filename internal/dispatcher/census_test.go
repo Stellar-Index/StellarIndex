@@ -68,8 +68,8 @@ func TestClaimAtomCount(t *testing.T) {
 		}
 		return c
 	}
-	mixedClaims := func(real, zero int) []xdr.ClaimAtom {
-		c := realClaims(real)
+	mixedClaims := func(nReal, zero int) []xdr.ClaimAtom {
+		c := realClaims(nReal)
 		for i := 0; i < zero; i++ {
 			c = append(c, xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{AmountSold: 0, AmountBought: 0}})
 		}

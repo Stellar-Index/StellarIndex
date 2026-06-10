@@ -28,8 +28,8 @@ func mkClaims(n int) []xdr.ClaimAtom {
 
 // mkClaimsMixed builds `real` value-moving claims followed by `zero` both-zero
 // no-op crosses (the dust/rounding artifacts the decoder + census must drop).
-func mkClaimsMixed(real, zero int) []xdr.ClaimAtom {
-	claims := mkClaims(real)
+func mkClaimsMixed(nReal, zero int) []xdr.ClaimAtom {
+	claims := mkClaims(nReal)
 	for i := 0; i < zero; i++ {
 		claims = append(claims, xdr.ClaimAtom{
 			Type:      xdr.ClaimAtomTypeClaimAtomTypeOrderBook,

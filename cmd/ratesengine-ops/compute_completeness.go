@@ -368,7 +368,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 // verify the served tier is faithful within what it retains; the full-history
 // coverage claim rests on substrate. Pure entity/oracle sources verify the
 // whole [genesis, hi].
-func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) {
+func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) { //nolint:gocognit // two linear reconcile branches (census vs event re-derive) over the target list; clearer unsplit, the retention floor is already extracted.
 	lo := genesis
 	if hasTradesTarget(src) && retentionStart > genesis {
 		lo = retentionStart
@@ -377,19 +377,13 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	var details []string
 
 	if src.census {
-		// Floor at the ACTUAL retained boundary. trades is drop_chunks-managed
-		// (~90d) and can retain LESS than retentionStart: tip-1.5M is ~100d at the
-		// current ledger rate, ~10d / 150k ledgers below the oldest retained chunk
-		// (min served ≈ 2026-03-12). Counting census>0 vs served=0 for those
-		// retention-dropped ledgers is a false gap — scope to where served begins.
-		for _, tgt := range src.targets {
-			minL, ok, merr := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
-			if merr != nil {
-				return 0, "", merr
-			}
-			if ok && minL > lo {
-				lo = minL
-			}
+		// Floor at the ACTUAL retained boundary (drop_chunks can retain less than
+		// retentionStart; census>0 vs served=0 below the oldest chunk is a
+		// retention artifact, not a gap — see retentionFloor).
+		var ferr error
+		lo, ferr = retentionFloor(ctx, store, src, lo, hi)
+		if ferr != nil {
+			return 0, "", ferr
 		}
 		expected, eerr := store.ClassicTradeEffectCountsByLedger(ctx, lo, hi)
 		if eerr != nil {
@@ -426,6 +420,25 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 		}
 	}
 	return totalDelta, strings.Join(details, "; "), nil
+}
+
+// retentionFloor raises lo to the actual oldest retained ledger of the source's
+// served table(s). trades is drop_chunks-managed (~90d) and can retain LESS
+// than retentionStart: tip-1.5M is ~100d at the current ledger rate, ~10d / 150k
+// ledgers below the oldest retained chunk (min served ≈ 2026-03-12). Counting
+// census>0 vs served=0 for those retention-dropped ledgers is a false gap, so we
+// scope the reconcile to where served data actually begins.
+func retentionFloor(ctx context.Context, store *timescale.Store, src reconSource, lo, hi uint32) (uint32, error) {
+	for _, tgt := range src.targets {
+		minL, ok, err := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+		if err != nil {
+			return 0, err
+		}
+		if ok && minL > lo {
+			lo = minL
+		}
+	}
+	return lo, nil
 }
 
 func hasTradesTarget(src reconSource) bool {
