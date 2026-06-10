@@ -134,37 +134,3 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 	}
 	return rows.Err()
 }
-
-// ReDeriveSDEXCensusByLedger re-derives the SDEX trade-effect count per ledger
-// INDEPENDENTLY from the certified CH operations, applying the SAME fixed
-// claimAtomCount (skip both-zero no-ops, keep one-side-zero) the indexer uses at
-// ingest. This is the honest projection-reconcile oracle for SDEX: an
-// operation-derived census compared against served trades — NOT the served count
-// copied over itself (which would pass by construction), and NOT the stale
-// pre-fix ledger_ingest_log census. Read-only (no writes); the [from,to] scope
-// keeps the per-run cost bounded for the incremental verify.
-func ReDeriveSDEXCensusByLedger(ctx context.Context, addr string, from, to uint32) (map[uint32]int, error) {
-	out := make(map[uint32]int)
-	// Window the scan: StreamSDEXOps joins operations⋈operation_results, which
-	// buffers — a multi-hundred-k-ledger range exceeds the CH memory cap. 100k
-	// keeps each join bounded (the recovery hit the cap at 500k).
-	const window = 100_000
-	for lo := from; lo <= to; lo += window {
-		hi := lo + window - 1
-		if hi > to {
-			hi = to
-		}
-		if err := StreamSDEXOps(ctx, addr, lo, hi, func(op SDEXOp) error {
-			if n := claimAtomCount(op.Op, op.OpResult); n > 0 {
-				out[op.Ledger] += n
-			}
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-		if hi == to {
-			break
-		}
-	}
-	return out, nil
-}

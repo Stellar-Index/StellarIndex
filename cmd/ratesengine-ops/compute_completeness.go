@@ -10,7 +10,9 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/completeness"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
+	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
 	"github.com/RatesEngine/rates-engine/internal/storage/clickhouse"
 	"github.com/RatesEngine/rates-engine/internal/storage/timescale"
 )
@@ -385,12 +387,15 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 		if ferr != nil {
 			return 0, "", ferr
 		}
-		// Re-derive the census INDEPENDENTLY from the certified CH operations
-		// (the fixed claimAtomCount) rather than reading the pre-recorded
-		// ledger_ingest_log: the stored census carries the old both-zero
-		// over-count, and an operation-derived oracle compared against served
-		// trades is an honest match — not the served count copied over itself.
-		expected, eerr := clickhouse.ReDeriveSDEXCensusByLedger(ctx, chAddr, lo, hi)
+		// Re-derive the census by running the SDEX decoder over the certified CH
+		// operations and counting its trade output — the SAME decode the indexer
+		// applies to live ops. This matches served by identical logic, so the
+		// only residual is ops the served tier dropped (real coverage gaps), not
+		// the over-count claimAtomCount carries (it counts claims the decoder
+		// later drops as malformed-asset). Independent SOURCE (the lake's full op
+		// set, substrate-proven) vs the live-ingested ops — catches drops, never
+		// passes by construction.
+		expected, eerr := reDeriveSDEXCensusViaDecoder(ctx, chAddr, lo, hi)
 		if eerr != nil {
 			return 0, "", eerr
 		}
@@ -444,6 +449,46 @@ func retentionFloor(ctx context.Context, store *timescale.Store, src reconSource
 		}
 	}
 	return lo, nil
+}
+
+// reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
+// ledger by running the SDEX decoder over the certified CH operations and
+// counting its output — byte-identical to the decode the indexer runs on live
+// ops. This is the honest projection oracle: census == served by the same
+// decode logic, so the residual is exactly the ops the served tier dropped
+// (real coverage gaps), not the malformed-asset claims claimAtomCount would
+// over-count. Read-only; windowed 100k so the operations⋈results join stays
+// under the CH memory cap (it hit the cap at 500k).
+func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, error) {
+	out := make(map[uint32]int)
+	dec := sdex.NewDecoder()
+	const window = 100_000
+	for lo := from; lo <= to; lo += window {
+		hi := lo + window - 1
+		if hi > to {
+			hi = to
+		}
+		if err := clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
+			// SDEX Decode soft-fails per claim (never a non-nil error).
+			outs, _ := dec.Decode(dispatcher.OpContext{
+				Ledger:   op.Ledger,
+				ClosedAt: op.ClosedAt,
+				TxHash:   op.TxHash,
+				TxSource: op.Source,
+				OpIndex:  int(op.OpIndex),
+				Op:       op.Op,
+				OpResult: op.OpResult,
+			})
+			out[op.Ledger] += len(outs)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		if hi == to {
+			break
+		}
+	}
+	return out, nil
 }
 
 func hasTradesTarget(src reconSource) bool {
