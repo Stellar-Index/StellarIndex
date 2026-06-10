@@ -168,6 +168,7 @@ type StrategyFlow struct {
 	ClosedAt   time.Time
 	TxHash     string
 	OpIndex    int
+	EventIndex uint32 // in-tx contract event index — per-flow PK discriminator (migration 0055)
 	ContractID string // the BlendStrategy contract that emitted
 	Direction  Direction
 	From       string           // account (G…) or contract (C…) strkey
@@ -228,6 +229,7 @@ type VaultFlow struct {
 	ClosedAt   time.Time
 	TxHash     string
 	OpIndex    int
+	EventIndex uint32 // in-tx contract event index — per-flow PK discriminator (migration 0055)
 	ContractID string // the DeFindex vault-wrapper contract
 	Direction  Direction
 	User       string             // depositor (G…) or withdrawer; may be C-strkey

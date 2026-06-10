@@ -62,6 +62,7 @@ type DefindexFlow struct {
 	LedgerCloseTime time.Time
 	TxHash          string
 	OpIndex         uint32
+	EventIndex      uint32 // distinguishes multiple same-(contract,op,layer) flows in one op (PK component, migration 0055)
 	ContractID      string
 
 	Layer     DefindexLayer
@@ -110,15 +111,15 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 
 	const q = `
         INSERT INTO defindex_flows (
-            ledger, ledger_close_time, tx_hash, op_index,
+            ledger, ledger_close_time, tx_hash, op_index, event_index,
             contract_id, layer, direction, actor,
             amount, amounts_vec, df_tokens
         ) VALUES (
-            $1, $2, $3, $4,
-            $5, $6, $7, $8,
-            $9, $10, $11
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9,
+            $10, $11, $12
         )
-        ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, layer) DO NOTHING
+        ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, layer, event_index) DO NOTHING
     `
 	var amount, dfTokens interface{}
 	if e.Amount != "" {
@@ -132,7 +133,7 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 		amountsVec = pq.Array(e.AmountsVec)
 	}
 	_, err := s.db.ExecContext(ctx, q,
-		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, int(e.OpIndex),
+		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, int(e.OpIndex), int(e.EventIndex),
 		e.ContractID, string(e.Layer), string(e.Direction), e.Actor,
 		amount, amountsVec, dfTokens,
 	)

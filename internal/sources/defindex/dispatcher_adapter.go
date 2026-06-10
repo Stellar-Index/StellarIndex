@@ -54,6 +54,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		if err != nil {
 			return nil, err
 		}
+		flow.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
 		return []consumer.Event{Event{Flow: flow}}, nil
 	}
 	if kind := classifyVault(&ev); kind != "" {
@@ -61,6 +62,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		if err != nil {
 			return nil, err
 		}
+		flow.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
 		return []consumer.Event{VaultEvent{Flow: flow}}, nil
 	}
 	if classifyFactory(&ev) != "" {
