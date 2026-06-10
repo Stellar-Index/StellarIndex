@@ -54,7 +54,6 @@ var allow = map[string]string{
 	"oracle_updates":        "OK: decoders fan out op_index per feed; (source,ledger,tx,op,ts) is unique per update",
 	"cctp_events":           "OK: (contract_id,…,event_type,ts) — one event per (type,ts) per op",
 	"rozo_events":           "OK: (contract_id,…,event_type,ts) — one event per (type,ts) per op",
-	"blend_positions":       "OK: (asset,user_address) added to PK in migration 0053 — distinct positions never collide",
 	"blend_auctions":        "OK: auction events are one-per-(ledger,tx,op); legacy table",
 	"comet_liquidity":       "OK: (event_kind, token) distinguishes per-token liquidity changes; completeness reconcile Δ=0",
 	"sep41_supply_events":   "OK: supply-observer snapshots keyed by observed_at, not per-event; SEP-41 observer not enabled (CLAUDE.md)",

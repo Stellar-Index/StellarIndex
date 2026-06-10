@@ -39,24 +39,24 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e blend.PositionEv
 
 	const q = `
         INSERT INTO blend_positions (
-            pool, ledger, tx_hash, op_index, ledger_close_time,
+            pool, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, asset, user_address,
             token_amount, b_or_d_amount,
             counterparty
         ) VALUES (
-            $1, $2, $3, $4, $5,
-            $6, $7, $8,
-            $9::numeric, $10::numeric,
-            $11
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9,
+            $10::numeric, $11::numeric,
+            $12
         )
-        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, asset, user_address, ledger_close_time) DO NOTHING
+        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO NOTHING
     `
 	var counterparty sql.NullString
 	if e.Counterparty != "" {
 		counterparty = sql.NullString{String: e.Counterparty, Valid: true}
 	}
 	_, err := s.db.ExecContext(ctx, q,
-		e.Pool, int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
+		e.Pool, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.Timestamp.UTC(),
 		e.Kind, e.Asset, e.User,
 		bigIntToNumericString(e.TokenAmount), bigIntToNumericString(e.BOrDAmount),
 		counterparty,

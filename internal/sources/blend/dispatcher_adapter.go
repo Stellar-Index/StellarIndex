@@ -58,12 +58,12 @@ func (*Decoder) Matches(ev events.Event) bool {
 // — the sink writes them to blend_positions / blend_emissions /
 // blend_admin via the migration-0042 schemas.
 // Decode routes the event by kind (decodeByKind) and stamps EventIndex onto the
-// emission/admin outputs — the per-event discriminator that distinguishes
-// multiple same-kind events emitted in a single operation. Without it those rows
-// collide on the blend_emissions / blend_admin primary key and all but one are
-// silently dropped (the coarse-PK data-loss bug fixed in migration 0053).
-// Position events carry (asset, user_address) for the same purpose, so they
-// don't need EventIndex.
+// position/emission/admin outputs — the per-event discriminator that
+// distinguishes multiple same-kind events emitted in a single operation. Without
+// it those rows collide on the blend_positions / blend_emissions / blend_admin
+// primary key and all but one are silently dropped (the coarse-PK data-loss bug;
+// emissions/admin fixed in migration 0053, positions in 0054 after (asset,user)
+// proved insufficient for same-(asset,user,kind)-per-op events).
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := d.decodeByKind(ev)
 	if err != nil {
@@ -72,6 +72,9 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	ei := uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
 	for i, o := range outs {
 		switch e := o.(type) {
+		case PositionEvent:
+			e.EventIndex = ei
+			outs[i] = e
 		case EmissionEvent:
 			e.EventIndex = ei
 			outs[i] = e

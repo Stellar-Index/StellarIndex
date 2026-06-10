@@ -57,10 +57,11 @@ type PositionEvent struct {
 	TokenAmount *big.Int // body[0]: tokens_in / tokens_out i128
 	BOrDAmount  *big.Int // body[1]: b_or_d_tokens minted / burnt i128
 
-	Ledger    uint32
-	TxHash    string
-	OpIndex   uint32
-	Timestamp time.Time
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32 // distinguishes multiple same-(asset,user,kind) position events in one op (PK component, migration 0054)
+	Timestamp  time.Time
 }
 
 // EmissionEvent is the decoded shape of the four emission /
