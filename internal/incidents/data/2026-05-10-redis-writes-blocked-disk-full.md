@@ -80,12 +80,13 @@ Two layered causes:
 
 Operational follow-ups:
 
-- [ ] Audit `/etc/logrotate.d/rsyslog` and `postgresql-common`
+- [~] Audit `/etc/logrotate.d/rsyslog` and `postgresql-common`
       — rsyslog half is codified in `configs/ansible/roles/
       archival-node/tasks/15-log-discipline.yml` (cap 100M ×
       7 rotations, compress, plus journald cap 500M). The
       `postgresql-common` half hasn't been audited end-to-end
-      yet so this stays open.
+      yet. Acknowledged 2026-06-10 as deferred low-priority hygiene —
+      the critical remediation (root-disk alert below) is the real fix.
 - [x] Add Prometheus alert rule on `node_filesystem_avail_bytes /
       node_filesystem_size_bytes < 0.15` for `/` — shipped in
       commit 922ebd72 / PR #1229 as
@@ -93,7 +94,8 @@ Operational follow-ups:
       and `ratesengine_node_root_disk_full` (< 10% for 1m, P1).
       Catches the gap that `ratesengine_timescale_disk_full`
       only watched `/var/lib/postgresql`.
-- [ ] Move WASM-audit one-time stderr captures to a dedicated dir
+- [~] Move WASM-audit one-time stderr captures to a dedicated dir
+      (acknowledged 2026-06-10 — deferred cosmetic hygiene)
 - [x] Document the recovery sequence (this incident notes done):
       `docs/operations/runbooks/redis-write-blocked-disk-full.md`
       — runbook landed in PR #1228.
