@@ -228,7 +228,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		}
 		if *useCH {
 			if srW.Ledger >= projFrom {
-				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, chStreamer, src, projFrom, srW.Ledger, retentionStart)
+				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, chStreamer, *chAddr, src, projFrom, srW.Ledger, retentionStart)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
@@ -368,7 +368,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 // verify the served tier is faithful within what it retains; the full-history
 // coverage claim rests on substrate. Pure entity/oracle sources verify the
 // whole [genesis, hi].
-func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) { //nolint:gocognit // two linear reconcile branches (census vs event re-derive) over the target list; clearer unsplit, the retention floor is already extracted.
+func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) { //nolint:gocognit // two linear reconcile branches (census vs event re-derive) over the target list; clearer unsplit, the retention floor is already extracted.
 	lo := genesis
 	if hasTradesTarget(src) && retentionStart > genesis {
 		lo = retentionStart
@@ -385,7 +385,12 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 		if ferr != nil {
 			return 0, "", ferr
 		}
-		expected, eerr := store.ClassicTradeEffectCountsByLedger(ctx, lo, hi)
+		// Re-derive the census INDEPENDENTLY from the certified CH operations
+		// (the fixed claimAtomCount) rather than reading the pre-recorded
+		// ledger_ingest_log: the stored census carries the old both-zero
+		// over-count, and an operation-derived oracle compared against served
+		// trades is an honest match — not the served count copied over itself.
+		expected, eerr := clickhouse.ReDeriveSDEXCensusByLedger(ctx, chAddr, lo, hi)
 		if eerr != nil {
 			return 0, "", eerr
 		}
