@@ -13,6 +13,7 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/completeness"
 	"github.com/RatesEngine/rates-engine/internal/config"
+	"github.com/RatesEngine/rates-engine/internal/consumer"
 	"github.com/RatesEngine/rates-engine/internal/dispatcher"
 	"github.com/RatesEngine/rates-engine/internal/pipeline"
 	"github.com/RatesEngine/rates-engine/internal/sources/sdex"
@@ -563,22 +564,38 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 }
 
 // reDeriveContractCallCensus re-derives the expected event count per ledger for
-// an event-less ContractCall source (band, soroswap-router) by streaming the
-// lake's InvokeContract ops that touch the source's contract and running the
-// source's ContractCallDecoder over each — byte-identical to the live
-// dispatcher's routing (dispatcher.ExtractContractCallTree + the decoder). With
-// no soroban_events landing zone, this IS the projection oracle. contractStrkey
-// is decoded to its 32-byte ID for the body_xdr substring filter. Windowed so
-// the successful-tx IN-set stays bounded.
-//
-// natural fan-out; splitting hurts the read (mirrors reDeriveSDEXCensusViaDecoder).
-//
-//nolint:gocognit // windowed stream → per-op call-tree → Matches/Decode is
+// an event-less ContractCall source (band, soroswap-router). With no
+// soroban_events landing zone, this IS the projection oracle: it counts the
+// events the source's ContractCallDecoder emits over the lake's InvokeContract
+// ops. Built on forEachContractCallEvent so it decodes byte-identically to the
+// ch-rebuild WRITE path — the only way a written-row re-verify reaches Δ=0.
 func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32) (map[uint32]int, error) {
 	out := make(map[uint32]int)
+	err := forEachContractCallEvent(ctx, chAddr, contractStrkey, dec, from, to, func(ledger uint32, _ consumer.Event) error {
+		out[ledger]++
+		return nil
+	})
+	return out, err
+}
+
+// forEachContractCallEvent streams the lake's InvokeContract ops that touch
+// contractStrkey, extracts each op's auth-tree calls
+// (dispatcher.ExtractContractCallTree — byte-identical to what the live
+// dispatcher feeds its ContractCallDecoders), runs dec over the matching ones,
+// and invokes fn once per decoded event with its event ledger. It is the single
+// decode path shared by the projection census (reDeriveContractCallCensus, which
+// counts) and the ch-rebuild writer (which buffers + persists), so the WRITE
+// path produces EXACTLY what the census expects. contractStrkey is decoded to
+// its 32-byte ID for the body_xdr substring filter; windowed so the
+// successful-tx IN-set stays bounded.
+//
+// linear pipeline; splitting hurts the read (mirrors reDeriveSDEXCensusViaDecoder).
+//
+//nolint:gocognit // windowed stream → per-op call-tree → Matches/Decode is a
+func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32, fn func(ledger uint32, ev consumer.Event) error) error {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractStrkey)
 	if err != nil {
-		return nil, fmt.Errorf("decode contract strkey %s: %w", contractStrkey, err)
+		return fmt.Errorf("decode contract strkey %s: %w", contractStrkey, err)
 	}
 	contractHex := hex.EncodeToString(raw)
 	const window = 250_000
@@ -605,19 +622,23 @@ func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey stri
 					CallPath:     call.CallPath,
 				})
 				if derr != nil {
-					continue // malformed call: skip + count per the decoder contract
+					continue // malformed call: skip per the decoder contract
 				}
-				out[op.Ledger] += len(evs)
+				for _, ev := range evs {
+					if ferr := fn(op.Ledger, ev); ferr != nil {
+						return ferr
+					}
+				}
 			}
 			return nil
 		}); err != nil {
-			return nil, err
+			return err
 		}
 		if hi == to {
 			break
 		}
 	}
-	return out, nil
+	return nil
 }
 
 func hasTradesTarget(src reconSource) bool {
