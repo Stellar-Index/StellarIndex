@@ -42,6 +42,11 @@ type SoroswapRouterSwap struct {
 	AmountIn   string
 	AmountOut  string
 	DeadlineTS *time.Time
+
+	// CallSig is the per-call PK discriminator (migration 0056) — a content
+	// hash from RouterSwap.CallSig(). Distinguishes multiple distinct router
+	// swaps in one op (aggregator / batch) while deduping auth-tree duplicates.
+	CallSig string
 }
 
 // InsertSoroswapRouterSwap appends one soroswap_router_swaps row,
@@ -67,6 +72,12 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 	if e.AmountIn == "" || e.AmountOut == "" {
 		return errors.New("timescale: InsertSoroswapRouterSwap: AmountIn/AmountOut required")
 	}
+	if e.CallSig == "" {
+		// call_sig is part of the PK (migration 0056); an empty value would
+		// collide every distinct swap in one op. Every writer must set it from
+		// RouterSwap.CallSig() — surface the omission loudly.
+		return errors.New("timescale: InsertSoroswapRouterSwap: CallSig (PK discriminator) is empty")
+	}
 
 	const q = `
         INSERT INTO soroswap_router_swaps (
@@ -74,15 +85,17 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
             contract_id, function_name,
             op_source, tx_source,
             recipient, path,
-            amount_in, amount_out, deadline_ts
+            amount_in, amount_out, deadline_ts,
+            call_sig
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6,
             $7, $8,
             $9, $10,
-            $11, $12, $13
+            $11, $12, $13,
+            $14
         )
-        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, call_sig) DO NOTHING
     `
 	// deadline_ts is a user-supplied u64 expiry. Some router calls pass a
 	// sentinel / garbage value (≈3e18, or one that overflows int64 to a BC
@@ -101,6 +114,7 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		nullableString(e.OpSource), nullableString(e.TxSource),
 		e.Recipient, pq.Array(e.Path),
 		e.AmountIn, e.AmountOut, deadline,
+		e.CallSig,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSoroswapRouterSwap %s@%d: %w", e.TxHash, e.Ledger, err)

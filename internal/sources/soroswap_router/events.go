@@ -11,6 +11,9 @@
 package soroswap_router
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -92,3 +95,24 @@ func (e Event) EventKind() string { return "soroswap-router.swap" }
 
 // Source implements [consumer.Event].
 func (e Event) Source() string { return SourceName }
+
+// CallSig is the per-call discriminator in the soroswap_router_swaps PK. A
+// single InvokeContract op can carry MULTIPLE distinct router swaps — an
+// aggregator splitting a trade, or a batch distributing to several recipients —
+// which all share (ledger, tx_hash, op_index). Without a discriminator the
+// served PK collapses them to one row (verified: 106 genuinely-distinct swaps
+// across pubnet history were being lost). CallSig is a deterministic 128-bit
+// content hash over the swap's economic identity (function + recipient + path +
+// requested amounts), so distinct swaps get distinct PKs (all stored), while
+// auth-tree DUPLICATES of the same call — a multi-entry (co-signed) tx surfaces
+// the identical call at several CallPaths — hash equal and dedup via ON
+// CONFLICT. deadline is excluded: it's a user sentinel (often garbage; see the
+// deadline_ts NULL-clamp) that doesn't distinguish economic intent.
+func (s RouterSwap) CallSig() string {
+	parts := make([]string, 0, len(s.Path)+4)
+	parts = append(parts, s.Function, s.Recipient)
+	parts = append(parts, s.Path...)
+	parts = append(parts, s.AmountIn.String(), s.AmountOut.String())
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:16])
+}

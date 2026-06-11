@@ -135,6 +135,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 			Path:            ev.Swap.Path,
 			AmountIn:        ev.Swap.AmountIn.String(),
 			AmountOut:       ev.Swap.AmountOut.String(),
+			CallSig:         ev.Swap.CallSig(),
 		}
 		if !ev.Swap.DeadlineTs.IsZero() {
 			row.DeadlineTS = &ev.Swap.DeadlineTs

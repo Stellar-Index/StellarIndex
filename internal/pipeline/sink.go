@@ -448,6 +448,7 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			Path:            e.Swap.Path,
 			AmountIn:        e.Swap.AmountIn.String(),
 			AmountOut:       e.Swap.AmountOut.String(),
+			CallSig:         e.Swap.CallSig(),
 		}
 		if !e.Swap.DeadlineTs.IsZero() {
 			row.DeadlineTS = &e.Swap.DeadlineTs

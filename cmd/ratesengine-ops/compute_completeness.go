@@ -572,80 +572,63 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 // (co-signed) / nested-auth txs (see dispatcher.extractInvokeContractCallTrees:
 // "Duplicate calls across entries are accepted… dispatch-side dedup is the
 // consumer's concern via the CallPath identifier"). The served ON CONFLICT
-// dedups them, so the census must too — mirroring reDeriveSDEXCensusViaDecoder.
-//   - soroswap-router → soroswap_router_swaps PK (…, tx_hash, op_index): ts=0.
-//   - band            → oracle_updates PK (…, tx_hash, op_index, ts).
+// dedups on these columns, so the census counts DISTINCT identities to match —
+// mirroring reDeriveSDEXCensusViaDecoder.
+//   - soroswap-router → soroswap_router_swaps PK (…, tx_hash, op_index, call_sig):
+//     callSig (migration 0056) is the per-call discriminator — distinct swaps in
+//     one op get distinct identities (all stored); identical auth-tree dups share
+//     a callSig and dedup. ts unused.
+//   - band → oracle_updates PK (…, tx_hash, op_index, ts): op_index is fanned per
+//     feed, so (tx, op, ts) is already unique per update. callSig unused.
 type contractCallRowID struct {
-	tx string
-	op uint32
-	ts int64
+	tx      string
+	op      uint32
+	ts      int64
+	callSig string
 }
 
-// contractCallRowIdentity returns the served-row identity + a content signature
-// (every persisted column that isn't part of the identity). Two events with the
-// same identity but DIFFERENT content signature are genuinely distinct rows the
-// coarse PK collapses — i.e. real data loss, not an auth-tree duplicate — which
-// the census surfaces rather than silently dedups. ok=false for an event type
-// not routed through a ContractCall source (defensive; never expected here).
-func contractCallRowIdentity(ev consumer.Event) (id contractCallRowID, contentSig string, ok bool) {
+// contractCallRowIdentity returns the served-row identity for a ContractCall
+// source event. ok=false for an event type not routed through such a source
+// (defensive; never expected here).
+func contractCallRowIdentity(ev consumer.Event) (contractCallRowID, bool) {
 	switch e := ev.(type) {
 	case soroswap_router.Event:
 		s := e.Swap
-		op := uint32(s.OpIndex) //nolint:gosec // op_index is a small non-negative op position
-		sig := fmt.Sprintf("%s|%s|%v|%s|%s", s.Function, s.Recipient, s.Path, s.AmountIn.String(), s.AmountOut.String())
-		return contractCallRowID{tx: s.TxHash, op: op}, sig, true
+		return contractCallRowID{tx: s.TxHash, op: uint32(s.OpIndex), callSig: s.CallSig()}, true //nolint:gosec // op_index is a small non-negative op position
 	case band.UpdateEvent:
 		u := e.Update
-		sig := fmt.Sprintf("%s|%s|%s|%d", u.Asset.String(), u.Quote.String(), u.Price.String(), u.Decimals)
-		return contractCallRowID{tx: u.TxHash, op: u.OpIndex, ts: u.Timestamp.Unix()}, sig, true
+		return contractCallRowID{tx: u.TxHash, op: u.OpIndex, ts: u.Timestamp.Unix()}, true
 	}
-	return contractCallRowID{}, "", false
+	return contractCallRowID{}, false
 }
 
 // reDeriveContractCallCensus re-derives the expected row count per ledger for an
 // event-less ContractCall source (band, soroswap-router). With no soroban_events
 // landing zone, this IS the projection oracle. It counts DISTINCT served-PK
 // identities (contractCallRowID) — not raw events — so the auth-tree duplicates
-// the live path also dedups (via ON CONFLICT) don't read as a coverage gap.
-// Built on forEachContractCallEvent so it decodes byte-identically to the
-// ch-rebuild WRITE path; the write persists the same raw events and ON CONFLICT
-// collapses them to this exact set, so a written-row re-verify reaches Δ=0.
-//
-// Honesty guard: if two events share an identity but differ in content, the
-// coarse PK is collapsing genuinely-distinct rows (real loss, not a dup). That
-// would be a schema-grain defect, not a coverage gap — so we count it once (to
-// match served) but LOG it loudly so it's surfaced, never silently buried.
+// the live path also dedups (via ON CONFLICT) don't read as a coverage gap,
+// while genuinely-distinct swaps that share (tx, op) are kept apart by call_sig
+// (mirrors reDeriveSDEXCensusViaDecoder's distinct-PK count). Built on
+// forEachContractCallEvent so it decodes byte-identically to the ch-rebuild
+// WRITE path; the write persists the same raw events and ON CONFLICT collapses
+// them to this exact set, so a written-row re-verify reaches Δ=0.
 func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32) (map[uint32]int, error) {
-	seen := make(map[uint32]map[contractCallRowID]string) // ledger → id → first content sig
-	var lossyCollisions int
+	seen := make(map[uint32]map[contractCallRowID]struct{})
 	err := forEachContractCallEvent(ctx, chAddr, contractStrkey, dec, from, to, func(ledger uint32, ev consumer.Event) error {
-		id, sig, ok := contractCallRowIdentity(ev)
+		id, ok := contractCallRowIdentity(ev)
 		if !ok {
 			return fmt.Errorf("reDeriveContractCallCensus: unexpected event type %T (no served-row identity)", ev)
 		}
 		ids := seen[ledger]
 		if ids == nil {
-			ids = make(map[contractCallRowID]string)
+			ids = make(map[contractCallRowID]struct{})
 			seen[ledger] = ids
 		}
-		if prev, dup := ids[id]; dup {
-			if prev != sig && lossyCollisions < 20 {
-				fmt.Fprintf(os.Stderr, "reDeriveContractCallCensus: CONTENT-DISTINCT PK collision at ledger=%d tx=%s op=%d — coarse PK collapsing distinct rows (schema-grain loss): %q vs %q\n",
-					ledger, id.tx, id.op, prev, sig)
-			}
-			if prev != sig {
-				lossyCollisions++
-			}
-			return nil
-		}
-		ids[id] = sig
+		ids[id] = struct{}{}
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if lossyCollisions > 0 {
-		fmt.Fprintf(os.Stderr, "reDeriveContractCallCensus: WARNING %d content-distinct PK collision(s) — served tier collapses these to one row each; needs a per-call PK discriminator to capture every distinct call\n", lossyCollisions)
 	}
 	out := make(map[uint32]int, len(seen))
 	for ledger, ids := range seen {

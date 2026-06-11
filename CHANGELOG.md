@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **soroswap-router: distinct swaps in one op were collapsed by a coarse PK
+  (migration 0056).** A single InvokeContract op can carry multiple genuinely
+  distinct router swaps (an aggregator splitting a trade, or a batch to several
+  recipients); the PK `(ledger_close_time, ledger, tx_hash, op_index)` dropped
+  all but one via `ON CONFLICT`. The completeness honesty guard confirmed 106
+  real swaps lost across pubnet history (not auth-tree dup-noise). Added a
+  per-call discriminator `call_sig` — `RouterSwap.CallSig()`, a 128-bit content
+  hash of `function|recipient|path|amount_in|amount_out` — to the PK: distinct
+  swaps get distinct keys (all stored); auth-tree duplicates of the same call
+  hash equal and still dedup. Operator runbook: stop indexer → migrate → deploy
+  the `call_sig` sink → `TRUNCATE` → `ch-rebuild -contract-calls -sources
+  soroswap-router -write`. Last of the coarse-PK class (lint allowlist now `OK:`).
 - **Completeness census for the event-less ContractCall sources (band,
   soroswap-router) now counts distinct served-PK identities, not raw events.**
   The auth tree surfaces the same authorized call at multiple CallPaths for

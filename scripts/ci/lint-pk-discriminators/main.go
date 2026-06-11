@@ -60,7 +60,7 @@ var allow = map[string]string{
 	"trades":                "OK: op_index is FANNED (canonical.FanoutOpIndex: opIndex<<16|event_index; SDEX opIdx*1024+claim_index) — encodes the per-trade discriminator, so multi-trade ops never collide",
 	"phoenix_liquidity":     "OK: (op_index, action) distinguishes provide/withdraw per op; completeness reconcile Δ=0",
 	"phoenix_stake_events":  "OK: (op_index, action) distinguishes bond/unbond per op; completeness reconcile Δ=0",
-	"soroswap_router_swaps": "TODO: PK (ledger_close_time,ledger,tx,op) — no per-route discriminator; verify multi-route ops. Tracked.",
+	"soroswap_router_swaps": "OK: call_sig (RouterSwap.CallSig content hash; migration 0056) discriminates distinct swaps in one op; auth-tree dups share it + dedup; completeness reconcile Δ=0",
 }
 
 var (
