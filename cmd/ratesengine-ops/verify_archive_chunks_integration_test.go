@@ -125,6 +125,7 @@ func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 		ctx, filesystemLedgerstreamConfig(dir), chunks,
 		true, false, "",
 		time.Now(), 1*time.Hour,
+		chunkOrchestratorOpts{},
 	)
 	if err != nil {
 		t.Fatalf("runVerifyChunks: %v", err)

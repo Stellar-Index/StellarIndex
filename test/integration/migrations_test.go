@@ -183,15 +183,18 @@ func TestMigrationsRoundTrip(t *testing.T) {
              asset, quote, price, decimals)
         VALUES ('o', 1, 'aa', 0, now(), 'native', 'native', -1, 14)`)
 
-	// ─── Compression + retention policies attached ─────────────
-	// Migrations add compression + retention per ADR-0006. If a
-	// future migration silently drops a policy, chunks would grow
-	// without bound and break the disk forecast. Assert each
-	// policy exists once on the hypertables that should have it.
+	// ─── Compression attached; retention deliberately ABSENT ───
+	// Migrations add compression (ADR-0006). Retention was REMOVED for
+	// raw trades (migration 0031) and oracle_updates (0040): ADR-0034
+	// invariant 8 keeps the certified raw history forever, so a
+	// drop_after retention policy on these tables is DRIFT (a rogue 90d
+	// policy was in fact removed as drift on 2026-06-10). Assert
+	// compression is present and retention is absent — F-1334 flipped
+	// these from the old (now-invalid) assert-attached.
 	assertPolicyAttached(t, db, ctx, "trades", "policy_compression")
-	assertPolicyAttached(t, db, ctx, "trades", "policy_retention")
+	assertPolicyAbsent(t, db, ctx, "trades", "policy_retention")
 	assertPolicyAttached(t, db, ctx, "oracle_updates", "policy_compression")
-	assertPolicyAttached(t, db, ctx, "oracle_updates", "policy_retention")
+	assertPolicyAbsent(t, db, ctx, "oracle_updates", "policy_retention")
 
 	// 0041 — soroban_events raw-event landing zone (ADR-0029).
 	// Hypertable + indexes + compression policy (no retention —
@@ -385,6 +388,28 @@ func assertPolicyAttached(t *testing.T, db *sql.DB, ctx context.Context, hyperta
 	}
 	if count < 1 {
 		t.Errorf("expected %s policy on hypertable %q, got %d jobs", procName, hypertable, count)
+	}
+}
+
+// assertPolicyAbsent is the inverse of assertPolicyAttached: it fails if
+// the named policy IS attached. Used for retention policies that the
+// migration chain deliberately removed (trades/oracle_updates per
+// migrations 0031/0040 + ADR-0034 invariant 8: raw history is kept
+// forever; a re-appeared drop_after policy is drift).
+func assertPolicyAbsent(t *testing.T, db *sql.DB, ctx context.Context, hypertable, procName string) {
+	t.Helper()
+	var count int
+	err := db.QueryRowContext(ctx, `
+        SELECT count(*) FROM timescaledb_information.jobs
+        WHERE hypertable_name = $1 AND proc_name = $2`,
+		hypertable, procName,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("check policy %s on %s: %v", procName, hypertable, err)
+	}
+	if count != 0 {
+		t.Errorf("expected NO %s policy on hypertable %q (invariant 8: raw history kept forever), got %d jobs",
+			procName, hypertable, count)
 	}
 }
 
