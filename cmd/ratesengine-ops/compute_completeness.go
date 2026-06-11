@@ -453,21 +453,35 @@ func retentionFloor(ctx context.Context, store *timescale.Store, src reconSource
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
 // ledger by running the SDEX decoder over the certified CH operations and
-// counting its output — byte-identical to the decode the indexer runs on live
-// ops. This is the honest projection oracle: census == served by the same
-// decode logic, so the residual is exactly the ops the served tier dropped
-// (real coverage gaps), not the malformed-asset claims claimAtomCount would
-// over-count. Read-only; windowed 100k so the operations⋈results join stays
-// under the CH memory cap (it hit the cap at 500k).
+// counting the DISTINCT, Validate-passing trades it emits — mirroring exactly
+// what InsertTrade lands in the served tier (the Validate gate AND the served
+// PK's ON CONFLICT DO NOTHING de-dup). This is the honest projection oracle:
+// census == served by identical write logic, so the residual is exactly the
+// ops the served tier dropped (real coverage gaps) — not a methodology
+// artifact (one-side-zero fills or op_index fanout collisions, both of which
+// the served can't hold but the CH substrate retains). Read-only; windowed
+// 100k so the operations⋈results join stays under the CH memory cap.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, error) {
 	out := make(map[uint32]int)
 	dec := sdex.NewDecoder()
+	// sdexPK is the served trades primary key minus its per-ledger constants:
+	// source is always "sdex" and ts is the ledger close-time (constant within
+	// a ledger), so per-ledger de-dup reduces to (tx_hash, op_index). Counting
+	// DISTINCT keys mirrors the served ON CONFLICT (source,ledger,tx_hash,
+	// op_index,ts) DO NOTHING: the op_index fanout stride (1024) collides for
+	// rare >1024-claim ops, which the served de-dups — so the census must too,
+	// or it reads systematically high (the fixed-across-tips residual).
+	type sdexPK struct {
+		tx string
+		op uint32
+	}
 	const window = 100_000
 	for lo := from; lo <= to; lo += window {
 		hi := lo + window - 1
 		if hi > to {
 			hi = to
 		}
+		seen := make(map[uint32]map[sdexPK]struct{})
 		if err := clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
 			// SDEX Decode soft-fails per claim (never a non-nil error).
 			outs, _ := dec.Decode(dispatcher.OpContext{
@@ -479,21 +493,31 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 				Op:       op.Op,
 				OpResult: op.OpResult,
 			})
-			// Count only trades the served tier can actually hold. The SDEX
-			// decoder emits one-side-zero fills (a leg rounds to 0) as trades
-			// for raw completeness, but canonical.Trade.Validate() requires
-			// BaseAmount>0 ∧ QuoteAmount>0, so InsertTrade rejects them — they
-			// never reach the served tier (the raw claim is in the CH
-			// substrate). Mirroring Validate() here keeps census == served by
-			// identical logic, so the only residual is genuinely-dropped ops.
+			// Mirror the served write exactly with two filters: (1)
+			// canonical.Trade.Validate() (BaseAmount>0 ∧ QuoteAmount>0) — the
+			// decoder emits one-side-zero fills for raw completeness but
+			// InsertTrade rejects them; (2) PK de-dup — fanout collisions on
+			// >1024-claim ops are coalesced by ON CONFLICT. Both leave the raw
+			// claim in the CH substrate; the served projection holds the
+			// distinct, valid subset, so this counts that subset.
 			for _, ev := range outs {
-				if te, ok := ev.(sdex.TradeEvent); ok && te.Trade.Validate() == nil {
-					out[op.Ledger]++
+				te, ok := ev.(sdex.TradeEvent)
+				if !ok || te.Trade.Validate() != nil {
+					continue
 				}
+				s := seen[te.Trade.Ledger]
+				if s == nil {
+					s = make(map[sdexPK]struct{})
+					seen[te.Trade.Ledger] = s
+				}
+				s[sdexPK{tx: te.Trade.TxHash, op: te.Trade.OpIndex}] = struct{}{}
 			}
 			return nil
 		}); err != nil {
 			return nil, err
+		}
+		for ledger, s := range seen {
+			out[ledger] += len(s)
 		}
 		if hi == to {
 			break
