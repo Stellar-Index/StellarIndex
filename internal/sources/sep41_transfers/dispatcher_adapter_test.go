@@ -362,22 +362,22 @@ func TestDecoder_NameAndSource(t *testing.T) {
 	}
 }
 
-// TestFirehoseDecoder_MatchesAnyContract pins F-1316: the projector's
-// firehose decoder must match SEP-41 transfer-class events from ANY
-// contract by topic alone. The watched-list NewDecoder would reject an
-// unwatched contract; the firehose variant must not.
-func TestFirehoseDecoder_MatchesAnyContract(t *testing.T) {
-	dec := NewFirehoseDecoder()
-	ev := transferEvent(t, "CSOMERANDOMCONTRACTNOTINANYWATCHEDSET00000000000000000000", 42)
-	if !dec.Matches(ev) {
-		t.Fatal("firehose decoder must match a transfer event from an arbitrary contract (F-1316)")
-	}
-	out, err := dec.Decode(ev)
+// TestDecoder_MatchesOnlyWatchedContract pins F-1316: the projector
+// reuses this watched-set decoder so it reproduces exactly what the
+// dispatcher writes — a watched contract matches, an unwatched one does
+// not. (The pre-fix projector passed a synthetic contract that matched
+// nothing, so it wrote zero rows.)
+func TestDecoder_MatchesOnlyWatchedContract(t *testing.T) {
+	const watched = "CWATCHEDCONTRACT0000000000000000000000000000000000000000"
+	dec, err := NewDecoder([]string{watched})
 	if err != nil {
-		t.Fatalf("Decode: %v", err)
+		t.Fatalf("NewDecoder: %v", err)
 	}
-	if len(out) != 1 {
-		t.Fatalf("emitted %d events, want 1", len(out))
+	if !dec.Matches(transferEvent(t, watched, 42)) {
+		t.Fatal("decoder must match a transfer event from a watched contract")
+	}
+	if dec.Matches(transferEvent(t, "CUNWATCHEDCONTRACT00000000000000000000000000000000000000", 42)) {
+		t.Fatal("decoder must NOT match an unwatched contract")
 	}
 }
 
@@ -385,8 +385,12 @@ func TestFirehoseDecoder_MatchesAnyContract(t *testing.T) {
 // carried onto the row so multiple same-op events don't collapse on the
 // PK via ON CONFLICT.
 func TestDecode_PopulatesEventIndex(t *testing.T) {
-	dec := NewFirehoseDecoder()
-	ev := transferEvent(t, "CSOMERANDOMCONTRACTNOTINANYWATCHEDSET00000000000000000000", 42)
+	const watched = "CWATCHEDCONTRACT0000000000000000000000000000000000000000"
+	dec, err := NewDecoder([]string{watched})
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	ev := transferEvent(t, watched, 42)
 	ev.EventIndex = 3
 	out, err := dec.Decode(ev)
 	if err != nil {

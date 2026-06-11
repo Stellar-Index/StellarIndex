@@ -51,7 +51,7 @@ func TestRun_NilSinkReturnsError(t *testing.T) {
 // external CEX/FX) are silently skipped — they're handled
 // elsewhere per ADR-0032 § "Out of scope".
 func TestBuildRegistry_UnknownSourceIsSilent(t *testing.T) {
-	reg, err := BuildRegistry([]string{"sdex", "binance", "kraken", "band"}, oracleConfigEmpty())
+	reg, err := BuildRegistry([]string{"sdex", "binance", "kraken", "band"}, oracleConfigEmpty(), nil)
 	if err != nil {
 		t.Fatalf("BuildRegistry: unexpected error: %v", err)
 	}
@@ -60,12 +60,36 @@ func TestBuildRegistry_UnknownSourceIsSilent(t *testing.T) {
 	}
 }
 
+// TestBuildRegistry_SEP41NeedsWatchedSet pins F-1316: the sep41 projector
+// sources reproduce the dispatcher's WATCHED set, not a firehose. With no
+// watched contracts they're skipped (the dispatcher writes nothing
+// either); with a watched set they're registered.
+func TestBuildRegistry_SEP41NeedsWatchedSet(t *testing.T) {
+	names := []string{"sep41_transfers", "sep41_supply"}
+
+	reg, err := BuildRegistry(names, oracleConfigEmpty(), nil)
+	if err != nil {
+		t.Fatalf("BuildRegistry: %v", err)
+	}
+	if len(reg.Sources) != 0 {
+		t.Fatalf("no watched sep41 contracts → expected 0 sources, got %d", len(reg.Sources))
+	}
+
+	reg, err = BuildRegistry(names, oracleConfigEmpty(), []string{"CWATCHEDCONTRACT0000000000000000000000000000000000000000"})
+	if err != nil {
+		t.Fatalf("BuildRegistry (watched): %v", err)
+	}
+	if len(reg.Sources) != 2 {
+		t.Fatalf("watched sep41 contracts → expected 2 sources, got %d", len(reg.Sources))
+	}
+}
+
 // TestBuildRegistry_IncludesInScopeSources confirms an enabled-
 // sources list with on-chain Soroban protocols produces matching
 // projector.Source entries. Order-dependent so we map names.
 func TestBuildRegistry_IncludesInScopeSources(t *testing.T) {
 	names := []string{"aquarius", "phoenix", "comet", "blend", "cctp", "rozo", "soroswap", "defindex"}
-	reg, err := BuildRegistry(names, oracleConfigEmpty())
+	reg, err := BuildRegistry(names, oracleConfigEmpty(), nil)
 	if err != nil {
 		t.Fatalf("BuildRegistry: %v", err)
 	}
