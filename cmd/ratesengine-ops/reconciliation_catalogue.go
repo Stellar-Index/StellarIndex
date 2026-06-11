@@ -59,14 +59,20 @@ type reconSource struct {
 // soroswap-router) via the InvokeContract-op census (callDec path) — their
 // calls are re-derived from the lake by filtering body_xdr on the contract
 // bytes (stellar.operations has no contract_id column). Deliberately EXCLUDED:
-//   - sep41-transfers / sep41-supply: as of F-1316 their projector decoders
-//     match by TOPIC (NewFirehoseDecoder), so a soroban_events re-derive now
-//     reproduces them and they are eligible for inclusion. Adding them here
-//     is a follow-up: the reconTarget topic identifiers + genesis
-//     (50_457_424, per per_source_gaps.go) must be verified against the
-//     census topic-naming convention first so we don't emit false
-//     reconciliation deltas. Until then they're covered by the data-derived
-//     gap detector, not the ADR-0033 projection reconcile.
+//   - sep41-transfers / sep41-supply: now eligible in principle — the
+//     re-derive (ReDeriveOutputCountsByKindFromEvents) calls dec.Matches()
+//     before Decode, and the sep41 decoders gate Matches() on the watched
+//     set, so building them here with cfg.Supply.WatchedSEP41Contracts +
+//     contractIDs prefilter would count exactly the watched-contract rows
+//     the dispatcher wrote (kinds: "sep41_transfers.event" /
+//     "sep41_supply.event"; genesis 50_457_424). They are NOT added yet for
+//     a CONCRETE correctness reason: the historical table rows predate the
+//     event_index PK discriminator (migrations 0057), so multiple same-op
+//     events are still COLLAPSED on disk — a re-derive (which counts each
+//     event) would flag every such historical ledger as "missing rows", a
+//     false delta. Add them only AFTER migration 0057 is applied AND the
+//     tables are re-derived from the lake. Until then they're covered by the
+//     data-derived gap detector, not the ADR-0033 projection reconcile.
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder) {
 	soroswapDec := soroswap.NewDecoder()
 
