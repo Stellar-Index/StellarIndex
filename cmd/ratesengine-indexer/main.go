@@ -444,7 +444,7 @@ func run(cfgPath string, dryRun bool) error {
 	// (persist_per_source=false): projector is sole writer.
 	var projectorDone chan struct{}
 	if cfg.Ingestion.Projector.Enabled {
-		registry, perr := projector.BuildRegistry(cfg.Ingestion.EnabledSources, cfg.Oracle, soroswapOpts...)
+		registry, perr := projector.BuildRegistry(cfg.Ingestion.EnabledSources, cfg.Oracle, cfg.Supply.WatchedSEP41Contracts, soroswapOpts...)
 		if perr != nil {
 			return fmt.Errorf("projector registry: %w", perr)
 		}

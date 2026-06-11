@@ -35,16 +35,17 @@ import (
 // requires oracle config + that config is empty (e.g.
 // `reflector-dex` enabled but `oracle.reflector.dex_contract`
 // is "").
-func BuildRegistry(names []string, oracle config.OracleConfig, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
+func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
 	var sources []Source
 	for _, name := range names {
-		s, ok, err := buildSource(strings.ToLower(name), oracle, soroswapOpts...)
+		s, ok, err := buildSource(strings.ToLower(name), oracle, watchedSEP41, soroswapOpts...)
 		if err != nil {
 			return Registry{}, err
 		}
 		if !ok {
 			// Source is enabled but doesn't have a projector entry
-			// (sdex, band, soroswap-router, external sources).
+			// (sdex, band, soroswap-router, external sources), or a
+			// sep41 source with no watched contracts to project.
 			// Silently skip — `pipeline.BuildDispatcher` handles
 			// those via different surfaces.
 			continue
@@ -90,7 +91,7 @@ var firehoseExcludeSyms = []string{
 }
 
 //nolint:gocognit,gocyclo,funlen // dispatch switch; one case per source. Same shape as pipeline.BuildDispatcher (which carries the same exemption).
-func buildSource(name string, oracle config.OracleConfig, soroswapOpts ...soroswap.DecoderOption) (Source, bool, error) {
+func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string, soroswapOpts ...soroswap.DecoderOption) (Source, bool, error) {
 	switch name {
 	case soroswap.SourceName:
 		// Soroswap dispatches via topic[0] across all pairs in
@@ -143,25 +144,43 @@ func buildSource(name string, oracle config.OracleConfig, soroswapOpts ...sorosw
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case sep41_transfers.SourceName:
-		// The projector wants all-contracts coverage. F-1316: this
-		// previously passed a single synthetic watched-contract that no
-		// real event could match, so the decoder's Matches() rejected
+		// F-1316: this previously passed a single SYNTHETIC watched
+		// contract that no real event could match, so Matches() rejected
 		// every event and the projector wrote ZERO sep41_transfers rows
-		// (silent total loss in Phase-4 sole-writer mode). The firehose
-		// decoder matches by topic alone; the SQL Topic0Syms prefilter
-		// keeps the catch-up scan bounded.
+		// (silent total loss in Phase-4 sole-writer mode). The fix is to
+		// pass the REAL watched set — the same contracts the dispatcher
+		// writes — so the projector faithfully reproduces the dispatcher
+		// (NOT a firehose over all contracts, which would write rows the
+		// dispatcher never did and diverge Phase-3 from Phase-4). When no
+		// contracts are watched the dispatcher writes nothing either, so
+		// the source is skipped. The SQL Topic0Syms prefilter bounds the
+		// catch-up scan.
+		if len(watchedSEP41) == 0 {
+			return Source{}, false, nil
+		}
+		dec, err := sep41_transfers.NewDecoder(watchedSEP41)
+		if err != nil {
+			return Source{}, false, err
+		}
 		return Source{
 			Name:       sep41_transfers.SourceName,
-			Decoder:    sep41_transfers.NewFirehoseDecoder(),
+			Decoder:    dec,
 			Topic0Syms: sep41TransferSyms,
 		}, true, nil
 	case sep41_supply.SourceName:
-		// Firehose decoder (see sep41_transfers above) + a mint/burn/
+		// Watched-set decoder (see sep41_transfers above) + a mint/burn/
 		// clawback SQL prefilter so the catch-up window doesn't stream
 		// the whole CAP-67 firehose (G16-07).
+		if len(watchedSEP41) == 0 {
+			return Source{}, false, nil
+		}
+		dec, err := sep41_supply.NewDecoder(watchedSEP41)
+		if err != nil {
+			return Source{}, false, err
+		}
 		return Source{
 			Name:       sep41_supply.SourceName,
-			Decoder:    sep41_supply.NewFirehoseDecoder(),
+			Decoder:    dec,
 			Topic0Syms: sep41SupplySyms,
 		}, true, nil
 	case reflector.SourceDEX:
