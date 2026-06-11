@@ -243,11 +243,6 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	q := url.Values{}
 	q.Set("ids", strings.Join(ids, ","))
 	q.Set("vs_currencies", strings.Join(currencies, ","))
-	if p.APIKey != "" {
-		q.Set("x_cg_pro_api_key", p.APIKey)
-	} else if p.DemoAPIKey != "" {
-		q.Set("x_cg_demo_api_key", p.DemoAPIKey)
-	}
 
 	endpoint := p.Endpoint
 	if endpoint == "" {
@@ -258,6 +253,16 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	// G10-04: pass the key in a request HEADER, not the query string.
+	// A transport error's *url.Error embeds the request URL in its
+	// message; a key in the query string would leak into logs.
+	// CoinGecko accepts the Pro/Demo key via these headers (the
+	// `x_cg_*_api_key` query params still work but are the leaky form).
+	if p.APIKey != "" {
+		req.Header.Set("x-cg-pro-api-key", p.APIKey)
+	} else if p.DemoAPIKey != "" {
+		req.Header.Set("x-cg-demo-api-key", p.DemoAPIKey)
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)

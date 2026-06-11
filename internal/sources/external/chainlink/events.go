@@ -15,6 +15,7 @@ package chainlink
 import (
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"sync"
 	"time"
 
@@ -132,10 +133,13 @@ type Round struct {
 	// came from. Used in dedup keys + log line context.
 	FeedAddress string
 
-	// RoundID is the chainlink-internal round identifier. Dedup is
-	// by (FeedAddress, RoundID) — repeated polls of an unchanged
-	// feed must not produce duplicate OracleUpdate rows.
-	RoundID uint64
+	// RoundID is the chainlink-internal round identifier — the FULL
+	// uint80 proxy round id, (phaseId<<64)|aggregatorRoundId, held as
+	// a *big.Int so it never truncates (F-1323/G10-01, and ADR-0003
+	// in spirit). Dedup is by (FeedAddress, RoundID) — repeated polls
+	// of an unchanged feed must not produce duplicate OracleUpdate
+	// rows. Never nil after decode; treat a nil RoundID as zero.
+	RoundID *big.Int
 
 	// Answer is the raw int256 price at the feed's native decimals.
 	// Preserved as-is (no scaling) — canonical.OracleUpdate.Price
@@ -184,24 +188,41 @@ var (
 // the round-trip.
 type roundCache struct {
 	mu   sync.Mutex
-	last map[string]uint64 // feed address (lowercase) → last roundId emitted
+	last map[string]*big.Int // feed address (lowercase) → last roundId emitted
 }
 
 func newRoundCache() *roundCache {
-	return &roundCache{last: make(map[string]uint64)}
+	return &roundCache{last: make(map[string]*big.Int)}
 }
 
 // shouldEmit reports whether this (feed, roundId) is new — i.e.
 // strictly greater than the last seen. Returns true and updates
 // the cache; returns false if we've already emitted this round or
 // a newer one.
-func (c *roundCache) shouldEmit(feedAddr string, roundID uint64) bool {
+//
+// roundID is the FULL uint80 proxy round id
+// (phaseId<<64)|aggregatorRoundId — see decodeRoundID. Comparing the
+// wide value (not the low 64 bits) is what keeps emission alive
+// across a proxy phase upgrade: when Chainlink rotates the underlying
+// aggregator, aggregatorRoundId resets to ~1 but phaseId increments,
+// so the wide id still strictly increases. The old low-64-bit key saw
+// round=1 <= prev and silently wedged the feed until restart
+// (F-1323/G10-01).
+//
+// nil roundID is treated as zero (defensive — decode never produces
+// a nil, but a future caller passing nil shouldn't panic here).
+func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
+	if roundID == nil {
+		roundID = new(big.Int)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	prev, ok := c.last[feedAddr]
-	if ok && roundID <= prev {
+	if ok && roundID.Cmp(prev) <= 0 {
 		return false
 	}
-	c.last[feedAddr] = roundID
+	// Store a copy so a later mutation of the caller's *big.Int can't
+	// corrupt the cached high-water mark.
+	c.last[feedAddr] = new(big.Int).Set(roundID)
 	return true
 }

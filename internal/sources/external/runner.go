@@ -64,14 +64,34 @@ func Run(
 
 	// Pre-flight every Start. Fatal config errors (empty pair list,
 	// bad endpoint URL) surface here before we spawn anything.
+	//
+	// G10-11: each Streamer.Start spawns a reconnect-forever goroutine
+	// bound to the context we hand it. If a LATER Start fails, the
+	// earlier streamers' goroutines would otherwise leak — Run returns
+	// an error, the caller never gets a wait()/cancel handle, and those
+	// goroutines run until the parent ctx is cancelled (often never, on
+	// a startup-config error). We start every streamer under a DERIVED,
+	// cancellable context and cancel it on the error path so the
+	// already-launched streamers shut down before Run returns. On the
+	// happy path the derived context lives as long as the parent (it's
+	// cancelled when ctx is, via context.WithCancel propagation).
+	streamerCtx, cancelStreamers := context.WithCancel(ctx)
 	type running struct {
 		name string
 		ch   <-chan canonical.Trade
 	}
 	launched := make([]running, 0, len(streamers))
 	for _, s := range streamers {
-		ch, err := s.Streamer.Start(ctx, s.Pairs)
+		ch, err := s.Streamer.Start(streamerCtx, s.Pairs)
 		if err != nil {
+			// Tear down every streamer we already launched, then wait
+			// for their goroutines to observe the cancellation and
+			// close their channels so we don't return with goroutines
+			// still draining.
+			cancelStreamers()
+			for _, r := range launched {
+				drainUntilClosed(r.ch)
+			}
 			return nil, fmt.Errorf("external.Run: start %q: %w", s.Streamer.Name(), err)
 		}
 		launched = append(launched, running{name: s.Streamer.Name(), ch: ch})
@@ -82,7 +102,7 @@ func Run(
 		wg.Add(1)
 		go func(name string, ch <-chan canonical.Trade) {
 			defer wg.Done()
-			forwardTrades(ctx, name, ch, sink, logger)
+			forwardTrades(streamerCtx, name, ch, sink, logger)
 		}(r.name, r.ch)
 	}
 
@@ -91,12 +111,13 @@ func Run(
 	// trades + updates are wrapped and fanned to the shared sink.
 	for _, p := range pollers {
 		if p.Poller == nil {
-			return nil, errors.New("external.Run: nil Poller in spec")
+			return nil, teardown(cancelStreamers, &wg, errors.New("external.Run: nil Poller in spec"))
 		}
 		interval := p.Poller.PollInterval()
 		if interval <= 0 {
-			return nil, fmt.Errorf("external.Run: %q declares non-positive PollInterval %v",
-				p.Poller.Name(), interval)
+			return nil, teardown(cancelStreamers, &wg, fmt.Errorf(
+				"external.Run: %q declares non-positive PollInterval %v",
+				p.Poller.Name(), interval))
 		}
 		wg.Add(1)
 		go func(spec PollerSpec) {
@@ -105,8 +126,37 @@ func Run(
 		}(p)
 	}
 
-	wait = func() { wg.Wait() }
+	// wait() blocks until every connector goroutine has shut down, then
+	// releases the derived streamer context. cancelStreamers is also
+	// the safety valve the error paths above use to avoid leaking the
+	// already-launched streamer goroutines (G10-11).
+	wait = func() {
+		wg.Wait()
+		cancelStreamers()
+	}
 	return wait, nil
+}
+
+// teardown cancels the derived streamer context and blocks until the
+// already-launched streamer goroutines have observed the cancellation
+// and exited, then returns the original error. Used by Run's poller-
+// validation error paths so a late config error doesn't leak the
+// streamer goroutines started earlier in the same call (G10-11).
+func teardown(cancel context.CancelFunc, wg *sync.WaitGroup, err error) error {
+	cancel()
+	wg.Wait()
+	return err
+}
+
+// drainUntilClosed reads and discards from a streamer's trade channel
+// until it closes. Used on the streamer-Start error path (G10-11):
+// the earlier streamers were started with the now-cancelled derived
+// context, so their run loops will close their channels promptly; we
+// drain so the close — and thus the goroutine exit — is not blocked on
+// a pending send, then return.
+func drainUntilClosed(ch <-chan canonical.Trade) {
+	for range ch {
+	}
 }
 
 // forwardTrades drains one streamer's channel into the shared sink,

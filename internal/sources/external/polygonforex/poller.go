@@ -7,7 +7,6 @@ import (
 	"io"
 	"math/big"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -91,14 +90,17 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
-	q := url.Values{}
-	q.Set("apiKey", p.APIKey)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+SnapshotPath+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+SnapshotPath, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	// G10-04: authenticate via the Authorization header rather than an
+	// `apiKey` query param. Polygon.io supports `Authorization: Bearer
+	// <key>`; keeping the key out of the URL means a transport error's
+	// *url.Error can't leak it into the indexer log.
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)

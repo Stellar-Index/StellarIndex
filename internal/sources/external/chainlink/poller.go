@@ -171,7 +171,20 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// but found nothing). Returning err here would mark the WHOLE
 	// tick as "error" even when most feeds succeeded — that's bad
 	// signal hygiene. Per-feed errors are already logged above.
+	//
+	// G10-02 (liveness): but an all-feeds-FAILED cycle is NOT a
+	// healthy skip. Pre-fix this branch returned (nil,nil,nil) even
+	// when every feed errored, so the runner bumped
+	// ExternalPollerLastSuccessUnix and the staleness gauge stayed
+	// green while the poller was actually wedged (e.g. bad endpoint,
+	// key revoked, RPC down). We now surface firstErr when there were
+	// zero successful updates AND at least one feed errored — a
+	// genuine "polled and found nothing new" cycle (firstErr == nil)
+	// still skips cleanly.
 	if len(updates) == 0 {
+		if firstErr != nil {
+			return nil, nil, firstErr
+		}
 		return nil, nil, nil
 	}
 	return nil, updates, nil
@@ -249,13 +262,26 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 // + collision resistance across feeds; the actual wire format is
 // tx_hash CHAR(64) so we hex-encode the 32-byte SHA-256 output.
 //
+// roundID is the FULL uint80 proxy round id (*big.Int) — hashing the
+// wide value means two rounds from different phases that happen to
+// share a low-64-bit aggregatorRoundId produce DISTINCT tx hashes,
+// so they don't collide on the storage PK (F-1323/G10-01).
+//
 // Mirrors the synthetic-hash pattern in coingecko/coinmarketcap
 // pollers — different inputs (their tickers + currency + ts vs our
 // feed + roundId), same idea.
-func syntheticTxHash(feedAddress string, roundID uint64) string {
+func syntheticTxHash(feedAddress string, roundID *big.Int) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(strings.ToLower(feedAddress)))
 	_, _ = h.Write([]byte(":"))
-	_, _ = fmt.Fprintf(h, "%020d", roundID)
+	if roundID == nil {
+		roundID = new(big.Int)
+	}
+	// Decimal string of the wide id. It's already a unique,
+	// deterministic representation per distinct round (no two distinct
+	// wide ids share a decimal string), so the SHA-256 input — and
+	// thus the synthetic tx_hash — is stable + collision-free across
+	// phase rollovers.
+	_, _ = h.Write([]byte(roundID.String()))
 	return hex.EncodeToString(h.Sum(nil))
 }

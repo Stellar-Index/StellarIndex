@@ -70,8 +70,8 @@ func TestDecodeLatestRoundData_happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeLatestRoundData: %v", err)
 	}
-	if rnd.RoundID != 42 {
-		t.Errorf("RoundID = %d, want 42", rnd.RoundID)
+	if rnd.RoundID == nil || rnd.RoundID.Cmp(big.NewInt(42)) != 0 {
+		t.Errorf("RoundID = %v, want 42", rnd.RoundID)
 	}
 	if rnd.Answer != "123456789012345" {
 		t.Errorf("Answer = %q, want 123456789012345 (no truncation per ADR-0003)", rnd.Answer)
@@ -127,21 +127,105 @@ func TestDecodeLatestRoundData_wrongLength(t *testing.T) {
 func TestRoundCache_dedup(t *testing.T) {
 	t.Parallel()
 	c := newRoundCache()
-	if !c.shouldEmit("0xabc", 100) {
+	rid := func(n int64) *big.Int { return big.NewInt(n) }
+	if !c.shouldEmit("0xabc", rid(100)) {
 		t.Errorf("first emit should pass")
 	}
-	if c.shouldEmit("0xabc", 100) {
+	if c.shouldEmit("0xabc", rid(100)) {
 		t.Errorf("repeated round 100 should be deduped")
 	}
-	if c.shouldEmit("0xabc", 99) {
+	if c.shouldEmit("0xabc", rid(99)) {
 		t.Errorf("older round 99 should be deduped (only strictly greater advances)")
 	}
-	if !c.shouldEmit("0xabc", 101) {
+	if !c.shouldEmit("0xabc", rid(101)) {
 		t.Errorf("newer round 101 should pass")
 	}
 	// Different feed: independent state.
-	if !c.shouldEmit("0xdef", 100) {
+	if !c.shouldEmit("0xdef", rid(100)) {
 		t.Errorf("different feed first emit should pass")
+	}
+}
+
+// TestRoundCache_phaseRollover_resumesEmission is the F-1323/G10-01
+// regression: a Chainlink proxy phase upgrade resets the aggregator-
+// local roundId to ~1 while the phaseId increments. With the old
+// low-64-bit dedup key the post-upgrade round=1 read as <= prev=<big>
+// and the feed silently stopped emitting until restart. Keying on the
+// FULL uint80 (phaseId<<64|aggRound) keeps the wide id monotonic, so
+// emission resumes.
+func TestRoundCache_phaseRollover_resumesEmission(t *testing.T) {
+	t.Parallel()
+	c := newRoundCache()
+
+	// Phase 1, aggregator round 5000 → wide id = (1<<64)+5000.
+	phase1 := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(5000))
+	if !c.shouldEmit("0xfeed", phase1) {
+		t.Fatal("phase-1 round should emit")
+	}
+
+	// Proxy phase upgrade: aggregator round resets to 1, phaseId → 2.
+	// Low 64 bits (1) are FAR below the prior low 64 bits (5000) — the
+	// old code would have deduped this and wedged the feed.
+	phase2 := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(2), 64), big.NewInt(1))
+	if !c.shouldEmit("0xfeed", phase2) {
+		t.Fatal("post-phase-bump round=1 should STILL emit — wide id increased (F-1323/G10-01)")
+	}
+
+	// And a normal advance within phase 2 keeps working.
+	phase2next := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(2), 64), big.NewInt(2))
+	if !c.shouldEmit("0xfeed", phase2next) {
+		t.Fatal("phase-2 round=2 should emit")
+	}
+	// Re-poll of the same wide id is still deduped.
+	if c.shouldEmit("0xfeed", phase2next) {
+		t.Fatal("repeated wide id should dedupe")
+	}
+}
+
+// TestDecodeLatestRoundData_phaseBits confirms the decoder reads the
+// upper uint80 phase bits, not just the low 64. The wide roundId
+// must equal (phaseID<<64)|aggRound. F-1323/G10-01.
+func TestDecodeLatestRoundData_phaseBits(t *testing.T) {
+	t.Parallel()
+	raw := buildProxyRoundDataReturn(t, 2, 1, big.NewInt(2_500_00000000), 1767225600)
+	rnd, err := decodeLatestRoundData(raw, "0xabc")
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(2), 64), big.NewInt(1))
+	if rnd.RoundID.Cmp(want) != 0 {
+		t.Errorf("RoundID = %v, want %v (phase bits must survive decode)", rnd.RoundID, want)
+	}
+}
+
+// TestPollOnce_allFeedsFailed_returnsError is the G10-02 liveness
+// regression: when every feed errors and zero updates result, PollOnce
+// must surface the error rather than returning (nil,nil,nil). The old
+// "skip" path made the runner bump LastSuccessUnix and the staleness
+// gauge stayed green while the poller was wedged.
+func TestPollOnce_allFeedsFailed_returnsError(t *testing.T) {
+	t.Parallel()
+	// Server that always 500s → every eth_call fails.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "boom")
+	}))
+	defer srv.Close()
+
+	pair := canonical.Pair{
+		Base:  canonical.Asset{Type: canonical.AssetCrypto, Code: "ETH"},
+		Quote: canonical.Asset{Type: canonical.AssetFiat, Code: "USD"},
+	}
+	p := NewPoller(srv.URL, map[string]FeedSpec{
+		pair.String(): {Address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"},
+	})
+
+	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{pair})
+	if err == nil {
+		t.Fatal("all-feeds-failed cycle returned nil error — would mark poller healthy (G10-02)")
+	}
+	if len(updates) != 0 {
+		t.Errorf("len(updates) = %d, want 0", len(updates))
 	}
 }
 
@@ -230,7 +314,7 @@ func TestProject_invert(t *testing.T) {
 	// Raw feed answer: 1.10 (EUR/USD), 8-dec → 110000000.
 	rnd := Round{
 		FeedAddress: spec.Address,
-		RoundID:     1,
+		RoundID:     big.NewInt(1),
 		Answer:      "110000000",
 		UpdatedAt:   time.Unix(1767225600, 0).UTC(),
 	}
@@ -264,6 +348,24 @@ func buildLatestRoundDataReturn(t *testing.T, roundID uint64, answer *big.Int, s
 	putUint64BE(buf[120:128], updatedAt)
 	// word 4: answeredInRound (uint80 padded)
 	putUint64BE(buf[152:160], answeredInRound)
+	return "0x" + hex.EncodeToString(buf[:])
+}
+
+// buildProxyRoundDataReturn assembles the same 5-tuple but encodes a
+// FULL uint80 proxy roundId = (phaseID<<64)|aggRound across bytes
+// 22..32 of word 0. Used by the phase-rollover test (F-1323/G10-01)
+// to reproduce the case where aggRound resets to ~1 but phaseID
+// increments — the wide id still strictly increases.
+func buildProxyRoundDataReturn(t *testing.T, phaseID uint16, aggRound uint64, answer *big.Int, updatedAt uint64) string {
+	t.Helper()
+	var buf [160]byte
+	// word 0: roundId (uint80) — phaseID in bytes 22..24, aggRound in
+	// bytes 24..32. Together that's the 10-byte big-endian uint80.
+	buf[22] = byte(phaseID >> 8)
+	buf[23] = byte(phaseID)
+	putUint64BE(buf[24:32], aggRound)
+	encodeInt256(buf[32:64], answer)     // word 1: answer
+	putUint64BE(buf[120:128], updatedAt) // word 3: updatedAt
 	return "0x" + hex.EncodeToString(buf[:])
 }
 

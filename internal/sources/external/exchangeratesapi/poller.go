@@ -3,6 +3,7 @@ package exchangeratesapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -142,7 +143,12 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("http: %w", err)
+		// G10-04: exchangeratesapi.io / apilayer only accepts the key
+		// as the `access_key` query param — there is no auth-header
+		// form — so the key necessarily appears in the request URL. A
+		// transport error's *url.Error embeds that URL; we redact the
+		// query string before wrapping so the key can't leak to logs.
+		return nil, nil, fmt.Errorf("http: %s", redactURLError(err, endpoint+LatestPath))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -322,6 +328,33 @@ func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
 
 func pow10(n int) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
+}
+
+// redactURLError converts a transport error into a string with the
+// secret-bearing URL scrubbed. *url.Error.Error() embeds the full
+// request URL — including the `access_key` query param — so we
+// replace it with a query-stripped, path-only form. G10-04.
+//
+// Non-*url.Error inputs are returned via Error() unchanged (they
+// don't carry the request URL).
+func redactURLError(err error, safeURL string) string {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err.Error()
+	}
+	return fmt.Sprintf("%s %q: %v", ue.Op, redactQuery(safeURL), ue.Err)
+}
+
+// redactQuery returns `rawURL` with any query string replaced by
+// "?<redacted>". Falls back to a constant on parse failure so we
+// never echo the raw (secret-bearing) input.
+func redactQuery(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return "[redacted-url]"
+	}
+	u.RawQuery = ""
+	return u.String() + "?<redacted>"
 }
 
 // backfillTxHash synthesises a canonical.OracleUpdate tx_hash from

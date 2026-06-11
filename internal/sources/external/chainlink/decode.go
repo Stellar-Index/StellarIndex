@@ -32,14 +32,21 @@ func decodeLatestRoundData(rawHex, feedAddress string) (Round, error) {
 		return Round{}, fmt.Errorf("%w: latestRoundData expected 160 bytes, got %d", ErrMalformedResult, len(bytes))
 	}
 
-	// roundId — uint80 padded to 32 bytes. Take the low 10 bytes
-	// (bytes 22..32 of word 0), interpret as big-endian uint64.
-	// (uint80 is 80 bits = 10 bytes; we throw away the top 2 bytes
-	// because uint64 is sufficient — Chainlink roundIds use phase
-	// IDs in the upper bits but for in-process dedup the low 64
-	// bits are unique per (feed, phase) and we never compare
-	// across phases.)
-	roundID := bigEndianUint64(bytes[24:32])
+	// roundId — uint80 padded to 32 bytes. We read the FULL 10-byte
+	// (80-bit) value from bytes 22..32 of word 0, not just the low
+	// 64 bits.
+	//
+	// F-1323/G10-01: the proxy contract's roundId is
+	// (phaseId<<64)|aggregatorRoundId. Reading only the low 64 bits
+	// (bytes[24:32]) discards the phase. On a proxy phase upgrade the
+	// aggregatorRoundId resets to ~1 while the phaseId increments, so
+	// the FULL roundId still strictly increases even though the low
+	// 64 bits regress. Dedup keyed on the low 64 bits would see
+	// round=1 <= prev=<big> and silently stop emitting until restart.
+	// Keying on the full uint80 keeps monotonicity across phase
+	// rollovers. The storage PK (source, ledger, tx_hash, op_index,
+	// ts) is idempotent, so even a re-emit on phase boundary is safe.
+	roundID := decodeRoundID(bytes[22:32])
 
 	// answer — int256, two's complement, in word 1.
 	answer := decodeInt256(bytes[32:64])
@@ -97,8 +104,11 @@ func decodeAnswerUpdatedLog(entry LogEntry) (Round, error) {
 	if len(roundIDBytes) != 32 {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated.roundId expected 32 bytes, got %d", ErrMalformedResult, len(roundIDBytes))
 	}
-	// roundId is uint256 indexed → low 8 bytes give us a uint64.
-	roundID := bigEndianUint64(roundIDBytes[24:32])
+	// roundId is uint256 indexed. We read the low 10 bytes (uint80
+	// width — the proxy roundId never exceeds that) into a wide id so
+	// the dedup key is phase-aware, matching decodeLatestRoundData
+	// (F-1323/G10-01).
+	roundID := decodeRoundID(roundIDBytes[22:32])
 
 	dataBytes, err := hexBytes(entry.Data)
 	if err != nil {
@@ -160,6 +170,19 @@ func parseHexUint(s string) (uint64, error) {
 		return 0, fmt.Errorf("overflows uint64: %s", v.String())
 	}
 	return v.Uint64(), nil
+}
+
+// decodeRoundID reads a big-endian byte slice (the 10-byte uint80
+// proxy roundId, or any width ≤ a uint256) into a *big.Int. We keep
+// the FULL value rather than truncating to uint64 so the per-feed
+// dedup key (RoundID) is phase-aware: the proxy roundId is
+// (phaseId<<64)|aggregatorRoundId and only the wide value is
+// monotonic across a phase rollover (F-1323/G10-01). new(big.Int)
+// .SetBytes treats the input as an unsigned big-endian integer,
+// which is exactly the uint80 layout Solidity left-pads into the
+// return slot.
+func decodeRoundID(b []byte) *big.Int {
+	return new(big.Int).SetBytes(b)
 }
 
 // bigEndianUint64 reads 8 bytes as big-endian uint64. Tiny helper

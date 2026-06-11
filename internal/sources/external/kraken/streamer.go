@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -15,6 +18,14 @@ import (
 	"github.com/RatesEngine/rates-engine/internal/obs"
 	"github.com/RatesEngine/rates-engine/internal/sources/external"
 )
+
+// healthyConnectionThreshold — if a connection survived at least this
+// long before disconnecting, treat the next reconnect as a fresh start
+// and reset backoff to InitialBackoff. Without this, an indefinite
+// stream of healthy multi-minute Kraken cycles eventually pins backoff
+// at MaxBackoff forever — losing up to MaxBackoff of data per cycle
+// instead of the expected InitialBackoff (F-0029, ported G10-03).
+const healthyConnectionThreshold = 5 * time.Minute
 
 // Streamer implements external.Streamer for Kraken's v2 WebSocket
 // trade channel. Single connection per process, reconnects with
@@ -32,11 +43,17 @@ type Streamer struct {
 }
 
 // NewStreamer constructs a Streamer with sensible defaults.
+//
+// Backoff defaults (F-0029, ported G10-03): InitialBackoff 5 s,
+// MaxBackoff 60 s. Combined with the healthy-connection reset in run()
+// (a connection that stays alive ≥ healthyConnectionThreshold rewinds
+// backoff to InitialBackoff on its next failure), the effect is bounded
+// 5-60 s reconnect windows instead of a 60 s blanket.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
 		Endpoint:       WSEndpoint,
-		InitialBackoff: 1 * time.Second,
+		InitialBackoff: 5 * time.Second,
 		MaxBackoff:     60 * time.Second,
 	}
 }
@@ -87,25 +104,38 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 func (s *Streamer) run(ctx context.Context, symbols []string, logger *slog.Logger, out chan<- canonical.Trade) {
 	defer close(out)
 
-	backoff := s.InitialBackoff
-	if backoff <= 0 {
-		backoff = 1 * time.Second
+	initialBackoff := s.InitialBackoff
+	if initialBackoff <= 0 {
+		initialBackoff = 5 * time.Second
 	}
 	maxBackoff := s.MaxBackoff
 	if maxBackoff <= 0 {
 		maxBackoff = 60 * time.Second
 	}
+	backoff := initialBackoff
 
 	for {
 		if ctx.Err() != nil {
 			return
 		}
+		connectedAt := time.Now()
 		err := s.runOnce(ctx, symbols, out)
 		if ctx.Err() != nil {
 			return
 		}
+		lifetime := time.Since(connectedAt)
+		reason := classifyDisconnect(err)
+		obs.CEXStreamDisconnectTotal.WithLabelValues(SourceName, reason).Inc()
+
+		// Healthy-lifetime reset (F-0029): a long-lived connection that
+		// finally dropped is NOT evidence of a wedged venue — reset the
+		// backoff so the next cycle isn't penalised for prior failures.
+		if lifetime >= healthyConnectionThreshold {
+			backoff = initialBackoff
+		}
 		logger.Warn("kraken stream disconnected, reconnecting",
-			"source", SourceName, "err", err, "backoff", backoff)
+			"source", SourceName, "err", err,
+			"lifetime", lifetime, "backoff", backoff, "reason", reason)
 
 		select {
 		case <-ctx.Done():
@@ -119,11 +149,56 @@ func (s *Streamer) run(ctx context.Context, symbols []string, logger *slog.Logge
 	}
 }
 
+// classifyDisconnect maps a runOnce error into a small, bounded reason
+// label set — keeps the disconnect counter's cardinality low while
+// distinguishing the wire-level cause. Mirrors the binance helper.
+func classifyDisconnect(err error) string {
+	if err == nil {
+		return "other"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection reset by peer"):
+		return "reset"
+	case strings.Contains(msg, "broken pipe"):
+		return "broken_pipe"
+	case strings.Contains(msg, "i/o timeout"), strings.Contains(msg, "timeout"):
+		return "timeout"
+	case strings.HasPrefix(msg, "dial:"):
+		return "dial"
+	default:
+		return "other"
+	}
+}
+
+// keepAliveHTTPClient builds an *http.Client whose Transport dials TCP
+// with a 30 s OS-level keepalive. Go's net.Dialer defaults to no
+// keepalive on the underlying socket; venues that issue TCP RST after
+// their own timeout window then surface as "connection reset by peer"
+// reads instead of being detected earlier by the dialer. F-0029.
+func keepAliveHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	transport := &http.Transport{
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          4,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{Transport: transport}
+}
+
 func (s *Streamer) runOnce(ctx context.Context, symbols []string, out chan<- canonical.Trade) error {
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint
 	}
-	conn, resp, err := websocket.Dial(ctx, s.Endpoint, nil)
+	conn, resp, err := websocket.Dial(ctx, s.Endpoint, &websocket.DialOptions{
+		HTTPClient: keepAliveHTTPClient(),
+	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}

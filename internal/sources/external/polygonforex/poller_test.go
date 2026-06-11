@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,8 +31,13 @@ func newTestServer(t *testing.T, body string, status int) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
-		if r.URL.Query().Get("apiKey") == "" {
-			t.Error("missing apiKey")
+		// G10-04: key travels in the Authorization header now, never
+		// the query string (so it can't leak via a *url.Error).
+		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
+			t.Errorf("Authorization header = %q, want Bearer-prefixed", got)
+		}
+		if r.URL.Query().Get("apiKey") != "" {
+			t.Error("apiKey must NOT appear in the query string (G10-04)")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)

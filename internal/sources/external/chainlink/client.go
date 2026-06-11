@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -172,7 +174,13 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("chainlink: %s transport: %w", method, err)
+		// G10-04: a transport failure produces a *url.Error whose
+		// Error() embeds the full request URL — and Alchemy/Infura/
+		// QuickNode endpoints carry the API key in the path. Logging
+		// the raw error would leak the secret into the journal. Redact
+		// the URL before wrapping so the error stays diagnostic without
+		// exposing the key.
+		return fmt.Errorf("chainlink: %s transport: %s", method, redactURLError(err, c.Endpoint))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -206,4 +214,37 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 		return fmt.Errorf("chainlink: %s unmarshal result: %w", method, err)
 	}
 	return nil
+}
+
+// redactURLError converts a transport error into a string with any
+// secret-bearing URL scrubbed. Keyed RPC providers (Alchemy, Infura,
+// QuickNode) embed the API key in the endpoint path
+// (e.g. https://eth-mainnet.g.alchemy.com/v2/<KEY>), so a *url.Error's
+// default Error() — "Post \"https://…/v2/<KEY>\": dial tcp …" — would
+// leak the key into logs. We replace the URL with a host-only,
+// path-redacted form. G10-04.
+//
+// Non-*url.Error inputs are returned via Error() unchanged — those
+// don't carry the request URL.
+func redactURLError(err error, endpoint string) string {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err.Error()
+	}
+	// Rebuild the message as "<op> <redacted-url>: <underlying>" so it
+	// stays shaped like the original *url.Error but without the secret.
+	return fmt.Sprintf("%s %q: %v", ue.Op, redactEndpoint(endpoint), ue.Err)
+}
+
+// redactEndpoint returns a log-safe form of an RPC endpoint: scheme +
+// host only, with the path/query (where keyed providers stash the API
+// key) replaced by "/<redacted>". Falls back to the bare scheme+host
+// string when the endpoint can't be parsed (never echoes the raw
+// input, which might be the secret-bearing URL).
+func redactEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return "[redacted-endpoint]"
+	}
+	return u.Scheme + "://" + u.Host + "/<redacted>"
 }

@@ -194,10 +194,14 @@ func TestBackoffFromRetryAfter(t *testing.T) {
 	}
 }
 
+// G10-04: the demo key now travels in the x-cg-demo-api-key HEADER,
+// never the query string (so it can't leak via a *url.Error in logs).
 func TestPollOnce_DemoAPIKeyParameter(t *testing.T) {
-	var seenQuery string
+	var seenQuery, seenDemo, seenPro string
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, r *http.Request) {
 		seenQuery = r.URL.RawQuery
+		seenDemo = r.Header.Get("x-cg-demo-api-key")
+		seenPro = r.Header.Get("x-cg-pro-api-key")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{}`))
 	})
@@ -210,18 +214,26 @@ func TestPollOnce_DemoAPIKeyParameter(t *testing.T) {
 		mustPair(t, "XLM", "USD"),
 	})
 
-	if !contains(seenQuery, "x_cg_demo_api_key=demo-test-key-123") {
-		t.Errorf("query missing demo key param; got %q", seenQuery)
+	if seenDemo != "demo-test-key-123" {
+		t.Errorf("missing demo key header; got %q", seenDemo)
 	}
-	if contains(seenQuery, "x_cg_pro_api_key") {
-		t.Error("Pro key param should not be set when only DemoAPIKey is configured")
+	if seenPro != "" {
+		t.Error("Pro key header should not be set when only DemoAPIKey is configured")
+	}
+	// Security property: the key must NOT appear in the query string.
+	if contains(seenQuery, "demo-test-key-123") || contains(seenQuery, "x_cg_demo_api_key") {
+		t.Errorf("key/param leaked into query string (G10-04): %q", seenQuery)
 	}
 }
 
+// G10-04: the Pro key travels in the x-cg-pro-api-key HEADER and still
+// wins over the demo key when both are configured.
 func TestPollOnce_ProAPIKeyWinsOverDemo(t *testing.T) {
-	var seenQuery string
+	var seenQuery, seenDemo, seenPro string
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, r *http.Request) {
 		seenQuery = r.URL.RawQuery
+		seenDemo = r.Header.Get("x-cg-demo-api-key")
+		seenPro = r.Header.Get("x-cg-pro-api-key")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{}`))
 	})
@@ -235,11 +247,16 @@ func TestPollOnce_ProAPIKeyWinsOverDemo(t *testing.T) {
 		mustPair(t, "XLM", "USD"),
 	})
 
-	if !contains(seenQuery, "x_cg_pro_api_key=pro-key") {
-		t.Errorf("Pro key should be sent when both are set; got %q", seenQuery)
+	if seenPro != "pro-key" {
+		t.Errorf("Pro key header should be sent when both are set; got %q", seenPro)
 	}
-	if contains(seenQuery, "x_cg_demo_api_key") {
-		t.Error("Demo key should NOT be sent when Pro key is set")
+	if seenDemo != "" {
+		t.Error("Demo key header should NOT be sent when Pro key is set")
+	}
+	// Security property: neither key in the query string.
+	if contains(seenQuery, "pro-key") || contains(seenQuery, "demo-key") ||
+		contains(seenQuery, "x_cg_pro_api_key") || contains(seenQuery, "x_cg_demo_api_key") {
+		t.Errorf("key/param leaked into query string (G10-04): %q", seenQuery)
 	}
 }
 
