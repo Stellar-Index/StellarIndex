@@ -10,7 +10,7 @@ import (
 )
 
 // refreshDivergenceAll iterates over every configured pair and asks
-// the [DivergenceRefresher] to update its `div:<asset>` cache entry
+// the [DivergenceRefresher] to update its `div:<base>/<quote>` cache entry
 // for the asset, using the shortest-window VWAP this Tick just
 // wrote as the "our price" input.
 //

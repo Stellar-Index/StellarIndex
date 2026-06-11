@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate/anomaly"
+	"github.com/RatesEngine/rates-engine/internal/cachekeys"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
 	"github.com/RatesEngine/rates-engine/internal/obs"
 )
@@ -916,6 +917,76 @@ func TestTick_AnomalyFreeze_SkipsCacheAndMarks(t *testing.T) {
 	if o.prevVWAPs[stateKey].Cmp(big.NewRat(1, 1)) != 0 {
 		t.Errorf("prevVWAPs slot moved during freeze; got %s, want 1/1",
 			o.prevVWAPs[stateKey].FloatString(6))
+	}
+
+	// F-1345 (G13-03): the LKG VWAP key was pre-Set with a 1-minute
+	// TTL; the freeze must have re-armed it to cachekeys.FreezeTTL so
+	// the value survives as long as the freeze marker. Without the
+	// fix the key keeps its original (shorter) TTL and can expire out
+	// of Redis mid-freeze, leaving the API with frozen=true and no
+	// value to serve.
+	ttl := mr.TTL(cacheKey)
+	if ttl <= time.Minute {
+		t.Errorf("LKG VWAP TTL = %v after freeze; want refreshed to ~%v (> original 1m)",
+			ttl, cachekeys.FreezeTTL)
+	}
+	if ttl > cachekeys.FreezeTTL {
+		t.Errorf("LKG VWAP TTL = %v after freeze; want ≤ %v", ttl, cachekeys.FreezeTTL)
+	}
+}
+
+// TestTick_AnomalyFreeze_RefreshesLKGTTL pins F-1345 (G13-03) on its
+// own: a freeze fires when the cached LKG value's remaining TTL is
+// already short. The freeze must extend the key's TTL to
+// cachekeys.FreezeTTL so a freeze that outlasts the original window
+// doesn't leave the API serving frozen=true with an evicted value.
+func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	cache, mr := newTestRedis(t)
+	checker := newAnomalyChecker(t, pair)
+	marker := &recordingFreezeMarker{}
+
+	o := New(nil, cache, Config{
+		Pairs:        []canonical.Pair{pair},
+		Windows:      []time.Duration{5 * time.Minute},
+		Anomaly:      checker,
+		FreezeWriter: marker,
+	})
+
+	stateKey := pair.String() + ":" + (5 * time.Minute).String()
+	o.prevVWAPs[stateKey] = big.NewRat(1, 1)
+	cacheKey := cachekeys.VWAP(pair.Base, pair.Quote, 5*time.Minute)
+	// Pre-write the LKG with a near-expiry 10-second TTL — the freeze
+	// must rescue it.
+	cache.Set(context.Background(), cacheKey, "1.000000000000", 10*time.Second)
+
+	o.store = &mockStore{
+		trades: []canonical.Trade{
+			buildTrade(t, big.NewInt(100_000_000), big.NewInt(210_000_000), time.Now()),
+		},
+	}
+
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(marker.marks) != 1 {
+		t.Fatalf("freeze should have fired once; Mark called %d times", len(marker.marks))
+	}
+
+	ttl := mr.TTL(cacheKey)
+	if ttl <= 10*time.Second {
+		t.Errorf("LKG VWAP TTL = %v; freeze did not extend the near-expiry key", ttl)
+	}
+	if ttl > cachekeys.FreezeTTL {
+		t.Errorf("LKG VWAP TTL = %v; want ≤ FreezeTTL %v", ttl, cachekeys.FreezeTTL)
+	}
+	// Value must still be intact (not overwritten by the frozen tick).
+	got, err := mr.Get(cacheKey)
+	if err != nil {
+		t.Fatalf("LKG value Get: %v", err)
+	}
+	if got != "1.000000000000" {
+		t.Errorf("LKG value = %q, want untouched %q", got, "1.000000000000")
 	}
 }
 

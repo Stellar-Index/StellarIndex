@@ -183,7 +183,7 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 				t.Fatalf("seed marshal: %v", err)
 			}
 			if err := rdb.Set(context.Background(),
-				cachekeys.Divergence(pair.Base), body, 5*time.Minute).Err(); err != nil {
+				cachekeys.Divergence(pair), body, 5*time.Minute).Err(); err != nil {
 				t.Fatalf("seed cache set: %v", err)
 			}
 		}
@@ -261,7 +261,7 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 		SuccessCount:  1,   // … below trust floor; should be ignored
 	})
 	if err := rdb.Set(context.Background(),
-		cachekeys.Divergence(pair.Base), body, 5*time.Minute).Err(); err != nil {
+		cachekeys.Divergence(pair), body, 5*time.Minute).Err(); err != nil {
 		t.Fatalf("seed cache set: %v", err)
 	}
 

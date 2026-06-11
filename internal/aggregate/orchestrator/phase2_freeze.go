@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/RatesEngine/rates-engine/internal/aggregate/anomaly"
 	"github.com/RatesEngine/rates-engine/internal/canonical"
@@ -113,6 +114,7 @@ type confidenceWithSourceCount struct {
 func (o *Orchestrator) markPhase2Freeze(
 	ctx context.Context,
 	pair canonical.Pair,
+	window time.Duration,
 	c confidenceWithSourceCount,
 	prevVWAP *big.Rat,
 ) {
@@ -148,6 +150,12 @@ func (o *Orchestrator) markPhase2Freeze(
 		"source_count", c.SourceCount,
 		"writer_wired", o.cfg.FreezeWriter != nil,
 	)
+
+	// F-1345 (G13-03): a Phase 2 freeze also skips the VWAP cache
+	// write, so the prior bucket's value must be kept alive for as
+	// long as the freeze marker. Refresh its TTL regardless of whether
+	// a FreezeWriter is wired — the LKG keeps serving either way.
+	o.keepFrozenVWAPAlive(ctx, pair, window)
 
 	if o.cfg.FreezeWriter == nil {
 		return
