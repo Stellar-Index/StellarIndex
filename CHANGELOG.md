@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **soroswap-router swaps with an unrepresentable `deadline` were silently
+  dropped.** The router `deadline` arg is a user-supplied u64; some calls pass a
+  sentinel/garbage value (≈3e18 s → year ~99 billion, or one that overflows
+  int64 to a BC year) that lands outside Postgres's timestamptz range and
+  rejected the whole INSERT (SQLSTATE 22008). The swap itself is a real,
+  successful token movement, so `InsertSoroswapRouterSwap` now NULLs an
+  out-of-range `deadline_ts` instead of dropping the row. This affected both the
+  live indexer and every backfill — ≈24% of historical router calls (30.7k of
+  157.3k) were unstorable. Forward-fixes live ingest on the next indexer deploy.
+
 ### Added
 
 - **`ch-rebuild -contract-calls` — lake-replay write path for the event-less
