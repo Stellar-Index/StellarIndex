@@ -22,7 +22,7 @@ severity: P2
 `ratesengine_supply_snapshot_circulating_xlm` is emitted by
 `internal/supply/textfile.go`, which only runs from the systemd-
 timer path (`supply-snapshot.timer` →
-`ratesengine-ops supply-snapshot`). The aggregator-resident
+`ratesengine-ops supply snapshot`). The aggregator-resident
 goroutine path (gated by `[supply] aggregator_refresh_enabled =
 true`) writes directly to `asset_supply_history` without going
 through the textfile, so this alert **cannot fire** on a

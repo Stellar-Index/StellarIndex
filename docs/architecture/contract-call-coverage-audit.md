@@ -1,4 +1,13 @@
+---
+title: Contract-call coverage audit
+last_verified: 2026-05-21
+status: point-in-time audit
+---
+
 # Contract-call coverage audit (2026-05-21)
+
+> **Note (audit 2026-06-12):** point-in-time audit snapshot;
+> `last_verified` is its capture date, not a fresh re-verification.
 
 > Comparing per-contract activity on Stellar Expert vs our internal
 > `source_entry_counts` to find decoder coverage gaps. Companion to

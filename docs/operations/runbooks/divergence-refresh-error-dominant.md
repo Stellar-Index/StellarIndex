@@ -52,7 +52,7 @@ something downstream broke. The four common patterns:
 
 ```sh
 # 1) Confirm the alert is real and which outcome dominates.
-curl -fs http://localhost:9464/metrics \
+curl -fs http://localhost:9465/metrics \
   | grep '^ratesengine_divergence_refresh_total'
 
 # 2) Look at recent aggregator logs for the underlying error.

@@ -1,6 +1,6 @@
 ---
 title: Runbook — external-poller-error-rate-high
-last_verified: 2026-05-13
+last_verified: 2026-06-12
 status: draft
 severity: P3
 ---
@@ -19,18 +19,18 @@ severity: P3
 
 ## Symptoms
 
-- `sum by (source) (rate(ratesengine_external_poller_total{outcome="error"}[5m])) / sum by (source) (rate(ratesengine_external_poller_total[5m])) > 0.5` for ≥ 5 min.
-- Aggregator log shows repeated `WARN poller error source={vendor}`.
+- `sum by (source) (rate(ratesengine_external_poller_polls_total{outcome="error"}[5m])) / sum by (source) (rate(ratesengine_external_poller_polls_total[5m])) > 0.5` for ≥ 5 min.
+- Indexer log shows repeated `WARN poller error source={vendor}` (the external pollers run in `ratesengine-indexer`, not the aggregator).
 - `/v1/sources?include=stats` shows the affected vendor with stale `last_event_unix`.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Which source(s) are erroring + at what rate
-curl -s 'http://localhost:9090/api/v1/query?query=sum%20by%20(source)%20(rate(ratesengine_external_poller_total%7Boutcome%3D%22error%22%7D%5B5m%5D))'
+curl -s 'http://localhost:9090/api/v1/query?query=sum%20by%20(source)%20(rate(ratesengine_external_poller_polls_total%7Boutcome%3D%22error%22%7D%5B5m%5D))'
 
-# The actual error message in the aggregator log
-journalctl -u ratesengine-aggregator -n 500 --no-pager | grep -iE 'poller error.*source=' | tail -20
+# The actual error message in the indexer log (pollers live in the indexer)
+journalctl -u ratesengine-indexer -n 500 --no-pager | grep -iE 'poller error.*source=' | tail -20
 
 # Manual probe of the vendor endpoint with our typical request
 # (replace BASE/QUERY for the affected venue per internal/sources/external/<vendor>/)
@@ -94,8 +94,8 @@ Common 429 causes ranked by likelihood on a healthy R1:
 
 ## Mitigation (≤ 15 min)
 
-- [ ] Step 1 — if HTTP 429, slow down the poll cadence in `[external_sources.<vendor>].poll_interval` (operator config) and restart the aggregator.
-- [ ] Step 2 — if HTTP 401/403, rotate the API key env var via the secrets vault and restart.
+- [ ] Step 1 — if HTTP 429, slow down the poll cadence in `[external.<vendor>] poll_interval` (operator config in `/etc/ratesengine.toml`) and restart the indexer (`systemctl restart ratesengine-indexer`).
+- [ ] Step 2 — if HTTP 401/403, rotate the API key env var via the secrets vault and restart the indexer.
 - [ ] Step 3 — if vendor outage, no action needed; the aggregator's class-aware fallback (ADR-0008) keeps `/v1/price` serving from remaining sources. Update the status page only if `flags.reduced_redundancy=true` propagates to a customer-visible pair.
 - [ ] Step 4 — if schema drift, the decoder needs a code update; jump to the source's dispatcher_adapter and update the parse path. Out-of-cycle release per `release-process.md`.
 - [ ] Verification: error rate drops below 50% within 5 min of mitigation.
@@ -121,4 +121,8 @@ For postmortem capture:
 
 ## Changelog
 
+- 2026-06-12 — F-1330: fix metric name (`ratesengine_external_poller_polls_total`,
+  not `_poller_total`); pollers run in `ratesengine-indexer` not the
+  aggregator (log + restart targets corrected); config key is
+  `[external.<vendor>] poll_interval`.
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).

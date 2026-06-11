@@ -32,14 +32,14 @@ sudo systemctl status ratesengine-aggregator
 
 # 2. Are any goroutines progressing? (Other counters should
 #    be incrementing if the orchestrator is alive.)
-curl -s http://aggregator:9464/metrics | grep ratesengine_aggregator_ticks_total
+curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_ticks_total
 
 # 3. What's the most-recent supply refresh outcome label?
 #    The metric is keyed by (asset_key, outcome) — if every asset_key
 #    has stopped incrementing the page is fleet-wide; if only one
 #    asset_key has stalled while others tick, the failure is
 #    per-asset and `error_dominant` should ALSO be firing.
-curl -s http://aggregator:9464/metrics | \
+curl -s http://localhost:9465/metrics | \
   awk '/^ratesengine_aggregator_supply_refresh_total\{/' | sort
 
 # 4. Recent supply-refresh logs.

@@ -1,6 +1,6 @@
 ---
 title: High-Availability Infrastructure Plan
-last_verified: 2026-05-03
+last_verified: 2026-06-12
 status: ratified — binding decisions in [ADR-0008](../adr/0008-ha-topology.md); long-form design here
 ---
 
@@ -202,21 +202,26 @@ provisioned; cloud is pay-as-you-use for DR.
   Patroni cluster. Transaction-mode pooling. Pool size sized against
   PostgreSQL `max_connections` and the api-pod count.
 - **Hypertables:**
-  - `trades` — partitioned by `ts` daily; retention: raw-grain
-    lives for **90 days**, then compressed, retained forever at
-    the post-compression rate.
+  - `trades` — partitioned by `ts` daily; **raw rows kept forever**
+    (migration 0031 removed the old 90-day retention — invariant 8:
+    storage is not a constraint, and Postgres is the served tier, not
+    the full archive). Compression still applies for space.
   - `oracle_updates` — same shape as `trades`, smaller volume.
   - `prices_1m`, `prices_15m`, `prices_1h`, `prices_4h`,
     `prices_1d`, `prices_1w`, `prices_1mo` — continuous
     aggregates (CAGGs) with `add_continuous_aggregate_policy`.
-  - `events_raw` — Soroban events, compressed after 7 days.
-  - `supplies` — supply-history hypertable; retention indefinite.
+  - `soroban_events` — the ADR-0029 Soroban-event landing zone the
+    projector tails (compressed after a window).
+  - `asset_supply_history` — supply-history hypertable; retention
+    indefinite.
   - `asset_metadata` — ordinary table (small).
-- **Retention policy** (matches S6.5 / S7.2):
-  - `trades` raw: 90 days uncompressed, then compressed indefinitely.
-  - `prices_1m`, `prices_15m`: 30 days retention.
+- **Retention policy** (invariant 8 — ADR-0034):
+  - `trades` raw: **indefinite** (no `drop_after`; migration 0031
+    removed the rogue 90-day policy — if you see one on `trades`,
+    it's drift, remove it).
+  - `prices_1m`, `prices_15m`: retention also removed — indefinite.
   - `prices_1h`, `prices_4h`, `prices_1d`, `prices_1w`,
-    `prices_1mo`: **indefinite** (RFP commitment).
+    `prices_1mo`: **indefinite** (daily OHLC spans back to 2015).
 - **Backup:**
   - `pgBackRest` to MinIO with WAL-stream, `--type=full` weekly,
     `--type=diff` daily, `--type=incr` hourly.

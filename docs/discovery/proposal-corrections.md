@@ -387,6 +387,153 @@ met via Galexie-backed backfill + our own indexer + REST API.
 
 ---
 
+## Data-freshness 30 s is served on `/v1/price/tip`, not `/v1/price`
+
+*(registered 2026-06-12 — audit-2026-06-11 RFP-01)*
+
+### Proposal says
+
+> "The maximum allowed staleness for current price endpoints is 30
+> seconds." (ctx-proposal.md §Data Freshness, line 329.)
+
+### Correction
+
+The 30-second freshness guarantee is met by the **closed-bucket
+tip** endpoint `/v1/price/tip` (per ADR-0015's closed-bucket serving
+contract), not the default `/v1/price`. `/v1/price` serves the most
+recent **closed** aggregation bucket and can therefore be older than
+30 s by design (it trades freshness for cross-region determinism —
+every region serves the same closed bucket). The re-scope happened
+in commit `43b640e5`; it was an internal decision and ran for ≥ 14
+days as a formal freshness-target breach against the as-written
+proposal before being registered here.
+
+### Source
+
+audit-2026-06-11 (RFP-01); [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md).
+
+### Impact
+
+Customer-facing if a consumer reads `/v1/price` expecting ≤ 30 s
+freshness. The capability is delivered — it lives on `/v1/price/tip`.
+Worth surfacing in the next customer revision so integrators point at
+the right endpoint.
+
+---
+
+## Multi-zone / 99.99 % / read-replicas are single-host (R1) today
+
+*(registered 2026-06-12 — audit-2026-06-11 RFP-02)*
+
+### Proposal says
+
+> "Multi-zone deployment is supported to eliminate single points of
+> failure." (line 309.) "The target availability is 99.99 percent or
+> greater." (line 335.) "Read replicas for storage systems" (line 347)
+> and "Horizontal scaling of API nodes and read replicas" (line 401).
+
+### Correction
+
+Production today is a **single bare-metal host (R1, Hetzner
+Frankfurt)** per [ADR-0008](../adr/0008-ha-topology.md). There is no
+multi-zone deployment, no read-replica Postgres, and no
+multi-instance API tier live. R2/R3 are designed (ADR-0016) but
+deferred — adding them is mechanical but not done. The 99.99 %
+availability number is an aspirational target, not a measured-or-
+architecturally-guaranteed property on a single host. The
+[ha-plan.md](../architecture/ha-plan.md) describes the *target*
+multi-region HA topology; it is not the current deployment.
+
+### Source
+
+audit-2026-06-11 (RFP-02); [ADR-0008](../adr/0008-ha-topology.md),
+[ADR-0016](../adr/0016-per-region-storage-strategy.md),
+[r1-deployment-state.md](../operations/r1-deployment-state.md).
+
+### Impact
+
+Material if the customer relies on the 99.99 % / multi-zone language
+as a present-tense guarantee. We are in the live-in-development phase
+with no consumer traffic yet; the HA topology is sequenced, not
+shipped. Should be stated plainly in the next customer revision.
+
+---
+
+## "Self-hosted RPC nodes" is Galexie + captive-core, not stellar-rpc
+
+*(registered 2026-06-12 — audit-2026-06-11 RFP-04)*
+
+### Proposal says
+
+> "All Soroban event indexing uses self-hosted RPC nodes rather than
+> third-party providers, with the same multi-instance redundancy
+> applied to the Classic DEX ingestion path." (line 87.)
+
+### Correction
+
+We do not run stellar-rpc in production ingest. Soroban (and classic)
+event indexing reads **Galexie's `LedgerCloseMeta` output from MinIO**
+(`go-stellar-sdk/ingest.ApplyLedgerMetadata`), where Galexie spawns a
+**captive-core** subprocess. stellar-rpc was removed from R1 on
+2026-04-23 and now exists only for the `rpc-probe` operator
+diagnostic + fixture capture (invariant 6,
+[ingest-pipeline.md](../architecture/ingest-pipeline.md)). The spirit
+of the claim holds — the data path is self-hosted, not a third-party
+RPC provider — but "RPC nodes" is the wrong mechanism.
+
+### Source
+
+audit-2026-06-11 (RFP-04); [ADR-0001](../adr/0001-horizon-deprecated.md),
+[ADR-0002](../adr/0002-minio-s3-compat-storage.md),
+[r1-deployment-state.md](../operations/r1-deployment-state.md).
+
+### Impact
+
+None on deliverables — self-hosted data path is preserved. Wording
+correction only; update "self-hosted RPC nodes" → "self-hosted
+Galexie + captive-core ingestion" in the next revision.
+
+---
+
+## "Containerized + load-balanced" is bare-metal systemd (ADR-0008)
+
+*(registered 2026-06-12 — audit-2026-06-11 RFP-05)*
+
+### Proposal says
+
+> "All services are containerized and deployed behind load-balanced
+> entry points." (line 285.) "API servers are deployed behind load
+> balancers and can scale horizontally." (line 485.) Plus the §11
+> footnote describing "a huge kubernetes stack with Talos Linux."
+
+### Correction
+
+Production R1 runs the binaries as **systemd-managed services on a
+single bare-metal host** (per [ADR-0008](../adr/0008-ha-topology.md))
+— there is no container orchestrator, no Kubernetes, and no
+multi-instance load balancer in front of the API. A Caddy reverse
+proxy terminates TLS, but it fronts a single API process, not a
+load-balanced pool. The release pipeline ships **binaries**, not
+container images (the GHCR job was dropped — F-1221); the
+`docker/*.Dockerfile` files remain only for self-hosters who want to
+build their own images. The self-hosted-deployment templates
+(Docker Compose) the proposal references are real and shipped; they
+just describe the *self-host* path, not how R1 runs.
+
+### Source
+
+audit-2026-06-11 (RFP-05); [ADR-0008](../adr/0008-ha-topology.md);
+release-process.md §Cut.
+
+### Impact
+
+None on deliverables — the API serves identically. Deployment-shape
+wording correction; the customer-facing claim should match the
+bare-metal systemd reality on R1 while keeping the containerized
+self-host kit as the templated option.
+
+---
+
 ## Apply to proposal on next revision
 
 When we do the next customer-facing revision (e.g. ahead of
@@ -401,6 +548,9 @@ proposal section:
 | Oracle Networks → Redstone | §5 |
 | Data Ingestion → SDEX / Stellar Classic DEX | §11 (phoenix + comet additions) |
 | Data Processing → Canonical Data Model | §7 (i128 invariant) |
-| Open Source & Deployment Model | §6 (MinIO / datastore backend) |
+| Open Source & Deployment Model | §6 (MinIO / datastore backend), self-hosted-RPC → Galexie, containerized → bare-metal systemd |
 | Oracle Networks → Chainlink | §9 |
+| Performance & SLA → Data Freshness | 30 s served on `/v1/price/tip` |
+| Architecture & Scalability → Availability | multi-zone / 99.99 % / read-replicas are single-host (R1) today |
+| Ingestion → Soroban DEX/AMM | "self-hosted RPC nodes" → Galexie + captive-core |
 | *(new section)* Coverage extensions | Phoenix, Comet, RWA via Redstone |

@@ -1,6 +1,6 @@
 ---
 title: Runbook — archive-files-missing
-last_verified: 2026-05-03
+last_verified: 2026-06-12
 status: draft
 severity: P2
 ---
@@ -56,16 +56,22 @@ If neither AWS nor SDF is reachable from R1: external network/source outage — 
   ssh r1 'journalctl -u archive-completeness.service -f --since="5 min ago"'
   ```
 
-- [ ] **Step 2 — If step 1 didn't clear it, run with all fallback sources forced.**
+- [ ] **Step 2 — If step 1 didn't clear it, run the verify subcommand manually with more workers and capture the report.**
+
+  `archive-completeness verify` runs the check AND the fallback-fill
+  in one pass (there is no separate `fix`/`-force-all-sources` mode —
+  the fallback chain already tries every layer, AWS → SDF 001/002/003
+  → tier-1 validators → galexie scan-and-fill, for each still-missing
+  file). Re-run scoped to the full range and write the report:
 
   ```sh
-  ssh r1 'ratesengine-ops archive-completeness fix \
-    -input-file /var/lib/galexie/last-completeness-report.json \
-    -workers 16 \
-    -force-all-sources'
+  ssh r1 'ratesengine-ops archive-completeness verify \
+    -from 2 -to 0 -workers 16 \
+    -output-file /var/lib/galexie/last-completeness-report.json'
   ```
 
-  `-force-all-sources` tries every layer (AWS → SDF 001/002/003 → all tier-1 validators → galexie scan-and-fill) for every file regardless of which one a previous run got from. Slower but exhaustive.
+  Exit code 0 means no residual missing files; 1 means the fallback
+  chain was exhausted on some (proceed to step 3).
 
 - [ ] **Step 3 — If step 2 still leaves files unfilled, log the residual list as a known incident** and escalate to the responder for `archive-completeness-stale`. The remaining files are unrecoverable from any public archive; recovery requires either:
   - Spinning up our own validator and catching up from peers (multi-week, ADR-0004 territory)
@@ -100,4 +106,8 @@ For the postmortem, capture:
 
 ## Changelog
 
+- 2026-06-12 — F-1330: replace fictional `archive-completeness fix
+  -input-file … -force-all-sources` with the real
+  `archive-completeness verify -from … -to … -workers …` (single mode,
+  check + fallback-fill in one pass).
 - 2026-04-27 — initial draft alongside ADR-0017.

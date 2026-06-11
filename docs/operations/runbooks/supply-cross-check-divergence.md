@@ -36,7 +36,7 @@ Both observe the same underlying state. Honest indexer math may differ by 1 stro
 
 ```sh
 # 1) Confirm the divergence is real and which asset.
-curl -fs http://localhost:9464/metrics \
+curl -fs http://localhost:9465/metrics \
   | grep '^ratesengine_supply_cross_check_divergence_stroops' \
   | awk '$NF != "0" && $NF != "1"'
 

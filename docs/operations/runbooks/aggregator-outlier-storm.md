@@ -29,7 +29,7 @@ severity: P3
 
 ```sh
 # 1) Confirm the spike is real, not just a baseline calibration issue.
-curl -fs http://localhost:9464/metrics \
+curl -fs http://localhost:9465/metrics \
   | grep '^ratesengine_aggregator_dropped_trades_total{reason="outlier"}'
 
 # 2) Is the upstream-trade rate also elevated? (real volume → real outliers)

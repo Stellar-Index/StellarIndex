@@ -139,13 +139,18 @@ pattern:
 | data | home | why |
 |---|---|---|
 | CAGGs `prices_1m…1mo` | Postgres, **all history** | small, hot; the pricing API serves them; the Go aggregator + Timescale policy chain live here |
-| raw `trades` | Postgres, **90-day window** (original ADR-0006 design) | enough for live VWAP/OHLC recompute (largest bucket = 1mo) + recent per-trade API |
-| all 2.9 B raw trades + events + ops | **ClickHouse** | protocol deep-dives, full explorer, historical-raw — the tier built for it |
+| raw `trades` | Postgres, **kept forever** (migration 0031 removed the old 90-day retention — invariant 8) | live VWAP/OHLC recompute + per-trade API; the served working set is recent, but no `drop_after` policy prunes old rows |
+| all 2.9 B raw trades + events + ops | **ClickHouse** | protocol deep-dives, full explorer, historical-raw — the certified raw lake, the tier built for it |
 | protocol entity tables | Postgres, rebuilt clean from CH | hot served entities; full event-level history in CH |
 
-The 0031 "preserve every raw trade forever" intent is honoured **by ClickHouse**
-(it holds all 2.9 B raw trades, completeness-certified) — Postgres is right-sized
-so the rebuild stays tractable and the OLTP-for-OLAP scale wall stays gone.
+The 0031 "preserve every raw trade forever" intent is honoured **in both tiers**:
+ClickHouse holds the completeness-certified raw history of all 2.9 B trades, and
+Postgres `trades` carries **no retention policy** (any `drop_after` on `trades` is
+drift — remove it, per invariant 8). Postgres is the *served* tier (the recent
+working set the API queries), but right-sizing here means access-pattern split, not
+a time-bounded retention window. The OLTP-for-OLAP scale wall is gone because the
+full historical *re-derivation* happens against ClickHouse, not by re-backfilling
+billions of rows into Postgres.
 
 **The clean-slate finding (why a repair/upsert is WRONG for trades).** The live
 AMM/projected trades were written through the collision-era `event_index = 0`

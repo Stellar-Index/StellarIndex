@@ -1,6 +1,6 @@
 ---
 title: Rollback procedures
-last_verified: 2026-05-03
+last_verified: 2026-06-12
 status: operator runbook
 ---
 
@@ -54,16 +54,45 @@ Symptoms: API binary won't start, indexer panics on boot,
 aggregator won't connect to Redis.
 
 Diagnosis is fast — `systemctl status ratesengine-{api,indexer,
-aggregator}` on each region. If the new release crashes at
-startup, it never served real traffic; rollback is just
-re-pinning the previous tag.
+aggregator}` on r1. If the new release crashes at startup, it never
+served real traffic; rollback is just re-deploying the previous tag.
+
+The deploy workflow keeps the last 5 previous binaries on disk as
+`/usr/local/bin/<binary>.prev-<previous-tag>` (see
+[`deploy-workflow.md`](deploy-workflow.md#backup-naming--rollback)).
+Preferred path is to re-trigger the deploy workflow with the
+previous-known-good tag — it does the host-side
+backup→swap→restart→health-probe with automatic rollback on probe
+failure:
 
 ```sh
-# Per region:
-ansible-playbook -i inventory/r1.yml deploy/ansible/roles/api/version-pin.yml \
-  --extra-vars 'release_tag=YYYY.MM.DD.<previous>'
-# Watch the unit until it's active (running):
-ssh r1 "systemctl status ratesengine-api"
+gh workflow run deploy.yml \
+  -f region=r1 \
+  -f version=vX.Y.Z \
+  -f binaries=ratesengine-api
+```
+
+Find the previous tag from `git tag` history or the "Running
+version" line in [`r1-deployment-state.md`](r1-deployment-state.md).
+Confirm the `.prev-<tag>` is still on disk first:
+
+```sh
+ssh root@<host> 'ls -lh /usr/local/bin/ratesengine-*.prev-* 2>/dev/null'
+```
+
+Manual fallback (only if the deploy workflow itself is broken — see
+[`release-process.md` §Rollback](release-process.md#rollback)):
+
+```sh
+PREVIOUS=vX.Y.Z                               # the known-good tag
+BINARY=ratesengine-api
+ssh root@<host> "
+  systemctl stop ${BINARY} && \
+  cp /usr/local/bin/${BINARY}.prev-${PREVIOUS} /usr/local/bin/${BINARY} && \
+  echo ${PREVIOUS} > /var/lib/ratesengine/deployed-versions/${BINARY} && \
+  systemctl start ${BINARY} && \
+  systemctl status ${BINARY} --no-pager | head -20
+"
 ```
 
 Skip directly to **§Post-rollback** below.
@@ -77,28 +106,30 @@ collapsing to zero, freeze flags fired everywhere.
 Highest-priority rollback. Bad data accumulates in the trades
 hypertable + the CAGGs every minute the broken release runs.
 
+R1 is the only production host today (single-host per
+[ADR-0008](../adr/0008-ha-topology.md); R2/R3 deferred). The sequence:
+
 ```sh
-# 1. Stop the aggregator on every region — preserves the cache
-#    in its last-good state.
-for region in r1 r2 r3; do
-  ssh $region "systemctl stop ratesengine-aggregator"
-done
+# 1. Stop the aggregator on r1 — preserves the cache in its
+#    last-good state while we swap binaries.
+ssh root@<host> "systemctl stop ratesengine-aggregator"
 
-# 2. Re-pin all three binaries to the previous tag, restart.
-for region in r1 r2 r3; do
-  ansible-playbook -i inventory/${region}.yml \
-    deploy/ansible/roles/api/version-pin.yml \
-    --extra-vars "release_tag=YYYY.MM.DD.<previous>"
-done
+# 2. Re-deploy all three binaries at the previous-known-good tag.
+#    The deploy workflow does the per-host backup→swap→restart→
+#    health-probe with automatic rollback on probe failure.
+gh workflow run deploy.yml \
+  -f region=r1 \
+  -f version=vX.Y.Z \
+  -f binaries=ratesengine-indexer,ratesengine-aggregator,ratesengine-api
 
-# 3. Restart the aggregator after the binaries are re-pinned.
-for region in r1 r2 r3; do
-  ssh $region "systemctl start ratesengine-aggregator"
-done
+# 3. (The aggregator was restarted by the workflow in step 2; if it
+#    was left stopped because the workflow only re-deployed a subset,
+#    start it explicitly.)
+ssh root@<host> "systemctl start ratesengine-aggregator"
 
 # 4. Smoke-check.
 ratesengine-sla-probe -base-url https://api.ratesengine.net/v1 \
-  -duration 30s -concurrency 4
+  -duration 30s -concurrency 1
 ```
 
 If any rows landed in the trades hypertable from the broken
@@ -116,16 +147,22 @@ spiking; `ratesengine_source_events_total{source="X"}` dropping
 to zero; the `decode-errors` runbook fires.
 
 DON'T roll back the whole release. Instead disable just the
-broken source via config:
+broken source by removing it from the `[ingestion]` allow-list in
+`/etc/ratesengine.toml` — the indexer only runs the connectors
+named in `enabled_sources`:
 
-```sh
-# /etc/ratesengine/indexer.toml
-[sources.<broken-source>]
-enabled = false
+```toml
+# /etc/ratesengine.toml
+[ingestion]
+# Drop the broken source from this list (it's an allow-list, not a
+# per-source enabled=false flag). Valid names: see config.KnownSources.
+enabled_sources = ["soroswap", "aquarius", "phoenix", "..."]
 ```
 
 ```sh
-ansible-playbook -i inventory/all deploy/ansible/roles/indexer/reload.yml
+# Apply on r1, then restart the indexer to pick up the new config.
+scp ratesengine.toml root@<host>:/etc/ratesengine.toml
+ssh root@<host> "systemctl restart ratesengine-indexer"
 ```
 
 Then file a SEV-2 against the broken source's package. The
@@ -172,10 +209,14 @@ exists.
 
 Two paths:
 
-1. **Edit + push** (preferred). Edit the incident JSON under
-   `web/status/src/data/incidents/` or the component states in
-   `components.json`, commit, push. Cloudflare Pages redeploys in
-   ~2 minutes.
+1. **Edit + push** (preferred). Edit the incident Markdown corpus
+   under `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` (this is
+   the single source of truth — `web/status/src/lib/incidents.ts`
+   reads it at build time, and `/v1/incidents` serves the same
+   corpus from the Go binary), commit, push. Cloudflare Pages
+   redeploys the status page in ~2 minutes. Note a corpus edit also
+   requires re-deploying `ratesengine-api` for `/v1/incidents` to
+   reflect it (the corpus is embedded in the binary).
 2. **Revert** if the page itself broke. `git revert <bad-sha>` on
    `main` and push — the previous-known-good build redeploys.
 
@@ -196,7 +237,7 @@ After any rollback above:
 1. **Confirm rollback took.** Re-run the SLA probe; verify the
    per-pair freshness gauges return to nominal.
 2. **File the SEV.**
-   - Title: `SEV-1: <YYYY.MM.DD.N> rolled back due to <symptom>`
+   - Title: `SEV-1: <vX.Y.Z> rolled back due to <symptom>`
    - Body: which decision-tree branch fired; what the rollback
      command was; current state.
 3. **Customer comms.** If the broken release was live for any

@@ -1,4 +1,19 @@
+---
+title: Storage considerations — r1 knowledge base
+last_verified: 2026-05-20
+status: living document
+---
+
 # Storage considerations — r1 knowledge base
+
+> **Drift note (audit 2026-06-12, F-1331/D3-09):** the storage
+> inventory below predates the ADR-0034 ClickHouse pivot
+> (2026-06-05) and the 2026-05-20 storage move. ClickHouse is now the
+> certified raw lake; Postgres is the served tier. Sections that
+> describe Postgres as the full-history home are stale — read them
+> against [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)
+> and `clickhouse-phase4-decoder-adapter.md`. `last_verified` reflects
+> the last substantive edit, not a fresh re-verification.
 
 > Living document. Captures r1's storage layout, per-dataset
 > touchpoints, trade-offs around space reclamation, and the

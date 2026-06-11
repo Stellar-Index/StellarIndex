@@ -27,7 +27,7 @@ severity: P2
 
 ```sh
 # How long since last observation, per source?
-curl -s http://api:9464/metrics |
+curl -s http://localhost:9464/metrics |
   grep -E "ratesengine_oracle_last_update_unix|ratesengine_oracle_resolution_seconds"
 
 # Is the CONTRACT itself still emitting? The oracle source

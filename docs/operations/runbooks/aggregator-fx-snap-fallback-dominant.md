@@ -52,7 +52,7 @@ is unhealthy.
 ```sh
 # 1) Which legs are falling back? Cardinality is bounded, so the per-leg
 #    counter directly names the affected pair(s).
-curl -fs http://localhost:9464/metrics \
+curl -fs http://localhost:9465/metrics \
   | grep '^ratesengine_aggregator_fx_snap_fallback_total'
 
 # 2) Is the trades hypertable getting fresh FX rows at all?

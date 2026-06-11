@@ -24,6 +24,27 @@
     patterns: "*.yml"
   register: repo_rule_files
 
+# F-1357 guard-rail: a misresolved `prometheus_rules_source_dir`
+# (e.g. a missing `..` hop pointing at a nonexistent directory)
+# makes the `find` above return an empty list. Without this assert
+# the stale-cleanup task below would then treat EVERY rule file on
+# the host as stale and delete it, reloading Prometheus with zero
+# alert rules. Fail loud before we touch the host instead.
+- name: assert repo rule source resolved to a non-empty directory
+  assert:
+    that:
+      - repo_rule_files.matched | int > 0
+    fail_msg: >-
+      prometheus_rules_source_dir ({{ prometheus_rules_source_dir }})
+      resolved to zero *.yml rule files. Refusing to run the
+      stale-rule cleanup, which would delete every alert rule on
+      {{ inventory_hostname }} and reload Prometheus with no rules.
+      Check the path resolves to the repo-root deploy/monitoring/rules
+      (it should be {{ playbook_dir }}/../../../deploy/monitoring/rules).
+    success_msg: >-
+      Found {{ repo_rule_files.matched }} rule file(s) in
+      {{ prometheus_rules_source_dir }}.
+
 - name: list rule files currently on the host
   find:
     paths: /etc/prometheus/rules.d

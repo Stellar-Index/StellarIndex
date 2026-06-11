@@ -65,7 +65,7 @@ curl -s localhost:9465/metrics | grep 'ratesengine_ingest_gap_max_size_ledgers{s
 
 ## Why no `sdex-backfill` subcommand?
 
-Soroban-era sources have dedicated `*-backfill` subcommands because they can stream from the `soroban_events` landing zone (no MinIO re-walk needed). SDEX has no equivalent landing zone — the classic-DEX ingest path writes straight to `trades`. Repair requires re-decoding from MinIO via the binary `backfill --source sdex`, which is the existing tool.
+There is no per-source `*-backfill` subcommand for any source — the whole `*-backfill` family (`cctp-backfill`, `soroswap-skim-backfill`, …) was **deleted** in rc.97 / ADR-0032 Phase 5. Soroban-derived sources catch up by rewinding the projector cursor (`projector-replay -source <name> -from <ledger>`), which re-projects from the `soroban_events` landing zone (no MinIO re-walk). SDEX has no equivalent landing zone — the classic-DEX ingest path writes straight to `trades` — so its repair re-decodes from the ClickHouse lake / MinIO via the generic `backfill -source sdex` subcommand, which is the existing tool.
 
 ## Related
 
