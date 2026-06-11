@@ -33,8 +33,12 @@ BINARIES := \
   ratesengine-migrate \
   ratesengine-sla-probe
 
-# Packages that hold integration tests (gated by build tag)
-INT_TEST_PKGS := ./test/integration/...
+# Packages that hold integration tests (gated by build tag). Includes
+# cmd/ratesengine-ops, which carries `//go:build integration` tests
+# (verify-archive chunk orchestration) — F-1334: omitting it let an
+# interface-signature change break the ops integration test undetected
+# (the build-check below only compiled ./test/integration/...).
+INT_TEST_PKGS := ./test/integration/... ./cmd/ratesengine-ops/...
 
 # Default test-cover threshold per package (staticcheck in CI enforces the per-package floor)
 COVER_THRESHOLD := 70

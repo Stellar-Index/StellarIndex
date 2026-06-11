@@ -306,8 +306,11 @@ func TestCursorFirstLedgerBackfillMigration(t *testing.T) {
 	// first_ledger. (Post-migration the production path always
 	// writes via UpsertCursor which captures first_ledger.)
 	_, err = db.ExecContext(ctx,
+		// 51000000 written without the PG16 underscore digit separator —
+		// the pinned image is timescale/timescaledb:…-pg15, where
+		// `51_000_000` is a syntax error (F-1334).
 		`INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger)
-		   VALUES ('backfill', '50500000-53174999:soroswap', NULL, 51_000_000)`,
+		   VALUES ('backfill', '50500000-53174999:soroswap', NULL, 51000000)`,
 	)
 	if err != nil {
 		t.Fatalf("insert pre-migration row: %v", err)

@@ -111,6 +111,12 @@ jobs:
       - run: go mod download
       - name: Test with race detector
         run: go test -race -timeout 2m -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Compile integration-tagged tests (no Docker)
+        # F-1334: catches build-tag breakage (an interface change that
+        # doesn't update an `//go:build integration` test) without
+        # spinning testcontainers. The full Docker suite stays
+        # operator-/local-invoked.
+        run: make test-integration-build
       - name: Upload coverage
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
