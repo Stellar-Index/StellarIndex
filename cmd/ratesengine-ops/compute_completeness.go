@@ -479,7 +479,18 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 				Op:       op.Op,
 				OpResult: op.OpResult,
 			})
-			out[op.Ledger] += len(outs)
+			// Count only trades the served tier can actually hold. The SDEX
+			// decoder emits one-side-zero fills (a leg rounds to 0) as trades
+			// for raw completeness, but canonical.Trade.Validate() requires
+			// BaseAmount>0 ∧ QuoteAmount>0, so InsertTrade rejects them — they
+			// never reach the served tier (the raw claim is in the CH
+			// substrate). Mirroring Validate() here keeps census == served by
+			// identical logic, so the only residual is genuinely-dropped ops.
+			for _, ev := range outs {
+				if te, ok := ev.(sdex.TradeEvent); ok && te.Trade.Validate() == nil {
+					out[op.Ledger]++
+				}
+			}
 			return nil
 		}); err != nil {
 			return nil, err
