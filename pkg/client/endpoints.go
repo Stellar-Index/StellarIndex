@@ -542,8 +542,10 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	}
 	// Server returns 204 No Content on success — no envelope to
 	// decode. Pass nil for the response struct so doJSON skips the
-	// JSON-decode step.
-	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+keyID, nil, nil, nil)
+	// JSON-decode step. PathEscape the keyID so a value containing
+	// reserved characters can't break out of the path segment (other
+	// path-param endpoints already do this — Asset / Issuer / Changes).
+	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil)
 }
 
 // CoinsOptions paginates / filters the classic-asset directory.

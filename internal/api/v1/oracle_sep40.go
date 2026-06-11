@@ -69,35 +69,29 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshot, sources, stale, err := reader.LatestPrice(r.Context(), asset, defaultPriceQuote)
+	// F-1340: route the primary read through the rc.89 XLM dual-form
+	// alias loop, exactly as handlePrice does. Without it, SEP-40
+	// `lastprice(native)` queries only the literal `native/fiat:USD`
+	// key and misses a fresh `crypto:XLM/fiat:USD` VWAP that CEX
+	// trades populate — returning stale/empty here while /v1/price
+	// serves fresh. See readPriceWithAliases for the full rationale.
+	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, defaultPriceQuote)
 	if errors.Is(err, ErrPriceNotFound) {
-		// Same Redis VWAP fallback as /v1/price (price.go) — covers
-		// stablecoin-proxy rewrites (XLM/fiat:USD synthesised from
-		// XLM/USDC-G…) + triangulated chains. Without this, SEP-40
-		// `lastprice(native)` 404s in steady state because
-		// prices_1m has no literal native/fiat:USD bucket, while
-		// /v1/price?asset=native&quote=fiat:USD succeeds via the
-		// same fallback. Caught by the 2026-05-08 prod audit.
+		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
+		// cache (stablecoin-proxy rewrites + triangulated chains) →
+		// read-time stablecoin-fiat proxy → fiat-vs-fiat cross-rate.
+		// Without this, SEP-40 `lastprice(native)` 404s in steady
+		// state because prices_1m has no literal native/fiat:USD
+		// bucket, while /v1/price?asset=native&quote=fiat:USD succeeds
+		// via the same fallback. Caught by the 2026-05-08 prod audit.
 		var ok bool
-		snapshot, sources, _, ok = s.tryRedisVWAPFallback(r.Context(), asset, defaultPriceQuote)
-		stale = false
-		if !ok {
-			// Read-time stablecoin-fiat proxy: walks the operator's
-			// classic USD pegs and rewrites X/fiat:USD to X/<peg>.
-			// Same mechanism as /v1/price (#1217) — the SEP-40
-			// surface needs identical fallback coverage so an
-			// on-chain integrator drop-in-replacing the SEP-40
-			// `lastprice()` call sees the same "available" set as
-			// /v1/price.
-			snapshot, sources, ok = s.tryStablecoinFiatProxy(r.Context(), asset, defaultPriceQuote)
-		}
-		if !ok {
-			// Fiat-vs-fiat cross-rate from the forex snapshot —
-			// covers `lastprice(fiat:EUR)` etc., which would 404
-			// without this branch. Mirrors #1086's /v1/price
-			// fiat fallback.
-			snapshot, sources, ok = s.tryFiatCrossRate(asset, defaultPriceQuote)
-		}
+		snapshot, sources, _, ok = s.priceFallback(r.Context(), asset, defaultPriceQuote)
+		// F-1339 (G2-02): every fallback degradation is below the
+		// surface's documented baseline contract, so flags.stale MUST
+		// be true — the chain itself is the staleness signal (F-1254).
+		// /v1/price does this; the SEP-40 surfaces used to force
+		// stale=false here, shipping stale data with stale=false.
+		stale = ok
 		if !ok {
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/price-not-found",
@@ -323,31 +317,22 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	snapshot, sources, stale, err := reader.LatestPrice(r.Context(), base, quote)
+	// F-1340: route the primary read through the rc.89 XLM dual-form
+	// alias loop, exactly as handlePrice does — so `x_last_price(native,
+	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
+	// trades populate rather than missing it on the literal form.
+	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, base, quote)
 	if errors.Is(err, ErrPriceNotFound) {
-		// Same Redis VWAP fallback as /v1/price for stablecoin-
-		// proxy + triangulated pairs. Companion to the equivalent
-		// fix on /v1/oracle/lastprice — see that handler's comment
-		// for the full rationale.
+		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
+		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
+		// cross-rate. Companion to the equivalent fix on
+		// /v1/oracle/lastprice — see that handler's comment.
 		var ok bool
-		snapshot, sources, _, ok = s.tryRedisVWAPFallback(r.Context(), base, quote)
-		stale = false
-		if !ok {
-			// Read-time stablecoin-fiat proxy: walks the operator's
-			// classic USD pegs and rewrites X/fiat:USD to X/<peg>.
-			// Mirrors the same fallback in /v1/price (#1217) and
-			// /v1/oracle/lastprice (this PR) — kept here too so a
-			// SEP-40 integrator calling `x_last_price(native, fiat:USD)`
-			// sees the same coverage as a /v1/price caller.
-			snapshot, sources, ok = s.tryStablecoinFiatProxy(r.Context(), base, quote)
-		}
-		if !ok {
-			// Fiat-vs-fiat cross-rate via the forex snapshot —
-			// covers `x_last_price(fiat:EUR, fiat:GBP)` etc.
-			// Mirrors the `/v1/oracle/lastprice` and `/v1/price`
-			// fiat fallbacks (#1086 / this PR).
-			snapshot, sources, ok = s.tryFiatCrossRate(base, quote)
-		}
+		snapshot, sources, _, ok = s.priceFallback(r.Context(), base, quote)
+		// F-1339 (G2-02): fallback responses surface flags.stale=true
+		// — the chain itself is the staleness signal (F-1254). The
+		// SEP-40 surface used to force stale=false here.
+		stale = ok
 		if !ok {
 			writeProblem(w, r,
 				"https://api.ratesengine.net/errors/price-not-found",

@@ -3,6 +3,7 @@ package v1_test
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,6 +192,93 @@ func TestOracleXLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
+// TestOracleLastPrice_FallbackSetsStaleFlag pins the F-1339 (G2-02)
+// contract: when the SEP-40 lastprice handler serves any priceFallback
+// branch (Redis VWAP / stablecoin proxy / fiat cross), it MUST set
+// flags.stale=true — the chain itself is the staleness signal (F-1254).
+// Pre-fix the handler forced stale=false on these branches, shipping
+// degraded data labelled fresh exactly the way /v1/price was before
+// F-1254.
+func TestOracleLastPrice_FallbackSetsStaleFlag(t *testing.T) {
+	t.Run("redis vwap fallback", func(t *testing.T) {
+		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+		looker := &stubTriangulatedPriceLooker{value: "0.155", found: true}
+		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+		ts := startHTTPTest(t, srv.Handler())
+
+		resp := mustGet(t, ts.URL+"/v1/oracle/lastprice?asset=native")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200 via fallback", resp.StatusCode)
+		}
+		body, _ := readAll(resp)
+		if !strings.Contains(body, `"stale":true`) {
+			t.Errorf("redis-vwap fallback must set stale=true; body: %s", body)
+		}
+	})
+	t.Run("stablecoin-proxy fallback", func(t *testing.T) {
+		usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+		if err != nil {
+			t.Fatalf("parse USDC: %v", err)
+		}
+		reader := &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{
+				"native/" + usdcClassic.String(): {
+					AssetID: "native", Quote: usdcClassic.String(),
+					Price: "0.1626", PriceType: "vwap",
+				},
+			},
+		}
+		srv := v1.New(v1.Options{
+			Prices:            reader,
+			USDPeggedClassics: []canonical.Asset{usdcClassic},
+		})
+		ts := startHTTPTest(t, srv.Handler())
+
+		resp := mustGet(t, ts.URL+"/v1/oracle/lastprice?asset=native")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200 via peg fallback", resp.StatusCode)
+		}
+		body, _ := readAll(resp)
+		if !strings.Contains(body, `"stale":true`) {
+			t.Errorf("stablecoin-proxy fallback must set stale=true; body: %s", body)
+		}
+	})
+}
+
+// TestOracleLastPrice_AliasResolvesXLM pins F-1340 on the SEP-40
+// lastprice surface: querying asset=native must resolve a snapshot
+// published under the crypto:XLM alias key (and vice-versa), exactly
+// like handlePrice's primary read. Pre-fix the SEP-40 surface queried
+// the literal form only, returning 404 while /v1/price served fresh.
+func TestOracleLastPrice_AliasResolvesXLM(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		// Only the crypto:XLM form is populated (CEX trades write it);
+		// the literal native/fiat:USD key is absent.
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {
+				AssetID: "crypto:XLM", Quote: "fiat:USD",
+				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+			},
+		},
+		sources: map[string][]string{"crypto:XLM/fiat:USD": {"binance"}},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/lastprice?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via crypto:XLM alias", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.SEP40Price `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.Price != "0.12" {
+		t.Errorf("price = %q, want \"0.12\" (resolved via crypto:XLM alias)", env.Data.Price)
+	}
+}
+
 func TestOracleLastPrice_HappyPath(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -308,6 +396,54 @@ func TestOracleXLastPrice_RedisVWAPFallback(t *testing.T) {
 	mustDecode(t, resp, &env)
 	if env.Data.Price != "0.91" {
 		t.Errorf("price = %q, want \"0.91\"", env.Data.Price)
+	}
+}
+
+// TestOracleXLastPrice_AliasResolvesXLM pins F-1340 on the SEP-40
+// cross-pair surface: x_last_price(base=native, quote=fiat:USD) must
+// resolve a snapshot published under the crypto:XLM alias key, like
+// handlePrice's primary read.
+func TestOracleXLastPrice_AliasResolvesXLM(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {
+				AssetID: "crypto:XLM", Quote: "fiat:USD",
+				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/x_last_price?base=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via crypto:XLM alias", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.SEP40Price `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.Price != "0.12" {
+		t.Errorf("price = %q, want \"0.12\" (resolved via crypto:XLM alias)", env.Data.Price)
+	}
+}
+
+// TestOracleXLastPrice_FallbackSetsStaleFlag pins F-1339 on the
+// cross-pair surface: a Redis-VWAP fallback must set stale=true.
+func TestOracleXLastPrice_FallbackSetsStaleFlag(t *testing.T) {
+	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+	looker := &stubTriangulatedPriceLooker{value: "0.91", isTriangulated: true, found: true}
+	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/x_last_price?base=native&quote=fiat:EUR")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via fallback", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"stale":true`) {
+		t.Errorf("x_last_price fallback must set stale=true; body: %s", body)
 	}
 }
 

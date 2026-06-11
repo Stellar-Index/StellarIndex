@@ -140,6 +140,42 @@ func TestPriceBatch_OmitsMissingAssets(t *testing.T) {
 	}
 }
 
+// TestPriceBatch_AliasResolvesXLM pins F-1340 on the batch surface:
+// asset_ids=native must resolve a snapshot published under the
+// crypto:XLM alias key, exactly like handlePrice's primary read.
+// Pre-fix the batch path queried the literal form only, silently
+// dropping the row while /v1/price?asset=native served fresh.
+func TestPriceBatch_AliasResolvesXLM(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		// Only the crypto:XLM form is populated; native is absent.
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {
+				AssetID: "crypto:XLM", Quote: "fiat:USD",
+				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+			},
+		},
+		sources: map[string][]string{"crypto:XLM/fiat:USD": {"binance"}},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.PriceSnapshot `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("got %d entries, want 1 (crypto:XLM alias should resolve)", len(env.Data))
+	}
+	if env.Data[0].Price != "0.12" {
+		t.Errorf("data[0].price = %q, want 0.12 (resolved via crypto:XLM alias)", env.Data[0].Price)
+	}
+}
+
 // TestPriceBatch_RedisFallbackForRewrittenPair — when the
 // PriceReader returns ErrPriceNotFound (typical for an aggregator-
 // rewritten pair like XLM/fiat:USD whose literal form isn't in

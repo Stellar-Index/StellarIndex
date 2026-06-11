@@ -138,20 +138,28 @@ paths:
       security: []
       responses:
         "200":
-          description: Ready to serve. `checks[]` lists each dependency-ping result.
+          description: |
+            Ready to serve. `data.checks[]` lists each
+            dependency-ping result. `data.status` is `ok` when
+            every check passed, or `degraded` when a NON-critical
+            dependency failed (the API still serves via fallback —
+            e.g. Timescale covers a Redis cache miss per ADR-0007 —
+            so the backend stays in the load-balancer pool;
+            `flags.stale` is `true` in the degraded case).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/HealthResponse" }
+              schema: { $ref: "#/components/schemas/ReadyEnvelope" }
         "503":
           description: |
-            One or more serving-plane dependencies failed their
-            ping under the deadline. `status` field is
-            `degraded` and `flags.stale` is `true`; the
-            response body carries the `checks` array so
-            operators can see which dependency failed.
+            One or more CRITICAL serving-plane dependencies failed
+            their ping under the deadline. The response is the same
+            enveloped `ReadyResponse` shape as the 200 (NOT
+            problem+json): `data.status` is `unready`, `flags.stale`
+            is `true`, and `data.checks[]` carries the per-dependency
+            breakdown so operators can see which dependency failed.
           content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadyEnvelope" }
 
   /version:
     get:
@@ -220,18 +228,35 @@ paths:
       summary: List indexed assets.
       description: |
         Paginated list of every asset that has appeared (as base or
-        quote) in the trades hypertable. Cursor is opaque; limit
-        clamped server-side to [1, 500].
+        quote) in the trades hypertable. Cursor is opaque; `limit` is
+        rejected with 400 when outside [1, 500] (NOT clamped).
 
-        The `type` / `code` / `issuer` filter params are planned but
-        not yet implemented — the current handler ignores any filter
-        params and returns the unfiltered page. See the TypeFilter,
-        CodeFilter, IssuerFilter schemas below for the planned
-        shape; they are not wired to any request until the filter
-        path ships.
+        The `asset_class` query param is the major dispatch (see its
+        own parameter below): `fiat` / `stablecoin` / `crypto` serve
+        a class-filtered view from the verified-currency catalogue;
+        `all` returns the unified cross-class listing; omitting it
+        returns the legacy classic-assets page.
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
+        - name: asset_class
+          in: query
+          required: false
+          description: |
+            Major dispatch for the listing. One of:
+            - `fiat` — fiat currencies from the verified-currency catalogue.
+            - `stablecoin` — fiat-pegged stablecoins from the catalogue.
+            - `crypto` — cryptocurrencies from the catalogue. The
+              aliases `blockchain`, `cryptocurrency`, and
+              `cryptocurrencies` fold to `crypto` (the explorer's
+              filter-chip label).
+            - `all` — the unified cross-class listing (every catalogue
+              class plus indexed Stellar assets).
+
+            Omitted: the legacy classic-assets page (unfiltered).
+          schema:
+            type: string
+            enum: [fiat, stablecoin, crypto, blockchain, cryptocurrency, cryptocurrencies, all]
         - name: issuer
           in: query
           required: false
@@ -415,6 +440,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AssetMetadataEnvelope" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /assets/{asset_id}/supply:
+    get:
+      tags: [assets]
+      summary: Live per-token supply (mint − burn − clawback).
+      description: |
+        Real-time total supply for any token, summed from the ClickHouse
+        `supply_flows` lake (decode-at-ingest, ADR-0034): Σmint − Σburn −
+        Σclawback over all history, kept current by the indexer's dual-sink
+        with no rollup refresh. Amounts are decimal strings in the asset's
+        smallest unit (ADR-0003); clients apply per-asset decimals for display.
+
+        Resolution: a Soroban contract id (`C…`) is used directly; a classic
+        asset (`CODE-ISSUER`) resolves to its Stellar-Asset-Contract via the
+        operator's configured SAC wrappers (404 if unmapped); `native` / `XLM`
+        returns the ledger header's `total_coins`
+        (`source=ledger_total_coins`), since XLM has no SAC mint/burn events.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: Live supply.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetSupplyEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /price:
     get:
@@ -784,7 +836,7 @@ paths:
         not this endpoint.
       parameters:
         - { $ref: "#/components/parameters/Base" }
-        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/QuoteRequired" }
         - { $ref: "#/components/parameters/From" }
         - { $ref: "#/components/parameters/To" }
         - name: limit
@@ -904,7 +956,7 @@ paths:
            continuous aggregates (5m/30m ← prices_1m, 4h ← prices_1h).
       parameters:
         - { $ref: "#/components/parameters/Base" }
-        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/QuoteRequired" }
         - { $ref: "#/components/parameters/From" }
         - { $ref: "#/components/parameters/To" }
         - name: interval
@@ -968,7 +1020,7 @@ paths:
         full window.
       parameters:
         - { $ref: "#/components/parameters/Base" }
-        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/QuoteRequired" }
         - { $ref: "#/components/parameters/From" }
         - { $ref: "#/components/parameters/To" }
         - name: outlier_sigma
@@ -1008,7 +1060,7 @@ paths:
         their slot duration, not a full window's worth).
       parameters:
         - { $ref: "#/components/parameters/Base" }
-        - { $ref: "#/components/parameters/Quote" }
+        - { $ref: "#/components/parameters/QuoteRequired" }
         - { $ref: "#/components/parameters/From" }
         - { $ref: "#/components/parameters/To" }
       responses:
@@ -1304,30 +1356,36 @@ paths:
             default: 100
       responses:
         "200":
-          description: Array of issuer summaries.
+          description: Array of issuer summaries (standard envelope; data is the array).
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  required:
-                    - g_strkey
-                    - asset_count
-                    - total_observation_count
-                  properties:
-                    g_strkey: { type: string }
-                    home_domain: { type: string }
-                    org_name:
-                      type: string
-                      description: |
-                        Issuer's organisation name from SEP-1
-                        `[DOCUMENTATION].ORG_NAME`. Populated by
-                        the `ratesengine-ops sep1-refresh` job;
-                        empty until the issuer's stellar.toml
-                        has been resolved.
-                    asset_count: { type: integer, format: int64 }
-                    total_observation_count: { type: integer, format: int64 }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - g_strkey
+                            - asset_count
+                            - total_observation_count
+                          properties:
+                            g_strkey: { type: string }
+                            home_domain: { type: string }
+                            org_name:
+                              type: string
+                              description: |
+                                Issuer's organisation name from SEP-1
+                                `[DOCUMENTATION].ORG_NAME`. Populated by
+                                the `ratesengine-ops sep1-refresh` job;
+                                empty until the issuer's stellar.toml
+                                has been resolved.
+                            asset_count: { type: integer, format: int64 }
+                            total_observation_count: { type: integer, format: int64 }
+                    required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1356,39 +1414,45 @@ paths:
           example: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
       responses:
         "200":
-          description: One issuer row plus issued-asset list.
+          description: One issuer row plus issued-asset list (standard envelope).
           content:
             application/json:
               schema:
-                type: object
-                required: [g_strkey]
-                properties:
-                  g_strkey: { type: string }
-                  home_domain: { type: string }
-                  org_name:
-                    type: string
-                    description: |
-                      Issuer's organisation name from SEP-1
-                      `[DOCUMENTATION].ORG_NAME`. Same value the
-                      listing endpoint surfaces.
-                  auth_required: { type: boolean, nullable: true }
-                  auth_revocable: { type: boolean, nullable: true }
-                  auth_immutable: { type: boolean, nullable: true }
-                  auth_clawback: { type: boolean, nullable: true }
-                  sep1_resolved_at: { type: string, format: date-time, nullable: true }
-                  sep1_payload: { type: object, additionalProperties: true, nullable: true }
-                  creation_ledger: { type: integer, nullable: true }
-                  assets:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        asset_id: { type: string }
-                        code: { type: string }
-                        slug: { type: string }
-                        first_seen_ledger: { type: integer }
-                        last_seen_ledger: { type: integer }
-                        observation_count: { type: integer, format: int64 }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [g_strkey]
+                        properties:
+                          g_strkey: { type: string }
+                          home_domain: { type: string }
+                          org_name:
+                            type: string
+                            description: |
+                              Issuer's organisation name from SEP-1
+                              `[DOCUMENTATION].ORG_NAME`. Same value the
+                              listing endpoint surfaces.
+                          auth_required: { type: boolean, nullable: true }
+                          auth_revocable: { type: boolean, nullable: true }
+                          auth_immutable: { type: boolean, nullable: true }
+                          auth_clawback: { type: boolean, nullable: true }
+                          sep1_resolved_at: { type: string, format: date-time, nullable: true }
+                          sep1_payload: { type: object, additionalProperties: true, nullable: true }
+                          creation_ledger: { type: integer, nullable: true }
+                          assets:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset_id: { type: string }
+                                code: { type: string }
+                                slug: { type: string }
+                                first_seen_ledger: { type: integer }
+                                last_seen_ledger: { type: integer }
+                                observation_count: { type: integer, format: int64 }
+                    required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -1448,46 +1512,52 @@ paths:
             default: 100
       responses:
         "200":
-          description: Per-contract audit-trail rows, newest-first.
+          description: Per-contract audit-trail rows, newest-first (standard envelope).
           content:
             application/json:
               schema:
-                type: object
-                required: [contract_id, count, limit, transfers]
-                properties:
-                  contract_id: { type: string }
-                  count: { type: integer }
-                  limit: { type: integer }
-                  from: { type: string }
-                  to: { type: string }
-                  transfers:
-                    type: array
-                    items:
-                      type: object
-                      required: [ledger, ledger_close_time, event_kind]
-                      properties:
-                        ledger: { type: integer }
-                        ledger_close_time: { type: string, format: date-time }
-                        tx_hash: { type: string }
-                        op_index: { type: integer }
-                        event_index: { type: integer }
-                        event_kind:
-                          type: string
-                          enum: [transfer, approve, set_admin, set_authorized]
-                        from: { type: string }
-                        to: { type: string }
-                        amount:
-                          type: string
-                          description: |
-                            i128 amount as a decimal string (ADR-0003).
-                            Populated for transfer + approve; omitted
-                            for set_admin + set_authorized.
-                        live_until_ledger:
-                          type: integer
-                          description: approve.live_until_ledger.
-                        authorized:
-                          type: boolean
-                          description: set_authorized.authorize.
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [contract_id, count, limit, transfers]
+                        properties:
+                          contract_id: { type: string }
+                          count: { type: integer }
+                          limit: { type: integer }
+                          from: { type: string }
+                          to: { type: string }
+                          transfers:
+                            type: array
+                            items:
+                              type: object
+                              required: [ledger, ledger_close_time, event_kind]
+                              properties:
+                                ledger: { type: integer }
+                                ledger_close_time: { type: string, format: date-time }
+                                tx_hash: { type: string }
+                                op_index: { type: integer }
+                                event_index: { type: integer }
+                                event_kind:
+                                  type: string
+                                  enum: [transfer, approve, set_admin, set_authorized]
+                                from: { type: string }
+                                to: { type: string }
+                                amount:
+                                  type: string
+                                  description: |
+                                    i128 amount as a decimal string (ADR-0003).
+                                    Populated for transfer + approve; omitted
+                                    for set_admin + set_authorized.
+                                live_until_ledger:
+                                  type: integer
+                                  description: approve.live_until_ledger.
+                                authorized:
+                                  type: boolean
+                                  description: set_authorized.authorize.
+                    required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1544,37 +1614,43 @@ paths:
           example: binance
       responses:
         "200":
-          description: One row from change_summary_5m.
+          description: One row from change_summary_5m (standard envelope).
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  entity_type: { type: string }
-                  entity_id: { type: string }
-                  refreshed_at: { type: string, format: date-time }
-                  current_value: { type: number }
-                  h1_value: { type: number, nullable: true }
-                  h1_delta_pct: { type: number, nullable: true }
-                  h24_value: { type: number, nullable: true }
-                  h24_delta_pct: { type: number, nullable: true }
-                  d7_value: { type: number, nullable: true }
-                  d7_delta_pct: { type: number, nullable: true }
-                  d30_value: { type: number, nullable: true }
-                  d30_delta_pct: { type: number, nullable: true }
-                  ath_value: { type: number, nullable: true }
-                  ath_at: { type: string, format: date-time, nullable: true }
-                  atl_value: { type: number, nullable: true }
-                  atl_at: { type: string, format: date-time, nullable: true }
-                  streak_direction:
-                    type: string
-                    enum: [up, down, flat]
-                    nullable: true
-                  streak_days: { type: integer, nullable: true }
-                  acceleration:
-                    type: string
-                    enum: [increasing, flat, decreasing]
-                    nullable: true
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          entity_type: { type: string }
+                          entity_id: { type: string }
+                          refreshed_at: { type: string, format: date-time }
+                          current_value: { type: number }
+                          h1_value: { type: number, nullable: true }
+                          h1_delta_pct: { type: number, nullable: true }
+                          h24_value: { type: number, nullable: true }
+                          h24_delta_pct: { type: number, nullable: true }
+                          d7_value: { type: number, nullable: true }
+                          d7_delta_pct: { type: number, nullable: true }
+                          d30_value: { type: number, nullable: true }
+                          d30_delta_pct: { type: number, nullable: true }
+                          ath_value: { type: number, nullable: true }
+                          ath_at: { type: string, format: date-time, nullable: true }
+                          atl_value: { type: number, nullable: true }
+                          atl_at: { type: string, format: date-time, nullable: true }
+                          streak_direction:
+                            type: string
+                            enum: [up, down, flat]
+                            nullable: true
+                          streak_days: { type: integer, nullable: true }
+                          acceleration:
+                            type: string
+                            enum: [increasing, flat, decreasing]
+                            nullable: true
+                    required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -1656,24 +1732,30 @@ paths:
             example: "ledgerstream"
       responses:
         "200":
-          description: Array of cursor entries, one per (source, sub_source).
+          description: Array of cursor entries, one per (source, sub_source) (standard envelope; data is the array).
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  required:
-                    - source
-                    - last_ledger
-                    - last_updated
-                    - lag_seconds
-                  properties:
-                    source: { type: string }
-                    sub_source: { type: string }
-                    last_ledger: { type: integer }
-                    last_updated: { type: string, format: date-time }
-                    lag_seconds: { type: integer, format: int64 }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - source
+                            - last_ledger
+                            - last_updated
+                            - lag_seconds
+                          properties:
+                            source: { type: string }
+                            sub_source: { type: string }
+                            last_ledger: { type: integer }
+                            last_updated: { type: string, format: date-time }
+                            lag_seconds: { type: integer, format: int64 }
+                    required: [data]
         "400":
           description: |
             Either `max_age` didn't parse as a positive Go duration
@@ -1714,129 +1796,135 @@ paths:
         a refreshing status page without hiding degradation.
       responses:
         "200":
-          description: Snapshot of the region's ingest state.
+          description: Snapshot of the region's ingest state (standard envelope).
           content:
             application/json:
               schema:
-                type: object
-                required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, market_cap, supply, sources]
-                properties:
-                  region:
-                    type: object
-                    required: [name, deployment]
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      name:       { type: string, example: "r1" }
-                      deployment: { type: string, example: "production" }
-                  version:
-                    type: object
-                    required: [version, build_date, commit, dirty, go_version]
-                    properties:
-                      version:    { type: string, example: "v0.5.0-rc.50" }
-                      build_date: { type: string, example: "2026-05-13T18:21:59Z" }
-                      commit:     { type: string, example: "539333827c1a25d3ecfdcda67aa9c9a6f30cf6d3" }
-                      dirty:      { type: string, example: "false" }
-                      go_version: { type: string, example: "go1.25.10" }
-                  ledger:
-                    type: object
-                    required: [latest_ledger, lag_seconds, markets_count_24h, assets_indexed]
-                    properties:
-                      latest_ledger:     { type: integer, format: int64 }
-                      lag_seconds:       { type: integer, format: int64 }
-                      volume_24h_usd:    { type: string, description: "Decimal string per ADR-0003." }
-                      markets_count_24h: { type: integer, format: int64 }
-                      assets_indexed:    { type: integer, format: int64 }
-                  backfill:
-                    type: array
-                    items:
-                      type: object
-                      required: [decoder, ranges_total, ranges_complete, ranges_running, ranges_stalled, ranges_active, oldest_lag_seconds, newest_ledger]
-                      properties:
-                        decoder:            { type: string, example: "sdex,soroswap" }
-                        ranges_total:       { type: integer, description: "Total cursor rows for this decoder set." }
-                        ranges_complete:    { type: integer, description: "last_ledger == range_end." }
-                        ranges_running:     { type: integer, description: "Incomplete AND updated within the last 10 min — actively progressing." }
-                        ranges_stalled:     { type: integer, description: "Incomplete AND not updated for 10+ min — needs `-resume` restart." }
-                        ranges_active:      { type: integer, description: "Back-compat: ranges_running + ranges_stalled." }
-                        oldest_updated_at:  { type: string, format: date-time }
-                        oldest_lag_seconds: { type: integer, format: int64 }
-                        newest_ledger:      { type: integer, format: int64 }
-                  backfill_coverage:
-                    type: array
-                    description: |
-                      Per-source min/max ledger + trade count from the
-                      trades hypertable. Answers "do we have data
-                      from genesis to tip?" — `applies=true` rows are
-                      Stellar-ledger-bearing sources (sdex + Soroban
-                      contracts); CEX/FX sources surface as
-                      `applies=false`. Background-refreshed every
-                      5 min; empty array until first refresh
-                      completes after process start.
-                    items:
-                      type: object
-                      required: [source, applies, entries]
-                      properties:
-                        source:          { type: string, example: "sdex" }
-                        applies:         { type: boolean, description: "False for CEX/FX sources whose trades have no Stellar ledger." }
-                        genesis_ledger:  { type: integer, format: int64, description: "Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban)." }
-                        earliest_ledger: { type: integer, format: int64 }
-                        latest_ledger:   { type: integer, format: int64 }
-                        entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
-                        coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
-                  backfill_coverage_as_of:
-                    type: string
-                    format: date-time
-                    description: When the backfill_coverage snapshot was last refreshed.
-                  cagg_coverage:
-                    type: object
-                    description: |
-                      MIN/MAX bucket of `prices_1h`, the canonical
-                      "long-lived" continuous aggregate. Real
-                      source-of-truth for "do we have historical
-                      OHLC since genesis?" — raw trades have a 90-day
-                      retention but the hourly+ CAGGs are retained
-                      forever (migration 0002).
-                    required: [bucket_count]
-                    properties:
-                      earliest_bucket: { type: string, format: date-time }
-                      latest_bucket:   { type: string, format: date-time }
-                      bucket_count:    { type: integer, format: int64 }
-                  fx_backfill:
-                    type: object
-                    required: [total_quotes, currencies_count]
-                    properties:
-                      earliest_quote:   { type: string, example: "1999-01-04" }
-                      latest_quote:     { type: string, example: "2026-05-13" }
-                      total_quotes:     { type: integer, format: int64 }
-                      currencies_count: { type: integer }
-                  market_cap:
-                    type: object
-                    required: [entries_count]
-                    properties:
-                      entries_count:     { type: integer }
-                      oldest_fetched_at: { type: string, format: date-time }
-                      newest_fetched_at: { type: string, format: date-time }
-                  supply:
-                    type: object
-                    required: [classic_assets_with_supply, sep41_assets_with_supply]
-                    properties:
-                      classic_assets_with_supply: { type: integer }
-                      sep41_assets_with_supply:   { type: integer }
-                      last_snapshot_at:           { type: string, format: date-time }
-                      latest_ledger:              { type: integer, format: int64 }
-                  sources:
-                    type: array
-                    items:
-                      type: object
-                      required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, markets_count_24h]
-                      properties:
-                        name:              { type: string, example: "binance" }
-                        class:             { type: string, example: "exchange" }
-                        subclass:          { type: string, example: "cex" }
-                        include_in_vwap:   { type: boolean }
-                        backfill_safe:     { type: boolean }
-                        trade_count_24h:   { type: integer, format: int64 }
-                        volume_24h_usd:    { type: string }
-                        markets_count_24h: { type: integer, format: int64 }
+                      data:
+                        type: object
+                        required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, market_cap, supply, sources]
+                        properties:
+                          region:
+                            type: object
+                            required: [name, deployment]
+                            properties:
+                              name:       { type: string, example: "r1" }
+                              deployment: { type: string, example: "production" }
+                          version:
+                            type: object
+                            required: [version, build_date, commit, dirty, go_version]
+                            properties:
+                              version:    { type: string, example: "v0.5.0-rc.50" }
+                              build_date: { type: string, example: "2026-05-13T18:21:59Z" }
+                              commit:     { type: string, example: "539333827c1a25d3ecfdcda67aa9c9a6f30cf6d3" }
+                              dirty:      { type: string, example: "false" }
+                              go_version: { type: string, example: "go1.25.10" }
+                          ledger:
+                            type: object
+                            required: [latest_ledger, lag_seconds, markets_count_24h, assets_indexed]
+                            properties:
+                              latest_ledger:     { type: integer, format: int64 }
+                              lag_seconds:       { type: integer, format: int64 }
+                              volume_24h_usd:    { type: string, description: "Decimal string per ADR-0003." }
+                              markets_count_24h: { type: integer, format: int64 }
+                              assets_indexed:    { type: integer, format: int64 }
+                          backfill:
+                            type: array
+                            items:
+                              type: object
+                              required: [decoder, ranges_total, ranges_complete, ranges_running, ranges_stalled, ranges_active, oldest_lag_seconds, newest_ledger]
+                              properties:
+                                decoder:            { type: string, example: "sdex,soroswap" }
+                                ranges_total:       { type: integer, description: "Total cursor rows for this decoder set." }
+                                ranges_complete:    { type: integer, description: "last_ledger == range_end." }
+                                ranges_running:     { type: integer, description: "Incomplete AND updated within the last 10 min — actively progressing." }
+                                ranges_stalled:     { type: integer, description: "Incomplete AND not updated for 10+ min — needs `-resume` restart." }
+                                ranges_active:      { type: integer, description: "Back-compat: ranges_running + ranges_stalled." }
+                                oldest_updated_at:  { type: string, format: date-time }
+                                oldest_lag_seconds: { type: integer, format: int64 }
+                                newest_ledger:      { type: integer, format: int64 }
+                          backfill_coverage:
+                            type: array
+                            description: |
+                              Per-source min/max ledger + trade count from the
+                              trades hypertable. Answers "do we have data
+                              from genesis to tip?" — `applies=true` rows are
+                              Stellar-ledger-bearing sources (sdex + Soroban
+                              contracts); CEX/FX sources surface as
+                              `applies=false`. Background-refreshed every
+                              5 min; empty array until first refresh
+                              completes after process start.
+                            items:
+                              type: object
+                              required: [source, applies, entries]
+                              properties:
+                                source:          { type: string, example: "sdex" }
+                                applies:         { type: boolean, description: "False for CEX/FX sources whose trades have no Stellar ledger." }
+                                genesis_ledger:  { type: integer, format: int64, description: "Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban)." }
+                                earliest_ledger: { type: integer, format: int64 }
+                                latest_ledger:   { type: integer, format: int64 }
+                                entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
+                                coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
+                          backfill_coverage_as_of:
+                            type: string
+                            format: date-time
+                            description: When the backfill_coverage snapshot was last refreshed.
+                          cagg_coverage:
+                            type: object
+                            description: |
+                              MIN/MAX bucket of `prices_1h`, the canonical
+                              "long-lived" continuous aggregate. Real
+                              source-of-truth for "do we have historical
+                              OHLC since genesis?" — raw trades have a 90-day
+                              retention but the hourly+ CAGGs are retained
+                              forever (migration 0002).
+                            required: [bucket_count]
+                            properties:
+                              earliest_bucket: { type: string, format: date-time }
+                              latest_bucket:   { type: string, format: date-time }
+                              bucket_count:    { type: integer, format: int64 }
+                          fx_backfill:
+                            type: object
+                            required: [total_quotes, currencies_count]
+                            properties:
+                              earliest_quote:   { type: string, example: "1999-01-04" }
+                              latest_quote:     { type: string, example: "2026-05-13" }
+                              total_quotes:     { type: integer, format: int64 }
+                              currencies_count: { type: integer }
+                          market_cap:
+                            type: object
+                            required: [entries_count]
+                            properties:
+                              entries_count:     { type: integer }
+                              oldest_fetched_at: { type: string, format: date-time }
+                              newest_fetched_at: { type: string, format: date-time }
+                          supply:
+                            type: object
+                            required: [classic_assets_with_supply, sep41_assets_with_supply]
+                            properties:
+                              classic_assets_with_supply: { type: integer }
+                              sep41_assets_with_supply:   { type: integer }
+                              last_snapshot_at:           { type: string, format: date-time }
+                              latest_ledger:              { type: integer, format: int64 }
+                          sources:
+                            type: array
+                            items:
+                              type: object
+                              required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, markets_count_24h]
+                              properties:
+                                name:              { type: string, example: "binance" }
+                                class:             { type: string, example: "exchange" }
+                                subclass:          { type: string, example: "cex" }
+                                include_in_vwap:   { type: boolean }
+                                backfill_safe:     { type: boolean }
+                                trade_count_24h:   { type: integer, format: int64 }
+                                volume_24h_usd:    { type: string }
+                                markets_count_24h: { type: integer, format: int64 }
+                    required: [data]
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
 
@@ -1859,58 +1947,64 @@ paths:
         reports the *currently active* incidents from Alertmanager.
       responses:
         "200":
-          description: List of past incidents, newest first.
+          description: List of past incidents, newest first (standard envelope).
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - incidents
-                  - count
-                properties:
-                  incidents:
-                    type: array
-                    items:
-                      type: object
-                      required: [slug, title, severity, status, started_at, body_markdown]
-                      properties:
-                        slug: { type: string, example: "2026-05-06-postgres-lock-table-full" }
-                        title: { type: string }
-                        severity:
-                          type: string
-                          enum: [SEV-1, SEV-2, SEV-3]
-                        status:
-                          type: string
-                          enum: [investigating, identified, monitoring, resolved]
-                        started_at: { type: string, format: date-time }
-                        resolved_at:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        affected_components:
-                          type: array
-                          items: { type: string }
-                        postmortem:
-                          type: string
-                          description: Optional reference to the internal post-mortem.
-                        body_markdown:
-                          type: string
-                          description: Markdown body — render with the renderer of your choice.
-                  count: { type: integer }
-              # Example shows the `data` block only — responses are
-              # wrapped in the standard envelope (data + as_of + flags);
-              # see EnvelopeMeta.
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required:
+                          - incidents
+                          - count
+                        properties:
+                          incidents:
+                            type: array
+                            items:
+                              type: object
+                              required: [slug, title, severity, status, started_at, body_markdown]
+                              properties:
+                                slug: { type: string, example: "2026-05-06-postgres-lock-table-full" }
+                                title: { type: string }
+                                severity:
+                                  type: string
+                                  enum: [SEV-1, SEV-2, SEV-3]
+                                status:
+                                  type: string
+                                  enum: [investigating, identified, monitoring, resolved]
+                                started_at: { type: string, format: date-time }
+                                resolved_at:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                                affected_components:
+                                  type: array
+                                  items: { type: string }
+                                postmortem:
+                                  type: string
+                                  description: Optional reference to the internal post-mortem.
+                                body_markdown:
+                                  type: string
+                                  description: Markdown body — render with the renderer of your choice.
+                          count: { type: integer }
+                    required: [data]
               example:
-                count: 1
-                incidents:
-                  - slug: "2026-05-06-postgres-lock-table-full"
-                    title: "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full"
-                    severity: "SEV-3"
-                    status: "resolved"
-                    started_at: "2026-05-06T15:00:00Z"
-                    resolved_at: "2026-05-06T22:39:00Z"
-                    affected_components: ["indexer", "storage"]
-                    body_markdown: "## Identification\n\nSome trades arriving on coinbase, binance…"
+                data:
+                  count: 1
+                  incidents:
+                    - slug: "2026-05-06-postgres-lock-table-full"
+                      title: "[SEV-3] Indexer dropping ~1% of trades — Postgres lock-table-full"
+                      severity: "SEV-3"
+                      status: "resolved"
+                      started_at: "2026-05-06T15:00:00Z"
+                      resolved_at: "2026-05-06T22:39:00Z"
+                      affected_components: ["indexer", "storage"]
+                      body_markdown: "## Identification\n\nSome trades arriving on coinbase, binance…"
+                as_of: "2026-05-06T22:40:00Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /incidents.atom:
@@ -2055,58 +2149,64 @@ paths:
         that just want a quick health-of-the-network number.
       responses:
         "200":
-          description: Aggregate stats.
+          description: Aggregate stats (standard envelope).
           content:
             application/json:
               schema:
-                type: object
-                required: [markets_count_24h, assets_indexed, latest_ledger, exchange_sources, total_sources]
-                properties:
-                  volume_24h_usd:
-                    type: string
-                    nullable: true
-                    description: |
-                      SUM(prices_1m.volume_usd) over the trailing
-                      24h. Decimal string per ADR-0003.
-                  markets_count_24h:
-                    type: integer
-                    description: Distinct (base, quote) pairs with non-null volume in 24h.
-                  assets_indexed:
-                    type: integer
-                    description: Total rows in classic_assets.
-                  latest_ledger:
-                    type: integer
-                    description: Max last_ledger across non-backfill sources.
-                  exchange_sources:
-                    type: integer
-                    description: |
-                      Count of `class=exchange` sources REGISTERED in
-                      the binary's `internal/sources/external.Registry`
-                      map. Constant across regions running the same
-                      build; independent of operator config.
-                  total_sources:
-                    type: integer
-                    description: |
-                      Count of ALL registered sources (every entry in
-                      `internal/sources/external.Registry`). Different
-                      from `/v1/status`'s `freshness.total_sources`,
-                      which counts only sources the operator has
-                      ENABLED at runtime — typically a strict subset.
-                      Today on r1: registry=21, enabled=17, active=15.
-                      The two `total_sources` measure different things
-                      by design; see the field doc on
-                      `internal/api/v1.NetworkStats` for the full
-                      semantic table.
-              # Example shows the `data` block only — responses are
-              # wrapped in the standard envelope (data + as_of + flags);
-              # see EnvelopeMeta.
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [markets_count_24h, assets_indexed, latest_ledger, exchange_sources, total_sources]
+                        properties:
+                          volume_24h_usd:
+                            type: string
+                            nullable: true
+                            description: |
+                              SUM(prices_1m.volume_usd) over the trailing
+                              24h. Decimal string per ADR-0003.
+                          markets_count_24h:
+                            type: integer
+                            description: Distinct (base, quote) pairs with non-null volume in 24h.
+                          assets_indexed:
+                            type: integer
+                            description: Total rows in classic_assets.
+                          latest_ledger:
+                            type: integer
+                            description: Max last_ledger across non-backfill sources.
+                          exchange_sources:
+                            type: integer
+                            description: |
+                              Count of `class=exchange` sources REGISTERED in
+                              the binary's `internal/sources/external.Registry`
+                              map. Constant across regions running the same
+                              build; independent of operator config.
+                          total_sources:
+                            type: integer
+                            description: |
+                              Count of ALL registered sources (every entry in
+                              `internal/sources/external.Registry`). Different
+                              from `/v1/status`'s `freshness.total_sources`,
+                              which counts only sources the operator has
+                              ENABLED at runtime — typically a strict subset.
+                              Today on r1: registry=21, enabled=17, active=15.
+                              The two `total_sources` measure different things
+                              by design; see the field doc on
+                              `internal/api/v1.NetworkStats` for the full
+                              semantic table.
+                    required: [data]
               example:
-                volume_24h_usd: "5941104763.13358600"
-                markets_count_24h: 4934
-                assets_indexed: 442190
-                latest_ledger: 62450017
-                exchange_sources: 11
-                total_sources: 21
+                data:
+                  volume_24h_usd: "5941104763.13358600"
+                  markets_count_24h: 4934
+                  assets_indexed: 442190
+                  latest_ledger: 62450017
+                  exchange_sources: 11
+                  total_sources: 21
+                as_of: "2026-05-05T15:09:00.119Z"
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -3147,6 +3247,10 @@ components:
         Strict canonical form only — `XLM` / `USDC` are rejected;
         use `native` for XLM and the full `<code>-<G…>` strkey for
         credit assets.
+    # Optional quote — defaults to fiat:USD when omitted. Used by the
+    # price family (/price, /price/tip, /price/batch, /chart,
+    # /observations) where handlePrice et al. fall back to
+    # defaultPriceQuote.
     Quote:
       name: quote
       in: query
@@ -3157,6 +3261,23 @@ components:
         `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
         the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
         `fiat:EUR`). Default `fiat:USD`.
+
+    # Required quote — the base/quote pair family (/history, /ohlc,
+    # /vwap, /twap) goes through parseBaseQuote (history.go), which
+    # 400s when `quote` is omitted rather than defaulting it. There is
+    # NO default on this surface; the parameter is mandatory.
+    QuoteRequired:
+      name: quote
+      in: query
+      required: true
+      schema: { type: string, example: "fiat:USD" }
+      example: "fiat:USD"
+      description: |
+        Quote-side asset (REQUIRED on this endpoint). Either a
+        canonical asset identifier (`native`, `<code>-<issuer>`,
+        contract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,
+        `fiat:EUR`). Unlike the `/price` family, this endpoint does
+        NOT default the quote — omitting it returns 400.
     Timeframe:
       name: timeframe
       in: query
@@ -3667,6 +3788,50 @@ components:
         status: { type: string, enum: [ok, degraded] }
       required: [status]
 
+    # /readyz body shape (enveloped). `status` carries three values:
+    # `ok` (all checks pass), `degraded` (a non-critical dependency
+    # failed — still 200), `unready` (a critical dependency failed —
+    # 503). See server.go handleReadyz.
+    ReadyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unready]
+          description: |
+            `ok` when every dependency check passed; `degraded`
+            (HTTP 200) when a NON-critical dependency failed and the
+            API still serves via fallback; `unready` (HTTP 503) when
+            a CRITICAL dependency failed.
+        uptime:
+          type: string
+          description: Human-readable process uptime, truncated to the second (e.g. `3h12m4s`).
+        checks:
+          type: array
+          description: Per-dependency ping results. Present on `/readyz`; absent on `/healthz`.
+          items:
+            type: object
+            properties:
+              name:  { type: string, description: "Dependency name (e.g. `postgres`, `redis`)." }
+              ok:    { type: boolean, description: "True when the dependency answered its ping within the deadline." }
+              error: { type: string, description: "Failure reason; present only when `ok` is false." }
+            required: [name, ok]
+        status_root:
+          type: string
+          description: |
+            Static link (`/v1/status`) to the rich health rollup, so a
+            probe consumer following only `/readyz`/`/healthz` can find
+            the SLA-truth endpoint without out-of-band knowledge.
+      required: [status, uptime]
+
+    ReadyEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ReadyResponse" }
+          required: [data]
+
     VersionResponse:
       allOf:
         - { $ref: "#/components/schemas/EnvelopeMeta" }
@@ -4107,6 +4272,33 @@ components:
             data: { $ref: "#/components/schemas/AssetMetadata" }
           required: [data]
 
+    AssetSupply:
+      type: object
+      description: |
+        Live per-token supply from the decode-at-ingest supply_flows lake
+        (ADR-0034). Amounts are decimal strings in the asset's smallest unit.
+      properties:
+        asset_id:       { type: string, description: "The requested asset_id, echoed back." }
+        contract_id:    { type: string, description: "The contract (Soroban token or classic SAC) supply is keyed by. Omitted for native XLM." }
+        total_supply:   { type: string, description: "Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003)." }
+        mint_total:     { type: string, description: "Decimal string: Σ mint. Omitted for native." }
+        burn_total:     { type: string, description: "Decimal string: Σ burn. Omitted for native." }
+        clawback_total: { type: string, description: "Decimal string: Σ clawback. Omitted for native." }
+        flow_count:     { type: integer, format: int64, description: "Number of supply-affecting events summed." }
+        source:
+          type: string
+          enum: [mint_burn_flows, ledger_total_coins]
+          description: "How total_supply was derived: mint/burn/clawback flows, or the ledger header total_coins (native XLM)."
+      required: [asset_id, total_supply, flow_count, source]
+
+    AssetSupplyEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AssetSupply" }
+          required: [data]
+
     # Price
     #
     # Fields marked "aggregator" are populated once the aggregator
@@ -4121,7 +4313,15 @@ components:
         asset_id:          { type: string }
         quote:             { type: string }
         price:             { type: string, description: "Decimal string. Never JSON number." }
-        price_type:        { type: string, enum: [vwap, twap, last_trade] }
+        price_type:
+          type: string
+          enum: [vwap, twap, last_trade, peg]
+          description: |
+            How the price was derived. `peg` is emitted on the
+            stablecoin self-peg path (`/v1/price?asset=<USD-pegged
+            classic>&quote=fiat:USD` returns `1.0` with
+            `flags.triangulated=true`) — see price.go
+            tryStablecoinFiatProxy.
         # observed_at = close-time of the underlying last_trade (for
         # last_trade price_type) or end of the aggregation window
         # (for vwap/twap). RFC 3339, UTC.
@@ -4275,7 +4475,14 @@ components:
                 quote:       { type: string }
                 timeframe:   { type: string, enum: [1h, 24h, 1w, 1mo, 1y, all] }
                 granularity: { type: string, enum: [1m, 15m, 1h, 4h, 1d, 1w, 1mo] }
-                price_type:  { type: string, enum: [vwap, twap] }
+                price_type:
+                  type: string
+                  enum: [vwap, market_cap]
+                  description: |
+                    `vwap` for the default price chart; `market_cap`
+                    on the market-cap chart variant (chart.go
+                    handleChartMarketCap). `twap` is never emitted on
+                    this surface.
                 points:
                   type: array
                   items: { $ref: "#/components/schemas/HistoryPoint" }

@@ -2,8 +2,10 @@ package client
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestAPIError_StatusPredicates pins each Is* predicate behaviour.
@@ -104,7 +106,7 @@ func TestAPIError_ErrorString(t *testing.T) {
 // through to a status-only error with errEmptyJSON's message.
 func TestParseAPIError(t *testing.T) {
 	t.Run("non-JSON small body lands in Detail", func(t *testing.T) {
-		e := parseAPIError(502, "text/plain", []byte("upstream timeout"))
+		e := parseAPIError(502, "text/plain", "", []byte("upstream timeout"))
 		if e.Status != 502 {
 			t.Errorf("Status=%d, want 502", e.Status)
 		}
@@ -114,14 +116,14 @@ func TestParseAPIError(t *testing.T) {
 	})
 
 	t.Run("non-JSON small body trims whitespace", func(t *testing.T) {
-		e := parseAPIError(502, "text/plain", []byte("  oops  \n"))
+		e := parseAPIError(502, "text/plain", "", []byte("  oops  \n"))
 		if e.Detail != "oops" {
 			t.Errorf("Detail=%q, want \"oops\"", e.Detail)
 		}
 	})
 
 	t.Run("non-JSON empty body — Detail empty", func(t *testing.T) {
-		e := parseAPIError(502, "text/plain", []byte(""))
+		e := parseAPIError(502, "text/plain", "", []byte(""))
 		if e.Detail != "" {
 			t.Errorf("Detail=%q, want empty", e.Detail)
 		}
@@ -133,7 +135,7 @@ func TestParseAPIError(t *testing.T) {
 		for i := range body {
 			body[i] = 'x'
 		}
-		e := parseAPIError(502, "text/plain", body)
+		e := parseAPIError(502, "text/plain", "", body)
 		if e.Detail != "" {
 			t.Errorf("Detail=%q, want empty (oversize body should not leak through)", e.Detail)
 		}
@@ -148,7 +150,7 @@ func TestParseAPIError(t *testing.T) {
 			"instance": "/v1/price?quote=fiat:USD",
 			"request_id": "req-xyz-789"
 		}`)
-		e := parseAPIError(400, "application/problem+json", body)
+		e := parseAPIError(400, "application/problem+json", "", body)
 		if e.Status != 400 {
 			t.Errorf("Status=%d, want 400", e.Status)
 		}
@@ -174,16 +176,68 @@ func TestParseAPIError(t *testing.T) {
 		// candidate. A plain application/json body that happens to
 		// have problem+json shape decodes the same.
 		body := []byte(`{"title": "Internal","status": 500}`)
-		e := parseAPIError(500, "application/json", body)
+		e := parseAPIError(500, "application/json", "", body)
 		if e.Title != "Internal" {
 			t.Errorf("Title=%q", e.Title)
 		}
 	})
 
 	t.Run("malformed JSON — Detail = errEmptyJSON message", func(t *testing.T) {
-		e := parseAPIError(500, "application/problem+json", []byte("not json at all"))
+		e := parseAPIError(500, "application/problem+json", "", []byte("not json at all"))
 		if !strings.Contains(e.Detail, "non-problem+json") {
 			t.Errorf("Detail=%q, want errEmptyJSON's message", e.Detail)
+		}
+	})
+}
+
+// TestParseAPIError_RetryAfter pins the G22-08 contract: the
+// Retry-After response header is parsed into APIError.RetryAfter for
+// both the delta-seconds and HTTP-date wire forms, and ignored when
+// absent / in the past / unparseable.
+func TestParseAPIError_RetryAfter(t *testing.T) {
+	t.Run("delta-seconds populates RetryAfter", func(t *testing.T) {
+		e := parseAPIError(429, "application/problem+json", "60", []byte(`{"title":"Rate limited"}`))
+		if e.RetryAfter != 60*time.Second {
+			t.Errorf("RetryAfter=%v, want 60s", e.RetryAfter)
+		}
+		if d, ok := e.RetryAfterDuration(); !ok || d != 60*time.Second {
+			t.Errorf("RetryAfterDuration()=(%v,%v), want (60s,true)", d, ok)
+		}
+	})
+
+	t.Run("absent header leaves RetryAfter zero", func(t *testing.T) {
+		e := parseAPIError(503, "application/problem+json", "", []byte(`{"title":"Unavailable"}`))
+		if e.RetryAfter != 0 {
+			t.Errorf("RetryAfter=%v, want 0", e.RetryAfter)
+		}
+		if _, ok := e.RetryAfterDuration(); ok {
+			t.Error("RetryAfterDuration() ok=true with no header, want false")
+		}
+	})
+
+	t.Run("HTTP-date in the future yields a positive duration", func(t *testing.T) {
+		future := time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)
+		e := parseAPIError(503, "text/plain", future, nil)
+		// Allow slack for the time-of-eval gap; must be clearly positive.
+		if e.RetryAfter < 30*time.Second || e.RetryAfter > 90*time.Second {
+			t.Errorf("RetryAfter=%v, want ~90s", e.RetryAfter)
+		}
+	})
+
+	t.Run("HTTP-date in the past yields zero (never negative)", func(t *testing.T) {
+		past := time.Now().Add(-90 * time.Second).UTC().Format(http.TimeFormat)
+		e := parseAPIError(503, "text/plain", past, nil)
+		if e.RetryAfter != 0 {
+			t.Errorf("RetryAfter=%v, want 0 for a past date", e.RetryAfter)
+		}
+	})
+
+	t.Run("unparseable / non-positive header yields zero", func(t *testing.T) {
+		for _, v := range []string{"soon", "0", "-5"} {
+			e := parseAPIError(429, "text/plain", v, nil)
+			if e.RetryAfter != 0 {
+				t.Errorf("RetryAfter for %q = %v, want 0", v, e.RetryAfter)
+			}
 		}
 	})
 }

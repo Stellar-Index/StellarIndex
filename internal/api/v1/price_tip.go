@@ -139,7 +139,12 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// aggregator wires the closed-bucket cache; both are in-contract
 	// for the tip fallback per ADR-0018 (the customer reads price_type
 	// + observed_at to know what they got).
-	snap, sources, _, err := s.prices.LatestPrice(ctx, asset, quote)
+	//
+	// F-1340: route through the rc.89 XLM dual-form alias loop, exactly
+	// as handlePrice does, so /v1/price/tip?asset=native resolves a
+	// fresh crypto:XLM observation rather than missing it on the
+	// literal form.
+	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, quote)
 	if err == nil {
 		return snap, sources, nil
 	}

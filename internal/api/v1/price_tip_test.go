@@ -202,6 +202,34 @@ func TestPriceTip_FallbackWhenNoHistoryWired(t *testing.T) {
 	}
 }
 
+// TestPriceTip_AliasResolvesXLM pins F-1340 on the tip surface:
+// asset=native must resolve a LatestPrice observation published under
+// the crypto:XLM alias key (the rolling-window VWAP path being empty),
+// exactly like handlePrice's primary read. Pre-fix the tip fallback
+// queried the literal form only and 404'd while /v1/price served fresh.
+func TestPriceTip_AliasResolvesXLM(t *testing.T) {
+	prices := &stubPriceReader{
+		// Only the crypto:XLM form is populated; native is absent.
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {
+				AssetID: "crypto:XLM", Quote: "fiat:USD",
+				Price: "0.55", PriceType: "last_trade",
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: prices})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via crypto:XLM alias", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.55"`) {
+		t.Errorf("tip alias body missing price 0.55: %s", body)
+	}
+}
+
 // TestPriceTip_RedisFallbackForRewrittenPair — when both the
 // rolling-window VWAP path AND PriceReader.LatestPrice come up empty
 // (typical for an aggregator-rewritten pair like XLM/fiat:USD whose

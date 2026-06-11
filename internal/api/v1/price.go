@@ -126,9 +126,12 @@ type PriceSnapshot struct {
 	// Computed by the reader from the underlying trade or CAGG row.
 	Price string `json:"price"`
 
-	// PriceType is one of: "vwap", "twap", "last_trade" (see
+	// PriceType is one of: "vwap", "twap", "last_trade", "peg" (see
 	// Freighter RFP §Misc). Freighter prefers VWAP > TWAP >
 	// last_trade; our reader picks the best available and reports it.
+	// "peg" is emitted on the stablecoin self-peg path
+	// (tryStablecoinFiatProxy) — a USD-pegged classic asset priced in
+	// fiat:USD returns 1.0.
 	PriceType string `json:"price_type"`
 
 	// ObservedAt is when the underlying trade closed (for
@@ -1037,7 +1040,12 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			detail: "price of an asset in itself is always 1; " + raw + " matches the quote",
 		}}
 	}
-	snap, sources, stale, err := s.prices.LatestPrice(ctx, asset, quote)
+	// F-1340: route the primary read through the rc.89 XLM dual-form
+	// alias loop, exactly as handlePrice does. Pre-fix the batch path
+	// queried the literal form only, so asset_ids=native returned
+	// stale/empty while /v1/price?asset=native served fresh CEX VWAP
+	// published under the crypto:XLM alias key.
+	snap, sources, stale, err := s.readPriceWithAliases(ctx, s.prices, asset, quote)
 	if errors.Is(err, ErrPriceNotFound) {
 		// Share the full three-layer fallback chain with /v1/price
 		// (priceFallback). Pre-2026-05-10 the batch path inlined

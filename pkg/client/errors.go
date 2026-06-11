@@ -3,7 +3,10 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // APIError is the typed wrapper around an RFC 9457 problem+json
@@ -41,6 +44,25 @@ type APIError struct {
 	// RequestID echoes the X-Request-ID extension field. Useful
 	// for correlating with server logs in support tickets.
 	RequestID string
+
+	// RetryAfter is the parsed value of the HTTP `Retry-After`
+	// response header, when present (G22-08). The server sets it on
+	// 429 (rate-limited) and 503 (service-unavailable) responses to
+	// tell the caller how long to back off. Zero when the header was
+	// absent or unparseable. Both wire forms are supported: a
+	// delta-seconds integer (RFC 9110 §10.2.3) is taken as a relative
+	// duration; an HTTP-date is converted to the remaining duration
+	// from now (never negative). Callers typically sleep for this
+	// value before retrying a 429 / 503.
+	RetryAfter time.Duration
+}
+
+// RetryAfterDuration reports the recommended back-off and whether the
+// server supplied one. ok=false means the header was absent (callers
+// should fall back to their own back-off policy rather than retrying
+// immediately).
+func (e *APIError) RetryAfterDuration() (d time.Duration, ok bool) {
+	return e.RetryAfter, e.RetryAfter > 0
 }
 
 // Error implements the error interface.
@@ -76,9 +98,10 @@ func (e *APIError) IsServerError() bool { return e.Status >= 500 }
 
 // parseAPIError decodes a problem+json body into an [APIError].
 // Falls back to a status-only error when the body isn't JSON or
-// doesn't have the expected shape.
-func parseAPIError(status int, contentType string, body []byte) *APIError {
-	apiErr := &APIError{Status: status}
+// doesn't have the expected shape. `retryAfter` is the raw value of
+// the HTTP `Retry-After` response header (empty when absent).
+func parseAPIError(status int, contentType, retryAfter string, body []byte) *APIError {
+	apiErr := &APIError{Status: status, RetryAfter: parseRetryAfter(retryAfter)}
 
 	// Best-effort: only try to decode JSON when the content-type
 	// claims problem+json or application/json. Other content types
@@ -103,6 +126,30 @@ func parseAPIError(status int, contentType string, body []byte) *APIError {
 	apiErr.Instance = p.Instance
 	apiErr.RequestID = p.RequestID
 	return apiErr
+}
+
+// parseRetryAfter converts an HTTP `Retry-After` header value into a
+// back-off duration. Per RFC 9110 §10.2.3 the value is either a
+// non-negative delta-seconds integer or an HTTP-date. Returns 0 for an
+// empty/unparseable header, or for an HTTP-date already in the past
+// (so callers never sleep on a negative duration).
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // problemJSON is the wire shape of an RFC 9457 problem+json

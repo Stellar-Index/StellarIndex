@@ -138,7 +138,12 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	}
 
 	if resp.StatusCode >= 400 {
-		return parseAPIError(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
+		return parseAPIError(
+			resp.StatusCode,
+			resp.Header.Get("Content-Type"),
+			resp.Header.Get("Retry-After"),
+			bodyBytes,
+		)
 	}
 
 	if out != nil {

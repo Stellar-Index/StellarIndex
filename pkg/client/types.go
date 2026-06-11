@@ -27,6 +27,13 @@ type Flags struct {
 	DivergenceWarning bool `json:"divergence_warning"`
 	Frozen            bool `json:"frozen,omitempty"`
 	SingleSource      bool `json:"single_source,omitempty"`
+	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
+	// requested asset's code matches a verified currency's Stellar
+	// ticker but its issuer doesn't match the verified entry — i.e.
+	// someone issued their own "USDC" on Stellar. Mirrors the server's
+	// envelope flag (G22-03). The decoder ignores unknown fields so
+	// adding this is non-breaking for older SDK builds.
+	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 }
 
 // Pagination is present on list-returning endpoints when there are
