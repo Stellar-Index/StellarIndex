@@ -1484,13 +1484,15 @@ function BackfillCoverageTable({
         )}
       </div>
       <p className="mb-2 text-[11px] text-ink-faint">
-        <strong>Coverage</strong> = % of ledgers in the source&apos;s
-        expected range [genesis, tip] that we&apos;ve processed
-        without gaps. Hits 100% when the indexer has fully walked
-        the range. Independent of how many events the protocol
-        actually emits — sparse protocols (band, blend, etc. that
-        emit once per hour) score 100% as long as every ledger
-        between their genesis and tip has been processed.
+        <strong>Coverage</strong> = verified completeness (ADR-0033). A
+        green % is <strong>fully verified</strong>: the lake is hash-chained
+        to the tip (substrate), every event shape is recognized, AND the
+        served tier reconciles to the lake (Δ=0). <em>reconciling</em> (amber)
+        = data is captured in the lake but the served tier hasn&apos;t
+        reconciled yet — <em>captured, not yet verified</em>; the % shown is
+        capture, not the verdict. <em>unverified</em> = only a gap-free
+        liveness signal exists (the verifier hasn&apos;t run), which can read
+        ~100% for sparse or partially-indexed sources.
       </p>
       <div className="overflow-hidden rounded-md border border-surface-line">
         <table className="w-full text-xs">
@@ -1516,18 +1518,28 @@ function BackfillCoverageTable({
               // "sparse-but-complete" from "incomplete" without the watermark,
               // so we never dress an unverified figure up as a trustworthy
               // coverage bar — it's shown muted + tagged "unverified".
-              const verified = r.completeness_pct != null;
+              // `ran` = the ADR-0033 verifier has computed a watermark for this
+              // source. `reconciled` = the FULL verdict (substrate ∧ recognition
+              // ∧ the served-tier projection reconciled to Δ=0) — the `complete`
+              // flag. completeness_pct alone is DATA CAPTURE (the lake is
+              // hash-chained to the tip); it can read 100% while the served tier
+              // is still short, so the green "verified" bar is gated on
+              // `reconciled`, NOT on the percentage.
+              const ran = r.completeness_pct != null;
+              const reconciled = r.completeness_complete === true;
               const pct =
-                (verified
+                (ran
                   ? (r.completeness_pct as number)
                   : (r.coverage_pct ?? r.gap_free_pct ?? r.density_pct ?? 0)) * 100;
-              const tone = !verified
+              const tone = !ran
                 ? ('pending' as const)
-                : pct >= 99
-                  ? 'ok'
-                  : pct >= 50
-                    ? 'warn'
-                    : ('bad' as const);
+                : !reconciled
+                  ? ('warn' as const)
+                  : pct >= 99
+                    ? 'ok'
+                    : pct >= 50
+                      ? 'warn'
+                      : ('bad' as const);
               const colors = {
                 ok: 'bg-ok-500 text-ok-700',
                 warn: 'bg-warn-500 text-warn-700',
@@ -1554,7 +1566,7 @@ function BackfillCoverageTable({
                         : undefined
                     }
                   >
-                    {verified ? (
+                    {ran && reconciled ? (
                       <div className="inline-flex items-center justify-end gap-2">
                         <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-line">
                           <div
@@ -1566,6 +1578,16 @@ function BackfillCoverageTable({
                           {pct.toFixed(1)}%
                         </span>
                       </div>
+                    ) : ran ? (
+                      <span
+                        className="inline-flex items-center justify-end gap-1.5 text-warn-700"
+                        title="Captured, not yet verified. The certified lake holds 100% of this source's data (substrate hash-chained to the tip), but the served tier has not reconciled to the lake yet (ADR-0033 complete=false) — so this is NOT yet fully verified. The hourly completeness verify + lake re-derive close the gap."
+                      >
+                        <span className="rounded bg-surface-line px-1 py-0.5 text-[10px] uppercase tracking-wide text-warn-700">
+                          reconciling
+                        </span>
+                        <span className="tabular-nums">{pct.toFixed(1)}% captured</span>
+                      </span>
                     ) : (
                       <span
                         className="inline-flex items-center justify-end gap-1.5 text-ink-muted"
