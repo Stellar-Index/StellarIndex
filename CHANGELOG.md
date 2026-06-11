@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`ch-rebuild -contract-calls` — lake-replay write path for the event-less
+  ContractCall sources (band, soroswap-router).** These emit no Soroban events,
+  so neither the event pass nor the ADR-0032 projector can rebuild them. The new
+  pass streams the lake's InvokeContract ops (filtered on the contract's bytes in
+  `body_xdr` — `stellar.operations` has no `contract_id` column), runs each
+  source's `ContractCallDecoder`, and writes the decoded events through the
+  production sink (idempotent `ON CONFLICT`). It shares the exact decode path
+  (`forEachContractCallEvent`) with the completeness projection census, so a
+  written-row re-verify reconciles to Δ=0. This is the ADR-0034 successor to the
+  retired `backfill-router` MinIO walk (which under-produced — it pre-dated the
+  auth-tree-roots extraction and missed router calls nested inside aggregator
+  contracts).
+
 ## [v0.5.0-rc.108] — 2026-06-10
 
 Tested against Stellar Protocol 23 (Whisk).

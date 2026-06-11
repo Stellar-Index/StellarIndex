@@ -73,7 +73,7 @@ func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *sorosw
 // (pipeline.HandleEvent — idempotent ON CONFLICT). It is the write-enabled
 // sibling of ch-reproject (which only counts + compares).
 //
-// Two passes, mirroring the dataflow split:
+// Three passes, mirroring the dataflow split:
 //   - Event-based sources (soroswap / aquarius / phoenix / comet / blend /
 //     cctp / rozo / defindex / reflector / redstone): one StreamContractEvents
 //     pass, every Matches-gated decoder per event. This is where the
@@ -85,6 +85,11 @@ func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *sorosw
 //     fills) is ~0.004 % and pricing-immaterial (the aggregator skips zero legs;
 //     served pricing is CEX+SDEX-dominated). The fixed live indexer captures
 //     these forward; a full historical SDEX rebuild is opt-in.
+//   - Event-less ContractCall sources (band / soroswap-router): a
+//     StreamContractCallOps pass (body_xdr contract-byte filter) feeding each
+//     source's ContractCallDecoder. Gated behind -contract-calls. These emit no
+//     Soroban events, so the projector can't rebuild them — this pass is the
+//     lake-replay successor to the retired backfill-router MinIO walk.
 //
 // Defaults to DRY-RUN (count only). Pass -write to persist. For a clean-slate
 // rebuild (ADR-0034 "rebuild, not repair") the operator truncates the target
@@ -101,6 +106,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	includeSDEX := fs.Bool("sdex", false, "also re-derive SDEX trades from operations (expensive: ~15.5B op decodes all-history)")
 	sdexGaps := fs.Bool("sdex-gaps", false, "with -sdex: re-derive ONLY the served gaps in [from,to] in one pass (each gap is an empty range → pure insert, no ON CONFLICT walk) — efficient drop-backlog recovery vs re-scanning the whole range")
 	sdexReconcile := fs.Bool("sdex-reconcile", false, "with -sdex: re-derive ONLY ledgers where the distinct Validate-passing census exceeds the served count (PARTIAL-drop ledgers the empty-gap pass misses); recovers the served-tier projection to exact parity with the lake")
+	contractCalls := fs.Bool("contract-calls", false, "also re-derive the event-less ContractCall sources (band, soroswap-router) from the lake's InvokeContract ops — filtered on the contract's bytes in body_xdr (no contract_id column) — and run their ContractCallDecoders. These have NO soroban_events landing zone, so neither the event pass nor the projector can rebuild them; this is the ADR-0034 lake-replay successor to the retired backfill-router MinIO walk. Respects -sources.")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -152,8 +158,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if *write {
 		mode = "WRITE"
 	}
-	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v ch=%s\n",
-		lo, hi, mode, *only, *includeSDEX, *chAddr)
+	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v ch=%s\n",
+		lo, hi, mode, *only, *includeSDEX, *contractCalls, *chAddr)
 
 	written := map[string]int{} // source name -> events written (or counted in dry-run)
 
@@ -165,37 +171,53 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	var buf []consumer.Event
 
 	// ─── Event-based pass (read → buffer) ────────────────────────────────
-	evStart := time.Now()
-	// Exclude the CAP-67 classic-token firehose — none of the projected DEX/
-	// lending sources consume it, and it's 99.99% of contract_events. Use
-	// FirehoseExcludeSyms (NOT ClassicTokenTopic0Syms): set_admin must be
-	// RETAINED because Blend/Comet emit a pool set_admin sharing that topic —
-	// excluding it wholesale dropped blend_admin's set_admin rows from the
-	// re-derive (matches the projector's firehoseExcludeSyms).
-	cherr := clickhouse.StreamContractEvents(ctx, *chAddr, lo, hi, clickhouse.FirehoseExcludeSyms, func(ev events.Event) error {
-		for _, src := range cat {
-			if src.dec == nil || !enabled(src.name) {
-				continue
-			}
-			if len(src.contractIDs) > 0 && !containsStr(src.contractIDs, ev.ContractID) {
-				continue
-			}
-			if !src.dec.Matches(ev) {
-				continue
-			}
-			outs, derr := src.dec.Decode(ev)
-			if derr != nil {
-				continue // soft-fail, mirroring the projector + live path
-			}
-			buf = append(buf, outs...)
+	// Skip entirely unless an enabled source actually has an event decoder:
+	// StreamContractEvents scans the whole firehose-excluded contract_events
+	// range regardless of how many decoders fire, so running it for a
+	// ContractCall-only invocation (e.g. -sources soroswap-router) is a pure
+	// waste — a multi-million-ledger CH scan whose every row is skipped.
+	hasEventSource := false
+	for _, src := range cat {
+		if src.dec != nil && enabled(src.name) {
+			hasEventSource = true
+			break
 		}
-		return nil
-	})
-	if cherr != nil {
-		return fmt.Errorf("ch-rebuild: event stream: %w", cherr)
 	}
-	fmt.Fprintf(os.Stderr, "ch-rebuild: event read done in %s (%d events buffered)\n",
-		time.Since(evStart).Round(time.Second), len(buf))
+	if hasEventSource {
+		evStart := time.Now()
+		// Exclude the CAP-67 classic-token firehose — none of the projected DEX/
+		// lending sources consume it, and it's 99.99% of contract_events. Use
+		// FirehoseExcludeSyms (NOT ClassicTokenTopic0Syms): set_admin must be
+		// RETAINED because Blend/Comet emit a pool set_admin sharing that topic —
+		// excluding it wholesale dropped blend_admin's set_admin rows from the
+		// re-derive (matches the projector's firehoseExcludeSyms).
+		cherr := clickhouse.StreamContractEvents(ctx, *chAddr, lo, hi, clickhouse.FirehoseExcludeSyms, func(ev events.Event) error {
+			for _, src := range cat {
+				if src.dec == nil || !enabled(src.name) {
+					continue
+				}
+				if len(src.contractIDs) > 0 && !containsStr(src.contractIDs, ev.ContractID) {
+					continue
+				}
+				if !src.dec.Matches(ev) {
+					continue
+				}
+				outs, derr := src.dec.Decode(ev)
+				if derr != nil {
+					continue // soft-fail, mirroring the projector + live path
+				}
+				buf = append(buf, outs...)
+			}
+			return nil
+		})
+		if cherr != nil {
+			return fmt.Errorf("ch-rebuild: event stream: %w", cherr)
+		}
+		fmt.Fprintf(os.Stderr, "ch-rebuild: event read done in %s (%d events buffered)\n",
+			time.Since(evStart).Round(time.Second), len(buf))
+	} else {
+		fmt.Fprintln(os.Stderr, "ch-rebuild: event pass skipped (no enabled event-decoder source)")
+	}
 
 	// ─── SDEX op-based pass (opt-in; read → buffer) ──────────────────────
 	if *includeSDEX && enabled("sdex") {
@@ -306,6 +328,36 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		} else {
 			fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX read done in %s\n", time.Since(sStart).Round(time.Second))
 		}
+	}
+
+	// ─── ContractCall pass (opt-in; read → buffer) ───────────────────────
+	// Event-less ContractCall sources (band, soroswap-router) emit no Soroban
+	// events, so neither the event pass above nor the ADR-0032 projector can
+	// rebuild them — there's no landing-zone signal. Re-derive from the lake's
+	// InvokeContract ops (filtered on the contract's bytes in body_xdr) and run
+	// each source's ContractCallDecoder, byte-identical to the live dispatcher's
+	// routing AND to the projection census (forEachContractCallEvent is shared
+	// with reDeriveContractCallCensus), so the written rows reconcile to the
+	// census Δ=0. This is the ADR-0034 lake-replay replacement for the retired
+	// backfill-router MinIO walk (which under-produced: it pre-dated the
+	// auth-tree-roots extraction, so it missed router calls nested inside
+	// aggregator contracts).
+	if *contractCalls {
+		ccStart := time.Now()
+		for _, src := range cat {
+			if src.callDec == nil || !enabled(src.name) {
+				continue
+			}
+			before := len(buf)
+			if cerr := forEachContractCallEvent(ctx, *chAddr, src.callContract, src.callDec, lo, hi, func(_ uint32, ev consumer.Event) error {
+				buf = append(buf, ev)
+				return nil
+			}); cerr != nil {
+				return fmt.Errorf("ch-rebuild: contract-call stream %s: %w", src.name, cerr)
+			}
+			fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call %s read done (%d events)\n", src.name, len(buf)-before)
+		}
+		fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call read done in %s\n", time.Since(ccStart).Round(time.Second))
 	}
 
 	// ─── write the buffered events to Postgres (trades batched) ──────────
