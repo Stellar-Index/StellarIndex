@@ -274,8 +274,9 @@ func IsProjectedEvent(ev consumer.Event) bool {
 // drainBufferedEvents writes any remaining buffered events using a
 // fresh shutdown context so postgres calls succeed past the parent
 // context's cancellation. Bounded by [drainTimeout] so a hung
-// shutdown can't keep the binary alive indefinitely; on deadline,
-// remaining buffered events are dropped and the loss is logged.
+// shutdown can't keep the binary alive indefinitely; on deadline, it
+// surfaces the exact undrained ledger range at ERROR (recoverable from
+// the CH lake per ADR-0034) rather than dropping it silently.
 //
 // Deliberately does not take a context parameter — the whole reason
 // this exists is to keep writing past the parent's cancellation.
@@ -319,19 +320,58 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 			HandleEvent(drainCtx, logger, store, ev)
 		case <-drainCtx.Done():
 			flushTrades()
-			logger.Warn("PersistEvents drain deadline exceeded — buffered events dropped",
-				"buffered", len(in))
+			// Don't drop silently. Under ADR-0034 every raw op is durably in
+			// the ClickHouse lake, so an undrained shutdown window is
+			// RE-DERIVABLE — but only if it's visible. Drain the remainder
+			// non-blocking (the producer has already stopped on ctx cancel, so
+			// `in` is a fixed set) to surface the exact ledger span at ERROR.
+			// The completeness timer + `ratesengine-ops ch-rebuild -sdex-gaps`
+			// recover that range from the lake instead of it becoming a silent
+			// served-tier gap.
+			var n int
+			var minL, maxL uint32
+		drainRemainder:
+			for {
+				select {
+				case ev, ok := <-in:
+					if !ok {
+						break drainRemainder
+					}
+					if t, ok := tradeFromEvent(ev); ok {
+						n++
+						if minL == 0 || t.Ledger < minL {
+							minL = t.Ledger
+						}
+						if t.Ledger > maxL {
+							maxL = t.Ledger
+						}
+					}
+				default:
+					break drainRemainder
+				}
+			}
+			if n > 0 {
+				logger.Error("PersistEvents drain deadline exceeded — undrained served-tier trades are recoverable from the CH lake; re-derive this ledger range",
+					"undrained_trades", n, "ledger_from", minL, "ledger_to", maxL)
+			} else {
+				logger.Warn("PersistEvents drain deadline exceeded — no trade events undrained",
+					"buffered", len(in))
+			}
 			return
 		}
 	}
 }
 
 // drainTimeout caps how long PersistEvents will spend writing
-// already-buffered events on shutdown. 30s is comfortable headroom:
+// already-buffered events on shutdown. 90s is comfortable headroom:
 // a 256-deep buffer at typical 1ms-per-insert latency drains in
-// ~250 ms; 30s tolerates 100x slowdown (e.g. postgres saturated by
-// a concurrent VACUUM) before giving up.
-const drainTimeout = 30 * time.Second
+// ~250 ms; 90s tolerates a 300x slowdown (e.g. postgres saturated by
+// a concurrent VACUUM) before giving up. If the deadline trips anyway
+// (e.g. postgres genuinely down), drainBufferedEvents logs the exact
+// undrained ledger range at ERROR rather than dropping silently — the
+// raw ops are in the CH lake (ADR-0034), so the range is recoverable
+// via `ratesengine-ops ch-rebuild -sdex-gaps` and the completeness timer.
+const drainTimeout = 90 * time.Second
 
 // HandleEvent dispatches one event to its hypertable insert.
 // Panic-recovers so a single malformed Amount can't take the whole
