@@ -3,20 +3,35 @@ auth_enabled: false
 server:
   http_listen_port: 3100
   grpc_listen_port: 9096
-  log_level: debug
+  log_level: warn
   grpc_server_max_concurrent_streams: 1000
 
+# Storage lives on the ZFS pool (data/loki → /var/lib/loki), NOT the
+# 49 GB root filesystem. The quickstart-scaffold default (/tmp/loki)
+# put chunk storage on root — the same failure class as the
+# 2026-06-11 ClickHouse-logs-on-root fill (commit 5dd6fcda) and the
+# 2026-05-10 root-full SEV-2 — and /tmp is cleared on reboot, so all
+# log history died with every host restart.
 common:
   instance_addr: 127.0.0.1
-  path_prefix: /tmp/loki
+  path_prefix: /var/lib/loki
   storage:
     filesystem:
-      chunks_directory: /tmp/loki/chunks
-      rules_directory: /tmp/loki/rules
+      chunks_directory: /var/lib/loki/chunks
+      rules_directory: /var/lib/loki/rules
   replication_factor: 1
   ring:
     kvstore:
       store: inmemory
+
+# Bound on-disk growth: without a compactor + retention_period the
+# scaffold config grew without limit (~70 MB/day observed on r1).
+# 30 days comfortably covers incident forensics; the journald +
+# rotated-syslog tiers hold the same window.
+compactor:
+  working_directory: /var/lib/loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
 
 query_range:
   results_cache:
@@ -28,6 +43,7 @@ query_range:
 limits_config:
   metric_aggregation_enabled: true
   enable_multi_variant_queries: true
+  retention_period: 720h # 30 days — enforced by the compactor above
 
 schema_config:
   configs:

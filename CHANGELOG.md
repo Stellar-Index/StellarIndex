@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **loki (r1): chunk storage moved off the root filesystem to the ZFS pool
+  (`/tmp/loki` → `data/loki` @ `/var/lib/loki`) + 30-day retention.** The
+  quickstart-scaffold config stored Loki chunks on the 49 GB root via
+  `/tmp/loki` — the same failure class as the 2026-06-11
+  ClickHouse-logs-on-root fill and the 2026-05-10 root-full SEV-2 — grew
+  without bound (no compactor/retention configured), and lost all log
+  history on every reboot (/tmp is wiped). Storage now lives on the
+  `data/loki` ZFS dataset with `retention_period: 720h` enforced by the
+  compactor; `log_level` codified at `warn` (matching what r1 actually ran)
+  instead of the scaffold's `debug`. Applied live on r1 2026-06-11 with the
+  existing 21 days of chunks migrated intact.
+
 - **sla-probe: measure the ≤30 s RFP freshness target on `/v1/price/tip`,
   not `/v1/price`.** The probe held `/v1/price` to the Freighter RFP's 30 s
   price-freshness target, but that surface serves the most recent CLOSED
