@@ -141,11 +141,11 @@ func run(cfgPath string, dryRun bool) error {
 	)
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	// ─── Storage ────────────────────────────────────────────────
 	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)
 	if err != nil {
+		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
 	}
 	defer func() {
@@ -153,6 +153,12 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Warn("storage close", "err", err)
 		}
 	}()
+	// F-1350: register cancel AFTER store.Close so LIFO runs cancel
+	// FIRST on shutdown — workers see context cancellation and unwind
+	// BEFORE the store they depend on is closed. Registering it before
+	// store.Close (the prior order) closed the pool while goroutines
+	// were still issuing queries against it.
+	defer cancel()
 	logger.Info("storage connected")
 
 	// Resilience-ping goroutine. Probes the *sql.DB pool every
@@ -523,10 +529,16 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Shutdown ──────────────────────────────────────────────
+	// streamExited records whether the ledgerstream producer goroutine
+	// has already returned (it sends exactly once on streamErr when it
+	// does). We MUST NOT close(events) while that goroutine might still
+	// send on it — see the G20-02 wait below.
+	streamExited := false
 	select {
 	case <-rootCtx.Done():
 		logger.Info("shutdown signal received — draining for up to 30s")
 	case err := <-streamErr:
+		streamExited = true
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("ledgerstream exited with error", "err", err)
 			return err
@@ -542,13 +554,42 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
+	// G20-02: when we entered shutdown via rootCtx.Done() (not via the
+	// producer's own exit), the ledgerstream producer goroutine may
+	// still be mid-`events <- ev`. Closing `events` underneath it is a
+	// send-on-closed-channel panic. Wait for it to return (it sends on
+	// streamErr on exit; rootCtx is already canceled so it unwinds
+	// promptly) before close(events), bounded by shutdownCtx so a stuck
+	// producer can't hang the binary forever.
+	safeToClose := true
+	if !streamExited {
+		select {
+		case <-streamErr:
+			logger.Info("ledgerstream producer exited")
+		case <-shutdownCtx.Done():
+			// Producer still running at the deadline. Leaving `events`
+			// UNCLOSED is the safe choice: a still-running producer would
+			// panic on send to a closed channel. rootCtx is already
+			// canceled, so the sink workers unwind via their ctx.Done()
+			// arm (which runs the shutdown drain) rather than the
+			// channel-closed arm — no events are lost either way.
+			safeToClose = false
+			logger.Warn("ledgerstream producer did not exit before drain deadline — leaving events channel open to avoid send-on-closed panic")
+		}
+	}
+
 	// Wait for external connectors to finish draining before
 	// closing the shared events channel — otherwise an in-flight
 	// trade write on a closed channel panics the runner goroutine.
 	externalWait()
 
-	// Close events channel so the sink returns after draining.
-	close(events)
+	// Close events channel so the sink returns after draining. Safe
+	// only when the ledgerstream producer has exited (waited above)
+	// and external connectors have drained (externalWait) — otherwise
+	// a still-live sender would panic on a closed channel.
+	if safeToClose {
+		close(events)
+	}
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
@@ -1194,12 +1235,16 @@ func processAndPersistCursor(
 	if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, networkPassphrase); err != nil {
 		return err
 	}
-	// ADR-0033 Phase 2: write the substrate-continuity record AFTER
-	// the ledger's events have persisted, so ledger_ingest_log is an
-	// authoritative "this ledger is fully done" marker — unlike the
-	// cursor below, which is operational resume state. Best-effort:
-	// a write failure here must not stall ingest (the gap surfaces in
-	// the substrate continuity check, which is the whole point).
+	// ADR-0033 Phase 2: write the substrate-continuity record once the
+	// ledger's events have been ENQUEUED to the sink channel (which is
+	// what ProcessLedger returning nil guarantees — the sink goroutine
+	// drains + persists asynchronously, so this is NOT a "rows are in
+	// postgres" marker). ledger_ingest_log records that the dispatcher
+	// fully walked + emitted this ledger; reconciliation against the
+	// served tier (ADR-0033 projection reconcile) is what proves the
+	// rows actually landed. Best-effort: a write failure here must not
+	// stall ingest (the gap surfaces in the substrate continuity
+	// check, which is the whole point).
 	recordLedgerIngest(ctx, store, logger, lcm, networkPassphrase)
 	if err := store.UpsertCursor(ctx, cursorSource, "", lcm.LedgerSequence()); err != nil {
 		logger.Warn("cursor upsert",

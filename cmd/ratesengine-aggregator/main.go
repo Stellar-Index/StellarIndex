@@ -147,11 +147,11 @@ func run(cfgPath string, dryRun bool) error {
 	)
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	// ─── Storage ─────────────────────────────────────────────────
 	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)
 	if err != nil {
+		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
 	}
 	defer func() {
@@ -169,9 +169,17 @@ func run(cfgPath string, dryRun bool) error {
 	// drift surfaces at startup rather than at first tick.
 	rdb := redisclient.Build(cfg.Storage)
 	if rdb == nil {
+		cancel() // store.Close deferred above will still run; release the signal ctx
 		return errors.New("storage.redis_addr or storage.redis_sentinel_addrs is required — aggregator writes VWAP to Redis")
 	}
 	defer func() { _ = rdb.Close() }()
+	// F-1350: register cancel LAST so LIFO runs it FIRST on shutdown —
+	// the orchestrator + worker goroutines see context cancellation and
+	// unwind BEFORE rdb.Close() / store.Close() pull the resources they
+	// query out from under them. Registering cancel before the store /
+	// redis defers (the prior order) closed those handles while the
+	// goroutines were still mid-flight.
+	defer cancel()
 	mode := redisclient.Mode(cfg.Storage)
 	if dryRun {
 		pingCtx, cancelPing := context.WithTimeout(rootCtx, 5*time.Second)
