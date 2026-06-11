@@ -294,6 +294,7 @@ func decodeLiquidityEvent(e *events.Event, closedAt time.Time) (LiquidityEvent, 
 		Ledger:       e.Ledger,
 		TxHash:       e.TxHash,
 		OpIndex:      uint32(e.OperationIndex),
+		EventIndex:   uint32(e.EventIndex), //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		ObservedAt:   closedAt,
 		Kind:         k,
 		Caller:       fields.Caller,

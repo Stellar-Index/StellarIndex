@@ -424,3 +424,55 @@ func TestDecoder_NameAndKind(t *testing.T) {
 		t.Errorf("DeleteAuctionEvent.EventKind mismatch")
 	}
 }
+
+// TestDecodeAuctions_PopulateEventIndex pins F-1324: each auction
+// decode must carry events.Event.EventIndex onto the row so multiple
+// same-kind auction events emitted by ONE operation don't collapse on
+// the blend_auctions PK (migration 0058). Without it a liquidation
+// that fills several positions in one op silently drops all but one
+// fill_auction row via ON CONFLICT DO NOTHING.
+func TestDecodeAuctions_PopulateEventIndex(t *testing.T) {
+	pool := contractStrkeyFromSeed(t, 0x01)
+	user := accountStrkeyFromSeed(t, 0x10)
+
+	// new_auction.
+	newBody := vecScVal(u32ScVal(50), auctionDataScVal(mapScVal(nil), mapScVal(nil), 7))
+	newEv := &events.Event{
+		ContractID: pool,
+		Topic: []string{
+			TopicSymbolNewAuction,
+			encodeScVal(t, u32ScVal(AuctionTypeUserLiquidation)),
+			encodeScVal(t, addressScVal(t, user)),
+		},
+		Value:          encodeScVal(t, newBody),
+		EventIndex:     5,
+		LedgerClosedAt: "2026-04-29T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, newEv.LedgerClosedAt)
+	na, err := decodeNewAuction(newEv, closedAt)
+	if err != nil {
+		t.Fatalf("decodeNewAuction: %v", err)
+	}
+	if na.EventIndex != 5 {
+		t.Errorf("new_auction EventIndex = %d, want 5 (F-1324)", na.EventIndex)
+	}
+
+	// delete_auction (simplest body — exercises the third struct).
+	delEv := &events.Event{
+		ContractID: pool,
+		Topic: []string{
+			TopicSymbolDeleteAuction,
+			encodeScVal(t, u32ScVal(AuctionTypeUserLiquidation)),
+			encodeScVal(t, addressScVal(t, user)),
+		},
+		EventIndex:     9,
+		LedgerClosedAt: "2026-04-29T12:00:00Z",
+	}
+	da, err := decodeDeleteAuction(delEv, closedAt)
+	if err != nil {
+		t.Fatalf("decodeDeleteAuction: %v", err)
+	}
+	if da.EventIndex != 9 {
+		t.Errorf("delete_auction EventIndex = %d, want 9 (F-1324)", da.EventIndex)
+	}
+}

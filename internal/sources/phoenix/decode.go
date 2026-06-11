@@ -294,11 +294,18 @@ func sdkDecodeI128(valueB64 string) (canonical.Amount, error) {
 // a single provide_liquidity call. Slots populate by topic[1]; the
 // record is ready when all 5 are non-nil.
 type RawProvideLiquidity struct {
-	Ledger   uint32
-	TxHash   string
-	OpIndex  uint32
-	Pool     string
-	ClosedAt time.Time
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
+	// EventIndex is the in-op index of the FIRST field-event of this
+	// provide_liquidity. The buffer emits-and-clears each completed
+	// action before the next, so each action's first-field index is
+	// distinct — the per-event discriminator added to the
+	// phoenix_liquidity PK by migration 0060 (F-1324) so two provides
+	// in one op don't collide.
+	EventIndex int
+	Pool       string
+	ClosedAt   time.Time
 
 	Sender       *events.Event
 	TokenA       *events.Event
@@ -350,11 +357,14 @@ func (r *RawProvideLiquidity) assign(e *events.Event, fieldTopic string) error {
 // duplicates information the stake-contract `unbond` decoder
 // already captures, and not every withdraw emits it.
 type RawWithdrawLiquidity struct {
-	Ledger   uint32
-	TxHash   string
-	OpIndex  uint32
-	Pool     string
-	ClosedAt time.Time
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
+	// EventIndex — per-event discriminator (phoenix_liquidity PK,
+	// migration 0060 / F-1324); first field-event's in-op index.
+	EventIndex int
+	Pool       string
+	ClosedAt   time.Time
 
 	Sender        *events.Event
 	SharesAmount  *events.Event
@@ -406,12 +416,15 @@ func (r *RawWithdrawLiquidity) assign(e *events.Event, fieldTopic string) error 
 // services both — the action (bond vs unbond) is carried alongside
 // in the buffer's group key.
 type RawStake struct {
-	Ledger   uint32
-	TxHash   string
-	OpIndex  uint32
-	Contract string
-	ClosedAt time.Time
-	IsBond   bool // true for bond, false for unbond
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
+	// EventIndex — per-event discriminator (phoenix_stake_events PK,
+	// migration 0060 / F-1324); first field-event's in-op index.
+	EventIndex int
+	Contract   string
+	ClosedAt   time.Time
+	IsBond     bool // true for bond, false for unbond
 
 	User   *events.Event
 	Token  *events.Event
@@ -478,17 +491,18 @@ func decodeProvideLiquidity(r *RawProvideLiquidity) (LiquidityChange, error) {
 		return LiquidityChange{}, fmt.Errorf("provide_liquidity token_b-amount: %w", err)
 	}
 	return LiquidityChange{
-		Action:   EventActionProvideLiquidity,
-		Pool:     r.Pool,
-		Ledger:   r.Ledger,
-		TxHash:   r.TxHash,
-		OpIndex:  int(r.OpIndex),
-		ClosedAt: r.ClosedAt,
-		Sender:   sender,
-		TokenA:   tokenA,
-		AmountA:  amountA,
-		TokenB:   tokenB,
-		AmountB:  amountB,
+		Action:     EventActionProvideLiquidity,
+		Pool:       r.Pool,
+		Ledger:     r.Ledger,
+		TxHash:     r.TxHash,
+		OpIndex:    int(r.OpIndex),
+		EventIndex: r.EventIndex,
+		ClosedAt:   r.ClosedAt,
+		Sender:     sender,
+		TokenA:     tokenA,
+		AmountA:    amountA,
+		TokenB:     tokenB,
+		AmountB:    amountB,
 	}, nil
 }
 
@@ -525,6 +539,7 @@ func decodeWithdrawLiquidity(r *RawWithdrawLiquidity) (LiquidityChange, error) {
 		Ledger:       r.Ledger,
 		TxHash:       r.TxHash,
 		OpIndex:      int(r.OpIndex),
+		EventIndex:   r.EventIndex,
 		ClosedAt:     r.ClosedAt,
 		Sender:       sender,
 		SharesAmount: shares,
@@ -558,14 +573,15 @@ func decodeStake(r *RawStake) (StakeChange, error) {
 		action = EventActionBond
 	}
 	return StakeChange{
-		Action:   action,
-		Contract: r.Contract,
-		Ledger:   r.Ledger,
-		TxHash:   r.TxHash,
-		OpIndex:  int(r.OpIndex),
-		ClosedAt: r.ClosedAt,
-		User:     user,
-		LPToken:  token,
-		Amount:   amount,
+		Action:     action,
+		Contract:   r.Contract,
+		Ledger:     r.Ledger,
+		TxHash:     r.TxHash,
+		OpIndex:    int(r.OpIndex),
+		EventIndex: r.EventIndex,
+		ClosedAt:   r.ClosedAt,
+		User:       user,
+		LPToken:    token,
+		Amount:     amount,
 	}, nil
 }

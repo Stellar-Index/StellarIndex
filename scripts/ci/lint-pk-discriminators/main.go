@@ -54,13 +54,13 @@ var allow = map[string]string{
 	"oracle_updates":        "OK: decoders fan out op_index per feed; (source,ledger,tx,op,ts) is unique per update",
 	"cctp_events":           "OK: (contract_id,…,event_type,ts) — one event per (type,ts) per op",
 	"rozo_events":           "OK: (contract_id,…,event_type,ts) — one event per (type,ts) per op",
-	"blend_auctions":        "OK: auction events are one-per-(ledger,tx,op); legacy table",
-	"comet_liquidity":       "OK: (event_kind, token) distinguishes per-token liquidity changes; completeness reconcile Δ=0",
-	"sep41_supply_events":   "OK: supply-observer snapshots keyed by observed_at, not per-event; SEP-41 observer not enabled (CLAUDE.md)",
 	"trades":                "OK: op_index is FANNED (canonical.FanoutOpIndex: opIndex<<16|event_index; SDEX opIdx*1024+claim_index) — encodes the per-trade discriminator, so multi-trade ops never collide",
-	"phoenix_liquidity":     "OK: (op_index, action) distinguishes provide/withdraw per op; completeness reconcile Δ=0",
-	"phoenix_stake_events":  "OK: (op_index, action) distinguishes bond/unbond per op; completeness reconcile Δ=0",
 	"soroswap_router_swaps": "OK: call_sig (RouterSwap.CallSig content hash; migration 0056) discriminates distinct swaps in one op; auth-tree dups share it + dedup; completeness reconcile Δ=0",
+	// blend_auctions (0058), comet_liquidity (0059), phoenix_liquidity +
+	// phoenix_stake_events (0060), sep41_supply_events (0057) were removed
+	// from this allow map when F-1324 added event_index to their PKs — the
+	// lint now ENFORCES event_index on them (their previous (kind,token) /
+	// (action) / observed_at keys did NOT discriminate two same-op events).
 }
 
 var (

@@ -60,18 +60,25 @@ type CometLiquidityEvent struct {
 	LedgerCloseTime time.Time
 	TxHash          string
 	OpIndex         uint32
-	Kind            CometLiquidityKind
-	Caller          string
-	Token           string
-	Amount          canonical.Amount
-	PoolAmountIn    canonical.Amount // withdraw-only; zero on the other kinds
+	// EventIndex is the contract event's index within its operation —
+	// the per-event discriminator added to the comet_liquidity PK by
+	// migration 0059 (F-1324) so two same-(kind,token) events from one
+	// op don't collide.
+	EventIndex   uint32
+	Kind         CometLiquidityKind
+	Caller       string
+	Token        string
+	Amount       canonical.Amount
+	PoolAmountIn canonical.Amount // withdraw-only; zero on the other kinds
 }
 
 // InsertCometLiquidity appends one Comet liquidity event row,
 // idempotent on the (ledger_close_time, contract_id, ledger,
-// tx_hash, op_index, event_kind, token) PK. Re-running the indexer
-// or a backfill over the same range writes the same rows; ON
-// CONFLICT DO NOTHING makes the replay a no-op.
+// tx_hash, op_index, event_kind, token, event_index) PK (event_index
+// added by migration 0059 / F-1324 so two same-(kind,token) events
+// from one op don't collide). Re-running the indexer or a backfill
+// over the same range writes the same rows; ON CONFLICT DO NOTHING
+// makes the replay a no-op.
 //
 // Defensive: rejects empty ContractID / TxHash / Caller / Token, an
 // invalid Kind, and a non-positive Amount before touching the DB —
@@ -112,18 +119,18 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 	const q = `
         INSERT INTO comet_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash, op_index,
-            event_kind, direction, caller, token, amount, pool_amount_in
+            event_kind, event_index, direction, caller, token, amount, pool_amount_in
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9, $10, $11
+            $6, $7, $8, $9, $10, $11, $12
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                     op_index, event_kind, token) DO NOTHING
+                     op_index, event_kind, token, event_index) DO NOTHING
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(),
 		e.TxHash, int(e.OpIndex),
-		string(e.Kind), e.Kind.Direction(),
+		string(e.Kind), int(e.EventIndex), e.Kind.Direction(),
 		e.Caller, e.Token,
 		e.Amount.String(), poolAmountIn,
 	)

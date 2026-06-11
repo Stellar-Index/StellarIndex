@@ -35,18 +35,24 @@ func (k SEP41EventKind) IsValid() bool {
 // SEP41SupplyEvent is one mint / burn / clawback event row.
 // Mirrors the sep41_supply_events columns.
 type SEP41SupplyEvent struct {
-	ContractID   string
-	Ledger       uint32
-	TxHash       string
-	OpIndex      uint32
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	// EventIndex is the contract event's index within its operation —
+	// the per-event discriminator added to the PK by migration 0057
+	// (F-1324) so multiple supply events from one op don't collide.
+	EventIndex   uint32
 	ObservedAt   time.Time
 	Kind         SEP41EventKind
 	Amount       *big.Int
 	Counterparty string // empty when not present (reserved for future variants)
 }
 
-// InsertSEP41SupplyEvent appends one event row, idempotent on
-// the (contract_id, ledger, tx_hash, op_index, observed_at) PK.
+// InsertSEP41SupplyEvent appends one event row, idempotent on the
+// (contract_id, ledger, tx_hash, op_index, observed_at, event_kind,
+// event_index) PK (event_index + event_kind added by migration 0057,
+// F-1324, so multiple supply events from one op don't collide).
 // Re-running the indexer over the same range writes the same
 // rows; ON CONFLICT DO NOTHING keeps the running sum
 // monotonically correct across replays.
@@ -72,12 +78,13 @@ func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) 
 	const q = `
         INSERT INTO sep41_supply_events (
             contract_id, ledger, tx_hash, op_index, observed_at,
-            event_kind, amount, counterparty
+            event_kind, event_index, amount, counterparty
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8
+            $6, $7, $8, $9
         )
-        ON CONFLICT (contract_id, ledger, tx_hash, op_index, observed_at) DO NOTHING
+        ON CONFLICT (contract_id, ledger, tx_hash, op_index, observed_at,
+                     event_kind, event_index) DO NOTHING
     `
 	var counterparty sql.NullString
 	if e.Counterparty != "" {
@@ -85,7 +92,7 @@ func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) 
 	}
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), e.ObservedAt.UTC(),
-		string(e.Kind), e.Amount.String(), counterparty,
+		string(e.Kind), int(e.EventIndex), e.Amount.String(), counterparty,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSEP41SupplyEvent %s@%d: %w", e.ContractID, e.Ledger, err)

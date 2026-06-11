@@ -52,11 +52,15 @@ var _ consumer.Event = TradeEvent{}
 //     as a SEP-41 mint event on the pool's share-token contract,
 //     which the sep41_supply observer handles separately.
 type LiquidityChange struct {
-	Action       string
-	Pool         string
-	Ledger       uint32
-	TxHash       string
-	OpIndex      int
+	Action  string
+	Pool    string
+	Ledger  uint32
+	TxHash  string
+	OpIndex int
+	// EventIndex is the first field-event's in-op index — the per-event
+	// discriminator added to the phoenix_liquidity PK by migration 0060
+	// (F-1324) so two provides/withdraws in one op don't collide.
+	EventIndex   int
 	ClosedAt     time.Time
 	Sender       string
 	TokenA       string
@@ -100,10 +104,14 @@ type StakeChange struct {
 	Ledger   uint32
 	TxHash   string
 	OpIndex  int
-	ClosedAt time.Time
-	User     string
-	LPToken  string
-	Amount   canonical.Amount
+	// EventIndex is the first field-event's in-op index — the per-event
+	// discriminator added to the phoenix_stake_events PK by migration
+	// 0060 (F-1324) so two bonds/unbonds in one op don't collide.
+	EventIndex int
+	ClosedAt   time.Time
+	User       string
+	LPToken    string
+	Amount     canonical.Amount
 }
 
 // StakeEvent is the [consumer.Event] wrapping a StakeChange.
@@ -246,7 +254,8 @@ func (b *buffer) absorbProvideLiquidity(e *events.Event, fieldTopic string, clos
 	if !ok {
 		r = &RawProvideLiquidity{
 			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
-			Pool: e.ContractID, ClosedAt: closedAt,
+			EventIndex: e.EventIndex,
+			Pool:       e.ContractID, ClosedAt: closedAt,
 		}
 		b.pl[k] = r
 	}
@@ -267,7 +276,8 @@ func (b *buffer) absorbWithdrawLiquidity(e *events.Event, fieldTopic string, clo
 	if !ok {
 		r = &RawWithdrawLiquidity{
 			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
-			Pool: e.ContractID, ClosedAt: closedAt,
+			EventIndex: e.EventIndex,
+			Pool:       e.ContractID, ClosedAt: closedAt,
 		}
 		b.wl[k] = r
 	}
@@ -292,7 +302,8 @@ func (b *buffer) absorbStake(e *events.Event, fieldTopic string, closedAt time.T
 	if !ok {
 		r = &RawStake{
 			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
-			Contract: e.ContractID, ClosedAt: closedAt, IsBond: isBond,
+			EventIndex: e.EventIndex,
+			Contract:   e.ContractID, ClosedAt: closedAt, IsBond: isBond,
 		}
 		target[k] = r
 	}

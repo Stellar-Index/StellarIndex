@@ -102,6 +102,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		Ledger:       ev.Ledger,
 		TxHash:       ev.TxHash,
 		OpIndex:      uint32(ev.OperationIndex), //nolint:gosec // OperationIndex is non-negative by Soroban spec; uint32 cast is safe.
+		EventIndex:   uint32(ev.EventIndex),     //nolint:gosec // EventIndex is non-negative by Soroban spec; uint32 cast is safe.
 		ObservedAt:   closedAt,
 		Kind:         kind,
 		Amount:       amount,

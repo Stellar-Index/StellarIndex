@@ -34,10 +34,16 @@ func (TradeEvent) Source() string { return SourceName }
 // underlying withdrawn); the writer translates a zero / unset
 // Amount to SQL NULL on the other three kinds.
 type LiquidityEvent struct {
-	ContractID   string
-	Ledger       uint32
-	TxHash       string
-	OpIndex      uint32
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	// EventIndex is the contract event's index within its operation —
+	// the per-event discriminator added to the comet_liquidity PK by
+	// migration 0059 (F-1324). The swap path already fans op_index via
+	// canonical.FanoutOpIndex; the liquidity path keys on event_index
+	// directly so two same-(kind,token) events in one op don't collide.
+	EventIndex   uint32
 	ObservedAt   time.Time
 	Kind         LiquidityKind
 	Caller       string

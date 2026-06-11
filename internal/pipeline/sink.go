@@ -138,7 +138,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 // is still well under the 25-conn pool ceiling.
 const PersistWorkers = 8
 
-//nolint:gocognit // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants.
+//nolint:gocognit,contextcheck // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants. The shutdown flush intentionally uses a fresh context (parent is canceled); see flushShutdown.
 func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, workerID int) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
@@ -159,10 +159,28 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 		}
 	}
 
+	// flushShutdown flushes this worker's in-memory tradeBuf on the
+	// shutdown paths (parent ctx canceled OR channel closed) using a
+	// FRESH bounded context. F-1318: the parent ctx is already
+	// canceled by the time those arms fire, so passing it to
+	// BatchInsertTrades / persistTrade makes every postgres call fail
+	// instantly and silently drops the buffered trades. The fresh
+	// context (same pattern as drainBufferedEvents) lets the final
+	// flush actually land, bounded by drainTimeout so a hung shutdown
+	// can't pin the binary forever.
+	flushShutdown := func() {
+		if len(tradeBuf) == 0 {
+			return
+		}
+		fctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+		defer cancel()
+		flush(fctx)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			flush(ctx)
+			flushShutdown()
 			// Only the first worker handles the shutdown drain to
 			// avoid duplicate drain work; the others just exit.
 			if workerID == 0 {
@@ -173,7 +191,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 			flush(ctx)
 		case ev, ok := <-in:
 			if !ok {
-				flush(ctx)
+				flushShutdown()
 				return
 			}
 			if mode == SinkModeSkipProjected && IsProjectedEvent(ev) {
@@ -328,7 +346,15 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 			// The completeness timer + `ratesengine-ops ch-rebuild -sdex-gaps`
 			// recover that range from the lake instead of it becoming a silent
 			// served-tier gap.
-			var n int
+			// Count EVERY undrained event, not just trade-shaped ones
+			// (G15-08). Oracle updates, supply observations, blend /
+			// cctp / rozo rows etc. are also served-tier writes that go
+			// missing on a hung shutdown; tallying only trades reported
+			// "no trade events undrained" while silently losing them.
+			// Trade ledger bounds still come from trade-shaped events
+			// (only they carry a Ledger we can range on) so the
+			// re-derive hint stays actionable.
+			var total, trades int
 			var minL, maxL uint32
 		drainRemainder:
 			for {
@@ -337,8 +363,9 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 					if !ok {
 						break drainRemainder
 					}
+					total++
 					if t, ok := tradeFromEvent(ev); ok {
-						n++
+						trades++
 						if minL == 0 || t.Ledger < minL {
 							minL = t.Ledger
 						}
@@ -350,11 +377,12 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 					break drainRemainder
 				}
 			}
-			if n > 0 {
-				logger.Error("PersistEvents drain deadline exceeded — undrained served-tier trades are recoverable from the CH lake; re-derive this ledger range",
-					"undrained_trades", n, "ledger_from", minL, "ledger_to", maxL)
+			if total > 0 {
+				logger.Error("PersistEvents drain deadline exceeded — undrained served-tier events are recoverable from the CH lake; re-derive this ledger range",
+					"undrained_events", total, "undrained_trades", trades,
+					"ledger_from", minL, "ledger_to", maxL)
 			} else {
-				logger.Warn("PersistEvents drain deadline exceeded — no trade events undrained",
+				logger.Warn("PersistEvents drain deadline exceeded — no events undrained",
 					"buffered", len(in))
 			}
 			return
@@ -676,6 +704,7 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 		LedgerCloseTime: e.ObservedAt,
 		TxHash:          e.TxHash,
 		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
 		Kind:            timescale.CometLiquidityKind(e.Kind),
 		Caller:          e.Caller,
 		Token:           e.Token,
@@ -961,6 +990,7 @@ func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *ti
 		ObservedAt:   c.ClosedAt,
 		TxHash:       c.TxHash,
 		OpIndex:      uint32(c.OpIndex),
+		EventIndex:   uint32(c.EventIndex), //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		Action:       timescale.PhoenixLiquidityAction(c.Action),
 		Sender:       c.Sender,
 		TokenA:       c.TokenA,
@@ -989,6 +1019,7 @@ func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timesc
 		ObservedAt:    c.ClosedAt,
 		TxHash:        c.TxHash,
 		OpIndex:       uint32(c.OpIndex),
+		EventIndex:    uint32(c.EventIndex), //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		Action:        timescale.PhoenixStakeAction(c.Action),
 		User:          c.User,
 		LPToken:       c.LPToken,
@@ -1012,6 +1043,7 @@ func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *ti
 		Ledger:       e.Ledger,
 		TxHash:       e.TxHash,
 		OpIndex:      e.OpIndex,
+		EventIndex:   e.EventIndex,
 		ObservedAt:   e.ObservedAt,
 		Kind:         timescale.SEP41EventKind(e.Kind),
 		Amount:       e.Amount,

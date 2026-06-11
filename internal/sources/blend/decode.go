@@ -91,7 +91,12 @@ type NewAuctionEvent struct {
 	Ledger      uint32
 	TxHash      string
 	OpIndex     uint32
-	Timestamp   time.Time
+	// EventIndex is the contract event's index within its operation —
+	// the per-event discriminator added to the blend_auctions PK by
+	// migration 0058 (F-1324) so multiple auction events from one op
+	// don't collide on ON CONFLICT DO NOTHING.
+	EventIndex uint32
+	Timestamp  time.Time
 }
 
 // FillAuctionEvent is the decoded form of `fill_auction`. Each
@@ -109,7 +114,11 @@ type FillAuctionEvent struct {
 	Ledger      uint32
 	TxHash      string
 	OpIndex     uint32
-	Timestamp   time.Time
+	// EventIndex — per-event discriminator (blend_auctions PK,
+	// migration 0058 / F-1324). A liquidation that fills several
+	// positions in one op emits multiple fill_auction events.
+	EventIndex uint32
+	Timestamp  time.Time
 }
 
 // DeleteAuctionEvent is the decoded form of `delete_auction` —
@@ -122,7 +131,10 @@ type DeleteAuctionEvent struct {
 	Ledger      uint32
 	TxHash      string
 	OpIndex     uint32
-	Timestamp   time.Time
+	// EventIndex — per-event discriminator (blend_auctions PK,
+	// migration 0058 / F-1324).
+	EventIndex uint32
+	Timestamp  time.Time
 }
 
 // decodeNewAuction parses a `new_auction` event.
@@ -174,6 +186,7 @@ func decodeNewAuction(e *events.Event, closedAt time.Time) (NewAuctionEvent, err
 		Ledger:      e.Ledger,
 		TxHash:      e.TxHash,
 		OpIndex:     uint32(e.OperationIndex),
+		EventIndex:  uint32(e.EventIndex), //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		Timestamp:   closedAt,
 	}, nil
 }
@@ -227,6 +240,7 @@ func decodeFillAuction(e *events.Event, closedAt time.Time) (FillAuctionEvent, e
 		Ledger:      e.Ledger,
 		TxHash:      e.TxHash,
 		OpIndex:     uint32(e.OperationIndex),
+		EventIndex:  uint32(e.EventIndex), //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		Timestamp:   closedAt,
 	}, nil
 }
@@ -253,6 +267,7 @@ func decodeDeleteAuction(e *events.Event, closedAt time.Time) (DeleteAuctionEven
 		Ledger:      e.Ledger,
 		TxHash:      e.TxHash,
 		OpIndex:     uint32(e.OperationIndex),
+		EventIndex:  uint32(e.EventIndex), //nolint:gosec // EventIndex is non-negative by Soroban spec.
 		Timestamp:   closedAt,
 	}, nil
 }

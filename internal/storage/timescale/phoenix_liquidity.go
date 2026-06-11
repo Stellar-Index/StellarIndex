@@ -39,11 +39,15 @@ func (a PhoenixLiquidityAction) IsValid() bool {
 // the side that doesn't carry them (withdraw has no token addresses;
 // provide has no shares amount) — the writer maps "" → SQL NULL.
 type PhoenixLiquidityChange struct {
-	Pool         string
-	Ledger       uint32
-	ObservedAt   time.Time
-	TxHash       string
-	OpIndex      uint32
+	Pool       string
+	Ledger     uint32
+	ObservedAt time.Time
+	TxHash     string
+	OpIndex    uint32
+	// EventIndex is the first field-event's in-op index — the per-event
+	// discriminator added to the phoenix_liquidity PK by migration 0060
+	// (F-1324) so two provides/withdraws in one op don't collide.
+	EventIndex   uint32
 	Action       PhoenixLiquidityAction
 	Sender       string
 	TokenA       string // provide-only; "" → NULL
@@ -55,9 +59,11 @@ type PhoenixLiquidityChange struct {
 
 // InsertPhoenixLiquidityChange appends one phoenix_liquidity row,
 // idempotent on the (ledger_close_time, pool, ledger, tx_hash,
-// op_index, action) PK. Re-running the indexer over the same range
-// or replaying a backfill writes the same rows; ON CONFLICT DO
-// NOTHING makes the replay a no-op.
+// op_index, action, event_index) PK (event_index added by migration
+// 0060 / F-1324 so two provides/withdraws in one op don't collide).
+// Re-running the indexer over the same range or replaying a backfill
+// writes the same rows; ON CONFLICT DO NOTHING makes the replay a
+// no-op.
 //
 // Defensive: rejects empty Pool / TxHash / Sender, an invalid
 // Action, and empty NUMERIC amounts (AmountA / AmountB are NOT NULL)
@@ -101,18 +107,18 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 	const q = `
         INSERT INTO phoenix_liquidity (
             pool, ledger, ledger_close_time, tx_hash, op_index,
-            action, sender, token_a, token_b, amount_a, amount_b,
+            action, event_index, sender, token_a, token_b, amount_a, amount_b,
             shares_amount
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9, $10, $11,
-            $12
+            $6, $7, $8, $9, $10, $11, $12,
+            $13
         )
-        ON CONFLICT (ledger_close_time, pool, ledger, tx_hash, op_index, action) DO NOTHING
+        ON CONFLICT (ledger_close_time, pool, ledger, tx_hash, op_index, action, event_index) DO NOTHING
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.Pool, int(e.Ledger), e.ObservedAt.UTC(), e.TxHash, int(e.OpIndex),
-		string(e.Action), e.Sender, tokenA, tokenB, e.AmountA, e.AmountB,
+		string(e.Action), int(e.EventIndex), e.Sender, tokenA, tokenB, e.AmountA, e.AmountB,
 		shares,
 	)
 	if err != nil {

@@ -392,3 +392,24 @@ func TestDecoder_HasI128SafeAmount(t *testing.T) {
 		t.Errorf("Amount=%s want %s", outs[0].(Event).Amount, huge)
 	}
 }
+
+// TestDecoder_PopulatesEventIndex pins F-1324: EventIndex must be
+// carried onto the row so multiple supply events emitted by one op
+// (mint-to-many, or a burn + clawback in one call) don't collapse on
+// the sep41_supply_events PK (migration 0057) via ON CONFLICT.
+func TestDecoder_PopulatesEventIndex(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	ev := mintEvent(t, cWatched, 1_000_000)
+	ev.EventIndex = 4
+	outs, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("emitted %d events, want 1", len(outs))
+	}
+	got := outs[0].(Event)
+	if got.EventIndex != 4 {
+		t.Errorf("EventIndex = %d, want 4 (F-1324)", got.EventIndex)
+	}
+}

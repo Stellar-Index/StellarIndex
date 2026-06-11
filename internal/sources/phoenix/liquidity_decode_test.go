@@ -536,3 +536,77 @@ func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
 		t.Fatal("backfilled 5-event provide failed to complete")
 	}
 }
+
+// TestDecoder_Liquidity_PopulatesEventIndex pins F-1324: the completed
+// provide_liquidity / withdraw_liquidity reassembly must carry the
+// FIRST field-event's in-op EventIndex onto the LiquidityChange so two
+// same-(op,action) liquidity actions don't collapse on the
+// phoenix_liquidity PK (migration 0060) via ON CONFLICT.
+func TestDecoder_Liquidity_PopulatesEventIndex(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := NewDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolPLSender, "addr:" + plSender},
+		{TopicSymbolPLTokenA, "addr:" + plTokenA},
+		{TopicSymbolPLTokenAAmt, "i128:1000000000"},
+		{TopicSymbolPLTokenB, "addr:" + plTokenB},
+		{TopicSymbolPLTokenBAmt, "i128:50000000"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		ev := plField(f.topic, f.body, plTxHash)
+		// The buffer stamps EventIndex from the FIRST arriving field —
+		// give the rest distinct indices to prove only the first wins.
+		ev.EventIndex = 11 + i
+		emitted, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i == 4 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	le := out[0].(LiquidityEvent)
+	if le.Change.EventIndex != 11 {
+		t.Errorf("EventIndex = %d, want 11 (first field-event's index, F-1324)", le.Change.EventIndex)
+	}
+}
+
+// TestDecoder_Stake_PopulatesEventIndex pins F-1324 for the stake path
+// (phoenix_stake_events PK, migration 0060): the bond / unbond
+// reassembly carries the first field-event's in-op EventIndex.
+func TestDecoder_Stake_PopulatesEventIndex(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := NewDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolStakeUser, "addr:" + plSender},
+		{TopicSymbolStakeToken, "addr:" + plTokenA},
+		{TopicSymbolStakeAmount, "i128:7000000"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		ev := bondField(f.topic, f.body, bondTx)
+		ev.EventIndex = 20 + i
+		emitted, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i == 2 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	se := out[0].(StakeEvent)
+	if se.Change.EventIndex != 20 {
+		t.Errorf("EventIndex = %d, want 20 (first field-event's index, F-1324)", se.Change.EventIndex)
+	}
+}

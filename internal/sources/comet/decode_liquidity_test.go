@@ -383,3 +383,31 @@ func TestDecodeLiquidity_LargeI128(t *testing.T) {
 		t.Errorf("Amount = %s, want %s — i128 round-trip lost precision", out.Amount, huge)
 	}
 }
+
+// TestDecodeLiquidity_PopulatesEventIndex pins F-1324: the liquidity
+// path must carry events.Event.EventIndex onto the row so two
+// same-(kind,token) liquidity events emitted by ONE operation don't
+// collapse on the comet_liquidity PK (migration 0059) via ON CONFLICT.
+// (The swap path already fans op_index via canonical.FanoutOpIndex;
+// the liquidity path keys on event_index directly.)
+func TestDecodeLiquidity_PopulatesEventIndex(t *testing.T) {
+	caller := accountStrkeyFromSeed(t, 0x70)
+	token := contractStrkeyFromSeed(t, 0x71)
+	body := encodeLiquidityBody(t, caller, token, "token_in", "token_amount_in", big.NewInt(1))
+	ev := &events.Event{
+		ContractID:     "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM",
+		Topic:          []string{TopicSymbolPool, TopicSymbolJoinPool},
+		Value:          body,
+		OperationIndex: 0,
+		EventIndex:     6,
+		LedgerClosedAt: "2026-05-26T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+	out, err := decodeLiquidityEvent(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeLiquidityEvent: %v", err)
+	}
+	if out.EventIndex != 6 {
+		t.Errorf("EventIndex = %d, want 6 (F-1324)", out.EventIndex)
+	}
+}

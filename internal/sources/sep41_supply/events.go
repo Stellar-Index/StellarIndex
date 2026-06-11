@@ -43,10 +43,16 @@ var (
 // variant emits without one today, but the field is reserved
 // for future-spec robustness).
 type Event struct {
-	ContractID   string
-	Ledger       uint32
-	TxHash       string
-	OpIndex      uint32
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	// EventIndex is the contract event's index within its operation —
+	// the per-event discriminator that keeps multiple supply events
+	// emitted by ONE op (mint-to-many, or a burn + clawback folded into
+	// one call) from collapsing onto a single sep41_supply_events row via
+	// ON CONFLICT DO NOTHING. Migration 0057 added it to the PK (F-1324).
+	EventIndex   uint32
 	ObservedAt   time.Time
 	Kind         string // SymbolMint | SymbolBurn | SymbolClawback
 	Amount       *big.Int

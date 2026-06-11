@@ -40,17 +40,23 @@ type PhoenixStakeEvent struct {
 	ObservedAt    time.Time
 	TxHash        string
 	OpIndex       uint32
-	Action        PhoenixStakeAction
-	User          string
-	LPToken       string
-	Amount        string // decimal i128
+	// EventIndex is the first field-event's in-op index — the per-event
+	// discriminator added to the phoenix_stake_events PK by migration
+	// 0060 (F-1324) so two bonds/unbonds in one op don't collide.
+	EventIndex uint32
+	Action     PhoenixStakeAction
+	User       string
+	LPToken    string
+	Amount     string // decimal i128
 }
 
 // InsertPhoenixStakeEvent appends one phoenix_stake_events row,
 // idempotent on the (ledger_close_time, stake_contract, ledger,
-// tx_hash, op_index, action) PK. Re-running the indexer over the
-// same range or replaying a backfill writes the same rows;
-// ON CONFLICT DO NOTHING makes the replay a no-op.
+// tx_hash, op_index, action, event_index) PK (event_index added by
+// migration 0060 / F-1324 so two bonds/unbonds in one op don't
+// collide). Re-running the indexer over the same range or replaying
+// a backfill writes the same rows; ON CONFLICT DO NOTHING makes the
+// replay a no-op.
 //
 // Defensive: rejects empty StakeContract / TxHash / User / LPToken,
 // an invalid Action, and an empty Amount before touching the DB.
@@ -78,16 +84,16 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 	const q = `
         INSERT INTO phoenix_stake_events (
             stake_contract, ledger, ledger_close_time, tx_hash, op_index,
-            action, user_addr, lp_token, amount
+            action, event_index, user_addr, lp_token, amount
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9
+            $6, $7, $8, $9, $10
         )
-        ON CONFLICT (ledger_close_time, stake_contract, ledger, tx_hash, op_index, action) DO NOTHING
+        ON CONFLICT (ledger_close_time, stake_contract, ledger, tx_hash, op_index, action, event_index) DO NOTHING
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.StakeContract, int(e.Ledger), e.ObservedAt.UTC(), e.TxHash, int(e.OpIndex),
-		string(e.Action), e.User, e.LPToken, e.Amount,
+		string(e.Action), int(e.EventIndex), e.User, e.LPToken, e.Amount,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertPhoenixStakeEvent %s@%d: %w",

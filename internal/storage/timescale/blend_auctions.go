@@ -61,8 +61,11 @@ func decodeBlendAssetAmounts(jsonStr string) ([]BlendAssetAmount, error) {
 }
 
 // InsertBlendNewAuction writes a `new_auction` event row.
-// Idempotent on (ledger, tx_hash, op_index, ts) — re-running over
-// the same range is a no-op rather than producing duplicates.
+// Idempotent on (ledger, tx_hash, op_index, ts, event_kind,
+// event_index) — re-running over the same range is a no-op rather
+// than producing duplicates. event_index (migration 0058 / F-1324)
+// is the per-event discriminator so multiple auction events emitted
+// by one operation don't collide via ON CONFLICT DO NOTHING.
 //
 // Per docs/discovery/dexes-amms/blend.md the auction lifecycle
 // produces multiple rows in this table:
@@ -87,20 +90,20 @@ func (s *Store) InsertBlendNewAuction(ctx context.Context, e blend.NewAuctionEve
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
             ledger, tx_hash, op_index, ts,
-            event_kind, percent,
+            event_kind, event_index, percent,
             block, bid, lot
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7,
-            'new', $8,
-            $9, $10, $11
+            'new', $8, $9,
+            $10, $11, $12
         )
-        ON CONFLICT (ledger, tx_hash, op_index, ts) DO NOTHING
+        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO NOTHING
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.Pool, int(e.AuctionType), e.User,
 		int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
-		int(e.Percent),
+		int(e.EventIndex), int(e.Percent),
 		int(e.Data.Block), bid, lot,
 	)
 	if err != nil {
@@ -127,21 +130,22 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
             ledger, tx_hash, op_index, ts,
-            event_kind,
+            event_kind, event_index,
             filler, fill_percent,
             block, bid, lot
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7,
-            'fill',
-            $8, $9::numeric,
-            $10, $11, $12
+            'fill', $8,
+            $9, $10::numeric,
+            $11, $12, $13
         )
-        ON CONFLICT (ledger, tx_hash, op_index, ts) DO NOTHING
+        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO NOTHING
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.Pool, int(e.AuctionType), e.User,
 		int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
+		int(e.EventIndex),
 		e.Filler, fillPct,
 		int(e.Data.Block), bid, lot,
 	)
@@ -158,17 +162,18 @@ func (s *Store) InsertBlendDeleteAuction(ctx context.Context, e blend.DeleteAuct
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
             ledger, tx_hash, op_index, ts,
-            event_kind
+            event_kind, event_index
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7,
-            'delete'
+            'delete', $8
         )
-        ON CONFLICT (ledger, tx_hash, op_index, ts) DO NOTHING
+        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO NOTHING
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.Pool, int(e.AuctionType), e.User,
 		int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
+		int(e.EventIndex),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendDeleteAuction: %w", err)

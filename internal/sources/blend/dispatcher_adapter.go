@@ -64,6 +64,11 @@ func (*Decoder) Matches(ev events.Event) bool {
 // primary key and all but one are silently dropped (the coarse-PK data-loss bug;
 // emissions/admin fixed in migration 0053, positions in 0054 after (asset,user)
 // proved insufficient for same-(asset,user,kind)-per-op events).
+//
+// The three auction events (new/fill/delete) carry EventIndex too — their
+// decode functions set it directly from events.Event.EventIndex (blend_auctions
+// PK, migration 0058 / F-1324), so the loop below only needs to fan it onto the
+// non-auction structs whose decode helpers don't see the raw event.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := d.decodeByKind(ev)
 	if err != nil {
