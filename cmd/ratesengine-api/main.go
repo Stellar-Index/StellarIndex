@@ -172,12 +172,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	// Storage — required. API reads from Timescale (+ Redis cache
 	// in a follow-up PR).
 	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)
 	if err != nil {
+		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
 	}
 	defer func() {
@@ -217,6 +217,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 		logger.Info("redis configured", "mode", mode)
 	}
+	// F-1350: register cancel AFTER the store + redis defers so LIFO
+	// runs cancel FIRST on shutdown — the background workers (forex,
+	// prewarm, marketcap, coverage refresher, stream sub/pub, webhook
+	// delivery) see context cancellation and unwind BEFORE the
+	// store/redis handles they query are closed. Registering cancel
+	// before those defers (the prior order) closed the pool while
+	// goroutines were still issuing queries against it. The HTTP server
+	// has its own bounded Shutdown() at the end of run(); cancel running
+	// last here doesn't change that path.
+	defer cancel()
 
 	// F-1224 (audit-2026-05-12): rebuild the SEP-10 validator with
 	// the Redis-backed replay guard now that we have an `rdb`. The
@@ -598,6 +608,21 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
 	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store})
+
+	// F-1350: dry-run exits HERE — before the first `go` statement and
+	// before the heavy background SQL (backfill-coverage refresh,
+	// self-prewarm). Dry-run's contract is "load config + open
+	// connections + validate, then exit"; it must NOT spin up the
+	// forex / prewarm / marketcap / coverage / stream goroutines or
+	// run their first-pass queries (the prior gate sat ~300 lines
+	// lower, after all of them had already launched). Everything above
+	// this point is pure construction + connection validation, which
+	// is exactly what dry-run is meant to exercise.
+	if dryRun {
+		logger.Info("dry-run complete — exiting")
+		return nil
+	}
+
 	go func() {
 		if err := forexWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("forex worker exited", "err", err)
@@ -917,11 +942,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("stream publisher running", "pairs", len(streamPairs), "interval", cfg.API.Streaming.PollInterval)
 	} else {
 		logger.Info("stream publisher disabled (no pairs configured); /v1/price/stream serves heartbeats only")
-	}
-
-	if dryRun {
-		logger.Info("dry-run complete — exiting")
-		return nil
 	}
 
 	// #16: background refresher for /v1/diagnostics/ingestion. Builds

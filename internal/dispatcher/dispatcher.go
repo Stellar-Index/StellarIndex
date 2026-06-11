@@ -41,6 +41,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/ingest"
@@ -225,7 +226,9 @@ type LedgerEntryChangeContext struct {
 //
 // Not safe for concurrent ProcessLedger calls — caller should
 // serialize. (The ledgerstream callback model naturally
-// serializes, so this is the intended usage.)
+// serializes, so this is the intended usage.) The internal stats
+// counters ARE safe for a concurrent Stats() reader (the statsflush
+// goroutine) — they're guarded by statsMu (F-1317).
 type Dispatcher struct {
 	decoders             []Decoder
 	opDecoders           []OpDecoder
@@ -248,6 +251,17 @@ type Dispatcher struct {
 	// sink disables the hook; the dispatcher behaves as if it weren't
 	// there. See [Dispatcher.SetRawEventSink].
 	rawEventSink RawEventSink
+
+	// statsMu guards every read + write of the counter fields below
+	// (eventsSeen / decodeErrors / unmatchedHits / txReadErrors).
+	// ProcessLedger mutates them on the dispatch goroutine while the
+	// statsflush goroutine reads them via Stats(); without this lock
+	// the concurrent map access is a fatal `concurrent map read and
+	// map write` panic (F-1317). Critical sections are kept tiny — a
+	// single `++` under Lock, or one snapshot copy under Lock — so the
+	// dispatch hot path pays only an uncontended mutex per matched
+	// input.
+	statsMu sync.Mutex
 
 	// Per-source events_seen — bumped every time a decoder's
 	// Matches() claims an input (event / contract call / entry
@@ -411,6 +425,14 @@ type Stats struct {
 }
 
 func (d *Dispatcher) Stats() Stats {
+	// Snapshot the counter fields under statsMu so this read can't
+	// race the dispatch goroutine's `++` mutations (F-1317). Kept to
+	// a tight copy of the maps + scalars; the orphan walk below calls
+	// into decoder code and is deliberately OUTSIDE the lock (the
+	// decoders slice is set once at startup, and holding statsMu
+	// across decoder calls would needlessly widen the critical
+	// section the dispatch path contends on).
+	d.statsMu.Lock()
 	seenCopied := make(map[string]int, len(d.eventsSeen))
 	for k, v := range d.eventsSeen {
 		seenCopied[k] = v
@@ -419,6 +441,10 @@ func (d *Dispatcher) Stats() Stats {
 	for k, v := range d.decodeErrors {
 		decodeCopied[k] = v
 	}
+	unmatched := d.unmatchedHits
+	txReadErrs := d.txReadErrors
+	d.statsMu.Unlock()
+
 	orphanCopied := map[string]int{}
 	for _, dec := range d.decoders {
 		reporter, ok := dec.(interface{ EvictedOrphans() int })
@@ -433,8 +459,8 @@ func (d *Dispatcher) Stats() Stats {
 		EventsSeen:    seenCopied,
 		DecodeErrors:  decodeCopied,
 		OrphanEvents:  orphanCopied,
-		UnmatchedHits: d.unmatchedHits,
-		TxReadErrors:  d.txReadErrors,
+		UnmatchedHits: unmatched,
+		TxReadErrors:  txReadErrs,
 	}
 }
 
@@ -487,7 +513,9 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 			// `Stats().TxReadErrors` surfaces the drop — silent skip
 			// here meant a slow corruption rate was invisible
 			// pre-2026-05-10.
+			d.statsMu.Lock()
 			d.txReadErrors++
+			d.statsMu.Unlock()
 			continue
 		}
 		if !tx.Result.Successful() {
@@ -702,6 +730,33 @@ func walkV4Operations(ops []xdr.OperationMetaV2, dispatch func(int, xdr.LedgerEn
 	return outs
 }
 
+// bumpEventsSeen increments the per-source events_seen counter under
+// statsMu (F-1317). Called pre-Decode on every matched input across
+// all four dispatch seams. The lock is held only for the single map
+// write so the decoder's own work runs lock-free.
+func (d *Dispatcher) bumpEventsSeen(name string) {
+	d.statsMu.Lock()
+	d.eventsSeen[name]++
+	d.statsMu.Unlock()
+}
+
+// bumpDecodeError increments the per-source decode-error counter
+// under statsMu (F-1317). Called when a matched decoder's Decode
+// returns an error.
+func (d *Dispatcher) bumpDecodeError(name string) {
+	d.statsMu.Lock()
+	d.decodeErrors[name]++
+	d.statsMu.Unlock()
+}
+
+// bumpUnmatched increments the unmatched-events counter under
+// statsMu (F-1317).
+func (d *Dispatcher) bumpUnmatched() {
+	d.statsMu.Lock()
+	d.unmatchedHits++
+	d.statsMu.Unlock()
+}
+
 // dispatchContractCall runs one InvokeContract op through the
 // contract-call decoder chain. First matching decoder owns it.
 func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.Event, error) {
@@ -709,10 +764,10 @@ func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.E
 		if !ccd.Matches(ctx.ContractID, ctx.FunctionName) {
 			continue
 		}
-		d.eventsSeen[ccd.Name()]++
+		d.bumpEventsSeen(ccd.Name())
 		outs, err := ccd.Decode(ctx)
 		if err != nil {
-			d.decodeErrors[ccd.Name()]++
+			d.bumpDecodeError(ccd.Name())
 			return nil, err
 		}
 		return outs, nil
@@ -736,10 +791,10 @@ func (d *Dispatcher) dispatchEntryChange(ctx LedgerEntryChangeContext) ([]consum
 		if !ld.Matches(ctx.Change) {
 			continue
 		}
-		d.eventsSeen[ld.Name()]++
+		d.bumpEventsSeen(ld.Name())
 		outs, err := ld.Decode(ctx)
 		if err != nil {
-			d.decodeErrors[ld.Name()]++
+			d.bumpDecodeError(ld.Name())
 			return nil, err
 		}
 		return outs, nil
@@ -760,10 +815,10 @@ func (d *Dispatcher) dispatchOp(ctx OpContext) ([]consumer.Event, error) {
 		if !od.Matches(ctx.Op) {
 			continue
 		}
-		d.eventsSeen[od.Name()]++
+		d.bumpEventsSeen(od.Name())
 		outs, err := od.Decode(ctx)
 		if err != nil {
-			d.decodeErrors[od.Name()]++
+			d.bumpDecodeError(od.Name())
 			return nil, err
 		}
 		return outs, nil
@@ -827,15 +882,15 @@ func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 		if !dec.Matches(ev) {
 			continue
 		}
-		d.eventsSeen[dec.Name()]++
+		d.bumpEventsSeen(dec.Name())
 		outs, err := dec.Decode(ev)
 		if err != nil {
-			d.decodeErrors[dec.Name()]++
+			d.bumpDecodeError(dec.Name())
 			return nil, err
 		}
 		return outs, nil
 	}
-	d.unmatchedHits++
+	d.bumpUnmatched()
 	return nil, nil
 }
 
