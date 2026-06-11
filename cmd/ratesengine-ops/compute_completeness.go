@@ -461,6 +461,10 @@ func retentionFloor(ctx context.Context, store *timescale.Store, src reconSource
 // artifact (one-side-zero fills or op_index fanout collisions, both of which
 // the served can't hold but the CH substrate retains). Read-only; windowed
 // 100k so the operations⋈results join stays under the CH memory cap.
+//
+// distinct-PK accumulation is natural fan-out; splitting hurts the read.
+//
+//nolint:gocognit // windowed stream → per-op decode → per-trade Validate +
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, error) {
 	out := make(map[uint32]int)
 	dec := sdex.NewDecoder()

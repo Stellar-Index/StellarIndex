@@ -100,6 +100,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	only := fs.String("sources", "", "comma-separated source names to rebuild (default: all event-based)")
 	includeSDEX := fs.Bool("sdex", false, "also re-derive SDEX trades from operations (expensive: ~15.5B op decodes all-history)")
 	sdexGaps := fs.Bool("sdex-gaps", false, "with -sdex: re-derive ONLY the served gaps in [from,to] in one pass (each gap is an empty range → pure insert, no ON CONFLICT walk) — efficient drop-backlog recovery vs re-scanning the whole range")
+	sdexReconcile := fs.Bool("sdex-reconcile", false, "with -sdex: re-derive ONLY ledgers where the distinct Validate-passing census exceeds the served count (PARTIAL-drop ledgers the empty-gap pass misses); recovers the served-tier projection to exact parity with the lake")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -239,6 +240,67 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				}
 			}
 			fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX gap-only read done (%d gaps) in %s\n", ng, time.Since(sStart).Round(time.Second))
+		} else if *sdexReconcile {
+			// Re-derive ONLY the PARTIAL-drop ledgers: those where the distinct,
+			// Validate-passing census exceeds the served count. The empty-gap
+			// pass (-sdex-gaps) misses these because served>0. Per 100k window:
+			// decode + buffer valid trade events by ledger (+ track the distinct
+			// served-PK census), compare to the per-ledger served count, and
+			// queue every event for any ledger that's short. Writing the full
+			// set is fine — ON CONFLICT no-ops the rows already present and
+			// inserts only the dropped ones.
+			type pk struct {
+				tx string
+				op uint32
+			}
+			const rwin = 100_000
+			var nShort int
+			for wlo := lo; wlo <= hi; wlo += rwin {
+				whi := wlo + rwin - 1
+				if whi > hi {
+					whi = hi
+				}
+				byLedger := make(map[uint32][]consumer.Event)
+				seen := make(map[uint32]map[pk]struct{})
+				if derr := clickhouse.StreamSDEXOps(ctx, *chAddr, wlo, whi, func(op clickhouse.SDEXOp) error {
+					outs, _ := sdexDec.Decode(dispatcher.OpContext{
+						Ledger:   op.Ledger,
+						ClosedAt: op.ClosedAt,
+						TxHash:   op.TxHash,
+						TxSource: op.Source,
+						OpIndex:  int(op.OpIndex),
+						Op:       op.Op,
+						OpResult: op.OpResult,
+					})
+					for _, ev := range outs {
+						te, ok := ev.(sdex.TradeEvent)
+						if !ok || te.Trade.Validate() != nil {
+							continue
+						}
+						byLedger[te.Trade.Ledger] = append(byLedger[te.Trade.Ledger], ev)
+						s := seen[te.Trade.Ledger]
+						if s == nil {
+							s = make(map[pk]struct{})
+							seen[te.Trade.Ledger] = s
+						}
+						s[pk{tx: te.Trade.TxHash, op: te.Trade.OpIndex}] = struct{}{}
+					}
+					return nil
+				}); derr != nil {
+					return fmt.Errorf("ch-rebuild: sdex reconcile stream [%d,%d]: %w", wlo, whi, derr)
+				}
+				served, serr := store.CountRowsByLedger(ctx, "trades", "ledger", "source='sdex'", wlo, whi)
+				if serr != nil {
+					return fmt.Errorf("ch-rebuild: sdex reconcile served counts [%d,%d]: %w", wlo, whi, serr)
+				}
+				for ledger, evs := range byLedger {
+					if len(seen[ledger]) > served[ledger] {
+						buf = append(buf, evs...)
+						nShort++
+					}
+				}
+			}
+			fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX reconcile read done (%d short ledgers) in %s\n", nShort, time.Since(sStart).Round(time.Second))
 		} else if derr := decodeRange(lo, hi); derr != nil {
 			return fmt.Errorf("ch-rebuild: sdex op stream: %w", derr)
 		} else {
