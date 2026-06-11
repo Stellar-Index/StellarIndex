@@ -461,9 +461,16 @@ var DefaultWindows = []time.Duration{
 // consumer pattern stabilises.
 const DefaultInterval = 30 * time.Second
 
-// DefaultMaxTradesPerWindow caps per-query scan size. 10,000 at
-// ~150 trades/sec network-wide rate is ~67 seconds of activity —
-// comfortably wider than any of the default windows.
+// DefaultMaxTradesPerWindow caps per-query scan size to bound a single
+// refresh's Timescale cost. 10,000 rows is comfortably wider than the
+// 5m default window at network-wide trade rates, but a single liquid
+// pair (e.g. XLM/USDC on a busy day) can clear 10,000 trades well
+// inside the 1h and 24h windows — when it does, TradesInRange returns
+// the NEWEST 10,000 (F-1319 fixed the prior oldest-N truncation) and
+// the orchestrator emits AggregatorWindowTruncatedTotal so operators
+// can see the VWAP is over a partial slice. Raise the cap (or move the
+// large windows to a SQL-side aggregate) if that counter fires
+// sustainedly.
 const DefaultMaxTradesPerWindow = 10_000
 
 // Orchestrator holds the wired dependencies and runs the tick loop.
@@ -961,13 +968,40 @@ func distinctSourceCount(trades []canonical.Trade) int {
 // aborting the whole window — a single connector misbehaving at
 // the Timescale layer shouldn't black out an otherwise-healthy
 // aggregation target.
+// fetchTradesDetectTruncation wraps the store fetch with the per-query
+// cap and bumps AggregatorWindowTruncatedTotal (+ a WARN) when the
+// returned row count hits the cap — i.e. the window held more trades
+// than `MaxTradesPerWindow` and the VWAP is computed over only the
+// newest `cap` of them. `target` is the aggregation target (for the log
+// line); `fetch` is the actual pair queried (== target for the direct
+// path, a stablecoin-backer pair under proxy expansion).
+func (o *Orchestrator) fetchTradesDetectTruncation(
+	ctx context.Context, target, fetch canonical.Pair, from, to time.Time,
+) ([]canonical.Trade, error) {
+	t, err := o.store.TradesInRange(ctx, fetch, from, to, o.cfg.MaxTradesPerWindow)
+	if err != nil {
+		return nil, err
+	}
+	if len(t) >= o.cfg.MaxTradesPerWindow {
+		obs.AggregatorWindowTruncatedTotal.Inc()
+		o.logger.Warn("trade window truncated at MaxTradesPerWindow — VWAP over newest-N slice only",
+			"target", target.String(),
+			"fetch_pair", fetch.String(),
+			"cap", o.cfg.MaxTradesPerWindow,
+			"from", from.UTC(),
+			"to", to.UTC(),
+		)
+	}
+	return t, nil
+}
+
 func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
 	from, to time.Time,
 ) (trades []canonical.Trade, usdVolume float64, tradeUSD map[string]float64, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
-		t, err := o.store.TradesInRange(ctx, target, from, to, o.cfg.MaxTradesPerWindow)
+		t, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -984,7 +1018,7 @@ func (o *Orchestrator) fetchForTarget(
 	var sumUSD float64
 	tradeUSD = map[string]float64{}
 	for _, src := range sources {
-		batch, ferr := o.store.TradesInRange(ctx, src, from, to, o.cfg.MaxTradesPerWindow)
+		batch, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
 		if ferr != nil {
 			o.logger.Warn("stablecoin-expansion fetch failed",
 				"target", target.String(),

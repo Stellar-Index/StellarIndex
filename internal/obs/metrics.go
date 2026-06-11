@@ -73,6 +73,7 @@ func init() {
 		AggregatorVWAPWritesTotal,
 		AggregatorVWAPCacheWriteErrorsTotal,
 		AggregatorEmptyWindowsTotal,
+		AggregatorWindowTruncatedTotal,
 		AggregatorStreamPublishTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
@@ -897,6 +898,22 @@ var AggregatorEmptyWindowsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "ratesengine_aggregator_empty_windows_total",
 		Help: "Aggregator (pair, window) refreshes that produced zero eligible trades.",
+	},
+)
+
+// AggregatorWindowTruncatedTotal — count of (pair, window) fetches
+// whose trade count hit MaxTradesPerWindow, i.e. the window held more
+// trades than the per-query cap and the VWAP was computed over only the
+// newest `cap` trades. A non-zero rate means a busy pair/window is
+// being aggregated over a partial slice (F-1319) — chart
+// `rate(...)` against AggregatorVWAPWritesTotal to see how often it
+// fires; sustained firing means the cap (or window) needs raising or a
+// SQL-side aggregate. Unlabelled to keep cardinality bounded, matching
+// the sibling aggregator counters.
+var AggregatorWindowTruncatedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "ratesengine_aggregator_window_truncated_total",
+		Help: "Aggregator (pair, window) fetches that hit MaxTradesPerWindow — VWAP computed over a partial (newest-N) trade slice.",
 	},
 )
 

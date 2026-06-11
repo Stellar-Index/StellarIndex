@@ -632,6 +632,13 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	if to.Before(from) {
 		return nil, fmt.Errorf("timescale: TradesInRange: to %v < from %v", to, from)
 	}
+	// Order DESC so the LIMIT keeps the NEWEST rows when the window has
+	// more than `limit` trades, then reverse to ascending below. The
+	// previous `ORDER BY ts ASC LIMIT` kept the OLDEST `limit` rows, so a
+	// busy 1h/24h VWAP was computed from a stale slice that began at the
+	// window start and stopped ~limit trades later, never reaching the
+	// present (F-1319). Callers still receive ascending order; only which
+	// rows survive truncation changed (newest, not oldest).
 	const q = `
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
@@ -642,7 +649,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
            AND quote_asset = $2
            AND ts         >= $3
            AND ts          < $4
-         ORDER BY ts ASC, ledger ASC
+         ORDER BY ts DESC, ledger DESC
          LIMIT $5
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -683,6 +690,11 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: TradesInRange rows: %w", err)
+	}
+	// Scanned newest-first (see the DESC query above); reverse to the
+	// ascending order this method's contract promises its callers.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
 }
