@@ -84,8 +84,15 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
         )
         ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index) DO NOTHING
     `
+	// deadline_ts is a user-supplied u64 expiry. Some router calls pass a
+	// sentinel / garbage value (≈3e18, or one that overflows int64 to a BC
+	// year) that lands outside Postgres's timestamptz range [4713 BC, 294276
+	// AD]. The swap itself is a real, successful token movement — so an
+	// unrepresentable deadline is NULLed rather than rejecting the whole row
+	// (the column is nullable). Without this the live indexer + every backfill
+	// silently drop these swaps (≈24% of historical router calls).
 	var deadline interface{}
-	if e.DeadlineTS != nil {
+	if e.DeadlineTS != nil && pgTimestamptzRepresentable(*e.DeadlineTS) {
 		deadline = e.DeadlineTS.UTC()
 	}
 	_, err := s.db.ExecContext(ctx, q,
@@ -109,4 +116,19 @@ func nullableString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// Postgres timestamptz spans 4713 BC … 294276 AD. Values outside this range
+// (e.g. a u64 router deadline of ~3e18 seconds, or one that overflows int64 to
+// a BC year) error the whole INSERT with SQLSTATE 22008. We treat such a
+// timestamp as "no representable value" (→ SQL NULL).
+var (
+	pgTimestamptzMin = time.Date(-4713, 1, 1, 0, 0, 0, 0, time.UTC)
+	pgTimestamptzMax = time.Date(294276, 1, 1, 0, 0, 0, 0, time.UTC)
+)
+
+// pgTimestamptzRepresentable reports whether t fits in Postgres's timestamptz
+// domain. Out-of-range values are NULLed by the caller rather than rejected.
+func pgTimestamptzRepresentable(t time.Time) bool {
+	return t.After(pgTimestamptzMin) && t.Before(pgTimestamptzMax)
 }
