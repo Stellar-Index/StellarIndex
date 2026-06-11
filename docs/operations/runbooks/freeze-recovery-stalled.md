@@ -57,7 +57,7 @@ ssh r1 'journalctl -u ratesengine-aggregator --since "30 min ago" \
 # Absent: the goroutine never started — restart aggregator.
 
 # 2) Is it failing on the lister side (postgres) or the cache side (Redis)?
-ssh r1 'curl -s http://localhost:9091/metrics \
+ssh r1 'curl -s http://localhost:9465/metrics \
   | grep "ratesengine_anomaly_freeze_recovery_sweeps_total"'
 # outcome="error" → lister path or all-Redis is failing
 # outcome="partial" → MarkRecovered postgres write is failing per-row

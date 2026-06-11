@@ -22,7 +22,7 @@ Per [supply-pipeline.md](../../architecture/supply-pipeline.md),
 `asset_supply_history` snapshots can be produced by **either** of:
 
 1. **systemd timer** (`supply-snapshot.timer` →
-   `ratesengine-ops supply-snapshot`, writes `last_success_timestamp`
+   `ratesengine-ops supply snapshot`, writes `last_success_timestamp`
    into `/var/lib/node_exporter/textfile_collector/supply_snapshot.prom`).
    This alert tracks **only** that gauge.
 2. **Aggregator-resident goroutine** (`runSupplyRefresh` in

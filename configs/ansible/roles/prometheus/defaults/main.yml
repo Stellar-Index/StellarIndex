@@ -41,8 +41,19 @@ alertmanager_group: alertmanager
 # ── Rule files ─────────────────────────────────────────────────
 # Local repo path containing the *.yml rule files that get
 # synced to /etc/prometheus/rules.d/ on each prometheus host.
-# Path is relative to the role's task root.
-prometheus_rules_source_dir: "{{ playbook_dir }}/../deploy/monitoring/rules"
+#
+# `playbook_dir` is `configs/ansible/playbooks/`, so reaching the
+# repo-root `deploy/monitoring/rules/` needs THREE `..` hops
+# (../../../) — the same convention the healthchecks role uses for
+# `{{ playbook_dir }}/../../../configs/healthchecks/...`. A prior
+# value used a single `..`, which resolved to the NONEXISTENT
+# `configs/ansible/deploy/monitoring/rules`; `find` on a missing
+# path returns an empty list, and the stale-rule cleanup task in
+# 03-prometheus-configure.yml would then delete EVERY rule file on
+# the host and reload Prometheus with zero alert rules (F-1357).
+# The non-empty assert in that task is the guard-rail against a
+# regression here.
+prometheus_rules_source_dir: "{{ playbook_dir }}/../../../deploy/monitoring/rules"
 
 # ── External labels ────────────────────────────────────────────
 # Stamped on every series for operator distinguishability when

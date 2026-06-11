@@ -1,6 +1,6 @@
 ---
 title: Runbook — projector-replay
-last_verified: 2026-05-29
+last_verified: 2026-06-12
 status: ratified
 severity: P3
 ---
@@ -12,7 +12,7 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). |
-| Tool | `ratesengine-ops projector-replay --source <name> --from <ledger>` |
+| Tool | `ratesengine-ops projector-replay -source <name> -from <ledger>` |
 | Typical wall time | ≤ 5 s SQL + projector catch-up (≈ 1 min per 100k ledgers per source) |
 | Impact | None — the projector tails `soroban_events` (ADR-0029); replay just rewinds a cursor. `ON CONFLICT DO NOTHING` makes re-writes idempotent. |
 
@@ -42,7 +42,7 @@ so re-writes are idempotent.
 ```sh
 # 1. Where is the projector's per-source cursor right now?
 ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
-  "SELECT source, sub_source, last_ledger, updated_at FROM source_cursors \
+  "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors \
    WHERE source = '"'"'projector'"'"' ORDER BY sub_source"'
 
 # 2. What rows are actually present in the per-source table for
@@ -107,4 +107,7 @@ replay is caught up to the live tip.
 
 ## Changelog
 
+- 2026-06-12 — F-1330: fix diagnosis SQL (`ingestion_cursors` not
+  `source_cursors`; `last_updated` not `updated_at`); normalise flag
+  form to single-dash to match the binary.
 - 2026-05-29 — initial draft (ADR-0032 Phase 5 rc.97).

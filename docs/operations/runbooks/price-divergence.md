@@ -1,6 +1,6 @@
 ---
 title: Runbook — price-divergence
-last_verified: 2026-04-23
+last_verified: 2026-06-12
 status: draft
 severity: P2
 ---
@@ -19,9 +19,13 @@ severity: P2
 
 ## Symptoms
 
-- `abs(ratesengine_our_price - ratesengine_reference_price) /
-  ratesengine_reference_price > 0.05` (or 0.10 for critical) for
-  ≥ 2 min on some asset + reference-source pair.
+- `flags.divergence_warning = true` on `/v1/price` responses for the
+  affected asset, driven by a `divergence_observations` row with
+  `status = 'firing'` (`|delta_pct| > 5` warning / `> 10` critical).
+  There are no `ratesengine_our_price` / `ratesengine_reference_price`
+  Prometheus gauges — the per-tick deltas live in the
+  `divergence_observations` hypertable (migration 0019), and the
+  boolean flag is the public surface.
 - Dashboard *Divergence → per-asset* panel shows the spread.
 - Often *doesn't* fire alone: bad decimal handling produces 100×
   or 1e6× divergence, not 5–10 %.
@@ -29,20 +33,27 @@ severity: P2
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Which asset + reference source?
-curl -s http://prometheus:9090/api/v1/query --data-urlencode \
-  'query=topk(5, abs(ratesengine_our_price - ratesengine_reference_price) / ratesengine_reference_price)'
+# Which asset + reference are firing right now, and by how much?
+psql -d ratesengine -c \
+  "SELECT asset_id, quote_id, reference, our_price, ref_price, delta_pct, observed_at
+   FROM divergence_observations
+   WHERE status = 'firing'
+     AND observed_at > now() - interval '15 minutes'
+   ORDER BY abs(delta_pct) DESC LIMIT 10;"
 
-# Compare the two prices side by side
-curl -s 'http://api:8080/v1/price?asset=native:XLM&quote=fiat:USD'
+# Compare our live price against the reference side by side.
+# (XLM is the canonical `native`; the API listens on :3000.)
+curl -s 'http://localhost:3000/v1/price?asset=native&quote=fiat:USD'
 curl -s 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd'
 
 # What sources are contributing to our aggregate for this asset?
-psql -c "SELECT source, count(*) AS trades, max(observed_at) AS latest
-         FROM trades
-         WHERE (base = 'native:XLM' OR quote = 'native:XLM')
-           AND observed_at > now() - interval '1 hour'
-         GROUP BY source ORDER BY trades DESC;"
+psql -d ratesengine -c \
+  "SELECT source, count(*) AS trades, max(ts) AS latest
+   FROM trades
+   WHERE (base_asset IN ('native', 'crypto:XLM')
+          OR quote_asset IN ('native', 'crypto:XLM'))
+     AND ts > now() - interval '1 hour'
+   GROUP BY source ORDER BY trades DESC;"
 ```
 
 ## Typical root causes (roughly in order of severity)
@@ -138,5 +149,9 @@ psql -c "SELECT source, count(*) AS trades, max(observed_at) AS latest
 
 ## Changelog
 
+- 2026-06-12 — F-1330: rewrite diagnosis to executable form — there
+  are no `ratesengine_our_price`/`_reference_price` gauges (deltas
+  live in `divergence_observations`, mig 0019); API port is :3000;
+  XLM is `native`; trades columns are `ts`/`base_asset`/`quote_asset`.
 - 2026-04-23 — initial draft. Lays out the "order of magnitude"
   triage trick: > 100× is always a decoder bug.

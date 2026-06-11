@@ -29,7 +29,7 @@ severity: P2
 
 ```sh
 # Which asset is stale?
-curl -s http://api:9464/metrics |
+curl -s http://localhost:9465/metrics |
   awk '/^ratesengine_price_staleness_seconds/ && $2 > 120 {print}'
 
 # Is it one asset or many?
@@ -37,14 +37,16 @@ curl -s http://api:9464/metrics |
 #   Many assets on one source → the source is stopped.
 #   Many sources → the aggregator isn't writing (or isn't running).
 
-# Which sources quote this asset?
-psql -c "SELECT source, max(observed_at) AS most_recent
-         FROM trades WHERE base = 'native:XLM' OR quote = 'native:XLM'
+# Which sources quote this asset? (XLM is stored as `native`; the
+# rc.89 dual-form alias also accepts `crypto:XLM`.)
+psql -c "SELECT source, max(ts) AS most_recent
+         FROM trades WHERE base_asset IN ('native', 'crypto:XLM')
+                        OR quote_asset IN ('native', 'crypto:XLM')
          GROUP BY source ORDER BY most_recent DESC;"
 
 # Is the aggregator binary running and writing CAGGs?
-ssh root@aggregator-01 "systemctl status ratesengine-aggregator --no-pager | head -10"
-ssh root@aggregator-01 "curl -s http://localhost:9464/metrics | grep aggregator_writes_total"
+ssh root@<host> "systemctl status ratesengine-aggregator --no-pager | head -10"
+ssh root@<host> "curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_vwap_writes_total"
 ```
 
 ## Typical root causes

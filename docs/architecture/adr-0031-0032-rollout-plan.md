@@ -1,7 +1,14 @@
+---
+title: ADR-0031 + ADR-0032 rollout plan
+last_verified: 2026-06-12
+status: completed
+---
+
 # ADR-0031 + ADR-0032 rollout plan
 
-**Last verified:** 2026-05-29
-**Status:** Proposed
+**Last verified:** 2026-06-12
+**Status:** Completed (shipped rc.91–rc.98 per ADR-0032 Phase 5; the
+plan below is retained as the historical rollout record).
 **Owners:** ratesengine eng
 
 ADR-0031 (data-derived coverage signal) and ADR-0032 (per-source

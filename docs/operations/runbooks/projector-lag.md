@@ -1,6 +1,6 @@
 ---
 title: Runbook — projector-lag
-last_verified: 2026-05-29
+last_verified: 2026-06-12
 status: ratified
 severity: P3
 ---
@@ -29,12 +29,12 @@ severity: P3
 # Read the per-source projector cursor — should be close to the
 # ledgerstream tip.
 ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
-  "SELECT source, sub_source, last_ledger, updated_at FROM source_cursors \
+  "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors \
    WHERE source = '"'"'projector'"'"' ORDER BY sub_source"'
 
 # Compare against the live ledgerstream tip.
 ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
-  "SELECT last_ledger FROM source_cursors \
+  "SELECT last_ledger FROM ingestion_cursors \
    WHERE source = '"'"'ledgerstream'"'"' AND sub_source = '"'"''"'"'"'
 
 # Tail the projector log for the lagging source.
@@ -55,7 +55,8 @@ an outage — let it run unless lag exceeds a few hours.
       causes: postgres connection saturation, downstream PK
       constraint failure on a malformed event, decoder panic.
 - [ ] Step 3 — if the projector is wedged on one source, disable
-      it via `[ingestion.projector] enabled = false` in `r1.toml` +
+      it via `[ingestion.projector] enabled = false` in
+      `/etc/ratesengine.toml` +
       `systemctl restart ratesengine-indexer.service`. Lag will
       reset on next start.
 - [ ] Verification: `ratesengine_projector_lag_ledgers` drops below
@@ -92,4 +93,7 @@ an outage — let it run unless lag exceeds a few hours.
 
 ## Changelog
 
+- 2026-06-12 — F-1330: fix diagnosis SQL (`ingestion_cursors` not
+  `source_cursors`; `last_updated` not `updated_at`); config file is
+  `/etc/ratesengine.toml` not `r1.toml`.
 - 2026-05-29 — initial draft (ADR-0032 Phase 3 rc.95).

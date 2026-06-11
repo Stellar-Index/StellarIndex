@@ -1,6 +1,6 @@
 ---
 title: Archive completeness — invariants, bootstrap, daily cron
-last_verified: 2026-05-03
+last_verified: 2026-06-12
 status: living procedure
 ---
 
@@ -89,11 +89,20 @@ the cross-anchor portion of the daily control and serves as the fleet's
 trust anchor for that narrower check set.
 
 ```
-ratesengine-ops archive-completeness verify -range yesterday
+ratesengine-ops archive-completeness verify -from 2 -to 0 -workers 8
   ↓
   ├─ implemented today: stat each expected /srv/history-archive/ledger-*.xdr.gz
   └─ implemented today: fetch/repair missing cross-anchor checkpoint files
 ```
+
+(`-to 0` resolves the tip from the live ledgerstream cursor. The real
+flag set is `-archive-root`, `-from`, `-to`, `-workers`,
+`-owner-user`, `-owner-group`, `-output-file`, `-textfile-output` —
+see `cmd/ratesengine-ops/main.go::archiveCompletenessVerify` and
+`deploy/systemd/archive-completeness.service` for the exact
+invocation. There is no `-range`/`-checks`/`-trust-leader` flag; the
+range-keyword and per-check selectors below describe the *target*
+ADR-0017 design, not the shipped command.)
 
 On any cross-anchor failure: attempt repair via the multi-source
 fallback chain (below). If repair succeeds, exit clean. If repair
@@ -107,8 +116,10 @@ cross-anchor archive on R2 disks at all. R2's local cron is
 narrower:
 
 ```
-ratesengine-ops archive-completeness verify -range yesterday \
-  -checks chain-link,multi-peer \
+# TARGET DESIGN (not shipped) — the -checks/-trust-leader flags do not
+# exist on the current binary. R2/R3 are deferred; today R1 is the only
+# host and runs the cross-anchor `verify` above.
+ratesengine-ops archive-completeness verify -checks chain-link,multi-peer \
   -trust-leader r1
 ```
 
@@ -135,7 +146,8 @@ R3 has the primary archive locally on Vultr Object Storage but no
 cross-anchor archive. Same shape as R2 with one addition:
 
 ```
-ratesengine-ops archive-completeness verify -range yesterday \
+# TARGET DESIGN (not shipped) — same caveat as R2 above.
+ratesengine-ops archive-completeness verify \
   -checks structural,chain-link,multi-peer \
   -trust-leader r1
 ```
@@ -204,29 +216,27 @@ on R1. Existing R1 gaps as of 2026-04-27:
    [galexie-backfill.md "mc mirror gotcha"](galexie-backfill.md#mc-mirror-gotcha-overwritefalse-doesnt-mean-what-it-says)
    for the failure mode this works around.
 
-4. **Diagnose cross-anchor gaps**
+4. **Diagnose + fill cross-anchor gaps**
+
+   The shipped command does not have separate `check`/`fix` modes —
+   `archive-completeness verify` performs the cross-anchor check AND
+   fills any missing checkpoints in one pass (Phase 1 check → Phase 2
+   fill via the fallback chain). Run it over the full range and write
+   the JSON report:
 
    ```sh
-   ratesengine-ops archive-completeness check \
-     -range full \
-     -checks cross-anchor-structural \
+   ratesengine-ops archive-completeness verify \
+     -from 2 -to 0 -workers 16 \
      -output-file /var/lib/galexie/cross-anchor-gaps.json
    ```
 
-5. **Fill cross-anchor gaps**
+   For each missing checkpoint it tries `core_live_001` →
+   `core_live_002` → `core_live_003` → tier-1 validator archives.
+   ~6,782 files at ~100 ms each = ~12 min serial, ~1 min wall-clock
+   at 16-way parallel. The exit code is 0 if no residual files remain
+   after the fill, 1 if the fallback chain was exhausted on some.
 
-   ```sh
-   ratesengine-ops archive-completeness fix \
-     -input-file /var/lib/galexie/cross-anchor-gaps.json \
-     -workers 16
-   ```
-
-   Iterates the missing-checkpoint list. For each: try
-   `core_live_001` → `core_live_002` → `core_live_003` → tier-1
-   validator archives. ~6,782 files at ~100 ms each = ~12 min serial,
-   ~1 min wall-clock at 16-way parallel.
-
-6. **Run end-to-end verify with hardened defaults**
+5. **Run end-to-end verify with hardened defaults**
 
    ```sh
    ratesengine-ops verify-archive -config /etc/ratesengine.toml \
@@ -238,13 +248,13 @@ on R1. Existing R1 gaps as of 2026-04-27:
    `checkpointsMissed > 0` as a hard failure. Must exit 0 before the
    daily cron is enabled.
 
-7. **Enable the daily timer**
+6. **Enable the daily timer**
 
    ```sh
    systemctl enable --now archive-completeness.timer
    ```
 
-After step 7, the system carries the invariants forward.
+After step 6, the system carries the invariants forward.
 
 ## Daily completeness cron (steady state)
 
@@ -263,10 +273,14 @@ The :17 minute and the 5-minute jitter avoid AWS S3 thundering-herd
 patterns and spread the three regions' runs apart from each other.
 
 The timer fires
-`/etc/systemd/system/archive-completeness.service`, which runs:
+`/etc/systemd/system/archive-completeness.service`, which runs (see
+`deploy/systemd/archive-completeness.service` for the canonical unit):
 
 ```sh
-ratesengine-ops archive-completeness verify -range yesterday
+ratesengine-ops archive-completeness verify \
+  -from 2 -to 0 -workers 8 \
+  -textfile-output /var/lib/node_exporter/textfile_collector/archive_completeness.prom \
+  -output-file /var/lib/galexie/last-completeness-report.json
 ```
 
 ### Wall-clock budget per run
@@ -384,37 +398,39 @@ for the comms policy.
 
 ## Tool reference
 
-`ratesengine-ops archive-completeness` (planned PRs A–D per
-ADR-0017):
+The shipped command is a single `verify` mode that checks the
+cross-anchor archive and fills any missing checkpoints in the same
+run (Phase 1 check → Phase 2 fill via the fallback chain). The
+`check`/`fix` mode split and the `-range`/`-checks`/`-trust-leader`
+flags below the line are part of the **target** ADR-0017 design and
+are NOT implemented today.
 
 ```
 USAGE
-  ratesengine-ops archive-completeness <mode> [flags]
+  ratesengine-ops archive-completeness verify [flags]
 
-MODES
-  check    Read-only enumeration; emits Prometheus gauges and a JSON
-           gap report. Doesn't modify either archive.
-  fix      Reads a gap report (or generates one) and runs the
-           multi-source fallback fetcher. Writes to both archives.
-  verify   check + fix + chain-walk + cross-anchor verify; the mode
-           the daily cron runs.
-
-FLAGS
-  -range RANGE          yesterday | last-7d | full | from N to M
-  -checks LIST          structural,chain-link,cross-anchor-structural,
-                        cross-anchor-anchor,multi-peer (default: all)
-  -trust-leader URL     scrape this URL for last_success_timestamp
-                        instead of running cross-anchor checks locally
-                        (R2, R3 mode)
-  -workers N            parallelism for repair fetches (default: 16)
-  -input-file PATH      reuse a previously-generated gap report
-  -output-file PATH     write gap report to this path
-  -fail-on-missed       (verify mode) treat checkpointsMissed > 0 as
-                        a hard failure (the post-bootstrap default)
-  -config PATH          ratesengine config file
+FLAGS (shipped)
   -archive-root PATH    cross-anchor archive root (default
                         /srv/history-archive)
+  -from N               first ledger sequence, inclusive (default 2)
+  -to N                 last ledger sequence, inclusive; REQUIRED.
+                        0 = resolve the tip from the live cursor
+  -workers N            parallel fetch workers (default 8)
+  -owner-user USER      file owner for placed files (default stellar)
+  -owner-group GROUP    file group for placed files (default stellar)
+  -output-file PATH     write JSON gap report here (empty = stdout)
+  -textfile-output PATH write a node_exporter textfile here
+                        (empty = no metrics emit)
+
+EXIT CODES
+  0   clean — no missing files after the fill pass
+  1   residual missing files (fallback chain exhausted some)
+  other  I/O error
 ```
+
+The reference implementation is
+`cmd/ratesengine-ops/main.go::archiveCompletenessVerify` +
+`internal/archivecompleteness/`.
 
 ## Cross-references
 

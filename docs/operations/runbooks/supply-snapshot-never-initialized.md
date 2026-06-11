@@ -95,7 +95,7 @@ sudo journalctl -u ratesengine-aggregator -f | grep -E 'supply-refresh'
 # Expect a "supply-refresh" tick line within `aggregator_refresh_cadence`.
 
 # Verify the metric appears in the aggregator's /metrics:
-curl -s http://localhost:9091/metrics | grep ratesengine_aggregator_supply_refresh_total
+curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_supply_refresh_total
 # Expect at least one outcome="ok" line per watched asset_key.
 ```
 

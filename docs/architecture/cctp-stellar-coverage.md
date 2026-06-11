@@ -1,3 +1,9 @@
+---
+title: CCTP-Stellar coverage — architecture & decoder design
+last_verified: 2026-05-22
+status: implemented
+---
+
 # CCTP-Stellar coverage — architecture & decoder design
 
 **Status:** Implemented (#40). Live ingest wired 2026-05-22.

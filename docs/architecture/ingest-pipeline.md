@@ -1,6 +1,6 @@
 ---
 title: Ingest pipeline — the one canonical data path
-last_verified: 2026-05-03
+last_verified: 2026-06-12
 status: binding
 ---
 
@@ -18,36 +18,59 @@ galexie                    ← the SINGLE stellar-core on r1 (ADR-0002 + CDP pat
 MinIO galexie-live         ← S3-compatible object store
     │
     ▼
-internal/ledgerstream/     ← SDK BufferedStorageBackend wrapper (PR 165a)
-    │   yields xdr.LedgerCloseMeta per ledger
+internal/ledgerstream/     ← SDK BufferedStorageBackend wrapper
+    │   Stream(ctx, from, to) yields xdr.LedgerCloseMeta per ledger
+    │   (StreamArchiveThenLive seams archive replay → live tail)
     ▼
-internal/dispatcher/       ← single consumer of ledgerstream (PR 165b)
-    │   per tx:
-    │     • tx.GetTransactionEvents()       → Soroban contract events
-    │     • tx.Envelope.Operations()        → classic ops (for SDEX)
-    │     • tx.Result.Result.OperationResults()
-    │   per event: byte-match topic[0] against each source's
-    │              TopicPrefix*/TopicSymbol* constants
+internal/dispatcher/       ← single consumer of ledgerstream
+    │   per tx, fed to four registered decoder seams (see Rule 3):
+    │     • Decoder                 — Soroban contract events (topic[0] byte-match)
+    │     • OpDecoder               — classic operations (e.g. SDEX, change_trust)
+    │     • ContractCallDecoder     — InvokeContract ops with no events (Band relay())
+    │     • LedgerEntryChangeDecoder — LedgerEntry mutations (supply observers)
     ▼
-internal/sources/{soroswap,aquarius,phoenix,reflector,sdex,…}/
+internal/sources/{soroswap,aquarius,phoenix,reflector,sdex,band,…}/
     │   each is a pure decoder + (optional) per-source correlation
     │   state (Soroswap swap+sync, Phoenix 8-field assembly).
     │   NO goroutines, NO RPC clients, NO pagination loops.
-    │   decode(...) → canonical.Trade | canonical.OracleUpdate
+    │   decode(...) → canonical.Trade | canonical.OracleUpdate | event
     ▼
-internal/storage/timescale/
-    │   InsertTrade / InsertOracleUpdate
-    ▼
-TimescaleDB hypertables
+internal/pipeline/sink.go  ← fans each decoded item to its destination:
     │
+    ├─► ClickHouse structural lake (ADR-0034) ──── the CERTIFIED raw history.
+    │     LiveSink writes every ledger + contract_event to ClickHouse;
+    │     ledgers are contiguous + hash-chained to genesis. This is the
+    │     substrate that proves "100% coverage" (ADR-0033).
+    │
+    ├─► soroban_events landing zone (ADR-0029, Postgres) ── raw Soroban events
+    │     │   tailed by ↓
+    │     ▼
+    │   internal/projector/  ← the ONE writer for Soroban-derived per-source
+    │     │   tables (trades, blend_*, phoenix_*, comet_*, soroswap_skim,
+    │     │   cctp_events, rozo_events, sep41_*, reflector/redstone oracle_updates).
+    │     │   ADR-0031/0032. Catch-up = `projector-replay -source <n> -from <l>`.
+    │     ▼
+    └─► dispatcher events-goroutine sink ── NON-projected events write here
+          directly (sdex, external CEX/FX, band, supply observers). These do
+          NOT flow through soroban_events; pipeline/sink.go::IsProjectedEvent
+          decides which path an event takes.
+              │
+              ▼
+    Postgres / TimescaleDB  ← the SERVED tier (ADR-0034): the recent working
+    │   set the API queries, NOT the full archive. Verified faithful within
+    │   what it holds (ADR-0033 projection reconcile, retention-scoped).
     ▼
 /v1/* API
 ```
 
-**Backfill and live-tail are the same code.** Both are just
-`internal/ledgerstream.Stream(ctx, fromLedger, toLedger)` with
-`toLedger == 0` meaning unbounded. No separate `BackfillRange` /
-`StreamLive` methods on sources.
+**Backfill and live-tail share the streaming code, but backfill
+re-derives from the lake, not a fresh MinIO walk.** Live tail is
+`internal/ledgerstream.Stream(ctx, from, 0)` (unbounded). Decoder
+backfills re-derive from the certified ClickHouse lake (SQL /
+`ch-rebuild`); projected-source catch-up is `projector-replay`. There
+are no separate `BackfillRange` / `StreamLive` methods on sources, and
+no per-source `<source>-backfill` subcommands (the whole family was
+deleted in rc.97 / ADR-0032 Phase 5).
 
 ---
 
@@ -88,18 +111,36 @@ A source package MUST NOT:
 - Poll.
 - Paginate.
 
-### 3. Dispatcher owns routing
+### 3. Dispatcher owns routing — four decoder seams
 
-`internal/dispatcher/` (landing in PR 165b) is the single
-consumer of `internal/ledgerstream`. It is the ONLY place where:
-- Contract-event byte-matching against `TopicPrefix*` /
-  `TopicSymbol*` happens.
-- Classic-op walking for SDEX happens.
-- Per-source correlation state is fed.
+`internal/dispatcher/` is the single consumer of
+`internal/ledgerstream`. Decoders register on the dispatcher
+(`dispatcher.go`, e.g. `AddDecoder`) — there is no `routes.go`. The
+dispatcher exposes **four** decoder interfaces (`dispatcher.go`),
+matching the four shapes of on-chain data:
+
+- **`Decoder`** — Soroban contract events, routed by `topic[0]`
+  byte-equality against each source's `TopicPrefix*`/`TopicSymbol*`
+  constants (Soroswap, Phoenix, Comet, Aquarius, Reflector, …).
+- **`OpDecoder`** — classic operations (SDEX trades, `change_trust`
+  supply observers).
+- **`ContractCallDecoder`** — InvokeContract ops that update storage
+  without emitting events (Band's `relay()`/`force_relay()`; match by
+  `(contract_id, function_name)`, decode from op args).
+- **`LedgerEntryChangeDecoder`** — `LedgerEntry` mutations
+  (account/trustline/claimable/LP-reserve supply observers).
+
+It is the ONLY place where contract-event byte-matching, classic-op
+walking, contract-call matching, and ledger-entry-change routing
+happen, and where per-source correlation state is fed.
 
 Adding a new source means:
 - Adding its decoder package under `internal/sources/<venue>/`.
-- Registering its dispatch entry in `internal/dispatcher/routes.go`.
+- Registering it on the dispatcher via the appropriate seam.
+- For a new Soroban-derived source: also adding a case in
+  `internal/projector/registry.go::buildSource` AND an arm in
+  `internal/pipeline/sink.go::IsProjectedEvent` (one-writer rule,
+  ADR-0031/0032).
 - That's it — no wire-layer code, no new goroutines.
 
 ### 4. Fixture captures stay RPC-based
@@ -138,8 +179,9 @@ Preventive controls put in place:
 - **CI check (live):** `scripts/ci/lint-imports.sh` blocks
   `internal/stellarrpc` imports outside the allowlist
   (`cmd/ratesengine-ops/`, `scripts/dev/`, `internal/stellarrpc/`
-  itself, `internal/sources/*/decode.go` until Event moves to a
-  neutral package in PR 165b, `*_test.go`). Also enforces rule B
+  itself, `*_test.go`). Soroban contract-event types now live in the
+  transport-neutral `internal/events/` package (no longer in each
+  source's `decode.go`). Also enforces rule B
   (xdr scoped to internal/scval, ADR-0013) and rule C (no
   Horizon, ADR-0001). Current legacy violations grandfathered in
   `scripts/ci/lint-imports.baseline`; the lint fails on NEW
@@ -161,6 +203,15 @@ in a per-source poll loop.
   storage is MinIO; not local filesystem.
 - [ADR-0013](../adr/0013-go-stellar-sdk-xdr-for-scval.md) — SDK
   dependency, which gives us `ingest.ApplyLedgerMetadata`.
+- [ADR-0029](../adr/0029-soroban-events-landing-zone.md) — the
+  `soroban_events` raw landing zone the projector tails.
+- [ADR-0031](../adr/0031-data-derived-coverage-signal.md) /
+  [ADR-0032](../adr/0032-per-source-tables-as-projections.md) —
+  data-derived coverage + per-source tables as projections; the
+  projector is the sole writer for Soroban-derived per-source tables.
+- [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md) —
+  ClickHouse is the certified raw lake; Postgres/TimescaleDB is the
+  served tier.
 - [r1-deployment-state.md](../operations/r1-deployment-state.md) —
   what's actually running on r1.
 - [architecture_cdp.md memory](../../../../.claude/projects/-Users-ash-code-ratesengine/memory/architecture_cdp.md) —

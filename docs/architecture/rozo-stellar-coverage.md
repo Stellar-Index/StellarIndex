@@ -1,3 +1,9 @@
+---
+title: Rozo intents — architecture & decoder design
+last_verified: 2026-05-22
+status: implemented (v1)
+---
+
 # Rozo intents — architecture & decoder design
 
 **Status:** v1 Payment implemented (#41). Live ingest wired

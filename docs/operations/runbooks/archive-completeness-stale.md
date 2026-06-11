@@ -1,6 +1,6 @@
 ---
 title: Runbook — archive-completeness-stale
-last_verified: 2026-05-03
+last_verified: 2026-06-12
 status: draft
 severity: P2
 ---
@@ -35,8 +35,11 @@ ssh r1 'journalctl -u archive-completeness.service --since="48 hours ago" -p err
 # 3. Did the last run exit non-zero? Why?
 ssh r1 'journalctl -u archive-completeness.service --since="48 hours ago" | tail -50'
 
-# 4. Is the binary itself working?
-ssh r1 'ratesengine-ops archive-completeness check -range yesterday -checks chain-link'
+# 4. Is the binary itself working? Run the real verify subcommand
+#    over a short trailing window (-to 0 resolves the tip from the
+#    live ledgerstream cursor). See `deploy/systemd/archive-completeness.service`
+#    for the exact flags the timer uses.
+ssh r1 'ratesengine-ops archive-completeness verify -from 2 -to 0 -workers 8'
 ```
 
 Common patterns:
@@ -61,18 +64,28 @@ Common patterns:
   ssh r1 'journalctl -u archive-completeness.service -f'
   ```
 
-- [ ] **Step 3 — If step 2 fails, capture the failure mode and run with `-checks` narrowed.**
+- [ ] **Step 3 — If step 2 fails, run the verify subcommand manually and bisect the ledger range.**
 
-  Bisect to the failing check:
+  `archive-completeness verify` performs a single cross-anchor
+  structural completeness check (there are no separate `-checks`
+  modes — see `cmd/ratesengine-ops/main.go::archiveCompletenessVerify`).
+  Write the JSON report to inspect which checkpoints are missing,
+  then narrow the `-from`/`-to` window around the failing region:
 
   ```sh
-  ssh r1 'ratesengine-ops archive-completeness check -range yesterday -checks structural'
-  ssh r1 'ratesengine-ops archive-completeness check -range yesterday -checks chain-link'
-  ssh r1 'ratesengine-ops archive-completeness check -range yesterday -checks cross-anchor-structural'
-  ssh r1 'ratesengine-ops archive-completeness check -range yesterday -checks cross-anchor-anchor'
+  # Full trailing window, capturing the JSON gap report.
+  ssh r1 'ratesengine-ops archive-completeness verify \
+    -from 2 -to 0 -workers 8 \
+    -output-file /tmp/completeness-report.json'
+
+  # Inspect the missing-file list, then re-run scoped to a narrow
+  # range to confirm a fix (replace LO/HI from the report).
+  ssh r1 'jq ".missing" /tmp/completeness-report.json | head'
+  ssh r1 'ratesengine-ops archive-completeness verify -from LO -to HI -workers 8'
   ```
 
-  The first one that fails identifies which contract is broken; from there see [archive-completeness.md](../archive-completeness.md) for the bootstrap-procedure step that addresses that contract.
+  From the missing-checkpoint list, see [archive-completeness.md](../archive-completeness.md)
+  for the bootstrap-procedure step that addresses the gap.
 
 - [ ] **Verification:** after a successful manual run, `archive_completeness_last_success_timestamp` updates to "now" and the alert clears within the next eval cycle (default 1 min).
 
@@ -96,4 +109,8 @@ Common patterns:
 
 ## Changelog
 
+- 2026-06-12 — F-1330: replace fictional `archive-completeness check
+  -range … -checks …` invocations with the real
+  `archive-completeness verify -from … -to … -workers …` subcommand
+  (no `-checks` modes exist; it is a single cross-anchor check).
 - 2026-04-27 — initial draft alongside ADR-0017.
