@@ -18,15 +18,25 @@ import (
 // Cache is the Redis subset the [Service] needs. Declared as an
 // interface so tests can substitute miniredis or a fake without
 // pulling the full redis.UniversalClient surface.
+//
+// SAdd / SMembers / Expire were added for F-1344: the worker keys
+// divergence results per-pair (`div:<base>/<quote>`) and maintains a
+// per-base index SET (`div:idx:<base>`) so the by-asset reader can
+// discover and OR every quote's WarningFired flag without a
+// blocking KEYS/SCAN on the hot path. redis.UniversalClient
+// satisfies all five methods.
 type Cache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
+	SAdd(ctx context.Context, key string, members ...any) *redis.IntCmd
+	SMembers(ctx context.Context, key string) *redis.StringSliceCmd
+	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 }
 
-// CachedResult is the wire shape stored at the `div:<asset>` Redis
-// key per ADR-0007. Mirrors most of [Result] but with a couple of
-// derived fields for API-side consumers that don't want to redo the
-// threshold logic.
+// CachedResult is the wire shape stored at the `div:<base>/<quote>`
+// Redis key per ADR-0007. Mirrors most of [Result] but with a couple
+// of derived fields for API-side consumers that don't want to redo
+// the threshold logic.
 type CachedResult struct {
 	// PairID is the canonical pair string the result is for.
 	PairID string `json:"pair_id"`
@@ -99,7 +109,7 @@ type ServiceOptions struct {
 	References []Reference
 
 	// Cache is the Redis client used to store CachedResult JSON
-	// at div:<asset> keys. Required.
+	// at div:<base>/<quote> keys. Required.
 	Cache Cache
 
 	// Threshold is the divergence percentage above which
@@ -152,7 +162,7 @@ type WarningHook func(ctx context.Context, pair canonical.Pair, cached CachedRes
 // Service wraps a set of References + a cache writer, exposing a
 // single [Service.RefreshPair] method the aggregator hooks into
 // after writing each fresh VWAP. Writes the cached result to
-// Redis at the `div:<asset>` key per ADR-0007.
+// Redis at the `div:<base>/<quote>` key per ADR-0007.
 //
 // Service is safe for concurrent RefreshPair calls — the
 // underlying Cache and References must also be concurrent-safe
@@ -215,9 +225,9 @@ func NewService(opts ServiceOptions) (*Service, error) {
 
 // RefreshPair runs one divergence check for the supplied pair +
 // our-price, then writes the cached result to Redis at
-// div:<base.String()>. The aggregator calls this from the
-// bucket-close path AFTER the VWAP has been written to its own
-// Redis key.
+// div:<base>/<quote> and records the quote in the per-base index
+// set. The aggregator calls this from the bucket-close path AFTER
+// the VWAP has been written to its own Redis key.
 //
 // Returns nil when the worker has no References configured (silent
 // no-op so an operator who hasn't enabled divergence yet doesn't
@@ -254,9 +264,28 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		return fmt.Errorf("divergence: marshal cached result: %w", err)
 	}
 
-	key := cachekeys.Divergence(pair.Base)
+	// F-1344 (G16-03): write a PER-PAIR key, not a per-base key. The
+	// orchestrator calls RefreshPair once per configured pair; a
+	// per-base key let the last pair in iteration order clobber the
+	// asset's divergence verdict. The per-pair key keeps each pair's
+	// result independent; the by-asset reader (LookupCached) ORs them.
+	key := cachekeys.Divergence(pair)
 	if err := s.cache.Set(ctx, key, body, cachekeys.DivergenceTTL).Err(); err != nil {
 		return fmt.Errorf("divergence: cache set %s: %w", key, err)
+	}
+
+	// Maintain the per-base quote index so LookupCached can discover
+	// which per-pair keys to OR for a given base. SADD is idempotent;
+	// the Expire refreshes the set's TTL on every write so it drains
+	// in lock-step with the value keys (a base whose pairs stop
+	// refreshing loses its index after DivergenceTTL rather than
+	// pinning dead quote members forever).
+	idxKey := cachekeys.DivergenceBaseIndex(pair.Base)
+	if err := s.cache.SAdd(ctx, idxKey, pair.Quote.String()).Err(); err != nil {
+		return fmt.Errorf("divergence: index sadd %s: %w", idxKey, err)
+	}
+	if err := s.cache.Expire(ctx, idxKey, cachekeys.DivergenceTTL).Err(); err != nil {
+		return fmt.Errorf("divergence: index expire %s: %w", idxKey, err)
 	}
 
 	// Durable per-reference mirror. Best-effort: a sink failure must
@@ -339,28 +368,93 @@ func absFloat(f float64) float64 {
 	return f
 }
 
-// LookupCached reads the most-recent cached divergence result for
-// the asset. Returns ([CachedResult{}], false, nil) when no cached
-// entry exists (the worker hasn't run for this asset yet, or the
-// TTL has elapsed). API hot-path consumers call this when serving
-// /v1/price to decide whether to set flags.divergence_warning.
+// LookupCached returns the divergence verdict for a BASE asset,
+// aggregated across every quote that asset trades against (F-1344).
+// The returned CachedResult.WarningFired is the OR of the per-pair
+// WarningFired flags — "firing if ANY quote diverges" — so the
+// API's by-asset DivergenceFiringFor(asset) keeps working unchanged
+// against the new per-pair key layout, and its verdict is
+// independent of the order the orchestrator refreshes pairs in.
+//
+// The remaining fields (OurPrice / Median / DivergencePct / Sources
+// / …) are copied from the FIRING pair with the largest divergence
+// when any pair fires, else from the most-recently-computed pair, so
+// operator dashboards that read the bundle still see a representative
+// detail row. The PairID field identifies which pair the detail came
+// from.
+//
+// Returns ([CachedResult{}], false, nil) when the base has no live
+// per-pair entries (the worker hasn't run for it yet, or every
+// pair's TTL has elapsed). API hot-path consumers call this when
+// serving /v1/price to decide whether to set flags.divergence_warning.
 //
 // Cache-read errors other than redis.Nil are surfaced — callers
 // should NOT silently set flags.divergence_warning=false on a
 // transient cache outage; better to keep the previous response's
 // flag value (or fail-open).
 func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (CachedResult, bool, error) {
-	key := cachekeys.Divergence(asset)
-	raw, err := s.cache.Get(ctx, key).Bytes()
-	if errors.Is(err, redis.Nil) {
+	idxKey := cachekeys.DivergenceBaseIndex(asset)
+	quotes, err := s.cache.SMembers(ctx, idxKey).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return CachedResult{}, false, fmt.Errorf("divergence: index smembers %s: %w", idxKey, err)
+	}
+	if len(quotes) == 0 {
 		return CachedResult{}, false, nil
 	}
-	if err != nil {
-		return CachedResult{}, false, fmt.Errorf("divergence: cache get %s: %w", key, err)
+
+	var (
+		agg       CachedResult
+		found     bool
+		warning   bool
+		bestFire  bool    // whether `agg` currently holds a firing pair
+		bestDelta float64 // |DivergencePct| of the representative pair held in `agg`
+	)
+	for _, q := range quotes {
+		quote, perr := canonical.ParseAsset(q)
+		if perr != nil {
+			// A malformed member can't be turned back into a key; skip
+			// it rather than fail the whole lookup. The index is
+			// worker-written from canonical assets, so this is a
+			// defensive guard, not an expected path.
+			continue
+		}
+		pair := canonical.Pair{Base: asset, Quote: quote}
+		key := cachekeys.Divergence(pair)
+		raw, gerr := s.cache.Get(ctx, key).Bytes()
+		if errors.Is(gerr, redis.Nil) {
+			// Value expired but the index member lingered (the set's
+			// own TTL hasn't fired yet). Treat as "no contribution".
+			continue
+		}
+		if gerr != nil {
+			return CachedResult{}, false, fmt.Errorf("divergence: cache get %s: %w", key, gerr)
+		}
+		var cached CachedResult
+		if uerr := json.Unmarshal(raw, &cached); uerr != nil {
+			return CachedResult{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", uerr)
+		}
+		if cached.WarningFired {
+			warning = true
+		}
+
+		// Pick the representative detail row: prefer firing pairs over
+		// non-firing, and within the same firing-status prefer the
+		// larger |divergence|. The first contributing pair always
+		// wins its slot (firstContrib short-circuits the comparison).
+		delta := absFloat(cached.DivergencePct)
+		switch {
+		case !found:
+			agg, bestFire, bestDelta = cached, cached.WarningFired, delta
+		case cached.WarningFired && !bestFire:
+			agg, bestFire, bestDelta = cached, true, delta
+		case cached.WarningFired == bestFire && delta >= bestDelta:
+			agg, bestDelta = cached, delta
+		}
+		found = true
 	}
-	var cached CachedResult
-	if err := json.Unmarshal(raw, &cached); err != nil {
-		return CachedResult{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", err)
+	if !found {
+		return CachedResult{}, false, nil
 	}
-	return cached, true, nil
+	agg.WarningFired = warning
+	return agg, true, nil
 }

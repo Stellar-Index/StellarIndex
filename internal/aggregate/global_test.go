@@ -271,3 +271,107 @@ func TestAverageAggregatorPrices_RejectsZeroPrices(t *testing.T) {
 		t.Error("all-zero-prices input must return ok=false")
 	}
 }
+
+// aliasAwareReader returns a VWAP keyed by the exact base form, so a
+// test can prove tryVWAPTier loops the asset aliases. Only the base
+// listed in `byBase` returns a hit; every other form misses.
+type aliasAwareReader struct {
+	byBase    map[string]int64 // base.String() → tradeCount
+	vwapCalls []string         // base forms queried, in order
+}
+
+func (r *aliasAwareReader) LatestVWAP(_ context.Context, base, _ canonical.Asset) (string, time.Time, int64, []string, bool, error) {
+	r.vwapCalls = append(r.vwapCalls, base.String())
+	if tc, ok := r.byBase[base.String()]; ok {
+		return "0.12340000000000", time.Now().UTC(), tc, []string{"binance"}, true, nil
+	}
+	return "", time.Time{}, 0, nil, false, nil
+}
+
+func (r *aliasAwareReader) LatestAggregatorPrices(_ context.Context, _, _ canonical.Asset, _ []string) ([]canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+func (r *aliasAwareReader) LookupTriangulated(_ context.Context, _, _ canonical.Asset, _ time.Duration) (string, time.Time, bool, error) {
+	return "", time.Time{}, false, nil
+}
+
+// TestComputeGlobalPrice_VWAPTierLoopsAliases pins F-1340 (G14-04):
+// the global view must find the XLM VWAP regardless of which
+// canonical form (`native` vs `crypto:XLM`) the configured pair set
+// publishes under. Pre-fix, tryVWAPTier queried only the literal
+// base; if the caller passed `native` but the VWAP lived under
+// `crypto:XLM`, the tier missed and the view degraded to
+// aggregator_avg.
+func TestComputeGlobalPrice_VWAPTierLoopsAliases(t *testing.T) {
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+
+	// VWAP only exists under crypto:XLM, but the caller queries native.
+	reader := &aliasAwareReader{byBase: map[string]int64{"crypto:XLM": 20}}
+	res, err := ComputeGlobalPrice(context.Background(), canonical.NativeAsset(), quote, reader, DefaultGlobalPriceOptions())
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice: %v", err)
+	}
+	if res.Authority != AuthorityVWAPNative {
+		t.Errorf("authority = %q, want vwap_native (alias loop should find the crypto:XLM VWAP)", res.Authority)
+	}
+	if res.TradeCount != 20 {
+		t.Errorf("trade_count = %d, want 20", res.TradeCount)
+	}
+	// The literal form must be tried first, then the alias.
+	if len(reader.vwapCalls) != 2 || reader.vwapCalls[0] != "native" || reader.vwapCalls[1] != "crypto:XLM" {
+		t.Errorf("alias query order = %v, want [native crypto:XLM]", reader.vwapCalls)
+	}
+}
+
+// TestComputeGlobalPrice_VWAPTierAliasUnderThreshold — an alias hit
+// that's below the trade-count floor must NOT win the VWAP tier; the
+// loop keeps trying and ultimately falls through to a lower tier.
+func TestComputeGlobalPrice_VWAPTierAliasUnderThreshold(t *testing.T) {
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+	// crypto:XLM has a VWAP but only 2 trades < default floor of 5.
+	reader := &aliasAwareReader{byBase: map[string]int64{"crypto:XLM": 2}}
+	_, err = ComputeGlobalPrice(context.Background(), canonical.NativeAsset(), quote, reader, DefaultGlobalPriceOptions())
+	if !errors.Is(err, ErrNoPrice) {
+		t.Errorf("err = %v, want ErrNoPrice (alias below threshold, no other tier)", err)
+	}
+}
+
+// TestAssetAliases mirrors the v1.assetAliases contract so the two
+// stay in lock-step (F-1340).
+func TestAssetAliases(t *testing.T) {
+	cases := map[string][]string{
+		"native":     {"native", "crypto:XLM"},
+		"crypto:XLM": {"crypto:XLM", "native"},
+	}
+	for in, want := range cases {
+		a, err := canonical.ParseAsset(in)
+		if err != nil {
+			t.Fatalf("parse %s: %v", in, err)
+		}
+		got := assetAliases(a)
+		if len(got) != len(want) {
+			t.Fatalf("assetAliases(%s) len = %d, want %d", in, len(got), len(want))
+		}
+		for i := range want {
+			if got[i].String() != want[i] {
+				t.Errorf("assetAliases(%s)[%d] = %q, want %q", in, i, got[i].String(), want[i])
+			}
+		}
+	}
+
+	// A non-XLM asset returns only itself.
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("classic: %v", err)
+	}
+	if got := assetAliases(usdc); len(got) != 1 || !got[0].Equal(usdc) {
+		t.Errorf("assetAliases(USDC) = %v, want just itself", got)
+	}
+}

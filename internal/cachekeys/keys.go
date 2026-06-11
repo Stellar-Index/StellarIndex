@@ -209,14 +209,41 @@ const SubscriberTTL = 60 * time.Second
 
 // ─── Divergence detector output ───────────────────────────────────
 //
-// Wire shape: `div:<asset_id>`
+// Wire shape: `div:<base>/<quote>`
 // Value: JSON with sources compared + max deviation + threshold.
 // Written by the divergence worker after each check cycle.
+//
+// F-1344 (G16-03): the key is per-PAIR, not per-base-asset. The
+// orchestrator's divergence refresh loops every configured pair
+// (XLM/fiat:USD, XLM/fiat:EUR, XLM/fiat:GBP, …) and each one calls
+// RefreshPair. The pre-fix key was `div:<base>` so the last pair in
+// iteration order clobbered the asset's divergence result — if
+// XLM/USD diverged but XLM/GBP didn't, the later XLM/GBP refresh
+// cleared the warning and /v1/price for XLM/USD served
+// divergence_warning=false. Keying by pair makes every pair's result
+// independent; the by-asset API reader (DivergenceFiringFor) ORs the
+// per-pair WarningFired flags via the [DivergenceBaseIndex] set so
+// "firing if ANY quote diverges" holds regardless of refresh order.
 
 // Divergence returns the cache key for the latest divergence result
-// for an asset.
-func Divergence(asset canonical.Asset) string {
-	return "div:" + asset.String()
+// for a (base, quote) pair.
+func Divergence(pair canonical.Pair) string {
+	return "div:" + pair.String()
+}
+
+// DivergenceBaseIndex returns the cache key for the Redis SET that
+// enumerates which quote-asset strings have a live `div:<base>/<quote>`
+// value for the given base. The divergence worker SADDs each quote it
+// refreshes; the by-asset reader SMEMBERs this set to discover the
+// per-pair keys to OR together — across processes (the aggregator
+// writes, the API reads, they share only Redis), so an in-memory
+// quote index on either side would not work.
+//
+// The set carries the same TTL as the value keys ([DivergenceTTL]),
+// refreshed on every write, so a base whose pairs stop refreshing
+// drains naturally rather than accumulating dead quote members.
+func DivergenceBaseIndex(base canonical.Asset) string {
+	return "div:idx:" + base.String()
 }
 
 // DivergenceTTL is the expiry for div: keys.

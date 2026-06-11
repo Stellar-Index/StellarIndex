@@ -26,7 +26,7 @@
 //   - Divergence-cache refresh from each Tick via
 //     `DivergenceRefresher` (the API's
 //     `flags.divergence_warning` reads from the resulting
-//     `div:<asset>` Redis keys).
+//     `div:<base>/<quote>` Redis keys).
 //   - Multi-factor confidence scoring + ADR-0019 anomaly response
 //     (Phase 1 + 2 — z-score / confidence / source-count freeze
 //     thresholds via the `Anomaly` + `FreezeWriter` fields; the
@@ -93,6 +93,12 @@ type FXStore interface {
 type Cache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
+	// Expire is used by the freeze path (F-1345) to extend the
+	// last-known-good VWAP key's TTL so it outlives the freeze marker
+	// instead of expiring out from under a sustained freeze. Returns
+	// a BoolCmd whose value is false when the key doesn't exist (no
+	// prior bucket to keep alive) — a normal, non-error outcome.
+	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 }
 
 // FreezeMarker is the side-effect interface the orchestrator uses
@@ -323,7 +329,7 @@ type Config struct {
 	FXStore FXStore
 
 	// DivergenceRefresher, when non-nil, is called once per pair
-	// per [Tick] to refresh the `div:<asset>` Redis cache so the
+	// per [Tick] to refresh the `div:<base>/<quote>` Redis cache so the
 	// API's `flags.divergence_warning` flag has a producer (per
 	// ADR-0019 / launch-readiness L2.10 + L2.11). Wired to
 	// `internal/divergence.Service` at the aggregator binary
@@ -346,7 +352,7 @@ type Config struct {
 	// 10,000 calls / MONTH. Even with the per-tick batched lookup
 	// shipped earlier, refreshing every 30 s × 12 pairs is ~2,880
 	// calls/day = ~86,000/month — 8.6 × over cap. The
-	// `div:<asset>` Redis entry has a 5-minute TTL
+	// `div:<base>/<quote>` Redis entry has a 5-minute TTL
 	// (cachekeys.DivergenceTTL), so a 5-minute refresh interval
 	// keeps the cache continuously populated while burning roughly
 	// one-tenth the external quota. The divergence warning is an
@@ -414,7 +420,7 @@ type ContributionRecord struct {
 }
 
 // DivergenceRefresher is the seam the orchestrator uses to keep the
-// `div:<asset>` Redis cache populated. Production impl is
+// `div:<base>/<quote>` Redis cache populated. Production impl is
 // [internal/divergence.Service]; tests substitute a fake that records
 // invocations without making network calls.
 //
@@ -766,6 +772,9 @@ func (o *Orchestrator) refreshPairWindow(
 	stateKey := pair.String() + ":" + window.String()
 	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, vwap, trades, stateKey); !ok {
 		_ = action
+		// Freeze: evaluateAndMaybeFreeze has already refreshed the LKG
+		// VWAP key's TTL (F-1345). Skip the cache write so the prior
+		// bucket's value keeps serving.
 		return nil
 	}
 
@@ -782,7 +791,9 @@ func (o *Orchestrator) refreshPairWindow(
 			SourceCount: distinctSourceCount(trades),
 		}
 		if phase2FreezeFires(input, o.cfg.Phase2Thresholds) {
-			o.markPhase2Freeze(ctx, pair, input, prevForConfidence)
+			// markPhase2Freeze refreshes the LKG VWAP key's TTL
+			// (F-1345) before returning; skip the cache write.
+			o.markPhase2Freeze(ctx, pair, window, input, prevForConfidence)
 			return nil
 		}
 	}
@@ -832,6 +843,33 @@ func (o *Orchestrator) refreshPairWindow(
 
 	o.publishToStream(ctx, pair, window, value, now)
 	return nil
+}
+
+// keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP
+// key for (pair, window) so it survives for at least as long as the
+// freeze marker (F-1345, G13-03).
+//
+// Why: a freeze skips the VWAP cache write, so the LKG value keeps
+// the TTL it was written with — equal to the window. The shortest
+// window (5m) equals the freeze-marker TTL ([cachekeys.FreezeTTL]),
+// so a freeze that persists past one window-worth of seconds lets
+// the LKG expire out of Redis while flags.frozen is still set. The
+// API then reads frozen=true with no value to serve. Re-arming the
+// key's expiry to FreezeTTL on every frozen tick keeps the LKG alive
+// for as long as the marker is being refreshed.
+//
+// Best-effort + nil-safe on a missing key: Expire returns
+// BoolCmd=false (not an error) when the key doesn't exist — the
+// first-tick-freeze-on-this-pair case where there's no prior bucket
+// to keep alive. A transient Redis error is logged at debug and
+// swallowed; the freeze marker write is the load-bearing operation
+// and already happened upstream.
+func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.Pair, window time.Duration) {
+	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
+	if err := o.cache.Expire(ctx, key, cachekeys.FreezeTTL).Err(); err != nil {
+		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
+			"pair", pair.String(), "window", window, "key", key, "err", err)
+	}
 }
 
 // publishToStream fans the closed-bucket event out to the
@@ -923,6 +961,11 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 			// tick over it.
 		}
 	}
+	// F-1345 (G13-03): the freeze skips the VWAP cache write, so the
+	// LKG value keeps its original TTL (== window). Extend it to the
+	// freeze-marker lifetime so a freeze outlasting the window doesn't
+	// let the LKG expire while flags.frozen is still set.
+	o.keepFrozenVWAPAlive(ctx, pair, window)
 	return decision.Action, false
 }
 

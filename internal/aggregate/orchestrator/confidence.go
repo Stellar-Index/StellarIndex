@@ -100,7 +100,7 @@ func (o *Orchestrator) computeConfidence(
 		SourceCount:              distinctSourceCount(trades),
 		SourceClassCount:         distinctSourceClassCount(trades),
 		LiquidityUSD:             approxUSDVolume(trades, pair),
-		CrossOracleDivergencePct: o.lookupDivergencePct(ctx, pair.Base),
+		CrossOracleDivergencePct: o.lookupDivergencePct(ctx, pair),
 		BaselineAgeDays:          baselineAgeDays(multi, computedAt),
 	}, confidence.DefaultWeights())
 
@@ -137,18 +137,24 @@ func (o *Orchestrator) cacheConfidence(
 // canonical package import. Same shape; same semantics.
 type canonicalTrade = canonical.Trade
 
-// lookupDivergencePct reads the cached divergence result for `asset`
-// and returns its DivergencePct when the SuccessCount meets the
-// trust floor (`divergenceMinSources`). Otherwise (no key, decode
-// error, transient cache failure, single-source success) returns -1
-// — the [confidence.CrossOracleFactor] "no cross-oracle data"
-// sentinel.
+// lookupDivergencePct reads the cached divergence result for the
+// specific `pair` and returns its DivergencePct when the
+// SuccessCount meets the trust floor (`divergenceMinSources`).
+// Otherwise (no key, decode error, transient cache failure,
+// single-source success) returns -1 — the
+// [confidence.CrossOracleFactor] "no cross-oracle data" sentinel.
+//
+// F-1344 (G16-03): reads the per-PAIR key (`div:<base>/<quote>`),
+// not a per-base key. The confidence score for XLM/USDT must use
+// XLM/USDT's own divergence, not whatever pair last wrote the base
+// key — the pre-fix per-base key meant the score consumed a
+// divergence computed against a different quote.
 //
 // Best-effort: divergence is enrichment, not a publish-blocker.
 // Read failures don't propagate; the confidence step continues with
 // the neutral sentinel.
-func (o *Orchestrator) lookupDivergencePct(ctx context.Context, asset canonical.Asset) float64 {
-	raw, err := o.cache.Get(ctx, cachekeys.Divergence(asset)).Bytes()
+func (o *Orchestrator) lookupDivergencePct(ctx context.Context, pair canonical.Pair) float64 {
+	raw, err := o.cache.Get(ctx, cachekeys.Divergence(pair)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return -1 // no cache entry; treat as "no data"
 	}

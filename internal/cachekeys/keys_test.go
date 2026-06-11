@@ -153,8 +153,19 @@ func TestSubscriber(t *testing.T) {
 
 func TestDivergence(t *testing.T) {
 	xlm := canonical.NativeAsset()
-	if k := cachekeys.Divergence(xlm); k != "div:native" {
-		t.Errorf("Divergence(XLM) = %q", k)
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	if k := cachekeys.Divergence(pair); k != "div:native/fiat:USD" {
+		t.Errorf("Divergence(XLM/USD) = %q", k)
+	}
+	if k := cachekeys.DivergenceBaseIndex(xlm); k != "div:idx:native" {
+		t.Errorf("DivergenceBaseIndex(XLM) = %q", k)
 	}
 	if cachekeys.DivergenceTTL != 5*time.Minute {
 		t.Errorf("DivergenceTTL = %v", cachekeys.DivergenceTTL)
@@ -284,7 +295,7 @@ func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 		"toml":       cachekeys.TOML("example.com"),
 		"meta":       cachekeys.Metadata(xlm),
 		"sub":        cachekeys.Subscriber("c", "s"),
-		"div":        cachekeys.Divergence(xlm),
+		"div":        cachekeys.Divergence(canonical.Pair{Base: xlm, Quote: usdc}),
 		"freeze":     cachekeys.Freeze(xlm, usdc),
 		"health":     cachekeys.Health("src"),
 	}

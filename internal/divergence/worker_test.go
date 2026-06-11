@@ -69,7 +69,7 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(canonical.NativeAsset())).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
 	if err != nil {
 		t.Fatalf("redis get: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(canonical.NativeAsset())).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
 	if err != nil {
 		t.Fatalf("redis get: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestRefreshPair_BelowMinSourcesNoWarning(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.50, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(canonical.NativeAsset())).Bytes()
+	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
 	var cached divergence.CachedResult
 	_ = json.Unmarshal(body, &cached)
 	if cached.WarningFired {
@@ -201,7 +201,7 @@ func TestRefreshPair_TTLApplied(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	ttl := mr.TTL(cachekeys.Divergence(canonical.NativeAsset()))
+	ttl := mr.TTL(cachekeys.Divergence(xlmUSD(t)))
 	if ttl == 0 || ttl > cachekeys.DivergenceTTL {
 		t.Errorf("TTL = %v, want ≤ %v and > 0", ttl, cachekeys.DivergenceTTL)
 	}
@@ -253,6 +253,134 @@ func TestLookupCached_AbsentEntry(t *testing.T) {
 	}
 }
 
+// xlmPair builds native/<quote-fiat> for the per-base-asset
+// aggregation tests.
+func xlmPair(t *testing.T, quoteFiat string) canonical.Pair {
+	t.Helper()
+	q, err := canonical.ParseAsset("fiat:" + quoteFiat)
+	if err != nil {
+		t.Fatalf("parse %s: %v", quoteFiat, err)
+	}
+	return canonical.Pair{Base: canonical.NativeAsset(), Quote: q}
+}
+
+// TestLookupCached_PerPairOR_OrderIndependent pins F-1344 (G16-03):
+// the by-asset reader must report "firing if ANY quote diverges"
+// regardless of the order the worker refreshes the base's pairs. The
+// pre-fix per-base key let the LAST pair refreshed clobber the
+// asset's verdict — so XLM/USD diverging but XLM/GBP not would clear
+// the warning if GBP refreshed last. With per-pair keys + the OR
+// across the base index, the verdict is stable.
+func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", price: 1.00},
+		&stubReference{name: "b", price: 1.00},
+	}
+	xlm := canonical.NativeAsset()
+	usdPair := xlmPair(t, "USD")
+	gbpPair := xlmPair(t, "GBP")
+	ctx := context.Background()
+
+	// Two refresh orderings; both must yield firing=true for the base.
+	// Ordering 1: USD (diverging) first, GBP (in-tolerance) last —
+	// this is the regression case (GBP would have cleared the base key
+	// under the pre-fix per-base layout).
+	// Ordering 2: GBP first, USD last.
+	type step struct {
+		pair  canonical.Pair
+		price float64
+	}
+	eurPair := xlmPair(t, "EUR")
+	for _, tc := range []struct {
+		name       string
+		order      []step
+		firingPair canonical.Pair // expected representative detail row
+	}{
+		{
+			name:       "diverging_first_clean_last",
+			order:      []step{{usdPair, 1.50}, {gbpPair, 1.00}},
+			firingPair: usdPair,
+		},
+		{
+			name:       "clean_first_diverging_last",
+			order:      []step{{gbpPair, 1.00}, {usdPair, 1.50}},
+			firingPair: usdPair,
+		},
+		{
+			// Robustness against Redis set-iteration order: the FIRING
+			// quote (EUR) sorts lexicographically BEFORE the clean
+			// quote (USD), so miniredis's sorted SMembers returns the
+			// clean pair LAST. A naive "last value wins" aggregation
+			// (the pre-fix per-base clobber) would read the base
+			// verdict as false here — only a true OR keeps it firing.
+			name:       "firing_quote_sorts_first",
+			order:      []step{{eurPair, 1.50}, {usdPair, 1.00}},
+			firingPair: eurPair,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
+				Threshold:            5.0,
+				MinSourcesForWarning: 2,
+			})
+			for _, s := range tc.order {
+				if err := svc.RefreshPair(ctx, s.pair, s.price, time.Now()); err != nil {
+					t.Fatalf("RefreshPair %s: %v", s.pair, err)
+				}
+			}
+
+			cached, found, err := svc.LookupCached(ctx, xlm)
+			if err != nil {
+				t.Fatalf("LookupCached: %v", err)
+			}
+			if !found {
+				t.Fatal("found=false after refreshing two pairs for the base")
+			}
+			if !cached.WarningFired {
+				t.Errorf("WarningFired=false; want true — a quote diverges so the "+
+					"base verdict must fire regardless of refresh / iteration order "+
+					"(got pair_id=%q)", cached.PairID)
+			}
+			// The representative detail row should be the FIRING pair,
+			// not the clean one — independent of Redis set order.
+			if cached.PairID != tc.firingPair.String() {
+				t.Errorf("representative PairID = %q, want the firing pair %q",
+					cached.PairID, tc.firingPair.String())
+			}
+		})
+	}
+}
+
+// TestLookupCached_PerPairOR_AllClean — when every quote is within
+// tolerance the base verdict must be false (no false positives from
+// the OR aggregation).
+func TestLookupCached_PerPairOR_AllClean(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", price: 1.00},
+		&stubReference{name: "b", price: 1.00},
+	}
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+	})
+	ctx := context.Background()
+	for _, p := range []canonical.Pair{xlmPair(t, "USD"), xlmPair(t, "GBP")} {
+		if err := svc.RefreshPair(ctx, p, 1.00, time.Now()); err != nil {
+			t.Fatalf("RefreshPair %s: %v", p, err)
+		}
+	}
+	cached, found, err := svc.LookupCached(ctx, canonical.NativeAsset())
+	if err != nil {
+		t.Fatalf("LookupCached: %v", err)
+	}
+	if !found {
+		t.Fatal("found=false after refreshing two clean pairs")
+	}
+	if cached.WarningFired {
+		t.Errorf("WarningFired=true with every quote in-tolerance; want false")
+	}
+}
+
 // TestRefreshPair_DefaultsApplied — zero-value options use sensible
 // defaults: 5% threshold, 2 min-sources, 5s timeout.
 func TestRefreshPair_DefaultsApplied(t *testing.T) {
@@ -267,7 +395,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.04, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(canonical.NativeAsset())).Bytes()
+	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
 	var cached divergence.CachedResult
 	_ = json.Unmarshal(body, &cached)
 	if cached.WarningFired {
@@ -278,7 +406,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(canonical.NativeAsset())).Bytes()
+	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
 	_ = json.Unmarshal(body, &cached)
 	if !cached.WarningFired {
 		t.Errorf("6%% deviation should fire under default 5%% threshold")

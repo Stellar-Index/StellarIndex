@@ -186,23 +186,64 @@ func tryVWAPTier(
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
 ) (GlobalPriceResult, bool, error) {
-	vwap, asOf, tradeCount, sources, ok, err := reader.LatestVWAP(ctx, base, quote)
-	if err != nil {
-		return GlobalPriceResult{}, false, fmt.Errorf("aggregate: VWAP lookup: %w", err)
+	// F-1340 (G14-04): loop the base's canonical aliases, mirroring
+	// the API's readPriceWithAliases. XLM has two canonical forms —
+	// `native` (SDEX-emitted) and `crypto:XLM` (CEX-emitted). The
+	// aggregator VWAPs under whichever form the configured pair set
+	// names; without the alias loop the global view (/v1/assets/{slug})
+	// degrades from vwap_native to aggregator_avg when LatestVWAP is
+	// queried under the form that has no trades. The FIRST alias whose
+	// VWAP clears the trade-count floor wins.
+	for _, b := range assetAliases(base) {
+		vwap, asOf, tradeCount, sources, ok, err := reader.LatestVWAP(ctx, b, quote)
+		if err != nil {
+			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: VWAP lookup: %w", err)
+		}
+		if !ok {
+			continue
+		}
+		if tradeCount < opts.VWAPMinTradeCount {
+			continue
+		}
+		return GlobalPriceResult{
+			Price:      vwap,
+			Authority:  AuthorityVWAPNative,
+			Sources:    sources,
+			AsOf:       asOf,
+			TradeCount: tradeCount,
+		}, true, nil
 	}
-	if !ok {
-		return GlobalPriceResult{}, false, nil
+	return GlobalPriceResult{}, false, nil
+}
+
+// assetAliases returns the canonical-asset forms equivalent to
+// `asset`, in priority order (the literal input first, then known
+// aliases). XLM is the only asset with two canonical forms today:
+// `native` (the per-network strkey-less form SDEX writes) and
+// `crypto:XLM` (the cross-network ticker form every CEX writes).
+// Both appear in production trade rows depending on the emitting
+// source, and the aggregator VWAPs under whichever form the
+// configured pair set names — so a read keyed by one form must also
+// try the other or it misses the VWAP published under the alias.
+//
+// This intentionally duplicates the small switch in
+// internal/api/v1.assetAliases rather than importing it (v1 imports
+// aggregate, not the reverse — pulling the helper down here would
+// invert the dependency). Keep the two in lock-step: a new asset
+// with a second canonical form needs a case in BOTH (and a test).
+func assetAliases(asset canonical.Asset) []canonical.Asset {
+	out := []canonical.Asset{asset}
+	switch asset.String() {
+	case "native":
+		if alt, err := canonical.ParseAsset("crypto:XLM"); err == nil {
+			out = append(out, alt)
+		}
+	case "crypto:XLM":
+		if alt, err := canonical.ParseAsset("native"); err == nil {
+			out = append(out, alt)
+		}
 	}
-	if tradeCount < opts.VWAPMinTradeCount {
-		return GlobalPriceResult{}, false, nil
-	}
-	return GlobalPriceResult{
-		Price:      vwap,
-		Authority:  AuthorityVWAPNative,
-		Sources:    sources,
-		AsOf:       asOf,
-		TradeCount: tradeCount,
-	}, true, nil
+	return out
 }
 
 func tryAggregatorTier(
