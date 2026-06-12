@@ -2036,6 +2036,63 @@ paths:
                   (first paragraph of the markdown body), and
                   full `<content>` (the markdown body).
 
+  /coverage:
+    get:
+      tags: [meta]
+      summary: Per-source completeness verdicts (ADR-0033) — the public trust surface.
+      description: |
+        Every indexed source's latest completeness verdict: the three
+        provable claims (substrate continuity, recognition, projection
+        reconciliation) plus the headline `complete` boolean, the
+        verified-to watermark, and the first problem ledger when one
+        exists. This is the same audit the operators run — published, so
+        consumers can verify the "every protocol, verified complete"
+        claim instead of trusting a badge.
+
+        Verdicts change only when the completeness audit runs, so the
+        endpoint is cheap and served with `public, max-age=60`.
+      responses:
+        "200":
+          description: Latest verdict per source, source-sorted.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [sources, complete_sources, total_sources]
+                        properties:
+                          sources:
+                            type: array
+                            items:
+                              type: object
+                              required:
+                                [source, complete, substrate_ok, recognition_ok,
+                                 projection_ok, genesis_ledger, watermark_ledger,
+                                 tip_ledger, coverage_pct, computed_at]
+                              properties:
+                                source: { type: string, example: soroswap }
+                                complete: { type: boolean }
+                                substrate_ok: { type: boolean }
+                                recognition_ok: { type: boolean }
+                                projection_ok: { type: boolean }
+                                genesis_ledger: { type: integer, format: int64 }
+                                watermark_ledger: { type: integer, format: int64 }
+                                tip_ledger: { type: integer, format: int64 }
+                                coverage_pct: { type: number }
+                                first_problem_ledger: { type: integer, format: int64 }
+                                detail: { type: string }
+                                computed_at: { type: string, format: date-time }
+                          complete_sources: { type: integer }
+                          total_sources: { type: integer }
+        "503":
+          description: No completeness reader wired on this deployment.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
   /ledger/tip:
     get:
       tags: [meta]

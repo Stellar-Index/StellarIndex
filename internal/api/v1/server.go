@@ -973,6 +973,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/changes/{entity_type}/{id}", s.handleChangeSummary)
 	s.mux.HandleFunc("GET /v1/diagnostics/cursors", s.handleCursors)
 	s.mux.HandleFunc("GET /v1/diagnostics/ingestion", s.handleDiagnosticsIngestion)
+	s.mux.HandleFunc("GET /v1/coverage", s.handleCoverageVerdicts)
 
 	// Live-ingest frontier — a lightweight slice of the ingestion
 	// snapshot (latest ingested ledger + lag). /tip is a 2s-cached

@@ -26,6 +26,15 @@ against.
   missing row) wired into the subcommand. Found when the blend
   TRUNCATE+replay re-derive wrote nothing.
 
+### Added
+
+- **GET /v1/coverage** — public per-source completeness verdicts
+  (ADR-0033): the three claims (substrate/recognition/projection), the
+  verified-to watermark, and the headline complete boolean, served from
+  completeness_snapshots. The trust story as an API: consumers can audit
+  the "every protocol, verified complete" claim themselves. Feeds the
+  explorer Coverage center.
+
 ### Changed
 
 - **Rebrand: Rates Engine -> Stellar Index** (ADR-0037; the same-day
