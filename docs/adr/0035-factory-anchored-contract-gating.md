@@ -188,8 +188,9 @@ whichever mechanism gives a verifiable contract set.
 Per-protocol, each as its own change with tests + a reconcile-seed
 update + a documented re-derive precondition:
 
-- [x] Soroswap (F-1347) — reference.
-- [ ] Blend (factory `deploy` → pool registry).
+- [x] Soroswap (F-1347) — reference (own `soroswap_pairs` registry; carries tokens).
+- [x] Blend (factory `deploy` → pool registry) — first consumer of the generic
+  `childgate.Registry` + `protocol_contracts` table (migration 0061).
 - [ ] Aquarius (pool factory).
 - [ ] Phoenix (factory → pool registry).
 - [ ] DeFindex (factory → vault registry).
