@@ -219,6 +219,13 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		return Subject{}, ErrTokenExpired
 	}
 
+	// Reuse the Postgres validator's CIDR decode so a malformed
+	// allowlist entry fails closed (401) identically on both stores.
+	ipAllowlist, err := decodeIPAllowlist(rec.IPAllowlist)
+	if err != nil {
+		return Subject{}, fmt.Errorf("auth: apikey ip_allowlist decode: %w", err)
+	}
+
 	tier := rec.Tier
 	if tier == "" {
 		// Records seeded without an explicit tier default to the
@@ -245,6 +252,17 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		// (legacy operator-minted + dashboard-minted keys are
 		// scoped out so the gate doesn't break them).
 		EmailVerifiedAt: rec.EmailVerifiedAt,
+		// Permission posture (F-1226 second half, found 2026-06-12): the
+		// record has carried these fields since wave 45, but Lookup never
+		// mapped them onto the Subject — so EVERY redis-minted key hit the
+		// permission middleware's closed posture (AllowAllPermissions=false
+		// + no entries) and 403'd on all endpoints ("this key has no
+		// permission entries"). Mirror the Postgres validator's mapping.
+		AllowAllPermissions: rec.PermissionsAll,
+		AllowPermissions:    rec.AllowPermissions,
+		DenyPermissions:     rec.DenyPermissions,
+		IPAllowlist:         ipAllowlist,
+		RefererAllowlist:    rec.RefererAllowlist,
 	}, nil
 }
 
