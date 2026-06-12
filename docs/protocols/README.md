@@ -48,7 +48,7 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 |---|---|---|---|
 | Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) | [blend.md](blend.md) |
 | Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
-| Phoenix | RPC view (pre-lake) | 🔎 Enumerated (13 contracts) | [phoenix.md](phoenix.md) |
-| Aquarius | TBD | ⏳ | — |
-| DeFindex | TBD | ⏳ | — |
-| Comet | WASM-hash | ⏳ | — |
+| Phoenix | RPC view (pre-lake) | 🔎 Enumerated (factory + multihop + 11 pools) | [phoenix.md](phoenix.md) |
+| DeFindex | lake deploy-graph | 🔎 Enumerated (4 factories, 34 vaults, 7 strategies) — open: strategy fan-out | [defindex.md](defindex.md) |
+| Aquarius | lake observation | ⏳ Enumerated (router + ~177 pools) — open: authoritative pool enumeration | [aquarius.md](aquarius.md) |
+| Comet | WASM-hash | ⏳ Pending (shared Balancer-v1 WASM, no factory namespace) | — |
