@@ -442,9 +442,9 @@ implement the `external.Connector` framework
 Copy the `binance` / `kraken` package as the template.
 
 1. Read [docs/discovery/external-refs/cex-feeds.md](docs/discovery/external-refs/cex-feeds.md).
-2. Pick the right reference in the existing Dash Retail Rates code
-   (`~/code/rates/rate_source_<venue>.go`) — those connectors have
-   the vendor's real endpoints + pair conventions documented.
+2. The predecessor production system (private) has per-venue reference
+   connectors with the vendors' real endpoints + pair conventions
+   documented — consult it when available.
 3. Create `internal/sources/external/<venue>/` following the
    actual per-package layout: `events.go` (wire types), `parse.go`
    (vendor JSON → `canonical.Trade`), `streamer.go` (live WS/REST;
