@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
 )
 
 // ListKeysForIdentifier returns every [APIKeyRecord] whose

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // StripeKeyManager is the v1 boundary for the Stripe webhook
@@ -279,7 +279,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 		s.logger.Error("stripe webhook: client_reference_id missing",
 			"event_id", ev.ID, "session_id", session.ID, "email", session.CustomerEmail)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/stripe-missing-identifier",
+			"https://api.stellarindex.io/errors/stripe-missing-identifier",
 			"client_reference_id missing", http.StatusBadRequest,
 			"Stripe Checkout sessions must set client_reference_id to the customer's signup identifier (e.g. signup-abc123); the webhook can't route the upgrade without it")
 		return
@@ -296,7 +296,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 				s.logger.Error("stripe webhook: bad rate_limit_per_min override",
 					"event_id", ev.ID, "value", override, "err", err)
 				writeProblem(w, r,
-					"https://api.stellaratlas.xyz/errors/stripe-bad-metadata",
+					"https://api.stellarindex.io/errors/stripe-bad-metadata",
 					"Bad rate_limit_per_min metadata", http.StatusBadRequest,
 					"metadata.rate_limit_per_min must be a non-negative integer")
 				return
@@ -307,7 +307,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 				"event_id", ev.ID, "tier", tierName,
 				"valid_tiers", "pro|business")
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/stripe-bad-metadata",
+				"https://api.stellarindex.io/errors/stripe-bad-metadata",
 				"Unknown tier", http.StatusBadRequest,
 				"metadata.tier must be one of pro/business, OR metadata.rate_limit_per_min must be set")
 			return
@@ -322,7 +322,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 		s.logger.Error("stripe webhook: list keys failed",
 			"err", err, "identifier", identifier, "event_id", ev.ID)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError,
 			"could not look up customer keys; Stripe will retry")
 		return
@@ -351,7 +351,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	// Stripe retries would just keep applying the same Redis
 	// rate-limit (already done above) without making the
 	// platform-store path any healthier. Operators surface failures
-	// via the `stellaratlas_stripe_platform_sync_errors_total{operation}`
+	// via the `stellarindex_stripe_platform_sync_errors_total{operation}`
 	// counter (incremented per error site) — any non-zero value is
 	// alertable as "Stripe bridge degraded; customer dashboard
 	// state drifting from billing state."
@@ -395,14 +395,14 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 func (s *Server) parseStripeWebhook(w http.ResponseWriter, r *http.Request) (stripeEvent, bool) {
 	if s.stripe == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/stripe-not-configured",
+			"https://api.stellarindex.io/errors/stripe-not-configured",
 			"Stripe webhook not configured", http.StatusServiceUnavailable,
 			"this deployment has no Stripe signing secret wired — set [api.stripe].signing_secret to enable webhooks")
 		return stripeEvent{}, false
 	}
 	if s.stripe.SigningSecret == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/stripe-not-configured",
+			"https://api.stellarindex.io/errors/stripe-not-configured",
 			"Stripe webhook signing secret is empty", http.StatusServiceUnavailable,
 			"signing secret unset — webhooks rejected to prevent unauthenticated upgrades")
 		return stripeEvent{}, false
@@ -411,7 +411,7 @@ func (s *Server) parseStripeWebhook(w http.ResponseWriter, r *http.Request) (str
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20)) // 1 MiB
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/body-too-large",
+			"https://api.stellarindex.io/errors/body-too-large",
 			"Request body too large", http.StatusBadRequest,
 			"Stripe webhook body must be under 1 MiB")
 		return stripeEvent{}, false
@@ -420,7 +420,7 @@ func (s *Server) parseStripeWebhook(w http.ResponseWriter, r *http.Request) (str
 	sigHeader := r.Header.Get("Stripe-Signature")
 	if sigHeader == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/stripe-signature-missing",
+			"https://api.stellarindex.io/errors/stripe-signature-missing",
 			"Stripe-Signature header missing", http.StatusBadRequest,
 			"every Stripe webhook delivery must carry a Stripe-Signature header; absence implies the request didn't come from Stripe")
 		return stripeEvent{}, false
@@ -435,7 +435,7 @@ func (s *Server) parseStripeWebhook(w http.ResponseWriter, r *http.Request) (str
 		s.logger.Warn("stripe webhook signature verification failed",
 			"err", err, "signature_header", preview)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/stripe-signature-invalid",
+			"https://api.stellarindex.io/errors/stripe-signature-invalid",
 			"Stripe-Signature invalid", http.StatusUnauthorized,
 			"signature verification failed; ensure the signing secret matches the dashboard's whsec_… value")
 		return stripeEvent{}, false
@@ -444,7 +444,7 @@ func (s *Server) parseStripeWebhook(w http.ResponseWriter, r *http.Request) (str
 	var ev stripeEvent
 	if err := json.Unmarshal(body, &ev); err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-body",
+			"https://api.stellarindex.io/errors/invalid-body",
 			"Malformed Stripe event", http.StatusBadRequest,
 			"could not parse webhook body as a Stripe event")
 		return stripeEvent{}, false
@@ -877,7 +877,7 @@ func (s *Server) stripeDedupeOK(w http.ResponseWriter, r *http.Request, ev strip
 	s.logger.Error("stripe webhook: AppendStripeEvent failed",
 		"err", err, "event_id", ev.ID)
 	writeProblem(w, r,
-		"https://api.stellaratlas.xyz/errors/internal",
+		"https://api.stellarindex.io/errors/internal",
 		"Internal error", http.StatusInternalServerError,
 		"could not record event for dedupe; Stripe will retry")
 	return false

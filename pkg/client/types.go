@@ -284,7 +284,7 @@ type OHLCBar struct {
 // Subclass refines `class=exchange` into `dex` / `cex` / `fx`.
 // Empty for non-exchange classes.
 //
-// BackfillSafe gates `stellaratlas-ops backfill` per CLAUDE.md
+// BackfillSafe gates `stellarindex-ops backfill` per CLAUDE.md
 // "Soroban DeFi contracts upgrade in place". On-chain Soroban
 // sources start `false` and only flip `true` after a per-WASM-
 // hash audit (`docs/operations/wasm-audits/`). Off-chain CEX/FX
@@ -380,7 +380,7 @@ type Market struct {
 
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]
 // (the SEP-1 overlay endpoint, /v1/assets/{id}/metadata). Mirrors
-// the AssetMetadata schema in openapi/stellar-atlas.v1.yaml.
+// the AssetMetadata schema in openapi/stellar-index.v1.yaml.
 //
 // All overlay fields populate only when Sep1Status == "verified".
 // Other states ("not_applicable" / "not_fetched" / "unreachable" /
@@ -447,7 +447,7 @@ type IssuerListEntry struct {
 	HomeDomain string `json:"home_domain,omitempty"`
 	// OrgName is the issuer's organisation name from SEP-1
 	// (`[DOCUMENTATION].ORG_NAME`). Empty until the SEP-1
-	// fetcher (`stellaratlas-ops sep1-refresh`) resolves it.
+	// fetcher (`stellarindex-ops sep1-refresh`) resolves it.
 	OrgName               string `json:"org_name,omitempty"`
 	AssetCount            int64  `json:"asset_count"`
 	TotalObservationCount int64  `json:"total_observation_count"`

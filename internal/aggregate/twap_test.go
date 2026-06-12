@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // mkTradeAt is mkTrade with a custom timestamp.

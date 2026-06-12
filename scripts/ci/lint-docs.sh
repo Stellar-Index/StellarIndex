@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Doc-code consistency linter for Stellar Atlas.
+# Doc-code consistency linter for Stellar Index.
 #
 # Runs in CI; fails the build if docs have drifted from code.
 # Based on the pattern from ~/code/loop-app/scripts/lint-docs.sh —
@@ -56,7 +56,7 @@ fi
 # server's base URL), so we strip /v1 before comparing.
 
 echo "Checking API routes vs OpenAPI..."
-if [ -d internal/api/v1 ] && [ -f openapi/stellar-atlas.v1.yaml ]; then
+if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   # Forward: handlers that aren't in the spec (client misses them).
   grep -rhoE 'HandleFunc\("[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
     sed -E 's|.*"[A-Z]+ /v1||; s|"$||' | \
@@ -64,7 +64,7 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-atlas.v1.yaml ]; then
     sort -u | while IFS= read -r route; do
       [ -z "$route" ] && continue
       # OpenAPI path entries look like `  /ohlc:` at 2-space indent.
-      if ! grep -qE "^  ${route}:" openapi/stellar-atlas.v1.yaml; then
+      if ! grep -qE "^  ${route}:" openapi/stellar-index.v1.yaml; then
         err "Route '$route' is registered in handlers but missing from OpenAPI spec"
       fi
   done
@@ -76,7 +76,7 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-atlas.v1.yaml ]; then
   # every spec path has a handler. If you add a new doc-but-stub
   # endpoint, add it here and remove it once the handler lands.
   planned_regex='^$'
-  grep -oE "^  /[^:]+:" openapi/stellar-atlas.v1.yaml | \
+  grep -oE "^  /[^:]+:" openapi/stellar-index.v1.yaml | \
     sed -E 's|^  ||; s|:$||' | sort -u | while IFS= read -r route; do
       [ -z "$route" ] && continue
       if [[ "$route" =~ $planned_regex ]]; then
@@ -105,7 +105,7 @@ echo "Checking metrics registry..."
 if [ -d internal/obs ] && [ -f docs/reference/metrics/README.md ]; then
   # Every metric registered in internal/obs must appear in the
   # reference doc. Scope is all prometheus `Name: "..."` fields —
-  # not just stellaratlas_*/ctx_* — so `http_requests_total` and
+  # not just stellarindex_*/ctx_* — so `http_requests_total` and
   # `http_request_duration_seconds` (unprefixed per standard
   # Prometheus convention) are also enforced.
   # BSD sed (macOS default) doesn't support \s — use [[:space:]].
@@ -122,9 +122,9 @@ fi
 echo "Checking for stale references..."
 stale_patterns=(
   "horizon\.stellar\.org"        # Horizon deprecated — ADR-0001
-  "stellaratlas\.ctx\.io"         # old placeholder domain
-  "ctx-indexer\|ctx-aggregator\|ctx-api\|ctx-ops\|ctx-migrate" # old binary names (we use stellaratlas- prefix now — adjust if you change the policy)
-  "CTX Rates"                    # old project name (now "Stellar Atlas")
+  "stellarindex\.ctx\.io"         # old placeholder domain
+  "ctx-indexer\|ctx-aggregator\|ctx-api\|ctx-ops\|ctx-migrate" # old binary names (we use stellarindex- prefix now — adjust if you change the policy)
+  "CTX Rates"                    # old project name (now "Stellar Index")
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
@@ -266,7 +266,7 @@ fi
 #
 # Catalogue is docs/operations/alerts-catalog.md; every rule file's
 # `alert: <name>` must appear verbatim somewhere in that doc. Caught
-# the `stellaratlas_ingestion_insert_errors` drift on 2026-04-23 —
+# the `stellarindex_ingestion_insert_errors` drift on 2026-04-23 —
 # the alert was live but the catalogue didn't list it.
 
 echo "Checking alerts-catalog drift..."
@@ -280,14 +280,14 @@ if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; t
     done
 fi
 
-# ─── 11. Runbook body references to `stellaratlas_source_*` metrics ─────────
+# ─── 11. Runbook body references to `stellarindex_source_*` metrics ─────────
 #
-# Narrow rule: only `stellaratlas_source_*` (the namespace fully
+# Narrow rule: only `stellarindex_source_*` (the namespace fully
 # owned by internal/obs/metrics.go). External-exporter metrics
-# (stellaratlas_stellar_core_*, pgbackrest_*, etc.) are intentionally
+# (stellarindex_stellar_core_*, pgbackrest_*, etc.) are intentionally
 # out of scope — those live in node-side exporters we don't control.
 #
-# Caught `stellaratlas_source_last_event_age_seconds` drift on
+# Caught `stellarindex_source_last_event_age_seconds` drift on
 # 2026-04-23 — runbook referenced a metric name that never existed.
 
 echo "Checking runbook metric-name freshness..."
@@ -299,14 +299,14 @@ if [ -d docs/operations/runbooks ] && [ -f internal/obs/metrics.go ]; then
   # if no matches.
   allowed=$(mktemp)
   {
-    (grep -hE 'Name:[[:space:]]*"stellaratlas_source_[a-z_]+"' internal/obs/metrics.go 2>/dev/null || true) | \
-      sed -E 's|.*"(stellaratlas_source_[a-z_]+)".*|\1|'
-    (grep -rhE '^[[:space:]]*-[[:space:]]*alert:[[:space:]]*stellaratlas_source_' deploy/monitoring/rules/ 2>/dev/null || true) | \
+    (grep -hE 'Name:[[:space:]]*"stellarindex_source_[a-z_]+"' internal/obs/metrics.go 2>/dev/null || true) | \
+      sed -E 's|.*"(stellarindex_source_[a-z_]+)".*|\1|'
+    (grep -rhE '^[[:space:]]*-[[:space:]]*alert:[[:space:]]*stellarindex_source_' deploy/monitoring/rules/ 2>/dev/null || true) | \
       sed -E 's|.*alert:[[:space:]]*||'
   } | sort -u > "$allowed"
 
-  # Extract every stellaratlas_source_* token from runbook bodies.
-  (grep -rhoE 'stellaratlas_source_[a-z_]+' docs/operations/runbooks/ 2>/dev/null || true) | \
+  # Extract every stellarindex_source_* token from runbook bodies.
+  (grep -rhoE 'stellarindex_source_[a-z_]+' docs/operations/runbooks/ 2>/dev/null || true) | \
     sort -u | while IFS= read -r metric; do
       [ -z "$metric" ] && continue
       if ! grep -qxF "$metric" "$allowed"; then

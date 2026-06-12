@@ -23,10 +23,10 @@ vocabulary defined in the
 
 | Severity | Receiver | Cadence |
 |----------|----------|---------|
-| `page` | `chat-page` (Slack `#stellaratlas-pages`) | every 12 h while firing |
-| `ticket` | `chat-default` (Slack `#stellaratlas-alerts`) | every 24 h while firing |
+| `page` | `chat-page` (Slack `#stellarindex-pages`) | every 12 h while firing |
+| `ticket` | `chat-default` (Slack `#stellarindex-alerts`) | every 24 h while firing |
 | `informational` | `silent` (Alertmanager UI only) | — |
-| `stellaratlas_deadmansswitch` | `deadmansswitch` (Healthchecks.io) | every 60 s |
+| `stellarindex_deadmansswitch` | `deadmansswitch` (Healthchecks.io) | every 60 s |
 
 The deadmansswitch is the alarm-of-last-resort — when its 60 s
 heartbeat stops, Healthchecks.io pages us via a fully separate
@@ -68,7 +68,7 @@ amtool alert add \
   --alertmanager.url=http://localhost:9093 \
   alertname=TEST_ALERT severity=ticket
 
-# 30 seconds later, expect a Slack message in #stellaratlas-alerts.
+# 30 seconds later, expect a Slack message in #stellarindex-alerts.
 # Resolve:
 amtool alert add \
   --alertmanager.url=http://localhost:9093 \

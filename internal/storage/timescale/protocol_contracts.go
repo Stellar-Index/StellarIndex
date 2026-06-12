@@ -55,7 +55,7 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 //
 // Returns an empty slice (not nil + error) when the source has no rows —
 // the steady-state for a fresh deployment that hasn't run
-// `stellaratlas-ops seed-protocol-contracts -source <name>` yet. The gate
+// `stellarindex-ops seed-protocol-contracts -source <name>` yet. The gate
 // then sees an empty registry and (correctly, per ADR-0035) drops every
 // child event until seeded; running the genesis walk is a deploy
 // precondition.

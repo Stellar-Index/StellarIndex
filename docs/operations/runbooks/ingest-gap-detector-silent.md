@@ -1,37 +1,37 @@
 ---
-title: Runbook — stellaratlas_ingest_gap_detector_silent
+title: Runbook — stellarindex_ingest_gap_detector_silent
 last_verified: 2026-05-28
 status: ratified
 severity: P2
 ---
 
-# Runbook — `stellaratlas_ingest_gap_detector_silent`
+# Runbook — `stellarindex_ingest_gap_detector_silent`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_ingest_gap_detector_silent` |
+| Alert | `stellarindex_ingest_gap_detector_silent` |
 | Severity | P2 (ticket) |
-| Detected by | `rate(stellaratlas_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0` OR series absent for 15 min |
+| Detected by | `rate(stellarindex_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0` OR series absent for 15 min |
 | Typical MTTR | 15 min (restart) — 1 h (deeper Postgres issue) |
-| Impact | The data-gap detector goroutine is wedged. `stellaratlas_ingest_gap_max_size_ledgers` gauges read stale value; the paging `ingest_gap_detected` alert can't fire even if a real gap forms. The system has lost its data-derived ingest-health signal. |
+| Impact | The data-gap detector goroutine is wedged. `stellarindex_ingest_gap_max_size_ledgers` gauges read stale value; the paging `ingest_gap_detected` alert can't fire even if a real gap forms. The system has lost its data-derived ingest-health signal. |
 
 ## Symptoms
 
-- `stellaratlas_ingest_gap_detector_runs_total{outcome="ok"}` rate is zero (or series absent).
+- `stellarindex_ingest_gap_detector_runs_total{outcome="ok"}` rate is zero (or series absent).
 - Operators reading the dashboard see the gap-size gauge frozen on its last-known value.
-- May coincide with `stellaratlas_aggregator_silent` (aggregator binary is down) or `stellaratlas_postgres_exporter_down` (Postgres is unreachable).
+- May coincide with `stellarindex_aggregator_silent` (aggregator binary is down) or `stellarindex_postgres_exporter_down` (Postgres is unreachable).
 
 ## Triage — 5 minutes
 
 1. **Aggregator service healthy?**
 
    ```sh
-   ssh root@<region-host> 'systemctl status stellaratlas-aggregator | head'
+   ssh root@<region-host> 'systemctl status stellarindex-aggregator | head'
    ```
 
-   If inactive or crash-looping, that's the root cause — fix the aggregator first (`journalctl -u stellaratlas-aggregator -n 200`).
+   If inactive or crash-looping, that's the root cause — fix the aggregator first (`journalctl -u stellarindex-aggregator -n 200`).
 
 2. **Postgres reachable?**
 
@@ -39,12 +39,12 @@ severity: P2
    ssh root@<region-host> 'sudo -iu postgres pg_isready'
    ```
 
-   If not, the detector's 60s scan timeout is firing every cycle and incrementing `outcome=error` instead. Cross-check `stellaratlas_postgres_exporter_down`.
+   If not, the detector's 60s scan timeout is firing every cycle and incrementing `outcome=error` instead. Cross-check `stellarindex_postgres_exporter_down`.
 
 3. **Connection pool saturated?**
 
    ```sh
-   ssh root@<region-host> "sudo -iu postgres psql -d stellaratlas -c 'SELECT count(*), state FROM pg_stat_activity GROUP BY state;'"
+   ssh root@<region-host> "sudo -iu postgres psql -d stellarindex -c 'SELECT count(*), state FROM pg_stat_activity GROUP BY state;'"
    ```
 
    `active` count near `max_connections` means the detector can't get a connection. Likely caused by concurrent fill walks per F-0020; see `docs/operations/backfill-with-live-ingest.md` for the recommended posture.
@@ -54,8 +54,8 @@ severity: P2
 ### Aggregator down
 
 ```sh
-ssh root@<region-host> 'systemctl restart stellaratlas-aggregator'
-ssh root@<region-host> 'journalctl -u stellaratlas-aggregator -f'
+ssh root@<region-host> 'systemctl restart stellarindex-aggregator'
+ssh root@<region-host> 'journalctl -u stellarindex-aggregator -f'
 ```
 
 The detector starts immediately on aggregator boot (first scan ~3 s post-startup), so the gauge refreshes and the alert clears within ~5 min.

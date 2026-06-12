@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // DefaultWindow is the size of the rolling training window per

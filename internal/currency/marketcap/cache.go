@@ -59,7 +59,7 @@ type Cache struct {
 }
 
 // New returns an empty cache. Used by both production wiring (in
-// cmd/stellaratlas-api/main.go) and tests.
+// cmd/stellarindex-api/main.go) and tests.
 func New() *Cache {
 	return &Cache{m: make(map[string]Snapshot, 32)}
 }

@@ -5,7 +5,7 @@ import { ShieldCheck } from 'lucide-react';
 import { loadDiscoveryDocs } from '@/lib/discovery';
 
 export const metadata: Metadata = {
-  title: 'Discovery audits — Stellar Atlas research',
+  title: 'Discovery audits — Stellar Index research',
   description:
     'Per-DEX and per-oracle integration audits documenting how each on-chain venue\'s event schema was verified against the upstream Rust source.',
 };

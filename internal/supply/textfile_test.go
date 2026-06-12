@@ -26,14 +26,14 @@ func TestWriteSnapshotMetrics_PassRun(t *testing.T) {
 	}
 	out := buf.String()
 	wants := []string{
-		`stellaratlas_supply_snapshot_total_xlm{asset_key="XLM"} 50001806812.000`,
-		`stellaratlas_supply_snapshot_circulating_xlm{asset_key="XLM"} 30000000000.000`,
-		`stellaratlas_supply_snapshot_max_xlm{asset_key="XLM"} 50001806812.000`,
-		`stellaratlas_supply_snapshot_ledger{asset_key="XLM"} 50000000`,
-		`stellaratlas_supply_snapshot_observed_at_seconds{asset_key="XLM"} 1770000000`,
-		`stellaratlas_supply_snapshot_run_duration_seconds 1.234`,
-		`stellaratlas_supply_snapshot_unit_failed{asset_key="XLM"} 0`,
-		`stellaratlas_supply_snapshot_last_success_timestamp{asset_key="XLM"}`,
+		`stellarindex_supply_snapshot_total_xlm{asset_key="XLM"} 50001806812.000`,
+		`stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"} 30000000000.000`,
+		`stellarindex_supply_snapshot_max_xlm{asset_key="XLM"} 50001806812.000`,
+		`stellarindex_supply_snapshot_ledger{asset_key="XLM"} 50000000`,
+		`stellarindex_supply_snapshot_observed_at_seconds{asset_key="XLM"} 1770000000`,
+		`stellarindex_supply_snapshot_run_duration_seconds 1.234`,
+		`stellarindex_supply_snapshot_unit_failed{asset_key="XLM"} 0`,
+		`stellarindex_supply_snapshot_last_success_timestamp{asset_key="XLM"}`,
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
@@ -60,10 +60,10 @@ func TestWriteSnapshotMetrics_OmitsMaxWhenNil(t *testing.T) {
 		t.Fatalf("writeSnapshotMetrics: %v", err)
 	}
 	out := buf.String()
-	if strings.Contains(out, "stellaratlas_supply_snapshot_max_xlm") {
+	if strings.Contains(out, "stellarindex_supply_snapshot_max_xlm") {
 		t.Errorf("nil MaxSupply should omit max_xlm metric:\n%s", out)
 	}
-	if !strings.Contains(out, `stellaratlas_supply_snapshot_total_xlm{asset_key="USDC:GA5..."}`) {
+	if !strings.Contains(out, `stellarindex_supply_snapshot_total_xlm{asset_key="USDC:GA5..."}`) {
 		t.Errorf("total_xlm should still emit:\n%s", out)
 	}
 }
@@ -84,10 +84,10 @@ func TestWriteSnapshotMetrics_FailRun(t *testing.T) {
 		t.Fatalf("writeSnapshotMetrics: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, `stellaratlas_supply_snapshot_unit_failed{asset_key="XLM"} 1`) {
+	if !strings.Contains(out, `stellarindex_supply_snapshot_unit_failed{asset_key="XLM"} 1`) {
 		t.Errorf("fail run should emit unit_failed=1:\n%s", out)
 	}
-	if strings.Contains(out, "stellaratlas_supply_snapshot_last_success_timestamp") {
+	if strings.Contains(out, "stellarindex_supply_snapshot_last_success_timestamp") {
 		t.Errorf("fail run should NOT emit last_success_timestamp:\n%s", out)
 	}
 }
@@ -98,13 +98,13 @@ func TestWriteFailureMetrics_NoValueGauges(t *testing.T) {
 		t.Fatalf("writeFailureMetrics: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, `stellaratlas_supply_snapshot_unit_failed{asset_key="native"} 1`) {
+	if !strings.Contains(out, `stellarindex_supply_snapshot_unit_failed{asset_key="native"} 1`) {
 		t.Errorf("failure path should emit unit_failed=1:\n%s", out)
 	}
-	if strings.Contains(out, "stellaratlas_supply_snapshot_total_xlm") {
+	if strings.Contains(out, "stellarindex_supply_snapshot_total_xlm") {
 		t.Errorf("failure path has no Supply, should not emit value gauges:\n%s", out)
 	}
-	if strings.Contains(out, "stellaratlas_supply_snapshot_last_success_timestamp") {
+	if strings.Contains(out, "stellarindex_supply_snapshot_last_success_timestamp") {
 		t.Errorf("failure path should NOT emit last_success_timestamp:\n%s", out)
 	}
 }
@@ -127,7 +127,7 @@ func TestWriteSnapshotTextfile_AtomicRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if !strings.Contains(string(body), "stellaratlas_supply_snapshot_unit_failed") {
+	if !strings.Contains(string(body), "stellarindex_supply_snapshot_unit_failed") {
 		t.Errorf("round-trip missing unit_failed:\n%s", body)
 	}
 	// `<path>.tmp` should be gone after a clean rename.

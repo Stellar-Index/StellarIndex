@@ -32,7 +32,7 @@ export default function SigninPage() {
       <div className="w-full max-w-sm space-y-6 rounded-lg border border-surface-line bg-surface p-8 shadow-sm">
         <div className="space-y-2">
           <h1 className="text-xl font-semibold tracking-tight text-ink">
-            Sign in to Stellar Atlas
+            Sign in to Stellar Index
           </h1>
           <p className="text-sm text-ink-muted">
             We&apos;ll email you a single-use link. New here? The same link
@@ -89,7 +89,7 @@ export default function SigninPage() {
         <p className="text-center text-xs text-ink-faint">
           By signing in you agree to the{' '}
           <a
-            href="https://stellaratlas.xyz/terms"
+            href="https://stellarindex.io/terms"
             className="underline hover:text-ink-muted"
           >
             terms of service

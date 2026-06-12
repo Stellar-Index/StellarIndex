@@ -7,12 +7,12 @@ status: operator runbook
 # Pre-launch hardening checklist
 
 Run through this BEFORE flipping public DNS at
-`api.stellaratlas.xyz` / `stellaratlas.xyz`. Each item is a config
+`api.stellarindex.io` / `stellarindex.io`. Each item is a config
 edit + service restart on R1; combined effort ~10 minutes.
 
 The API binary at startup now logs `SECURITY:` warnings when any
 of these are still in their dev-friendly defaults — checking
-`journalctl -u stellaratlas-api -b -p warning | grep SECURITY` is
+`journalctl -u stellarindex-api -b -p warning | grep SECURITY` is
 the canonical way to verify nothing's missed.
 
 ## 1. Bind the API to loopback
@@ -22,7 +22,7 @@ request goes through it including raw `http://<R1-IP>:3000` that
 bypasses Caddy's TLS. Once DNS lands, customers expect TLS-only;
 the loopback bind makes Caddy mandatory.
 
-**Config — append to `[api]` block in `/etc/stellaratlas.toml`:**
+**Config — append to `[api]` block in `/etc/stellarindex.toml`:**
 
 ```toml
 [api]
@@ -32,8 +32,8 @@ listen_addr = "127.0.0.1:3000"
 **Apply:**
 
 ```sh
-systemctl restart stellaratlas-api
-ss -tlnp | grep stellaratlas-api    # should show 127.0.0.1:3000, not *:3000
+systemctl restart stellarindex-api
+ss -tlnp | grep stellarindex-api    # should show 127.0.0.1:3000, not *:3000
 ```
 
 **Verify** the loopback restriction holds end-to-end:
@@ -46,7 +46,7 @@ curl -fsS http://localhost:3000/v1/healthz
 curl --connect-timeout 3 http://136.243.90.96:3000/v1/healthz   # connection refused
 
 # Through Caddy (TLS) — works post-DNS:
-curl -fsS https://api.stellaratlas.xyz/v1/healthz
+curl -fsS https://api.stellarindex.io/v1/healthz
 ```
 
 Caddy is on the same host so loopback access from Caddy still
@@ -64,8 +64,8 @@ user's bearer token. Restrict to the showcase + API hostnames.
 ```toml
 [api]
 allowed_origins = [
-  "https://stellaratlas.xyz",
-  "https://api.stellaratlas.xyz",
+  "https://stellarindex.io",
+  "https://api.stellarindex.io",
 ]
 ```
 
@@ -74,7 +74,7 @@ If you preview the showcase via Cloudflare Pages preview URLs
 hostnames temporarily — wildcards aren't honoured by the CORS
 middleware.
 
-**Apply:** `systemctl restart stellaratlas-api`.
+**Apply:** `systemctl restart stellarindex-api`.
 
 ## 3. Confirm trusted-proxy CIDRs match the proxy's source
 
@@ -87,11 +87,11 @@ or `X-Forwarded-For` from the wider internet starts being trusted.
 
 **No edit needed today** unless the proxy topology changes.
 
-## 4. Cloudflare proxy in front of api.stellaratlas.xyz (recommended)
+## 4. Cloudflare proxy in front of api.stellarindex.io (recommended)
 
 **Why:** Caddy gives TLS termination but no L7 protection. R1
 is one box; a sustained L7 flood saturates it. Cloudflare's
-free tier in front of `api.stellaratlas.xyz` gives WAF rules, rate
+free tier in front of `api.stellarindex.io` gives WAF rules, rate
 limiting at the edge, and IP-based bot blocking out of the box.
 
 **Steps:**
@@ -122,21 +122,21 @@ limiting at the edge, and IP-based bot blocking out of the box.
 
 ## 5. Stripe webhook secret (if launching paid tiers day 1)
 
-**Config — `/etc/default/stellaratlas`:**
+**Config — `/etc/default/stellarindex`:**
 
 ```sh
-STELLARATLAS_STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+STELLARINDEX_STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 (Sourced into the systemd unit via `EnvironmentFile=`.)
 
-Restart: `systemctl restart stellaratlas-api`. Verify via Stripe's
+Restart: `systemctl restart stellarindex-api`. Verify via Stripe's
 "Send test event" button → should land in `journalctl -u
-stellaratlas-api` and apply the upgrade.
+stellarindex-api` and apply the upgrade.
 
 ## 6. Healthchecks.io URLs
 
-Five URLs go into `/etc/default/stellaratlas-healthchecks`
+Five URLs go into `/etc/default/stellarindex-healthchecks`
 (F-1267 corrected the four-vs-five count on 2026-05-13 — the
 SLA-probe timer joined the heartbeat fleet):
 
@@ -158,23 +158,23 @@ SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...'
 Apply:
 
 ```sh
-# F-1304 (codex audit-2026-05-13): stellaratlas-sla-probe.timer
+# F-1304 (codex audit-2026-05-13): stellarindex-sla-probe.timer
 # must be in the restart set so systemd reloads the EnvironmentFile
 # and the new HEALTHCHECKS_URL_SLA_PROBE takes effect — without it
 # the timer keeps the old value (or runs with the URL unset) and
 # the SLA-evidence Healthchecks check stays silent.
 systemctl restart \
-  'stellaratlas-heartbeat@*.timer' \
-  stellaratlas-smoke.timer \
-  stellaratlas-sla-probe.timer
-bash /opt/stellaratlas/alertmanager/apply.sh
+  'stellarindex-heartbeat@*.timer' \
+  stellarindex-smoke.timer \
+  stellarindex-sla-probe.timer
+bash /opt/stellarindex/alertmanager/apply.sh
 ```
 
 ## 7. FX API keys (recommended, not blocking)
 
 The 4 FX sources flagged "stopped" in `/v1/sources` are missing
 operator-supplied API keys. Set in `[external.fx]` under
-`/etc/stellaratlas.toml`:
+`/etc/stellarindex.toml`:
 
 ```toml
 [external.fx]
@@ -193,7 +193,7 @@ Once DNS lands and Caddy has its cert:
 
 ```sh
 # From your laptop, NOT R1:
-API_BASE_URL=https://api.stellaratlas.xyz make smoke
+API_BASE_URL=https://api.stellarindex.io make smoke
 ```
 
 13/13 green confirms TLS + DNS + cert + path are all healthy
@@ -207,8 +207,8 @@ take a manual baseline:
 
 ```sh
 # On R1:
-pg_dump -h localhost -U stellaratlas stellaratlas | gzip \
-  > /var/backups/stellaratlas-baseline-$(date +%F).sql.gz
+pg_dump -h localhost -U stellarindex stellarindex | gzip \
+  > /var/backups/stellarindex-baseline-$(date +%F).sql.gz
 mc mirror /var/lib/galexie-archive remote-backup/galexie-archive-baseline-$(date +%F)
 ```
 
@@ -225,19 +225,19 @@ It's read-only — performs no state changes — and prints
 ssh root@r1 'bash -s' < scripts/ops/pre-launch-check.sh
 
 # Or interactively after a one-time copy:
-scp scripts/ops/pre-launch-check.sh root@r1:/opt/stellaratlas/
-ssh root@r1 'bash /opt/stellaratlas/pre-launch-check.sh'
+scp scripts/ops/pre-launch-check.sh root@r1:/opt/stellarindex/
+ssh root@r1 'bash /opt/stellarindex/pre-launch-check.sh'
 ```
 
 Spot checks if you'd rather verify by hand:
 
 ```sh
 # No SECURITY warnings in last boot:
-journalctl -u stellaratlas-api -b -p warning | grep SECURITY    # empty == good
+journalctl -u stellarindex-api -b -p warning | grep SECURITY    # empty == good
 
 # ListenAddr is loopback:
-ss -tlnp | grep stellaratlas-api        # 127.0.0.1:3000
+ss -tlnp | grep stellarindex-api        # 127.0.0.1:3000
 
 # Smoke from outside:
-API_BASE_URL=https://api.stellaratlas.xyz make smoke
+API_BASE_URL=https://api.stellarindex.io make smoke
 ```

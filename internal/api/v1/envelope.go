@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/v1/middleware"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
 )
 
 // Envelope is the shape of every 2xx JSON response. See
@@ -119,7 +119,7 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // this instead of http.Error to keep the wire contract consistent.
 //
 // typeURL is the stable error-type URL (document the taxonomy at
-// https://api.stellaratlas.xyz/errors/<name>); title is a short
+// https://api.stellarindex.io/errors/<name>); title is a short
 // human headline; status is the HTTP code; detail is the freeform
 // per-request message (optional).
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
@@ -148,7 +148,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 	// token); the magic-link cookie path is parallel and doesn't
 	// have a standard challenge token, so we advertise Bearer only.
 	if status == http.StatusUnauthorized {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="stellaratlas.xyz"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(p)

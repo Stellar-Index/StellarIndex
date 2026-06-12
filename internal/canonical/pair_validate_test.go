@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // Pair.Validate has three branches (base error, quote error,

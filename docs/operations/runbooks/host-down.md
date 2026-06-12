@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_host_down`
+# Runbook — `stellarindex_host_down`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_host_down` |
+| Alert | `stellarindex_host_down` |
 | Severity | P2 (ticket — but can auto-escalate if it takes a service down) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | 15 min – hours (depends on remote-hands availability) |

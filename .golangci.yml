@@ -1,4 +1,4 @@
-# golangci-lint config for Stellar Atlas.
+# golangci-lint config for Stellar Index.
 #
 # Lives at repo root. Applied via `make lint` and in CI. Any rule
 # change requires a PR + rationale; we don't weaken lint "just to
@@ -140,4 +140,4 @@ formatters:
       simplify: true
     goimports:
       local-prefixes:
-        - github.com/StellarAtlas/stellar-atlas
+        - github.com/StellarIndex/stellar-index

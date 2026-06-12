@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // usdcIssuer is the Circle USDC issuer — reused as a realistic G-address

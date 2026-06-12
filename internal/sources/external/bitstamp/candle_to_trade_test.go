@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // bitstampCandleToTrade has four error branches before its happy

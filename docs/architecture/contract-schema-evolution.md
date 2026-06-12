@@ -205,7 +205,7 @@ Concretely:
    historical range. Populated from `getLedgerEntries` against the
    contract's instance-storage entry.
 4. **Gate backfill behind a version audit.** Before we backfill
-   more than N ledgers past "now", a tool (`stellaratlas-ops
+   more than N ledgers past "now", a tool (`stellarindex-ops
    schema-audit <source>`) must walk the contract's WASM-hash history
    and confirm each observed hash has a decoder variant registered.
    Unknown hash = backfill refuses to proceed for that contract.
@@ -230,11 +230,11 @@ Concretely:
       from the Phase-1 audit). The historical "Blocked on live
       mainnet RPC access" framing is stale — stellar-rpc was
       removed from r1 on 2026-04-23 and the `wasm-history`
-      family of `stellaratlas-ops` subcommands enumerates from
+      family of `stellarindex-ops` subcommands enumerates from
       Galexie's MinIO output instead.
-- [x] CLI for the audit: `stellaratlas-ops wasm-history`,
+- [x] CLI for the audit: `stellarindex-ops wasm-history`,
       `wasm-history-merge-jsonl`, and
-      `extract-wasm-from-galexie` (under `cmd/stellaratlas-ops/`)
+      `extract-wasm-from-galexie` (under `cmd/stellarindex-ops/`)
       replace the originally-scoped `schema-audit` shape with
       something that walks history end-to-end without an RPC
       dependency.

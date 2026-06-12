@@ -7,9 +7,9 @@ status: planning
 # Showcase site — data, IA, and API plan
 
 **Codename:** none yet — referred to as "the showcase" in this doc.
-**Domain:** `stellaratlas.xyz` for the site (live on Cloudflare
-Pages). `docs.stellaratlas.xyz` serves the auto-generated API
-reference. The customer dashboard at `app.stellaratlas.xyz` is a
+**Domain:** `stellarindex.io` for the site (live on Cloudflare
+Pages). `docs.stellarindex.io` serves the auto-generated API
+reference. The customer dashboard at `app.stellarindex.io` is a
 separate Next.js app under [`web/dashboard/`](../../web/dashboard/README.md).
 
 This doc is the **single planning artefact** for the customer-facing
@@ -305,7 +305,7 @@ Every protocol/asset chart can overlay event markers (WASM upgrades, anomaly eve
 Top-right of every card. Opens a tray showing:
 
 ```
-GET https://api.stellaratlas.xyz/v1/price/native/fiat:USD?as_of_ledger=62405155
+GET https://api.stellarindex.io/v1/price/native/fiat:USD?as_of_ledger=62405155
 Authorization: not required (anonymous tier)
 
 Response (200):
@@ -1427,7 +1427,7 @@ Keyboard shortcut opens search modal. Every page.
 Every chart, donut, metric has a "Share / Embed" button. Generates:
 
 ```html
-<iframe src="https://stellaratlas.xyz/embed/chart?asset=native&quote=fiat:USD&granularity=1h&timeframe=24h"
+<iframe src="https://stellarindex.io/embed/chart?asset=native&quote=fiat:USD&granularity=1h&timeframe=24h"
         width="800" height="400" frameborder="0"></iframe>
 ```
 
@@ -1555,7 +1555,7 @@ To answer before frontend scaffolding starts:
 
 ## 21. Cross-references
 
-- API source-of-truth: [`openapi/stellar-atlas.v1.yaml`](../../openapi/stellar-atlas.v1.yaml)
+- API source-of-truth: [`openapi/stellar-index.v1.yaml`](../../openapi/stellar-index.v1.yaml)
 - Per-surface consistency policy: [ADR-0018](../adr/0018-api-consistency-surfaces.md)
 - Closed-bucket cross-region rule: [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md)
 - Chart timeframe × granularity: [ADR-0020](../adr/0020-chart-api-contract.md)

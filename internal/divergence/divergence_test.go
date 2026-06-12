@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/divergence"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/divergence"
 )
 
 // stubReference is a Reference implementation that returns canned

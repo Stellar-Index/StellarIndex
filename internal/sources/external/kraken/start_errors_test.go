@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // Streamer.Start has two pre-network reject paths: empty pairs

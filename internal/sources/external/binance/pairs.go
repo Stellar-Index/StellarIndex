@@ -3,7 +3,7 @@ package binance
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // DefaultPairs returns the built-in pair map for Binance — the

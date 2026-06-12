@@ -6,7 +6,7 @@ import "time"
 // writes to and the matching Subscriber listens on by default.
 // Operators with multiple deployments sharing one Redis can
 // override per-environment to keep streams partitioned.
-const DefaultChannel = "stellaratlas:closed-bucket:v1"
+const DefaultChannel = "stellarindex:closed-bucket:v1"
 
 // ClosedBucketEvent is the JSON wire shape published per
 // successful (pair, window) VWAP cache write. Carries the minimum

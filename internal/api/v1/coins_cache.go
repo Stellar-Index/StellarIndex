@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // CachedCoinsReader wraps a [CoinsReader] with a small per-key TTL

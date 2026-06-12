@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Stellar Atlas contributors.
+// Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package middleware_test
@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/v1/middleware"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // fakeMTDReader implements middleware.MonthToDateReader with a
@@ -74,7 +74,7 @@ func TestMonthlyQuota_PassThroughBelowCap(t *testing.T) {
 
 // TestMonthlyQuota_RejectsAtCap — when MTD reaches the quota, the
 // middleware returns 429 with the documented Problem+JSON shape +
-// the X-StellarAtlas-Monthly-* observability headers.
+// the X-StellarIndex-Monthly-* observability headers.
 func TestMonthlyQuota_RejectsAtCap(t *testing.T) {
 	reader := &fakeMTDReader{counts: map[string]int64{"key:K1": 100}}
 	mw := middleware.MonthlyQuota(reader, nil)
@@ -83,11 +83,11 @@ func TestMonthlyQuota_RejectsAtCap(t *testing.T) {
 	if status != http.StatusTooManyRequests {
 		t.Errorf("status = %d, want 429", status)
 	}
-	if got := headers.Get("X-StellarAtlas-Monthly-Quota"); got != "100" {
-		t.Errorf("X-StellarAtlas-Monthly-Quota = %q, want 100", got)
+	if got := headers.Get("X-StellarIndex-Monthly-Quota"); got != "100" {
+		t.Errorf("X-StellarIndex-Monthly-Quota = %q, want 100", got)
 	}
-	if got := headers.Get("X-StellarAtlas-Monthly-Used"); got != "100" {
-		t.Errorf("X-StellarAtlas-Monthly-Used = %q, want 100", got)
+	if got := headers.Get("X-StellarIndex-Monthly-Used"); got != "100" {
+		t.Errorf("X-StellarIndex-Monthly-Used = %q, want 100", got)
 	}
 	if !strings.Contains(body, `"monthly_quota":100`) {
 		t.Errorf("body missing monthly_quota: %s", body)

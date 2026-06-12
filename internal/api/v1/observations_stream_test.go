@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // startObservationsStreamServer wires a v1.Server with the given

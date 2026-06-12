@@ -10,7 +10,7 @@ asymmetry.
 
 ## Running
 
-Through the `stellaratlas-migrate` binary (preferred):
+Through the `stellarindex-migrate` binary (preferred):
 
 ```sh
 make db-migrate-status    # what's applied
@@ -21,8 +21,8 @@ make db-migrate-down      # roll back one
 Direct via `golang-migrate` CLI:
 
 ```sh
-migrate -path migrations -database "${STELLARATLAS_POSTGRES_DSN}" up
-migrate -path migrations -database "${STELLARATLAS_POSTGRES_DSN}" down 1
+migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" up
+migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
 ```
 
 ## Rules
@@ -43,24 +43,24 @@ migrate -path migrations -database "${STELLARATLAS_POSTGRES_DSN}" down 1
 6. **IDs follow canonical wire form** as text: `<code>-<issuer>` for
    classic, `C…` for Soroban, `native` for XLM. See
    `internal/canonical/asset.go`.
-7. **Migrations are applied as the `stellaratlas` app role, never as
-   a superuser.** Always go through `stellaratlas-migrate` /
-   `STELLARATLAS_POSTGRES_DSN` (the DSN under "Running" above) — that
-   DSN is the `stellaratlas` role, so every object a migration
-   creates is owned by `stellaratlas` and the application has full
+7. **Migrations are applied as the `stellarindex` app role, never as
+   a superuser.** Always go through `stellarindex-migrate` /
+   `STELLARINDEX_POSTGRES_DSN` (the DSN under "Running" above) — that
+   DSN is the `stellarindex` role, so every object a migration
+   creates is owned by `stellarindex` and the application has full
    access to it by construction. This is why a bare
-   `CREATE TABLE …` needs no explicit `GRANT … TO stellaratlas` — on
+   `CREATE TABLE …` needs no explicit `GRANT … TO stellarindex` — on
    a correctly-applied deploy (R2/R3/fresh) the app *is* the owner.
    Applying a migration manually as the `postgres` superuser
    instead makes the object superuser-owned and the app loses
    access to it. That happened to `source_entry_counts` (migration
    0035) on r1 on 2026-05-19 — `permission denied for table
    source_entry_counts (42501)` from the indexer's always-on entry
-   tally and from `stellaratlas-ops seed-entry-counts`. Hot-fixed in
-   place with `ALTER TABLE source_entry_counts OWNER TO stellaratlas`
+   tally and from `stellarindex-ops seed-entry-counts`. Hot-fixed in
+   place with `ALTER TABLE source_entry_counts OWNER TO stellarindex`
    (the canonical shape — matches `trades` and every other table).
    Do **not** "fix" this class of issue with a follow-up GRANT
-   migration: run as the `stellaratlas` role it cannot `GRANT`/
+   migration: run as the `stellarindex` role it cannot `GRANT`/
    `ALTER` on a superuser-owned object (errors in exactly the
    anomaly case), and on a correctly-owned object it is a redundant
    self-grant no-op. The fix is operational (apply as the app

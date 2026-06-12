@@ -2,7 +2,7 @@
 
 ## Scope
 
-This review treats Stellar Atlas as:
+This review treats Stellar Index as:
 
 1. A public market-intelligence explorer in the CoinGecko /
    CoinMarketCap category.
@@ -23,7 +23,7 @@ and focused user journeys.
 2. Mapped the explorer route set and the API endpoints each route
    depends on.
 3. Probed the live production surfaces on 2026-05-13:
-   - explorer pages on `stellaratlas.xyz`
+   - explorer pages on `stellarindex.io`
    - public status page
    - public docs site
    - selected API endpoints for status, network stats, assets,
@@ -108,7 +108,7 @@ The production status API reported:
 - `overall = degraded`
 - 8 active incidents
 - 1 page-level incident:
-  `stellaratlas_anomaly_freeze_sustained`
+  `stellarindex_anomaly_freeze_sustained`
 
 The public status page rendered "Degraded performance" and an active
 incident section in the browser pass.
@@ -183,7 +183,7 @@ Severity: High
 Every sampled explorer page emitted browser console failures for:
 
 ```text
-GET https://api.stellaratlas.xyz/v1/account/me
+GET https://api.stellarindex.io/v1/account/me
 ```
 
 The browser fetch is credentialed:
@@ -199,7 +199,7 @@ But the API CORS middleware explicitly states it does not set
 
 The live response to an origin-scoped `/v1/account/me` probe included:
 
-- `Access-Control-Allow-Origin: https://stellaratlas.xyz`
+- `Access-Control-Allow-Origin: https://stellarindex.io`
 - no `Access-Control-Allow-Credentials`
 
 That exactly matches the browser error.
@@ -215,7 +215,7 @@ Recommended action:
 
 Choose one architecture and make it consistent:
 
-1. If cookie auth on `stellaratlas.xyz` is intended, support
+1. If cookie auth on `stellarindex.io` is intended, support
    credentialed CORS for the specific explorer origins and update
    tests/config accordingly.
 2. If credentialed cross-origin CORS is intentionally forbidden,

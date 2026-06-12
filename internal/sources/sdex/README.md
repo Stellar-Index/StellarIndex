@@ -43,7 +43,7 @@ on post-P18 ledgers but warrants surfacing if it does):
 | --- | --- | --- |
 | `ClaimAtomTypeOrderBook` | Decoded | Standard SDEX order-book match |
 | `ClaimAtomTypeLiquidityPool` | Decoded | AMM-side fill against a pool, post-P18 |
-| `ClaimAtomTypeV0` | `ErrUnknownClaimAtomType` | Legacy pre-P18 shape — should not appear on a healthy modern stream; sustained-rate alert via `stellaratlas_source_decode_errors_total{source="sdex"}` |
+| `ClaimAtomTypeV0` | `ErrUnknownClaimAtomType` | Legacy pre-P18 shape — should not appear on a healthy modern stream; sustained-rate alert via `stellarindex_source_decode_errors_total{source="sdex"}` |
 
 ### Q3 — Op succeeded vs op succeeded with zero trades
 

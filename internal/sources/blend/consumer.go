@@ -1,7 +1,7 @@
 package blend
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // Auction events emitted by the Blend Decoder. These are NOT

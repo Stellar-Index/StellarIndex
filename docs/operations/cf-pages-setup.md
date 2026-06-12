@@ -1,19 +1,19 @@
 # Cloudflare Pages — bootstrap
 
 Provisions the three customer-facing surfaces on Cloudflare
-Pages, plus DNS + the `api.stellaratlas.xyz` proxy:
+Pages, plus DNS + the `api.stellarindex.io` proxy:
 
 | Surface | Project | Domain |
 |---|---|---|
-| Showcase site | `stellaratlas-showcase` | `stellaratlas.xyz` |
-| Customer dashboard | `stellaratlas-dashboard` | `app.stellaratlas.xyz` |
-| Status page | `stellaratlas-status` | `status.stellaratlas.xyz` |
-| API (proxied) | (n/a — Caddy on r1) | `api.stellaratlas.xyz` → `136.243.90.96` |
+| Showcase site | `stellarindex-showcase` | `stellarindex.io` |
+| Customer dashboard | `stellarindex-dashboard` | `app.stellarindex.io` |
+| Status page | `stellarindex-status` | `status.stellarindex.io` |
+| API (proxied) | (n/a — Caddy on r1) | `api.stellarindex.io` → `136.243.90.96` |
 
 ## One-time prerequisite (already done)
 
 Cloudflare's GitHub app must be authorised against the
-`StellarAtlas` org once. Visit
+`StellarIndex` org once. Visit
 `https://dash.cloudflare.com/<account-id>/pages/new/connect` and
 click through the OAuth grant. After that, every project this
 script creates can wire its `git source` programmatically — no
@@ -29,7 +29,7 @@ further dashboard clicks.
 #      Account → Account Settings → Read
 #      Zone    → Zone → Read
 #      Zone    → DNS → Edit
-#    Zone resources: Include → Specific zone → stellaratlas.xyz
+#    Zone resources: Include → Specific zone → stellarindex.io
 #    Account resources: Include → <your account>
 
 export CLOUDFLARE_API_TOKEN=cf_pat_...
@@ -48,10 +48,10 @@ patch any drift. Safe to run from CI on every change to
 
 ## What it does
 
-1. Verifies the API token + looks up the `stellaratlas.xyz`
+1. Verifies the API token + looks up the `stellarindex.io`
    zone (warns + skips DNS if the zone isn't on Cloudflare).
 2. For each of the three Pages projects: creates it pointing
-   at `StellarAtlas/stellar-atlas` with the right
+   at `StellarIndex/stellar-index` with the right
    `root_dir` / `build_command` / `output_dir` / env vars,
    or PATCHes the existing project to converge on those
    values.
@@ -70,37 +70,37 @@ handles it; no GitHub Actions minutes consumed).
 open "https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/pages"
 
 # DNS resolution (should return Cloudflare IPs once propagated)
-dig +short stellaratlas.xyz app.stellaratlas.xyz status.stellaratlas.xyz
-dig +short api.stellaratlas.xyz   # → 136.243.90.96 behind orange-cloud
+dig +short stellarindex.io app.stellarindex.io status.stellarindex.io
+dig +short api.stellarindex.io   # → 136.243.90.96 behind orange-cloud
 
 # Surface health
-curl -sI https://stellaratlas.xyz | head -3
-curl -sI https://app.stellaratlas.xyz | head -3
-curl -s  https://api.stellaratlas.xyz/v1/healthz
+curl -sI https://stellarindex.io | head -3
+curl -sI https://app.stellarindex.io | head -3
+curl -s  https://api.stellarindex.io/v1/healthz
 ```
 
 ## After this lands
 
 Two operator steps remain to make the dashboard fully live:
 
-1. **Set the dashboard config block** in `/etc/stellaratlas.toml`
+1. **Set the dashboard config block** in `/etc/stellarindex.toml`
    on r1 so the auth flow mounts:
 
    ```toml
    [api.dashboard]
-   base_url       = "https://app.stellaratlas.xyz"
-   email_from     = "Stellar Atlas <hello@stellaratlas.xyz>"
+   base_url       = "https://app.stellarindex.io"
+   email_from     = "Stellar Index <hello@stellarindex.io>"
    cookie_secure  = true
-   cookie_domain  = ".stellaratlas.xyz"
+   cookie_domain  = ".stellarindex.io"
    ```
 
-2. **Add the Resend API key** to `/etc/default/stellaratlas`:
+2. **Add the Resend API key** to `/etc/default/stellarindex`:
 
    ```sh
-   STELLARATLAS_RESEND_API_KEY=re_...
+   STELLARINDEX_RESEND_API_KEY=re_...
    ```
 
-   Then `systemctl restart stellaratlas-api`.
+   Then `systemctl restart stellarindex-api`.
 
 ## Fallback paths
 
@@ -108,7 +108,7 @@ Two operator steps remain to make the dashboard fully live:
   is paused (e.g. mid-rotation of the GitHub-app token):
   ```sh
   cd web/explorer && pnpm build && \
-    wrangler pages deploy out --project-name stellaratlas-showcase
+    wrangler pages deploy out --project-name stellarindex-showcase
   ```
 - **GitHub Actions workflow** — `showcase-deploy.yml` exists for
   the same case + hotfix-of-arbitrary-commit needs. Trigger via
@@ -130,12 +130,12 @@ Two operator steps remain to make the dashboard fully live:
   for CF to issue the cert. Check
   `https://dash.cloudflare.com/<account>/pages/view/<project>/domains`.
 
-## Known discrepancy: CF project still named `stellaratlas-showcase`
+## Known discrepancy: CF project still named `stellarindex-showcase`
 
 The repo + every code path now refers to "explorer", but the
-Cloudflare Pages project itself is still `stellaratlas-showcase`.
+Cloudflare Pages project itself is still `stellarindex-showcase`.
 CF doesn't support project rename. The cutover (create new
-`stellaratlas-explorer` project → reassign `stellaratlas.xyz` +
-`www.stellaratlas.xyz` custom domains → delete old project) is
+`stellarindex-explorer` project → reassign `stellarindex.io` +
+`www.stellarindex.io` custom domains → delete old project) is
 tracked separately. User-facing UX is unaffected; the CF-side
 label is the only mismatch.

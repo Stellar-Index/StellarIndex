@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	rpc "github.com/StellarAtlas/stellar-atlas/internal/stellarrpc"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	rpc "github.com/StellarIndex/stellar-index/internal/stellarrpc"
 )
 
 // mockRPC returns a test server that responds with the given result

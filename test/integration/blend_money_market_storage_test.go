@@ -11,8 +11,8 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/blend"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestBlendPositionsRoundTrip exercises the InsertBlendPositionEvent

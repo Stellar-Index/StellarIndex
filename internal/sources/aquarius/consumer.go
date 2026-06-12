@@ -1,8 +1,8 @@
 package aquarius
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // TradeEvent is the [consumer.Event] Aquarius's Decoder emits on

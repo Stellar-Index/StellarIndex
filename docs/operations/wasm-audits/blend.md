@@ -239,7 +239,7 @@ so pool addresses must be recovered from the factory's emitted
 events. Three execution options, in increasing self-sufficiency:
 
 1. **Walk Pool Factory `deploy` events on r1** (preferred).
-   Run `stellaratlas-ops wasm-history` against the factory contract
+   Run `stellarindex-ops wasm-history` against the factory contract
    to capture the timeline of when each pool address was deployed
    (factory's WASM history serves as a side-channel here — every
    pool deploy creates a `LedgerEntryChange` we'd see). However,
@@ -271,8 +271,8 @@ proceeds identically to phoenix / aquarius.
 For each pool address from Phase 1:
 
 ```sh
-stellaratlas-ops wasm-history \
-  -config /etc/stellaratlas.toml \
+stellarindex-ops wasm-history \
+  -config /etc/stellarindex.toml \
   -from 51499546 -to <r1-tip> -parallel 8 \
   -checkpoint-dir /var/log/wasm-history-blend-pools \
   -contracts <pool-1>,<pool-2>,...
@@ -288,7 +288,7 @@ For each unique WASM hash discovered in Phase 2:
 
 1. Fetch via `stellar contract fetch --wasm-hash <h>` from public
    RPC. If evicted (TTL expired), fall back to
-   `stellaratlas-ops extract-wasm-from-galexie` against r1.
+   `stellarindex-ops extract-wasm-from-galexie` against r1.
 2. Run `stellar contract info interface --wasm <h>.wasm` and
    compare against the canonical interface (most-recent deployed
    pool's WASM).

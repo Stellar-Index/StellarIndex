@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent Cloudflare Pages provisioning for stellaratlas.xyz.
+# Idempotent Cloudflare Pages provisioning for stellarindex.io.
 #
 # Creates / updates three Pages projects (showcase, dashboard,
 # status), binds custom domains, and (when the zone is on
@@ -10,8 +10,8 @@
 # PREREQ: authorize Cloudflare's GitHub app on this org ONCE.
 # The CF UI for that lives at:
 #   https://dash.cloudflare.com/<account-id>/pages/new/connect
-# Click "Connect GitHub", authorize the `StellarAtlas` org,
-# select the `stellar-atlas` repo. After that, this script can
+# Click "Connect GitHub", authorize the `StellarIndex` org,
+# select the `stellar-index` repo. After that, this script can
 # create new projects + change git config without ever opening
 # the CF dashboard again.
 #
@@ -21,10 +21,10 @@
 #   bash scripts/ops/cf-pages-bootstrap.sh
 #
 # Optional env:
-#   APEX_DOMAIN=stellaratlas.xyz       # the zone the records live under
+#   APEX_DOMAIN=stellarindex.io       # the zone the records live under
 #   API_HOST=136.243.90.96            # the IP the api.<apex> A record points at
-#   GITHUB_OWNER=StellarAtlas
-#   GITHUB_REPO=stellar-atlas
+#   GITHUB_OWNER=StellarIndex
+#   GITHUB_REPO=stellar-index
 #   PRODUCTION_BRANCH=main
 #   DRY_RUN=1                         # show what would change without touching CF
 #
@@ -38,10 +38,10 @@ set -euo pipefail
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN env var is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID env var is required}"
 
-APEX_DOMAIN="${APEX_DOMAIN:-stellaratlas.xyz}"
+APEX_DOMAIN="${APEX_DOMAIN:-stellarindex.io}"
 API_HOST="${API_HOST:-136.243.90.96}"
-GITHUB_OWNER="${GITHUB_OWNER:-StellarAtlas}"
-GITHUB_REPO="${GITHUB_REPO:-stellar-atlas}"
+GITHUB_OWNER="${GITHUB_OWNER:-StellarIndex}"
+GITHUB_REPO="${GITHUB_REPO:-stellar-index}"
 PRODUCTION_BRANCH="${PRODUCTION_BRANCH:-main}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -228,7 +228,7 @@ dns_upsert() {
 # ─── projects ─────────────────────────────────────────────────────
 
 project_create_or_update \
-  "stellaratlas-showcase" \
+  "stellarindex-showcase" \
   "web/explorer" \
   "pnpm install --frozen-lockfile && pnpm build" \
   "out" \
@@ -237,7 +237,7 @@ project_create_or_update \
   "PNPM_VERSION=10"
 
 project_create_or_update \
-  "stellaratlas-dashboard" \
+  "stellarindex-dashboard" \
   "web/dashboard" \
   "pnpm install --frozen-lockfile && pnpm build" \
   "out" \
@@ -246,7 +246,7 @@ project_create_or_update \
   "PNPM_VERSION=10"
 
 project_create_or_update \
-  "stellaratlas-status" \
+  "stellarindex-status" \
   "web/status" \
   "pnpm install --frozen-lockfile && pnpm build" \
   "out" \
@@ -258,26 +258,26 @@ project_create_or_update \
 # repo). No build step — CF Pages just serves the directory.
 # `make docs-api` regenerates the source HTML; CI checks the diff.
 project_create_or_update \
-  "stellaratlas-docs" \
+  "stellarindex-docs" \
   "docs/reference/api" \
   "true" \
   "."
 
 # ─── custom domains ──────────────────────────────────────────────
 
-project_attach_domain "stellaratlas-showcase"  "$APEX_DOMAIN"
-project_attach_domain "stellaratlas-showcase"  "www.$APEX_DOMAIN"
-project_attach_domain "stellaratlas-dashboard" "app.$APEX_DOMAIN"
-project_attach_domain "stellaratlas-status"    "status.$APEX_DOMAIN"
-project_attach_domain "stellaratlas-docs"      "docs.$APEX_DOMAIN"
+project_attach_domain "stellarindex-showcase"  "$APEX_DOMAIN"
+project_attach_domain "stellarindex-showcase"  "www.$APEX_DOMAIN"
+project_attach_domain "stellarindex-dashboard" "app.$APEX_DOMAIN"
+project_attach_domain "stellarindex-status"    "status.$APEX_DOMAIN"
+project_attach_domain "stellarindex-docs"      "docs.$APEX_DOMAIN"
 
 # ─── DNS records (only if the zone is on Cloudflare) ─────────────
 
-dns_upsert CNAME "$APEX_DOMAIN"        "stellaratlas-showcase.pages.dev"
-dns_upsert CNAME "www.$APEX_DOMAIN"    "stellaratlas-showcase.pages.dev"
-dns_upsert CNAME "app.$APEX_DOMAIN"    "stellaratlas-dashboard.pages.dev"
-dns_upsert CNAME "status.$APEX_DOMAIN" "stellaratlas-status.pages.dev"
-dns_upsert CNAME "docs.$APEX_DOMAIN"   "stellaratlas-docs.pages.dev"
+dns_upsert CNAME "$APEX_DOMAIN"        "stellarindex-showcase.pages.dev"
+dns_upsert CNAME "www.$APEX_DOMAIN"    "stellarindex-showcase.pages.dev"
+dns_upsert CNAME "app.$APEX_DOMAIN"    "stellarindex-dashboard.pages.dev"
+dns_upsert CNAME "status.$APEX_DOMAIN" "stellarindex-status.pages.dev"
+dns_upsert CNAME "docs.$APEX_DOMAIN"   "stellarindex-docs.pages.dev"
 dns_upsert A     "api.$APEX_DOMAIN"    "$API_HOST"
 
 # ─── done ─────────────────────────────────────────────────────────

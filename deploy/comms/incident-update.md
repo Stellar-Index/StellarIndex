@@ -4,7 +4,7 @@ the incident Markdown file at
 `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` under a
 fresh "## Update — <UTC timestamp>" subheading. The
 `web/status/` Cloudflare Pages build picks it up on every push
-to `main`; `stellaratlas-ops emit-incident --slug <slug>`
+to `main`; `stellarindex-ops emit-incident --slug <slug>`
 re-fires the customer-webhook fan-out so subscribed customers
 get the new payload too. (F-1211, 2026-05-13: prose corrects
 earlier external-issue tracker references — the project never
@@ -68,4 +68,4 @@ preemptively before page-worthy thresholds are reached." -->
 ---
 
 *Next update at {{utc_next_update}}. Status page:
-<https://status.stellaratlas.xyz>.*
+<https://status.stellarindex.io>.*

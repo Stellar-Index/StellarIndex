@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_alertmanager_config_bad`
+# Runbook — `stellarindex_alertmanager_config_bad`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_alertmanager_config_bad` |
+| Alert | `stellarindex_alertmanager_config_bad` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/meta.yml` |
 | Typical MTTR | 5–30 min |

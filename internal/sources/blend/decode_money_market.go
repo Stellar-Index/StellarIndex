@@ -5,8 +5,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // ─── Topic-arity expectations ──────────────────────────────────

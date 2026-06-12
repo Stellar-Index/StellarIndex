@@ -3,9 +3,9 @@ package soroswap
 import (
 	"sync"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // PairTokens captures the (token0, token1) identities of a
@@ -142,7 +142,7 @@ func (*Decoder) Name() string { return SourceName }
 //   - pair-contract events (swap/sync/deposit/withdraw/skim) match ONLY
 //     when the emitter is a REGISTERED Soroswap pair. The registry is
 //     seeded from factory new_pair events (live), a startup DB warm, and
-//     the genesis factory walk (`stellaratlas-ops seed-soroswap-pairs`),
+//     the genesis factory walk (`stellarindex-ops seed-soroswap-pairs`),
 //     so a real pair is always present before its events arrive
 //     (chronological: a pair's new_pair precedes its first swap), while
 //     a topic-collision from a non-Soroswap contract is rejected.

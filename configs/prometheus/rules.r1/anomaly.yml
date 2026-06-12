@@ -4,7 +4,7 @@
 # writes a freeze marker to Redis when ActionFreeze fires; the API
 # reads the marker on every /v1/price request and surfaces
 # flags.frozen=true. Both ends are tracked via
-# stellaratlas_anomaly_freeze_engaged_total — a counter labelled by
+# stellarindex_anomaly_freeze_engaged_total — a counter labelled by
 # asset class.
 #
 # Why a counter (not a gauge): the orchestrator doesn't currently
@@ -21,19 +21,19 @@
 # marker JSON; operator runbook reads from there during triage.
 
 groups:
-  - name: stellaratlas.anomaly
+  - name: stellarindex.anomaly
     interval: 30s
     rules:
 
-      - alert: stellaratlas_anomaly_freeze_engaged
+      - alert: stellarindex_anomaly_freeze_engaged
         expr: |
-          sum by (class) (rate(stellaratlas_anomaly_freeze_engaged_total[5m])) > 0
+          sum by (class) (rate(stellarindex_anomaly_freeze_engaged_total[5m])) > 0
         for: 1m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
         annotations:
           summary: "Anomaly freeze engaged on class {{ $labels.class }} (P3)"
           description: |
@@ -48,17 +48,17 @@ groups:
             Inspect the freeze:<asset>:<quote> Redis keys to
             identify the affected pair(s); manual override via
             policy YAML if confirmed false-positive.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
-      - alert: stellaratlas_anomaly_freeze_sustained
+      - alert: stellarindex_anomaly_freeze_sustained
         expr: |
-          sum by (class) (rate(stellaratlas_anomaly_freeze_engaged_total[1h])) > 0
+          sum by (class) (rate(stellarindex_anomaly_freeze_engaged_total[1h])) > 0
         for: 1h
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
         annotations:
           summary: "Anomaly freeze sustained for 1h+ on class {{ $labels.class }} (P1)"
           description: |
@@ -82,7 +82,7 @@ groups:
                §"RFP F4.2 one-year retention catch-up").
 
             Triage:
-              - `journalctl -u stellaratlas-aggregator | grep "phase2 freeze"`
+              - `journalctl -u stellarindex-aggregator | grep "phase2 freeze"`
                 lists the per-pair decisions with confidence + z-score.
               - `redis-cli KEYS 'freeze:*' | wc -l` — if this is 0
                 while the counter climbs, no marker is being written
@@ -90,29 +90,29 @@ groups:
                 impact, but the alert is still real signal.
               - `SELECT COUNT(*) FROM freeze_events WHERE recovered_at IS NULL`
                 — durable mirror; should track Redis when both wire.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
       # Recovery-side health: the freeze recovery worker closes
       # durable freeze_events rows once the Redis marker TTL elapses.
       # When it stalls, the explorer /anomalies timeline shows
       # resolved freezes as still-firing — silent quality regression
       # rather than an outage. F-1229.
-      - alert: stellaratlas_anomaly_freeze_recovery_stalled
+      - alert: stellarindex_anomaly_freeze_recovery_stalled
         expr: |
-          sum(rate(stellaratlas_anomaly_freeze_engaged_total[1h]))
-            > sum(rate(stellaratlas_anomaly_freeze_recovered_total[1h]))
-            and on() (sum(rate(stellaratlas_anomaly_freeze_recovery_sweeps_total{outcome!="ok"}[15m])) > 0)
+          sum(rate(stellarindex_anomaly_freeze_engaged_total[1h]))
+            > sum(rate(stellarindex_anomaly_freeze_recovered_total[1h]))
+            and on() (sum(rate(stellarindex_anomaly_freeze_recovery_sweeps_total{outcome!="ok"}[15m])) > 0)
         for: 2h
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
         annotations:
           summary: "Freeze recovery worker is stalled (P3)"
           description: |
-            stellaratlas_anomaly_freeze_engaged_total has outpaced
-            stellaratlas_anomaly_freeze_recovered_total for 2h+, AND
+            stellarindex_anomaly_freeze_engaged_total has outpaced
+            stellarindex_anomaly_freeze_recovered_total for 2h+, AND
             the recovery worker reported sweep failures within the
             last 15 min. The durable freeze_events table is
             accumulating open rows that the explorer /anomalies
@@ -126,4 +126,4 @@ groups:
             or a Redis ACL drift. Check the recovery worker logs
             (component=freeze-recovery) for the specific transport
             error.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md

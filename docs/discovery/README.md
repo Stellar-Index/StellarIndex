@@ -1,8 +1,8 @@
 # Discovery & Data Source Audit
 
-> **Brand note:** this archive predates the Stellar Atlas rebrand
-> (ADR-0036) and keeps the original Rates Engine naming as historical
-> record.
+> **Brand note:** this archive predates the brand renames (Rates Engine →
+> Stellar Atlas → Stellar Index; ADR-0036 + ADR-0037) and keeps the
+> original Rates Engine naming as historical record.
 
 > **Status (2026-05-03):** Phase 1 closed and ratified 2026-04-22
 > per [`phase1-closure.md`](phase1-closure.md). This tree is now

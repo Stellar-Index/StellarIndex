@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // externalAmountDecimals — same 10^8 scale as Binance and Kraken.

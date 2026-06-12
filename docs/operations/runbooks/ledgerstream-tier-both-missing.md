@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `stellaratlas_ledgerstream_tier_both_missing`
+# Runbook — `stellarindex_ledgerstream_tier_both_missing`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_ledgerstream_tier_both_missing` |
+| Alert | `stellarindex_ledgerstream_tier_both_missing` |
 | Severity | P1 (page) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/ledgerstream-tier.yml` |
 | Typical MTTR | 10–30 min (rehydrate from AWS) up to a few hours (cross-region rebuild) |
@@ -31,14 +31,14 @@ old hot ranges, the cold tier is the only fallback.
 ## Symptoms
 
 - Prometheus counter
-  `stellaratlas_ledgerstream_tier_read_total{outcome="both_missing"}`
+  `stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}`
   has increased in the last 5 min.
 - The affected binary's logs show `cold read: ... not found` (or
   the AWS-SDK equivalent) for one or more ledger sequences.
 - If the affected cursor is live ingest, the
-  `stellaratlas_indexer_ledger_lag_seconds` metric is climbing.
+  `stellarindex_indexer_ledger_lag_seconds` metric is climbing.
 - If it's a backfill, the backfill range's progress has frozen
-  (see `stellaratlas-ops list-cursors`).
+  (see `stellarindex-ops list-cursors`).
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -47,7 +47,7 @@ AWS is reachable at all.
 
 ```sh
 # 1. Which ledgers are missing — the indexer log line names them.
-ssh r1 'journalctl -u stellaratlas-indexer --since="10 min ago" | grep -iE "both.missing|tiered.*not.found" | tail -5'
+ssh r1 'journalctl -u stellarindex-indexer --since="10 min ago" | grep -iE "both.missing|tiered.*not.found" | tail -5'
 
 # 2. Is the local hot tier intact for the affected range?
 #    Replace SEQ with the ledger from step 1.
@@ -59,7 +59,7 @@ ssh r1 'curl -sf -m 10 https://aws-public-blockchain.s3.us-east-2.amazonaws.com/
 
 # 4. Cold-read latency in the last 30 min (background context for
 #    whether AWS is generally slow vs flat-out unavailable).
-ssh r1 'curl -s localhost:9100/metrics | grep stellaratlas_ledgerstream_cold_read_duration_seconds_count'
+ssh r1 'curl -s localhost:9100/metrics | grep stellarindex_ledgerstream_cold_read_duration_seconds_count'
 ```
 
 ## Decision tree
@@ -78,7 +78,7 @@ either down or r1 has lost outbound HTTPS.
   ```sh
   # Pull the missing range from R2 or R3's mirror (R3 keeps
   # galexie-archive locally on Vultr Object Storage per ADR-0016).
-  stellaratlas-ops rehydrate-galexie-archive \
+  stellarindex-ops rehydrate-galexie-archive \
     --from <SEQ> --to <SEQ_END> \
     --source vultr   # or aws-r2, depending on region.
   ```
@@ -110,7 +110,7 @@ Step 2 confirms the local partition is gone; step 3 also fails.
   ```sh
   ssh r1 'sudo systemctl disable --now galexie-archive-trim.timer'
   ```
-  File a ticket against stellaratlas-ops to add the missing safety.
+  File a ticket against stellarindex-ops to add the missing safety.
 
 ### D. The indexer/backfill is mis-configured
 
@@ -121,8 +121,8 @@ config is missing.
 
 - Check the binary's env / config for the right endpoints:
   ```sh
-  ssh r1 'grep -E "s3_bucket|s3_endpoint|cold_tier" /etc/stellaratlas.toml'
-  ssh r1 'grep -E "AWS_|S3_" /etc/default/stellaratlas'
+  ssh r1 'grep -E "s3_bucket|s3_endpoint|cold_tier" /etc/stellarindex.toml'
+  ssh r1 'grep -E "AWS_|S3_" /etc/default/stellarindex'
   ```
 - Restart the binary after fixing the config.
 
@@ -133,7 +133,7 @@ alert resolves on its own (no manual reset). Confirm the affected
 cursor has resumed advancing:
 
 ```sh
-ssh r1 'curl -s localhost:9100/metrics | grep -E "stellaratlas_indexer_ledger_lag_seconds|stellaratlas_backfill_cursor"'
+ssh r1 'curl -s localhost:9100/metrics | grep -E "stellarindex_indexer_ledger_lag_seconds|stellarindex_backfill_cursor"'
 ```
 
 ## Related

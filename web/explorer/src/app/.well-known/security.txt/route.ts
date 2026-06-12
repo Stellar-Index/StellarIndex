@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellaratlas.xyz';
+const SITE_URL = 'https://stellarindex.io';
 
 export function GET() {
   const now = new Date();
@@ -18,15 +18,15 @@ export function GET() {
   expires.setUTCFullYear(now.getUTCFullYear() + 1);
 
   const lines = [
-    `# Stellar Atlas — security.txt`,
+    `# Stellar Index — security.txt`,
     `# RFC-9116. Mirrors ${SITE_URL}/research → SECURITY.md.`,
     ``,
-    `Contact: mailto:security@stellaratlas.xyz`,
+    `Contact: mailto:security@stellarindex.io`,
     `Expires: ${expires.toISOString()}`,
     `Preferred-Languages: en`,
     `Canonical: ${SITE_URL}/.well-known/security.txt`,
-    `Policy: https://github.com/StellarAtlas/stellar-atlas/blob/main/SECURITY.md`,
-    `Acknowledgments: https://github.com/StellarAtlas/stellar-atlas/security/advisories`,
+    `Policy: https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md`,
+    `Acknowledgments: https://github.com/StellarIndex/stellar-index/security/advisories`,
     ``,
   ].join('\n');
 

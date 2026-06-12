@@ -54,7 +54,7 @@ v1 Payment:
 
 **Operator steps to turn it on:**
 
-1. Apply migration 0039 (`stellaratlas-migrate up` after the SCP).
+1. Apply migration 0039 (`stellarindex-migrate up` after the SCP).
 2. Add `"rozo"` to `ingestion.enabled_sources` in the region TOML.
 3. `BackfillSafe` stays `false` until a WASM-history audit lands
    at `docs/operations/wasm-audits/rozo.md`.

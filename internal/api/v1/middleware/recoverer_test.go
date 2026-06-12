@@ -71,7 +71,7 @@ func TestRecoverer_CatchesPanic(t *testing.T) {
 	if body["status"] != float64(500) { // JSON numbers decode as float64
 		t.Errorf("body status = %v, want 500", body["status"])
 	}
-	if body["type"] != "https://api.stellaratlas.xyz/errors/internal" {
+	if body["type"] != "https://api.stellarindex.io/errors/internal" {
 		t.Errorf("body type = %v", body["type"])
 	}
 	if body["instance"] != "/v1/explode" {

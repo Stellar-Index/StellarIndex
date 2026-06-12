@@ -1,4 +1,4 @@
-# Stellar Atlas
+# Stellar Index
 
 **Status:** Pre-v1. Core system shipped end-to-end (ingestion +
 storage + REST API + aggregator: VWAP/TWAP, triangulation,
@@ -12,7 +12,7 @@ security review, customer demo, production cutover).
 **License:** Apache-2.0.
 **Tested against:** Stellar pubnet protocol 23 (post-P23 / CAP-67 unified events).
 
-**Stellar Atlas is a protocol explorer for the Stellar network** —
+**Stellar Index is a protocol explorer for the Stellar network** —
 complete, verified, per-protocol on-chain data: every contract, every
 event, every trade, for every major protocol (SDEX, Soroswap, Aquarius,
 Phoenix, Comet, Blend, DeFindex, CCTP, Rozo, and the Reflector / Redstone
@@ -32,7 +32,7 @@ The pricing API was built against the
 [Stellar Prices API RFP](docs/stellar-rfp.md) and the
 [Freighter asset-detail RFP](docs/freighter-rfp.md). The project began
 as **Rates Engine**; renamed and repositioned 2026-06-12
-([ADR-0036](docs/adr/0036-stellar-atlas-rebrand.md)).
+([ADR-0037](docs/adr/0037-stellar-index-rebrand.md); briefly "Stellar Atlas", ADR-0036).
 
 ---
 
@@ -46,14 +46,14 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
 
 - **Hosted UI / explorer:** the explorer (`web/explorer/`) is a
   static-export Next.js site rendered at
-  <https://stellaratlas.xyz>. Browse coins, markets, issuers,
+  <https://stellarindex.io>. Browse coins, markets, issuers,
   sources, diagnostics; every panel reveals the exact API call
   that produced it. Build locally via
   `cd web/explorer && pnpm build` (output: `web/explorer/out/`).
   Operator runbook: [`docs/operations/explorer-deployment.md`](docs/operations/explorer-deployment.md).
 - **Users of the hosted API:** [`docs/getting-started.md`](docs/getting-started.md)
   walks from zero to your first authenticated request in five
-  minutes. Rendered at <https://docs.stellaratlas.xyz>.
+  minutes. Rendered at <https://docs.stellarindex.io>.
 - **API examples:** [`examples/curl/`](examples/curl/) — ten runnable
   shell scripts covering signup, account info, price, OHLC, history,
   oracle latest, markets, and the SSE price stream.
@@ -63,7 +63,7 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
 - **Reference docs:** generated Redocly output at
   [`docs/reference/api/index.html`](docs/reference/api/index.html)
   (regenerate via `make docs-api`); also published to
-  <https://docs.stellaratlas.xyz> by the
+  <https://docs.stellarindex.io> by the
   [`api-docs` workflow](.github/workflows/api-docs.yml).
 - **Self-hosting:** `make dev` boots the full local stack
   (TimescaleDB + Redis + MinIO). See
@@ -90,7 +90,7 @@ configs/               example.toml + Ansible roles (configs/ansible/)
 openapi/               API spec — source of truth for reference docs
 examples/              curl scripts + Postman collection for the public API
 deploy/                docker-compose (dev) / systemd (production) / monitoring (Prometheus rules) / status-page
-web/explorer/          Next.js static-export explorer rendered at stellaratlas.xyz
+web/explorer/          Next.js static-export explorer rendered at stellarindex.io
 test/                  integration + load + chaos + fixtures
 docs/                  architecture / ADR / operations / reference / discovery
 ```
@@ -166,11 +166,11 @@ long-form rationale; each becomes a numbered ADR.
 
 ## Contact
 
-- Security: <security@stellaratlas.xyz> — see [SECURITY.md](SECURITY.md)
+- Security: <security@stellarindex.io> — see [SECURITY.md](SECURITY.md)
   for the disclosure process (the GPG key for encrypted reports is not
   yet published; SECURITY.md tracks where it will land)
 - Code: [CONTRIBUTING.md](CONTRIBUTING.md)
-- General: <hello@stellaratlas.xyz>
+- General: <hello@stellarindex.io>
 
 ---
 

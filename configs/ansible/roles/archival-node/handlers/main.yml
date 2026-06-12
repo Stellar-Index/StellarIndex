@@ -28,19 +28,19 @@
     name: clickhouse-server
     state: restarted
 
-- name: Restart stellaratlas-indexer
+- name: Restart stellarindex-indexer
   ansible.builtin.systemd:
-    name: stellaratlas-indexer
+    name: stellarindex-indexer
     state: restarted
 
-- name: Restart stellaratlas-aggregator
+- name: Restart stellarindex-aggregator
   ansible.builtin.systemd:
-    name: stellaratlas-aggregator
+    name: stellarindex-aggregator
     state: restarted
 
-- name: Restart stellaratlas-api
+- name: Restart stellarindex-api
   ansible.builtin.systemd:
-    name: stellaratlas-api
+    name: stellarindex-api
     state: restarted
 
 # Timer-driven oneshot units (verify-archive-tier-a /
@@ -105,24 +105,24 @@
     name: rsyslog
     state: reloaded
 
-# 17-stellaratlas-healthchecks — wrapper-script and unit edits
+# 17-stellarindex-healthchecks — wrapper-script and unit edits
 # notify only the matching timer group, so a touch on smoke.sh
 # doesn't churn the heartbeat or sla-probe timers.
-- name: Restart stellaratlas-heartbeat timers
+- name: Restart stellarindex-heartbeat timers
   ansible.builtin.systemd:
-    name: "stellaratlas-heartbeat@{{ item }}.timer"
+    name: "stellarindex-heartbeat@{{ item }}.timer"
     state: restarted
   loop:
     - indexer
     - aggregator
     - api
 
-- name: Restart stellaratlas-smoke timer
+- name: Restart stellarindex-smoke timer
   ansible.builtin.systemd:
-    name: stellaratlas-smoke.timer
+    name: stellarindex-smoke.timer
     state: restarted
 
-- name: Restart stellaratlas-sla-probe timer
+- name: Restart stellarindex-sla-probe timer
   ansible.builtin.systemd:
-    name: stellaratlas-sla-probe.timer
+    name: stellarindex-sla-probe.timer
     state: restarted

@@ -1,0 +1,24 @@
+[Unit]
+Description=Stellar Index — REST + SSE API server
+After=network-online.target postgresql@{{ postgres_version }}-main.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/stellarindex
+EnvironmentFile=/etc/default/stellarindex
+ExecStart=/usr/local/bin/stellarindex-api -config /etc/stellarindex.toml
+ExecStop=/bin/kill -TERM $MAINPID
+
+LimitNOFILE=1048576
+Restart=on-failure
+RestartSec=10s
+
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

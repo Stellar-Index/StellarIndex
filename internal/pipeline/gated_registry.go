@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/blend"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/childgate"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // GatedMeta is the per-source description a factory-anchored decoder

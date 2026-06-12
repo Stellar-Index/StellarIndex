@@ -5,13 +5,13 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `stellaratlas_supply_snapshot_unit_failed_alert`
+# Runbook — `stellarindex_supply_snapshot_unit_failed_alert`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_supply_snapshot_unit_failed_alert` |
+| Alert | `stellarindex_supply_snapshot_unit_failed_alert` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/supply-snapshot.yml` |
 | Typical MTTR | 15–30 min |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Coverage caveat — timer-path-only alert
 
-`stellaratlas_supply_snapshot_unit_failed` is emitted by the
+`stellarindex_supply_snapshot_unit_failed` is emitted by the
 `supply-snapshot.service` systemd unit's wrapper script. The
 aggregator-resident goroutine path (gated by
 `[supply] aggregator_refresh_enabled = true`) doesn't run via
@@ -30,7 +30,7 @@ have a non-`ok` outcome). See
 [supply-pipeline.md](../../architecture/supply-pipeline.md) for
 the two-path overview.
 
-- `stellaratlas_supply_snapshot_unit_failed{asset_key=…} > 0` for ≥
+- `stellarindex_supply_snapshot_unit_failed{asset_key=…} > 0` for ≥
   30 min.
 - The most-recent `supply-snapshot.service` invocation in journald
   exited non-zero.
@@ -44,13 +44,13 @@ the two-path overview.
 sudo journalctl -u supply-snapshot.service -n 100 --output=cat
 
 # 2. Dry-run the writer to reproduce.
-sudo -u stellaratlas /usr/local/bin/stellaratlas-ops supply snapshot \
-  -config /etc/stellaratlas.toml -dry-run
+sudo -u stellarindex /usr/local/bin/stellarindex-ops supply snapshot \
+  -config /etc/stellarindex.toml -dry-run
 
 # 3. Validate config.
-sudo -u stellaratlas /usr/local/bin/stellaratlas-ops docs-config | \
+sudo -u stellarindex /usr/local/bin/stellarindex-ops docs-config | \
   head  # confirm parses cleanly
-grep -E "sdf_reserve_accounts|reserve_balances_stroops" /etc/stellaratlas.toml
+grep -E "sdf_reserve_accounts|reserve_balances_stroops" /etc/stellarindex.toml
 ```
 
 ## Typical root causes (roughly in frequency order)

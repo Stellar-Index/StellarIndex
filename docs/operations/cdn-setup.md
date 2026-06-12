@@ -1,10 +1,10 @@
 ---
-title: CDN setup for `api.stellaratlas.xyz` (L3.14)
+title: CDN setup for `api.stellarindex.io` (L3.14)
 last_verified: 2026-05-03
 status: operator runbook
 ---
 
-# CDN setup for `api.stellaratlas.xyz`
+# CDN setup for `api.stellarindex.io`
 
 Operator runbook for closing **L3.14** in the launch-readiness
 backlog. The origin-side `Cache-Control` middleware ships in code
@@ -53,10 +53,10 @@ graduate later.
 
 ```
 0. Pre-reqs
-   - DNS for stellaratlas.xyz is already in Cloudflare (move there
+   - DNS for stellarindex.io is already in Cloudflare (move there
      first if not — separate runbook).
    - Origin is reachable at the per-region HAProxy frontends
-     (api-r1.stellaratlas.xyz etc., per multi-region-topology.md).
+     (api-r1.stellarindex.io etc., per multi-region-topology.md).
 
 1. Create the proxied DNS record
    - Type: CNAME (or A if pointing at a single region pre-multi-region)
@@ -73,20 +73,20 @@ graduate later.
    - Caching → Configuration → Browser Cache TTL: Respect Existing Headers
      (origin sends max-age, don't override at edge).
    - Page Rules / Cache Rules:
-     - URL pattern: api.stellaratlas.xyz/v1/history/*
+     - URL pattern: api.stellarindex.io/v1/history/*
        Cache Level: Cache Everything
        Edge Cache TTL: 1 day
-     - URL pattern: api.stellaratlas.xyz/v1/sources
+     - URL pattern: api.stellarindex.io/v1/sources
        Cache Level: Cache Everything
        Edge Cache TTL: 5 minutes
-     - URL pattern: api.stellaratlas.xyz/v1/markets
+     - URL pattern: api.stellarindex.io/v1/markets
        Cache Level: Cache Everything
        Edge Cache TTL: 5 minutes
-     - URL pattern: api.stellaratlas.xyz/v1/auth/*
+     - URL pattern: api.stellarindex.io/v1/auth/*
        Cache Level: Bypass
-     - URL pattern: api.stellaratlas.xyz/v1/account/*
+     - URL pattern: api.stellarindex.io/v1/account/*
        Cache Level: Bypass
-     - URL pattern: api.stellaratlas.xyz/*/stream
+     - URL pattern: api.stellarindex.io/*/stream
        Cache Level: Bypass
        (also: WebSockets/SSE → set to no-buffer at proxy layer)
 
@@ -104,19 +104,19 @@ After config takes effect (DNS propagation + first proxy):
 
 ```sh
 # 1. Cache headers survive the edge
-curl -sI https://api.stellaratlas.xyz/v1/history/since-inception?asset=native | grep -iE "cache-control|cf-cache-status|age"
+curl -sI https://api.stellarindex.io/v1/history/since-inception?asset=native | grep -iE "cache-control|cf-cache-status|age"
 # Expect:
 #   cache-control: public, max-age=300, s-maxage=86400
 #   cf-cache-status: HIT (or MISS on first request, then HIT)
 
 # 2. Auth endpoints bypass
-curl -sI https://api.stellaratlas.xyz/v1/account/me -H "Authorization: Bearer <demo-key>" | grep -iE "cache-control|cf-cache-status"
+curl -sI https://api.stellarindex.io/v1/account/me -H "Authorization: Bearer <demo-key>" | grep -iE "cache-control|cf-cache-status"
 # Expect:
 #   cache-control: no-store
 #   cf-cache-status: BYPASS
 
 # 3. SSE passes through
-curl -sN https://api.stellaratlas.xyz/v1/price/tip/stream?base=native&quote=fiat:USD &
+curl -sN https://api.stellarindex.io/v1/price/tip/stream?base=native&quote=fiat:USD &
 # Should emit `data:` lines within 5s; Ctrl-C to close.
 
 # 4. Origin gets a cache-key signal

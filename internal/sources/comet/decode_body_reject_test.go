@@ -10,7 +10,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // sdkDecodeSwapBody has 5 required fields, each with a "missing"

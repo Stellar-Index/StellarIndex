@@ -8,7 +8,7 @@
 -- sparsity threshold here, so a single proven problem pins the
 -- watermark and coverage_pct is honest by construction.
 --
--- Written by `stellaratlas-ops compute-completeness` (operator/cron),
+-- Written by `stellarindex-ops compute-completeness` (operator/cron),
 -- read by /v1/diagnostics/ingestion + the status page — the same
 -- compute-once / read-cheap shape as source_coverage_snapshots (0048).
 --

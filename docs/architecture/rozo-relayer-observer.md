@@ -104,11 +104,11 @@ PK `(ledger_close_time, ledger, tx_hash, op_index)`. Written via a
 
 - New `external.Registry` entry `"rozo-relayer"` — `ClassBridge`,
   `DefaultWeight: 0`, `IncludeInVWAP: false` (volume signal, not a
-  price). Increments `stellaratlas_source_events_total{source=
+  price). Increments `stellarindex_source_events_total{source=
   "rozo-relayer"}` → appears in `active_sources` + the **Entries 24h**
   panel.
 - Wire `dispatcher.AddOpDecoder(rozorelayer.NewDecoder())` in
-  `cmd/stellaratlas-indexer/main.go` alongside SDEX.
+  `cmd/stellarindex-indexer/main.go` alongside SDEX.
 - Register `rozo_relayer_payments` in
   `internal/storage/timescale/per_source_gaps.go` (ADR-0030 —
   CI fails an unregistered per-source hypertable).

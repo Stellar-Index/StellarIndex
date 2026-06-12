@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // HistoryReader is the storage-side interface for /v1/history
@@ -170,7 +170,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	reader := s.history
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/history-unavailable",
+			"https://api.stellarindex.io/errors/history-unavailable",
 			"History serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
@@ -183,7 +183,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	pair, err := canonical.NewPair(base, quote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-pair",
+			"https://api.stellarindex.io/errors/invalid-pair",
 			"Invalid pair", http.StatusBadRequest,
 			err.Error())
 		return
@@ -199,7 +199,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 10000 {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-limit",
+				"https://api.stellarindex.io/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,
 				"limit must be an integer in [1, 10000]")
 			return
@@ -222,7 +222,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		c, err := decodeHistoryCursor(raw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-cursor",
+				"https://api.stellarindex.io/errors/invalid-cursor",
 				"Invalid cursor", http.StatusBadRequest, err.Error())
 			return
 		}
@@ -250,7 +250,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 				"base", base.String(), "quote", quote.String(),
 				"from", from, "to", to, "limit", limit)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/history-timeout",
+				"https://api.stellarindex.io/errors/history-timeout",
 				"History query timed out", http.StatusServiceUnavailable,
 				"the underlying trades-hypertable scan didn't return in 8s. Try narrowing the from/to window or reducing the limit.")
 			return
@@ -260,7 +260,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 			"base", base.String(), "quote", quote.String(),
 			"from", from, "to", to)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -388,7 +388,7 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 	rawAsset := r.URL.Query().Get("asset")
 	if rawBase != "" && rawAsset != "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-parameter",
+			"https://api.stellarindex.io/errors/invalid-parameter",
 			"`base` and `asset` are mutually exclusive", http.StatusBadRequest,
 			"both query parameters refer to the same value — pick one (this endpoint's canonical form is `base=`; `asset=` is accepted as an alias for /v1/price compatibility)")
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -398,7 +398,7 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 	}
 	if rawBase == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-base",
+			"https://api.stellarindex.io/errors/missing-base",
 			"Missing base parameter", http.StatusBadRequest,
 			"base query parameter is required (or `asset=` as an alias for /v1/price compatibility)")
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -406,7 +406,7 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 	base, err := canonical.ParseAsset(rawBase)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid base identifier", http.StatusBadRequest,
 			err.Error())
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -415,7 +415,7 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 	rawQuote := r.URL.Query().Get("quote")
 	if rawQuote == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-quote",
+			"https://api.stellarindex.io/errors/missing-quote",
 			"Missing quote parameter", http.StatusBadRequest,
 			"quote query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -423,7 +423,7 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 	quote, err := canonical.ParseAsset(rawQuote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-quote",
+			"https://api.stellarindex.io/errors/invalid-quote",
 			"Invalid quote identifier", http.StatusBadRequest,
 			err.Error())
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -478,7 +478,7 @@ const (
 func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + grain-default + clamp logic are linear; splitting fragments the request lifecycle
 	if s.history == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/history-unavailable",
+			"https://api.stellarindex.io/errors/history-unavailable",
 			"History serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
@@ -487,7 +487,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	rawAsset := r.URL.Query().Get("asset")
 	if rawAsset == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset",
+			"https://api.stellarindex.io/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
 			"asset query parameter is required")
 		return
@@ -495,7 +495,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -506,7 +506,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		q, err := canonical.ParseAsset(rawQuote)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-quote",
+				"https://api.stellarindex.io/errors/invalid-quote",
 				"Invalid quote identifier", http.StatusBadRequest,
 				err.Error())
 			return
@@ -516,7 +516,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	if asset.Equal(quote) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/identity-pair",
+			"https://api.stellarindex.io/errors/identity-pair",
 			"Asset is the quote", http.StatusBadRequest,
 			"asset and quote must differ")
 		return
@@ -530,7 +530,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	pair, err := canonical.NewPair(asset, quote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-pair",
+			"https://api.stellarindex.io/errors/invalid-pair",
 			"Invalid pair", http.StatusBadRequest,
 			err.Error())
 		return
@@ -541,7 +541,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	points, err := s.history.HistoryPoints(hCtx, pair, gran, historyMaxPoints)
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-granularity",
+			"https://api.stellarindex.io/errors/invalid-granularity",
 			"Invalid granularity", http.StatusBadRequest,
 			fmt.Sprintf("granularity must be one of: 1m, 15m, 1h, 4h, 1d, 1w, 1mo (got %q)", gran))
 		return
@@ -554,7 +554,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 			s.logger.Warn("HistoryPoints deadline exceeded",
 				"asset", asset.String(), "quote", quote.String(), "granularity", gran)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/history-timeout",
+				"https://api.stellarindex.io/errors/history-timeout",
 				"History query timed out", http.StatusServiceUnavailable,
 				"the underlying CAGG didn't return in 8s; cache may still be warming.")
 			return
@@ -562,7 +562,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		s.logger.Error("HistoryPoints failed",
 			"err", err, "asset", asset.String(), "quote", quote.String(), "granularity", gran)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

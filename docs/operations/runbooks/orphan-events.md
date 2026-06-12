@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_ingestion_orphan_events`
+# Runbook — `stellarindex_ingestion_orphan_events`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_ingestion_orphan_events` |
+| Alert | `stellarindex_ingestion_orphan_events` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | hours-to-days (investigation) |
@@ -19,9 +19,9 @@ severity: P3
 
 ## Symptoms
 
-- `sum by (source) (rate(stellaratlas_source_orphan_events_total[10m])) > 10/60` sustained 15 min.
+- `sum by (source) (rate(stellarindex_source_orphan_events_total[10m])) > 10/60` sustained 15 min.
 - Per-source breakdown in the alert label shows WHICH source is dropping events.
-- `stellaratlas_source_events_total` for the same source may still rise — orphans are a subset of pulled events that couldn't be completed.
+- `stellarindex_source_events_total` for the same source may still rise — orphans are a subset of pulled events that couldn't be completed.
 
 ## Context — what counts as an orphan?
 
@@ -35,18 +35,18 @@ Depends on the source:
 
 ```sh
 # Which source is orphaning? (alert label also tells you this)
-curl -s http://api:9464/metrics | grep stellaratlas_source_orphan_events_total
+curl -s http://api:9464/metrics | grep stellarindex_source_orphan_events_total
 
 # Look at the indexer's logs for the affected source — orphans get
 # logged at debug level with the group key.
-ssh root@indexer-01 "journalctl -u stellaratlas-indexer -n 1000 --no-pager" \
+ssh root@indexer-01 "journalctl -u stellarindex-indexer -n 1000 --no-pager" \
   | grep -E "orphan|evicted" | tail -20
 
 # Is the upstream RPC dropping events? Compare to the decode-error
 # rate and the event-rate over the same window:
-#   rate(stellaratlas_source_events_total[10m])
-#   rate(stellaratlas_source_decode_errors_total[10m])
-#   rate(stellaratlas_source_orphan_events_total[10m])
+#   rate(stellarindex_source_events_total[10m])
+#   rate(stellarindex_source_decode_errors_total[10m])
+#   rate(stellarindex_source_orphan_events_total[10m])
 # Orphan-rate rising while event-rate is flat → RPC drops or reorders.
 # Event-rate + orphan-rate both rising → source volume spike with
 # ordering happening to fall outside our buffer window.

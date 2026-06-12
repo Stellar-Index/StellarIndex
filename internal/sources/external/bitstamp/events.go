@@ -40,7 +40,7 @@ package bitstamp
 import (
 	"errors"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 // SourceName is stamped on every canonical.Trade this package emits.

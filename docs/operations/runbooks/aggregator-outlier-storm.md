@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_aggregator_outlier_storm`
+# Runbook — `stellarindex_aggregator_outlier_storm`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_aggregator_outlier_storm` |
+| Alert | `stellarindex_aggregator_outlier_storm` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 30 min – several hours |
@@ -19,10 +19,10 @@ severity: P3
 
 ## Symptoms
 
-- `sum(rate(stellaratlas_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 5×` baseline.
+- `sum(rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 5×` baseline.
 - `/v1/vwap` may show a smaller `samples` count (when that field
   lands in PR-191) per pair than the same hour the previous day.
-- Often co-occurs with `stellaratlas_price_divergence_warning` if
+- Often co-occurs with `stellarindex_price_divergence_warning` if
   the underlying market actually moved fast.
 
 ## Quick diagnosis (≤ 5 min)
@@ -30,10 +30,10 @@ severity: P3
 ```sh
 # 1) Confirm the spike is real, not just a baseline calibration issue.
 curl -fs http://localhost:9465/metrics \
-  | grep '^stellaratlas_aggregator_dropped_trades_total{reason="outlier"}'
+  | grep '^stellarindex_aggregator_dropped_trades_total{reason="outlier"}'
 
 # 2) Is the upstream-trade rate also elevated? (real volume → real outliers)
-psql -d stellaratlas -c \
+psql -d stellarindex -c \
   "SELECT pair, COUNT(*) AS rows
    FROM trades
    WHERE timestamp > now() - interval '15 minutes'
@@ -41,9 +41,9 @@ psql -d stellaratlas -c \
 
 # 3) Sanity-check by pair: is the storm one pair or many?
 # (planned: when per-pair labels exist; for now infer from
-#  stellaratlas_source_events_total per source)
+#  stellarindex_source_events_total per source)
 curl -fs http://localhost:9464/metrics \
-  | grep '^stellaratlas_source_events_total' | sort
+  | grep '^stellarindex_source_events_total' | sort
 ```
 
 Decision tree:
@@ -52,7 +52,7 @@ Decision tree:
 | -------------------- | --------------- | -------------- | ---------- |
 | Yes | Many | Real market-wide event (BTC flash-move, fiat-pair news) | Wait it out; verify divergence-warning fires + clears alongside |
 | Yes | One pair | Pair-specific dislocation, possibly a depeg | Check the pair's primary venue; consider pausing stablecoin proxy for that quote if it was a peg break |
-| No | Many | Connector regression — every venue producing weird amounts | Check `stellaratlas_source_decode_errors_total`; likely a recent decoder change |
+| No | Many | Connector regression — every venue producing weird amounts | Check `stellarindex_source_decode_errors_total`; likely a recent decoder change |
 | No | One pair, one source | Single connector misbehaving (amount-decimal regression) | Disable that source via config; open ticket against the connector |
 
 ## Mitigation (≤ 15 min)
@@ -61,7 +61,7 @@ Decision tree:
       the on-call channel with the incident timestamp + the pair(s)
       affected so the postmortem-window divergence numbers have context.
 - [ ] **Connector regression**: identify the offending source via
-      `stellaratlas_source_events_total` × `stellaratlas_source_decode_errors_total`
+      `stellarindex_source_events_total` × `stellarindex_source_decode_errors_total`
       ratio + recent deploy diff. Disable that source in TOML
       (`[external.<venue>] enabled = false`) and reload — the
       orchestrator picks up the change at next tick.
@@ -85,7 +85,7 @@ Capture for the postmortem:
   the offending source's `parse.go` / `decode.go`.
 - If it was a real market event: external context (CoinGecko /
   CoinMarketCap headlines, Tradingview screenshots) so the postmortem
-  doesn't read as a pure stellaratlas failure when it's the world.
+  doesn't read as a pure stellarindex failure when it's the world.
 
 ## Known false-positive patterns
 

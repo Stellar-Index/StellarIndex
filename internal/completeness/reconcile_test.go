@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
 )
 
 // ─── fakes ──────────────────────────────────────────────────────

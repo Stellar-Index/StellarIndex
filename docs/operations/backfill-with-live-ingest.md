@@ -28,14 +28,14 @@ Concretely:
 
 - **Live indexer always running** at full priority. Its cursor
   must advance every ledger.
-- **Backfill walks (`stellaratlas-ops backfill`)**: run at
+- **Backfill walks (`stellarindex-ops backfill`)**: run at
   `-parallel 4` or lower when live ingest is also writing.
   `-parallel 12` is for catch-up windows where live ingest is
   paused or running on a fresh box.
 - **verify-archive Tier A**: scheduled by
   `verify-archive-tier-a.timer` for off-peak windows (default:
   Sunday 02:00 UTC). Operators triggering an ad-hoc tier-A run
-  should `systemctl stop stellaratlas-indexer` first OR
+  should `systemctl stop stellarindex-indexer` first OR
   `-chunks 4` it down from the bootstrap's 12.
 - **Galexie + ledgerstream-fill** runs continuously in the
   background but pulls from MinIO, not Postgres — these don't
@@ -61,11 +61,11 @@ alertable:
 
 | Signal | Alert | Page |
 | --- | --- | --- |
-| Live cursor stalls | `stellaratlas_ingestion_source_insert_stale` | P2 |
-| Live indexer keeps inserting duplicates only | `stellaratlas_ingestion_duplicate_flood` | P2 |
-| Aggregator output stops | `stellaratlas_aggregator_silent` | P1 |
-| Per-asset staleness > 120 s | `stellaratlas_api_price_stale` | P2 |
-| Postgres connection pool saturated | `stellaratlas_postgres_connections_high` | P2 |
+| Live cursor stalls | `stellarindex_ingestion_source_insert_stale` | P2 |
+| Live indexer keeps inserting duplicates only | `stellarindex_ingestion_duplicate_flood` | P2 |
+| Aggregator output stops | `stellarindex_aggregator_silent` | P1 |
+| Per-asset staleness > 120 s | `stellarindex_api_price_stale` | P2 |
+| Postgres connection pool saturated | `stellarindex_postgres_connections_high` | P2 |
 
 The first two were shipped in this session (tasks #61 / #62 /
 #67) specifically to surface the F-0020 pattern at first
@@ -83,7 +83,7 @@ proven otherwise, and stop the heavy walker first.
 
 ```sh
 # On r1 — find the fill PID. The fill is a manual operator invocation
-# (`stellaratlas-ops backfill -source soroban-events`), NOT a systemd unit;
+# (`stellarindex-ops backfill -source soroban-events`), NOT a systemd unit;
 # there is no soroban-events-fill.service.
 ps -eo pid,args | grep '[r]atesengine-ops backfill'
 # kill -INT by the EXPLICIT PID (graceful — drains in-flight rows then exits).
@@ -109,7 +109,7 @@ The timer remains armed; the next scheduled fire still happens.
 ```sh
 # The indexer should be running; the freeze symptom is "cursor
 # not advancing" not "process not running". Confirm:
-systemctl status stellaratlas-indexer
+systemctl status stellarindex-indexer
 # Cursor lag check:
 curl -sS http://localhost:3000/v1/diagnostics/cursors \
   | jq '.data[] | select(.source=="ledgerstream") | .lag_seconds'
@@ -120,8 +120,8 @@ If lag stays high after the back-pressure source is stopped,
 restart the indexer:
 
 ```sh
-systemctl restart stellaratlas-indexer
-journalctl -u stellaratlas-indexer -f
+systemctl restart stellarindex-indexer
+journalctl -u stellarindex-indexer -f
 ```
 
 ## Long-term architecture options

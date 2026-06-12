@@ -78,7 +78,7 @@ that one time". -->
 <!-- The gaps. Slow detection, missing alert, runbook step that
 turned out to be wrong, communication delay. Be specific.
 "Detection was slow" is not actionable; "the alert
-`stellaratlas_X` fires after 30 min but the customer signal
+`stellarindex_X` fires after 30 min but the customer signal
 arrived at 5 min" is. -->
 
 ## What we got lucky on

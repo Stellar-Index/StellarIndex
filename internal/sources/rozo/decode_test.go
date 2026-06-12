@@ -10,7 +10,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // ─── SDK-encode helpers for building well-formed fixtures ────────

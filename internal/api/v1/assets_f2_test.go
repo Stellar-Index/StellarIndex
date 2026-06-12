@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/supply"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/supply"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 )
 
 // stubSupplyLooker implements v1.SupplyLooker for tests.

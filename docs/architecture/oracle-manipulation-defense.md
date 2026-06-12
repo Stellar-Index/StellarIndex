@@ -285,9 +285,9 @@ on-chain price back to ~$1.00:
 ### Engineering observability during the event
 
 Operators see (via Prometheus + alertmanager):
-- `stellaratlas_anomaly_freeze_engaged{asset="USTRY-G..."}` gauge: 1
-- `stellaratlas_anomaly_z_score{asset="USTRY-G..."}` histogram: spikes
-- `stellaratlas_anomaly_confidence{asset="USTRY-G..."}` gauge: drops
+- `stellarindex_anomaly_freeze_engaged{asset="USTRY-G..."}` gauge: 1
+- `stellarindex_anomaly_z_score{asset="USTRY-G..."}` histogram: spikes
+- `stellarindex_anomaly_confidence{asset="USTRY-G..."}` gauge: drops
 - P2 alert "anomaly freeze engaged on USTRY-G..." fires within 1
   bucket of trip
 - Runbook `anomaly-freeze-engaged.md` walks through:

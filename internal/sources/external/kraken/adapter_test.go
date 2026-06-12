@@ -3,8 +3,8 @@ package kraken
 import (
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 func TestStreamer_Name(t *testing.T) {

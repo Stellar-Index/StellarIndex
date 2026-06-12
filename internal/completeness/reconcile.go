@@ -4,9 +4,9 @@ import (
 	"context"
 	"sort"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
 )
 
 // Decoder is the per-source decode surface the reconciler re-runs over

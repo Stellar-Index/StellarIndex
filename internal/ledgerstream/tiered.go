@@ -32,9 +32,9 @@ import (
 //
 // Metrics (registered when Registry is non-nil):
 //
-//   - stellaratlas_ledgerstream_tier_read_total
+//   - stellarindex_ledgerstream_tier_read_total
 //     {outcome="hot"|"cold"|"both_missing"}
-//   - stellaratlas_ledgerstream_cold_read_duration_seconds
+//   - stellarindex_ledgerstream_cold_read_duration_seconds
 //     {outcome="ok"|"miss"|"error"}
 //
 // Operators chart `cold` rate as a proxy for "is the trim window
@@ -57,7 +57,7 @@ func NewTieredDataStore(hot, cold datastore.DataStore, registry prometheus.Regis
 	if registry != nil {
 		t.readTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "stellaratlas",
+				Namespace: "stellarindex",
 				Subsystem: "ledgerstream",
 				Name:      "tier_read_total",
 				Help:      "Tiered datastore reads partitioned by which tier served the request. hot=local MinIO; cold=AWS public bucket fallback; both_missing=neither tier has the object.",
@@ -66,7 +66,7 @@ func NewTieredDataStore(hot, cold datastore.DataStore, registry prometheus.Regis
 		)
 		t.coldDurationSec = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "stellaratlas",
+				Namespace: "stellarindex",
 				Subsystem: "ledgerstream",
 				Name:      "cold_read_duration_seconds",
 				Help:      "Latency of cold-tier (AWS public bucket) reads. Includes hot miss → cold attempt; does not include hot-tier reads.",

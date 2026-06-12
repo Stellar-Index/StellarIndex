@@ -26,8 +26,8 @@ export async function generateMetadata({
   const { slug } = await params;
   const doc = loadDiscoveryDoc(slug);
   if (!doc) return { title: 'Discovery doc not found' };
-  const canonical = `https://stellaratlas.xyz/research/discovery/${slug}`;
-  const title = `${doc.title} — Stellar Atlas integration audit`;
+  const canonical = `https://stellarindex.io/research/discovery/${slug}`;
+  const title = `${doc.title} — Stellar Index integration audit`;
   return {
     title,
     description: doc.description,
@@ -70,7 +70,7 @@ export default async function DiscoveryDocPage({
           {doc.description}
         </p>
         <a
-          href={`https://github.com/StellarAtlas/stellar-atlas/blob/main/${doc.source_path}`}
+          href={`https://github.com/StellarIndex/stellar-index/blob/main/${doc.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"

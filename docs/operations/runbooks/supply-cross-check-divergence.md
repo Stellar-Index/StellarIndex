@@ -5,13 +5,13 @@ status: living
 severity: P3
 ---
 
-# Runbook — `stellaratlas_supply_cross_check_divergence`
+# Runbook — `stellarindex_supply_cross_check_divergence`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_supply_cross_check_divergence` |
+| Alert | `stellarindex_supply_cross_check_divergence` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/supply.yml` |
 | Typical MTTR | 1 – 4 hours (RCA-driven; not user-impacting on its own) |
@@ -19,9 +19,9 @@ severity: P3
 
 ## Symptoms
 
-- `stellaratlas_supply_cross_check_divergence_stroops{classic_key="..."} > 1` for ≥ 5 min.
+- `stellarindex_supply_cross_check_divergence_stroops{classic_key="..."} > 1` for ≥ 5 min.
 - The labelled `classic_key` identifies the affected asset (format `CODE:ISSUER`).
-- `stellaratlas_supply_cross_check_total{outcome="over"}` rate non-zero.
+- `stellarindex_supply_cross_check_total{outcome="over"}` rate non-zero.
 
 ## Background — why both algorithms must agree
 
@@ -37,11 +37,11 @@ Both observe the same underlying state. Honest indexer math may differ by 1 stro
 ```sh
 # 1) Confirm the divergence is real and which asset.
 curl -fs http://localhost:9465/metrics \
-  | grep '^stellaratlas_supply_cross_check_divergence_stroops' \
+  | grep '^stellarindex_supply_cross_check_divergence_stroops' \
   | awk '$NF != "0" && $NF != "1"'
 
 # 2) Look at both readings + their basis.
-psql -d stellaratlas -c \
+psql -d stellarindex -c \
   "SELECT asset_key, time, total_supply::text, basis, ledger_sequence
      FROM asset_supply_history
     WHERE asset_key IN ('USDC:GA5Z...', 'CCW6...')
@@ -50,7 +50,7 @@ psql -d stellaratlas -c \
 
 The SAC contract id for a classic asset is deterministic — derive it once and confirm it matches the row in `asset_supply_history` you'd expect.
 
-> **Periodic gauge emission is wired into the aggregator's supply-refresh loop** when `[supply].aggregator_refresh_enabled = true`. Every `aggregator_refresh_cadence` tick, `supply.CrossCheckRefresher` (built in `cmd/stellaratlas-aggregator/main.go::buildCrossCheckRefresher`) loads the latest classic + SAC snapshots for every classic asset that's both in `watched_classic_assets` AND has its SAC contract id declared in `sac_wrappers` AND that contract id is also in `watched_sep41_contracts`. The intersection is the cross-check pair set — outside it the supply package can't compare, so the refresher silently skips it. The CLI `stellaratlas-ops supply audit <asset> -cross-check <counterpart>` path remains available for ad-hoc operator inspection but is no longer the gauge-emission path.
+> **Periodic gauge emission is wired into the aggregator's supply-refresh loop** when `[supply].aggregator_refresh_enabled = true`. Every `aggregator_refresh_cadence` tick, `supply.CrossCheckRefresher` (built in `cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`) loads the latest classic + SAC snapshots for every classic asset that's both in `watched_classic_assets` AND has its SAC contract id declared in `sac_wrappers` AND that contract id is also in `watched_sep41_contracts`. The intersection is the cross-check pair set — outside it the supply package can't compare, so the refresher silently skips it. The CLI `stellarindex-ops supply audit <asset> -cross-check <counterpart>` path remains available for ad-hoc operator inspection but is no longer the gauge-emission path.
 
 Decision tree:
 
@@ -58,7 +58,7 @@ Decision tree:
 | ------------- | ------------- | ------------ | ---------- |
 | Yes (1+ stroop) | — | Algorithm 3 missed mint events (rare — events are durable) | Replay the SAC contract's event range from Galexie; rerun Algorithm 3 |
 | — | Yes (1+ stroop) | Algorithm 2 missed a trustline / claimable / LP entry change (more common — trustline-delta indexer is more recent code) | Replay the affected ledger range through the trustline-delta indexer; rerun Algorithm 2 |
-| Both readings stale | Both readings stale | Aggregator orchestrator stalled; cross-check is comparing old data | Check `stellaratlas_aggregator_silent` runbook first |
+| Both readings stale | Both readings stale | Aggregator orchestrator stalled; cross-check is comparing old data | Check `stellarindex_aggregator_silent` runbook first |
 
 ## Mitigation (≤ 60 min)
 
@@ -67,8 +67,8 @@ Decision tree:
       via `-cross-check`; optionally include `-history-hours 24`
       to spot whether divergence is fresh or chronic:
       ```sh
-      stellaratlas-ops supply audit USDC-GA5Z... \
-          -config /etc/stellaratlas.toml \
+      stellarindex-ops supply audit USDC-GA5Z... \
+          -config /etc/stellarindex.toml \
           -cross-check CCW6... \
           -history-hours 24
       ```
@@ -79,7 +79,7 @@ Decision tree:
 - [ ] **Replay the affected range.** Per-algorithm replay
       subcommands aren't shipped yet — the operator path today is
       restarting the indexer with a config override that re-reads
-      the ledger window. See `cmd/stellaratlas-indexer` flags.
+      the ledger window. See `cmd/stellarindex-indexer` flags.
 
 - [ ] **Verify** the divergence gauge drops below 2 within 10 min of
       the replay completing. The gauge updates once per aggregator
@@ -155,6 +155,6 @@ Capture for the postmortem:
 - 2026-05-02 — Cross-check gauge emission shipped: the
   aggregator's supply-refresh loop now runs
   `supply.CrossCheckRefresher` per cadence and emits both
-  `stellaratlas_supply_cross_check_divergence_stroops` and
-  `stellaratlas_supply_cross_check_total{outcome=…}`. Status flipped
+  `stellarindex_supply_cross_check_divergence_stroops` and
+  `stellarindex_supply_cross_check_total{outcome=…}`. Status flipped
   from `draft` to `living`; removed the manual-cron caveat.

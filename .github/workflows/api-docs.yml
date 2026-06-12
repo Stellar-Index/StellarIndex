@@ -6,7 +6,7 @@
 # verified the two are in sync at PR-merge time, so this workflow
 # trusts what's in main and just publishes.
 #
-# DNS: docs.stellaratlas.xyz is wired to the project's GitHub Pages
+# DNS: docs.stellarindex.io is wired to the project's GitHub Pages
 # domain (set via repository CNAME after the public-flip per
 # docs/operations/public-flip.md).
 
@@ -48,7 +48,7 @@ jobs:
           mkdir -p _site
           cp -r docs/reference/api/index.html _site/index.html
           cp -r docs/reference/api/README.md _site/README.md
-          cp -r docs/reference/api/stellar-atlas.v1.yaml _site/stellar-atlas.v1.yaml
+          cp -r docs/reference/api/stellar-index.v1.yaml _site/stellar-index.v1.yaml
 
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

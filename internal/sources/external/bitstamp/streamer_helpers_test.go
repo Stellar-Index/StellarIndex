@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // symbolsFor inverts the operator-supplied PairMap so the streamer

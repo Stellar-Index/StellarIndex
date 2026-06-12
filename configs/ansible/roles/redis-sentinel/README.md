@@ -72,7 +72,7 @@ all:
         cache-02: { ansible_host: 10.0.0.22, redis_role: replica }
         cache-03: { ansible_host: 10.0.0.23, redis_role: replica }
       vars:
-        redis_sentinel_master_name: stellaratlas-r1-cache
+        redis_sentinel_master_name: stellarindex-r1-cache
         redis_sentinel_quorum: 2
         redis_maxmemory: 4gb
 ```
@@ -103,7 +103,7 @@ cd configs/ansible
 # Promote a specific replica (operator action — not covered by
 # this role; Sentinel handles automatic failover):
 ssh cache-01 redis-cli -p 26379 -a "$REDIS_PASSWORD" \
-  SENTINEL failover stellaratlas-r1-cache
+  SENTINEL failover stellarindex-r1-cache
 ```
 
 ## Idempotency on a live cluster
@@ -137,7 +137,7 @@ The connection-construction pattern is:
 
 ```go
 client := redis.NewFailoverClient(&redis.FailoverOptions{
-    MasterName:    "stellaratlas-r1-cache",
+    MasterName:    "stellarindex-r1-cache",
     SentinelAddrs: []string{
         "cache-01.internal:26379",
         "cache-02.internal:26379",
@@ -170,11 +170,11 @@ during a quiet window.
 - `redis_exporter` listens on port `9121` and exposes the standard
   Redis metrics. Add a Prometheus scrape config pointing at each
   host.
-- `stellaratlas_redis_sentinel_primary{instance=...}` gauge —
+- `stellarindex_redis_sentinel_primary{instance=...}` gauge —
   rendered by `redis-sentinel-textfile-scraper.timer` every 30 s.
   Sum across hosts should always equal 1; > 1 means a split-brain
   candidate; 0 means Sentinel hasn't elected yet.
 
 Companion alerts live alongside the Patroni alerts in
 `deploy/monitoring/rules/cache.yml` (added separately —
-`stellaratlas_redis_master_down`, `redis_memory_high`).
+`stellarindex_redis_master_down`, `redis_memory_high`).

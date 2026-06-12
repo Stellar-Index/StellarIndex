@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
 )
 
 // InsertSorobanEventsBatch persists a slice of raw Soroban event
@@ -115,7 +115,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []sorobaneven
 // — event_index makes the per-op replay order deterministic so
 // multi-event ops (Phoenix's 8-events-per-swap) reconstruct stably
 // (ADR-0033). Used by
-// per-source `stellaratlas-ops <source>-backfill` subcommands to
+// per-source `stellarindex-ops <source>-backfill` subcommands to
 // re-feed historical rows through the live Go decoders without a
 // MinIO walk.
 //
@@ -267,14 +267,14 @@ func placeholdersFrom(startIdx, count int) string {
 
 // LedgerGap is one contiguous block of ledgers with no
 // soroban_events row. Produced by [FindSorobanEventsLedgerGaps]
-// and consumed by the operator-facing `stellaratlas-ops
+// and consumed by the operator-facing `stellarindex-ops
 // find-data-gaps` subcommand + future periodic gap-detection
 // metric.
 //
 // Start and End are inclusive. Size = End - Start + 1. JSON
 // tags use snake_case so the subcommand's `--output json` mode
 // emits the same shape an operator-facing plan would (consumed
-// by shell scripts piping into `stellaratlas-ops backfill`).
+// by shell scripts piping into `stellarindex-ops backfill`).
 type LedgerGap struct {
 	Start int64 `json:"start"`
 	End   int64 `json:"end"`

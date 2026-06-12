@@ -54,8 +54,8 @@ backend api_pool
     # re-add → 15s detection window, 10s slowstart prevents cold
     # pod from getting hammered after recovery.
     default-server inter 5s fall 3 rise 2 slowstart 10s
-{% for h in groups['stellaratlas_api'] %}
-    server {{ h }} {{ hostvars[h].ansible_host }}:{{ stellaratlas_api_port }} check
+{% for h in groups['stellarindex_api'] %}
+    server {{ h }} {{ hostvars[h].ansible_host }}:{{ stellarindex_api_port }} check
 {% endfor %}
 
 # Stats endpoint, loopback-only. Operators SSH-tunnel for remote

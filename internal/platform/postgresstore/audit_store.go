@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // AuditStore implements [platform.AuditStore] against the

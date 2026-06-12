@@ -1,5 +1,5 @@
 [Unit]
-Description=Stellar Atlas — ClickHouse Tier-1 live fan-out catch-up (ADR-0034)
+Description=Stellar Index — ClickHouse Tier-1 live fan-out catch-up (ADR-0034)
 After=clickhouse-server.service network-online.target
 Wants=clickhouse-server.service
 

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // Tip-surface tunables per ADR-0018.
@@ -57,7 +57,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	// gracefully when only one of them is wired.
 	if s.prices == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-unavailable",
+			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -68,7 +68,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	// regardless of whether the asset/quote happen to parse.
 	if r.URL.Query().Get("granularity") != "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-tip-param",
+			"https://api.stellarindex.io/errors/invalid-tip-param",
 			"granularity is not valid on /v1/price/tip", http.StatusBadRequest,
 			"granularity is a closed-bucket concept (ADR-0018); use /v1/price for closed-bucket VWAP")
 		return
@@ -87,7 +87,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	snapshot, sources, err := s.computeTip(r.Context(), asset, quote, window)
 	if errors.Is(err, ErrPriceNotFound) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-not-found",
+			"https://api.stellarindex.io/errors/price-not-found",
 			"No price data for pair", http.StatusNotFound,
 			"no trades or oracle observations for "+asset.String()+" / "+quote.String())
 		return
@@ -105,7 +105,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("computeTip failed",
 			"err", err, "asset", asset.String(), "quote", quote.String())
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -193,7 +193,7 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 	rawAsset := r.URL.Query().Get("asset")
 	if rawAsset == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset",
+			"https://api.stellarindex.io/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
 			"asset query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -201,7 +201,7 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest, err.Error())
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
@@ -211,7 +211,7 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 		q, err := canonical.ParseAsset(raw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-quote",
+				"https://api.stellarindex.io/errors/invalid-quote",
 				"Invalid quote identifier", http.StatusBadRequest, err.Error())
 			return canonical.Asset{}, canonical.Asset{}, false
 		}
@@ -220,7 +220,7 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 
 	if asset.Equal(quote) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/identity-price",
+			"https://api.stellarindex.io/errors/identity-price",
 			"Asset and quote are the same", http.StatusBadRequest,
 			"price of an asset in itself is always 1; parameters must differ")
 		return canonical.Asset{}, canonical.Asset{}, false
@@ -240,7 +240,7 @@ func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < minTipWindowSeconds || n > maxTipWindowSeconds {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-window",
+			"https://api.stellarindex.io/errors/invalid-window",
 			"Invalid window_seconds", http.StatusBadRequest,
 			"window_seconds must be an integer in [1, 60]")
 		return 0, false

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/confidence"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/confidence"
 )
 
 func near(a, b, tol float64) bool {

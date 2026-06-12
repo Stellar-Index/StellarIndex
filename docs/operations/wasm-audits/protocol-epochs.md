@@ -200,7 +200,7 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 ## Redstone
 
-Two WASMs spanning a deliberate hotfix sequence: an initial deploy `b400f7a8…` lived for ledgers 58,758,722 → 58,759,141 (~35 minutes) before being replaced by the production hash `5e93d22c…`. Pre-backfill SQL guard reproduced in the synthesis report; required reading before any `stellaratlas-ops backfill` overlapping the hotfix window.
+Two WASMs spanning a deliberate hotfix sequence: an initial deploy `b400f7a8…` lived for ledgers 58,758,722 → 58,759,141 (~35 minutes) before being replaced by the production hash `5e93d22c…`. Pre-backfill SQL guard reproduced in the synthesis report; required reading before any `stellarindex-ops backfill` overlapping the hotfix window.
 
 ### WASM inventory (2 unique)
 
@@ -243,8 +243,8 @@ Re-run the audit pipeline:
 # 1) Run a fresh wasm-history walk on r1 against the curated list
 yq '.[] | (select(.contracts) | .contracts) | .[]' \
   configs/audit/wasm-walk-contracts.yaml | sort -u > /tmp/all-contracts.txt
-ssh r1 "set -a; . /etc/default/stellaratlas-ops; set +a; \
-  stellaratlas-ops wasm-history -config /etc/stellaratlas.toml \
+ssh r1 "set -a; . /etc/default/stellarindex-ops; set +a; \
+  stellarindex-ops wasm-history -config /etc/stellarindex.toml \
     -from 50457424 -to <current-tip> -parallel 8 \
     -contracts \$(paste -sd, /tmp/all-contracts.txt) \
     > /var/log/wasm-history-full.json"

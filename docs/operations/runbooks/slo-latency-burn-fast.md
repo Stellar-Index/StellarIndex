@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `stellaratlas_slo_latency_burn_fast`
+# Runbook — `stellarindex_slo_latency_burn_fast`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_slo_latency_burn_fast` |
+| Alert | `stellarindex_slo_latency_burn_fast` |
 | Severity | **P1** (page) |
 | Detected by | `deploy/monitoring/rules/slo.yml` |
 | Typical MTTR | 15–30 min |
@@ -20,7 +20,7 @@ severity: P1
 ## Symptoms
 
 - Multi-window burn-rate detection: 5-min p95 burn AND 1-hour p95 burn both ≥ 14.4× the budget. (Per Google SRE workbook ch. 5; this is the "fast burn" archetype.)
-- `/v1/price` p95 > 0.5 s for ≥ 2 min (the underlying `stellaratlas_api_latency_p95_high` alert fires alongside).
+- `/v1/price` p95 > 0.5 s for ≥ 2 min (the underlying `stellarindex_api_latency_p95_high` alert fires alongside).
 - Customer-facing dashboards show synthetic-probe latency above SLA budget.
 
 ## Quick diagnosis (≤ 5 min)
@@ -31,11 +31,11 @@ curl -s 'http://localhost:9090/api/v1/query?query=histogram_quantile(0.95,%20sum
   | jq '.data.result[] | {path: .metric.path, p95: .value[1]}' | head -20
 
 # Top-N slow requests in the last 5 min from the API log
-journalctl -u stellaratlas-api --since '5 min ago' --no-pager \
+journalctl -u stellarindex-api --since '5 min ago' --no-pager \
   | jq -r 'select(.latency_ms > 200) | [.path, .latency_ms] | @tsv' | sort -k2 -n -r | head -20
 
 # Is it a database query slowing us down?
-sudo -u postgres psql -d stellaratlas -c "SELECT query, calls, mean_exec_time, max_exec_time FROM pg_stat_statements ORDER BY max_exec_time DESC LIMIT 10;"
+sudo -u postgres psql -d stellarindex -c "SELECT query, calls, mean_exec_time, max_exec_time FROM pg_stat_statements ORDER BY max_exec_time DESC LIMIT 10;"
 ```
 
 Key signals:

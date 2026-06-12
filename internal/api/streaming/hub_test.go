@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/streaming"
+	"github.com/StellarIndex/stellar-index/internal/api/streaming"
 )
 
 // drainNonblocking returns events from ch until either it has

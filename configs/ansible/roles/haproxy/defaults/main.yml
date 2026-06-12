@@ -30,8 +30,8 @@ haproxy_health_check_path: /v1/readyz
 
 # Default api backend port; override per-deployment if api binds
 # elsewhere. Must match cfg.API.ListenAddr's port in the
-# stellaratlas-api TOML.
-stellaratlas_api_port: 3000
+# stellarindex-api TOML.
+stellarindex_api_port: 3000
 
 haproxy_max_conn: 8000
 

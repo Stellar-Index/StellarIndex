@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // APIKeyStore implements [platform.APIKeyStore] against Postgres
@@ -25,7 +25,7 @@ import (
 // from Redis until the cutover migration mirrors records here;
 // today this store is exercised exclusively by the dashboard's
 // list/create/revoke surface — the validator picks it up when
-// `cmd/stellaratlas-api` swaps the Redis-only store for a
+// `cmd/stellarindex-api` swaps the Redis-only store for a
 // Postgres-backed read-through one.
 type APIKeyStore struct{ s *Store }
 
@@ -149,7 +149,7 @@ func parseCIDRArray(in pq.StringArray) []netip.Prefix {
 //
 // `maxActiveKeysPerAccount` is passed by the handler
 // (MaxKeysPerAccount = 25 at time of writing). Zero or negative
-// disables the cap (used by stellaratlas-ops staff seeding).
+// disables the cap (used by stellarindex-ops staff seeding).
 func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKeysPerAccount int) (platform.APIKey, error) {
 	args, err := buildAPIKeyCreateArgs(k)
 	if err != nil {
@@ -264,7 +264,7 @@ const apiKeyInsertCapped = `
 
 // apiKeyInsertUncapped is the unfenced INSERT path used by
 // staff-seeding callers that bypass the per-account cap (e.g.
-// stellaratlas-ops).
+// stellarindex-ops).
 const apiKeyInsertUncapped = `
 	INSERT INTO api_keys (
 		id, account_id, created_by_user_id,

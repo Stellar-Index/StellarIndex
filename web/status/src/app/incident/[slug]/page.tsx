@@ -37,7 +37,7 @@ export async function generateMetadata({
   const inc = loadIncident(slug);
   if (!inc) return { title: 'Incident not found' };
   return {
-    title: `${inc.title} — Stellar Atlas status`,
+    title: `${inc.title} — Stellar Index status`,
     description: `Postmortem for ${inc.severity} on ${inc.date}.`,
   };
 }

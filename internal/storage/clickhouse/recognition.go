@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // TopicShape is one distinct (contract_id, topic_0_sym) event shape in the lake,

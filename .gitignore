@@ -6,11 +6,11 @@
 coverage.txt
 coverage.html
 # Stray binaries built without -o bin/ (prevent accidental root-level commits).
-/stellaratlas-indexer
-/stellaratlas-aggregator
-/stellaratlas-api
-/stellaratlas-ops
-/stellaratlas-migrate
+/stellarindex-indexer
+/stellarindex-aggregator
+/stellarindex-api
+/stellarindex-ops
+/stellarindex-migrate
 
 # Go tool caches
 /.gocache/
@@ -99,7 +99,7 @@ service-account*.json
 /.wrangler/
 
 # GCP / BigQuery service-account keys — credentials, NEVER commit
-stellar-atlas-data-validation-*.json
+stellar-index-data-validation-*.json
 *.iam.gserviceaccount.com.json
 gcp-key*.json
 
@@ -107,5 +107,5 @@ gcp-key*.json
 *-data-validation-*.json
 /ratesengine-ops
 /ratesengine-aggregator
-/stellaratlas-*
-!/cmd/stellaratlas-*
+/stellarindex-*
+!/cmd/stellarindex-*

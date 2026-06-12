@@ -35,7 +35,7 @@ archival at launch and promote once the Tier-1 paperwork clears
 | History publisher | `stellar-core --writequorum` + cron | via core | yes | no | shares with core |
 | Galexie | `stellar-galexie` | yes (captive) | no | no | moderate |
 | stellar-rpc | `stellar-rpc` | yes (captive) | no | no | moderate |
-| Rates-engine indexer | `stellaratlas-indexer` | no | no | no | negligible |
+| Rates-engine indexer | `stellarindex-indexer` | no | no | no | negligible |
 | Prometheus scrape | `node_exporter` + `stellar-core-prometheus-exporter` | no | no | no | tiny |
 | Log shipper | `promtail` | no | no | no | tiny |
 | Backup agent | `pgbackrest` / `mc` sidecar | no | no | no | bandwidth only |
@@ -84,7 +84,7 @@ you colocate. Tiered:
 | ---- | ----- | ------ |
 | **Minimum** | 8c / 16t @ ≥ 2.5 GHz | `stellar-core` alone (SDF validator baseline) |
 | **Comfortable** | 16c / 32t @ ≥ 2.5 GHz | core + one captive-core sidecar (Galexie **or** stellar-rpc) + Postgres |
-| **All-in-one** | 32c / 64t @ ≥ 2.5 GHz | core + Galexie + stellar-rpc + stellaratlas-indexer on one host (the spec's original assumption) |
+| **All-in-one** | 32c / 64t @ ≥ 2.5 GHz | core + Galexie + stellar-rpc + stellarindex-indexer on one host (the spec's original assumption) |
 | **Over-provisioned** | 64c+ | spare cycles for chaos testing and future Soroban volume |
 
 | Axis | Spec | Why |
@@ -421,7 +421,7 @@ Beyond the per-component security in the HA plan §6:
    against local mirror. ~24-48 h.
 7. Galexie + stellar-rpc captive-cores start in `CATCHUP_RECENT`.
 8. Prometheus scraping begins → dashboards populate.
-9. Join the stellaratlas-indexer fleet as `region-X` consumer.
+9. Join the stellarindex-indexer fleet as `region-X` consumer.
 
 ### 6.2 Upgrade
 

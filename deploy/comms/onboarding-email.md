@@ -6,10 +6,10 @@ the self-service flow.
 Tone: warm but information-dense. Goal is "first successful
 request within 5 minutes of receiving this".
 
-Subject: "Re: Stellar Atlas API access — getting started"
+Subject: "Re: Stellar Index API access — getting started"
 -->
 
-# Welcome to Stellar Atlas, {{customer_name}}
+# Welcome to Stellar Index, {{customer_name}}
 
 Your API key:
 
@@ -24,7 +24,7 @@ code. Rotate any time via `POST /v1/account/keys`.)
 
 ```sh
 curl -H "Authorization: Bearer {{api_key}}" \
-  'https://api.stellaratlas.xyz/v1/price?base=native&quote=fiat:USD' | jq .
+  'https://api.stellarindex.io/v1/price?base=native&quote=fiat:USD' | jq .
 ```
 
 Expected response (illustrative):
@@ -67,8 +67,8 @@ Expected response (illustrative):
 | `/v1/assets/{id}` | Asset detail (supply, market cap, FDV, 24h volume) |
 | `/v1/price/stream` (SSE) | Push notifications on every closed bucket |
 
-Full API reference: <https://docs.stellaratlas.xyz>.
-Walkthrough: <https://docs.stellaratlas.xyz/getting-started>.
+Full API reference: <https://docs.stellarindex.io>.
+Walkthrough: <https://docs.stellarindex.io/getting-started>.
 
 ## Rate limits
 
@@ -79,8 +79,8 @@ budget is left in the current window. 429 responses include
 
 ## Help
 
-- Bug reports / feature requests: <https://github.com/StellarAtlas/stellar-atlas/issues>
-- Status: <https://status.stellaratlas.xyz>
+- Bug reports / feature requests: <https://github.com/StellarIndex/stellar-index/issues>
+- Status: <https://status.stellarindex.io>
 - Direct support: reply to this email.
 
 Welcome aboard.

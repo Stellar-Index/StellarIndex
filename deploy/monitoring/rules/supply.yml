@@ -9,19 +9,19 @@
 # upstream and demands investigation.
 
 groups:
-  - name: stellaratlas.supply
+  - name: stellarindex.supply
     interval: 60s
     rules:
 
-      - alert: stellaratlas_supply_cross_check_divergence
+      - alert: stellarindex_supply_cross_check_divergence
         expr: |
-          stellaratlas_supply_cross_check_divergence_stroops > 1
+          stellarindex_supply_cross_check_divergence_stroops > 1
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: supply
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
         annotations:
           summary: "Classic vs SAC supply mismatch >1 stroop on {{ $labels.classic_key }} (P3)"
           description: |
@@ -34,4 +34,4 @@ groups:
             the indexers is mis-summing. The asset's
             circulating/total/max_supply on the API will be
             correspondingly wrong until reconciled.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md

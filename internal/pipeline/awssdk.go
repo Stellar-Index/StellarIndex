@@ -37,7 +37,7 @@ var (
 // Why this exists: aws-sdk-go-v2 logs a WARN on every S3 GetObject
 // response that lacks one of its supported checksum headers. MinIO
 // (our colo galexie backend) never sends those headers, so *every*
-// ledger read triggers the line. stellaratlas-indexer's live tail
+// ledger read triggers the line. stellarindex-indexer's live tail
 // reads ~1 ledger/5s so the noise is trivial; verify-archive's
 // 12-way parallel walk does ~50k ledgers/s and floods journald
 // (~22k WARN/30s observed during r1 bootstrap, ballooning
@@ -88,8 +88,8 @@ var (
 // exits. Without it, short-lived processes lose output: the
 // consumer goroutine reads from the pipe in the background and is
 // killed mid-buffer when the runtime tears down. This first
-// manifest in rc.77 as `stellaratlas-ops backfill -dry-run`
-// printing only its first line and `stellaratlas-ops backfill`
+// manifest in rc.77 as `stellarindex-ops backfill -dry-run`
+// printing only its first line and `stellarindex-ops backfill`
 // errors printing nothing at all.
 //
 // The flush func:

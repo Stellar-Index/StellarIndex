@@ -4,7 +4,7 @@
 # under docs/operations/runbooks/.
 
 groups:
-  - name: stellaratlas.ingestion
+  - name: stellarindex.ingestion
     interval: 30s
     rules:
 
@@ -17,7 +17,7 @@ groups:
       # acknowledges "Low-volume sources during quiet windows …
       # can genuinely see zero swaps for 5+ minute stretches" and
       # recommends extending the window. Total-outage coverage is
-      # still the 3-minute `stellaratlas_ingestion_all_sources_stopped`
+      # still the 3-minute `stellarindex_ingestion_all_sources_stopped`
       # alert below — that one stays tight because if no source
       # at all emits, something is broken across the whole
       # indexer/upstream surface.
@@ -31,16 +31,16 @@ groups:
       # alert needs to match the source's actual cadence to be
       # useful. Splitting into three rules by source-name regex is
       # the simplest path that doesn't require adding a `class`
-      # label to stellaratlas_source_events_total.
+      # label to stellarindex_source_events_total.
 
       # High-volume sources (CEX feeds, SDEX, oracles, aggregators).
       # 30-min rate / 15-min sustained — the original window. These
       # sources emit continuously by design; any gap > 30 min is a
       # real signal.
-      - alert: stellaratlas_ingestion_source_stopped
+      - alert: stellarindex_ingestion_source_stopped
         expr: |
-          sum by (source) (rate(stellaratlas_source_events_total[30m])) == 0
-          and on (source) stellaratlas_source_enabled == 1
+          sum by (source) (rate(stellarindex_source_events_total[30m])) == 0
+          and on (source) stellarindex_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "binance",       "", "") or
             label_replace(vector(1), "source", "bitstamp",      "", "") or
@@ -57,9 +57,9 @@ groups:
         for: 15m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Source {{ $labels.source }} has stopped ingesting"
           description: |
@@ -67,16 +67,16 @@ groups:
             sustained for ≥ 15 min — well beyond the natural quiet-window
             cadence for a high-volume source. The source is configured
             as enabled in ingestion.enabled_sources.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
 
       # Low-volume Soroban DEX sources. 6-hour rate / 30-min sustained.
       # These can go hours between swaps on quiet days and that's
       # not an outage signal — long-tail TVL just doesn't trade
       # constantly. F-1208 (codex audit-2026-05-12).
-      - alert: stellaratlas_ingestion_source_stopped_low_volume_dex
+      - alert: stellarindex_ingestion_source_stopped_low_volume_dex
         expr: |
-          sum by (source) (rate(stellaratlas_source_events_total[6h])) == 0
-          and on (source) stellaratlas_source_enabled == 1
+          sum by (source) (rate(stellarindex_source_events_total[6h])) == 0
+          and on (source) stellarindex_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "comet",    "", "") or
             label_replace(vector(1), "source", "phoenix",  "", "") or
@@ -86,9 +86,9 @@ groups:
         for: 30m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Low-volume Soroban DEX {{ $labels.source }} has been silent for 6+ hours"
           description: |
@@ -97,15 +97,15 @@ groups:
             this is unusual but not necessarily an outage — check
             the contract on stellar.expert before paging the
             indexer team.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
 
       # Daily-publisher sources (ECB, Band). Rates published once a
       # day at most — anything below 30h sustained for 1h is the
       # earliest meaningful signal.
-      - alert: stellaratlas_ingestion_source_stopped_daily_publisher
+      - alert: stellarindex_ingestion_source_stopped_daily_publisher
         expr: |
-          sum by (source) (rate(stellaratlas_source_events_total[30h])) == 0
-          and on (source) stellaratlas_source_enabled == 1
+          sum by (source) (rate(stellarindex_source_events_total[30h])) == 0
+          and on (source) stellarindex_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "ecb",  "", "") or
             label_replace(vector(1), "source", "band", "", "")
@@ -113,9 +113,9 @@ groups:
         for: 1h
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Daily publisher {{ $labels.source }} has been silent for 30+ hours"
           description: |
@@ -123,34 +123,34 @@ groups:
             publishes daily; Band publishes on relayer push (also
             roughly daily). 30h gives a one-day buffer plus
             ample slack for upstream cadence variation.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
 
-      - alert: stellaratlas_ingestion_all_sources_stopped
-        expr: sum(rate(stellaratlas_source_events_total[5m])) == 0
+      - alert: stellarindex_ingestion_all_sources_stopped
+        expr: sum(rate(stellarindex_source_events_total[5m])) == 0
         for: 3m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/all-ingestion-down.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/all-ingestion-down.md
         annotations:
           summary: "All ingestion sources have stopped (SEV-1)"
           description: |
             No events from any source in the last 3 minutes. API data will go
             stale within 60 s. This is a P1 — check shared upstream (stellar-rpc)
             or shared storage (Timescale) before restarting the indexer.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/all-ingestion-down.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
-      - alert: stellaratlas_ingestion_cursor_stuck
+      - alert: stellarindex_ingestion_cursor_stuck
         expr: |
-          increase(stellaratlas_cursor_last_ledger[5m]) == 0
-          and on (source) stellaratlas_source_enabled == 1
+          increase(stellarindex_cursor_last_ledger[5m]) == 0
+          and on (source) stellarindex_source_enabled == 1
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/cursor-stuck.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/cursor-stuck.md
         annotations:
           summary: "Cursor for {{ $labels.source }} not advancing"
           description: |
@@ -159,14 +159,14 @@ groups:
             failed silently, or the orchestrator's cursor-persister goroutine
             is wedged.
 
-      - alert: stellaratlas_ingestion_orphan_events
-        expr: sum by (source) (rate(stellaratlas_source_orphan_events_total[10m])) > 10/60
+      - alert: stellarindex_ingestion_orphan_events
+        expr: sum by (source) (rate(stellarindex_source_orphan_events_total[10m])) > 10/60
         for: 15m
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/orphan-events.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/orphan-events.md
         annotations:
           summary: "Source {{ $labels.source }} orphan events {{ $value | humanize }}/sec"
           description: |
@@ -176,14 +176,14 @@ groups:
             15 min. Likely a page-boundary issue in the RPC subscription
             or a contract-schema shift we haven't accounted for.
 
-      - alert: stellaratlas_ingestion_decode_error
-        expr: rate(stellaratlas_source_decode_errors_total[5m]) > 1
+      - alert: stellarindex_ingestion_decode_error
+        expr: rate(stellarindex_source_decode_errors_total[5m]) > 1
         for: 5m
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/decode-errors.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/decode-errors.md
         annotations:
           summary: "Decode errors on {{ $labels.source }} at {{ $value }}/sec"
           description: |
@@ -191,14 +191,14 @@ groups:
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
 
-      - alert: stellaratlas_ingestion_discovery_drops
-        expr: increase(stellaratlas_discovery_dropped_hits_total[10m]) > 0
+      - alert: stellarindex_ingestion_discovery_drops
+        expr: increase(stellarindex_discovery_dropped_hits_total[10m]) > 0
         for: 10m
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/discovery-drops.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/discovery-drops.md
         annotations:
           summary: "Discovery sink is dropping hits"
           description: |
@@ -207,14 +207,14 @@ groups:
             stall the main ingest path, but discovery coverage is degrading
             under recorder pressure or buffer saturation.
 
-      - alert: stellaratlas_ingestion_insert_errors
-        expr: sum by (source, kind) (rate(stellaratlas_source_insert_errors_total[5m])) > 0.1
+      - alert: stellarindex_ingestion_insert_errors
+        expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/insert-errors.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/insert-errors.md
         annotations:
           summary: "Insert errors on {{ $labels.source }}/{{ $labels.kind }} at {{ $value }}/sec"
           description: |
@@ -231,17 +231,17 @@ groups:
       # Mirror of the rule in deploy/monitoring/rules/ingestion.yml;
       # the per-host wave-96 lint requires both copies to stay in
       # sync.
-      - alert: stellaratlas_ingestion_duplicate_flood
+      - alert: stellarindex_ingestion_duplicate_flood
         expr: |
-          sum by (source) (rate(stellaratlas_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
+          sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
           and on (source)
-          sum by (source) (rate(stellaratlas_trade_insert_outcome_total{outcome="new"}[10m])) == 0
+          sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="new"}[10m])) == 0
         for: 10m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
         annotations:
           summary: "Source {{ $labels.source }} producing duplicates only (cursor replay or stuck-tip)"
           description: |
@@ -256,89 +256,89 @@ groups:
             channel feeding the sink from an old replay loop, or a
             back-pressure event that lost in-flight events.
 
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
       # Mirror of source_insert_stale in deploy/monitoring/rules/
       # ingestion.yml — timestamp-shape sibling to duplicate_flood
       # above. wave-96 pair lint requires both copies to stay in
       # sync.
-      - alert: stellaratlas_ingestion_source_insert_stale
+      - alert: stellarindex_ingestion_source_insert_stale
         expr: |
-          time() - stellaratlas_source_last_insert_unix > 3600
-          and on (source) stellaratlas_source_enabled == 1
+          time() - stellarindex_source_last_insert_unix > 3600
+          and on (source) stellarindex_source_enabled == 1
         for: 10m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
         annotations:
           summary: "Source {{ $labels.source }} hasn't landed a new row in >1h"
           description: |
-            stellaratlas_source_last_insert_unix{source="{{ $labels.source }}"}
+            stellarindex_source_last_insert_unix{source="{{ $labels.source }}"}
             hasn't advanced in over an hour while the source is
             still enabled. Same root-cause cluster as the
             duplicate-flood alert; the timestamp-shape signal
             catches low-volume sources whose insert rate sits
             under the rate-shape alert's 0.5/s threshold.
 
-            Cross-check stellaratlas_source_last_event_unix — if the
+            Cross-check stellarindex_source_last_event_unix — if the
             dispatcher is still matching events, the gap is the
             stuck-tip diagnostic (cursor advances, data doesn't).
 
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
       # Data-derived gap detector — mirrors the multi-host rule.
       # See deploy/monitoring/rules/ingestion.yml for the full
       # rationale. The wave-96 lint requires both copies to stay
       # in sync.
-      - alert: stellaratlas_ingest_gap_detected
+      - alert: stellarindex_ingest_gap_detected
         expr: |
-          max by (source) (stellaratlas_ingest_gap_max_size_ledgers) > 1000
+          max by (source) (stellarindex_ingest_gap_max_size_ledgers) > 1000
         for: 15m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detected.md
         annotations:
           summary: "Data-coverage gap of {{ $value }} ledgers in source={{ $labels.source }}"
           description: |
-            max by (source) (stellaratlas_ingest_gap_max_size_ledgers{source="{{ $labels.source }}"})
+            max by (source) (stellarindex_ingest_gap_max_size_ledgers{source="{{ $labels.source }}"})
             = {{ $value }} ledgers — a contiguous block of
             {{ $labels.source }} ingest is missing in one of its
             per-source hypertables. Cursor inventory may read fine;
             this alert reads the data tables directly.
 
             Resolve via:
-              stellaratlas-ops find-data-gaps --config /etc/stellaratlas.toml --source {{ $labels.source }} --output text
+              stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --source {{ $labels.source }} --output text
             for per-source diagnosis, then either
-              stellaratlas-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
-              stellaratlas-ops <source>-backfill --from F --to T     (if only one source is short)
+              stellarindex-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
+              stellarindex-ops <source>-backfill --from F --to T     (if only one source is short)
 
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
-      - alert: stellaratlas_ingest_gap_detector_silent
+      - alert: stellarindex_ingest_gap_detector_silent
         expr: |
-          rate(stellaratlas_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0
+          rate(stellarindex_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0
           OR
-          absent_over_time(stellaratlas_ingest_gap_detector_runs_total[15m]) == 1
+          absent_over_time(stellarindex_ingest_gap_detector_runs_total[15m]) == 1
         for: 10m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
         annotations:
           summary: "Data-gap detector hasn't run in >15 min"
           description: |
             The aggregator's data-gap detector goroutine appears
             stuck or absent. Without it the operator-facing
-            `stellaratlas_ingest_gap_max_size_ledgers` gauge stops
+            `stellarindex_ingest_gap_max_size_ledgers` gauge stops
             updating.
 
             Likely causes: aggregator binary crash-looping;
             Postgres connection-pool exhaustion; deploy regression
             removed the worker wiring.
 
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md

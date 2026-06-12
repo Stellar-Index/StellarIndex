@@ -5,8 +5,8 @@ import { DegradedBanner } from '@/components/nav/DegradedBanner';
 import { Footer } from '@/components/nav/Footer';
 import { QueryProvider } from '@/components/QueryProvider';
 
-const SITE_URL = 'https://stellaratlas.xyz';
-const SITE_NAME = 'Stellar Atlas';
+const SITE_URL = 'https://stellarindex.io';
+const SITE_NAME = 'Stellar Index';
 const SITE_DESCRIPTION =
   'The protocol explorer for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus an independent VWAP pricing API across on-chain DEXes, classic SDEX, and major exchanges.';
 
@@ -71,14 +71,14 @@ export const metadata: Metadata = {
     // Default canonical for the home page. Detail pages override
     // this in their own generateMetadata; without it the root URL
     // would be served without a <link rel="canonical">, leaving
-    // search engines free to treat https://stellaratlas.xyz/ vs
-    // https://stellaratlas.xyz (no trailing slash) vs
-    // https://stellaratlas.xyz/index.html as separate pages.
+    // search engines free to treat https://stellarindex.io/ vs
+    // https://stellarindex.io (no trailing slash) vs
+    // https://stellarindex.io/index.html as separate pages.
     canonical: '/',
     types: {
       'application/atom+xml': [
-        { url: '/blog.atom', title: 'Stellar Atlas — engineering notes' },
-        { url: '/changelog.atom', title: 'Stellar Atlas — changelog' },
+        { url: '/blog.atom', title: 'Stellar Index — engineering notes' },
+        { url: '/changelog.atom', title: 'Stellar Index — changelog' },
       ],
     },
   },
@@ -107,7 +107,7 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {/* Build identifier — same SHA + time as the footer badge,
-            in machine-readable form. `curl -s stellaratlas.xyz | grep
+            in machine-readable form. `curl -s stellarindex.io | grep
             re-build` reveals the live build without rendering JS. */}
         <meta
           name="re-build-sha"
@@ -121,7 +121,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         {/* Schema.org JSON-LD — Organization + WebSite. Lets Google
             render the brand panel and a sitelinks search box at
-            stellaratlas.xyz pointing at /assets?q=…. */}
+            stellarindex.io pointing at /assets?q=…. */}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -136,18 +136,18 @@ export default function RootLayout({
                   logo: `${SITE_URL}/icon.svg`,
                   description: SITE_DESCRIPTION,
                   sameAs: [
-                    'https://github.com/StellarAtlas/stellar-atlas',
+                    'https://github.com/StellarIndex/stellar-index',
                   ],
                   contactPoint: [
                     {
                       '@type': 'ContactPoint',
                       contactType: 'security',
-                      email: 'security@stellaratlas.xyz',
+                      email: 'security@stellarindex.io',
                     },
                     {
                       '@type': 'ContactPoint',
                       contactType: 'sales',
-                      email: 'sales@stellaratlas.xyz',
+                      email: 'sales@stellarindex.io',
                     },
                   ],
                 },

@@ -14,9 +14,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 // healthyConnectionThreshold — if a connection survived at least this

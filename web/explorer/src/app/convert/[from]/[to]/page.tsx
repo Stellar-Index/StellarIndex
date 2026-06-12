@@ -7,7 +7,7 @@ import { assetHrefFor } from '@/lib/fiat-slugs';
 import { ConvertPair } from './ConvertPair';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -185,14 +185,14 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     title: `${f} to ${t} — live exchange rate + currency converter`,
     description: `Convert ${f} to ${t} at the live mid-market rate.${ratePart} Real-time forex rate, interactive converter, and ${f}/${t} cross-rates at common amounts (1, 10, 100, 1000, 10000).`,
     alternates: {
-      canonical: `https://stellaratlas.xyz/convert/${f}/${t}`,
+      canonical: `https://stellarindex.io/convert/${f}/${t}`,
     },
     openGraph: {
       title: `${f} to ${t} converter`,
       description: rate != null
         ? `1 ${f} = ${formatRateForMeta(rate)} ${t} — live forex rate.`
         : `Live ${f} to ${t} forex rate + converter.`,
-      url: `https://stellaratlas.xyz/convert/${f}/${t}`,
+      url: `https://stellarindex.io/convert/${f}/${t}`,
       type: 'website',
       images: SITE_OG_IMAGES,
     },
@@ -215,10 +215,10 @@ export default async function ConvertPage({ params }: { params: Params }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellaratlas.xyz' },
-      { '@type': 'ListItem', position: 2, name: 'Assets', item: 'https://stellaratlas.xyz/assets' },
-      { '@type': 'ListItem', position: 3, name: f, item: `https://stellaratlas.xyz${assetHrefFor(f)}` },
-      { '@type': 'ListItem', position: 4, name: `${f} to ${t}`, item: `https://stellaratlas.xyz/convert/${f}/${t}` },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
+      { '@type': 'ListItem', position: 2, name: 'Assets', item: 'https://stellarindex.io/assets' },
+      { '@type': 'ListItem', position: 3, name: f, item: `https://stellarindex.io${assetHrefFor(f)}` },
+      { '@type': 'ListItem', position: 4, name: `${f} to ${t}`, item: `https://stellarindex.io/convert/${f}/${t}` },
     ],
   };
 

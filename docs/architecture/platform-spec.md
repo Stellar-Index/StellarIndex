@@ -53,7 +53,7 @@ Two paths from the same email:
 
 **Magic link.** Sent on `POST /v1/auth/login` with `{email}`.
 Body of the email contains:
-- A one-tap link → `https://stellaratlas.xyz/auth/callback?token=<...>`
+- A one-tap link → `https://stellarindex.io/auth/callback?token=<...>`
 - A 6-digit numeric code (paste-friendly on mobile, terminal SSH, etc.)
 
 Token is a 32-byte random; SHA-256 hash stored in
@@ -74,7 +74,7 @@ covers 95% of dev workflows. Defer until churn shows it's needed.
 ### 1.2 Sessions
 
 Server-issued, opaque session ID stored in:
-- HttpOnly + Secure + SameSite=Lax cookie on `stellaratlas.xyz`
+- HttpOnly + Secure + SameSite=Lax cookie on `stellarindex.io`
 - 30-day rolling expiry; touched on every authenticated request
 
 `sessions` table:
@@ -562,7 +562,7 @@ full retention (12mo).
 ## 7. Staff dashboard
 
 Strict separation from customer dashboard. Hosted at
-`admin.stellaratlas.xyz` (separate Cloudflare Pages project),
+`admin.stellarindex.io` (separate Cloudflare Pages project),
 auth via:
 
 - Staff users (`users.is_staff = true`) only — separate login flow
@@ -720,7 +720,7 @@ Priority-ordered. Each phase ships independently; no big-bang.
 - Backfill: existing API keys → synthesise an `account` per
   unique `identifier`; existing user surface becomes a one-user
   account with `role=owner`
-- Customer dashboard at `app.stellaratlas.xyz`:
+- Customer dashboard at `app.stellarindex.io`:
   - List/mint/edit/revoke keys with names + descriptions
   - Basic usage chart (today + 30d, requests count + error rate)
   - Account profile + email change
@@ -764,7 +764,7 @@ with their own login.
 
 ### Phase 5 — Staff dashboard (3 weeks)
 
-- Separate `admin.stellaratlas.xyz` Pages project
+- Separate `admin.stellarindex.io` Pages project
 - Account / user / key search
 - Usage anomaly explorer
 - Revenue dashboard (MRR / ARR / cohorts)
@@ -828,7 +828,7 @@ What we already have that we extend, vs what's brand new:
 | `/v1/signup` | email → key, idempotent | 1 | Becomes "create account + first user + first key" |
 | `RateLimitKey` | per-subject Redis counter | 1 | Stays; usage event log is parallel |
 | `StripeWebhookConfig` | `checkout.session.completed` only | 2 | Extend to 6 events; idempotency via `stripe_event_log` |
-| Showcase `/account` | paste-key dashboard | 1 | Replaced by full dashboard at `app.stellaratlas.xyz` |
+| Showcase `/account` | paste-key dashboard | 1 | Replaced by full dashboard at `app.stellarindex.io` |
 | Showcase `/signup` | email → key form | 1 | Becomes magic-link request form |
 | `/v1/account/usage` | always returns `[]` | 1 | Wires up the CAGG-fed reader |
 | `/v1/status` | already shipped | — | Stays as-is |

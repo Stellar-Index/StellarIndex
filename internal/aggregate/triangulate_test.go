@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
 )
 
 func TestTriangulate_Basic(t *testing.T) {

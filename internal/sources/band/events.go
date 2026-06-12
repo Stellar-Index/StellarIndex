@@ -50,7 +50,7 @@ const DefaultDecimals uint8 = 9
 // DefaultResolutionSeconds reflects Band's variable relayer
 // cadence — secondary validation source, not real-time. 60s aligns
 // with the poll-cadence recommendation in the discovery doc.
-// Emitted as the `stellaratlas_oracle_resolution_seconds` gauge by
+// Emitted as the `stellarindex_oracle_resolution_seconds` gauge by
 // [pipeline.BuildDispatcher] at registration time, so the
 // oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 60

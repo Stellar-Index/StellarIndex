@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // AccountStore implements [platform.AccountStore] against

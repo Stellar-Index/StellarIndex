@@ -97,7 +97,7 @@ ledger[N+1].LedgerHeader.PreviousLedgerHash`. Catches any internal
 corruption, dropped ledger, or replay divergence regardless of
 upstream trust.
 
-Command: `stellaratlas-ops verify-archive -tier chain` (PR #17).
+Command: `stellarindex-ops verify-archive -tier chain` (PR #17).
 
 ### Tier B — Checkpoint anchoring against local history archive (primary, free, mandatory)
 
@@ -114,7 +114,7 @@ checkpoint hashes match at every 64th ledger, inter-checkpoint
 content is byte-identical by induction (each ledger's hash chains to
 the next).
 
-Command: `stellaratlas-ops verify-archive -tier checkpoint` (PR #18).
+Command: `stellarindex-ops verify-archive -tier checkpoint` (PR #18).
 
 ### Tier C — Byte-compare sample against SDF's GCS bucket (optional, belt-and-braces)
 
@@ -131,7 +131,7 @@ Doesn't add evidence beyond Tier B (same upstream source), but:
 - Surfaces GCS requester-pays / egress issues before an actual DR
   event.
 
-Command (planned): `stellaratlas-ops verify-archive -tier sdf-sample --samples 1000`. Deferred pending public-read confirmation on the SDF bucket — see open items in [stellar-data-lakes.md](../discovery/data-sources/stellar-data-lakes.md).
+Command (planned): `stellarindex-ops verify-archive -tier sdf-sample --samples 1000`. Deferred pending public-read confirmation on the SDF bucket — see open items in [stellar-data-lakes.md](../discovery/data-sources/stellar-data-lakes.md).
 
 Caveat: SDF's galexie bucket may not retain to genesis; check
 coverage before relying on it (open item in
@@ -154,7 +154,7 @@ ledger K, and our replay produces the same hash, the network
 agreed on those bytes via SCP consensus. Cryptographically the
 strongest evidence available short of running our own validator.
 
-Command: `stellaratlas-ops verify-archive -tier peers -peer-samples
+Command: `stellarindex-ops verify-archive -tier peers -peer-samples
 20 -peers <url>,<url>,...` (PR #20). Defaults to a built-in
 seven-peer set when `-peers` is empty.
 
@@ -173,14 +173,14 @@ local mirror at `file://<archive-root>`; pass `-archivist-url
 https://...` to scan a peer's published archive instead.
 
 ```sh
-stellaratlas-ops verify-archive -config /etc/stellaratlas.toml \
+stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier archivist
 # or against a remote archive:
-stellaratlas-ops verify-archive -config /etc/stellaratlas.toml \
+stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier archivist \
   -archivist-url https://history.stellar.org/prd/core-live/core_live_001
 # or with the Rust port:
-stellaratlas-ops verify-archive -config /etc/stellaratlas.toml \
+stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier archivist -archivist-bin rs-stellar-archivist
 ```
 
@@ -342,17 +342,17 @@ mc ls local/galexie-archive/FFFFFFFF--0-63999/ | head
 
 # 5. Source the reader credentials, then run verify-archive
 #    (Tier A + B) before declaring success:
-set -a; source /etc/default/stellaratlas-ops; set +a
-stellaratlas-ops verify-archive -config /etc/stellaratlas.toml \
+set -a; source /etc/default/stellarindex-ops; set +a
+stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier all -from 2 -to <last-mirrored-ledger>
 ```
 
-`/etc/default/stellaratlas-ops` sets `AWS_ACCESS_KEY_ID` /
+`/etc/default/stellarindex-ops` sets `AWS_ACCESS_KEY_ID` /
 `AWS_SECRET_ACCESS_KEY` (which the AWS SDK actually consumes) plus
-the `STELLARATLAS_S3_*` duplicates for the config loader. Without
+the `STELLARINDEX_S3_*` duplicates for the config loader. Without
 sourcing it, verify-archive falls through to the default credential
 chain and gets a 403 from MinIO. Provisioned by the
-`stellaratlas-reader` MinIO user — see
+`stellarindex-reader` MinIO user — see
 `roles/archival-node/tasks/09-minio.yml`.
 
 #### Runbook — recovering from a partial / mc-cp-poisoned bucket

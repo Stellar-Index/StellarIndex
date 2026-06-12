@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/notify"
+	"github.com/StellarIndex/stellar-index/internal/notify"
 )
 
 func TestValidate_HappyPath(t *testing.T) {
 	n := &notify.NoopSender{}
 	err := n.Send(context.Background(), notify.Message{
-		From:    "Stellar Atlas <hello@stellaratlas.xyz>",
+		From:    "Stellar Index <hello@stellarindex.io>",
 		To:      []string{"alice@example.com"},
 		Subject: "Test",
 		Text:    "hello",
@@ -51,10 +51,10 @@ func TestValidate_RejectsEmptyMessage(t *testing.T) {
 
 func TestMagicLinkMessage_Renders(t *testing.T) {
 	msg, err := notify.MagicLinkMessage(
-		"Stellar Atlas <hello@stellaratlas.xyz>",
+		"Stellar Index <hello@stellarindex.io>",
 		"alice@example.com",
 		notify.MagicLinkInput{
-			LinkURL:          "https://app.stellaratlas.xyz/auth/callback?token=abc",
+			LinkURL:          "https://app.stellarindex.io/auth/callback?token=abc",
 			Code:             "123456",
 			ExpiresInMinutes: 15,
 			IPAddress:        "203.0.113.1",
@@ -70,7 +70,7 @@ func TestMagicLinkMessage_Renders(t *testing.T) {
 	// Spot-check that the dynamic fields landed in the rendered
 	// bodies — guards against a refactor that drops a field
 	// from the template.
-	for _, want := range []string{"https://app.stellaratlas.xyz/auth/callback?token=abc", "123456", "15 minutes", "203.0.113.1"} {
+	for _, want := range []string{"https://app.stellarindex.io/auth/callback?token=abc", "123456", "15 minutes", "203.0.113.1"} {
 		if !strings.Contains(msg.HTML, want) {
 			t.Errorf("HTML missing %q", want)
 		}
@@ -102,7 +102,7 @@ func TestResendSender_HappyPath(t *testing.T) {
 	s.BaseURL = srv.URL
 
 	err = s.Send(context.Background(), notify.Message{
-		From:    "Stellar Atlas <hello@stellaratlas.xyz>",
+		From:    "Stellar Index <hello@stellarindex.io>",
 		To:      []string{"alice@example.com"},
 		Subject: "Test",
 		Text:    "hello",

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // opIndexFanoutStride spaces the synthetic op_index values emitted
@@ -252,7 +252,7 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 				// slot in a mixed-payload event is strictly better
 				// than dropping all prices in that event.
 				// F-1234 (codex audit-2026-05-12): count the skip
-				// on stellaratlas_source_unknown_symbols_total so
+				// on stellarindex_source_unknown_symbols_total so
 				// operators can spot upstream coverage drift
 				// without parsing logs. The metric label uses the
 				// generic "reflector" because the decoder is

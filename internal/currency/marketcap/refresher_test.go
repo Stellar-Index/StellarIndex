@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/currency"
+	"github.com/StellarIndex/stellar-index/internal/currency"
 )
 
 // fakeCatalogue is a minimal Catalogue with one crypto entry that

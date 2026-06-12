@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // SEP41TransfersReader is the seam the handler reads through.
@@ -51,7 +51,7 @@ type SEP41TransfersResponse struct {
 func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	if s.sep41Transfers == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/sep41-transfers-unavailable",
+			"https://api.stellarindex.io/errors/sep41-transfers-unavailable",
 			"SEP-41 transfers unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the sep41 transfers reader yet.")
 		return
@@ -66,7 +66,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 500 {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-limit",
+				"https://api.stellarindex.io/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,
 				"limit must be 1-500")
 			return
@@ -86,7 +86,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("ListSEP41Transfers deadline exceeded",
 				"contract_id", contractID, "from", fromAddr, "to", toAddr, "limit", limit)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/sep41-transfers-timeout",
+				"https://api.stellarindex.io/errors/sep41-transfers-timeout",
 				"SEP-41 transfers timed out", http.StatusServiceUnavailable,
 				"the per-contract scan didn't return in 8s; retry shortly.")
 			return
@@ -95,7 +95,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("sep41 transfers list: transient storage error",
 				"contract_id", contractID, "err", err)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/sep41-transfers-transient",
+				"https://api.stellarindex.io/errors/sep41-transfers-transient",
 				"SEP-41 transfers temporarily unavailable", http.StatusServiceUnavailable,
 				"the storage layer hit a transient error; retry shortly.")
 			return
@@ -103,7 +103,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("sep41 transfers list",
 			"contract_id", contractID, "from", fromAddr, "to", toAddr, "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/sep41-transfers-error",
+			"https://api.stellarindex.io/errors/sep41-transfers-error",
 			"SEP-41 transfers failed", http.StatusInternalServerError,
 			"Storage layer returned an error.")
 		return
@@ -151,14 +151,14 @@ func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (cont
 	contractID = r.PathValue("contract_id")
 	if contractID == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-contract-id",
+			"https://api.stellarindex.io/errors/invalid-contract-id",
 			"Invalid contract_id", http.StatusBadRequest,
 			"contract_id path segment is required")
 		return "", "", "", false
 	}
 	if !canonical.IsContractID(contractID) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-contract-id",
+			"https://api.stellarindex.io/errors/invalid-contract-id",
 			"Invalid contract_id", http.StatusBadRequest,
 			"contract_id must be a 56-char C-strkey (e.g. CDB2WMKQQNVZMEBY...). Got "+contractID)
 		return "", "", "", false
@@ -174,14 +174,14 @@ func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (cont
 	// actively misleading for the operator-debugging use case.
 	if fromAddr != "" && !canonical.IsAnyHolder(fromAddr) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-address",
+			"https://api.stellarindex.io/errors/invalid-address",
 			"Invalid from address", http.StatusBadRequest,
 			"from must be a valid Stellar address (G/C/M/B/L strkey). Got "+fromAddr)
 		return "", "", "", false
 	}
 	if toAddr != "" && !canonical.IsAnyHolder(toAddr) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-address",
+			"https://api.stellarindex.io/errors/invalid-address",
 			"Invalid to address", http.StatusBadRequest,
 			"to must be a valid Stellar address (G/C/M/B/L strkey). Got "+toAddr)
 		return "", "", "", false

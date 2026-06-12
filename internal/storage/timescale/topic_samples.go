@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
 )
 
 // TopicSample is one representative soroban_events row for a distinct

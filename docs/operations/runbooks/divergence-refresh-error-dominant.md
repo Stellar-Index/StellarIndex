@@ -5,13 +5,13 @@ status: living
 severity: P3
 ---
 
-# Runbook — `stellaratlas_divergence_refresh_error_dominant`
+# Runbook — `stellarindex_divergence_refresh_error_dominant`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_divergence_refresh_error_dominant` |
+| Alert | `stellarindex_divergence_refresh_error_dominant` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/divergence.yml` |
 | Typical MTTR | 5–60 min (usually upstream-reference recovery) |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `rate(stellaratlas_divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(stellaratlas_divergence_refresh_total{outcome="ok"}[5m])` sustained 30+ min.
+- `rate(stellarindex_divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(stellarindex_divergence_refresh_total{outcome="ok"}[5m])` sustained 30+ min.
 - Aggregator log lines repeat `divergence refresh failed` with the underlying error (CoinGecko 429, Chainlink RPC timeout, Redis cache write failure).
 - After 5 min sustained, `/v1/price` consumers reading `flags.divergence_warning` see whatever the last successful refresh wrote — eventually nothing once entries TTL out.
 
@@ -53,17 +53,17 @@ something downstream broke. The four common patterns:
 ```sh
 # 1) Confirm the alert is real and which outcome dominates.
 curl -fs http://localhost:9465/metrics \
-  | grep '^stellaratlas_divergence_refresh_total'
+  | grep '^stellarindex_divergence_refresh_total'
 
 # 2) Look at recent aggregator logs for the underlying error.
-journalctl -u stellaratlas-aggregator -n 100 \
+journalctl -u stellarindex-aggregator -n 100 \
   | grep 'divergence refresh failed'
 
 # 3) Probe each configured reference manually:
 #    CoinGecko (the default)
 curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd'
 #    Chainlink (when configured)
-#    grep 'rpc_url' /etc/stellaratlas.toml — then curl that endpoint
+#    grep 'rpc_url' /etc/stellarindex.toml — then curl that endpoint
 #    with a JSON-RPC eth_chainId payload.
 ```
 
@@ -87,7 +87,7 @@ curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencie
       operator config, set the relevant `enabled = false`, restart
       the aggregator. The remaining references continue feeding
       the divergence comparison.
-- [ ] **Verify** `rate(stellaratlas_divergence_refresh_total{outcome="ok"}[5m])`
+- [ ] **Verify** `rate(stellarindex_divergence_refresh_total{outcome="ok"}[5m])`
       recovers above the `refresh_error` rate; the alert
       auto-resolves after 30 min sustained.
 

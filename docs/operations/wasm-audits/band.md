@@ -45,7 +45,7 @@ match.
 | StandardReference | `CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M` |
 
 The address is configured via `cfg.Oracle.Band.StandardReferenceContract`
-in `stellaratlas.toml`; the value above is the published mainnet
+in `stellarindex.toml`; the value above is the published mainnet
 contract per `docs/discovery/oracles/band.md`.
 
 ## Decoder expectations — Band is structurally unique
@@ -170,7 +170,7 @@ discovery doc + the package's symbol_resolver.
 
 ## WASM timeline
 
-Output from `stellaratlas-ops wasm-history` over the post-Soroban
+Output from `stellarindex-ops wasm-history` over the post-Soroban
 window — full archive on r1, walked 2026-04-29:
 
 ```json

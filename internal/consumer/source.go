@@ -8,7 +8,7 @@ import (
 // Source is the uniform interface every ingestion source implements.
 //
 // Implementations live under internal/sources/<name>/. The
-// orchestrator in cmd/stellaratlas-indexer holds a registry of
+// orchestrator in cmd/stellarindex-indexer holds a registry of
 // configured Source values and drives them via BackfillRange +
 // StreamLive.
 //

@@ -10,13 +10,13 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestTradeInsertOutcome_NewVsDuplicate pins the diagnostic metric
-// `stellaratlas_trade_insert_outcome_total{source, outcome}`: a
+// `stellarindex_trade_insert_outcome_total{source, outcome}`: a
 // fresh trade increments outcome=new, a re-insertion (same PK)
 // increments outcome=duplicate. Live r1 evidence on 2026-05-28
 // surfaced a stuck-cursor pattern where the older counter

@@ -19,10 +19,10 @@
 #
 # Run on r1: nohup setsid bash scripts/ops/ch-rebuild-projected.sh >/dev/null 2>&1 &
 set -uo pipefail
-set -a; . /etc/default/stellaratlas-ops; set +a
-OPS=${OPS:-/usr/local/bin/stellaratlas-ops-ch}
-CFG=${CFG:-/etc/stellaratlas.toml}
-DSN="$STELLARATLAS_POSTGRES_DSN"
+set -a; . /etc/default/stellarindex-ops; set +a
+OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
+CFG=${CFG:-/etc/stellarindex.toml}
+DSN="$STELLARINDEX_POSTGRES_DSN"
 SRC=${SRC:-"aquarius,soroswap,phoenix,comet,blend,cctp,rozo,defindex"}
 FROM=${FROM:-50000000}; TO=${TO:-62894000}; WIN=${WIN:-1000000}
 STATE=${STATE:-/var/lib/ch-backfill/rebuild-done-windows.txt}

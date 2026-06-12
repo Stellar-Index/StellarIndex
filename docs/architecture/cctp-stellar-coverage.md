@@ -11,7 +11,7 @@ status: implemented
 
 This document captures the contract identities, event schemas, and
 the design decisions for integrating Circle's CCTP v2 on Stellar
-into the Stellar Atlas's source fleet. The implementation lives in
+into the Stellar Index's source fleet. The implementation lives in
 `internal/sources/cctp/` (decoder + dispatcher adapter + consumer)
 with persistence to the `cctp_events` hypertable (migration 0038).
 The storage shape — a per-protocol table rather than a shared

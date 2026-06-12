@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 // OracleReader is the storage-side interface for /v1/oracle/latest
@@ -118,7 +118,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	reader := s.oracle
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/oracle-unavailable",
+			"https://api.stellarindex.io/errors/oracle-unavailable",
 			"Oracle readings not configured", http.StatusServiceUnavailable,
 			"this deployment has no OracleReader wired — check binary configuration")
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	rawAsset := r.URL.Query().Get("asset")
 	if rawAsset == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset",
+			"https://api.stellarindex.io/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
 			"asset query parameter is required. For the full per-source latest snapshot across every observed asset, call /v1/oracle/streams instead — it returns one row per (source, asset, quote) triple in the trailing 7d.")
 		return
@@ -135,7 +135,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -151,7 +151,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		// /v1/markets and /v1/observations.
 		if _, ok := external.Registry[source]; !ok {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/unknown-source",
+				"https://api.stellarindex.io/errors/unknown-source",
 				"Unknown source", http.StatusBadRequest,
 				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
 			return
@@ -170,7 +170,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("LatestOracleUpdatesForAsset deadline exceeded",
 				"asset", asset.String(), "source", source)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/oracle-latest-timeout",
+				"https://api.stellarindex.io/errors/oracle-latest-timeout",
 				"Oracle latest query timed out", http.StatusServiceUnavailable,
 				"the oracle_updates hypertable scan didn't return in 8s; retry shortly.")
 			return
@@ -184,7 +184,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("LatestOracleUpdatesForAsset failed",
 			"err", err, "asset", asset.String(), "source", source)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -226,7 +226,7 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 		if handlerTimedOut(osCtx, err) {
 			s.logger.Warn("LatestOracleStreams deadline exceeded")
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/oracle-streams-timeout",
+				"https://api.stellarindex.io/errors/oracle-streams-timeout",
 				"Oracle streams query timed out", http.StatusServiceUnavailable,
 				"the oracle_updates hypertable scan didn't return in 8s; retry shortly.")
 			return
@@ -238,7 +238,7 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("LatestOracleStreams failed", "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

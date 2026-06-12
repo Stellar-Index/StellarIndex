@@ -30,7 +30,7 @@ type MagicLinkInput struct {
 	UserAgent string
 }
 
-const magicLinkSubject = "Sign in to Stellar Atlas"
+const magicLinkSubject = "Sign in to Stellar Index"
 
 // renderMagicLink produces the HTML + plaintext bodies for the
 // login email. Two-template approach (one html, one text)
@@ -86,7 +86,7 @@ const magicLinkHTMLTemplate = `<!DOCTYPE html>
 <body style="margin:0;padding:32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;background:#f8fafc;">
   <table style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px;border:1px solid #e2e8f0;" cellpadding="0" cellspacing="0" border="0" role="presentation">
     <tr><td>
-      <h1 style="margin:0 0 12px;font-size:20px;font-weight:600;letter-spacing:-0.01em;">Sign in to Stellar Atlas</h1>
+      <h1 style="margin:0 0 12px;font-size:20px;font-weight:600;letter-spacing:-0.01em;">Sign in to Stellar Index</h1>
       <p style="margin:0 0 24px;color:#475569;line-height:1.5;">Click the button below to sign in. The link expires in {{.ExpiresInMinutes}} minutes and can only be used once.</p>
       <p style="margin:0 0 24px;">
         <a href="{{.LinkURL}}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:500;">Sign in</a>
@@ -102,7 +102,7 @@ const magicLinkHTMLTemplate = `<!DOCTYPE html>
 </body>
 </html>`
 
-const magicLinkTextTemplate = `Sign in to Stellar Atlas
+const magicLinkTextTemplate = `Sign in to Stellar Index
 
 Click this link to sign in (expires in {{.ExpiresInMinutes}} minutes, single-use):
 

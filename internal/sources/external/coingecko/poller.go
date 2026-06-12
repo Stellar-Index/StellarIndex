@@ -40,8 +40,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 // SourceName is stamped on every canonical.OracleUpdate this package

@@ -8,9 +8,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // Observer is the dispatcher-facing SAC balance observer per

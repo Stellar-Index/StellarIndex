@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/baseline"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // HistoryPoint is a single bucket's worth of aggregated price +

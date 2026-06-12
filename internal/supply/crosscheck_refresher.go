@@ -28,7 +28,7 @@ type SnapshotReader interface {
 // working through the wrap chain.
 //
 // Production storage maps timescale.ErrNotFound → ErrNoSnapshot via
-// the supplyStorageReader adapter in cmd/stellaratlas-aggregator —
+// the supplyStorageReader adapter in cmd/stellarindex-aggregator —
 // the supply package itself doesn't import timescale.
 var ErrNoSnapshot = errors.New("supply: no snapshot for asset_key")
 
@@ -46,7 +46,7 @@ type CrossCheckPair struct {
 // CrossCheckOutcomeKind is the per-pair outcome of one tick. Stable
 // metric-label strings; the aggregator-level counter uses these
 // values directly as the `outcome` label per
-// `stellaratlas_supply_cross_check_total`.
+// `stellarindex_supply_cross_check_total`.
 type CrossCheckOutcomeKind string
 
 const (
@@ -93,7 +93,7 @@ type CrossCheckOutcome struct {
 //
 // Production impl wraps obs.SupplyCrossCheckDivergenceStroops +
 // obs.SupplyCrossCheckTotal; the wiring lives in
-// cmd/stellaratlas-aggregator/main.go where the supply package
+// cmd/stellarindex-aggregator/main.go where the supply package
 // can stay free of the obs dependency.
 type CrossCheckEmitter interface {
 	// Divergence sets the per-asset gauge to the stroop divergence.

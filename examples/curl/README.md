@@ -1,7 +1,7 @@
 # curl examples
 
-Each script is self-contained and uses `${API_BASE_URL:-https://api.stellaratlas.xyz}`
-plus optional `${STELLARATLAS_API_KEY}` for authenticated endpoints.
+Each script is self-contained and uses `${API_BASE_URL:-https://api.stellarindex.io}`
+plus optional `${STELLARINDEX_API_KEY}` for authenticated endpoints.
 
 ```sh
 # Run a single example

@@ -25,7 +25,7 @@ import "sort"
 // `update_contract` upgrade can change event body schemas, so a
 // current-version decoder cannot be trusted on historical ledgers
 // without a per-WASM-hash audit. Flip to true per-source as the audit
-// (`stellaratlas-ops wasm-history`) confirms the decoder handles every
+// (`stellarindex-ops wasm-history`) confirms the decoder handles every
 // version that ran for the replay range. Off-chain sources and SDEX
 // are BackfillSafe=true unconditionally — no on-chain WASM dependency.
 var Registry = map[string]Metadata{
@@ -137,7 +137,7 @@ func IncludeInVWAP(source string) bool {
 
 // BackfillSafe reports whether the source's decoder is currently
 // authorised to run against historical ledger ranges. The
-// `stellaratlas-ops backfill` command refuses to enqueue a source
+// `stellarindex-ops backfill` command refuses to enqueue a source
 // against a historical range when this returns false — the audit must
 // land first to avoid decoding old WASM-event bodies with a current-
 // only decoder. See [Metadata.BackfillSafe] for the policy detail.

@@ -5,13 +5,13 @@ status: ratified
 severity: P2
 ---
 
-# Runbook — `stellaratlas_sla_probe_p95_breach`
+# Runbook — `stellarindex_sla_probe_p95_breach`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_sla_probe_p95_breach` |
+| Alert | `stellarindex_sla_probe_p95_breach` |
 | Severity | P2 (page) |
 | Detected by | `deploy/monitoring/rules/sla-probe.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,11 +19,11 @@ severity: P2
 
 ## Symptoms
 
-- `stellaratlas_sla_probe_latency_ms{endpoint=…,quantile="0.95"} > 200`
+- `stellarindex_sla_probe_latency_ms{endpoint=…,quantile="0.95"} > 200`
   for ≥ 30 min (2 timer firings).
 - The probe's most-recent JSON report in journald carries
   `failed_reasons: ["<endpoint>: p95=<N>ms > target 200.0ms"]`.
-- Direct-API alert `stellaratlas_api_latency_p95_high` may also be
+- Direct-API alert `stellarindex_api_latency_p95_high` may also be
   firing — they're complementary signals (probe = synthetic;
   histogram = real traffic).
 
@@ -31,15 +31,15 @@ severity: P2
 
 ```sh
 # 1. Get the most-recent probe report.
-sudo journalctl -u stellaratlas-sla-probe.service -n 1 --output=cat | jq .
+sudo journalctl -u stellarindex-sla-probe.service -n 1 --output=cat | jq .
 
 # 2. Confirm direct-traffic histograms agree (rules out probe-only artefacts).
 curl -s http://prometheus:9090/api/v1/query --data-urlencode \
-  'query=histogram_quantile(0.95, sum by (route, le) (rate(http_request_duration_seconds_bucket{job=~"stellaratlas[_-]api"}[5m])))' | \
+  'query=histogram_quantile(0.95, sum by (route, le) (rate(http_request_duration_seconds_bucket{job=~"stellarindex[_-]api"}[5m])))' | \
   jq -r '.data.result[] | "\(.metric.route): \(.value[1])s"' | sort -k2 -rn | head
 
 # 3. Run a one-off probe locally to see if it's regional / network.
-stellaratlas-sla-probe -base-url https://api.stellaratlas.xyz/v1 \
+stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
   -duration 10s -concurrency 2 -report-format text
 ```
 

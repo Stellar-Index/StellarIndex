@@ -3,7 +3,7 @@ package timescale
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // USDVolumeQuoteSpec lets the trade-insert path recognise on-chain

@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_anomaly_freeze_engaged`
+# Runbook — `stellarindex_anomaly_freeze_engaged`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellaratlas_anomaly_freeze_engaged` (P3) / `stellaratlas_anomaly_freeze_sustained` (P1) |
+| Alerts | `stellarindex_anomaly_freeze_engaged` (P3) / `stellarindex_anomaly_freeze_sustained` (P1) |
 | Severity | P3 on first 5m window; P1 once sustained ≥ 1h |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/anomaly.yml` |
 | Typical MTTR | 5–30 min for confirmed manipulation; up to 2 h for ambiguous market events |
@@ -34,10 +34,10 @@ USTRY-shape attacks; designed NOT to fire on real market events
 
 ## Symptoms
 
-- `stellaratlas_anomaly_freeze_engaged{asset="..."}` gauge = 1
-- `stellaratlas_anomaly_z_score{asset="..."}` histogram shows a
+- `stellarindex_anomaly_freeze_engaged{asset="..."}` gauge = 1
+- `stellarindex_anomaly_z_score{asset="..."}` histogram shows a
   recent spike (5σ+)
-- `stellaratlas_anomaly_confidence{asset="..."}` gauge dropped
+- `stellarindex_anomaly_confidence{asset="..."}` gauge dropped
   sharply below 0.10
 - Affected asset's `/v1/price` response carries
   `flags.frozen: true` and `flags.divergence_warning: true`
@@ -52,11 +52,11 @@ sources simultaneously; manipulation typically hits only one venue.
 
 ```sh
 # 1) Which asset is frozen and what's its on-the-wire state?
-ssh r1 'curl -s "http://localhost:9090/api/v1/query?query=stellaratlas_anomaly_freeze_engaged" | jq'
-ssh r1 'stellaratlas-ops list-cursors -config /etc/stellaratlas.toml | grep <asset>'
+ssh r1 'curl -s "http://localhost:9090/api/v1/query?query=stellarindex_anomaly_freeze_engaged" | jq'
+ssh r1 'stellarindex-ops list-cursors -config /etc/stellarindex.toml | grep <asset>'
 
 # 2) What does our raw observation show right now?
-curl -s "https://api.stellaratlas.xyz/v1/observations?asset=<asset>&quote=fiat:USD" | jq
+curl -s "https://api.stellarindex.io/v1/observations?asset=<asset>&quote=fiat:USD" | jq
 
 # 3) What do EXTERNAL references show? (if multiple agree, it's likely real)
 curl -s "https://api.coingecko.com/api/v3/simple/price?ids=<coingecko-id>&vs_currencies=usd" | jq
@@ -65,7 +65,7 @@ curl -s "https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbo
 
 # 4) What does the affected venue's spot order book look like?
 # (Specific to the venue — Aquarius, Soroswap, etc.)
-stellaratlas-ops verify-decoders -config /etc/stellaratlas.toml \
+stellarindex-ops verify-decoders -config /etc/stellarindex.toml \
   -from <recent-ledger> -to <head-ledger> | grep <asset>
 ```
 
@@ -97,7 +97,7 @@ Decision tree:
   ```sh
   # Manual unfreeze. CAREFUL — this immediately publishes the
   # current observed price as authoritative.
-  stellaratlas-ops anomaly unfreeze -asset <asset-id> \
+  stellarindex-ops anomaly unfreeze -asset <asset-id> \
     -reason "real market event: <details>" \
     -approver <your-handle>
   ```
@@ -112,7 +112,7 @@ Decision tree:
   - Manipulation has stopped; manually unfreeze
   - Manipulation persists or asset has structurally changed (e.g. delisted everywhere); manually set price via operator override OR delist asset from API surface
 
-- [ ] **Verification:** `stellaratlas_anomaly_freeze_engaged{asset=<x>}` returns to 0 after auto-unfreeze or manual override.
+- [ ] **Verification:** `stellarindex_anomaly_freeze_engaged{asset=<x>}` returns to 0 after auto-unfreeze or manual override.
 
 ## Root cause analysis
 

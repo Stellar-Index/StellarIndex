@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // RESTEndpoint is Kraken's public REST base. Public endpoints need

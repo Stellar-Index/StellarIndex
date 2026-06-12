@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/streaming"
+	"github.com/StellarIndex/stellar-index/internal/api/streaming"
 )
 
 const (
@@ -52,7 +52,7 @@ const (
 func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 	if s.cursors == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/ledger-tip-unavailable",
+			"https://api.stellarindex.io/errors/ledger-tip-unavailable",
 			"Ledger tip not available", http.StatusServiceUnavailable,
 			"this deployment has no CursorsReader wired — check binary configuration")
 		return
@@ -67,13 +67,13 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("ledgerTip failed (stream prelude)", "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
 	if !ok {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/ledger-tip-unavailable",
+			"https://api.stellarindex.io/errors/ledger-tip-unavailable",
 			"Ledger tip not available", http.StatusServiceUnavailable,
 			"the live-ingest cursor has not been established yet — the indexer "+
 				"has not committed its first ledger on this deployment")

@@ -21,8 +21,8 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // gAccountFromSeed returns a strkey-valid 56-char G-address whose
@@ -485,9 +485,9 @@ func startTimescale(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	pg, err := tcpostgres.Run(ctx,
 		"timescale/timescaledb:2.17.2-pg15",
-		tcpostgres.WithDatabase("stellaratlas"),
-		tcpostgres.WithUsername("stellaratlas"),
-		tcpostgres.WithPassword("stellaratlas-test"),
+		tcpostgres.WithDatabase("stellarindex"),
+		tcpostgres.WithUsername("stellarindex"),
+		tcpostgres.WithPassword("stellarindex-test"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).WithStartupTimeout(60*time.Second),

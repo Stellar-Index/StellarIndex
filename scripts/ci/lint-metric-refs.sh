@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lint-metric-refs.sh — F-1329 guard against the "dead alert layer".
 #
-# Every `stellaratlas_*` metric token referenced inside a Prometheus
+# Every `stellarindex_*` metric token referenced inside a Prometheus
 # rule `expr:` MUST resolve to something that actually emits it — a
 # `Name:` field in internal/obs (or any literal use in internal/ cmd/
 # scripts/ configs/healthchecks, which covers textfile-collector .prom
@@ -11,16 +11,16 @@
 # (the F-1329 finding).
 #
 # Scope + conservatism:
-#   - Only `stellaratlas_*` tokens are enforced. node_/pg_/redis_/
+#   - Only `stellarindex_*` tokens are enforced. node_/pg_/redis_/
 #     pgbackrest_ metrics come from third-party exporters whose full
 #     metric set isn't in this repo, so enforcing them would be all
 #     false positives. They're handled by promtool + the EXTERNAL_OK
 #     reference list below (documentation only).
 #   - Tokens that appear ONLY inside a `job=` / `job=~` matcher are
-#     ignored — those are scrape-job names (e.g. stellaratlas_indexer in
+#     ignored — those are scrape-job names (e.g. stellarindex_indexer in
 #     the multi-host config), not metric names.
-#   - Recording-rule outputs use the `stellaratlas:foo:5m` colon style,
-#     which never matches the `stellaratlas_[a-z0-9_]+` token regex.
+#   - Recording-rule outputs use the `stellarindex:foo:5m` colon style,
+#     which never matches the `stellarindex_[a-z0-9_]+` token regex.
 #   - KNOWN_INERT lists references that are deliberately kept but cannot
 #     fire (no producer exists yet / not applicable on this host). Each
 #     entry is documented with an INERT comment in the rule file. Adding
@@ -49,25 +49,25 @@ EMITTER_PATHS=(internal cmd scripts configs/healthchecks)
 KNOWN_INERT=(
   # storage.yml — TimescaleDB job-scheduler state; needs a custom
   # postgres_exporter query or a textfile SQL exporter (not yet built).
-  stellaratlas_cagg_last_refresh_unix
-  stellaratlas_cagg_refresh_interval_seconds
-  stellaratlas_uncompressed_chunks_older_than_7d
+  stellarindex_cagg_last_refresh_unix
+  stellarindex_cagg_refresh_interval_seconds
+  stellarindex_uncompressed_chunks_older_than_7d
   # stellar.yml — no archive-publish-error counter is wired to Prometheus.
-  stellaratlas_stellar_archive_publish_errors_total
+  stellarindex_stellar_archive_publish_errors_total
   # stellar.yml — stellar-core / stellar-rpc metrics come from the
   # external stellar-core-prometheus-exporter, which is NOT deployed on
   # r1 today (removed 2026-04-23; returns at Phase-3 / ADR-0004).
-  stellaratlas_stellar_core_last_ledger_time_unix
-  stellaratlas_stellar_core_peer_count
-  stellaratlas_stellar_rpc_latest_ledger_age_seconds
+  stellarindex_stellar_core_last_ledger_time_unix
+  stellarindex_stellar_core_peer_count
+  stellarindex_stellar_rpc_latest_ledger_age_seconds
   # divergence.yml — per-asset prices live in Postgres + Redis, not the
   # Prometheus registry; a gauge would be high-cardinality (out of scope).
-  stellaratlas_our_price
-  stellaratlas_reference_price
+  stellarindex_our_price
+  stellarindex_reference_price
 )
 
 # Third-party exporter metrics intentionally referenced by exprs. Listed
-# for documentation only (the lint enforces stellaratlas_* exclusively),
+# for documentation only (the lint enforces stellarindex_* exclusively),
 # so a future reader knows these are expected-external, not typos.
 EXTERNAL_OK=(
   pg_up pg_replication_lag_seconds pg_locks_count pg_settings_max_locks_per_transaction
@@ -88,7 +88,7 @@ in_list() {
   return 1
 }
 
-# Pull stellaratlas_* tokens that appear inside a rule's `expr:` region.
+# Pull stellarindex_* tokens that appear inside a rule's `expr:` region.
 # An expr region starts at an `expr:` line and ends at the next sibling
 # key (`for:` / `labels:` / `annotations:` / `- alert:` / `- record:`).
 # Tokens inside a job= / job=~ matcher are dropped (scrape-job names).
@@ -106,7 +106,7 @@ extract_expr_tokens() {
       if ($0 ~ /^[[:space:]]*(for|labels|annotations):/ || $0 ~ /^[[:space:]]*-[[:space:]]+(alert|record):/) { inexpr=0; next }
       print strip_jobs($0)
     }
-  ' "$1" | grep -oE 'stellaratlas_[a-zA-Z0-9_]+' || true
+  ' "$1" | grep -oE 'stellarindex_[a-zA-Z0-9_]+' || true
 }
 
 self_rel="scripts/ci/lint-metric-refs.sh"
@@ -147,7 +147,7 @@ for tok in "${KNOWN_INERT[@]}"; do
 done
 
 if [[ "$dead" -eq 0 ]]; then
-  echo "lint-metric-refs: OK — every stellaratlas_* expr token resolves to an emitter or a documented KNOWN_INERT entry."
+  echo "lint-metric-refs: OK — every stellarindex_* expr token resolves to an emitter or a documented KNOWN_INERT entry."
 else
   echo "lint-metric-refs: FAIL — $dead dead/stale metric reference(s)." >&2
 fi

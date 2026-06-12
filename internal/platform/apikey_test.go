@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 func TestAPIKey_IsActive(t *testing.T) {

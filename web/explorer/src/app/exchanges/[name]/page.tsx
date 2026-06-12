@@ -60,7 +60,7 @@ export async function generateMetadata({
   const { name } = await params;
   const info = CEX_INFO[name];
   if (!info) return { title: 'Exchange not found' };
-  const canonical = `https://stellaratlas.xyz/exchanges/${encodeURIComponent(name)}`;
+  const canonical = `https://stellarindex.io/exchanges/${encodeURIComponent(name)}`;
   const title = `${info.name} — every pair, live`;
   const description = `All ${info.name} pairs observed in the last 14 days, with per-pair 24h trade count + last trade. Source: /v1/markets?source=${name}.`;
   return {
@@ -86,9 +86,9 @@ export default async function ExchangeDetailPage({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellaratlas.xyz' },
-      { '@type': 'ListItem', position: 2, name: 'Exchanges', item: 'https://stellaratlas.xyz/exchanges' },
-      { '@type': 'ListItem', position: 3, name: info.name, item: `https://stellaratlas.xyz/exchanges/${name}` },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
+      { '@type': 'ListItem', position: 2, name: 'Exchanges', item: 'https://stellarindex.io/exchanges' },
+      { '@type': 'ListItem', position: 3, name: info.name, item: `https://stellarindex.io/exchanges/${name}` },
     ],
   };
 
@@ -116,7 +116,7 @@ export default async function ExchangeDetailPage({
         <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">{info.blurb}</p>
         <p className="max-w-3xl rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
           <span className="font-semibold">Curated subscription, not a full mirror.</span>{' '}
-          Stellar Atlas is the protocol explorer for the Stellar network, with an independent pricing API; from each CEX we
+          Stellar Index is the protocol explorer for the Stellar network, with an independent pricing API; from each CEX we
           subscribe to the pairs that triangulate to XLM (the largest XLM
           markets, the BTC/ETH crypto anchors, and ~17 top-cap globals
           for cross-venue VWAP coverage). The full venue order book is

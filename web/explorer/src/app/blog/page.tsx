@@ -6,7 +6,7 @@ import { loadBlogPosts } from '@/lib/blog';
 export const metadata: Metadata = {
   title: 'Blog — engineering notes + product updates',
   description:
-    'Stellar Atlas engineering blog — release notes, architecture decisions, post-mortems, product updates.',
+    'Stellar Index engineering blog — release notes, architecture decisions, post-mortems, product updates.',
 };
 
 export default function BlogIndexPage() {

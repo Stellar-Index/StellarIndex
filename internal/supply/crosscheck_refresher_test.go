@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/supply"
+	"github.com/StellarIndex/stellar-index/internal/supply"
 )
 
 // fakeSnapshotReader returns canned per-key supplies. Errors come

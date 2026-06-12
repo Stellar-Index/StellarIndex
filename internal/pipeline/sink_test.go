@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // fakeEvent is a consumer.Event that hits the sink's default

@@ -61,7 +61,7 @@
     value: "{{ item.value }}"
     state: present
     reload: true
-    sysctl_file: /etc/sysctl.d/90-stellaratlas.conf
+    sysctl_file: /etc/sysctl.d/90-stellarindex.conf
   loop: "{{ sysctl_tunings | dict2items }}"
 
 # systemd drop-in directories aren't pre-created on Ubuntu; the

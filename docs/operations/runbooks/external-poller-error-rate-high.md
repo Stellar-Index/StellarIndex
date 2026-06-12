@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_external_poller_error_rate_high`
+# Runbook — `stellarindex_external_poller_error_rate_high`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_external_poller_error_rate_high` |
+| Alert | `stellarindex_external_poller_error_rate_high` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/external-pollers.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,18 +19,18 @@ severity: P3
 
 ## Symptoms
 
-- `sum by (source) (rate(stellaratlas_external_poller_polls_total{outcome="error"}[5m])) / sum by (source) (rate(stellaratlas_external_poller_polls_total[5m])) > 0.5` for ≥ 5 min.
-- Indexer log shows repeated `WARN poller error source={vendor}` (the external pollers run in `stellaratlas-indexer`, not the aggregator).
+- `sum by (source) (rate(stellarindex_external_poller_polls_total{outcome="error"}[5m])) / sum by (source) (rate(stellarindex_external_poller_polls_total[5m])) > 0.5` for ≥ 5 min.
+- Indexer log shows repeated `WARN poller error source={vendor}` (the external pollers run in `stellarindex-indexer`, not the aggregator).
 - `/v1/sources?include=stats` shows the affected vendor with stale `last_event_unix`.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Which source(s) are erroring + at what rate
-curl -s 'http://localhost:9090/api/v1/query?query=sum%20by%20(source)%20(rate(stellaratlas_external_poller_polls_total%7Boutcome%3D%22error%22%7D%5B5m%5D))'
+curl -s 'http://localhost:9090/api/v1/query?query=sum%20by%20(source)%20(rate(stellarindex_external_poller_polls_total%7Boutcome%3D%22error%22%7D%5B5m%5D))'
 
 # The actual error message in the indexer log (pollers live in the indexer)
-journalctl -u stellaratlas-indexer -n 500 --no-pager | grep -iE 'poller error.*source=' | tail -20
+journalctl -u stellarindex-indexer -n 500 --no-pager | grep -iE 'poller error.*source=' | tail -20
 
 # Manual probe of the vendor endpoint with our typical request
 # (replace BASE/QUERY for the affected venue per internal/sources/external/<vendor>/)
@@ -66,14 +66,14 @@ Quick CG diagnosis on R1:
 
 ```sh
 # Which CG key is the binary using? Logs disclose Pro/Demo/none.
-journalctl -u stellaratlas-indexer -n 1000 --no-pager | \
+journalctl -u stellarindex-indexer -n 1000 --no-pager | \
   grep -iE 'coingecko.*key|coingecko.*tier' | tail -5
 
 # Manual probe with the SAME key the binary uses (replace KEY):
 curl -sv "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd&x_cg_demo_api_key=KEY" 2>&1 | head -20
 
 # Check the cooldown state from logs (poller logs `cooldown armed for Xs` on each backoff).
-journalctl -u stellaratlas-indexer -n 500 --no-pager | \
+journalctl -u stellarindex-indexer -n 500 --no-pager | \
   grep -iE 'coingecko.*cooldown|coingecko.*backoff' | tail -5
 ```
 
@@ -94,7 +94,7 @@ Common 429 causes ranked by likelihood on a healthy R1:
 
 ## Mitigation (≤ 15 min)
 
-- [ ] Step 1 — if HTTP 429, slow down the poll cadence in `[external.<vendor>] poll_interval` (operator config in `/etc/stellaratlas.toml`) and restart the indexer (`systemctl restart stellaratlas-indexer`).
+- [ ] Step 1 — if HTTP 429, slow down the poll cadence in `[external.<vendor>] poll_interval` (operator config in `/etc/stellarindex.toml`) and restart the indexer (`systemctl restart stellarindex-indexer`).
 - [ ] Step 2 — if HTTP 401/403, rotate the API key env var via the secrets vault and restart the indexer.
 - [ ] Step 3 — if vendor outage, no action needed; the aggregator's class-aware fallback (ADR-0008) keeps `/v1/price` serving from remaining sources. Update the status page only if `flags.reduced_redundancy=true` propagates to a customer-visible pair.
 - [ ] Step 4 — if schema drift, the decoder needs a code update; jump to the source's dispatcher_adapter and update the parse path. Out-of-cycle release per `release-process.md`.
@@ -121,8 +121,8 @@ For postmortem capture:
 
 ## Changelog
 
-- 2026-06-12 — F-1330: fix metric name (`stellaratlas_external_poller_polls_total`,
-  not `_poller_total`); pollers run in `stellaratlas-indexer` not the
+- 2026-06-12 — F-1330: fix metric name (`stellarindex_external_poller_polls_total`,
+  not `_poller_total`); pollers run in `stellarindex-indexer` not the
   aggregator (log + restart targets corrected); config key is
   `[external.<vendor>] poll_interval`.
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).

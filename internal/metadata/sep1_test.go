@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/metadata"
+	"github.com/StellarIndex/stellar-index/internal/metadata"
 )
 
 // fixtureTOML is a realistic small stellar.toml from a public issuer.

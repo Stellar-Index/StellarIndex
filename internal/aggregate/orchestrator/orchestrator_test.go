@@ -11,10 +11,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/anomaly"
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // mockStore is a hand-controlled Store for deterministic tick tests.

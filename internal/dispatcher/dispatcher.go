@@ -48,9 +48,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical/discovery"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/canonical/discovery"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // Decoder is the contract every source package implements to
@@ -273,7 +273,7 @@ type Dispatcher struct {
 	eventsSeen map[string]int
 
 	// Error counters — read via Stats(). Production wiring in
-	// cmd/stellaratlas-indexer increments obs.SourceDecodeErrorsTotal
+	// cmd/stellarindex-indexer increments obs.SourceDecodeErrorsTotal
 	// per source name on decode failures; internal counters here are
 	// for test assertions.
 	decodeErrors  map[string]int

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // quoteForVariant has a default-fallback branch for unknown Variant

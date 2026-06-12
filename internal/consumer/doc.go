@@ -15,7 +15,7 @@
 // the [internal/dispatcher] hot path or produced by an
 // [internal/sources/external] connector goroutine, lands on a
 // `chan consumer.Event` and gets sunk by
-// `cmd/stellaratlas-indexer`.
+// `cmd/stellarindex-indexer`.
 //
 // # What's legacy
 //
@@ -67,7 +67,7 @@
 //     seam (Decoder / OpDecoder / ContractCallDecoder).
 //
 //  4. Add the source name + builder to
-//     cmd/stellaratlas-indexer/main.go's `buildDispatcher()`.
+//     cmd/stellarindex-indexer/main.go's `buildDispatcher()`.
 //
 //  5. Add real-fixture tests under test/fixtures/<name>/.
 package consumer

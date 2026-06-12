@@ -14,7 +14,7 @@
 // Both must be structurally complete for the API's downstream
 // integrity guarantees to hold. The package implements all three
 // ADR-0017 modes (check / fix / verify), driven by the
-// `stellaratlas-ops archive-completeness <mode>` subcommand and
+// `stellarindex-ops archive-completeness <mode>` subcommand and
 // the `archive-completeness.{service,timer}` systemd units.
 //
 //   - [CrossAnchorChecker.Check] — read-only scan of the cross-

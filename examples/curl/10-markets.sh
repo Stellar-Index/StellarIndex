@@ -4,7 +4,7 @@
 # Cursor-paginated. Pass the `next_cursor` from the previous
 # response as the first arg to continue.
 set -euo pipefail
-BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
+BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 LIMIT="${1:-50}"
 CURSOR="${2:-}"
 

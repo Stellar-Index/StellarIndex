@@ -62,7 +62,7 @@ package comet
 import (
 	"errors"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // SourceName is the canonical string stamped on every event this
@@ -159,7 +159,7 @@ var (
 	// (POOL, <kind>) tuple. Skip: another Comet variant added in a
 	// future contract upgrade, or an unrelated contract entirely.
 	// Operators see the rate via the dispatcher's
-	// `stellaratlas_source_orphan_events_total{source="comet"}`
+	// `stellarindex_source_orphan_events_total{source="comet"}`
 	// counter; a sustained spike means a new event variant is in
 	// the wild and decoder coverage is incomplete.
 	ErrNotCometEvent = errors.New("comet: not a recognised Comet POOL event")

@@ -4,10 +4,10 @@
 # ── Cluster identity ───────────────────────────────────────────
 # Per-region Patroni scope. Different per region prevents
 # accidental cross-region cluster joins.
-patroni_cluster_name: stellaratlas-default
+patroni_cluster_name: stellarindex-default
 
 # Per-region etcd cluster token. Same rule as above.
-etcd_cluster_token: stellaratlas-etcd-default
+etcd_cluster_token: stellarindex-etcd-default
 
 # ── Postgres ───────────────────────────────────────────────────
 patroni_postgres_version: 15
@@ -41,7 +41,7 @@ etcd_election_timeout: 1000
 # rebuilds).
 patroni_bootstrap_method: initdb
 # Used when method=pgbackrest:
-patroni_pgbackrest_stanza: stellaratlas
+patroni_pgbackrest_stanza: stellarindex
 patroni_pgbackrest_restore_target: latest   # "latest" | "time:..."
 
 # ── pgBackRest hooks (called by Patroni's archive_command) ─────

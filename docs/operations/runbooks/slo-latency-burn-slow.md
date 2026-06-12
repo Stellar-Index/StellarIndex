@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_slo_latency_burn_slow`
+# Runbook — `stellarindex_slo_latency_burn_slow`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_slo_latency_burn_slow` |
+| Alert | `stellarindex_slo_latency_burn_slow` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/slo.yml` |
 | Typical MTTR | days |

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
-	"github.com/StellarAtlas/stellar-atlas/internal/stellarrpc"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/stellarrpc"
 )
 
 // seedThrottle is the delay inserted between simulateTransaction

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/baseline"
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/confidence"
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/divergence"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/confidence"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/divergence"
 )
 
 // stubBaselineSource implements orchestrator.BaselineSource with a

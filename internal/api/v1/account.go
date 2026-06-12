@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // AccountStore is the v1 boundary against [auth.APIKeyStore].
@@ -180,7 +180,7 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/unauthorized",
+			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
 			"/v1/account/me requires a magic-link session, API key, or SEP-10 token")
 		return
@@ -228,7 +228,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/unauthorized",
+			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
 			"/v1/account/usage requires an API key or SEP-10 token")
 		return
@@ -288,14 +288,14 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/unauthorized",
+			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
 			"/v1/account/keys requires an API key or SEP-10 token")
 		return
 	}
 	if s.accounts == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-store-unavailable",
+			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
@@ -304,7 +304,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4*1024))
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/body-too-large",
+			"https://api.stellarindex.io/errors/body-too-large",
 			"Request body too large", http.StatusBadRequest,
 			"/v1/account/keys body must be under 4 KiB")
 		return
@@ -313,7 +313,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &req); err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-body",
+				"https://api.stellarindex.io/errors/invalid-body",
 				"Malformed JSON body", http.StatusBadRequest,
 				"could not parse request body as JSON")
 			return
@@ -321,14 +321,14 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	}
 	if req.Label == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-label",
+			"https://api.stellarindex.io/errors/missing-label",
 			"Label is required", http.StatusBadRequest,
 			"the new key needs a label so the customer can identify it later")
 		return
 	}
 	if len(req.Label) > 128 {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/label-too-long",
+			"https://api.stellarindex.io/errors/label-too-long",
 			"Label too long", http.StatusBadRequest,
 			"label must be 128 characters or fewer")
 		return
@@ -348,7 +348,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		}
 		s.logger.Error("account key create failed", "err", err, "identifier", subject.Identifier)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-create-failed",
+			"https://api.stellarindex.io/errors/account-create-failed",
 			"Could not issue key", http.StatusInternalServerError,
 			"see X-Request-ID in server logs")
 		return
@@ -383,14 +383,14 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/unauthorized",
+			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
 			"/v1/account/keys requires an API key or SEP-10 token")
 		return
 	}
 	if s.accounts == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-store-unavailable",
+			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
@@ -401,7 +401,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("account keys list failed", "err", err,
 			"identifier", subject.Identifier)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-list-failed",
+			"https://api.stellarindex.io/errors/account-list-failed",
 			"Could not list keys", http.StatusInternalServerError,
 			"see X-Request-ID in server logs")
 		return
@@ -442,7 +442,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/unauthorized",
+			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
 			"/v1/account/keys requires an API key or SEP-10 token")
 		return
@@ -450,21 +450,21 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	keyID := r.PathValue("keyID")
 	if keyID == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-key-id",
+			"https://api.stellarindex.io/errors/missing-key-id",
 			"Missing key id", http.StatusBadRequest,
 			"path must be /v1/account/keys/{keyID}")
 		return
 	}
 	if subject.KeyID == keyID {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/cannot-revoke-self",
+			"https://api.stellarindex.io/errors/cannot-revoke-self",
 			"Can't revoke the key you're using", http.StatusConflict,
 			"authenticate with a different key (or SEP-10 token) and retry")
 		return
 	}
 	if s.accounts == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-store-unavailable",
+			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
@@ -473,7 +473,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		s.logger.Error("account keys revoke failed", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-revoke-failed",
+			"https://api.stellarindex.io/errors/account-revoke-failed",
 			"Could not revoke key", http.StatusInternalServerError,
 			"see X-Request-ID in server logs")
 		return

@@ -48,7 +48,7 @@ related:
 ```
  ┌──────────────────────────────────────────────────┐
  │  every host that runs a service or daemon:       │
- │   stellaratlas-{api,aggregator,indexer},          │
+ │   stellarindex-{api,aggregator,indexer},          │
  │   patroni, redis, haproxy, prometheus, alertmgr  │
  │                                                  │
  │   Promtail :9080  ◀── scrape systemd journal     │
@@ -99,7 +99,7 @@ switch to TSDB index with S3 backing.
 ```yaml
 clients:
   - url: http://{{ log_aggregator_host }}:3100/loki/api/v1/push
-    tenant_id: stellaratlas
+    tenant_id: stellarindex
     backoff_config:
       min_period: 500ms
       max_period: 5m
@@ -193,9 +193,9 @@ all:
     log_shippers:
       children:
         prometheus_pair: {}
-        stellaratlas_api: {}
-        stellaratlas_aggregator: {}
-        stellaratlas_indexer: {}
+        stellarindex_api: {}
+        stellarindex_aggregator: {}
+        stellarindex_indexer: {}
         haproxy_lb: {}
         redis_cluster: {}
         postgres_cluster: {}

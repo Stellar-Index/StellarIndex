@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/ratelimit"
+	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 )
 
 // Take's eval-error path is the seam between the Redis client and

@@ -7,7 +7,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // SEP41SupplyComponents is the per-token breakdown the

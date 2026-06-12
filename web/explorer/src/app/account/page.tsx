@@ -3,9 +3,9 @@ import type { Metadata } from 'next';
 import { AccountDashboard } from './AccountDashboard';
 
 export const metadata: Metadata = {
-  title: 'Account — Stellar Atlas',
+  title: 'Account — Stellar Index',
   description:
-    'Manage your Stellar Atlas account, API keys, and rate-limit budget. Magic-link sign-in — no passwords.',
+    'Manage your Stellar Index account, API keys, and rate-limit budget. Magic-link sign-in — no passwords.',
 };
 
 /**

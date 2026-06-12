@@ -12,7 +12,7 @@ server:
   # single-binary mode logs every internal `Get
   # key=collectors/{ring,scheduler,compactor,distributor,pattern-ring}`
   # poll — easily 4M lines/day, which filled syslog to 7 GB in
-  # 4 days on r1 and triggered stellaratlas_node_root_disk_warning.
+  # 4 days on r1 and triggered stellarindex_node_root_disk_warning.
   # warn keeps real errors visible while silencing the polling
   # noise. The 15-log-discipline.yml syslog cap is the safety net
   # if this regresses.

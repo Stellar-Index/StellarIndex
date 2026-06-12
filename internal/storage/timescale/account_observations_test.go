@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/accounts"
+	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
 )
 
 // TestInsertAccountObservation_RejectsEmptyAccountID — the

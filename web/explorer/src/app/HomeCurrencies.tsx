@@ -98,12 +98,12 @@ export function HomeCurrencies() {
           </Link>{' '}
           may have more luck — or check{' '}
           <a
-            href="https://status.stellaratlas.xyz"
+            href="https://status.stellarindex.io"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:no-underline"
           >
-            status.stellaratlas.xyz
+            status.stellarindex.io
           </a>{' '}
           for ongoing incidents.
         </div>

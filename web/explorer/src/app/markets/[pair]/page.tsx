@@ -6,7 +6,7 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { PairChart } from './PairChart';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -141,7 +141,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { pair } = await params;
   const decoded = decodePairSlug(pair);
-  if (!decoded) return { title: 'Pair — Stellar Atlas' };
+  if (!decoded) return { title: 'Pair — Stellar Index' };
   const baseLabel = shortAsset(decoded.base);
   const quoteLabel = shortAsset(decoded.quote);
   // Best-effort price fetch so the social-share preview reads as
@@ -162,7 +162,7 @@ export async function generateMetadata({
   // Canonical URL: the URL-encoded pair slug. Without this,
   // any case- or encoding-variant of the same pair would be
   // treated as a separate page by Google.
-  const canonical = `https://stellaratlas.xyz/markets/${encodeURIComponent(pair)}`;
+  const canonical = `https://stellarindex.io/markets/${encodeURIComponent(pair)}`;
   return {
     title,
     description,
@@ -322,19 +322,19 @@ export default async function PairPage({ params }: { params: Params }) {
         '@type': 'ListItem',
         position: 1,
         name: 'Home',
-        item: 'https://stellaratlas.xyz',
+        item: 'https://stellarindex.io',
       },
       {
         '@type': 'ListItem',
         position: 2,
         name: 'Markets',
-        item: 'https://stellaratlas.xyz/markets',
+        item: 'https://stellarindex.io/markets',
       },
       {
         '@type': 'ListItem',
         position: 3,
         name: `${baseLabel} / ${quoteLabel}`,
-        item: `https://stellaratlas.xyz/markets/${encodeURIComponent(`${base}~${quote}`)}`,
+        item: `https://stellarindex.io/markets/${encodeURIComponent(`${base}~${quote}`)}`,
       },
     ],
   };

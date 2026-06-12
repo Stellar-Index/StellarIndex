@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/supply"
+	"github.com/StellarIndex/stellar-index/internal/supply"
 )
 
 // TestInsertSupply_RejectsZeroValueStruct — the supply-package

@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_ingestion_source_stopped`
+# Runbook — `stellarindex_ingestion_source_stopped`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_ingestion_source_stopped` |
+| Alert | `stellarindex_ingestion_source_stopped` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `sum by (source) (rate(stellaratlas_source_events_total[30m])) == 0` AND `stellaratlas_source_enabled == 1` sustained 15 min.
+- `sum by (source) (rate(stellarindex_source_events_total[30m])) == 0` AND `stellarindex_source_enabled == 1` sustained 15 min.
 - Dashboard: *Ingestion → Events per source* panel shows a flat line for the offending source while other sources are still producing.
 
 The alert window is intentionally wide (30m rate × 15m sustain) to
@@ -28,7 +28,7 @@ suppress false positives on low-volume Soroban / FX sources
 swaps, Phoenix off-peak windows) — the natural emission cadence
 on these sources can exceed 5 minutes during quiet hours. Total-
 outage coverage is the separate
-`stellaratlas_ingestion_all_sources_stopped` (3-min window, P1) —
+`stellarindex_ingestion_all_sources_stopped` (3-min window, P1) —
 that one stays tight because if no source at all is emitting,
 something is broken across the whole indexer/upstream surface.
 
@@ -38,16 +38,16 @@ something is broken across the whole indexer/upstream surface.
 # Confirm which source: the alert label tells you, but dashboards
 # sometimes drop the label on flat-line queries.
 curl -s http://api:9464/metrics | \
-  grep -E "stellaratlas_source_(events_total|enabled|last_event_unix)"
+  grep -E "stellarindex_source_(events_total|enabled|last_event_unix)"
 
 # Health snapshot for every source's connection state:
-stellaratlas-ops list-cursors -config /etc/stellaratlas/config.toml
+stellarindex-ops list-cursors -config /etc/stellarindex/config.toml
 
 # Is upstream the issue? r1 doesn't run its own stellar-rpc (removed
 # 2026-04-23, see docs/operations/r1-deployment-state.md); point the
 # probe at a public endpoint to confirm the network is closing
 # ledgers and the source contract is still emitting events.
-stellaratlas-ops rpc-probe https://mainnet.sorobanrpc.com
+stellarindex-ops rpc-probe https://mainnet.sorobanrpc.com
 ```
 
 Key signals:
@@ -65,7 +65,7 @@ beyond it warrants investigation.
 
 | Source | Expected cadence (active hours) | Expected idle cap (normal silence) | First-look-when-stopped |
 | ------ | ------------------------------- | ---------------------------------- | ----------------------- |
-| `sdex` (classic) | Continuous during US/EU trading; sparse off-hours | 30 min off-hours | Hubble cross-check via `stellaratlas-ops hubble-check`; if Hubble shows trades we missed, decoder regression. |
+| `sdex` (classic) | Continuous during US/EU trading; sparse off-hours | 30 min off-hours | Hubble cross-check via `stellarindex-ops hubble-check`; if Hubble shows trades we missed, decoder regression. |
 | `soroswap` | Continuous during US/EU trading hours | 30 min off-hours | Soroban-RPC `getEvents` for the contract; if events flowing on-chain but not into us, decoder regression or cursor stuck. |
 | `phoenix` | Low cadence; off-peak windows are common | 45 min off-peak | Same as soroswap. Phoenix's 8-event-per-swap shape (CLAUDE.md surprise) means partial decode-error storms can mimic source-stopped. |
 | `comet` | Pool-activity-driven; sparse | 45 min | Verify the contract address matches the operator-watched pool; Comet's shared `("POOL", <event>)` topic can attract events from unrelated Balancer-v1 deploys. |
@@ -88,14 +88,14 @@ but doesn't catch every off-peak case for the longer-cadence sources.
 
 ## Mitigation
 
-- [ ] Step 1 — restart the indexer if this is isolated to one or a few sources and the broader host/process is healthy. The indexer runs as `stellaratlas-indexer.service` on the indexer hosts (per the `archival-node` ansible role; ADR-0008).
+- [ ] Step 1 — restart the indexer if this is isolated to one or a few sources and the broader host/process is healthy. The indexer runs as `stellarindex-indexer.service` on the indexer hosts (per the `archival-node` ansible role; ADR-0008).
   ```sh
-  ssh root@indexer-01 "systemctl restart stellaratlas-indexer && \
-    systemctl status stellaratlas-indexer --no-pager | head -10"
+  ssh root@indexer-01 "systemctl restart stellarindex-indexer && \
+    systemctl status stellarindex-indexer --no-pager | head -10"
   ```
 - [ ] Step 2 — if events flow for 1-2 min post-restart then stop again: the source is probably legitimately idle, misconfigured, or affected by upstream schema drift. Compare its recent on-chain/off-chain activity to expectations before treating it as a dead connector.
 - [ ] Step 3 — if decode-errors is also firing: the contract's event shape changed. Follow `decode-errors.md` Step 3 (update decoder + backfill).
-- [ ] Verification: `rate(stellaratlas_source_events_total{source=...}[5m]) > 0` within 2 min of mitigation.
+- [ ] Verification: `rate(stellarindex_source_events_total{source=...}[5m]) > 0` within 2 min of mitigation.
 
 ## Known false-positive patterns
 

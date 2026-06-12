@@ -152,7 +152,7 @@ type rawNetwork struct {
 }
 
 // LoadEmbedded parses the binary-embedded seed catalogue. Used by
-// the production wiring in cmd/stellaratlas-api/main.go.
+// the production wiring in cmd/stellarindex-api/main.go.
 func LoadEmbedded() (*Catalogue, error) {
 	return LoadFromBytes(seedYAML)
 }

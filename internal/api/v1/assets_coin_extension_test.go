@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 )
 
 // stubCoinsReaderExt implements v1.CoinsReader for the coin-extension

@@ -1,4 +1,4 @@
-// Package client is the official Go SDK for the Stellar Atlas
+// Package client is the official Go SDK for the Stellar Index
 // public API.
 //
 // # Stability
@@ -16,12 +16,12 @@
 //	import (
 //	    "context"
 //	    "fmt"
-//	    "github.com/StellarAtlas/stellar-atlas/pkg/client"
+//	    "github.com/StellarIndex/stellar-index/pkg/client"
 //	)
 //
 //	func main() {
 //	    c := client.New(client.Options{
-//	        BaseURL: "https://api.stellaratlas.xyz",
+//	        BaseURL: "https://api.stellarindex.io",
 //	        APIKey:  "rek_…",  // optional; anonymous works at low rate-limit
 //	    })
 //	    p, err := c.Price(context.Background(), client.PriceQuery{
@@ -103,5 +103,5 @@
 // runs a dashboard polling multiple regions. The Cursors method
 // exposes ingestion lag for the same reason.
 //
-// [ADR-0005]: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/adr/0005-monorepo.md
+// [ADR-0005]: https://github.com/StellarIndex/stellar-index/blob/main/docs/adr/0005-monorepo.md
 package client

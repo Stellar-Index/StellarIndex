@@ -25,7 +25,7 @@ test whether the team correctly distinguishes degraded-vs-down.
 
 Read aloud at drill setup.
 
-- All Stellar Atlas services up. SLA probe metrics within target.
+- All Stellar Index services up. SLA probe metrics within target.
   Redis Sentinel cluster (`cache-01` master, `cache-02` +
   `cache-03` replicas) all reachable; `redis_exporter` shows
   `up=1` on all three.
@@ -59,7 +59,7 @@ participants to narrate.
 | T+ | Beat |
 | --- | --- |
 | 0:00 | `redis_master_unreachable` fires (Sentinel can't reach `cache-01` for 10 s). |
-| 0:30 | `redis_failover_in_progress` fires (Sentinel promoting `cache-02`). API-side connection-pool errors spike in `stellaratlas_ratelimit_fail_open_total`. |
+| 0:30 | `redis_failover_in_progress` fires (Sentinel promoting `cache-02`). API-side connection-pool errors spike in `stellarindex_ratelimit_fail_open_total`. |
 | 1:00 | `cache-02` accepts writes; replicas re-attach. `flags.frozen` paths re-enable as the cache catches up. |
 | 2:00 | A customer (Freighter) DMs: "we got 503s on a few `/v1/price` calls, are you OK?" |
 | 5:00 | API metrics return to baseline, BUT `flags.frozen` is firing on a pair that wasn't frozen pre-failover — was the marker stale data? Or did the aggregator legitimately freeze it during the outage? |
@@ -85,7 +85,7 @@ sequence.
 
 - Confirm via `/v1/readyz` that the `redis` check is now back
   to `status: ok` after a brief flap.
-- Confirm via `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL get-master-addr-by-name stellaratlas-r1-cache`
+- Confirm via `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL get-master-addr-by-name stellarindex-r1-cache`
   that the new master is correctly promoted. (F-1273,
   2026-05-13: the `-a "$REDIS_PASSWORD"` is required since wave 106
   added `requirepass` to the Sentinel listener; earlier versions
@@ -105,7 +105,7 @@ sequence.
 - `flags.frozen` markers re-populated for any pair that the
   aggregator actively re-flagged during the outage. Spot-check
   one against `redis-cli GET freeze:<asset>:<quote>`.
-- Run the canary: `curl -sS https://api.stellaratlas.xyz/v1/price?asset=native | jq '.flags'`.
+- Run the canary: `curl -sS https://api.stellarindex.io/v1/price?asset=native | jq '.flags'`.
 
 ### Within 1 hour — communicate
 

@@ -157,7 +157,7 @@ Drawing the generic checklist into Aquarius-specific tripwires:
 
 ## WASM timeline
 
-Output from `stellaratlas-ops wasm-history` for the **router**
+Output from `stellarindex-ops wasm-history` for the **router**
 (CBQDHNBF...) over the post-Soroban window — full archive on r1,
 walked 2026-04-29:
 

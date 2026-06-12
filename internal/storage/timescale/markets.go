@@ -10,8 +10,8 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // Market is one distinct (base, quote) pair summary with activity

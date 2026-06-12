@@ -1,6 +1,6 @@
 # Metrics Reference
 
-Every metric the Stellar Atlas binaries emit, with its labels, type,
+Every metric the Stellar Index binaries emit, with its labels, type,
 and purpose. Lint `scripts/ci/lint-docs.sh` section 3 enforces
 round-trip: any metric declared in `internal/obs/metrics.go` MUST
 appear here, and vice versa.
@@ -34,7 +34,7 @@ Histogram, labels `method`, `route`.
 Handler latency including time-in-middleware. Buckets 1ms – 10s with
 extra resolution at the 200ms / 500ms SLO boundaries.
 
-### `stellaratlas_ingest_gap_ledgers`
+### `stellarindex_ingest_gap_ledgers`
 
 Gauge, labels `source`, `table`.
 
@@ -56,27 +56,27 @@ trades-table sources `sdex` / `soroswap` / `phoenix` / `comet` /
 Soroban projections, the classic SDEX path, and the off-chain
 oracle tables — NOT `soroban-events` alone.
 
-### `stellaratlas_ingest_gap_count`
+### `stellarindex_ingest_gap_count`
 
 Gauge, labels `source`, `table`.
 
 Number of contiguous gaps per (`source`, `table`) at the
 detector's most recent cycle. A single 100K-ledger gap and 100
 ten-ledger gaps both report ≈100K in
-`stellaratlas_ingest_gap_ledgers` but very different shapes; chart
+`stellarindex_ingest_gap_ledgers` but very different shapes; chart
 this alongside the size gauge to distinguish "one big halt"
 (cascade signature) from "many small drops" (flaky-write pattern).
 
-### `stellaratlas_ingest_gap_max_size_ledgers`
+### `stellarindex_ingest_gap_max_size_ledgers`
 
 Gauge, labels `source`, `table`.
 
 Size of the largest contiguous gap per (`source`, `table`) at the
 detector's most recent cycle. Drives the
-`stellaratlas_ingest_gap_detected` P1 alert (fires when > 1000
+`stellarindex_ingest_gap_detected` P1 alert (fires when > 1000
 sustained 15 min).
 
-### `stellaratlas_ingest_source_distinct_ledgers`
+### `stellarindex_ingest_source_distinct_ledgers`
 
 Gauge, labels `source`, `table`.
 
@@ -85,18 +85,18 @@ most recent gap-detector cycle. The **numerator** of the ADR-0031
 data-derived density signal:
 
 ```
-density(source) = stellaratlas_ingest_source_distinct_ledgers / (tip - genesis + 1)
+density(source) = stellarindex_ingest_source_distinct_ledgers / (tip - genesis + 1)
 ```
 
 Where `tip` comes from
-`stellaratlas_ingest_gap_detector_tip_ledger` and `genesis` is the
+`stellarindex_ingest_gap_detector_tip_ledger` and `genesis` is the
 per-source first-deploy ledger (hard-coded in the diagnostic
 handler's source-genesis map). Dense sources (SDEX, Soroswap)
 approach the [genesis, tip] span; sparse-by-design sources (Blend
 auctions, CCTP) are naturally lower because the contract doesn't
 emit per ledger.
 
-### `stellaratlas_ingest_gap_detector_tip_ledger`
+### `stellarindex_ingest_gap_detector_tip_ledger`
 
 Gauge (no labels).
 
@@ -106,17 +106,17 @@ ADR-0031 consumers subtract per-source genesis from this to
 compute the density denominator. One gauge for the whole detector
 because every target uses the same tip in the same cycle.
 
-### `stellaratlas_ingest_gap_detector_runs_total`
+### `stellarindex_ingest_gap_detector_runs_total`
 
 Counter, labels `source`, `table`, `outcome`.
 
 Periodic gap-detector cycle outcomes — `ok` on a clean scan,
 `error` on a transient Postgres / timeout failure. Operators
 chart `rate({outcome="ok"}[5m])` to confirm the worker is alive;
-the `stellaratlas_ingest_gap_detector_silent` ticket-tier alert
+the `stellarindex_ingest_gap_detector_silent` ticket-tier alert
 fires when this rate goes to zero.
 
-### `stellaratlas_ingest_gap_detector_duration_seconds`
+### `stellarindex_ingest_gap_detector_duration_seconds`
 
 Histogram, labels `source`, `table`, `outcome`.
 
@@ -126,25 +126,25 @@ scan against the large hypertables is slow on r1 — the
 ledgers, which is why the buckets extend to 600 s and the scan
 timeout was raised past the original 60 s cap.
 
-### `stellaratlas_projector_lag_ledgers`
+### `stellarindex_projector_lag_ledgers`
 
 Gauge, labels `source`.
 
 Distance (in ledgers) between the projector's per-source cursor
 and the live ledgerstream tip at the end of the last cycle. 0 =
-caught up. Drives the `stellaratlas_projector_lag_high` alert (P3
+caught up. Drives the `stellarindex_projector_lag_high` alert (P3
 ticket: > 256 ledgers sustained 10 min). See ADR-0032.
 
-### `stellaratlas_projector_runs_total`
+### `stellarindex_projector_runs_total`
 
 Counter, labels `source`, `outcome`.
 
 Per-cycle outcome counter. Outcomes: `ok` (cursor advanced),
 `idle` (caught up, no rows in scan range), `error` (scan / cursor
 read / cursor write failed; cursor not advanced — retried next
-cycle). Drives the `stellaratlas_projector_error_rate_high` alert.
+cycle). Drives the `stellarindex_projector_error_rate_high` alert.
 
-### `stellaratlas_projector_events_decoded_total`
+### `stellarindex_projector_events_decoded_total`
 
 Counter, labels `source`, `outcome`.
 
@@ -153,7 +153,7 @@ Outcomes: `ok` (decode succeeded) and `decode_error` (Reconstruct
 or Decoder.Decode returned non-nil; row skipped, cursor still
 advances).
 
-### `stellaratlas_projector_cycle_duration_seconds`
+### `stellarindex_projector_cycle_duration_seconds`
 
 Histogram, labels `source`.
 
@@ -175,7 +175,7 @@ counts all requests including errors. Added in 2026-05-28 to close
 F-0105 (audit 2026-05-26) — pre-this-PR the SLO ratio reported a
 5ms 500 as a "good fast" response.
 
-### `stellaratlas_api_cache_ops_total`
+### `stellarindex_api_cache_ops_total`
 
 Counter, labels `cache`, `op`, `result`.
 
@@ -191,14 +191,14 @@ callers that piggy-backed on an in-progress upstream call) or
 Use to detect prewarm-key drift: when a prewarm goroutine warms
 key A but the handler looks up key B, `result="miss"` rate
 stays high even though the prewarm cycle is running. Suggested
-alert: `rate(stellaratlas_api_cache_ops_total{result="miss"}[5m])
-/ rate(stellaratlas_api_cache_ops_total[5m]) > 0.5` sustained
+alert: `rate(stellarindex_api_cache_ops_total{result="miss"}[5m])
+/ rate(stellarindex_api_cache_ops_total[5m]) > 0.5` sustained
 for 10 min on any (cache, op) pair — for hot ops the prewarm
 should keep miss rate under 10%.
 
 ## Ingestion (indexer binary)
 
-### `stellaratlas_source_events_total`
+### `stellarindex_source_events_total`
 
 Counter, label `source`.
 
@@ -207,7 +207,7 @@ source. Emitted from `internal/pipeline/sink.go`, not the retired
 legacy orchestrator path. Zero rate + `source_enabled=1` backs the
 `source-stopped` alert.
 
-### `stellaratlas_source_enabled`
+### `stellarindex_source_enabled`
 
 Gauge, label `source`.
 
@@ -216,7 +216,7 @@ Gauge, label `source`.
 qualify source-level alerts so intentionally disabled sources do not
 page.
 
-### `stellaratlas_source_lag_ledgers`
+### `stellarindex_source_lag_ledgers`
 
 Gauge, label `source`.
 
@@ -225,41 +225,41 @@ current `ledgerstream -> dispatcher` indexer does not emit this gauge,
 so no live alert should depend on it until a replacement per-source
 lag signal exists.
 
-### `stellaratlas_source_last_event_unix`
+### `stellarindex_source_last_event_unix`
 
 Gauge, label `source`. Unix-seconds timestamp of the most recent
 event dispatched to the sink. Dashboards use it for a last-seen clock.
 
-### `stellaratlas_source_last_insert_unix`
+### `stellarindex_source_last_insert_unix`
 
 Gauge, label `source`. Wall-clock Unix-seconds timestamp of the
 most recent SUCCESSFULLY-inserted trade row per source (i.e.
 `Store.InsertTrade` returned with `rowsInserted == 1`, not
 `ON CONFLICT DO NOTHING`).
 
-Pairs with `stellaratlas_source_last_event_unix` to expose the
+Pairs with `stellarindex_source_last_event_unix` to expose the
 stuck-cursor / duplicate-flood pattern: when the dispatcher matches
 events (last_event climbs) but every insert hits the ON CONFLICT
 short-circuit (last_insert flat-lines), the gap between the two
 grows. Direct alert template:
 
-    time() - stellaratlas_source_last_insert_unix{source="sdex"} > 3600
+    time() - stellarindex_source_last_insert_unix{source="sdex"} > 3600
 
 catches the live r1 2026-05-28 pattern (157 SDEX insert-attempts/
 min, every one a duplicate, max(ts) 11 h old) within an hour of
-recurrence. Complements `stellaratlas_trade_insert_outcome_total`'s
+recurrence. Complements `stellarindex_trade_insert_outcome_total`'s
 rate-shape signal with a timestamp-shape signal that doesn't
 require sustained traffic to fire.
 
-### `stellaratlas_source_matched_events_total`
+### `stellarindex_source_matched_events_total`
 
 Counter, label `source`.
 
 Per-source count of inputs (events, contract calls, entry changes,
 classic ops) the decoder's `Matches()` claimed. The DENOMINATOR of
 decoder error-rate — chart
-`rate(stellaratlas_source_decode_errors_total[5m]) /
-rate(stellaratlas_source_matched_events_total[5m])` per source.
+`rate(stellarindex_source_decode_errors_total[5m]) /
+rate(stellarindex_source_matched_events_total[5m])` per source.
 Bumped pre-Decode so a decoder that matches then errors still
 counts; error-rate stays interpretable (errors / attempted) rather
 than tautological (errors / successful).
@@ -270,7 +270,7 @@ Distinct from `source_events_total` — that's downstream of decoding
 producing zero outputs would register here but not on
 `source_events_total`.
 
-### `stellaratlas_source_decode_errors_total`
+### `stellarindex_source_decode_errors_total`
 
 Counter, label `source`.
 
@@ -279,9 +279,9 @@ canonical-invariant violations. Distinct from `orphan_events`
 (events were well-formed but partnerless) and `insert_errors`
 (decoded fine but persistence broke). Emitted from dispatcher stats
 deltas after each processed ledger. Denominator is
-`stellaratlas_source_matched_events_total`.
+`stellarindex_source_matched_events_total`.
 
-### `stellaratlas_source_unknown_symbols_total`
+### `stellarindex_source_unknown_symbols_total`
 
 Counter, label `source`.
 
@@ -295,7 +295,7 @@ into mixed-asset batches the same way. A sustained non-zero rate
 means an upstream oracle expanded its feed set and our allow-list
 needs an amendment. F-1234 (codex audit-2026-05-12).
 
-### `stellaratlas_source_orphan_events_total`
+### `stellarindex_source_orphan_events_total`
 
 Counter, label `source`.
 
@@ -306,7 +306,7 @@ Aquarius / Reflector don't emit orphans — they're 1-event-per-
 observation. Emitted from decoder-maintained orphan counters via the
 live dispatcher path.
 
-### `stellaratlas_external_poller_polls_total`
+### `stellarindex_external_poller_polls_total`
 
 Counter, labels `source`, `outcome` ∈ {success, error, skipped}.
 
@@ -319,7 +319,7 @@ Bitstamp). The `skipped` outcome covers the per-poller cooldown path
 so absence-of-success alerting isn't masked by the poller silently
 respecting a backoff window.
 
-### `stellaratlas_cex_stream_disconnect_total`
+### `stellarindex_cex_stream_disconnect_total`
 
 Counter, labels `source`, `reason` ∈ {reset, broken_pipe, timeout, dial, server_requested, other}.
 
@@ -328,7 +328,7 @@ the Binance and Bitstamp streaming sources. `reset` is the most common
 on r1 (Binance proactively recycles connections every 6–12 min); a
 sustained rate of `dial` or `timeout` means the venue is unreachable
 or our keepalive isn't recovering the socket. Combined with
-`stellaratlas_external_poller_last_success_unix` (when the streamer
+`stellarindex_external_poller_last_success_unix` (when the streamer
 emits trades the runner forwards to the poller's success channel),
 operators can distinguish "stream churning but data flowing" from
 "stream stuck and we're losing the venue". F-0029 (audit-2026-05-27)
@@ -336,19 +336,19 @@ fix landed alongside this metric — bounded 5–60 s exponential backoff
 with a healthy-connection reset path, plus TCP keepalive on the
 dialer.
 
-### `stellaratlas_external_poller_last_success_unix`
+### `stellarindex_external_poller_last_success_unix`
 
 Gauge, label `source`.
 
 UNIX-seconds timestamp of the most recent successful `PollOnce` per
 external source. Zero / unset when the poller has never succeeded
 since process start. Companion to
-`stellaratlas_external_poller_polls_total`: a gauge makes "data is
+`stellarindex_external_poller_polls_total`: a gauge makes "data is
 stale by N minutes" expressible as `time() - <gauge>` rather than
 multi-window rate math, which simplifies alerting (see
-`stellaratlas_external_poller_stale`).
+`stellarindex_external_poller_stale`).
 
-### `stellaratlas_discovery_dropped_hits_total`
+### `stellarindex_discovery_dropped_hits_total`
 
 Counter, no labels.
 
@@ -358,11 +358,11 @@ sampling, not only at shutdown, so operators can alert on sustained
 loss while the process is still running. Any non-zero increase means
 discovery coverage is degrading under recorder pressure; this is
 best-effort data loss, not a backpressure signal on the main ingest
-path. With in-process dedup (per `stellaratlas_discovery_skipped_hits_total`)
+path. With in-process dedup (per `stellarindex_discovery_skipped_hits_total`)
 healthy steady-state should never drop — a non-zero rate typically
 means a Postgres outage or cold-start burst.
 
-### `stellaratlas_discovery_skipped_hits_total`
+### `stellarindex_discovery_skipped_hits_total`
 
 Counter, no labels.
 
@@ -376,7 +376,7 @@ capacity-planning visibility, not for alerting. A process restart
 resets the dedup set; the first push for any key after restart still
 records (no-op upsert if already in DB).
 
-### `stellaratlas_source_insert_errors_total`
+### `stellarindex_source_insert_errors_total`
 
 Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` / `unhandled`).
 
@@ -390,7 +390,7 @@ Events that failed to persist to the store. `panic` kind flags a
 recovered panic in the event-sink handler. A sustained rate signals
 storage-layer distress; the `insert-errors` alert escalates.
 
-### `stellaratlas_cursor_last_ledger`
+### `stellarindex_cursor_last_ledger`
 
 Gauge, label `source`.
 
@@ -399,7 +399,7 @@ live ledgerstream pipeline, updated after each successful cursor
 upsert. `cursor-stuck` alert fires when `increase(...[5m]) == 0` with
 `source_enabled=1`.
 
-### `stellaratlas_trade_inserts_total`
+### `stellarindex_trade_inserts_total`
 
 Counter, labels `source`, `usd_volume_populated` (`yes` | `no`).
 
@@ -410,10 +410,10 @@ Operators flipping on `[trades].usd_pegged_classic_assets` use this
 to verify their allow-list actually covers what the indexer is
 seeing. Counts attempts; the trades hypertable's `ON CONFLICT DO
 NOTHING` dedupe is invisible to this counter — pair with
-[`stellaratlas_trade_insert_outcome_total`](#stellaratlas_trade_insert_outcome_total)
+[`stellarindex_trade_insert_outcome_total`](#stellarindex_trade_insert_outcome_total)
 below to see new-vs-duplicate.
 
-### `stellaratlas_trade_insert_outcome_total`
+### `stellarindex_trade_insert_outcome_total`
 
 Counter, labels `source`, `outcome` (`new` | `duplicate`).
 
@@ -429,7 +429,7 @@ a cursor-replay loop or stuck-tip pattern produces a fast-growing
 to catch the live r1-2026-05-28 signature (157 SDEX insert
 attempts/min while the hypertable's `max(ts)` was 11 h old).
 
-### `stellaratlas_stream_publish_total`
+### `stellarindex_stream_publish_total`
 
 Counter, label `stream` (currently only `price_stream`).
 
@@ -444,7 +444,7 @@ counts to verify the closed-bucket fanout path: steady publishes
 with zero subscribers means clients aren't connecting; zero
 publishes with active subscribers means the producer is starved.
 
-### `stellaratlas_ch_live_sink_ledgers_total`
+### `stellarindex_ch_live_sink_ledgers_total`
 
 Counter, label `outcome` (`written` | `buffered` | `dropped` |
 `errored`).
@@ -474,7 +474,7 @@ the per-tick delta.
 
 ## Oracle layer (indexer binary, reflector + future sources)
 
-### `stellaratlas_oracle_last_update_unix`
+### `stellarindex_oracle_last_update_unix`
 
 Gauge, labels `source`, `asset`.
 
@@ -482,7 +482,7 @@ Unix-seconds timestamp of the most recent oracle observation for the
 (source, asset) pair. `oracle-stale` alert compares to
 `oracle_resolution_seconds`.
 
-### `stellaratlas_oracle_resolution_seconds`
+### `stellarindex_oracle_resolution_seconds`
 
 Gauge, label `source`.
 
@@ -493,7 +493,7 @@ the rule.
 
 ## API layer (api binary)
 
-### `stellaratlas_price_staleness_seconds`
+### `stellarindex_price_staleness_seconds`
 
 Gauge, label `asset`.
 
@@ -502,7 +502,7 @@ seconds. Updated per request so a popular asset keeps a fresh
 reading; unqueried assets stop updating and the `price-stale` alert
 uses `change()` to distinguish "no-update" from "updated-but-stale".
 
-### `stellaratlas_sep1_cache_ops_total`
+### `stellarindex_sep1_cache_ops_total`
 
 Counter, label `result` (`hit` / `miss` / `upstream_error`).
 
@@ -511,7 +511,7 @@ cache effectiveness and `upstream_error` rate for issuer-side
 outages. `upstream_error` deliberately doesn't cache — a 404 from
 an issuer is a real signal, typically transient.
 
-### `stellaratlas_ratelimit_fail_open_total`
+### `stellarindex_ratelimit_fail_open_total`
 
 Counter, no labels.
 
@@ -520,7 +520,7 @@ errored. The middleware fails open deliberately (Redis outage
 shouldn't take down the API); this metric gives ops a quantitative
 signal that correlates with `redis` readyz turning red.
 
-### `stellaratlas_aggregator_ticks_total`
+### `stellarindex_aggregator_ticks_total`
 
 Counter, label `outcome` (`ok` / `error`).
 
@@ -530,7 +530,7 @@ with all-pair-success records as `ok`. Per-pair errors still surface
 as soft warnings; this counter is the tick-level rollup operators
 watch for sustained instability.
 
-### `stellaratlas_aggregator_vwap_writes_total`
+### `stellarindex_aggregator_vwap_writes_total`
 
 Counter, no labels.
 
@@ -540,7 +540,7 @@ and the per-pair lens lives in the Redis key namespace
 (`vwap:<base>:<quote>:<window>`). Operators alert on a sustained
 zero-rate as the "aggregator is silent" signal.
 
-### `stellaratlas_aggregator_vwap_cache_write_errors_total`
+### `stellarindex_aggregator_vwap_cache_write_errors_total`
 
 Counter, no labels.
 
@@ -558,7 +558,7 @@ was 404s on rewritten pairs because `flags.stale` was not flipped
 publish). Operators alert on `rate(...[5m]) > 0` for ≥ 2 min as
 the upstream-of-stale signal.
 
-### `stellaratlas_aggregator_empty_windows_total`
+### `stellarindex_aggregator_empty_windows_total`
 
 Counter, no labels.
 
@@ -569,7 +569,7 @@ coverage gaps without per-pair cardinality cost — a sustained
 all-empty signal usually means the configured pair set has
 out-grown the live data.
 
-### `stellaratlas_aggregator_window_truncated_total`
+### `stellarindex_aggregator_window_truncated_total`
 
 Counter, no labels.
 
@@ -579,13 +579,13 @@ per-query cap, so the VWAP was computed over only the **newest**
 `cap` of them (F-1319; the truncation keeps the most-recent slice, not
 the oldest). A non-zero rate means a busy pair/window is being
 aggregated over a partial slice. Chart `rate(...)` against
-`stellaratlas_aggregator_vwap_writes_total`; sustained firing means the
+`stellarindex_aggregator_vwap_writes_total`; sustained firing means the
 cap (or the window) needs raising, or that window should move to a
 SQL-side aggregate. Unlabelled to keep cardinality bounded — the
 per-pair lens lives in the WARN log line the orchestrator emits
 alongside each increment.
 
-### `stellaratlas_aggregator_stream_publish_total`
+### `stellarindex_aggregator_stream_publish_total`
 
 Counter, label `outcome` (`ok` / `error`).
 
@@ -599,7 +599,7 @@ fan-out. `outcome="error"` is best-effort failure (publish
 errored; the next tick retries; the VWAP cache write itself
 is unaffected).
 
-### `stellaratlas_api_stream_subscribe_total`
+### `stellarindex_api_stream_subscribe_total`
 
 Counter, label `outcome` (`ok` / `decode_error` / `malformed`).
 
@@ -614,7 +614,7 @@ Publisher and this Subscriber — investigate if non-zero).
 valid topic to route to; message dropped). All paths log; only
 the `ok` path forwards.
 
-### `stellaratlas_api_cors_decisions_total`
+### `stellarindex_api_cors_decisions_total`
 
 Counter, label `outcome` (`no_origin` / `allowed_origin` /
 `allowed_wildcard` / `denied`).
@@ -631,10 +631,10 @@ boot then drifts out of memory. This counter is the per-request
 companion — operators dashboard cross-origin traffic patterns and
 alert when a wildcard policy starts handling real cross-origin
 traffic in production (the silent failure mode of
-`STELLARATLAS_ALLOWED_ORIGINS=*` slipping into prod with
+`STELLARINDEX_ALLOWED_ORIGINS=*` slipping into prod with
 credentialed auth_mode). F-1244.
 
-### `stellaratlas_customer_webhook_delivery_attempts_total`
+### `stellarindex_customer_webhook_delivery_attempts_total`
 
 Counter, label `outcome` (`delivered` / `server_error` /
 `client_error` / `exhausted` / `network_error` / `webhook_missing` /
@@ -664,7 +664,7 @@ rate(...{outcome="exhausted"}[1h]) > 0
 
 F-1270 (audit-2026-05-12).
 
-### `stellaratlas_aggregator_dropped_trades_total`
+### `stellarindex_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).
 
@@ -676,7 +676,7 @@ registered). `outlier` = removed by the σ-threshold filter
 mis-registered in `external.Registry`; a spike in `outlier` is
 usually a market-distress event flooding the window with anomalies.
 
-### `stellaratlas_aggregator_dropped_windows_total`
+### `stellarindex_aggregator_dropped_windows_total`
 
 Counter, label `reason` (`min_usd_volume`).
 
@@ -692,7 +692,7 @@ threshold is mis-tuned.
 
 ## Supply derivation (aggregator binary)
 
-### `stellaratlas_supply_cross_check_divergence_stroops`
+### `stellarindex_supply_cross_check_divergence_stroops`
 
 Gauge, label `classic_key` (`CODE:ISSUER`).
 
@@ -701,10 +701,10 @@ total_supply (ledger-entry sum) and its SAC-wrapped Algorithm 3
 total_supply (SEP-41 event sum). Per ADR-0011 the two MUST agree
 within 1 stroop because both algorithms observe the same underlying
 state. Drives the
-[`stellaratlas_supply_cross_check_divergence`](../../operations/runbooks/supply-cross-check-divergence.md)
+[`stellarindex_supply_cross_check_divergence`](../../operations/runbooks/supply-cross-check-divergence.md)
 alert when > 1.
 
-### `stellaratlas_supply_cross_check_total`
+### `stellarindex_supply_cross_check_total`
 
 Counter, label `outcome` (`within` / `over`).
 
@@ -715,7 +715,7 @@ the gauge — a flat gauge with zero counter increments means the
 orchestrator stopped invoking the cross-check, not that everything's
 healthy.
 
-### `stellaratlas_aggregator_triangulations_total`
+### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /
 `redis_error`).
@@ -728,7 +728,7 @@ entries when a leg's window was empty this tick. Sustained
 upstream regression worth investigating (Redis blip, malformed
 cached value).
 
-### `stellaratlas_aggregator_fx_snap_fallback_total`
+### `stellarindex_aggregator_fx_snap_fallback_total`
 
 Counter, label `leg` (canonical pair string of the FX leg, e.g.
 `fiat:USD/fiat:EUR`).
@@ -747,7 +747,7 @@ typically a single-digit number of FX legs across all chains. Sustained
 in `deploy/monitoring/rules/aggregator.yml` fires at 30m sustained
 fallback dominance.
 
-### `stellaratlas_divergence_refresh_total`
+### `stellarindex_divergence_refresh_total`
 
 Counter, label `outcome` (`ok` / `no_vwap` / `parse_error` /
 `refresh_error`).
@@ -765,9 +765,9 @@ and writes the result to `div:<asset>` in Redis. The API's
 (no fresh VWAP to compare against). Sustained `refresh_error` means
 external references are unreachable — `flags.divergence_warning`
 goes stale across the API surface; alert on a sustained rate via
-`stellaratlas_divergence_refresh_error_dominant` (deploy/monitoring/rules/aggregator.yml).
+`stellarindex_divergence_refresh_error_dominant` (deploy/monitoring/rules/aggregator.yml).
 
-### `stellaratlas_aggregator_baseline_refresh_total`
+### `stellarindex_aggregator_baseline_refresh_total`
 
 Counter, label `outcome` (`ok` / `not_enough_samples` / `read_error` /
 `write_error`).
@@ -784,7 +784,7 @@ factor instead of using a per-asset baseline. Sustained `read_error`
 or `write_error` rates indicate the storage layer needs investigation
 (prices_1m read failing or volatility_baseline_1m write conflict).
 
-### `stellaratlas_aggregator_supply_refresh_total`
+### `stellarindex_aggregator_supply_refresh_total`
 
 Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
 `no_ledger` / `no_observation` / `compute_error` / `write_error`).
@@ -816,7 +816,7 @@ The `asset_key` label lets operators chart per-asset bootstrap
 progress + isolate failure modes per asset rather than chasing
 a single aggregate signal across the watched-set.
 
-### `stellaratlas_aggregator_confidence_compute_total`
+### `stellarindex_aggregator_confidence_compute_total`
 
 Counter, label `outcome` (`ok` / `skipped` / `baseline_missing` /
 `marshal_error` / `write_error`).
@@ -836,7 +836,7 @@ back to bootstrap. `ok` should be the dominant value in steady state.
 `marshal_error` / `write_error` indicate the JSON encoder or Redis
 itself misbehaved — both should be flat-zero in healthy operation.
 
-### `stellaratlas_anomaly_freeze_engaged_total`
+### `stellarindex_anomaly_freeze_engaged_total`
 
 Counter, label `class` (`stablecoin` / `treasury` / `crypto` /
 `governance` / `default`).
@@ -852,19 +852,19 @@ Redis marker JSON (deviation_pct, reason, frozen_at) — labelled by
 class only here so cardinality stays bound to the small AssetClass
 enum.
 
-### `stellaratlas_anomaly_freeze_recovered_total`
+### `stellarindex_anomaly_freeze_recovered_total`
 
 Counter, no labels.
 
 Freeze rows the recovery worker closed (`MarkRecovered` stamped
 `recovered_at` on the durable `freeze_events` row after the Redis
 marker TTL elapsed). Steady-state rate trails
-`stellaratlas_anomaly_freeze_engaged_total` by the freeze TTL plus
+`stellarindex_anomaly_freeze_engaged_total` by the freeze TTL plus
 the recovery-worker poll interval (default 60s). A persistent gap
 between the two indicates the recovery worker is broken — see the
 [freeze-recovery-stalled runbook](../../operations/runbooks/freeze-recovery-stalled.md).
 
-### `stellaratlas_anomaly_freeze_recovery_sweeps_total`
+### `stellarindex_anomaly_freeze_recovery_sweeps_total`
 
 Counter, label `outcome` (`ok` / `partial` / `error`).
 
@@ -875,9 +875,9 @@ issue) but the rest of the sweep completed. Sustained non-`ok`
 indicates an upstream infrastructure problem; the recovery worker
 itself retries on the next tick.
 
-## verify-archive (stellaratlas-ops one-shot)
+## verify-archive (stellarindex-ops one-shot)
 
-Emitted by `stellaratlas-ops verify-archive` when the operator
+Emitted by `stellarindex-ops verify-archive` when the operator
 passes `-metrics-listen ADDR`. One-shot diagnostic command, but the
 run can take hours on full pubnet sweeps — live metrics let
 operators dashboard the bottleneck during the run rather than
@@ -887,7 +887,7 @@ All vectors labelled by `chunk_idx` (decimal string) so a parallel
 run with `-workers 8` produces per-chunk series. Cardinality bound
 by the `-workers` cap (currently `[1, 16]`).
 
-### `stellaratlas_verify_archive_ledgers_verified_total`
+### `stellarindex_verify_archive_ledgers_verified_total`
 
 Counter, label `chunk_idx`.
 
@@ -895,7 +895,7 @@ Ledgers walked + verified per chunk. Rate over time gives ledgers/sec
 per chunk — primary signal for spotting a stalled chunk versus a
 slow one.
 
-### `stellaratlas_verify_archive_current_ledger`
+### `stellarindex_verify_archive_current_ledger`
 
 Gauge, label `chunk_idx`.
 
@@ -904,7 +904,7 @@ the chunk's `[from, to]` range (operator-known) gives a
 percent-complete view; together across chunks gives a
 ledger-distance-fan picture of leading vs trailing chunks.
 
-### `stellaratlas_verify_archive_checkpoints_total`
+### `stellarindex_verify_archive_checkpoints_total`
 
 Counter, labels `chunk_idx` + `outcome` (`matched` / `missed`).
 
@@ -912,7 +912,7 @@ Tier B checkpoint outcomes per chunk. `missed` = archive file
 absent (warning, or hard fail under `-fail-on-missed`); `matched` =
 hash-equal proof.
 
-### `stellaratlas_verify_archive_mismatches_total`
+### `stellarindex_verify_archive_mismatches_total`
 
 Counter, labels `chunk_idx` + `reason` (`chain` / `sequence` /
 `checkpoint`).
@@ -923,7 +923,7 @@ dashboards can distinguish "mismatch fired and the run aborted at
 second X" from "chunk aborted for an unrelated reason (canceled
 context)".
 
-### `stellaratlas_anomaly_freeze_recovery_sweep_duration_seconds`
+### `stellarindex_anomaly_freeze_recovery_sweep_duration_seconds`
 
 Histogram, label `outcome` (matches the `_sweeps_total` counter:
 `ok` / `partial` / `error`).
@@ -944,7 +944,7 @@ rows the operator UI shows as permanently firing.
 
 Buckets span 10 ms → 30 s. No alert wired today.
 
-### `stellaratlas_aggregator_supply_refresh_duration_seconds`
+### `stellarindex_aggregator_supply_refresh_duration_seconds`
 
 Histogram, label `outcome` (matches the per-asset_key counter's
 outcome enum: `ok` / `no_ledger` / `no_observation` /
@@ -966,10 +966,10 @@ Steady-state ~50-200 ms per tick. A p99 climb past 1 s typically
 means the snapshot inserter is contending with another writer or
 a per-component freshness reader fell off its index. Buckets span
 10 ms → 30 s. No alert wired today; the existing
-`stellaratlas_supply_snapshot_*` alert family covers freshness
+`stellarindex_supply_snapshot_*` alert family covers freshness
 + never-initialised paths.
 
-### `stellaratlas_divergence_refresh_duration_seconds`
+### `stellarindex_divergence_refresh_duration_seconds`
 
 Histogram, label `outcome` (`ok` / `no_vwap` / `parse_error` /
 `refresh_error`).
@@ -994,7 +994,7 @@ default 5 s) compounded across multiple references. No alert
 wired today; the existing failing-rate signal lives in the
 `_total` counter.
 
-### `stellaratlas_customer_webhook_delivery_duration_seconds`
+### `stellarindex_customer_webhook_delivery_duration_seconds`
 
 Histogram, label `outcome` (`delivered` / `server_error` /
 `client_error` / `network_error` / `build_error`).
@@ -1025,11 +1025,11 @@ Operators chart p95/p99 latency separately per outcome to isolate:
 
 Buckets span 10 ms → 60 s (the worker's per-request context
 timeout). No alert wired today; the existing
-`stellaratlas_customer_webhook_delivery_failing` covers the
+`stellarindex_customer_webhook_delivery_failing` covers the
 failing-rate signal, latency degradation surfaces in the
 dashboard.
 
-### `stellaratlas_postgres_ping_total`
+### `stellarindex_postgres_ping_total`
 
 Counter, label `outcome` (`ok` / `error`).
 
@@ -1044,26 +1044,26 @@ the indexer's pool held stale conns and silently failed writes
 for ~14 h until a manual restart. The pool now retires conns every
 30 min via `SetConnMaxLifetime` — automatic safety-net — and this
 counter is the live observability signal so the next cascade
-surfaces in minutes via `stellaratlas_postgres_ping_failing`
+surfaces in minutes via `stellarindex_postgres_ping_failing`
 instead of hours of silent drift.
 
-Alert: `rate(stellaratlas_postgres_ping_total{outcome="error"}[5m]) > 0.5`
+Alert: `rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0.5`
 for 2 m → page. Brief failures during a postgres restart are
 expected; sustained means the pool is wedged.
 
-### `stellaratlas_postgres_ping_failure_streak`
+### `stellarindex_postgres_ping_failure_streak`
 
 Gauge, no labels.
 
 Consecutive failed-ping count from the same `watchPostgresPing`
 goroutine. Resets to 0 on the next success. Pair with
-`stellaratlas_postgres_ping_total` on dashboards to chart the live
+`stellarindex_postgres_ping_total` on dashboards to chart the live
 streak alongside the cumulative outcome counts. The indexer logs a
 structured error at `streak == 3` (`pool may be wedged`); search
 the journal for that string when triaging the
-`stellaratlas_postgres_ping_failing` page. F-0151.
+`stellarindex_postgres_ping_failing` page. F-0151.
 
-### `stellaratlas_tls_cert_not_after_unix`
+### `stellarindex_tls_cert_not_after_unix`
 
 Gauge, label `host`.
 
@@ -1073,21 +1073,21 @@ the configured host. Emitted by the API binary's self-probe
 Probe failures keep the last-known value in place — the probe
 counter below is the freshness signal. F-0051.
 
-Alert `stellaratlas_tls_cert_expiring_soon` fires when
+Alert `stellarindex_tls_cert_expiring_soon` fires when
 `(not_after_unix - time()) < 14 * 24 * 3600` sustained 1 h.
 
-### `stellaratlas_tls_cert_probe_total`
+### `stellarindex_tls_cert_probe_total`
 
 Counter, labels `host`, `outcome` (`ok` / `dial_error` /
 `timeout` / `no_cert`).
 
 TLS cert self-probe outcomes per host. A growing `ok` rate while
-`stellaratlas_tls_cert_not_after_unix` stays flat is the success
+`stellarindex_tls_cert_not_after_unix` stays flat is the success
 signal; a sustained non-`ok` rate alongside a stale gauge means
 the probe itself is failing — investigate before the gauge ages
 out via the alert rule's 14-day threshold. F-0051.
 
-### `stellaratlas_stripe_platform_sync_errors_total`
+### `stellarindex_stripe_platform_sync_errors_total`
 
 Counter, label `operation` (`get_account` / `upsert_subscription` /
 `account_update` / `list_keys` / `key_update`).
@@ -1108,7 +1108,7 @@ completed); `upsert_subscription` → Postgres write failure;
 `account_update` → tier sync failure; `list_keys` / `key_update` →
 per-key rate-limit lift failure.
 
-### `stellaratlas_markets_skipped_rows_total`
+### `stellarindex_markets_skipped_rows_total`
 
 Counter, no labels.
 
@@ -1129,7 +1129,7 @@ any row that increments this counter.
 
 ## Changelog
 
-- 2026-06-12 — added `stellaratlas_ch_live_sink_ledgers_total`
+- 2026-06-12 — added `stellarindex_ch_live_sink_ledgers_total`
   (`outcome=written|buffered|dropped|errored`), emitted by the
   indexer's periodic stats goroutine when the ClickHouse real-time
   dual-sink is enabled. Closes G12-02: the LiveSink counters were
@@ -1137,51 +1137,51 @@ any row that increments this counter.
   were, and `written` was bumped on buffer-enqueue rather than
   durable flush (now split into `buffered` vs `written`). Pairs
   with the G12-01 bounded-drop buffer cap (`dropped` outcome).
-- 2026-06-01 — added `stellaratlas_markets_skipped_rows_total`
+- 2026-06-01 — added `stellarindex_markets_skipped_rows_total`
   to surface non-canonical rows in the trades table that the
   /v1/markets scanner is skipping. Closes the 2026-06-01
   incident root cause (one stray test-row 500ed every markets
   request).
 - 2026-05-27 — added postgres-pool resilience metrics
-  (`stellaratlas_postgres_ping_total` +
-  `stellaratlas_postgres_ping_failure_streak`) emitted by the
+  (`stellarindex_postgres_ping_total` +
+  `stellarindex_postgres_ping_failure_streak`) emitted by the
   indexer's `watchPostgresPing` goroutine. Closes the F-0151
   observability gap surfaced by the 2026-05-26 cascade (dead
   pool, ~14 h silent drift before manual restart). Pairs with
-  the new `stellaratlas_postgres_ping_failing` page alert in
+  the new `stellarindex_postgres_ping_failing` page alert in
   `configs/prometheus/rules.r1/storage.yml` +
   `deploy/monitoring/rules/storage.yml`.
 - 2026-05-13 — added freeze-recovery-sweep latency histogram
-  (`stellaratlas_anomaly_freeze_recovery_sweep_duration_seconds`).
+  (`stellarindex_anomaly_freeze_recovery_sweep_duration_seconds`).
   Pairs with the existing `_sweeps_total` counter; surfaces
   Postgres / Redis pressure as a chartable signal before the
   freeze_events table accumulates open rows.
 - 2026-05-13 — added supply-refresh latency histogram
-  (`stellaratlas_aggregator_supply_refresh_duration_seconds`).
+  (`stellarindex_aggregator_supply_refresh_duration_seconds`).
   Pairs with the existing per-asset_key `_total` counter;
   histogram labels by outcome only to keep cardinality bounded
   on deployments watching many assets.
 - 2026-05-13 — added divergence-refresh latency histogram
-  (`stellaratlas_divergence_refresh_duration_seconds`). Pairs
+  (`stellarindex_divergence_refresh_duration_seconds`). Pairs
   with the existing `_total` counter to give operators per-pair
   per-outcome p95/p99 — surfaces "one vendor's API is slow" as
   a chartable signal even when the refresh still eventually
   succeeds.
 - 2026-05-13 — added customer-webhook delivery latency
-  histogram (`stellaratlas_customer_webhook_delivery_duration_seconds`).
+  histogram (`stellarindex_customer_webhook_delivery_duration_seconds`).
   Pairs with the existing `_attempts_total` counter to give
   operators per-outcome p95/p99 latency on the OUTBOUND
   webhook surface (the standard `http_request_duration_seconds`
   covers inbound only).
 - 2026-05-13 — added Stripe platform-bridge error counter
-  (`stellaratlas_stripe_platform_sync_errors_total`) covering the
+  (`stellarindex_stripe_platform_sync_errors_total`) covering the
   five platform-store side-effect failure sites in the Stripe
   webhook path. Closes the long-standing TODO from F-1219 wave 32.
-- 2026-04-29 — added verify-archive metrics (`stellaratlas_verify_archive_*`)
+- 2026-04-29 — added verify-archive metrics (`stellarindex_verify_archive_*`)
   covering per-chunk ledger progress, checkpoint outcomes, and
   mismatches.
 - 2026-04-28 — added supply cross-check metrics (L2.12 PR 5)
 - 2026-04-25 — added aggregator orchestrator metrics
-  (`stellaratlas_aggregator_*`) covering tick outcomes, VWAP writes,
+  (`stellarindex_aggregator_*`) covering tick outcomes, VWAP writes,
   empty windows, and per-stage trade drops.
 - 2026-04-23 — initial reference document to close the lint drift.

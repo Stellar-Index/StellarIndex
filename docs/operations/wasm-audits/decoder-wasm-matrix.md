@@ -83,7 +83,7 @@ finds it. Hence the 50/52 result.
   the SymbolSmall packing rule is well-understood — every
   Soroban-built contract handles short symbols this way.
 - Cross-validation: production ingest health metrics
-  (`stellaratlas_redstone_events_total`) show events flowing.
+  (`stellarindex_redstone_events_total`) show events flowing.
 
 ## How to refresh
 

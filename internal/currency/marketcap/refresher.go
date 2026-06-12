@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/currency"
+	"github.com/StellarIndex/stellar-index/internal/currency"
 )
 
 // Default CG endpoint + path. Free tier — no auth required for

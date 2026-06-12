@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_archive_completeness_stale`
+# Runbook — `stellarindex_archive_completeness_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_archive_completeness_stale` (P2 at 26 h) / `_critical_stale` (P1 at 48 h on R1) |
+| Alert | `stellarindex_archive_completeness_stale` (P2 at 26 h) / `_critical_stale` (P1 at 48 h on R1) |
 | Severity | P2 / P1 |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/archive-completeness.yml` |
 | Typical MTTR | 5 min if the cron silently failed; 1 h if the daemon itself is broken |
@@ -39,7 +39,7 @@ ssh r1 'journalctl -u archive-completeness.service --since="48 hours ago" | tail
 #    over a short trailing window (-to 0 resolves the tip from the
 #    live ledgerstream cursor). See `deploy/systemd/archive-completeness.service`
 #    for the exact flags the timer uses.
-ssh r1 'stellaratlas-ops archive-completeness verify -from 2 -to 0 -workers 8'
+ssh r1 'stellarindex-ops archive-completeness verify -from 2 -to 0 -workers 8'
 ```
 
 Common patterns:
@@ -68,20 +68,20 @@ Common patterns:
 
   `archive-completeness verify` performs a single cross-anchor
   structural completeness check (there are no separate `-checks`
-  modes — see `cmd/stellaratlas-ops/main.go::archiveCompletenessVerify`).
+  modes — see `cmd/stellarindex-ops/main.go::archiveCompletenessVerify`).
   Write the JSON report to inspect which checkpoints are missing,
   then narrow the `-from`/`-to` window around the failing region:
 
   ```sh
   # Full trailing window, capturing the JSON gap report.
-  ssh r1 'stellaratlas-ops archive-completeness verify \
+  ssh r1 'stellarindex-ops archive-completeness verify \
     -from 2 -to 0 -workers 8 \
     -output-file /tmp/completeness-report.json'
 
   # Inspect the missing-file list, then re-run scoped to a narrow
   # range to confirm a fix (replace LO/HI from the report).
   ssh r1 'jq ".missing" /tmp/completeness-report.json | head'
-  ssh r1 'stellaratlas-ops archive-completeness verify -from LO -to HI -workers 8'
+  ssh r1 'stellarindex-ops archive-completeness verify -from LO -to HI -workers 8'
   ```
 
   From the missing-checkpoint list, see [archive-completeness.md](../archive-completeness.md)

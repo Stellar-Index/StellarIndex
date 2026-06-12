@@ -12,7 +12,7 @@ status: implemented (v1)
 
 This document captures the contract identities, event schemas, and
 deployment status for integrating Rozo's intent-based cross-chain
-contracts on Stellar into the Stellar Atlas. The v1 Payment
+contracts on Stellar into the Stellar Index. The v1 Payment
 implementation lives in `internal/sources/rozo/` (decoder +
 dispatcher adapter + consumer) with persistence to the `rozo_events`
 hypertable (migration 0039). The storage shape — a per-protocol

@@ -6,9 +6,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/anomaly"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // Phase 2 freeze thresholds per ADR-0019 §"Freeze policy". All

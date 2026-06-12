@@ -6,7 +6,7 @@ import { Panel } from '@/components/reveal';
 export const metadata: Metadata = {
   title: 'Divergences — cross-reference monitor',
   description:
-    'Continuously cross-checks the canonical Stellar Atlas VWAP against external references (CoinGecko, Chainlink HTTP, Reflector, Redstone, Band). Persistent gaps flip flags.divergence_warning.',
+    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko, Chainlink HTTP, Reflector, Redstone, Band). Persistent gaps flip flags.divergence_warning.',
 };
 
 type FeedRef = { pair: string; address: string };
@@ -29,7 +29,7 @@ const REFERENCES: Reference[] = [
     blurb:
       'Independent price index via mainnet AggregatorV3 contracts on Ethereum. Queried over public RPC (eth.llamarpc.com). Drives the divergence worker\'s "are we wildly off" alerting threshold.',
     feeds: [
-      // Operator-config from configs/ansible/.../stellaratlas.toml.j2
+      // Operator-config from configs/ansible/.../stellarindex.toml.j2
       // [divergence.chainlink.feeds]. Verified 2026-05-08.
       { pair: 'EUR/USD', address: '0xb49f677943BC038e9857d61E7d053CaA2C1734C1' },
       { pair: 'GBP/USD', address: '0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5' },
@@ -62,7 +62,7 @@ export default function DivergencesPage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Divergences</h1>
         <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
-          Continuously cross-checks the canonical Stellar Atlas VWAP
+          Continuously cross-checks the canonical Stellar Index VWAP
           against external references. A persistent gap flips{' '}
           <code className="font-mono text-xs">flags.divergence_warning</code>{' '}
           on the canonical{' '}

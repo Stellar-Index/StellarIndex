@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // TestVWAPUSDFXResolver_NoPegs — empty USDPegs list means the

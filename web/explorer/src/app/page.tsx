@@ -23,7 +23,7 @@ export default function HomePage() {
           The protocol explorer for the Stellar network.
         </h1>
         <p className="max-w-2xl text-base text-slate-600 dark:text-slate-400 md:text-lg">
-          Stellar Atlas captures every contract, every event, and every
+          Stellar Index captures every contract, every event, and every
           trade across Stellar protocols — CEXes, on-chain DEXes, and
           lending protocols — and serves verified per-protocol data plus a
           single VWAP price through a public REST API, alongside live world
@@ -51,7 +51,7 @@ export default function HomePage() {
             Connected exchanges
           </Link>
           <a
-            href="https://docs.stellaratlas.xyz"
+            href="https://docs.stellarindex.io"
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:text-slate-300"
           >
             API docs

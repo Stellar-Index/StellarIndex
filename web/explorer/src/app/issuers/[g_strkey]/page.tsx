@@ -114,7 +114,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { g_strkey } = await params;
   const short = `${g_strkey.slice(0, 8)}…${g_strkey.slice(-4)}`;
-  const canonical = `https://stellaratlas.xyz/issuers/${g_strkey}`;
+  const canonical = `https://stellarindex.io/issuers/${g_strkey}`;
   const title = `Issuer ${short} — Stellar`;
   const description = `Identity, auth flags, and issued assets for Stellar issuer ${short}.`;
   return {
@@ -187,13 +187,13 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellaratlas.xyz' },
-      { '@type': 'ListItem', position: 2, name: 'Issuers', item: 'https://stellaratlas.xyz/issuers' },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
+      { '@type': 'ListItem', position: 2, name: 'Issuers', item: 'https://stellarindex.io/issuers' },
       {
         '@type': 'ListItem',
         position: 3,
         name: detail.org_name || shortKey(g_strkey),
-        item: `https://stellaratlas.xyz/issuers/${g_strkey}`,
+        item: `https://stellarindex.io/issuers/${g_strkey}`,
       },
     ],
   };

@@ -17,19 +17,19 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/ledgerstream"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/aquarius"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/band"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/comet"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/phoenix"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/redstone"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/reflector"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sdex"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
+	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
+	"github.com/StellarIndex/stellar-index/internal/sources/band"
+	"github.com/StellarIndex/stellar-index/internal/sources/comet"
+	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+	"github.com/StellarIndex/stellar-index/internal/sources/redstone"
+	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
+	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
+	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 const testPassphrase = "Test SDF Network ; September 2015"
@@ -48,7 +48,7 @@ const testPassphrase = "Test SDF Network ; September 2015"
 // The test uses the SDK's filesystem datastore (not MinIO) — the
 // S3 transport is a separate concern tested in internal/ledgerstream
 // (and by the r1 smoke once 165d is deployed). What's proved here
-// is the wiring that cmd/stellaratlas-indexer runs in production.
+// is the wiring that cmd/stellarindex-indexer runs in production.
 //
 // Ledger fixtures are constructed in-test using the SDK's
 // compressxdr helpers, mirroring what Galexie writes. Two
@@ -514,7 +514,7 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 
 // ─── helpers ─────────────────────────────────────────────────────
 
-// runIngest mirrors cmd/stellaratlas-indexer's processAndPersist
+// runIngest mirrors cmd/stellarindex-indexer's processAndPersist
 // logic in-test: stream ledgers from the datastore, dispatch them,
 // persist each consumer.Event via the appropriate store insert,
 // and upsert the pipeline cursor after each ledger. Returns the
@@ -558,7 +558,7 @@ func runIngest(
 	return events, processed, cursor
 }
 
-// persistInTest mirrors handleOneEvent in cmd/stellaratlas-indexer
+// persistInTest mirrors handleOneEvent in cmd/stellarindex-indexer
 // but without the panic recovery + metrics plumbing — the test
 // wants raw errors to surface.
 func persistInTest(ctx context.Context, store *timescale.Store, ev consumer.Event) error {
@@ -584,7 +584,7 @@ func persistInTest(ctx context.Context, store *timescale.Store, ev consumer.Even
 }
 
 // newFullDispatcher registers every production decoder — the
-// same set cmd/stellaratlas-indexer wires from config when all
+// same set cmd/stellarindex-indexer wires from config when all
 // sources are enabled. Reflector contracts use placeholders because
 // the empty-ledger tests don't emit events that would be matched
 // against them.
@@ -604,7 +604,7 @@ func newFullDispatcher(t *testing.T) *dispatcher.Dispatcher {
 
 // filesystemLedgerstreamConfig builds a ledgerstream.Config
 // pointing at a local directory — the same config shape
-// cmd/stellaratlas-indexer would produce for an S3 datastore, just
+// cmd/stellarindex-indexer would produce for an S3 datastore, just
 // with Type=Filesystem so we don't need MinIO in the unit
 // integration suite.
 func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {

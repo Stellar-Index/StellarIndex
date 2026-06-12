@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // refreshDivergenceAll iterates over every configured pair and asks

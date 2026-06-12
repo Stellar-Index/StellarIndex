@@ -26,14 +26,14 @@ export function Navbar() {
           className="flex items-center gap-2 text-sm font-semibold tracking-tight"
         >
           <TrendingUp className="h-5 w-5 text-brand-500" />
-          <span>Stellar Atlas</span>
+          <span>Stellar Index</span>
         </Link>
 
         {/* Desktop nav */}
         <div className="hidden items-center gap-1 text-sm md:flex">
           <NavLink href="/assets" label="Assets" />
           <Dropdown label="Blockchain" items={BLOCKCHAIN_ITEMS} />
-          <NavLink href="https://docs.stellaratlas.xyz" label="API Docs" external />
+          <NavLink href="https://docs.stellarindex.io" label="API Docs" external />
           <Dropdown label="About" items={ABOUT_ITEMS} />
           <SearchModal />
           <ThemeToggle />
@@ -76,7 +76,7 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
       </Link>
       <MobileSection label="Blockchain" items={BLOCKCHAIN_ITEMS} onClose={onClose} />
       <a
-        href="https://docs.stellaratlas.xyz"
+        href="https://docs.stellarindex.io"
         onClick={onClose}
         className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
       >
@@ -211,7 +211,7 @@ function SignedInWidget({ email }: { email?: string }) {
   async function handleSignOut() {
     try {
       const base =
-        process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+        process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
       await fetch(`${base}/v1/auth/logout`, {
         method: 'POST',
         credentials: 'include',
@@ -293,9 +293,9 @@ const BLOCKCHAIN_ITEMS: Item[] = [
 const ABOUT_ITEMS: Item[] = [
   { label: 'Pricing', href: '/pricing', description: 'Plans, quotas, SLAs.' },
   { label: 'Blog', href: '/blog', description: 'Engineering notes + product updates.' },
-  { label: 'API status', href: 'https://status.stellaratlas.xyz', external: true, description: 'Live service status.' },
+  { label: 'API status', href: 'https://status.stellarindex.io', external: true, description: 'Live service status.' },
   { label: 'Company', href: '/company', description: 'Who we are.' },
-  { label: 'Careers', href: '/careers', description: 'Roles open at Stellar Atlas.' },
+  { label: 'Careers', href: '/careers', description: 'Roles open at Stellar Index.' },
   { label: 'Contact', href: '/contact', description: 'How to reach us.' },
 ];
 
@@ -404,13 +404,13 @@ function StatusPill() {
     overall === 'ok'
       ? 'All systems operational'
       : overall === 'degraded'
-        ? 'Degraded performance — see status.stellaratlas.xyz'
+        ? 'Degraded performance — see status.stellarindex.io'
         : overall === 'down'
-          ? 'Major outage — see status.stellaratlas.xyz'
+          ? 'Major outage — see status.stellarindex.io'
           : 'Status unknown';
   return (
     <a
-      href="https://status.stellaratlas.xyz"
+      href="https://status.stellarindex.io"
       title={title}
       aria-label={`API status: ${overall}`}
       className="ml-2 inline-flex items-center rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"

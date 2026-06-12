@@ -64,9 +64,9 @@ SERVICES=(
   galexie
   minio
   node_exporter
-  stellaratlas-indexer
-  stellaratlas-aggregator
-  stellaratlas-api
+  stellarindex-indexer
+  stellarindex-aggregator
+  stellarindex-api
 )
 for s in "${SERVICES[@]}"; do
   state=$(systemctl is-active "$s" 2>&1)
@@ -90,7 +90,7 @@ for s in "${SERVICES[@]}"; do
 done
 
 # --- Check 1b: API /v1/healthz returning 200 -------------------
-# A running stellaratlas-api process means systemd thinks it's alive,
+# A running stellarindex-api process means systemd thinks it's alive,
 # but the HTTP listener may be wedged behind a deadlock or a
 # blocked goroutine. /v1/healthz is the canonical liveness signal
 # for the API; its absence is a real fault, its 200 is the only
@@ -98,10 +98,10 @@ done
 #
 # Skip if the api unit isn't installed on this node (mirrors the
 # Check 1 logic above).
-if systemctl cat stellaratlas-api >/dev/null 2>&1; then
+if systemctl cat stellarindex-api >/dev/null 2>&1; then
   api_status=$(curl -sS -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:3000/v1/healthz 2>&1 || echo CURL_FAILED)
   if [ "$api_status" != "200" ]; then
-    add_fail "stellaratlas-api /v1/healthz returned $api_status (expected 200)"
+    add_fail "stellarindex-api /v1/healthz returned $api_status (expected 200)"
   fi
 fi
 

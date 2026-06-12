@@ -3,9 +3,9 @@ package cctp
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // Decoder is the dispatcher-facing view of Circle CCTP v2. It is a

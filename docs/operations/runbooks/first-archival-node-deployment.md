@@ -26,7 +26,7 @@ superseded_by:
 
 # First archival-node deployment
 
-**Purpose:** sequence the first Stellar Atlas archival node from
+**Purpose:** sequence the first Stellar Index archival node from
 "Hetzner box ordered" to "our indexer replays since-inception
 history into Timescale" without ever needing to wipe and start over.
 
@@ -493,12 +493,12 @@ wall clock. Meanwhile, on the workstation side:
       `internal/sources/{soroswap,aquarius,phoenix,reflector}/decode.go`
       with real implementations backed by `github.com/stellar/go-stellar-sdk/xdr`.
 - [ ] Pull real event fixtures from public stellar-rpc via
-      `stellaratlas-ops rpc-probe` → save under
+      `stellarindex-ops rpc-probe` → save under
       `test/fixtures/<source>/`.
 - [ ] Unit-test each decoder against golden fixtures.
 
 ### Aggregator (high priority)
-- [ ] Build `cmd/stellaratlas-aggregator` main loop.
+- [ ] Build `cmd/stellarindex-aggregator` main loop.
 - [ ] VWAP/TWAP over windows from the trades hypertable → write
       to Redis hot-path keys per ADR-0007.
 - [ ] Refresh cadence per granularity (matches migration 0002
@@ -524,7 +524,7 @@ against fixtures:
 ```sh
 # On the box (or wherever the indexer runs — probably same box
 # for simplicity in phase 1)
-systemctl start stellaratlas-indexer
+systemctl start stellarindex-indexer
 ```
 
 With config pointing at localhost stellar-rpc and `backfill_from_ledger`
@@ -540,9 +540,9 @@ days, because:
   restarts are safe.
 
 Monitor via:
-- `stellaratlas_source_events_total` rate.
-- `stellaratlas_cursor_last_ledger` climbing toward tip.
-- `stellaratlas_source_insert_errors_total` zero.
+- `stellarindex_source_events_total` rate.
+- `stellarindex_cursor_last_ledger` climbing toward tip.
+- `stellarindex_source_insert_errors_total` zero.
 
 Once the cursor reaches live tip, backfill is complete. The
 indexer continues consuming live events from stellar-rpc
@@ -572,7 +572,7 @@ resume.
 
 ### During backfill (§8)
 
-Decoder errors spike → `stellaratlas_source_decode_errors_total`
+Decoder errors spike → `stellarindex_source_decode_errors_total`
 rises. Look at indexer logs; usually means we hit an event shape
 the fixture tests didn't cover. Pause indexer, fix decoder, restart
 (backfill resumes from last persisted cursor).

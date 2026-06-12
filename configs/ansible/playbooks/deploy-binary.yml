@@ -1,5 +1,5 @@
 ---
-# Deploy one or more stellaratlas-* binaries to a single host.
+# Deploy one or more stellarindex-* binaries to a single host.
 #
 # Triggered by .github/workflows/deploy.yml; not normally run by
 # hand. The workflow has already:
@@ -9,7 +9,7 @@
 #
 # Required vars (passed via -e from the workflow):
 #   version              — SemVer tag being deployed (e.g. v0.2.0)
-#   binaries_csv         — comma-separated list (e.g. "stellaratlas-api,stellaratlas-indexer")
+#   binaries_csv         — comma-separated list (e.g. "stellarindex-api,stellarindex-indexer")
 #   local_dist_dir       — path on the controller (Action runner) holding
 #                          the binaries; each is named "<binary>-linux-amd64"
 #   health_grace_seconds — sleep before /v1/healthz probe (api only)
@@ -31,7 +31,7 @@
 #      path, restart, leave host in known-good state. Playbook exits
 #      non-zero so the workflow surfaces the failure.
 
-- name: Deploy stellaratlas binaries
+- name: Deploy stellarindex binaries
   hosts: all
   gather_facts: false
   become: false                         # workflow already runs as root
@@ -45,9 +45,9 @@
     # smoke test for these. Adding a new daemon binary? Don't
     # touch this; it's the deny-list.
     cli_binaries:
-      - stellaratlas-ops
-      - stellaratlas-migrate
-      - stellaratlas-sla-probe
+      - stellarindex-ops
+      - stellarindex-migrate
+      - stellarindex-sla-probe
 
   pre_tasks:
     - name: Verify required vars are set
@@ -68,12 +68,12 @@
     # than the binary expected, producing partial-outage shapes
     # at runtime even though /v1/healthz returned 200. Now the
     # playbook copies the migrations dir from the controller and
-    # runs `stellaratlas-migrate up` BEFORE touching any binary.
+    # runs `stellarindex-migrate up` BEFORE touching any binary.
     # Idempotent — golang-migrate skips already-applied versions.
     - name: Sync migrations dir from controller
       ansible.posix.synchronize:
         src: "{{ local_dist_dir }}/migrations/"
-        dest: /usr/local/share/stellaratlas/migrations/
+        dest: /usr/local/share/stellarindex/migrations/
         delete: true
         recursive: true
       when:
@@ -83,11 +83,11 @@
     - name: Apply outstanding migrations
       ansible.builtin.command:
         argv:
-          - /usr/local/bin/stellaratlas-migrate
+          - /usr/local/bin/stellarindex-migrate
           - -dsn
-          - "{{ migrate_dsn | default('postgres://stellaratlas@127.0.0.1:5432/stellaratlas?sslmode=disable') }}"
+          - "{{ migrate_dsn | default('postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable') }}"
           - -migrations
-          - /usr/local/share/stellaratlas/migrations
+          - /usr/local/share/stellarindex/migrations
           - up
       register: migrate_result
       changed_when: "'migrations applied' in migrate_result.stdout"

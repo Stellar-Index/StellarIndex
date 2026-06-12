@@ -43,13 +43,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sorobanevents"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/clickhouse"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // Interval is the catch-up cadence. The projector reads new

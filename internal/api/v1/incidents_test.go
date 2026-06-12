@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/incidents"
+	"github.com/StellarIndex/stellar-index/internal/incidents"
 )
 
 // TestHandleIncidentsAtom_LinkTarget pins the per-entry alternate
 // link to the canonical /incident/{slug} route.
 //
-// The atom feed previously emitted `https://status.stellaratlas.xyz/#<slug>`,
+// The atom feed previously emitted `https://status.stellarindex.io/#<slug>`,
 // expecting subscribers to land on the home page and scroll to a
 // matching anchor — but the home page doesn't render `id="<slug>"`
 // on the per-incident summary, so feed readers landed on the home
@@ -53,7 +53,7 @@ func TestHandleIncidentsAtom_LinkTarget(t *testing.T) {
 	if len(feed.Entries) != 1 {
 		t.Fatalf("len(Entries) = %d, want 1", len(feed.Entries))
 	}
-	const wantHref = "https://status.stellaratlas.xyz/incident/2026-05-06-postgres-lock-table-full"
+	const wantHref = "https://status.stellarindex.io/incident/2026-05-06-postgres-lock-table-full"
 	var got string
 	for _, l := range feed.Entries[0].Link {
 		if l.Rel == "alternate" {
@@ -191,7 +191,7 @@ func TestHandleIncidents_EmptyList(t *testing.T) {
 
 // TestHandleIncidentsAtom_ValidXML — the atom feed must round-trip
 // through encoding/xml. Pin core RFC-4287 fields and the per-entry
-// urn:stellaratlas:incident:<slug> ID convention so feed-reader
+// urn:stellarindex:incident:<slug> ID convention so feed-reader
 // dedupe stays stable across crawls.
 func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 	resolved := time.Date(2026, 5, 6, 22, 39, 0, 0, time.UTC)
@@ -232,7 +232,7 @@ func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 		t.Fatalf("len(entries) = %d, want 1", len(feed.Entries))
 	}
 	e := feed.Entries[0]
-	if e.ID != "urn:stellaratlas:incident:2026-05-06-postgres-lock" {
+	if e.ID != "urn:stellarindex:incident:2026-05-06-postgres-lock" {
 		t.Errorf("entry ID = %q (urn convention drift breaks dedupe)", e.ID)
 	}
 	if e.Summary != "First paragraph for summary." {

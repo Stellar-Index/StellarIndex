@@ -44,14 +44,14 @@ func TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32(t *testing.T) {
 
 func TestLCMHomeDomainResolver_HappyPath(t *testing.T) {
 	r := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{
-		"GA1": "stellaratlas.xyz",
+		"GA1": "stellarindex.io",
 	}})
 	domain, ok, err := r.HomeDomainFor(context.Background(), "GA1")
 	if err != nil {
 		t.Fatalf("HomeDomainFor: %v", err)
 	}
-	if !ok || domain != "stellaratlas.xyz" {
-		t.Errorf("got (%q, %v), want (stellaratlas.xyz, true)", domain, ok)
+	if !ok || domain != "stellarindex.io" {
+		t.Errorf("got (%q, %v), want (stellarindex.io, true)", domain, ok)
 	}
 }
 

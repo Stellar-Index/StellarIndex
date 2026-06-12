@@ -12,9 +12,9 @@ import { loadBlogPosts, type BlogPost } from '@/lib/blog';
 
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellaratlas.xyz';
-const FEED_TITLE = 'Stellar Atlas — engineering notes';
-const FEED_AUTHOR = 'Stellar Atlas';
+const SITE_URL = 'https://stellarindex.io';
+const FEED_TITLE = 'Stellar Index — engineering notes';
+const FEED_AUTHOR = 'Stellar Index';
 
 export function GET() {
   const posts = loadBlogPosts();
@@ -42,7 +42,7 @@ ${entries}
 }
 
 function renderEntry(p: BlogPost): string {
-  const id = `urn:stellaratlas:blog:${p.slug}`;
+  const id = `urn:stellarindex:blog:${p.slug}`;
   const url = `${SITE_URL}/blog/${p.slug}`;
   const published = atomDate(p.date);
   return `  <entry>

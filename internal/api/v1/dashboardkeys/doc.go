@@ -12,7 +12,7 @@
 // Redis; this package mirror-writes new keys into the Redis
 // store too so a key created from the dashboard works for
 // programmatic API calls immediately. The Phase 1 cutover is
-// the cmd/stellaratlas-api wiring that swaps to a Postgres-
+// the cmd/stellarindex-api wiring that swaps to a Postgres-
 // backed read-through validator; once that lands the mirror-
 // write goes away and Postgres is canonical.
 package dashboardkeys

@@ -4,7 +4,7 @@
 // Three tiers, in increasing trust:
 //
 //   - "anonymous" — no credential. Default; rate-limited at the
-//     lowest tier (60 req/min today; stellaratlas_api §S9.3).
+//     lowest tier (60 req/min today; stellarindex_api §S9.3).
 //   - "apikey"    — caller presents `Authorization: Bearer <key>`
 //     or `X-API-Key: <key>`. Lookup yields a subject + tier.
 //   - "sep10"     — caller presents a SEP-10 JWT in

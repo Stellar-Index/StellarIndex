@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // upsertHookTimeout caps how long the live new_pair upsert is allowed
@@ -29,7 +29,7 @@ const upsertHookTimeout = 2 * time.Second
 //
 //  1. WithSeededPairTokensDecoder — preloaded from the
 //     soroswap_pairs table. Empty table is fine (returns an empty
-//     seed); operators run `stellaratlas-ops seed-soroswap-pairs`
+//     seed); operators run `stellarindex-ops seed-soroswap-pairs`
 //     once on first deployment to bootstrap.
 //  2. WithPairUpsertHook — bound to store.UpsertSoroswapPair so
 //     every live factory new_pair event persists through to the

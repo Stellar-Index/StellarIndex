@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // TestEventClosedAt_RFC3339Parsing — the happy path: a well-formed

@@ -108,7 +108,7 @@ diverges, the v2 audit ships either:
    - Fetch bytes via `stellar contract fetch --wasm-hash` first.
    - If RPC returns "Contract Code not found", the WASM is
      evicted; fall back to
-     `stellaratlas-ops extract-wasm-from-galexie` against r1.
+     `stellarindex-ops extract-wasm-from-galexie` against r1.
    - Run `wasm2wat` to get text form.
    - Use `stellar contract info interface` + `strings` for the
      interface + symbol-table view we already use in v1 audits.
@@ -138,5 +138,5 @@ This is v3 follow-up scope.
   [`docs/architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
 - Per-source v1 audits: this directory's `<source>.md` files.
 - Subcommand:
-  `cmd/stellaratlas-ops/wasm_extract.go` (`extract-wasm-from-galexie`).
-- Tool: `cmd/stellaratlas-ops/main.go` `wasm-history` subcommand.
+  `cmd/stellarindex-ops/wasm_extract.go` (`extract-wasm-from-galexie`).
+- Tool: `cmd/stellarindex-ops/main.go` `wasm-history` subcommand.

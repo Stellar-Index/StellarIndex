@@ -21,8 +21,8 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/dev/', '/embed/', '/auth/', '/account', '/signin', '/signup'],
       },
     ],
-    sitemap: 'https://stellaratlas.xyz/sitemap.xml',
-    host: 'https://stellaratlas.xyz',
+    sitemap: 'https://stellarindex.io/sitemap.xml',
+    host: 'https://stellarindex.io',
   };
 }
 

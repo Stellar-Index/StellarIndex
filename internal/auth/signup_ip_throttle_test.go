@@ -10,7 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // TestRedisSignupIPThrottle_Allows_UpToCap pins the first

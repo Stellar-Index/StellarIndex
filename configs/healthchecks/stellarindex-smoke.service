@@ -1,0 +1,15 @@
+[Unit]
+Description=Stellar Index API smoke test (schema + data integrity)
+Documentation=https://github.com/StellarIndex/stellar-index/blob/main/configs/healthchecks/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/stellarindex/healthchecks/smoke.sh
+EnvironmentFile=-/etc/default/stellarindex-healthchecks
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

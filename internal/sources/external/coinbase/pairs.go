@@ -3,7 +3,7 @@ package coinbase
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // DefaultPairs returns the Coinbase Exchange product → canonical.Pair

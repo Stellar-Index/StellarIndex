@@ -9,7 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // RedisPublisher is the subset of the Redis client surface
@@ -20,7 +20,7 @@ type RedisPublisher interface {
 }
 
 // Publisher implements
-// [github.com/StellarAtlas/stellar-atlas/internal/aggregate/orchestrator.StreamPublisher]
+// [github.com/StellarIndex/stellar-index/internal/aggregate/orchestrator.StreamPublisher]
 // by encoding each closed-bucket event as JSON and PUBLISHing it
 // to a configurable Redis channel.
 //

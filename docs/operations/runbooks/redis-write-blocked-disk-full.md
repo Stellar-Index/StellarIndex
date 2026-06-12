@@ -10,9 +10,9 @@ status: living procedure
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_aggregator_cache_write_errors` (P1 / page) |
+| Alert | `stellarindex_aggregator_cache_write_errors` (P1 / page) |
 | Severity | P1 |
-| Detected by | Prometheus rule `stellaratlas_aggregator_cache_write_errors` (alerts on `rate(stellaratlas_aggregator_vwap_cache_write_errors_total[5m]) > 0` for ≥ 2 min) in `deploy/monitoring/rules/aggregator.yml` |
+| Detected by | Prometheus rule `stellarindex_aggregator_cache_write_errors` (alerts on `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m]) > 0` for ≥ 2 min) in `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 5–10 min once root cause is confirmed (free disk space → Redis re-enables writes automatically) |
 | Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written. Customer-visible. |
 
@@ -123,12 +123,12 @@ redis-cli SET test:probe ok && redis-cli GET test:probe && redis-cli DEL test:pr
 
 ```sh
 # Aggregator log: WARN cadence should drop to ~0 within 30s
-journalctl -u stellaratlas-aggregator --since "30 seconds ago" -o cat \
+journalctl -u stellarindex-aggregator --since "30 seconds ago" -o cat \
   | grep -c "refresh failed"
 # Expect: 0 (was firing 15+ per 30s pre-fix)
 
 # Probe a previously-broken price endpoint via the public API
-curl -sS "https://api.stellaratlas.xyz/v1/price?asset=native&quote=<USDC-classic-asset_id>"
+curl -sS "https://api.stellarindex.io/v1/price?asset=native&quote=<USDC-classic-asset_id>"
 # Expect: 200 with a fresh observed_at within the last few minutes
 ```
 
@@ -141,7 +141,7 @@ follow-up rotation policy.
 
 Redis defaults to `stop-writes-on-bgsave-error yes`. This is the
 right choice for a primary data store (you don't want to silently
-accept writes that will be lost on restart), but Stellar Atlas uses
+accept writes that will be lost on restart), but Stellar Index uses
 Redis as a CACHE — every value in it is reproducible from the
 trades hypertable on demand. The conservative default still
 applies: a long sustained block protects the operator from

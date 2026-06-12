@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Regenerate the Postman collection from openapi/stellar-atlas.v1.yaml.
+# Regenerate the Postman collection from openapi/stellar-index.v1.yaml.
 #
-# Writes to examples/postman/stellar-atlas.postman_collection.json
+# Writes to examples/postman/stellar-index.postman_collection.json
 # — the customer-facing canonical path (referenced by README.md +
 # the audit parity matrix, and the file customers actually
 # download from the repo).
@@ -26,7 +26,7 @@ cd "$REPO_ROOT"
 
 if ! command -v npx >/dev/null 2>&1; then
   echo "npx not found — install Node (https://nodejs.org/) to regenerate the Postman collection."
-  echo "Source of truth: openapi/stellar-atlas.v1.yaml"
+  echo "Source of truth: openapi/stellar-index.v1.yaml"
   exit 1
 fi
 
@@ -36,7 +36,7 @@ mkdir -p examples/postman
 # /dev/null and rely on the exit code so this is silent on success.
 TMP=$(mktemp)
 npx --yes "openapi-to-postmanv2@${CONVERTER_VERSION}" \
-    -s openapi/stellar-atlas.v1.yaml \
+    -s openapi/stellar-index.v1.yaml \
     -o "$TMP" \
     -p \
     >/dev/null
@@ -51,7 +51,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-CANONICAL="examples/postman/stellar-atlas.postman_collection.json"
+CANONICAL="examples/postman/stellar-index.postman_collection.json"
 
 jq 'walk(if type == "object" and has("id") then del(.id) else . end)' "$TMP" \
   > "$CANONICAL"

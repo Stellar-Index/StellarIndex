@@ -1,5 +1,5 @@
 # Cloudflare Pages config for the public status page
-# (status.stellaratlas.xyz).
+# (status.stellarindex.io).
 #
 # Recommended deploy path is Cloudflare Pages' git integration —
 # every push to main rebuilds and deploys without consuming the
@@ -8,6 +8,6 @@
 # steps; the status project follows the same shape as the
 # explorer + dashboard wrangler.toml.
 
-name = "stellaratlas-status"
+name = "stellarindex-status"
 pages_build_output_dir = "./out"
 compatibility_date = "2026-05-05"

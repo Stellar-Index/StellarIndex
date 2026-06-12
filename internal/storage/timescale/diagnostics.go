@@ -398,7 +398,7 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //
 // This is the heavy reconciliation the writers' incremental bump can
 // never do on its own (a fresh counter doesn't know pre-counter
-// history). Operator one-shot via `stellaratlas-ops seed-entry-counts`
+// history). Operator one-shot via `stellarindex-ops seed-entry-counts`
 // — run post-backfill: the GROUP BY scans every relevant chunk in one
 // transaction (fine within the 4096 max_locks budget, slow + IO-hungry
 // mid-backfill).

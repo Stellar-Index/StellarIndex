@@ -9,10 +9,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/anomaly"
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/freeze"
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // newRedis spins up an in-memory miniredis + a *redis.Client

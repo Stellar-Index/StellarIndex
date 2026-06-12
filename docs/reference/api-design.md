@@ -1,13 +1,13 @@
 ---
-title: API Design — Stellar Atlas v1
+title: API Design — Stellar Index v1
 last_verified: 2026-05-03
-status: ratified — `openapi/stellar-atlas.v1.yaml` is the binding contract; this doc records design intent
+status: ratified — `openapi/stellar-index.v1.yaml` is the binding contract; this doc records design intent
 ---
 
-# API Design — Stellar Atlas v1
+# API Design — Stellar Index v1
 
 **Owner:** @ash.
-**Binds:** `openapi/stellar-atlas.v1.yaml` (source of truth for the
+**Binds:** `openapi/stellar-index.v1.yaml` (source of truth for the
 wire contract), `internal/api/` (Go implementation),
 `pkg/client/` (Go SDK), `docs/reference/api/` (generated reference).
 
@@ -44,8 +44,8 @@ Where the two diverge, the OpenAPI file wins and this doc gets updated.
 
 ## 2. Base URL + versioning
 
-- Production: `https://api.stellaratlas.xyz/v1`
-- Staging: `https://api.staging.stellaratlas.xyz/v1`
+- Production: `https://api.stellarindex.io/v1`
+- Staging: `https://api.staging.stellarindex.io/v1`
 - Self-hosted: `http://<host>:3000/v1`
 
 Versioning rules:
@@ -294,7 +294,7 @@ OHLC `/v1/ohlc`:
 }
 ```
 the table in the Freighter RFP. Invalid combinations → 400 with
-`type=https://api.stellaratlas.xyz/errors/invalid-granularity`.
+`type=https://api.stellarindex.io/errors/invalid-granularity`.
 
 ### 5.5 Streaming (SSE)
 
@@ -341,7 +341,7 @@ Decimals and resolution exposed via `/v1/oracle/decimals` and
 | GET | `/v1/account/usage?from=&to=` | Per-day request counts for the authenticated key over the trailing 30 days. Backed by the Redis usage counter the rate-limit middleware writes. Returns `[]` only when the counter isn't wired (Redis-less deployment); the absence is reflected on `/v1/readyz` under `checks`. F-1259 (codex audit-2026-05-12). |
 | POST | `/v1/account/keys` | Create a new API key (rotate). |
 
-Self-service signup flow lives at `https://stellaratlas.xyz/signup`;
+Self-service signup flow lives at `https://stellarindex.io/signup`;
 the API returns the generated key once.
 
 ---
@@ -361,7 +361,7 @@ API keys are:
   at creation.
 - Stored in Redis under a SHA-256-derived key; the plaintext itself is
   not recoverable from the stored record.
-- Prefixed `rek_` (short for "Stellar Atlas key") for reverse-grep.
+- Prefixed `rek_` (short for "Stellar Index key") for reverse-grep.
 - Scopes are reserved in the record model, but scope enforcement is not
   wired on runtime endpoints in this snapshot.
 
@@ -476,7 +476,7 @@ Every 4xx/5xx returns:
 Content-Type: application/problem+json
 
 {
-  "type": "https://api.stellaratlas.xyz/errors/rate-limit-exceeded",
+  "type": "https://api.stellarindex.io/errors/rate-limit-exceeded",
   "title": "Rate limit exceeded",
   "status": 429,
   "detail": "You have exceeded your 1000 req/min quota. Try again in 12 seconds.",
@@ -537,10 +537,10 @@ concurrently. `/v3` only when we can retire `/v1`.
 ## 14. SDK
 
 - **Go:** `pkg/client/` in this repo. Published as
-  `github.com/StellarAtlas/stellar-atlas/pkg/client` (same module
+  `github.com/StellarIndex/stellar-index/pkg/client` (same module
   path as the server; tag with `client/v0.x.y` SemVer).
 - **TypeScript:** auto-generated from OpenAPI into
-  `https://github.com/StellarAtlas/stellar-atlas-js`. Published to
+  `https://github.com/StellarIndex/stellar-index-js`. Published to
   npm. Owner: community, with review by @ash for launch version.
 - **Python:** post-launch, community-owned.
 
@@ -585,7 +585,7 @@ Each was a "close by Week 4 design review" item; all settled:
 
 ## 16. OpenAPI spec
 
-Lives at [openapi/stellar-atlas.v1.yaml](../../openapi/stellar-atlas.v1.yaml).
+Lives at [openapi/stellar-index.v1.yaml](../../openapi/stellar-index.v1.yaml).
 Source-of-truth for the wire contract — every documented path
 is implemented in `internal/api/v1/` (the price/batch,
 price/stream, history/since-inception, account/*, and SEP-40

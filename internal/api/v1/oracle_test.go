@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 type stubOracleReader struct {
@@ -170,7 +170,7 @@ func TestOracleLatest_UnknownSource400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.stellaratlas.xyz/errors/unknown-source" {
+	if p.Type != "https://api.stellarindex.io/errors/unknown-source" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }

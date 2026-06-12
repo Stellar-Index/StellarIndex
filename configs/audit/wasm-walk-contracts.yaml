@@ -1,4 +1,4 @@
-# Curated input list for `stellaratlas-ops wasm-history` walks.
+# Curated input list for `stellarindex-ops wasm-history` walks.
 # Used as the source-of-truth contract set per Soroban source.
 # Maintained alongside the per-source decoder in
 # `internal/sources/<source>/`. Provenance per source is the

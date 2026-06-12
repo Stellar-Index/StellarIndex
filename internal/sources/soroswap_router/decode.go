@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // ErrMalformedArgs flags an InvokeContract call whose arg slice

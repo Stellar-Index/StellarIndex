@@ -1,6 +1,6 @@
 package sep41_transfers
 
-import "github.com/StellarAtlas/stellar-atlas/internal/consumer"
+import "github.com/StellarIndex/stellar-index/internal/consumer"
 
 func (Event) EventKind() string { return EventKind }
 func (Event) Source() string    { return SourceName }

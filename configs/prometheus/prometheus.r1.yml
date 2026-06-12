@@ -1,4 +1,4 @@
-# Stellar Atlas — single-node Prometheus on r1.
+# Stellar Index — single-node Prometheus on r1.
 # Scrapes the local exporters; sends alerts to local Alertmanager.
 # When R2/R3 land, switch to the configs/ansible/roles/prometheus
 # 2-host HA topology (paired with R2 prometheus, AlertManager
@@ -44,25 +44,25 @@ scrape_configs:
         labels:
           host: r1
 
-  - job_name: stellaratlas-indexer
+  - job_name: stellarindex-indexer
     static_configs:
       - targets: [localhost:9464]
         labels:
-          binary: stellaratlas-indexer
+          binary: stellarindex-indexer
           host: r1
 
-  - job_name: stellaratlas-api
+  - job_name: stellarindex-api
     static_configs:
       - targets: [localhost:3000]
         labels:
-          binary: stellaratlas-api
+          binary: stellarindex-api
           host: r1
 
-  - job_name: stellaratlas-aggregator
+  - job_name: stellarindex-aggregator
     static_configs:
       - targets: [localhost:9465]
         labels:
-          binary: stellaratlas-aggregator
+          binary: stellarindex-aggregator
           host: r1
 
   - job_name: caddy

@@ -1,4 +1,4 @@
-# Stellar Atlas — monitoring rule files
+# Stellar Index — monitoring rule files
 
 Prometheus alerting rules that correspond 1:1 to the rows in
 [docs/operations/alerts-catalog.md](../../docs/operations/alerts-catalog.md).
@@ -97,9 +97,9 @@ Every rule carries these labels for AlertManager routing:
 | Label | Values | Purpose |
 | ----- | ------ | ------- |
 | `severity` | `page` / `ticket` / `informational` | routing tier |
-| `team` | `stellaratlas` | downstream filtering |
+| `team` | `stellarindex` | downstream filtering |
 | `component` | `ingestion` / `storage` / `cache` / `api` / `stellar` / `infra` / `meta` / `aggregator` / `archive` / `divergence` / `supply` | dashboard grouping |
-| `runbook_url` | `https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/<name>.md` | direct link from the page |
+| `runbook_url` | `https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/<name>.md` | direct link from the page |
 
 Annotations (not labels) carry human-readable metadata:
 

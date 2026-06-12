@@ -1,11 +1,11 @@
-// Thin fetch wrapper for the Stellar Atlas API.
+// Thin fetch wrapper for the Stellar Index API.
 //
 // Resolves the base URL from `NEXT_PUBLIC_API_BASE_URL` (set in
 // `next.config.mjs`). Use this everywhere instead of constructing
 // URLs by hand so the `<>` reveal can introspect every request.
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
 export type RequestExample = {
   method: 'GET' | 'POST';

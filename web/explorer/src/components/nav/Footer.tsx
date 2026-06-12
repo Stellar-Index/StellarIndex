@@ -48,7 +48,7 @@ export function Footer() {
               { label: 'Company', href: '/company' },
               { label: 'Careers', href: '/careers' },
               { label: 'Contact', href: '/contact' },
-              { label: 'API status', href: 'https://status.stellaratlas.xyz', external: true },
+              { label: 'API status', href: 'https://status.stellarindex.io', external: true },
             ]}
           />
           <FooterColumn
@@ -57,7 +57,7 @@ export function Footer() {
               { label: 'Sign in', href: '/signin' },
               { label: 'Create account', href: '/signup' },
               { label: 'Your account', href: '/account' },
-              { label: 'API docs', href: 'https://docs.stellaratlas.xyz', external: true },
+              { label: 'API docs', href: 'https://docs.stellarindex.io', external: true },
               { label: 'Go SDK', href: '/sdk' },
               { label: 'Widgets', href: '/widgets' },
               { label: 'Methodology', href: '/methodology' },
@@ -72,14 +72,14 @@ export function Footer() {
             <span>
               API:{' '}
               <a
-                href="https://api.stellaratlas.xyz"
+                href="https://api.stellarindex.io"
                 className="font-mono hover:text-slate-700 dark:hover:text-slate-300"
               >
-                api.stellaratlas.xyz
+                api.stellarindex.io
               </a>
             </span>
             <a
-              href="https://github.com/StellarAtlas/stellar-atlas"
+              href="https://github.com/StellarIndex/stellar-index"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-slate-700 dark:hover:text-slate-300"
@@ -108,7 +108,7 @@ function BuildBadge() {
   const date = time ? time.slice(0, 10) : '';
   return (
     <a
-      href={`https://github.com/StellarAtlas/stellar-atlas/commit/${sha}`}
+      href={`https://github.com/StellarIndex/stellar-index/commit/${sha}`}
       target="_blank"
       rel="noopener noreferrer"
       title={`Built ${time} from commit ${sha}`}

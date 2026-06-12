@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/currency/marketcap"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
-	"github.com/StellarAtlas/stellar-atlas/internal/version"
+	"github.com/StellarIndex/stellar-index/internal/currency/marketcap"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/version"
 )
 
 // FXCoverageReader is the seam the ingestion diagnostics reads
@@ -130,7 +130,7 @@ type SourceCoverageReader interface {
 // CompletenessReader is the ADR-0033 Phase 6 read seam for the
 // per-source watermark verdict. Production wiring is
 // timescale.Store.ListCompletenessSnapshots, populated by
-// `stellaratlas-ops compute-completeness` (cron). Nil reader / empty
+// `stellarindex-ops compute-completeness` (cron). Nil reader / empty
 // slice → the completeness_* fields stay absent and the UI falls back
 // to the gap_free coverage signal; never a regression.
 type CompletenessReader interface {
@@ -235,7 +235,7 @@ type BackfillCoverageRow struct {
 	// single PROVEN gap pins it — so it is the honest 100%-confidence
 	// signal that supersedes density/gap_free as the headline.
 	// Populated by overlayCompleteness from completeness_snapshots
-	// (written by `stellaratlas-ops compute-completeness`); absent when
+	// (written by `stellarindex-ops compute-completeness`); absent when
 	// not yet computed for this source.
 	CompletenessPct float64 `json:"completeness_pct,omitempty"`
 	// CompletenessWatermark is the highest fully-verified ledger.
@@ -454,7 +454,7 @@ type SourceHealthRow struct {
 	BackfillSafe  bool   `json:"backfill_safe"`
 	TradeCount24h int64  `json:"trade_count_24h"`
 	// Entries24h is the trailing-24h per-source event count from the
-	// universal stellaratlas_source_events_total counter (Prometheus) —
+	// universal stellarindex_source_events_total counter (Prometheus) —
 	// non-zero for every active source, on-chain or external, unlike
 	// trade_count_24h which is trades-table-only (and 0 for oracles,
 	// bridges, FX) and which a trades-scan timeout can silently zero.

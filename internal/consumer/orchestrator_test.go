@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // fakeSource implements consumer.Source. Emits N events then sleeps

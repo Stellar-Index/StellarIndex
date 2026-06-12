@@ -7,7 +7,7 @@
 # 13 h before discovery.
 
 groups:
-  - name: stellaratlas.external_pollers
+  - name: stellarindex.external_pollers
     interval: 60s
     rules:
 
@@ -23,19 +23,19 @@ groups:
       # comment claiming ECB polls every 60s with cached responses
       # was inconsistent with the source code; the implementation
       # is 6h.)
-      - alert: stellaratlas_external_poller_stale
+      - alert: stellarindex_external_poller_stale
         expr: |
-          (time() - stellaratlas_external_poller_last_success_unix{source!="ecb"}) > 1800
+          (time() - stellarindex_external_poller_last_success_unix{source!="ecb"}) > 1800
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
           summary: "external poller {{ $labels.source }} has not succeeded in 30+ min"
           description: |
-            stellaratlas_external_poller_last_success_unix for source
+            stellarindex_external_poller_last_success_unix for source
             {{ $labels.source }} has been > 30 min stale for > 5 min.
             Either the poller is sustained-throttled (4xx), the
             upstream venue is down (5xx / network), or an auth token
@@ -47,15 +47,15 @@ groups:
       # 6h poll interval) means we only fire when ECB has missed
       # at least one whole poll cycle. Fires every day from ~22h
       # after the last success if the poller is genuinely stuck.
-      - alert: stellaratlas_external_poller_stale_ecb
+      - alert: stellarindex_external_poller_stale_ecb
         expr: |
-          (time() - stellaratlas_external_poller_last_success_unix{source="ecb"}) > 43200
+          (time() - stellarindex_external_poller_last_success_unix{source="ecb"}) > 43200
         for: 10m
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
           summary: "ECB FX poller has not succeeded in 12+ h (>2x poll interval)"
           description: |
@@ -70,22 +70,22 @@ groups:
       # the poller is hitting the venue successfully sometimes but
       # >50% of attempts return non-nil err. Lower severity than
       # the staleness alert because at least *some* data is flowing.
-      - alert: stellaratlas_external_poller_error_rate_high
+      - alert: stellarindex_external_poller_error_rate_high
         expr: |
           (
-            rate(stellaratlas_external_poller_polls_total{outcome="error"}[15m])
+            rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
             /
             (
-              rate(stellaratlas_external_poller_polls_total{outcome="success"}[15m])
-              + rate(stellaratlas_external_poller_polls_total{outcome="error"}[15m])
+              rate(stellarindex_external_poller_polls_total{outcome="success"}[15m])
+              + rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
             )
           ) > 0.5
         for: 15m
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
           summary: "external poller {{ $labels.source }} error rate > 50 % (15 min)"
           description: |

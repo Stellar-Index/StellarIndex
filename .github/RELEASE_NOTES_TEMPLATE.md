@@ -1,5 +1,5 @@
 <!--
-Release notes template for a Stellar Atlas binary release.
+Release notes template for a Stellar Index binary release.
 
 The release.yml workflow auto-builds release notes by extracting
 the matching CHANGELOG section. This template is the SHAPE that
@@ -15,7 +15,7 @@ Every section is mandatory. If a section has no entries, write
 absence of a Migration block as much as from its presence.
 -->
 
-# Stellar Atlas vX.Y.Z
+# Stellar Index vX.Y.Z
 
 **Operator action required: yes / no**
 
@@ -46,8 +46,8 @@ toggles. Link the relevant runbook for each. If none, write "None."
 
 Use this checklist if migration steps exist:
 - [ ] Stop API + indexer
-- [ ] Run `stellaratlas-migrate up`
-- [ ] Update `/etc/stellaratlas.toml` — see config-reference diff
+- [ ] Run `stellarindex-migrate up`
+- [ ] Update `/etc/stellarindex.toml` — see config-reference diff
 - [ ] Restart API + indexer
 - [ ] Verify <metric> on the post-launch dashboard
 -->

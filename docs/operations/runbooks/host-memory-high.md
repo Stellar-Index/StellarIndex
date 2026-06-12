@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_host_memory_high`
+# Runbook — `stellarindex_host_memory_high`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_host_memory_high` |
+| Alert | `stellarindex_host_memory_high` |
 | Severity | P3 (informational, can escalate quickly) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | 15 min – hours |
