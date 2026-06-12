@@ -264,26 +264,41 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	if s.history == nil {
 		return PriceSnapshot{}, nil, false
 	}
-	pair, err := canonical.NewPair(asset, quote)
-	if err != nil {
-		// Identity-pair was already rejected upstream; any other
-		// validation error here is unexpected. Drop to fallback.
-		return PriceSnapshot{}, nil, false
-	}
-
 	now := time.Now().UTC()
 	from := now.Add(-time.Duration(windowSeconds) * time.Second)
-	trades, err := s.history.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
-	if err != nil {
-		// Don't log under a cancelled ctx — that's just the client
-		// disconnecting (or, on the stream path, the per-tick scope
-		// completing).
-		if ctx.Err() == nil {
-			s.logger.Warn("TradesInRange failed (tip window) — falling back to LatestPrice",
-				"err", err, "asset", asset.String(), "quote", quote.String(),
-				"window_seconds", windowSeconds)
+
+	// XLM dual-form (rc.89 / F-1340): trades for the SAME asset live under
+	// different canonical ids per source class — CEX trades under
+	// `crypto:XLM`, on-chain under `native`. A single-pair read sees only
+	// one slice, which made ?asset=native fall through to the closed-bucket
+	// fallback (61–113s stale) while ?asset=crypto:XLM was fresh — failing
+	// the ≤30s freshness contract for the natural spelling. MERGE the
+	// alias pairs' trades (disjoint sets) so the tip VWAP covers all venues
+	// regardless of which spelling the caller used. Both sides alias:
+	// XLM appears as a QUOTE too (e.g. AQUA/XLM).
+	var trades []canonical.Trade
+	for _, a := range assetAliases(asset) {
+		for _, q := range assetAliases(quote) {
+			pair, err := canonical.NewPair(a, q)
+			if err != nil {
+				// Identity pair via aliasing (e.g. native/crypto:XLM
+				// collapsing) — skip the degenerate combination.
+				continue
+			}
+			tr, err := s.history.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
+			if err != nil {
+				// Don't log under a cancelled ctx — that's just the client
+				// disconnecting (or, on the stream path, the per-tick scope
+				// completing).
+				if ctx.Err() == nil {
+					s.logger.Warn("TradesInRange failed (tip window) — falling back to LatestPrice",
+						"err", err, "asset", a.String(), "quote", q.String(),
+						"window_seconds", windowSeconds)
+				}
+				return PriceSnapshot{}, nil, false
+			}
+			trades = append(trades, tr...)
 		}
-		return PriceSnapshot{}, nil, false
 	}
 	if len(trades) == 0 {
 		return PriceSnapshot{}, nil, false
