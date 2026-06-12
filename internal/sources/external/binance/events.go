@@ -8,7 +8,7 @@
 // consecutive fills at the same price in the same millisecond into a
 // single message — lossless for VWAP because the aggregated volume is
 // preserved, and ~5-10× lower throughput in practice. The same
-// pattern powers ~/code/rates's Binance connector and it's been
+// pattern powers the predecessor system's Binance connector and it's been
 // stable at production volume there for years.
 //
 // Wire format (verified 2026-04-24 against

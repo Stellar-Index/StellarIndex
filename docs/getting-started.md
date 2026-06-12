@@ -198,7 +198,7 @@ command:
 ```sh
 git clone git@github.com:StellarIndex/stellar-index.git
 cd stellar-index
-make dev    # docker-compose: TimescaleDB + Redis + MinIO + API
+make dev    # docker-compose: TimescaleDB + Redis + MinIO (app binaries run on the host)
 ```
 
 Production deployment is documented in

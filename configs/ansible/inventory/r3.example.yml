@@ -104,7 +104,7 @@ all:
 
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
-      - "ssh-ed25519 AAAA... ash@ashfrancis.com"   # replace
+      - "ssh-ed25519 AAAA... ops@stellarindex.io"   # replace
     allowed_ssh_cidrs:
       - "0.0.0.0/0"                            # tighten to VPN/jump-host CIDR
 

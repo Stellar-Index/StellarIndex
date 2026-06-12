@@ -1,7 +1,7 @@
 // Package coinbase streams live trade matches from Coinbase
 // Exchange's public WebSocket feed. Adds US price discovery for
 // XLM/USD — a venue missing from our reference implementation
-// (`~/code/rates`), so this is the net-new connector in the Phase-2
+// (a private predecessor system), so this is the net-new connector in the Phase-2
 // CEX fleet.
 //
 // Venue-naming note: Coinbase has two distinct API families —
