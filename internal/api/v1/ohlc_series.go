@@ -176,7 +176,7 @@ func (s *Server) handleOHLCSeries(
 
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	bars, err := s.history.OHLCSeries(hCtx, pair, string(interval), from, to, limit)
+	bars, err := s.ohlcSeriesWithAliases(hCtx, pair, interval, from, to, limit)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// Shouldn't fire — handler validated the interval — but guard
 		// against a future code path that wires the storage layer
@@ -281,4 +281,34 @@ func parseOHLCSeriesFromTo(
 		return time.Time{}, time.Time{}, false
 	}
 	return from, to, true
+}
+
+// ohlcSeriesWithAliases reads the bar series trying each XLM dual-form
+// alias pair (rc.89 / F-1340) and returns the FIRST non-empty series.
+// The continuous aggregates key bars by the canonical id the
+// contributing trades carried — CEX-driven bars live under
+// `crypto:XLM`, so `?base=native` read zero bars while
+// `?base=crypto:XLM` served a full series. Bars are aggregates;
+// cross-alias bar FUSION is a separate design decision — first-hit
+// matches the single-bar endpoint's semantics.
+func (s *Server) ohlcSeriesWithAliases(
+	ctx context.Context,
+	pair canonical.Pair,
+	interval ohlcInterval,
+	from, to time.Time,
+	limit int,
+) ([]OHLCSeriesBar, error) {
+	for _, a := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			ap, perr := canonical.NewPair(a, q)
+			if perr != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			bars, err := s.history.OHLCSeries(ctx, ap, string(interval), from, to, limit)
+			if err != nil || len(bars) > 0 {
+				return bars, err
+			}
+		}
+	}
+	return nil, nil
 }
