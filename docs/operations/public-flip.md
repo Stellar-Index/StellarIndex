@@ -1,12 +1,12 @@
 ---
-title: Public-flip strategy — publishing Stellar Atlas to a public repo at v1.0
+title: Public-flip strategy — publishing Stellar Index to a public repo at v1.0
 last_verified: 2026-05-03
 status: living doc — checklist execution-ready, awaiting v1.0 launch signal
 ---
 
 # Public-flip strategy
 
-The Stellar Atlas source must go public — it's a binding commitment
+The Stellar Index source must go public — it's a binding commitment
 in [`docs/stellar-rfp.md`](../stellar-rfp.md). This doc captures
 **how** we make that flip, and the prep work that must be done
 before it.
@@ -30,12 +30,12 @@ the same time. The cost — two repos coexisting — is negligible.
 
 ## What "the new repo" looks like
 
-- Org: `StellarAtlas` (org already created)
-- Name: `stellar-atlas` (matches the Go module path
-  `github.com/StellarAtlas/stellar-atlas` already used internally)
+- Org: `StellarIndex` (org already created)
+- Name: `stellar-index` (matches the Go module path
+  `github.com/StellarIndex/stellar-index` already used internally)
 - License: Apache-2.0 (same as private)
 - Default branch: `main`
-- Initial commit message: `Initial public release — Stellar Atlas v1.0`
+- Initial commit message: `Initial public release — Stellar Index v1.0`
   containing the entire working tree at the v1.0 commit, no history
 - Releases: starts CalVer at `2026.06.30.1` or whatever the launch
   tag is — the public repo's release cadence picks up where private
@@ -52,7 +52,7 @@ satisfies it.
 | ☑ | Postgres password from CTX legacy probe scrubbed from working tree | PR #169 |
 | ☑ | r1 public IP scrubbed from working tree | PR #169 |
 | ☑ | `configs/ansible/inventory/r1.yml` removed from tracked files (added to `.gitignore`) | PR #169 |
-| ☑ | `SECURITY.md` lists `security@stellaratlas.xyz` as the public reporting address (not an internal alias) | `SECURITY.md:9` (verified 2026-04-30) |
+| ☑ | `SECURITY.md` lists `security@stellarindex.io` as the public reporting address (not an internal alias) | `SECURITY.md:9` (verified 2026-04-30) |
 | ☑ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` (only `@ash`, verified 2026-04-30) |
 | ☑ | `README.md` reads as a public landing page — what the project does, who it's for, getting-started link, badge for license + CI | `README.md` (verified 2026-04-30) |
 | ☑ | `CONTRIBUTING.md` welcomes external contributors (issue triage SLA, PR review SLA, code-of-conduct link) | `CONTRIBUTING.md` (verified 2026-04-30) |
@@ -96,14 +96,14 @@ PRs land between checklist verification and launch day. **Do this
    run a no-op commit (e.g. CHANGELOG punctuation) to force a
    green build before tagging.
 6. **External-asset readiness.** Confirm:
-   - `SECURITY.md`'s reporting address (`security@stellaratlas.xyz`)
+   - `SECURITY.md`'s reporting address (`security@stellarindex.io`)
      is monitored — send a test email if uncertain.
    - The `CODEOWNERS` file's only @-handle (`@ash`) has the
      bandwidth to triage day-1 external PRs (or has a delegate
      wired up post-flip via branch-protection settings).
-   - The `StellarAtlas/stellar-atlas` GitHub repo creation
+   - The `StellarIndex/stellar-index` GitHub repo creation
      command in §"Cut-over mechanics" still resolves cleanly
-     (`gh repo view StellarAtlas/stellar-atlas` returns 404 —
+     (`gh repo view StellarIndex/stellar-index` returns 404 —
      i.e. nothing exists yet under that name).
 
 A row that fails the dry-run is a launch blocker. The dry-run
@@ -114,22 +114,22 @@ else is read-only checks against the working tree + GitHub API.
 
 ```sh
 # 1. Tag and verify the v1.0 source on private
-cd ~/code/stellaratlas
+cd ~/code/stellarindex
 git checkout main && git pull --ff-only
 gitleaks detect --source . --redact --exit-code 1   # last secret scan
 make test                                           # one final green build
 
 # 2. Fork into a fresh working dir with no history
 cd ~/code
-git clone --no-local --no-hardlinks stellaratlas stellaratlas-public
-cd stellaratlas-public
+git clone --no-local --no-hardlinks stellarindex stellarindex-public
+cd stellarindex-public
 
 # 3. Orphan-branch the public initial commit
 git checkout --orphan public-v1
 git add -A
-git commit -m "Initial public release — Stellar Atlas v1.0
+git commit -m "Initial public release — Stellar Index v1.0
 
-This is the first public release of the Stellar Atlas source code.
+This is the first public release of the Stellar Index source code.
 History prior to this commit lives in a private development repo
 that is not published; CalVer release notes from this point forward
 live in this repository.
@@ -137,23 +137,23 @@ live in this repository.
 See CHANGELOG.md and docs/architecture/semver-policy.md."
 
 # 4. Verify working tree matches private at v1.0
-diff -r --brief --exclude=.git ../stellaratlas . | head -50
+diff -r --brief --exclude=.git ../stellarindex . | head -50
 # Expect: zero diff. Anything reported is a publish-time slip-up.
 
 # 5. Create the GitHub repo + push
-gh repo create StellarAtlas/stellar-atlas \
+gh repo create StellarIndex/stellar-index \
     --public \
     --description "Stellar-network pricing API: ingest, aggregate, serve VWAP/TWAP/OHLC" \
     --license Apache-2.0
 git remote remove origin
-git remote add origin git@github.com:StellarAtlas/stellar-atlas.git
+git remote add origin git@github.com:StellarIndex/stellar-index.git
 git push -u origin public-v1:main
 
 # 6. Tag the release on the public repo
 git tag YYYY.MM.DD.N
 git push origin YYYY.MM.DD.N
 gh release create YYYY.MM.DD.N \
-    --title "Stellar Atlas YYYY.MM.DD.N — Initial public release" \
+    --title "Stellar Index YYYY.MM.DD.N — Initial public release" \
     --notes-file /tmp/release-notes.md \
     --verify-tag
 ```
@@ -177,14 +177,14 @@ on the clone could affect the private repo's reflog. `--no-local
    these on a clone-and-push. Re-import from the private repo's
    `.github/` directory.
 4. **DNS cutover.**
-   - `docs.stellaratlas.xyz` → public-repo GitHub Pages (or our
+   - `docs.stellarindex.io` → public-repo GitHub Pages (or our
      equivalent — see L3.15 self-service onboarding)
-   - `status.stellaratlas.xyz` → status page (L4.11)
+   - `status.stellarindex.io` → status page (L4.11)
 5. **Stop CI on private.** Set workflows to `workflow_dispatch`-only
    on the private repo, so it stops auto-burning Actions minutes.
    Keep the repo itself alive — it remains the audit trail.
 6. **Customer announcement.** Stellar RFP contacts get the link;
-   `#stellar-atlas-public` Slack channel announcement; tweet from
+   `#stellar-index-public` Slack channel announcement; tweet from
    the project handle if applicable.
 7. **Decommission cron jobs / Renovate / Dependabot** scoped to the
    private repo (re-scope to public).
@@ -193,10 +193,10 @@ on the clone could affect the private repo's reflog. `--no-local
 
 After the flip, both repos exist:
 
-- **Private (`ash/code/stellaratlas`)** — full history, internal
+- **Private (`ash/code/stellarindex`)** — full history, internal
   audit trail, day-to-day work continues here. New work lands here
   first; later mirrored to public via merge PR (see below).
-- **Public (`StellarAtlas/stellar-atlas`)** — clean derived artefact;
+- **Public (`StellarIndex/stellar-index`)** — clean derived artefact;
   external PRs land here and get backported privately if they
   require additional internal-context discussion before merge.
 

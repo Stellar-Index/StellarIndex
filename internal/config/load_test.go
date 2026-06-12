@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	cfg "github.com/StellarAtlas/stellar-atlas/internal/config"
+	cfg "github.com/StellarIndex/stellar-index/internal/config"
 )
 
 func TestLoadReader_happyPath(t *testing.T) {
@@ -33,7 +33,7 @@ postgres_dsn = "postgres://u:p@h/db"
 		t.Errorf("region.name = %q", c.Region.Name)
 	}
 	// Default home_domain survives when the file omits it.
-	if c.Region.HomeDomain != "stellaratlas.xyz" {
+	if c.Region.HomeDomain != "stellarindex.io" {
 		t.Errorf("default home_domain not applied, got %q", c.Region.HomeDomain)
 	}
 	if c.Storage.PostgresDSN != "postgres://u:p@h/db" {
@@ -315,7 +315,7 @@ func findFieldByTOMLTag(v reflect.Value, tag string) reflect.Value {
 }
 
 func TestApplyEnvOverrides(t *testing.T) {
-	t.Setenv("STELLARATLAS_POSTGRES_DSN", "postgres://from-env/db")
+	t.Setenv("STELLARINDEX_POSTGRES_DSN", "postgres://from-env/db")
 	c := cfg.Default()
 	c.ApplyEnvOverrides()
 	if c.Storage.PostgresDSN != "postgres://from-env/db" {
@@ -323,7 +323,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 
 	// Unset env var → no change.
-	t.Setenv("STELLARATLAS_POSTGRES_DSN", "")
+	t.Setenv("STELLARINDEX_POSTGRES_DSN", "")
 	c2 := cfg.Default()
 	original := c2.Storage.PostgresDSN
 	c2.ApplyEnvOverrides()
@@ -342,7 +342,7 @@ func TestLoadWithEnv_RevalidatesAfterOverride(t *testing.T) {
 	good := `
 [region]
 id = "r1"
-home_domain = "stellaratlas.xyz"
+home_domain = "stellarindex.io"
 
 [stellar]
 network = "pubnet"
@@ -361,7 +361,7 @@ postgres_dsn = "postgres://valid@host/db"
 	}
 
 	// Env override with a malformed DSN.
-	t.Setenv("STELLARATLAS_POSTGRES_DSN", "mysql://not-a-postgres-url")
+	t.Setenv("STELLARINDEX_POSTGRES_DSN", "mysql://not-a-postgres-url")
 	_, err := cfg.LoadWithEnv(path)
 	if err == nil {
 		t.Fatal("bad env-var DSN must be rejected by LoadWithEnv")

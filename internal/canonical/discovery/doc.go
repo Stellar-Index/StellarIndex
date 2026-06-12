@@ -39,12 +39,12 @@
 //   - Postgres-backed Recorder:
 //     [internal/storage/timescale/discovery.go] implements
 //     [Recorder] against the `discovered_assets` hypertable;
-//     `cmd/stellaratlas-indexer/main.go` adapts the Store to the
+//     `cmd/stellarindex-indexer/main.go` adapts the Store to the
 //     interface.
-//   - Ops command: `stellaratlas-ops discovery` (see
-//     `cmd/stellaratlas-ops/discovery.go`) — list, recent-window,
+//   - Ops command: `stellarindex-ops discovery` (see
+//     `cmd/stellarindex-ops/discovery.go`) — list, recent-window,
 //     per-source counts.
-//   - Alert metric: `stellaratlas_ingestion_discovery_drops` per
+//   - Alert metric: `stellarindex_ingestion_discovery_drops` per
 //     `deploy/monitoring/rules/ingestion.yml` — fires when
 //     discovery writes start failing.
 package discovery

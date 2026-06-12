@@ -5,7 +5,7 @@ import { ArrowRight, Github, Mail } from 'lucide-react';
 export const metadata: Metadata = {
   title: 'Careers — work on Stellar pricing infrastructure',
   description:
-    'Roles at Stellar Atlas — Apache-2.0 codebase, real on-chain pricing, no AI-slop shortcuts. No open roles listed today; contributions via GitHub PRs welcome.',
+    'Roles at Stellar Index — Apache-2.0 codebase, real on-chain pricing, no AI-slop shortcuts. No open roles listed today; contributions via GitHub PRs welcome.',
   alternates: { canonical: '/careers' },
 };
 
@@ -31,22 +31,22 @@ const VALUES = [
 const CONTRIBUTING_PATHS = [
   {
     label: 'Decoder for a new on-chain DEX',
-    href: 'https://github.com/StellarAtlas/stellar-atlas/blob/main/CLAUDE.md#add-a-new-on-chain-soroban-dex',
+    href: 'https://github.com/StellarIndex/stellar-index/blob/main/CLAUDE.md#add-a-new-on-chain-soroban-dex',
     description: 'Five-file convention: README + events + decode + consumer + tests. Templates exist for Soroswap / Phoenix / Aquarius / Comet.',
   },
   {
     label: 'CEX connector',
-    href: 'https://github.com/StellarAtlas/stellar-atlas/blob/main/CLAUDE.md#add-a-new-cex-connector',
+    href: 'https://github.com/StellarIndex/stellar-index/blob/main/CLAUDE.md#add-a-new-cex-connector',
     description: 'WebSocket / REST poller against vendor APIs. Same five-file convention; reference implementations for Binance / Coinbase / Kraken / Bitstamp.',
   },
   {
     label: 'Supply observer',
-    href: 'https://github.com/StellarAtlas/stellar-atlas/blob/main/CLAUDE.md#add-a-new-supply-observer',
+    href: 'https://github.com/StellarIndex/stellar-index/blob/main/CLAUDE.md#add-a-new-supply-observer',
     description: 'Per-domain observer (Algorithm 1 XLM / Algorithm 2 classic / Algorithm 3 SEP-41). Plug into the dispatcher hook matching what the source emits.',
   },
   {
     label: 'Documentation + ADRs',
-    href: 'https://github.com/StellarAtlas/stellar-atlas/tree/main/docs',
+    href: 'https://github.com/StellarIndex/stellar-index/tree/main/docs',
     description: 'Architecture narratives, runbooks, integration audits. Every PR description in this repo follows the same shape — pick one and write the next.',
   },
 ];
@@ -152,7 +152,7 @@ export default function CareersPage() {
             Contact
           </Link>
           <a
-            href="https://github.com/StellarAtlas/stellar-atlas"
+            href="https://github.com/StellarIndex/stellar-index"
             target="_blank"
             rel="noreferrer noopener"
             className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600 dark:border-slate-700"

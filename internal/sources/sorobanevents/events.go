@@ -27,7 +27,7 @@
 //     this is the catch-all).
 //   - [Capture] converts a [events.Event] into a [Row] suitable for
 //     batched insert.
-//   - The consumer (cmd/stellaratlas-indexer / stellaratlas-ops
+//   - The consumer (cmd/stellarindex-indexer / stellarindex-ops
 //     backfill) wires an [AsyncSink] that batches Rows and calls
 //     [timescale.Store.InsertSorobanEventsBatch].
 //
@@ -59,8 +59,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // SourceName is the registry key for this catch-all source. Used

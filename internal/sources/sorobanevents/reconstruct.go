@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // Reconstruct projects a soroban_events Row back into an
@@ -23,7 +23,7 @@ import (
 // ID + TransactionIndex are left empty — they're metadata for
 // stellar-rpc replays, not used by any decoder.
 //
-// Used by `stellaratlas-ops <source>-backfill` subcommands to walk
+// Used by `stellarindex-ops <source>-backfill` subcommands to walk
 // soroban_events for a historical range and re-feed the same Go
 // decoder live ingest uses, persisting to the per-source hypertable.
 func Reconstruct(row Row) (events.Event, error) {

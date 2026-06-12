@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 )
 
 // stubCheck is a ReadyChecker that returns a configurable error.
@@ -329,8 +329,8 @@ func TestRootReturnsWelcomeEnvelope(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("body not envelope JSON: %v", err)
 	}
-	if env.Data["name"] != "stellar-atlas" {
-		t.Errorf("name = %q, want stellar-atlas", env.Data["name"])
+	if env.Data["name"] != "stellar-index" {
+		t.Errorf("name = %q, want stellar-index", env.Data["name"])
 	}
 	if env.Data["docs"] == "" {
 		t.Error("docs should be non-empty")
@@ -457,7 +457,7 @@ func TestRobotsTxt(t *testing.T) {
 	if !strings.Contains(string(body), "User-agent: *") {
 		t.Errorf("body missing User-agent directive: %q", body)
 	}
-	if !strings.Contains(string(body), "Sitemap: https://stellaratlas.xyz/sitemap.xml") {
+	if !strings.Contains(string(body), "Sitemap: https://stellarindex.io/sitemap.xml") {
 		t.Errorf("body missing Sitemap pointer: %q", body)
 	}
 }
@@ -546,10 +546,10 @@ func TestSecurityTxt(t *testing.T) {
 	}
 	s := string(body)
 	for _, want := range []string{
-		"Contact: mailto:security@stellaratlas.xyz",
+		"Contact: mailto:security@stellarindex.io",
 		"Expires: ",
-		"Canonical: https://stellaratlas.xyz/.well-known/security.txt",
-		"Policy: https://github.com/StellarAtlas/stellar-atlas/blob/main/SECURITY.md",
+		"Canonical: https://stellarindex.io/.well-known/security.txt",
+		"Policy: https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("body missing %q", want)

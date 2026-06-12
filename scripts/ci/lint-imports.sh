@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Import-boundary lint for Stellar Atlas.
+# Import-boundary lint for Stellar Index.
 #
 # Enforces architectural layering rules that docs alone can't: a
 # build-time check that certain package imports don't leak into
@@ -16,7 +16,7 @@
 #      docs/architecture/ingest-pipeline.md.
 #      Allowed in:
 #        - internal/stellarrpc/           (the package itself)
-#        - cmd/stellaratlas-ops/           (`rpc-probe` diag)
+#        - cmd/stellarindex-ops/           (`rpc-probe` diag)
 #        - scripts/dev/                   (fixture-capture scripts)
 #        - internal/sources/*/decode.go   (imports `Event` type
 #                                          only; type moves to a
@@ -79,11 +79,11 @@ RULES = [
     {
         "name": "A/no-rpc-in-ingest",
         "banned": [
-            "github.com/StellarAtlas/stellar-atlas/internal/stellarrpc",
+            "github.com/StellarIndex/stellar-index/internal/stellarrpc",
         ],
         "allow": [
             "internal/stellarrpc/",             # the package itself
-            "cmd/stellaratlas-ops/",             # rpc-probe diag
+            "cmd/stellarindex-ops/",             # rpc-probe diag
             "scripts/dev/",                     # fixture-capture
             "/decode.go",                       # source decode.go — uses Event type only (PR 165b will move)
             "/factory_seed.go",                 # cold-start factory state via simulateTransaction (PR 14) — not a runtime decoder
@@ -114,8 +114,8 @@ RULES = [
             "internal/sources/sac_balances/",   # SAC ContractData observer reads ledger-meta deltas (ADR-0022)
             "internal/sources/sep41_supply/",   # SEP-41 supply observer reads xdr.ScVal Value/Type discriminants (ADR-0023)
             "internal/sources/sep41_transfers/", # SEP-41 audit-trail decoder reads xdr.ScVal Value/Type discriminants (F-0021)
-            "cmd/stellaratlas-indexer/",         # glue: wires ledgerstream → dispatcher (PR 165d)
-            "cmd/stellaratlas-ops/",             # verify-decoders mirrors the indexer's ledger plumbing
+            "cmd/stellarindex-indexer/",         # glue: wires ledgerstream → dispatcher (PR 165d)
+            "cmd/stellarindex-ops/",             # verify-decoders mirrors the indexer's ledger plumbing
             "internal/stellarrpc/",             # builds TransactionEnvelope XDR for simulateTransaction (not SCVal)
             "scripts/dev/",                     # diagnostic helpers (decode-scval pretty-prints raw XDR)
             "_test.go",                         # fixture construction

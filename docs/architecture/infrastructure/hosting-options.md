@@ -165,7 +165,7 @@ Rather than picking one provider for everything, split:
 - **Ingest + storage tier** on Hetzner / Latitude / Equinix bare-
   metal (stellar-core, Galexie, stellar-rpc, Timescale, MinIO).
   Local NVMe, flat bandwidth, predictable cost.
-- **Serving tier** (`stellaratlas-api`, CDN integration) on AWS /
+- **Serving tier** (`stellarindex-api`, CDN integration) on AWS /
   Cloudflare — stateless pods that scale to zero and scale up to
   handle spikes. Near-zero cost at idle.
 
@@ -378,7 +378,7 @@ work-streams.
 - **+1 day:** node provisioned; Ansible runs our bootstrap.
 - **+2 days:** stellar-core in `CATCHUP_RECENT`; Galexie writing to
   local MinIO.
-- **Week 2:** stellaratlas-indexer SDEX connector ingests first trade.
+- **Week 2:** stellarindex-indexer SDEX connector ingests first trade.
 - **Week 3:** Phase-A exit criteria met (7 days synced).
 - **Week 4:** validator key ceremony (if promoting at this provider;
   otherwise defer).

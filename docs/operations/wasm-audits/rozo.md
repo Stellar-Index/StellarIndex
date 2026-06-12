@@ -132,7 +132,7 @@ Per the schemas pinned in `events.go` (extracted from
 
 ## WASM timeline
 
-**Walked 2026-05-26** — `stellaratlas-ops wasm-history` over
+**Walked 2026-05-26** — `stellarindex-ops wasm-history` over
 `[60000000, 62642779]` with `-parallel 4` covering all 3 mainnet
 `MainnetPaymentContracts` (shared walk with the CCTP audit).
 Walk duration: 5h02m. Result: **zero WASM upgrades observed for
@@ -224,7 +224,7 @@ Because Rozo is `ClassBridge` with `DefaultWeight: 0` and
 [`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go),
 the source contributes nothing to VWAP regardless of the
 `BackfillSafe` flag. The flag gates the operator-triggered
-`stellaratlas-ops backfill --source=rozo` path only.
+`stellarindex-ops backfill --source=rozo` path only.
 
 ## References
 

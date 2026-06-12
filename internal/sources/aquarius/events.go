@@ -9,7 +9,7 @@ package aquarius
 import (
 	"errors"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // SourceName constant — appears in metrics labels,

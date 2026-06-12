@@ -1,6 +1,6 @@
 package sac_balances
 
-import "github.com/StellarAtlas/stellar-atlas/internal/consumer"
+import "github.com/StellarIndex/stellar-index/internal/consumer"
 
 func (Observation) EventKind() string { return ObservationKind }
 func (Observation) Source() string    { return SourceName }

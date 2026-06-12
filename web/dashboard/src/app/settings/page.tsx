@@ -47,9 +47,9 @@ function SettingsBody() {
         Need to change the email on file or rename the account? Contact{' '}
         <a
           className="underline"
-          href="mailto:support@stellaratlas.xyz"
+          href="mailto:support@stellarindex.io"
         >
-          support@stellaratlas.xyz
+          support@stellarindex.io
         </a>{' '}
         until self-service edits ship.
       </p>

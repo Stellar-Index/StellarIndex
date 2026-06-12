@@ -31,7 +31,7 @@ marked as such.
 
 | Surface | Source of truth | Generated copy | Regen command |
 | ------- | --------------- | -------------- | ------------- |
-| HTTP API | `openapi/stellar-atlas.v1.yaml` | `docs/reference/api/` (Redocly output) | `make docs-api` |
+| HTTP API | `openapi/stellar-index.v1.yaml` | `docs/reference/api/` (Redocly output) | `make docs-api` |
 | Config schema | Struct tags in `internal/config/*.go` | `docs/reference/config/README.md` | `make docs-config` |
 | Prometheus metrics | `Name:` fields in `internal/obs/*.go` | `docs/reference/metrics/README.md` | `make docs-metrics` |
 | Canonical types | `internal/canonical/*.go` | None — Go types are their own docs | — |
@@ -292,7 +292,7 @@ All enforced in `.golangci.yml` + `.github/workflows/ci.yml`.
 | Gate | Tool | Fails on |
 | ---- | ---- | -------- |
 | Format | `gofumpt` | any unformatted file |
-| Imports | `goimports -local github.com/StellarAtlas/stellar-atlas` | bad import order |
+| Imports | `goimports -local github.com/StellarIndex/stellar-index` | bad import order |
 | Vet | `go vet` | any warning |
 | Static | `staticcheck` + `govet` + `errcheck` + `errorlint` + `bodyclose` + `contextcheck` + `nilerr` + `noctx` + `rowserrcheck` + `sqlclosecheck` + `wastedassign` + `ineffassign` | any finding |
 | Security | `gosec` | any finding (except `G104` — we use `errcheck`) |
@@ -389,9 +389,9 @@ where mechanical; reviewer enforces the rest.
 | Go packages | short, lowercase, single-word where possible |
 | Go exported symbols | `CamelCase`; one-sentence godoc |
 | Files | `snake_case.go`; test files `foo_test.go` |
-| Environment variables | `STELLARATLAS_<AREA>_<KEY>` |
+| Environment variables | `STELLARINDEX_<AREA>_<KEY>` |
 | Config keys (YAML) | `snake_case` |
-| Metric names | `stellaratlas_<subsystem>_<metric>_<unit>` |
+| Metric names | `stellarindex_<subsystem>_<metric>_<unit>` |
 | HTTP paths | `kebab-case`, plural nouns |
 | JSON response fields | `snake_case` |
 | Error types | `<subsystem>: <action>` prefix |
@@ -474,7 +474,7 @@ files in `deploy/systemd/`.
   line-by-line. Each role has a `README.md` plus its
   `tasks/`, `templates/`, `defaults/`, `handlers/` subtree.
 - All systemd units in `deploy/systemd/<binary>.service`
-  (`stellaratlas-{api,indexer,aggregator}.service` plus the
+  (`stellarindex-{api,indexer,aggregator}.service` plus the
   timer/oneshot units for `archive-completeness`, `sla-probe`,
   `supply-snapshot`, and `verify-archive-tier-a`).
 - The dev / reference docker-compose stack lives in

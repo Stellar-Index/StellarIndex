@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_host_cpu_high`
+# Runbook — `stellarindex_host_cpu_high`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_host_cpu_high` |
+| Alert | `stellarindex_host_cpu_high` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | 30 min – days (depends on whether it's fixable code vs scale-up) |

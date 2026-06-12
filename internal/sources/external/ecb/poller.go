@@ -55,8 +55,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 const (
@@ -151,7 +151,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/xml, text/xml")
-	req.Header.Set("User-Agent", "stellaratlas/1.0")
+	req.Header.Set("User-Agent", "stellarindex/1.0")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)

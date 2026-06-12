@@ -9,11 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestLint_RealSpecIsClean — the current stellar-atlas.v1.yaml MUST
+// TestLint_RealSpecIsClean — the current stellar-index.v1.yaml MUST
 // pass the lint. If a future PR introduces a violating param, this
 // test fails before CI even sees it.
 func TestLint_RealSpecIsClean(t *testing.T) {
-	const specPath = "../../../openapi/stellar-atlas.v1.yaml"
+	const specPath = "../../../openapi/stellar-index.v1.yaml"
 	data := mustReadFile(t, specPath)
 	var s spec
 	if err := yaml.Unmarshal(data, &s); err != nil {

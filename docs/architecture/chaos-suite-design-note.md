@@ -12,7 +12,7 @@ related:
 
 # Chaos suite — design note
 
-Forced-failure smoke for the Stellar Atlas stack, run as a deliberate
+Forced-failure smoke for the Stellar Index stack, run as a deliberate
 "break one component, assert sane behaviour" exercise. Companion to
 the [k6 load suite](k6-load-tests-design-note.md) — load proves
 "healthy stack stays within SLA," chaos proves "broken stack fails
@@ -94,13 +94,13 @@ surface.
 | 05 | Redis Sentinel master kill | 2 | systemd kill on r1 | Sentinel quorum elects new master ≤ 10 s; clients reconnect ≤ 30 s |
 | 06 | HAProxy + keepalived VIP flip | 2 | systemctl stop haproxy on owner | VIP migrates ≤ 5 s; in-flight requests retry-OK |
 | 07 | Galexie / MinIO node failure | 2 | docker stop / systemctl stop | erasure-coded reads keep serving |
-| 08 | API pod mid-stream kill | 2 | systemctl restart stellaratlas-api | SSE clients reconnect with cursor ≤ 5 s |
-| 09 | Aggregator tick stall | 2 | `kill -STOP $(pgrep stellaratlas-aggregator)` | cached values serve until TTL; `aggregator-silent` fires within 5m |
+| 08 | API pod mid-stream kill | 2 | systemctl restart stellarindex-api | SSE clients reconnect with cursor ≤ 5 s |
+| 09 | Aggregator tick stall | 2 | `kill -STOP $(pgrep stellarindex-aggregator)` | cached values serve until TTL; `aggregator-silent` fires within 5m |
 
 ## Production-safety guard
 
 Every script (and the runner) refuses to execute when
-`CHAOS_TARGET` matches `*production*`, `*api.stellaratlas.xyz*`, or
+`CHAOS_TARGET` matches `*production*`, `*api.stellarindex.io*`, or
 `*prod.*`. The check is duplicated at the runner level AND inside
 every scenario's prologue — defence in depth. Production chaos
 runs out of the SEV playbook's quarterly drill, not this suite.

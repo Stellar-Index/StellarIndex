@@ -1,33 +1,33 @@
 ---
-title: Getting started with Stellar Atlas
+title: Getting started with Stellar Index
 last_verified: 2026-05-04
 status: living doc
 ---
 
 # Getting started
 
-Stellar Atlas is a public, aggregated, real-time and historical
+Stellar Index is a public, aggregated, real-time and historical
 pricing API for every asset on the Stellar network — native XLM,
 classic credit assets, and SEP-41 Soroban tokens. This page walks
 you from zero to your first authenticated request in under five
 minutes.
 
-> **Hosted endpoint:** `https://api.stellaratlas.xyz`
-> **Interactive explorer:** [`stellaratlas.xyz`](https://stellaratlas.xyz) — browse coins / markets / issuers / sources / diagnostics; every panel reveals the API call that produced it
-> **Reference docs:** [`docs.stellaratlas.xyz`](https://docs.stellaratlas.xyz)
-> **Status page:** [`status.stellaratlas.xyz`](https://status.stellaratlas.xyz)
+> **Hosted endpoint:** `https://api.stellarindex.io`
+> **Interactive explorer:** [`stellarindex.io`](https://stellarindex.io) — browse coins / markets / issuers / sources / diagnostics; every panel reveals the API call that produced it
+> **Reference docs:** [`docs.stellarindex.io`](https://docs.stellarindex.io)
+> **Status page:** [`status.stellarindex.io`](https://status.stellarindex.io)
 
 ## Quick start
 
 ```sh
 # Current XLM/USD price — no auth required for the free tier.
-curl -fsSL https://api.stellaratlas.xyz/v1/price?asset=native&quote=fiat:USD
+curl -fsSL https://api.stellarindex.io/v1/price?asset=native&quote=fiat:USD
 
 # 24-hour OHLC for XLM:
-curl -fsSL "https://api.stellaratlas.xyz/v1/ohlc?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
+curl -fsSL "https://api.stellarindex.io/v1/ohlc?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
 
 # Last-24h trade history for an asset:
-curl -fsSL "https://api.stellaratlas.xyz/v1/history?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
+curl -fsSL "https://api.stellarindex.io/v1/history?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
 Every JSON response carries the same envelope:
@@ -65,13 +65,13 @@ to private surfaces (`/v1/observations`, `/v1/account/*`).
 
 ```sh
 # Issue an API key (returns the raw key once — store it):
-curl -fsSL -X POST https://api.stellaratlas.xyz/v1/account/keys \
+curl -fsSL -X POST https://api.stellarindex.io/v1/account/keys \
      -H "Authorization: Bearer $YOUR_SEP10_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"label":"my laptop"}'
 
 # Use the key on subsequent requests:
-curl -fsSL https://api.stellaratlas.xyz/v1/account/me \
+curl -fsSL https://api.stellarindex.io/v1/account/me \
      -H "Authorization: Bearer rate_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
@@ -95,7 +95,7 @@ X-RateLimit-Remaining: 987
 
 Exceeded limits return `429 Too Many Requests` with `Retry-After`.
 Operators on a Postgres outage may see the rate-limit middleware
-fail open; the `stellaratlas_ratelimit_fail_open_total` counter
+fail open; the `stellarindex_ratelimit_fail_open_total` counter
 ticks during such windows (operators alert on a sustained spike).
 
 ## Endpoint families
@@ -121,17 +121,17 @@ your needs (see [ADR-0018](adr/0018-api-consistency-surfaces.md)).
 
 | Language | Package | Status |
 |---|---|---|
-| Go | `github.com/StellarAtlas/stellar-atlas/pkg/client` | v0.x — public-launch hardening |
+| Go | `github.com/StellarIndex/stellar-index/pkg/client` | v0.x — public-launch hardening |
 | TypeScript | (planned) | — |
 | Python | (planned) | — |
 
 The Go client is a thin layer over the v1 REST API:
 
 ```go
-import "github.com/StellarAtlas/stellar-atlas/pkg/client"
+import "github.com/StellarIndex/stellar-index/pkg/client"
 
 c := client.New(client.Options{
-    BaseURL: "https://api.stellaratlas.xyz",
+    BaseURL: "https://api.stellarindex.io",
     APIKey:  "rek_xxxxxxxx...", // optional; anonymous tier works without
 })
 env, err := c.Price(ctx, client.PriceQuery{
@@ -162,7 +162,7 @@ Errors follow [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)
 
 ```json
 {
-  "type":    "https://api.stellaratlas.xyz/errors/invalid-asset-id",
+  "type":    "https://api.stellarindex.io/errors/invalid-asset-id",
   "title":   "Invalid asset identifier",
   "status":  400,
   "detail":  "asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE>",
@@ -192,12 +192,12 @@ For oracle / on-chain integrations:
 
 ## Self-hosting
 
-Stellar Atlas is Apache-2.0; the full stack runs locally with one
+Stellar Index is Apache-2.0; the full stack runs locally with one
 command:
 
 ```sh
-git clone git@github.com:StellarAtlas/stellar-atlas.git
-cd stellar-atlas
+git clone git@github.com:StellarIndex/stellar-index.git
+cd stellar-index
 make dev    # docker-compose: TimescaleDB + Redis + MinIO + API
 ```
 
@@ -209,14 +209,14 @@ nodes per [ADR-0004](adr/0004-tier1-validator-aspiration.md).
 ## Help
 
 - **Documentation:** [`docs/`](.) in this repo, or the rendered
-  reference at [`docs.stellaratlas.xyz`](https://docs.stellaratlas.xyz).
+  reference at [`docs.stellarindex.io`](https://docs.stellarindex.io).
 - **Issues:** open one at
-  [github.com/StellarAtlas/stellar-atlas/issues](https://github.com/StellarAtlas/stellar-atlas/issues).
-- **Security:** `security@stellaratlas.xyz` (do not open a public
+  [github.com/StellarIndex/stellar-index/issues](https://github.com/StellarIndex/stellar-index/issues).
+- **Security:** `security@stellarindex.io` (do not open a public
   issue for security findings — see [SECURITY.md](../SECURITY.md)).
 
 ## What changed recently
 
 See [CHANGELOG.md](../CHANGELOG.md) for the per-release detail or
-[GitHub Releases](https://github.com/StellarAtlas/stellar-atlas/releases)
+[GitHub Releases](https://github.com/StellarIndex/stellar-index/releases)
 for the operator-facing summaries.

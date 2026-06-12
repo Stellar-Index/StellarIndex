@@ -15,8 +15,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/v1/dashboardauth"
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // fakeStore is an in-memory platform.WebhookStore. Each test gets

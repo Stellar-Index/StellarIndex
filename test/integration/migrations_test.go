@@ -37,9 +37,9 @@ func TestMigrationsRoundTrip(t *testing.T) {
 
 	pg, err := tcpostgres.Run(ctx,
 		"timescale/timescaledb:2.17.2-pg15",
-		tcpostgres.WithDatabase("stellaratlas"),
-		tcpostgres.WithUsername("stellaratlas"),
-		tcpostgres.WithPassword("stellaratlas-test"),
+		tcpostgres.WithDatabase("stellarindex"),
+		tcpostgres.WithUsername("stellarindex"),
+		tcpostgres.WithPassword("stellarindex-test"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).

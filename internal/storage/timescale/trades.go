@@ -12,10 +12,10 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
 )
 
 // externalUSDVolumeDecimals is the off-chain quote-amount scale.
@@ -39,7 +39,7 @@ const externalUSDVolumeDecimals = 8
 // [VWAPUSDFXResolver] queries `prices_1m` for `<asset>/<peg>`
 // per configured peg, caches per-(asset, 1-minute bucket), and
 // expires entries past a freshness ceiling. Wired in
-// `cmd/stellaratlas-indexer/main.go` whenever the operator's
+// `cmd/stellarindex-indexer/main.go` whenever the operator's
 // `[trades].usd_pegged_classic_assets` list is non-empty.
 //
 // Concurrency: the resolver is invoked from the trade-insert
@@ -310,7 +310,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 
 	// Emit per-source outcome metric (new vs duplicate) so operators
 	// can detect a cursor-replay / stuck-tip pattern via
-	// `rate(stellaratlas_trade_insert_outcome_total{outcome="new"}[5m]) == 0`
+	// `rate(stellarindex_trade_insert_outcome_total{outcome="new"}[5m]) == 0`
 	// while attempts (TradeInsertsTotal) keep climbing. See
 	// obs.TradeInsertOutcomeTotal.
 	outcome := "new"
@@ -334,7 +334,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// duplicate-flood pattern: when last_event_unix keeps climbing
 	// but last_insert_unix flat-lines, the cursor is processing
 	// events that produce only duplicate inserts. See the metric
-	// godoc + stellaratlas_ingestion_duplicate_flood alert.
+	// godoc + stellarindex_ingestion_duplicate_flood alert.
 	obs.SourceLastInsertUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
 
 	// Phase 4 (per migration 0023's docblock): auto-register the

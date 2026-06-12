@@ -5,8 +5,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
-	"github.com/StellarAtlas/stellar-atlas/internal/ledgerstream"
+	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
 )
 
 // liveTailRetryWait shortens the SDK BufferedStorageBackend's 30s
@@ -51,7 +51,7 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 		// errors at the trailing edge. The 2026-05-26 soroban-events
 		// fill walk failed exactly this way on chunk 11. Setting the
 		// tolerance flag here applies it to every consumer of this
-		// helper (currently: stellaratlas-ops backfill, the live
+		// helper (currently: stellarindex-ops backfill, the live
 		// indexer's bounded archive-then-live preamble). Has no
 		// effect on unbounded streams (live tail) — those wait for
 		// the file via RetryWait instead. See ledgerstream.Config

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // CursorStore is the subset of the storage API the orchestrator

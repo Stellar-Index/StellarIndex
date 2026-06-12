@@ -3,8 +3,8 @@ package redisclient_test
 import (
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/redisclient"
+	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
 )
 
 func TestBuild_DisabledWhenAllEmpty(t *testing.T) {
@@ -25,7 +25,7 @@ func TestBuild_SinglePrefersSentinelWhenBothSet(t *testing.T) {
 	cfg := config.StorageConfig{
 		RedisAddr:          "127.0.0.1:6379",
 		RedisSentinelAddrs: []string{"sentinel-1:26379", "sentinel-2:26379"},
-		RedisMasterName:    "stellaratlas-test-cache",
+		RedisMasterName:    "stellarindex-test-cache",
 	}
 	got := redisclient.Build(cfg)
 	if got == nil {

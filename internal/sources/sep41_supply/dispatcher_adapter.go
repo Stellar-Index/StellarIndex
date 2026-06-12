@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // Decoder is the dispatcher-facing SEP-41 supply observer per

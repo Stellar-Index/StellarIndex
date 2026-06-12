@@ -1,12 +1,12 @@
 # Ansible role — `haproxy`
 
-Deploy the api-tier load balancer fronting `stellaratlas-api`.
+Deploy the api-tier load balancer fronting `stellarindex-api`.
 Implements the topology pinned in
 [`docs/architecture/ha-plan.md §3.1`](../../../../docs/architecture/ha-plan.md):
 
 - 2 HAProxy hosts (`lb-01` / `lb-02`) sharing a VIP via keepalived
   VRRP.
-- HAProxy backends are the 3 `stellaratlas-api` pods, health-checked
+- HAProxy backends are the 3 `stellarindex-api` pods, health-checked
   via `/v1/readyz`.
 - TLS termination at the edge; HSTS header on every response.
 - Built-in Prometheus exporter on the loopback stats endpoint.
@@ -20,7 +20,7 @@ the launch-critical HA topology. Design rationale lives in
 - Two LB hosts named per inventory (`lb-01` / `lb-02` by default).
   Each needs:
   - Ubuntu 24.04 LTS (or 22.04).
-  - Network reachability to the `stellaratlas_api` host group on
+  - Network reachability to the `stellarindex_api` host group on
     the api port (default 3000).
   - VRRP traffic (multicast `224.0.0.18` on private VLAN, OR
     unicast peering — see "Cloud VRRP gotchas" below).
@@ -50,13 +50,13 @@ all:
         keepalived_iface: eth0
         keepalived_vip_prefix_length: 24
         keepalived_vrid: 51
-    stellaratlas_api:
+    stellarindex_api:
       hosts:
         api-01: { ansible_host: 10.0.0.41 }
         api-02: { ansible_host: 10.0.0.42 }
         api-03: { ansible_host: 10.0.0.43 }
       vars:
-        stellaratlas_api_port: 3000
+        stellarindex_api_port: 3000
 ```
 
 Per-host `keepalived_priority` + `keepalived_initial_state` only
@@ -118,7 +118,7 @@ customer-facing surface was still serving.
 - **Prometheus metrics**: `http://127.0.0.1:8404/metrics` —
   HAProxy 2.4+'s built-in exporter.
 - **Keepalived state**: per-host textfile metric
-  `stellaratlas_haproxy_vip_owner{instance=...}` — sums to 1
+  `stellarindex_haproxy_vip_owner{instance=...}` — sums to 1
   across hosts in steady state. Emitted every 30s by the role's
   textfile scraper.
 

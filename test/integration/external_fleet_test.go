@@ -15,15 +15,15 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
-	externalbinance "github.com/StellarAtlas/stellar-atlas/internal/sources/external/binance"
-	externalbitstamp "github.com/StellarAtlas/stellar-atlas/internal/sources/external/bitstamp"
-	externalcoingecko "github.com/StellarAtlas/stellar-atlas/internal/sources/external/coingecko"
-	externalecb "github.com/StellarAtlas/stellar-atlas/internal/sources/external/ecb"
-	externalexchangerates "github.com/StellarAtlas/stellar-atlas/internal/sources/external/exchangeratesapi"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	externalbinance "github.com/StellarIndex/stellar-index/internal/sources/external/binance"
+	externalbitstamp "github.com/StellarIndex/stellar-index/internal/sources/external/bitstamp"
+	externalcoingecko "github.com/StellarIndex/stellar-index/internal/sources/external/coingecko"
+	externalecb "github.com/StellarIndex/stellar-index/internal/sources/external/ecb"
+	externalexchangerates "github.com/StellarIndex/stellar-index/internal/sources/external/exchangeratesapi"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestExternalFleet_EndToEnd is the Phase-2-ingestion closing-
@@ -138,7 +138,7 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 		t.Fatalf("external.Run: %v", err)
 	}
 
-	// Persist goroutine — the same shape as cmd/stellaratlas-indexer's
+	// Persist goroutine — the same shape as cmd/stellarindex-indexer's
 	// persistEvents but without panic recovery / obs metrics.
 	persistDone := make(chan struct{})
 	var insertedTrades, insertedUpdates int

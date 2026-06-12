@@ -1,8 +1,8 @@
 package discovery
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // SEP41EventType identifies which of the four SEP-41 event topics

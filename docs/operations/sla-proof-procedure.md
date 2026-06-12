@@ -62,8 +62,8 @@ Before kicking off the run:
 
 ```sh
 # Required env vars:
-export K6_TARGET=https://api.staging.stellaratlas.xyz/v1
-export STELLARATLAS_LOAD_API_KEY="<paste from vault — load-test key, not customer key>"
+export K6_TARGET=https://api.staging.stellarindex.io/v1
+export STELLARINDEX_LOAD_API_KEY="<paste from vault — load-test key, not customer key>"
 
 # Optional — override the Prometheus output target if you want
 # the run isolated from the regular metrics stack:
@@ -82,7 +82,7 @@ panel queries below use this window.
 ### 1. Grafana snapshot
 
 Open the load-proof dashboard:
-`https://grafana.staging.stellaratlas.xyz/d/load-proof/k6-load-proof?from=<start>&to=<end>`.
+`https://grafana.staging.stellarindex.io/d/load-proof/k6-load-proof?from=<start>&to=<end>`.
 
 Click **Share → Snapshot → External (Internet)** to mint a
 public snapshot URL. **Mint with no expiry**; the link goes into

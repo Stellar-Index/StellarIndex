@@ -4,24 +4,24 @@
 # silent" canary.
 
 groups:
-  - name: stellaratlas.meta
+  - name: stellarindex.meta
     interval: 30s
     rules:
 
-      - alert: stellaratlas_prometheus_scrape_failing
+      - alert: stellarindex_prometheus_scrape_failing
         # F-1222 (audit-2026-05-12): job names match the multi-host
         # ansible role's scrape config in
         # configs/ansible/roles/prometheus/templates/prometheus.yml.j2
-        # (`stellaratlas_api`, `stellaratlas_aggregator`, etc — with
+        # (`stellarindex_api`, `stellarindex_aggregator`, etc — with
         # underscores). R1's single-host shape uses hyphenated names
         # and tracks them in configs/prometheus/rules.r1/meta.yml.
-        expr: up{job=~"stellaratlas_api|stellaratlas_indexer|stellaratlas_aggregator|postgres_exporter|redis_exporter|minio|node_exporter"} == 0
+        expr: up{job=~"stellarindex_api|stellarindex_indexer|stellarindex_aggregator|postgres_exporter|redis_exporter|minio|node_exporter"} == 0
         for: 2m
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: meta
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/scrape-failing.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/scrape-failing.md
         annotations:
           summary: "Prometheus scrape of {{ $labels.job }}@{{ $labels.instance }} failing"
           description: |
@@ -29,14 +29,14 @@ groups:
             into that subsystem's health until it returns. Doesn't mean the
             subsystem is down — often the exporter is the problem.
 
-      - alert: stellaratlas_alertmanager_config_bad
+      - alert: stellarindex_alertmanager_config_bad
         expr: alertmanager_config_last_reload_successful == 0
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: meta
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/alertmanager-bad-config.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/alertmanager-bad-config.md
         annotations:
           summary: "AlertManager config reload failed"
           description: |
@@ -46,7 +46,7 @@ groups:
 
       # ─── F-0085 (audit-2026-05-26): exporter-down meta-alerts ─────
       # The 2026-05-10 SEV-2 cascade exposed a blindness pattern: the
-      # `stellaratlas_redis_writes_blocked` alert watches
+      # `stellarindex_redis_writes_blocked` alert watches
       # `redis_rdb_last_bgsave_status == 0`, but during the cascade
       # redis_exporter itself was DOWN — so the metric never reached
       # Prometheus, the alert evaluated `absent_gauge == 0` (no_data),
@@ -69,7 +69,7 @@ groups:
       # failure — well before a downstream metric-dependent alert
       # would otherwise notice.
 
-      - alert: stellaratlas_redis_exporter_down
+      - alert: stellarindex_redis_exporter_down
         expr: |
           up{job="redis_exporter"} == 0
           OR
@@ -77,16 +77,16 @@ groups:
         for: 2m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/exporter-down.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
           summary: "redis_exporter scrape target is down — cascade-blind for any alert that depends on it"
           description: |
             The redis_exporter Prometheus scrape target has been down
             for 2+ minutes. While it is down, every alert that depends
             on its metrics is silently blind — most importantly
-            `stellaratlas_redis_writes_blocked`
+            `stellarindex_redis_writes_blocked`
             (`redis_rdb_last_bgsave_status == 0`), the alert family in
             `deploy/monitoring/rules/cache.yml`, and any
             cache-miss / latency rule keyed on `redis_*`. This is the
@@ -97,7 +97,7 @@ groups:
             and verify the exporter; once scraping resumes the
             dependent alert families will re-evaluate on real data.
 
-      - alert: stellaratlas_postgres_exporter_down
+      - alert: stellarindex_postgres_exporter_down
         expr: |
           up{job="postgres_exporter"} == 0
           OR
@@ -105,9 +105,9 @@ groups:
         for: 2m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/exporter-down.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
           summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
           description: |
@@ -115,17 +115,17 @@ groups:
             down for 2+ minutes. While it is down, every alert that
             depends on `pg_*` metrics in
             `deploy/monitoring/rules/storage.yml` is silently
-            blind — including `stellaratlas_timescale_primary_down`,
-            `stellaratlas_timescale_replica_lag`,
-            `stellaratlas_timescale_lock_table_pressure`, and
-            `stellaratlas_timescale_connections_saturated`. This is
+            blind — including `stellarindex_timescale_primary_down`,
+            `stellarindex_timescale_replica_lag`,
+            `stellarindex_timescale_lock_table_pressure`, and
+            `stellarindex_timescale_connections_saturated`. This is
             the F-0085 blindness pattern surfaced by the 2026-05-10
             SEV-2 incident: the metric-producing exporter died first,
             so the dependent alert evaluated `absent_gauge == 0`
             (no_data) and never fired. Follow the runbook to restart
             and verify the exporter.
 
-      - alert: stellaratlas_pgbackrest_exporter_down
+      - alert: stellarindex_pgbackrest_exporter_down
         expr: |
           up{job="pgbackrest_exporter"} == 0
           OR
@@ -133,26 +133,26 @@ groups:
         for: 2m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/exporter-down.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
           summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
           description: |
             The pgbackrest_exporter Prometheus scrape target has been
             down for 2+ minutes. While it is down,
-            `stellaratlas_timescale_backup_failed` and
-            `stellaratlas_timescale_backup_none_24h`
+            `stellarindex_timescale_backup_failed` and
+            `stellarindex_timescale_backup_none_24h`
             (`deploy/monitoring/rules/storage.yml`) are silently
             blind — both depend on
-            `stellaratlas_pgbackrest_last_success_unix`, which only
+            `stellarindex_pgbackrest_last_success_unix`, which only
             this exporter publishes. A 24h RPO breach during exporter
             downtime would not surface until the exporter came back.
             This is the F-0085 blindness pattern from the 2026-05-10
             SEV-2 incident. Follow the runbook to restart and verify
             the exporter.
 
-      - alert: stellaratlas_minio_exporter_down
+      - alert: stellarindex_minio_exporter_down
         expr: |
           up{job="minio"} == 0
           OR
@@ -160,9 +160,9 @@ groups:
         for: 2m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/exporter-down.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
           summary: "MinIO scrape target is down — cascade-blind for any alert that depends on it"
           description: |
@@ -186,14 +186,14 @@ groups:
       # When the heartbeat stops, that receiver pages — which catches
       # BOTH Prometheus-down and AlertManager-down (our primary alerting
       # channels being broken).
-      - alert: stellaratlas_deadmansswitch
+      - alert: stellarindex_deadmansswitch
         expr: vector(1)
         for: 0s
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: meta
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/deadmansswitch.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/deadmansswitch.md
         annotations:
           summary: "This alert fires constantly — alarm is when it STOPS"
           description: |

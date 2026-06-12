@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/supply"
+	"github.com/StellarIndex/stellar-index/internal/supply"
 )
 
 // TestLockedSet_IsEmpty — the IsEmpty discriminator drives a

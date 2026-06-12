@@ -3,9 +3,9 @@ package blend
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/childgate"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 )
 
 // Decoder is the dispatcher-facing view of Blend (ADR-0035
@@ -19,7 +19,7 @@ import (
 // seeded live (every `deploy` we decode calls reg.Seed), DB-warmed at
 // boot (the `protocol_contracts` table → childgate.WithSeed), and
 // genesis-seeded by walking the factory's `deploy` events from the lake
-// (`stellaratlas-ops seed-protocol-contracts -source blend`, and the
+// (`stellarindex-ops seed-protocol-contracts -source blend`, and the
 // ADR-0033 reconcile pre-seed). See docs/discovery/dexes-amms/blend.md
 // (Pool Factory V2 = CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU).
 type Decoder struct {

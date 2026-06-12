@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // SEP40Price is the wire shape for the SEP-40 passthrough
@@ -39,7 +39,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.prices
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-unavailable",
+			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -48,7 +48,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	rawAsset := r.URL.Query().Get("asset")
 	if rawAsset == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset",
+			"https://api.stellarindex.io/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
 			"asset query parameter is required")
 		return
@@ -56,14 +56,14 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
 	}
 	if asset.Equal(defaultPriceQuote) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/identity-price",
+			"https://api.stellarindex.io/errors/identity-price",
 			"Asset is the SEP-40 quote", http.StatusBadRequest,
 			"price of fiat:USD in itself is always 1; SEP-40 lastprice quotes everything in fiat:USD")
 		return
@@ -94,7 +94,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		stale = ok
 		if !ok {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/price-not-found",
+				"https://api.stellarindex.io/errors/price-not-found",
 				"No price data for asset", http.StatusNotFound,
 				"no observation for "+asset.String())
 			return
@@ -108,7 +108,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("LatestPrice (sep40 lastprice) failed",
 			"err", err, "asset", asset.String())
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	reader := s.prices
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-unavailable",
+			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -149,7 +149,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	rawAsset := r.URL.Query().Get("asset")
 	if rawAsset == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset",
+			"https://api.stellarindex.io/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
 			"asset query parameter is required")
 		return
@@ -157,14 +157,14 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
 	}
 	if asset.Equal(defaultPriceQuote) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/identity-price",
+			"https://api.stellarindex.io/errors/identity-price",
 			"Asset is the SEP-40 quote", http.StatusBadRequest,
 			"price of fiat:USD in itself is always 1; SEP-40 prices() quotes everything in fiat:USD")
 		return
@@ -175,7 +175,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > oraclePricesMax {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-records",
+				"https://api.stellarindex.io/errors/invalid-records",
 				"Invalid records parameter", http.StatusBadRequest,
 				"records must be an integer in [1, 200]")
 			return
@@ -191,7 +191,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("RecentClosedSnapshots (sep40 prices) failed",
 			"err", err, "asset", asset.String(), "records", records)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -270,7 +270,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	reader := s.prices
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-unavailable",
+			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -279,7 +279,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	rawBase := r.URL.Query().Get("base")
 	if rawBase == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-base",
+			"https://api.stellarindex.io/errors/missing-base",
 			"Missing base parameter", http.StatusBadRequest,
 			"base query parameter is required")
 		return
@@ -287,7 +287,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	base, err := canonical.ParseAsset(rawBase)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid base identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -296,7 +296,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	rawQuote := r.URL.Query().Get("quote")
 	if rawQuote == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-quote",
+			"https://api.stellarindex.io/errors/missing-quote",
 			"Missing quote parameter", http.StatusBadRequest,
 			"quote query parameter is required")
 		return
@@ -304,14 +304,14 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	quote, err := canonical.ParseAsset(rawQuote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-quote",
+			"https://api.stellarindex.io/errors/invalid-quote",
 			"Invalid quote identifier", http.StatusBadRequest,
 			err.Error())
 		return
 	}
 	if base.Equal(quote) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/identity-pair",
+			"https://api.stellarindex.io/errors/identity-pair",
 			"Base and quote are the same", http.StatusBadRequest,
 			"price of an asset in itself is always 1; base and quote must differ")
 		return
@@ -335,7 +335,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		stale = ok
 		if !ok {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/price-not-found",
+				"https://api.stellarindex.io/errors/price-not-found",
 				"No price data for pair", http.StatusNotFound,
 				"no observation for "+base.String()+" / "+quote.String())
 			return
@@ -349,7 +349,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		s.logger.Error("LatestPrice (sep40 x_last_price) failed",
 			"err", err, "base", base.String(), "quote", quote.String())
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // priceBatchMaxAssets is the upper bound on asset_ids per
@@ -63,7 +63,7 @@ type FrozenLooker interface {
 //
 // Production implementation: Redis hot path (the `price:<asset>`
 // cache per ADR-0007), Timescale fallback to the latest trade for
-// the pair. The MVP impl in cmd/stellaratlas-api skips Redis and
+// the pair. The MVP impl in cmd/stellarindex-api skips Redis and
 // goes straight to the trades hypertable — the handler's Envelope
 // flags mark those responses stale=true per the degradation
 // envelope in docs/architecture/ha-plan.md §9.
@@ -246,7 +246,7 @@ func resolveAssetOrBaseParam(w http.ResponseWriter, r *http.Request) (string, bo
 	rawBase := r.URL.Query().Get("base")
 	if rawAsset != "" && rawBase != "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-parameter",
+			"https://api.stellarindex.io/errors/invalid-parameter",
 			"`asset` and `base` are mutually exclusive", http.StatusBadRequest,
 			"both query parameters refer to the same value — pick one (this endpoint's canonical form is `asset=`; `base=` is accepted as an alias for /v1/twap compatibility)")
 		return "", false
@@ -256,7 +256,7 @@ func resolveAssetOrBaseParam(w http.ResponseWriter, r *http.Request) (string, bo
 	}
 	if rawAsset == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset",
+			"https://api.stellarindex.io/errors/missing-asset",
 			"Missing asset parameter", http.StatusBadRequest,
 			"asset query parameter is required (or `base=` as an alias for /v1/twap compatibility)")
 		return "", false
@@ -276,7 +276,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.prices
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-unavailable",
+			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -289,7 +289,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -304,7 +304,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		quote, err = canonical.ParseAsset(rawQuote)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-quote",
+				"https://api.stellarindex.io/errors/invalid-quote",
 				"Invalid quote identifier", http.StatusBadRequest,
 				err.Error())
 			return
@@ -313,7 +313,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 
 	if asset.Equal(quote) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/identity-price",
+			"https://api.stellarindex.io/errors/identity-price",
 			"Asset and quote are the same", http.StatusBadRequest,
 			"price of an asset in itself is always 1; parameters must differ")
 		return
@@ -349,7 +349,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		stale = ok
 		if !ok {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/price-not-found",
+				"https://api.stellarindex.io/errors/price-not-found",
 				"No price data for pair", http.StatusNotFound,
 				"no trades or oracle observations for "+asset.String()+" / "+quote.String())
 			return
@@ -365,7 +365,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 			"asset", asset.String(),
 			"quote", quote.String())
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -847,7 +847,7 @@ func (s *Server) handlePriceBatch(w http.ResponseWriter, r *http.Request) {
 	rawPairs := r.URL.Query().Get("pairs")
 	if rawIDs != "" && rawPairs != "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-parameter",
+			"https://api.stellarindex.io/errors/invalid-parameter",
 			"`asset_ids` and `pairs` are mutually exclusive", http.StatusBadRequest,
 			"both query parameters refer to the same value — pick one (this endpoint's canonical form is `asset_ids=`; `pairs=` is accepted as an alias for cross-endpoint compatibility)")
 		return
@@ -857,7 +857,7 @@ func (s *Server) handlePriceBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if rawIDs == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset-ids",
+			"https://api.stellarindex.io/errors/missing-asset-ids",
 			"Missing asset_ids parameter", http.StatusBadRequest,
 			"asset_ids query parameter is required (comma-separated; `pairs=` is accepted as an alias)")
 		return
@@ -887,13 +887,13 @@ func (s *Server) handlePriceBatchPost(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-body",
+			"https://api.stellarindex.io/errors/invalid-body",
 			"Invalid JSON body", http.StatusBadRequest, err.Error())
 		return
 	}
 	if len(body.AssetIDs) == 0 {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset-ids",
+			"https://api.stellarindex.io/errors/missing-asset-ids",
 			"Missing asset_ids", http.StatusBadRequest,
 			"request body must include a non-empty asset_ids array")
 		return
@@ -917,7 +917,7 @@ func (s *Server) handlePriceBatchPost(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runPriceBatch(w http.ResponseWriter, r *http.Request, rawIDs []string, rawQuote string, limit int) {
 	if s.prices == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/price-unavailable",
+			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -952,14 +952,14 @@ func (s *Server) parsePriceBatchIDs(w http.ResponseWriter, r *http.Request, rawI
 	}
 	if len(ids) == 0 {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-asset-ids",
+			"https://api.stellarindex.io/errors/missing-asset-ids",
 			"Missing asset_ids", http.StatusBadRequest,
 			"asset_ids must contain at least one non-empty id")
 		return nil, false
 	}
 	if len(ids) > limit {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/too-many-assets",
+			"https://api.stellarindex.io/errors/too-many-assets",
 			"Too many assets", http.StatusBadRequest,
 			fmt.Sprintf("asset_ids may contain at most %d entries", limit))
 		return nil, false
@@ -976,7 +976,7 @@ func (s *Server) parsePriceBatchQuote(w http.ResponseWriter, r *http.Request, ra
 	q, err := canonical.ParseAsset(raw)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-quote",
+			"https://api.stellarindex.io/errors/invalid-quote",
 			"Invalid quote identifier", http.StatusBadRequest,
 			err.Error())
 		return canonical.Asset{}, false
@@ -1032,7 +1032,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	if err != nil {
 		return batchRowResult{fail: &batchRowFailure{
 			status: http.StatusBadRequest,
-			typ:    "https://api.stellaratlas.xyz/errors/invalid-asset-id",
+			typ:    "https://api.stellarindex.io/errors/invalid-asset-id",
 			title:  "Invalid asset identifier",
 			detail: raw + ": " + err.Error(),
 		}}
@@ -1040,7 +1040,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	if asset.Equal(quote) {
 		return batchRowResult{fail: &batchRowFailure{
 			status: http.StatusBadRequest,
-			typ:    "https://api.stellaratlas.xyz/errors/identity-price",
+			typ:    "https://api.stellarindex.io/errors/identity-price",
 			title:  "Asset and quote are the same",
 			detail: "price of an asset in itself is always 1; " + raw + " matches the quote",
 		}}
@@ -1088,7 +1088,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			"err", err, "asset", asset.String(), "quote", quote.String())
 		return batchRowResult{fail: &batchRowFailure{
 			status: http.StatusInternalServerError,
-			typ:    "https://api.stellaratlas.xyz/errors/internal",
+			typ:    "https://api.stellarindex.io/errors/internal",
 			title:  "Internal error",
 		}}
 	}

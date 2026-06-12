@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_nvme_thermal_throttle`
+# Runbook — `stellarindex_nvme_thermal_throttle`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_nvme_thermal_throttle` |
+| Alert | `stellarindex_nvme_thermal_throttle` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | 15 min – days (airflow fix vs waiting for cooler weather) |

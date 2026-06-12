@@ -3,7 +3,7 @@ package sdex
 import (
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // TradeEvent.EventKind / Source and Decoder.Name are trivial

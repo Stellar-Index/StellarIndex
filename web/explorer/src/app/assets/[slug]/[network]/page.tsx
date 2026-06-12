@@ -104,7 +104,7 @@ export async function generateMetadata(props: {
   }
   const networkLabel = network.charAt(0).toUpperCase() + network.slice(1);
   return {
-    title: `${view.ticker} on ${networkLabel} — Stellar Atlas`,
+    title: `${view.ticker} on ${networkLabel} — Stellar Index`,
     description:
       view.description ?? `${view.name} on ${networkLabel}: issuer, markets, supply.`,
   };

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // CORSOptions configures [CORS]. Pass a zero-valued struct for the

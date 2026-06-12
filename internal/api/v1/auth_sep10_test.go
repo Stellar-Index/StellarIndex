@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // stubSEP10Validator implements auth.SEP10Validator for tests.

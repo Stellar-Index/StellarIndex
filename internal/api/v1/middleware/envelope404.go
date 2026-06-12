@@ -100,13 +100,13 @@ func shouldOverride(status int, contentType string) bool {
 // package's writeProblem shape but stays in middleware so we don't
 // pull a circular import.
 func (e *envelope404Recorder) writeProblem(status int) {
-	typeURL := "https://api.stellaratlas.xyz/errors/not-found"
+	typeURL := "https://api.stellarindex.io/errors/not-found"
 	title := "Not found"
-	detail := "No handler is registered for this path. See https://docs.stellaratlas.xyz for the API surface."
+	detail := "No handler is registered for this path. See https://docs.stellarindex.io for the API surface."
 	if status == http.StatusMethodNotAllowed {
-		typeURL = "https://api.stellaratlas.xyz/errors/method-not-allowed"
+		typeURL = "https://api.stellarindex.io/errors/method-not-allowed"
 		title = "Method not allowed"
-		detail = "The path exists but the request method is not supported. See https://docs.stellaratlas.xyz for the API surface."
+		detail = "The path exists but the request method is not supported. See https://docs.stellarindex.io for the API surface."
 	}
 	_ = json.NewEncoder(e.ResponseWriter).Encode(map[string]any{
 		"type":       typeURL,

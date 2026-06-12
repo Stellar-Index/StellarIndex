@@ -3,7 +3,7 @@ package v1
 import (
 	"context"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // CoinsReader is the seam the /v1/assets handlers read through to

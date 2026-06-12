@@ -7,10 +7,10 @@ status: living procedure
 # SLA probe — periodic per-endpoint evidence trail
 
 Operational companion to the executable SLA-evidence CLI shipped in
-#283 (`cmd/stellaratlas-sla-probe`). This doc covers:
+#283 (`cmd/stellarindex-sla-probe`). This doc covers:
 
 - What the probe is + why it runs continuously
-- Daily cron via `configs/healthchecks/stellaratlas-sla-probe.{service,timer}`
+- Daily cron via `configs/healthchecks/stellarindex-sla-probe.{service,timer}`
 - The RFP-stated SLA targets the probe verifies against
 - Textfile-collector integration + the four shipped alerts
 
@@ -41,33 +41,33 @@ rate budget.
 ## Operator wiring
 
 ```sh
-sudo cp configs/healthchecks/stellaratlas-sla-probe.{service,timer} /etc/systemd/system/
+sudo cp configs/healthchecks/stellarindex-sla-probe.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now stellaratlas-sla-probe.timer
+sudo systemctl enable --now stellarindex-sla-probe.timer
 ```
 
-Override defaults via `/etc/default/stellaratlas-healthchecks`:
+Override defaults via `/etc/default/stellarindex-healthchecks`:
 
 ```sh
-BASE_URL=https://api.stellaratlas.xyz/v1     # default
+BASE_URL=https://api.stellarindex.io/v1     # default
 DURATION=30s                                 # default
 CONCURRENCY=4                                # default
 PAIRS="-pair native,fiat:USD -pair USDC-G…,fiat:USD"
 REPORT_FORMAT=json                           # default; text also valid
-STELLARATLAS_PROBE_API_KEY=rek_…              # vault-minted key; required (see below)
+STELLARINDEX_PROBE_API_KEY=rek_…              # vault-minted key; required (see below)
 EXTRA_FLAGS=""                               # default
 ```
 
 ### Why an API key is required
 
-Without `STELLARATLAS_PROBE_API_KEY` set, the probe hits the
+Without `STELLARINDEX_PROBE_API_KEY` set, the probe hits the
 anonymous-tier rate limit (60 req/min per IP). At the documented 4
 workers × 30 s window that's ~1000 requests/sec/worker — every
 non-`/healthz` endpoint reads as `availability < 0.1 %` and the
 verdict comes back `fail` for reasons unrelated to actual SLA
 compliance. Mint a load-test API key from the operator vault (same
-class as `STELLARATLAS_LOAD_API_KEY` for the k6 weekly) and set it
-in `/etc/default/stellaratlas-healthchecks` before enabling the timer. The probe
+class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and set it
+in `/etc/default/stellarindex-healthchecks` before enabling the timer. The probe
 sends it as `Authorization: Bearer <key>` on every request — the
 key never appears on the systemd unit's command line.
 
@@ -81,14 +81,14 @@ chart, price, and oracle-latest surfaces for that pair.
 Each run logs its JSON report to the systemd journal:
 
 ```sh
-sudo journalctl -u stellaratlas-sla-probe.service -n 100 --output=cat | jq .
+sudo journalctl -u stellarindex-sla-probe.service -n 100 --output=cat | jq .
 ```
 
 Key fields:
 
 ```json
 {
-  "base_url": "https://api.stellaratlas.xyz/v1",
+  "base_url": "https://api.stellarindex.io/v1",
   "started_at": "2026-04-30T12:00:00Z",
   "duration_sec": 30.0,
   "concurrency": 4,
@@ -120,13 +120,13 @@ Key fields:
 
 A `verdict` of `fail` carries the reasons in `failed_reasons` —
 e.g. `["price: p95=215.3ms > target 200.0ms"]`. The Healthchecks
-wrapper at `/opt/stellaratlas/healthchecks/sla-probe.sh` reports the
+wrapper at `/opt/stellarindex/healthchecks/sla-probe.sh` reports the
 breach through three channels (F-1313, codex audit-2026-05-13):
 1. POSTs the full JSON report body to `${HEALTHCHECKS_URL_SLA_PROBE}/fail`.
-2. Writes `stellaratlas_sla_probe_unit_failed 1` to the textfile-collector,
-   which Prometheus surfaces as the `stellaratlas_sla_probe_unit_failed_alert`.
+2. Writes `stellarindex_sla_probe_unit_failed 1` to the textfile-collector,
+   which Prometheus surfaces as the `stellarindex_sla_probe_unit_failed_alert`.
 3. The probe binary's stdout JSON lands in journald (`journalctl -u
-   stellaratlas-sla-probe.service`).
+   stellarindex-sla-probe.service`).
 
 The wrapper itself **exits 0** even on probe failure so the timer's
 "completed successfully" path stays clean for systemd; the breach is
@@ -139,8 +139,8 @@ above.
 Before enabling the timer, run a single probe directly:
 
 ```sh
-stellaratlas-sla-probe \
-  -base-url https://api.stellaratlas.xyz/v1 \
+stellarindex-sla-probe \
+  -base-url https://api.stellarindex.io/v1 \
   -duration 10s \
   -concurrency 2 \
   -report-format text
@@ -158,7 +158,7 @@ run so node_exporter can scrape per-endpoint p50/p95/p99 latency,
 availability, freshness, and a pass/fail gauge. Operator wiring:
 
 ```sh
-# /etc/default/stellaratlas-healthchecks
+# /etc/default/stellarindex-healthchecks
 TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom
 ```
 
@@ -170,13 +170,13 @@ in a scrape.
 ### Metric set
 
 ```
-stellaratlas_sla_probe_latency_ms{endpoint=,quantile=}      gauge   ms
-stellaratlas_sla_probe_availability_pct{endpoint=}          gauge   percent
-stellaratlas_sla_probe_freshness_sec{endpoint=}             gauge   seconds (only when present)
-stellaratlas_sla_probe_samples{endpoint=}                   gauge   count
-stellaratlas_sla_probe_run_duration_seconds                 gauge   seconds
-stellaratlas_sla_probe_unit_failed                          gauge   1 on fail, 0 on pass
-stellaratlas_sla_probe_last_pass_timestamp                  gauge   unix; only on pass
+stellarindex_sla_probe_latency_ms{endpoint=,quantile=}      gauge   ms
+stellarindex_sla_probe_availability_pct{endpoint=}          gauge   percent
+stellarindex_sla_probe_freshness_sec{endpoint=}             gauge   seconds (only when present)
+stellarindex_sla_probe_samples{endpoint=}                   gauge   count
+stellarindex_sla_probe_run_duration_seconds                 gauge   seconds
+stellarindex_sla_probe_unit_failed                          gauge   1 on fail, 0 on pass
+stellarindex_sla_probe_last_pass_timestamp                  gauge   unix; only on pass
 ```
 
 ### Alerts
@@ -186,15 +186,15 @@ runbook under `docs/operations/runbooks/sla-probe-*.md`:
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
-| `stellaratlas_sla_probe_p95_breach` | per-endpoint p95 > 200 ms sustained 30 min | **P2** page |
-| `stellaratlas_sla_probe_freshness_breach` | per-endpoint freshness > 30 s sustained 30 min | **P2** page |
-| `stellaratlas_sla_probe_unit_failed_alert` | overall verdict gauge = 1 sustained 30 min | P3 ticket |
-| `stellaratlas_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× 15-min cadence) | **P2** page |
+| `stellarindex_sla_probe_p95_breach` | per-endpoint p95 > 200 ms sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_freshness_breach` | per-endpoint freshness > 30 s sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_unit_failed_alert` | overall verdict gauge = 1 sustained 30 min | P3 ticket |
+| `stellarindex_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× 15-min cadence) | **P2** page |
 
 ## SLA targets in code
 
 The probe's `slaTargets` struct mirrors the table at the top of
 this doc. Defaults are baked in
-(`cmd/stellaratlas-sla-probe/main.go::default*Target`); operators
+(`cmd/stellarindex-sla-probe/main.go::default*Target`); operators
 can tune them via flags if their deployment carries a different
 contract (e.g. an internal staging environment with looser bars).

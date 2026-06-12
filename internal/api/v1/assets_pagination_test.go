@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // paginatingCoinsReader embeds the full stub and overrides only

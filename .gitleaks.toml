@@ -7,7 +7,7 @@
 # Each allowlist below documents the reason the flagged string is
 # a false positive.
 
-title = "stellar-atlas gitleaks config"
+title = "stellar-index gitleaks config"
 
 [extend]
 useDefault = true
@@ -59,7 +59,7 @@ paths = [
 ]
 
 [[rules.allowlists]]
-description = "Generated Redocly HTML — embeds OpenAPI example values (canonical asset_ids: G-strkeys, C-strkeys, transaction hashes) that look like high-entropy secrets to gitleaks. The file is a build artefact regenerated from openapi/stellar-atlas.v1.yaml; the spec itself is scanned and any real secret would be caught there."
+description = "Generated Redocly HTML — embeds OpenAPI example values (canonical asset_ids: G-strkeys, C-strkeys, transaction hashes) that look like high-entropy secrets to gitleaks. The file is a build artefact regenerated from openapi/stellar-index.v1.yaml; the spec itself is scanned and any real secret would be caught there."
 paths = [
   '''docs/reference/api/index\.html''',
 ]
@@ -67,7 +67,7 @@ paths = [
 [[rules.allowlists]]
 description = "OpenAPI spec example values for /v1/signup + /v1/dashboard/keys: synthetic key_id (`k_...`) + plaintext (`re_live_...`) are fabricated illustrations of what the response shape looks like — not real credentials. Real secrets in production never get committed; the response examples MUST be high-entropy-looking to be useful to API consumers. Generated TS types (web/explorer/src/api/types.ts) inherit the same examples in JSDoc; same allowlist rationale applies."
 paths = [
-  '''openapi/stellar-atlas\.v1\.yaml''',
+  '''openapi/stellar-index\.v1\.yaml''',
   '''web/explorer/src/api/types\.ts''',
 ]
 
@@ -84,9 +84,9 @@ paths = [
 ]
 
 [[rules.allowlists]]
-description = "Generated Redocly-format spec mirror — `make docs-api` regenerates this from openapi/stellar-atlas.v1.yaml verbatim, so any allowlist on the source yaml must also cover the mirror. Contains the same OpenAPI example values (canonical asset_ids, signup/dashboard key shapes) the source already declares."
+description = "Generated Redocly-format spec mirror — `make docs-api` regenerates this from openapi/stellar-index.v1.yaml verbatim, so any allowlist on the source yaml must also cover the mirror. Contains the same OpenAPI example values (canonical asset_ids, signup/dashboard key shapes) the source already declares."
 paths = [
-  '''docs/reference/api/stellar-atlas\.v1\.yaml''',
+  '''docs/reference/api/stellar-index\.v1\.yaml''',
 ]
 
 [[rules.allowlists]]

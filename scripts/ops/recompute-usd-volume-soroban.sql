@@ -1,6 +1,6 @@
 -- One-shot UPDATE to populate trades.usd_volume for Soroban DEX
 -- trades that landed BEFORE the SAC wrapper config was added to
--- /etc/stellaratlas.toml. Without the SAC mapping the indexer's
+-- /etc/stellarindex.toml. Without the SAC mapping the indexer's
 -- on-chain usd_volume path can't resolve `quote_asset = C…` back
 -- to an underlying classic, so the rows insert with NULL volume.
 --
@@ -25,8 +25,8 @@
 -- adding more SAC mappings — just extend the IN list.
 --
 -- Operator usage:
---   PGPASSWORD=$(cat /etc/stellaratlas/postgres-password.txt) \
---   psql -h 127.0.0.1 -U stellaratlas -d stellaratlas \
+--   PGPASSWORD=$(cat /etc/stellarindex/postgres-password.txt) \
+--   psql -h 127.0.0.1 -U stellarindex -d stellarindex \
 --        -f scripts/ops/recompute-usd-volume-soroban.sql
 
 BEGIN;

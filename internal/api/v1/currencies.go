@@ -37,7 +37,7 @@ type FXQuotePoint struct {
 
 // CurrenciesSnapshot is the v1-side projection of the forex cache.
 // Mirrors forex.Snapshot field-for-field; defined here so the
-// binding adapter in cmd/stellaratlas-api can convert without this
+// binding adapter in cmd/stellarindex-api can convert without this
 // package importing the source package.
 type CurrenciesSnapshot struct {
 	Currencies  []CurrencyEntry

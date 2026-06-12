@@ -83,13 +83,13 @@ This package is **wired into the ingest pipeline** (#40):
 
 **Operator steps to turn it on:**
 
-1. Apply migration 0038 (`stellaratlas-migrate up` after the SCP —
+1. Apply migration 0038 (`stellarindex-migrate up` after the SCP —
    migrations are not auto-deployed).
 2. Add `"cctp"` to `ingestion.enabled_sources` in the region TOML.
 3. `BackfillSafe` stays `false` until a WASM-history audit lands
    at `docs/operations/wasm-audits/cctp.md`. The contracts are
    brand new (a single WASM hash is expected) but the audit is
-   required program work before `stellaratlas-ops backfill` will
+   required program work before `stellarindex-ops backfill` will
    run CCTP against historical ranges. Live ingest works without
    it — per the user's direction CCTP needs little/no history.
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Stellar Atlas contributors.
+// Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package customerwebhook
@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // FanoutStore is the subset of [platform.WebhookStore] the fan-out

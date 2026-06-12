@@ -20,8 +20,8 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Textfile-collector landing dir. cmd/stellaratlas-sla-probe writes
-# its prom file here; cmd/stellaratlas-ops verify-archive +
+# Textfile-collector landing dir. cmd/stellarindex-sla-probe writes
+# its prom file here; cmd/stellarindex-ops verify-archive +
 # archive-completeness + supply-snapshot write here too. Without
 # this dir + the matching --collector.textfile flag below, every
 # alert in deploy/monitoring/rules/{sla-probe,archive-completeness,
@@ -32,15 +32,15 @@
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
-    owner: stellaratlas
-    group: stellaratlas
+    owner: stellarindex
+    group: stellarindex
     mode: "0775"
 
 # /etc/default/supply-snapshot — operator override that wires the
 # textfile-collector path the supply-snapshot binary writes its
 # success metric to. Without this, the binary runs successfully on
 # its daily cadence but emits no metric, and
-# `stellaratlas_supply_snapshot_never_initialized` (alert in
+# `stellarindex_supply_snapshot_never_initialized` (alert in
 # deploy/monitoring/rules/supply-snapshot.yml) fires permanently.
 # The asset coverage limitation (only XLM today) is documented in
 # the unit comments + tracked separately — this file just unblocks
@@ -53,7 +53,7 @@
     mode: "0644"
     content: |
       # Managed by ansible (archival-node role / 10-observability.yml).
-      # Required for stellaratlas_supply_snapshot_last_success_timestamp
+      # Required for stellarindex_supply_snapshot_last_success_timestamp
       # to emit. Without TEXTFILE_OUTPUT, the unit succeeds but no
       # metric is written and the never-initialized alert fires.
       TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_snapshot.prom
@@ -62,7 +62,7 @@
 # /etc/default/sla-probe — operator override that:
 #   1. Targets the local API binary (bypasses CF + Caddy edges).
 #   2. Wires the textfile-collector output for the
-#      stellaratlas_sla_probe_unit_failed gauge — without this the
+#      stellarindex_sla_probe_unit_failed gauge — without this the
 #      Prometheus alert can't read the verdict and stays stuck on
 #      whatever the previous run wrote (or stuck firing if no run
 #      ever wrote a value).

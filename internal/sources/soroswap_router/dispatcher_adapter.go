@@ -1,8 +1,8 @@
 package soroswap_router
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 )
 
 // Decoder implements dispatcher.ContractCallDecoder. The Soroswap

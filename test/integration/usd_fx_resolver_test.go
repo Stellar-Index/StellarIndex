@@ -9,8 +9,8 @@ import (
 
 	_ "github.com/lib/pq"
 
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestVWAPUSDFXResolver_QueriesPrices1m exercises the F-1268

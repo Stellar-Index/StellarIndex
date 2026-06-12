@@ -11,13 +11,13 @@ import (
 	"github.com/stellar/go-stellar-sdk/network"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth/sep10"
+	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/auth/sep10"
 )
 
 const (
-	testWebDomain  = "auth.stellaratlas.test"
-	testHomeDomain = "stellaratlas.test"
+	testWebDomain  = "auth.stellarindex.test"
+	testHomeDomain = "stellarindex.test"
 )
 
 var testJWTSecret = []byte("test-jwt-secret-must-be-32-bytes-or-more!!")

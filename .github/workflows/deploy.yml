@@ -36,10 +36,10 @@ on:
         type: string
       binaries:
         # F-1314 (codex audit-2026-05-13): the default deploy set
-        # now INCLUDES stellaratlas-sla-probe so the active
-        # /opt/stellaratlas/healthchecks/sla-probe.sh wrapper +
-        # stellaratlas-sla-probe.timer always have a matching
-        # /usr/local/bin/stellaratlas-sla-probe under it. Pre-fix
+        # now INCLUDES stellarindex-sla-probe so the active
+        # /opt/stellarindex/healthchecks/sla-probe.sh wrapper +
+        # stellarindex-sla-probe.timer always have a matching
+        # /usr/local/bin/stellarindex-sla-probe under it. Pre-fix
         # a nominal deploy would leave the SLA-evidence binary
         # stale (or absent on a fresh host) because the timer's
         # presence on r1 came from the wave-129 ssh-side
@@ -47,7 +47,7 @@ on:
         description: 'Comma-separated binaries to deploy'
         required: false
         type: string
-        default: 'stellaratlas-indexer,stellaratlas-aggregator,stellaratlas-api,stellaratlas-sla-probe'
+        default: 'stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe'
       health_grace_seconds:
         description: 'Seconds to wait between restart and /v1/healthz probe'
         required: false

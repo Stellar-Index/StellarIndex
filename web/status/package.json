@@ -1,8 +1,8 @@
 {
-  "name": "@stellaratlas/status",
+  "name": "@stellarindex/status",
   "version": "0.0.0",
   "private": true,
-  "description": "Public status page for the Stellar Atlas API (status.stellaratlas.xyz).",
+  "description": "Public status page for the Stellar Index API (status.stellarindex.io).",
   "scripts": {
     "dev": "next dev -p 3002",
     "build": "next build",

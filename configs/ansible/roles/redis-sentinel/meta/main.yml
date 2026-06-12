@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: redis_sentinel
-  author: stellaratlas
+  author: stellarindex
   description: >-
     Redis Sentinel-managed cache cluster. Three nodes, 1 primary
     + 2 replicas, 3 co-located Sentinels. Implements

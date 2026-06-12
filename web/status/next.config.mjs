@@ -7,7 +7,7 @@ const nextConfig = {
   productionBrowserSourceMaps: true,
   env: {
     NEXT_PUBLIC_API_BASE_URL:
-      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz',
+      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io',
   },
 };
 

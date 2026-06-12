@@ -21,7 +21,7 @@ Copied verbatim from the scenario script:
 > At 09:17 UTC, the dashboard's Ingestion → Decode errors panel
 > begins to climb for the soroswap source. The rate goes from
 > 0/s baseline to 3/s sustained over 5 minutes.
-> `stellaratlas_source_events_total{source="soroswap"}` rate is
+> `stellarindex_source_events_total{source="soroswap"}` rate is
 > still positive (events ARE arriving) but every event is being
 > rejected. Aquarius, Phoenix, and Comet are unaffected.
 >
@@ -32,7 +32,7 @@ Copied verbatim from the scenario script:
 
 T+0 = trigger at 09:17 UTC. Times simulated.
 
-- **T+02:30** — `stellaratlas_ingestion_decode_error{source="soroswap"}`
+- **T+02:30** — `stellarindex_ingestion_decode_error{source="soroswap"}`
   paged via PagerDuty (P3 ticket; SEV-2 severity assigned per
   playbook §1.2). Acknowledged within the SEV-2 30-min window
   comfortably. Opened #incident-2026-04-30-soroswap-decode
@@ -50,11 +50,11 @@ T+0 = trigger at 09:17 UTC. Times simulated.
   the canonical SCVal-enum-extension symptom; the runbook flags
   this in its decoder-vs-source-side discriminator.
 - **T+10:00** — Confirmed events still arriving via
-  `stellaratlas_source_events_total{source="soroswap"}` still
+  `stellarindex_source_events_total{source="soroswap"}` still
   rising (~30/s baseline, unchanged). Confirms decoder-side
   failure, not source-stopped — followed runbook's discriminator
   cleanly.
-- **T+12:00** — `stellaratlas_aggregator_class_drop_spike` fires
+- **T+12:00** — `stellarindex_aggregator_class_drop_spike` fires
   for affected pairs (XLM/USDC, XLM/USDT). Confirmed VWAP for
   these pairs has lost soroswap as a contributor; SDEX +
   Aquarius + Phoenix + Comet still contributing. **No customer-
@@ -85,7 +85,7 @@ T+0 = trigger at 09:17 UTC. Times simulated.
   progress; ETA 4h. No customer action needed; affected pairs
   continue to receive valid prices via remaining sources."
 - **T+24h (simulated)** — After hotfix lands, ran the gap
-  recovery: `stellaratlas-ops backfill -from <protocol-25-activation> -to <fix-deploy> -source soroswap`.
+  recovery: `stellarindex-ops backfill -from <protocol-25-activation> -to <fix-deploy> -source soroswap`.
   Triangulation rates auto-recompute on the next aggregator
   tick. Status page transitioned *Degraded* → *Operational*.
 
@@ -103,9 +103,9 @@ T+0 = trigger at 09:17 UTC. Times simulated.
   correlation. Action: RSS-or-similar watcher on
   `developers.stellar.org` release notes.
 - **Backfill subcommand wiring is partial.** The runbook
-  references `stellaratlas-ops backfill -source <name>` but the
+  references `stellarindex-ops backfill -source <name>` but the
   source-filtered backfill flag isn't wired end-to-end yet
-  (see `cmd/stellaratlas-ops/main.go` — backfill takes
+  (see `cmd/stellarindex-ops/main.go` — backfill takes
   `-from / -to` but per-source gating leans on
   `BackfillSafe` registry filter rather than CLI flag). Action:
   Land per-source `-source` flag + golden test before launch.
@@ -130,7 +130,7 @@ T+0 = trigger at 09:17 UTC. Times simulated.
       due 2026-Q3 (post-launch alerting hardening).
 - [ ] **Add stellar-core release-notes RSS watcher** — owner @ash,
       due 2026-Q3.
-- [ ] **Wire `stellaratlas-ops backfill -source <name>` flag end-to-end
+- [ ] **Wire `stellarindex-ops backfill -source <name>` flag end-to-end
       + integration test** — owner @ash, due 2026-Q3.
 - [ ] **3-person tabletop with state-transition rehearsal** —
       owner @ash, due 2026-Q3.
@@ -145,7 +145,7 @@ T+0 = trigger at 09:17 UTC. Times simulated.
 | 4 | Did the team confirm decoder-side (not source-stopped) by checking `source_events_total` still rising? | pass | T+10:00. |
 | 5 | Did the team avoid panic? | pass | SEV-2 path; no restart attempted. |
 | 6 | Did the team correctly identify the fix-forward path? | pass | `internal/scval` update + golden fixture + ordinary deploy. |
-| 7 | Did anyone propose `stellaratlas-ops backfill` for gap recovery? | pass | T+24h step. |
+| 7 | Did anyone propose `stellarindex-ops backfill` for gap recovery? | pass | T+24h step. |
 | 8 | Did anyone surface `flags.divergence_warning` as the customer-facing degradation signal? | pass | Used in customer DM reply. |
 
 **Overall:** pass.

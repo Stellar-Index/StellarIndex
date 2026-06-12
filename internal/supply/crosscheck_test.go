@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/supply"
+	"github.com/StellarIndex/stellar-index/internal/supply"
 )
 
 const (

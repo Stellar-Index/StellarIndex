@@ -26,7 +26,7 @@ type APIError struct {
 	Status int
 
 	// Type is the problem+json `type` field — a stable error-type
-	// URL like `https://api.stellaratlas.xyz/errors/missing-asset`.
+	// URL like `https://api.stellarindex.io/errors/missing-asset`.
 	// Empty when the server returned a non-problem+json body
 	// (e.g. plain-text 502 from a reverse proxy).
 	Type string
@@ -68,7 +68,7 @@ func (e *APIError) RetryAfterDuration() (d time.Duration, ok bool) {
 // Error implements the error interface.
 func (e *APIError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "stellar-atlas API error %d", e.Status)
+	fmt.Fprintf(&b, "stellar-index API error %d", e.Status)
 	if e.Title != "" {
 		fmt.Fprintf(&b, ": %s", e.Title)
 	}

@@ -14,7 +14,7 @@ name: release
 # **Container images are NOT built/pushed by this workflow.** The
 # `docker/*.Dockerfile` files remain in the repo so a self-hoster
 # can build their own image (`make build-docker` or
-# `docker build -f docker/stellaratlas-api.Dockerfile .`); we don't
+# `docker build -f docker/stellarindex-api.Dockerfile .`); we don't
 # push to ghcr.io because no consumer of those images exists today
 # and multi-arch Docker builds were adding ~3-5 min of CI burn per
 # release tag for no return. To re-enable: restore the `containers:`
@@ -101,12 +101,12 @@ jobs:
       fail-fast: false
       matrix:
         binary:
-          - stellaratlas-indexer
-          - stellaratlas-aggregator
-          - stellaratlas-api
-          - stellaratlas-ops
-          - stellaratlas-migrate
-          - stellaratlas-sla-probe
+          - stellarindex-indexer
+          - stellarindex-aggregator
+          - stellarindex-api
+          - stellarindex-ops
+          - stellarindex-migrate
+          - stellarindex-sla-probe
         goos: [linux]
         # arm64 dropped 2026-05-08 — every region (R1/R2/R3 plan) is
         # amd64. Re-add when an arm64 host is provisioned. See memory:
@@ -209,7 +209,7 @@ jobs:
           ' CHANGELOG.md > "$NOTES"
           if [ ! -s "$NOTES" ]; then
             echo "::warning::No CHANGELOG section found for ${TAG}; falling back to commit summary"
-            echo "# Stellar Atlas ${TAG}" > "$NOTES"
+            echo "# Stellar Index ${TAG}" > "$NOTES"
             echo "" >> "$NOTES"
             echo "_Auto-generated notes — no CHANGELOG entry found for this tag._" >> "$NOTES"
             echo "" >> "$NOTES"
@@ -242,7 +242,7 @@ jobs:
             gh release delete "$TAG" --yes
           fi
           gh release create "$TAG" \
-            --title "Stellar Atlas $TAG" \
+            --title "Stellar Index $TAG" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
             --verify-tag $PRE \
             dist/*

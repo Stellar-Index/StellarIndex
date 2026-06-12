@@ -5,7 +5,7 @@ import { Wrench } from 'lucide-react';
 import { loadOperationsDocs } from '@/lib/operations';
 
 export const metadata: Metadata = {
-  title: 'Operations runbooks — Stellar Atlas research',
+  title: 'Operations runbooks — Stellar Index research',
   description:
     'Operator runbooks: archival-node bring-up, release process, deploy workflow, disaster recovery.',
 };
@@ -19,7 +19,7 @@ export default function OperationsIndexPage() {
           Operations runbooks
         </h1>
         <p className="max-w-3xl text-base text-slate-600 dark:text-slate-400">
-          Canonical recipes for standing up and operating Stellar Atlas.{' '}
+          Canonical recipes for standing up and operating Stellar Index.{' '}
           <Link href="/research" className="underline decoration-dotted">
             Back to research
           </Link>

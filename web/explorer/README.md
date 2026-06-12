@@ -1,8 +1,8 @@
-# Stellar Atlas — showcase site
+# Stellar Index — showcase site
 
-Public explorer for the Stellar Atlas API. Lives at
-`stellaratlas.xyz` (Cloudflare Pages). The companion
-customer dashboard lives at `app.stellaratlas.xyz` — see
+Public explorer for the Stellar Index API. Lives at
+`stellarindex.io` (Cloudflare Pages). The companion
+customer dashboard lives at `app.stellarindex.io` — see
 [`web/dashboard/README.md`](../dashboard/README.md).
 
 The original [implementation plan](../../docs/architecture/explorer-implementation-plan.md)
@@ -21,7 +21,7 @@ phasing.
 - [TailwindCSS](https://tailwindcss.com) + [shadcn/ui](https://ui.shadcn.com)
 - [TradingView Lightweight Charts](https://tradingview.github.io/lightweight-charts/)
 - [TanStack Query v5](https://tanstack.com/query)
-- [openapi-typescript](https://github.com/openapi-ts/openapi-typescript) — types generated from `../../openapi/stellar-atlas.v1.yaml`
+- [openapi-typescript](https://github.com/openapi-ts/openapi-typescript) — types generated from `../../openapi/stellar-index.v1.yaml`
 - [Zod](https://zod.dev) — runtime validation at the API boundary
 - [satori](https://github.com/vercel/satori) + [@resvg/resvg-js](https://github.com/yisibl/resvg-js) — Open Graph card generation (build-time + Cloudflare Worker for long-tail)
 - [lucide-react](https://lucide.dev) — icons
@@ -29,7 +29,7 @@ phasing.
 
 **Static export only** (`output: 'export'` in `next.config.mjs`).
 Deployed to Cloudflare Pages at v1; rsync → r1 nginx behind Cloudflare
-CDN as the fallback. Same vendor story as `api.stellaratlas.xyz`.
+CDN as the fallback. Same vendor story as `api.stellarindex.io`.
 
 ## Run locally
 
@@ -74,7 +74,7 @@ src/
 │   └── QueryProvider.tsx
 ├── api/
 │   ├── client.ts        Fetch wrapper
-│   ├── types.ts         Generated from openapi/stellar-atlas.v1.yaml
+│   ├── types.ts         Generated from openapi/stellar-index.v1.yaml
 │   │                    via `pnpm generate:api` — DO NOT EDIT
 │   └── hooks.ts         TanStack Query hooks
 └── lib/
@@ -103,7 +103,7 @@ for the canonical list. Summary:)
 
 ## API source-of-truth
 
-The OpenAPI spec at `../../openapi/stellar-atlas.v1.yaml` is the
+The OpenAPI spec at `../../openapi/stellar-index.v1.yaml` is the
 contract. `pnpm generate:api` regenerates `src/api/types.ts`; CI
 fails if the regen would produce a diff. **Never hand-edit
 `src/api/types.ts`.**
@@ -115,17 +115,17 @@ HTML + JS + CSS, no Node runtime needed at the edge.
 
 **v1 target: Cloudflare Pages.** Connect the repo, set the build
 output dir to `web/explorer/out`, set the build command to
-`pnpm --filter @stellaratlas/explorer build`. Cloudflare auto-deploys
+`pnpm --filter @stellarindex/explorer build`. Cloudflare auto-deploys
 on every push to `main` + creates per-PR previews. Free tier covers
 unmetered requests on Pages-served static assets.
 
 **v1 fallback: rsync → r1.** `make web-build` produces `out/`; rsync
-that to `/var/www/showcase/` on r1; Cloudflare proxies `stellaratlas.xyz`
+that to `/var/www/showcase/` on r1; Cloudflare proxies `stellarindex.io`
 → r1 nginx → static files. Same TLS termination + CDN as the API.
 
 Dynamic routes (`/assets/{id}`, `/contracts/{id}`, `/tx/{hash}`,
 `/accounts/{G}`) use **client-side rendering**: the build emits a
-shell, the page hydrates and fetches data from `api.stellaratlas.xyz`
+shell, the page hydrates and fetches data from `api.stellarindex.io`
 via TanStack Query. High-traffic routes (top-N assets, all protocols,
 all sources) get pre-rendered via `generateStaticParams` for SEO;
 the long-tail is JS-rendered (Google handles it fine in 2026).
@@ -133,5 +133,5 @@ the long-tail is JS-rendered (Google handles it fine in 2026).
 Why not Vercel: brand fit + vendor consolidation. Static export to
 our existing Cloudflare CDN is one vendor; Vercel is two. Reliability
 difference is invisible at our traffic volume — the showcase is a
-thin shell over `api.stellaratlas.xyz`, which is the actual reliability
+thin shell over `api.stellarindex.io`, which is the actual reliability
 question.

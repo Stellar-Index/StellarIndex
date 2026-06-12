@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Stellar Atlas contributors.
+// Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package auth
@@ -12,7 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
 )
 
 // MarkEmailVerified flips an existing API key's

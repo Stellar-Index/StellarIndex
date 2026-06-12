@@ -32,7 +32,7 @@
 package cctp
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // SourceName is the registry key for this source.

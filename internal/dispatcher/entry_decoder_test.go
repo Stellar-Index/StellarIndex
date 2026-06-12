@@ -7,7 +7,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // fakeEntryDecoder is the test-only [LedgerEntryChangeDecoder].

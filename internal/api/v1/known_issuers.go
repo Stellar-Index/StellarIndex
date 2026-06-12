@@ -161,7 +161,7 @@ var knownIssuers = map[string]knownIssuer{
 // passed entry with the curated fallback when one exists. Returns
 // the (possibly mutated) values. Pass-through when the DB already
 // populated them — DB wins, since an operator with a real
-// `stellaratlas-ops sep1-refresh` cron has more current data than
+// `stellarindex-ops sep1-refresh` cron has more current data than
 // the static map.
 func enrichIssuer(gStrkey, homeDomain, orgName string) (string, string) {
 	if homeDomain != "" && orgName != "" {

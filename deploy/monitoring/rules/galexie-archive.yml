@@ -36,18 +36,18 @@
 # and false-fired through every normal partition cycle.
 
 groups:
-  - name: stellaratlas.galexie_archive_tip_lag
+  - name: stellarindex.galexie_archive_tip_lag
     interval: 60s
     rules:
 
-      - alert: stellaratlas_galexie_archive_tip_lag_high
+      - alert: stellarindex_galexie_archive_tip_lag_high
         expr: galexie_archive_tip_lag_ledgers > 64000
         for: 90m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
           summary: "galexie-archive >1 partition behind live ({{ $value }} ledgers, sustained 90m, P3)"
           description: |
@@ -61,16 +61,16 @@ groups:
             backstops); R1's full-mirror guarantee is degrading.
             Investigate galexie-archive-fill.timer status + last log +
             aws-public mc-alias reachability.
-            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
 
-      - alert: stellaratlas_galexie_archive_tip_lag_severe
+      - alert: stellarindex_galexie_archive_tip_lag_severe
         expr: galexie_archive_tip_lag_ledgers > 128000
         for: 30m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
           summary: "galexie-archive >2 partitions behind live ({{ $value }} ledgers, P1)"
           description: |
@@ -83,14 +83,14 @@ groups:
             full-mirror integrity-leader role is broken until repair.
             Runbook: same as above.
 
-      - alert: stellaratlas_galexie_archive_tip_lag_metric_stale
+      - alert: stellarindex_galexie_archive_tip_lag_metric_stale
         expr: time() - galexie_archive_tip_lag_updated_seconds > 1800
         for: 15m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
           summary: "galexie-archive tip-lag metric not updated >30m"
           description: |

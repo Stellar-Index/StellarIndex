@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // fakeContractCallDecoder is the parallel of fakeOpDecoder /

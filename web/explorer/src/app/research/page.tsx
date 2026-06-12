@@ -11,7 +11,7 @@ import { StatusBadge } from './StatusBadge';
 export const metadata: Metadata = {
   title: 'Research — architecture decisions and methodology',
   description:
-    'Every architectural decision behind Stellar Atlas, with rationale, alternatives considered, and consequences. Browse the ADR archive, integration audits, and operations runbooks.',
+    'Every architectural decision behind Stellar Index, with rationale, alternatives considered, and consequences. Browse the ADR archive, integration audits, and operations runbooks.',
 };
 
 // TOPICS held the GitHub-only catch-all topic cards. As each
@@ -44,7 +44,7 @@ export default function ResearchPage() {
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Research</h1>
         <p className="max-w-3xl text-base text-slate-600 dark:text-slate-400">
-          The thinking behind every Stellar Atlas choice. Architecture
+          The thinking behind every Stellar Index choice. Architecture
           decision records (ADRs) below capture every load-bearing
           design call with its alternatives + consequences. The
           discovery audits, operations runbooks, and architecture
@@ -60,7 +60,7 @@ export default function ResearchPage() {
           <span className="text-xs text-slate-500">
             {archDocs.length} docs ·{' '}
             <a
-              href="https://github.com/StellarAtlas/stellar-atlas/tree/main/docs/architecture"
+              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/architecture"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"
@@ -106,7 +106,7 @@ export default function ResearchPage() {
           <span className="text-xs text-slate-500">
             {discoveryDocs.length} audits ·{' '}
             <a
-              href="https://github.com/StellarAtlas/stellar-atlas/tree/main/docs/discovery"
+              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/discovery"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"
@@ -153,7 +153,7 @@ export default function ResearchPage() {
           <span className="text-xs text-slate-500">
             {opsDocs.length} guides ·{' '}
             <a
-              href="https://github.com/StellarAtlas/stellar-atlas/tree/main/docs/operations"
+              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/operations"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"
@@ -205,7 +205,7 @@ export default function ResearchPage() {
           <span className="text-xs text-slate-500">
             {adrs.length} records ·{' '}
             <a
-              href="https://github.com/StellarAtlas/stellar-atlas/tree/main/docs/adr"
+              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/adr"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"

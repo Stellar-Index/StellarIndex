@@ -84,7 +84,7 @@ loop. Applied + codified (`configs/ansible/roles/archival-node/tasks/
   logging into a feedback loop that fills root faster than you can
   clear it. Freeing space does not reset a wedged async channel; the
   service must be restarted.
-- The disk-fill alert class (`stellaratlas_node_root_disk_*`, shipped
+- The disk-fill alert class (`stellarindex_node_root_disk_*`, shipped
   after 2026-05-10) is correct but has no pager on the dev host, so it
   was discovered via downstream symptoms (PG down) again.
 - Operator recovery load on shared infra (CH) can trigger

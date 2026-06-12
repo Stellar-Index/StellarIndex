@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_anomaly_freeze_recovery_stalled`
+# Runbook — `stellarindex_anomaly_freeze_recovery_stalled`
 
 ## At a glance
 
@@ -32,15 +32,15 @@ The aggregator runs two sides of the freeze pipeline:
 The recovery worker is what closes durable rows once the underlying
 anomaly clears (the orchestrator stops refreshing the marker, the
 TTL elapses, the recovery worker notices). When recovery stalls,
-`stellaratlas_anomaly_freeze_engaged_total` keeps incrementing but
-`stellaratlas_anomaly_freeze_recovered_total` flatlines, and the
+`stellarindex_anomaly_freeze_engaged_total` keeps incrementing but
+`stellarindex_anomaly_freeze_recovered_total` flatlines, and the
 backlog of open rows in `freeze_events` grows.
 
 ## Symptoms
 
-- `rate(stellaratlas_anomaly_freeze_engaged_total[1h])` >
-  `rate(stellaratlas_anomaly_freeze_recovered_total[1h])` for ≥ 2 h
-- `count by () (max_over_time(stellaratlas_anomaly_freeze_recovery_sweeps_total{outcome="error"}[15m]))`
+- `rate(stellarindex_anomaly_freeze_engaged_total[1h])` >
+  `rate(stellarindex_anomaly_freeze_recovered_total[1h])` for ≥ 2 h
+- `count by () (max_over_time(stellarindex_anomaly_freeze_recovery_sweeps_total{outcome="error"}[15m]))`
   is non-zero for the same window
 - `SELECT count(*) FROM freeze_events WHERE recovered_at IS NULL`
   on r1 postgres returns a large number (steady-state should be
@@ -51,19 +51,19 @@ backlog of open rows in `freeze_events` grows.
 
 ```sh
 # 1) Is the recovery worker even running?
-ssh r1 'journalctl -u stellaratlas-aggregator --since "30 min ago" \
+ssh r1 'journalctl -u stellarindex-aggregator --since "30 min ago" \
   | grep -i "freeze-recovery"'
 # Expected: periodic Debug "recovery sweep complete" lines.
 # Absent: the goroutine never started — restart aggregator.
 
 # 2) Is it failing on the lister side (postgres) or the cache side (Redis)?
 ssh r1 'curl -s http://localhost:9465/metrics \
-  | grep "stellaratlas_anomaly_freeze_recovery_sweeps_total"'
+  | grep "stellarindex_anomaly_freeze_recovery_sweeps_total"'
 # outcome="error" → lister path or all-Redis is failing
 # outcome="partial" → MarkRecovered postgres write is failing per-row
 
 # 3) Confirm the open-row backlog directly:
-ssh r1 'sudo -u postgres psql stellaratlas -c \
+ssh r1 'sudo -u postgres psql stellarindex -c \
   "SELECT count(*), min(frozen_at) FROM freeze_events WHERE recovered_at IS NULL;"'
 ```
 
@@ -93,7 +93,7 @@ Decision tree:
   the pool is wedged.
 
 - [ ] **Step 3 — If Redis-side error:** check
-  `redis-cli ping` and the `stellaratlas-redis` systemd unit. If
+  `redis-cli ping` and the `stellarindex-redis` systemd unit. If
   Redis is up but the recovery sweep still fails its GETs, suspect
   ACL changes (the recovery worker uses the same client as the
   freeze writer — if one works the other should too).
@@ -102,7 +102,7 @@ Decision tree:
   clear immediately and the recovery worker remains broken:
 
   ```sh
-  ssh r1 'sudo -u postgres psql stellaratlas'
+  ssh r1 'sudo -u postgres psql stellarindex'
   -- Close every open row whose Redis marker is gone:
   -- (Adjust the cutoff to "2× FreezeTTL" — anything older than
   -- this can't possibly still have a marker.)
@@ -117,7 +117,7 @@ Decision tree:
   the orchestrator might apply. Verify the current `FreezeTTL`
   before running.
 
-- [ ] **Verification:** `stellaratlas_anomaly_freeze_recovered_total`
+- [ ] **Verification:** `stellarindex_anomaly_freeze_recovered_total`
   resumes climbing on the next sweep tick (within 60 s), and the
   open-row count in postgres trends back down toward the count of
   live Redis markers.
@@ -131,7 +131,7 @@ For the postmortem, capture:
   whether the goroutine itself wasn't running)
 - If the goroutine wasn't running: did the aggregator restart and
   miss wiring it up? (`freezeRecovery` block in
-  `cmd/stellaratlas-aggregator/main.go`.)
+  `cmd/stellarindex-aggregator/main.go`.)
 - Did the explorer `/anomalies` timeline visibly diverge from
   reality during the stall? Customer impact?
 

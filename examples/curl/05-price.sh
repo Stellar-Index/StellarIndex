@@ -11,7 +11,7 @@
 # `<code>-<issuer>` identifier (cross-asset rate) or `fiat:EUR` /
 # `fiat:GBP` / etc. (other fiat quotes).
 set -euo pipefail
-BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
+BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 ASSET="${1:-native}"
 QUOTE="${2:-fiat:USD}"
 

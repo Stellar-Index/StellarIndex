@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 const (

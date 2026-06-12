@@ -35,7 +35,7 @@ below and the implementation under Task #73 is then straightforward
 
 ## What we're picking
 
-A vendor / self-hosted option for `https://status.stellaratlas.xyz`
+A vendor / self-hosted option for `https://status.stellarindex.io`
 that satisfies the requirements in
 [`sev-playbook.md §5.1`](../operations/sev-playbook.md#51-status-page):
 
@@ -47,7 +47,7 @@ that satisfies the requirements in
 - **Wired to PagerDuty** (or wherever the incident response
   starts) so on-call doesn't have to context-switch to a
   separate UI.
-- **CNAME-able** to `status.stellaratlas.xyz` so it inherits the
+- **CNAME-able** to `status.stellarindex.io` so it inherits the
   DNS cutover documented in
   [`public-flip.md §Post-flip`](../operations/public-flip.md).
 
@@ -81,7 +81,7 @@ Weighted against our specific needs:
 | Public UX (anonymous user lands, gets answer in 2 s) | high | 5 | 5 | 5 | 4 | 5 | 3 |
 | PagerDuty / webhook integration | high | 5 | 5 | 4 | 3 | 1 | 3 |
 | Cost at our scale (~3 incidents/quarter) | medium | 2 | 3 | **5** | 5 | 5 | 5 |
-| CNAME to `status.stellaratlas.xyz` on chosen tier | high | 5 | 5 | 5 | 5 | 5 | 5 |
+| CNAME to `status.stellarindex.io` on chosen tier | high | 5 | 5 | 5 | 5 | 5 | 5 |
 | Stack-fit (Go + Postgres + MinIO; no new langs / DBs) | low | n/a hosted | n/a hosted | n/a hosted | 1 (PHP) | 5 (static) | 5 (Go) |
 | Open-source freedom (no vendor lock) | medium | 1 | 1 | 1 | 5 | 5 | 5 |
 | Bus factor (vendor still around in 2 years) | medium | 5 | 4 | 3 | 4 | 4 | 4 |
@@ -160,7 +160,7 @@ Instatus:
 3. Wire PagerDuty integration so SEV-1/2 acknowledgement in
    PagerDuty creates an Instatus incident with the playbook §5.2
    "Initial" template pre-filled.
-4. Add CNAME `status.stellaratlas.xyz → stellaratlas.instatus.com`
+4. Add CNAME `status.stellarindex.io → stellarindex.instatus.com`
    in our DNS config (post-public-flip per
    `docs/operations/public-flip.md §Post-flip`).
 5. Test by deliberately creating a "Maintenance" entry from
@@ -199,8 +199,8 @@ Instatus:
 
 5. **Status page itself going down**: Instatus's own uptime is
    a vendor commitment, not ours. Document in the runbook that
-   if status.stellaratlas.xyz is unreachable, post to
-   `#stellar-atlas-public` Slack channel as the fallback
+   if status.stellarindex.io is unreachable, post to
+   `#stellar-index-public` Slack channel as the fallback
    communication channel.
 
 ## Cost summary
@@ -239,7 +239,7 @@ implementation.
 export deploying to Cloudflare Pages on every push to `main`.
 Incidents are Markdown files under
 `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, embedded into the
-API binary via `go:embed` so `stellaratlas-ops emit-incident` can
+API binary via `go:embed` so `stellarindex-ops emit-incident` can
 fire customer-webhook fan-out (`incident.sev1` /
 `incident.resolved`, F-1249) directly from the same source. The
 status page itself is a static rendering of the same corpus via

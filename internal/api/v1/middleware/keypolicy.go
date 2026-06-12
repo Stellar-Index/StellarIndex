@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Stellar Atlas contributors.
+// Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package middleware
@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // KeyPolicy returns a Middleware that enforces the per-key policy
@@ -156,7 +156,7 @@ func writeKeyPolicyDenied(w http.ResponseWriter, r *http.Request, slug, detail s
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusForbidden)
 	body, _ := json.Marshal(map[string]any{
-		"type":     "https://api.stellaratlas.xyz/errors/" + slug,
+		"type":     "https://api.stellarindex.io/errors/" + slug,
 		"title":    "Forbidden",
 		"status":   http.StatusForbidden,
 		"detail":   detail,

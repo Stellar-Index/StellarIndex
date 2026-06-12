@@ -60,7 +60,7 @@ prometheus_rules_source_dir: "{{ playbook_dir }}/../../../deploy/monitoring/rule
 # we eventually federate from multiple regions.
 prometheus_external_labels:
   region: "{{ region_id | default('r1') }}"
-  cluster: "stellaratlas"
+  cluster: "stellarindex"
 
 # ── Scrape intervals ───────────────────────────────────────────
 prometheus_default_scrape_interval: 15s
@@ -81,14 +81,14 @@ prometheus_node_scrape_interval: 30s
 # webhooks degrade silently to "alerts visible in AM UI only".
 alertmanager_pagerduty_key: ""
 alertmanager_slack_webhook_url: ""
-alertmanager_slack_channel: "#stellaratlas-alerts"
+alertmanager_slack_channel: "#stellarindex-alerts"
 # Page-tier (SEV-1) goes to a dedicated channel so the on-call
 # rotation can mute the ticket channel without missing pages.
-alertmanager_slack_channel_pages: "#stellaratlas-pages"
+alertmanager_slack_channel_pages: "#stellarindex-pages"
 alertmanager_discord_webhook_url: ""
 
 # Healthchecks.io deadmansswitch endpoint. The
-# `stellaratlas_deadmansswitch` alert fires every 60 s while
+# `stellarindex_deadmansswitch` alert fires every 60 s while
 # Prometheus is alive; Alertmanager pings this URL on receive.
 # When the heartbeat stops (Prometheus or Alertmanager itself
 # down) Healthchecks pages us via a separately-hosted channel.

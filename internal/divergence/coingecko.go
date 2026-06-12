@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // CoinGeckoReference looks up prices via CoinGecko's public
@@ -153,7 +153,7 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 }
 
 // defaultCoinGeckoIDMap covers the canonical asset_id forms the
-// aggregator computes by default (per cmd/stellaratlas-aggregator/
+// aggregator computes by default (per cmd/stellarindex-aggregator/
 // main.go::defaultPairs — XLM/BTC/ETH × USD/EUR/GBP, with XLM in
 // both `crypto:XLM` and `native` forms). Major USD stablecoins are
 // included so a deployment with stablecoin-fiat-proxy enabled
@@ -315,7 +315,7 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 		return nil, fmt.Errorf("coingecko: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "stellaratlas-divergence/0.1")
+	req.Header.Set("User-Agent", "stellarindex-divergence/0.1")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 
 // TestEnrichIssuer_DBWins — when both home_domain and org_name come
 // from the DB, the curated map MUST NOT override. The DB is the
-// source of truth (operator's `stellaratlas-ops sep1-refresh` cron
+// source of truth (operator's `stellarindex-ops sep1-refresh` cron
 // reflects current SEP-1 state); the static map is only a fallback
 // for issuers that haven't been resolved yet.
 func TestEnrichIssuer_DBWins(t *testing.T) {

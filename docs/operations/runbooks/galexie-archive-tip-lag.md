@@ -5,13 +5,13 @@ status: ratified
 severity: P1 | P3
 ---
 
-# Runbook — `stellaratlas_galexie_archive_tip_lag_*`
+# Runbook — `stellarindex_galexie_archive_tip_lag_*`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellaratlas_galexie_archive_tip_lag_high` (P3, warn) · `stellaratlas_galexie_archive_tip_lag_severe` (P1, page) · `stellaratlas_galexie_archive_tip_lag_metric_stale` (P3) |
+| Alerts | `stellarindex_galexie_archive_tip_lag_high` (P3, warn) · `stellarindex_galexie_archive_tip_lag_severe` (P1, page) · `stellarindex_galexie_archive_tip_lag_metric_stale` (P3) |
 | Severity | P3 → P1 escalation |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/galexie-archive.yml` + `configs/prometheus/rules.r1/galexie-archive.yml` |
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/galexie_archive_tip_lag.prom`, refreshed every 5 min by `galexie-archive-tip-lag.timer` → `/usr/local/bin/galexie-archive-tip-lag` |

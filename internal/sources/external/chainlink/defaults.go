@@ -3,7 +3,7 @@ package chainlink
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // DefaultFeedMap returns the built-in operator-facing default seed —
@@ -41,7 +41,7 @@ func DefaultFeedMap() map[string]FeedSpec {
 // Returns an error on a pair string that fails canonical parsing —
 // silent skips would hide misconfiguration.
 //
-// Used by both the indexer (live poller) and stellaratlas-ops
+// Used by both the indexer (live poller) and stellarindex-ops
 // (backfill subcommand) so the same operator TOML drives both
 // paths.
 func BuildFeedSet(operatorMap map[string]FeedSpec) (map[string]FeedSpec, []canonical.Pair, error) {

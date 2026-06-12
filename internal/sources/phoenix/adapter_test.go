@@ -4,8 +4,8 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
 // ─── consumer.go ──────────────────────────────────────────────────

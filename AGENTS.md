@@ -1,4 +1,4 @@
-# AGENTS.md — Stellar Atlas
+# AGENTS.md — Stellar Index
 
 > Generic AI-agent orientation file. This repo's full map lives in
 > [CLAUDE.md](CLAUDE.md) (same content, Claude-convention naming).

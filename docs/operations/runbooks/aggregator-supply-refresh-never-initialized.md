@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_aggregator_supply_refresh_never_initialized`
+# Runbook — `stellarindex_aggregator_supply_refresh_never_initialized`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_aggregator_supply_refresh_never_initialized` |
+| Alert | `stellarindex_aggregator_supply_refresh_never_initialized` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `stellaratlas_aggregator_supply_refresh_total{outcome="ok"} == 0` since aggregator boot.
+- `stellarindex_aggregator_supply_refresh_total{outcome="ok"} == 0` since aggregator boot.
 - `/v1/assets/USDC-G…` returns the `AssetDetail` envelope with all `*_supply` and `*_cap_usd` fields null.
 - Aggregator log shows no `supply refresh complete` info lines.
 
@@ -27,13 +27,13 @@ severity: P3
 
 ```sh
 # Confirm the goroutine wired
-journalctl -u stellaratlas-aggregator -n 200 --no-pager | grep -iE 'supply.*refresh|watched_'
+journalctl -u stellarindex-aggregator -n 200 --no-pager | grep -iE 'supply.*refresh|watched_'
 
 # Check the operator config for the watched-set knobs
-grep -E '\\[supply\\]|watched_classic|watched_sep41|sdf_reserve_accounts' /etc/stellaratlas/config.toml
+grep -E '\\[supply\\]|watched_classic|watched_sep41|sdf_reserve_accounts' /etc/stellarindex/config.toml
 
 # Sample one watched asset's supply storage
-sudo -u postgres psql -d stellaratlas -c "SELECT * FROM asset_supply_history ORDER BY time DESC LIMIT 5;"
+sudo -u postgres psql -d stellarindex -c "SELECT * FROM asset_supply_history ORDER BY time DESC LIMIT 5;"
 ```
 
 Key signals:
@@ -43,7 +43,7 @@ Key signals:
 
 ## Mitigation (≤ 15 min)
 
-- [ ] Step 1 — populate the watched asset list. Edit `/etc/stellaratlas/config.toml`:
+- [ ] Step 1 — populate the watched asset list. Edit `/etc/stellarindex/config.toml`:
   ```toml
   [supply]
   watched_classic = [
@@ -54,8 +54,8 @@ Key signals:
   watched_sep41 = []
   sdf_reserve_accounts = ["GA…"]
   ```
-- [ ] Step 2 — restart the aggregator: `systemctl restart stellaratlas-aggregator`.
-- [ ] Step 3 — within 5 min, `stellaratlas_aggregator_supply_refresh_total{outcome="ok"}` should increment. Sample a watched asset's `/v1/assets/{id}` and confirm the F2 fields populate.
+- [ ] Step 2 — restart the aggregator: `systemctl restart stellarindex-aggregator`.
+- [ ] Step 3 — within 5 min, `stellarindex_aggregator_supply_refresh_total{outcome="ok"}` should increment. Sample a watched asset's `/v1/assets/{id}` and confirm the F2 fields populate.
 - [ ] Verification: `circulating_supply` non-null on at least one watched asset; `market_cap_usd` non-null when the asset has a USD price.
 
 ## Root cause analysis

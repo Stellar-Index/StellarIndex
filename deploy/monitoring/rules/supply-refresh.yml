@@ -1,9 +1,9 @@
 ---
 # Supply-refresh alerts. Pair with the aggregator-resident supply
-# refresher in cmd/stellaratlas-aggregator (Task #57 + #66 + #70).
+# refresher in cmd/stellarindex-aggregator (Task #57 + #66 + #70).
 #
 # Scrape source: the aggregator's Prometheus /metrics endpoint
-# emits stellaratlas_aggregator_supply_refresh_total{outcome=…},
+# emits stellarindex_aggregator_supply_refresh_total{outcome=…},
 # defined in internal/obs/metrics.go and incremented by
 # runSupplyRefresh on every tick.
 #
@@ -16,13 +16,13 @@
 #
 # Alert family:
 #
-#   - `stellaratlas_aggregator_supply_refresh_stalled` — the
+#   - `stellarindex_aggregator_supply_refresh_stalled` — the
 #     refresher hasn't recorded a successful tick in ≥ 30 min.
 #     With the default 5-min cadence that's 6 missed ticks.
 #     Either the goroutine is wedged (aggregator deadlock) or
 #     every recent tick has failed.
 #
-#   - `stellaratlas_aggregator_supply_refresh_error_dominant` —
+#   - `stellarindex_aggregator_supply_refresh_error_dominant` —
 #     for ≥ 30 min, the rate of error outcomes (no_ledger /
 #     no_observation / compute_error / write_error) exceeds the
 #     rate of `ok` outcomes. Indicates the refresher is running
@@ -30,27 +30,27 @@
 #     drift, observer not backfilled, or storage layer broken.
 
 groups:
-  - name: stellaratlas.supply_refresh
+  - name: stellarindex.supply_refresh
     interval: 60s
     rules:
 
-      - alert: stellaratlas_aggregator_supply_refresh_stalled
+      - alert: stellarindex_aggregator_supply_refresh_stalled
         expr: |
           (
             time()
-            - max(timestamp(stellaratlas_aggregator_supply_refresh_total{outcome="ok"}))
+            - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))
           ) > (30 * 60)
         for: 5m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: supply
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
         annotations:
           summary: "supply refresher hasn't recorded a successful tick in {{ $value | humanizeDuration }} (cadence 5m, threshold 30m)"
           description: |
             The aggregator-resident supply refresher emits
-            stellaratlas_aggregator_supply_refresh_total{outcome="ok"}
+            stellarindex_aggregator_supply_refresh_total{outcome="ok"}
             on every successful per-asset tick. No `ok` increments
             in 30+ minutes means either the goroutine is wedged
             (aggregator deadlock), the orchestrator hasn't started,
@@ -73,19 +73,19 @@ groups:
       # `_never_initialized`: a brand-new aggregator deployment has
       # plenty of time to fire its first tick; a deployment that's
       # been up for over a day without one is genuinely uninitialized.
-      - alert: stellaratlas_aggregator_supply_refresh_never_initialized
+      - alert: stellarindex_aggregator_supply_refresh_never_initialized
         expr: |
-          absent_over_time(stellaratlas_aggregator_supply_refresh_total{outcome="ok"}[36h]) == 1
+          absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h]) == 1
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: supply
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
         annotations:
           summary: "supply refresher (goroutine path) has never recorded a successful tick"
           description: |
-            stellaratlas_aggregator_supply_refresh_total{outcome="ok"}
+            stellarindex_aggregator_supply_refresh_total{outcome="ok"}
             has been absent for ≥ 36 h. Either
             `[supply] aggregator_refresh_enabled = false` (the
             default — operator hasn't opted into the goroutine
@@ -97,7 +97,7 @@ groups:
             (`supply-snapshot-never-initialized`) since the fix is
             symmetric: pick Path A or Path B.
 
-      - alert: stellaratlas_aggregator_supply_refresh_error_dominant
+      - alert: stellarindex_aggregator_supply_refresh_error_dominant
         # F-1320: aggregate PER ASSET (`by (asset_key)`), not fleet-wide —
         # a single asset failing 100% of its ticks could never push the
         # fleet-wide fraction past 50% while healthy siblings diluted it,
@@ -106,16 +106,16 @@ groups:
         # current — accepted, not an error).
         expr: |
           (
-            sum by (asset_key) (rate(stellaratlas_aggregator_supply_refresh_total{outcome!~"ok|dormant"}[5m]))
+            sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total{outcome!~"ok|dormant"}[5m]))
             /
-            (sum by (asset_key) (rate(stellaratlas_aggregator_supply_refresh_total[5m])) > 0)
+            (sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total[5m])) > 0)
           ) > 0.5
         for: 30m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: supply
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
         annotations:
           summary: "supply refresher: > 50% of ticks non-ok for asset {{ $labels.asset_key }} for ≥ 30m"
           description: |

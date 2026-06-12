@@ -11,7 +11,7 @@ status: accepted — phased rollout described here is post-launch (Phase-3); the
 **Relates to:** [archival-node-spec.md](archival-node-spec.md),
 [multi-region-topology.md](multi-region-topology.md).
 
-This doc locks the phased rollout: **one Stellar Atlas organisation,
+This doc locks the phased rollout: **one Stellar Index organisation,
 three full validators, geographically separated, brought up one at a
 time.** We launch with one node in syncing state so we can shake out
 bugs without multi-node coordination; the architecture is designed
@@ -37,7 +37,7 @@ A Tier-1 Organisation is a **single organisation** running:
 - **Org-level identity** — the three validators vote as one org in
   network trust decisions (via the SDF-maintained T1 Orgs list).
 
-So: **Stellar Atlas = 1 org. We operate 3 validators. They're our
+So: **Stellar Index = 1 org. We operate 3 validators. They're our
 three validators, not three peer orgs' validators.** This matters
 for:
 
@@ -45,7 +45,7 @@ for:
   they're the same org. SDF treats them as one org-vote.
 - Key ceremony: all three validator keys trace to the same HSM
   backup ceremony and operational procedures.
-- Compliance: the T1 Orgs listing names `Stellar Atlas` once, not
+- Compliance: the T1 Orgs listing names `Stellar Index` once, not
   three times.
 
 ---
@@ -92,7 +92,7 @@ it's a quality gate.
 **Exit criteria (Phase A → Phase B):**
 
 - [ ] Node has been live and synced for ≥ 7 consecutive days.
-- [ ] Galexie + stellar-rpc + stellaratlas-indexer all ingest from
+- [ ] Galexie + stellar-rpc + stellarindex-indexer all ingest from
       this node with zero gaps.
 - [ ] Archive cross-checks (against SDF + 2 other T1 orgs' public
       archives) show hash parity.
@@ -107,7 +107,7 @@ it's a quality gate.
 - Config: `NODE_IS_VALIDATOR=true`, `NODE_SEED` resolved via the
   HSM signer daemon (never on disk).
 - Register with SDF: submit our validator public key to the
-  `stellar.toml` of `stellaratlas.xyz` + the
+  `stellar.toml` of `stellarindex.io` + the
   `stellar-docs/validators/tier-1-orgs.mdx` addition PR (when we
   have 3 validators). For now we're a standalone validator.
 - Announce on `#validators` Discord so other operators can weight
@@ -131,10 +131,10 @@ muscle memory.
 - Key ceremony: second validator key, fresh on a second YubiHSM.
   Different key material than validator 1 — never the same key.
 - Config: `NODE_IS_VALIDATOR=true`, distinct `NODE_SEED`,
-  `NODE_HOME_DOMAIN=stellaratlas.xyz` (same as validator 1; signals
+  `NODE_HOME_DOMAIN=stellarindex.io` (same as validator 1; signals
   "same org").
 - Quorum set of validator 2: same shape as validator 1's, except
-  it adds validator 1 to its "stellaratlas org" sub-quorum.
+  it adds validator 1 to its "stellarindex org" sub-quorum.
 - Our quorum sub-quorum now has 2 members; SCP expects us to
   weight it as an org.
 - Application-layer: region R2 joins the Patroni cluster as sync
@@ -157,7 +157,7 @@ validator 2.
 - Precondition: all three validators voted correctly, their
   archives matched, and we published for ≥ 14 days.
 - Action: open a PR to `stellar/stellar-docs` adding
-  "Stellar Atlas" to the Tier-1 Orgs table, citing our 3 validators'
+  "Stellar Index" to the Tier-1 Orgs table, citing our 3 validators'
   public keys + public archive URLs.
 - SDF reviews. Typical turnaround days to weeks.
 
@@ -190,18 +190,18 @@ THRESHOLD_PERCENT = 67
   # ... etc
 ```
 
-**Phase B (one Stellar Atlas validator):** same quorum set we follow,
+**Phase B (one Stellar Index validator):** same quorum set we follow,
 with us now voting. SDF + T1s + us = still one-vote-each.
 
-**Phase C (two Stellar Atlas validators):** we're now an `org`. Each
-of our two validators includes a sub-quorum for the `stellaratlas.xyz`
+**Phase C (two Stellar Index validators):** we're now an `org`. Each
+of our two validators includes a sub-quorum for the `stellarindex.io`
 home domain:
 
 ```
 [[quorumSet]] threshold_percent=67
   [[validators]] home_domain="stellar.org" ...             # 3 SDF
   [[validators]] home_domain="lobstr.co" ...
-  [[validators]] home_domain="stellaratlas.xyz"
+  [[validators]] home_domain="stellarindex.io"
     [[validators]] publickey="G..." # validator 1
     [[validators]] publickey="G..." # validator 2
   ... other T1 orgs
@@ -212,7 +212,7 @@ slightly less than a 3-validator org — some downstream voters will
 weight it less. This is why we don't promote to T1 listing until
 we have 3.
 
-**Phase D+ (three Stellar Atlas validators):** the `stellaratlas.xyz`
+**Phase D+ (three Stellar Index validators):** the `stellarindex.io`
 sub-quorum contains all three; T1-compliant.
 
 The exact TOML shapes land as PRs against `configs/validators/`
@@ -247,7 +247,7 @@ Apply at Phase B, C, D (once per validator).
 6. Wipe the ceremony laptop.
 7. Install the HSM in the validator host's USB slot.
 8. `stellar-core` config: `NODE_SEED` → HSM signer daemon at
-   `unix:///var/run/stellaratlas-signer.sock`.
+   `unix:///var/run/stellarindex-signer.sock`.
 9. Sign-off: both operators attest the ceremony completed correctly.
 10. File the public-key record + ceremony log in
     `configs/validators/<name>/ceremony.txt` (public-key + metadata

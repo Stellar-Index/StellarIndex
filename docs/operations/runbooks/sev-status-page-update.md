@@ -12,7 +12,7 @@ related:
 
 The customer-facing companion to the on-call escalation flow.
 Every SEV that meets the visibility threshold below MUST be
-posted to `status.stellaratlas.xyz`; this runbook is the binding
+posted to `status.stellarindex.io`; this runbook is the binding
 how-to.
 
 F-1211 (codex audit-2026-05-12): the prior version of this
@@ -64,7 +64,7 @@ $EDITOR "${DATE}-${SLUG}.md"
 ```
 
 `<slug>` is what appears in the incident URL
-(`status.stellaratlas.xyz/incident/${DATE}-${SLUG}`) so make it
+(`status.stellarindex.io/incident/${DATE}-${SLUG}`) so make it
 informative; the front-matter `title` field is what the customer
 reads on the index page.
 
@@ -132,7 +132,7 @@ gh pr merge --squash --auto
 
 The `web/status` Cloudflare Pages deploy fires automatically on
 the merge into `main` and renders the new incident at
-`status.stellaratlas.xyz` within a minute or two. Verify the
+`status.stellarindex.io` within a minute or two. Verify the
 incident lands on the index page before stepping away.
 
 ### 5 — Customer webhook fan-out (optional but expected)
@@ -143,8 +143,8 @@ fan out the `incident.sev1` webhook so dashboard subscribers
 get a callback. F-1249 (codex audit-2026-05-12) on R1:
 
 ```sh
-ssh root@r1 -- /usr/local/bin/stellaratlas-ops emit-incident \
-  -config /etc/stellaratlas.toml \
+ssh root@r1 -- /usr/local/bin/stellarindex-ops emit-incident \
+  -config /etc/stellarindex.toml \
   -slug ${DATE}-${SLUG} \
   -event sev1
 ```
@@ -153,8 +153,8 @@ When the SEV closes, after the same merge + deploy cycle
 flips the corpus's `status: resolved`:
 
 ```sh
-ssh root@r1 -- /usr/local/bin/stellaratlas-ops emit-incident \
-  -config /etc/stellaratlas.toml \
+ssh root@r1 -- /usr/local/bin/stellarindex-ops emit-incident \
+  -config /etc/stellarindex.toml \
   -slug ${DATE}-${SLUG} \
   -event resolved
 ```

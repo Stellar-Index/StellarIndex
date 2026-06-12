@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 type stubMarketsReader struct {
@@ -254,7 +254,7 @@ func TestMarkets_UnknownSource400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.stellaratlas.xyz/errors/unknown-source" {
+	if p.Type != "https://api.stellarindex.io/errors/unknown-source" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -311,7 +311,7 @@ func TestMarkets_InvalidAsset400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.stellaratlas.xyz/errors/invalid-asset-id" {
+	if p.Type != "https://api.stellarindex.io/errors/invalid-asset-id" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -329,7 +329,7 @@ func TestMarkets_SourceAndAssetTogether400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.stellaratlas.xyz/errors/conflicting-filters" {
+	if p.Type != "https://api.stellarindex.io/errors/conflicting-filters" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -360,7 +360,7 @@ func TestPools_InvalidAsset400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.stellaratlas.xyz/errors/invalid-asset-id" {
+	if p.Type != "https://api.stellarindex.io/errors/invalid-asset-id" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -429,7 +429,7 @@ func TestPools_AssetAndBaseTogether400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.stellaratlas.xyz/errors/conflicting-filters" {
+	if p.Type != "https://api.stellarindex.io/errors/conflicting-filters" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }

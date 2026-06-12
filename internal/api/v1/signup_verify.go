@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Stellar Atlas contributors.
+// Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // SignupVerifier is the v1 boundary for the email-ownership-
@@ -91,7 +91,7 @@ type SignupVerifyResult struct {
 func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 	if s.signupVerifier == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/signup-verify-unavailable",
+			"https://api.stellarindex.io/errors/signup-verify-unavailable",
 			"Signup verification not configured", http.StatusServiceUnavailable,
 			"this deployment doesn't run the email-ownership-proof flow; the original signup response is the only proof of issuance")
 		return
@@ -99,7 +99,7 @@ func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if token == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-token",
+			"https://api.stellarindex.io/errors/missing-token",
 			"Missing token", http.StatusBadRequest,
 			"the verify endpoint requires a `token` query parameter (the value emailed to you on signup)")
 		return
@@ -108,14 +108,14 @@ func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, auth.ErrSignupVerifyNotFound) {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/signup-verify-not-found",
+				"https://api.stellarindex.io/errors/signup-verify-not-found",
 				"Verification token not found", http.StatusNotFound,
 				"the token is unknown, has already been consumed, or has expired; sign up again to receive a fresh link")
 			return
 		}
 		s.logger.Error("signup verify: store error", "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError,
 			"verification failed; try again in a moment")
 		return

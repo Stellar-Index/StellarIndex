@@ -5,7 +5,7 @@ import { Github, Mail } from 'lucide-react';
 export const metadata: Metadata = {
   title: 'Company — who we are',
   description:
-    'Stellar Atlas — vendor-neutral pricing infrastructure for the Stellar network. Built against the SDF + Freighter RFPs and the awarded CTX proposal. Apache-2.0, pre-v1.',
+    'Stellar Index — vendor-neutral pricing infrastructure for the Stellar network. Built against the SDF + Freighter RFPs and the awarded CTX proposal. Apache-2.0, pre-v1.',
   alternates: { canonical: '/company' },
 };
 
@@ -20,7 +20,7 @@ export default function CompanyPage() {
           Pricing infrastructure for Stellar.
         </h1>
         <p className="text-base text-slate-600 dark:text-slate-400">
-          Stellar Atlas is a public, vendor-neutral pricing surface for
+          Stellar Index is a public, vendor-neutral pricing surface for
           the Stellar network. Built against the SDF and Freighter
           RFPs and the awarded CTX proposal.
         </p>
@@ -53,7 +53,7 @@ export default function CompanyPage() {
               The whole codebase — backend, explorer, status site,
               widgets, infrastructure-as-code — is on{' '}
               <a
-                href="https://github.com/StellarAtlas/stellar-atlas"
+                href="https://github.com/StellarIndex/stellar-index"
                 target="_blank"
                 rel="noreferrer noopener"
                 className="text-brand-600 hover:underline"
@@ -78,7 +78,7 @@ export default function CompanyPage() {
               >
                 ADR-0008
               </Link>
-              , Stellar Atlas runs in three geographically separate
+              , Stellar Index runs in three geographically separate
               regions (R1 Hetzner, R2 AWS, R3 Vultr), each with an
               independent history archive and full validator. Every
               region serves the same rate at the same wall-clock
@@ -143,7 +143,7 @@ export default function CompanyPage() {
           v1 ships in the coming weeks. The roadmap that gets us there
           lives in{' '}
           <a
-            href="https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/architecture/launch-readiness-backlog.md"
+            href="https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/launch-readiness-backlog.md"
             target="_blank"
             rel="noreferrer noopener"
             className="text-brand-600 hover:underline"
@@ -171,7 +171,7 @@ export default function CompanyPage() {
             Contact
           </Link>
           <a
-            href="https://github.com/StellarAtlas/stellar-atlas"
+            href="https://github.com/StellarIndex/stellar-index"
             target="_blank"
             rel="noreferrer noopener"
             className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600 dark:border-slate-700"

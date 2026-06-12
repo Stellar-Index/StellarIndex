@@ -91,7 +91,7 @@ read budget. Slow issuers can blow this; we don't tune it per
 host because that defeats the bound.
 
 **Resolver behaviour:** `ErrSEP1Timeout`. **Cache:** not cached.
-**Alert:** `stellaratlas_metadata_resolver_timeout_total` increases
+**Alert:** `stellarindex_metadata_resolver_timeout_total` increases
 beyond baseline (P3 alert, designed but not yet shipping at v1).
 
 ### TOML parse error
@@ -182,7 +182,7 @@ or wrong on-chain, the API has nothing to feed to the SEP-1
 resolver. Operators close that gap via a curated map:
 
 ```toml
-# /etc/stellaratlas.toml
+# /etc/stellarindex.toml
 [metadata.issuer_home_domains]
 "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"
 ```
@@ -203,15 +203,15 @@ in `internal/config/load.go`, not hot-reloaded).
 
 ### Tracing a specific asset's resolution
 
-A future `stellaratlas-ops sep1-trace -domain <home_domain>`
-subcommand (not in `cmd/stellaratlas-ops/main.go`'s switch today)
+A future `stellarindex-ops sep1-trace -domain <home_domain>`
+subcommand (not in `cmd/stellarindex-ops/main.go`'s switch today)
 would dump the full resolution path: DNS, IP, SSRF check
 result, HTTP status, parsed fields. Until it lands the manual
 playbook is:
 
 ```sh
 # 1. Confirm what the API sees
-curl -sf https://api.stellaratlas.xyz/v1/assets/<asset_id> | jq .
+curl -sf https://api.stellarindex.io/v1/assets/<asset_id> | jq .
 
 # 2. Confirm what the cache holds
 redis-cli -h <redis-master> GET "toml:<home_domain>"
@@ -228,14 +228,14 @@ redis-cli -h <redis-master> DEL "toml:<home_domain>"
 The `internal/metadata` package emits these counters / gauges via
 `internal/obs`:
 
-- `stellaratlas_metadata_resolver_requests_total{status}` —
+- `stellarindex_metadata_resolver_requests_total{status}` —
   status ∈ {ok, not_found, http_error, timeout, parse_error,
   private_ip_blocked}.
-- `stellaratlas_metadata_cache_hits_total` /
-  `stellaratlas_metadata_cache_misses_total`.
-- `stellaratlas_metadata_resolver_duration_seconds` histogram.
+- `stellarindex_metadata_cache_hits_total` /
+  `stellarindex_metadata_cache_misses_total`.
+- `stellarindex_metadata_resolver_duration_seconds` histogram.
 
-Alert: `stellaratlas_metadata_resolver_error_rate_high` is
+Alert: `stellarindex_metadata_resolver_error_rate_high` is
 designed but not yet shipping — no rule in
 `deploy/monitoring/rules/` produces it today. The metadata
 overlay IS wired into `/v1/assets/{id}` already (see §"Resolution

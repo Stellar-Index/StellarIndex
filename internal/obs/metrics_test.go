@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 func TestHandler_ExposesMetrics(t *testing.T) {
@@ -54,23 +54,23 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	expected := []string{
 		"http_requests_total",
 		"http_request_duration_seconds",
-		"stellaratlas_source_events_total",
-		"stellaratlas_source_lag_ledgers",
-		"stellaratlas_source_last_event_unix",
-		"stellaratlas_source_enabled",
-		"stellaratlas_source_decode_errors_total",
-		"stellaratlas_source_orphan_events_total",
-		"stellaratlas_source_insert_errors_total",
-		"stellaratlas_ratelimit_fail_open_total",
-		"stellaratlas_sep1_cache_ops_total",
-		"stellaratlas_cursor_last_ledger",
-		"stellaratlas_price_staleness_seconds",
-		"stellaratlas_oracle_last_update_unix",
-		"stellaratlas_oracle_resolution_seconds",
-		"stellaratlas_aggregator_ticks_total",
-		"stellaratlas_aggregator_vwap_writes_total",
-		"stellaratlas_aggregator_empty_windows_total",
-		"stellaratlas_aggregator_dropped_trades_total",
+		"stellarindex_source_events_total",
+		"stellarindex_source_lag_ledgers",
+		"stellarindex_source_last_event_unix",
+		"stellarindex_source_enabled",
+		"stellarindex_source_decode_errors_total",
+		"stellarindex_source_orphan_events_total",
+		"stellarindex_source_insert_errors_total",
+		"stellarindex_ratelimit_fail_open_total",
+		"stellarindex_sep1_cache_ops_total",
+		"stellarindex_cursor_last_ledger",
+		"stellarindex_price_staleness_seconds",
+		"stellarindex_oracle_last_update_unix",
+		"stellarindex_oracle_resolution_seconds",
+		"stellarindex_aggregator_ticks_total",
+		"stellarindex_aggregator_vwap_writes_total",
+		"stellarindex_aggregator_empty_windows_total",
+		"stellarindex_aggregator_dropped_trades_total",
 		// Language-native + process metrics from collectors.
 		"go_goroutines",
 		"process_open_fds",
@@ -270,7 +270,7 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 }
 
 // TestHTTPMetrics_SyntheticUASkipsHistogram pins the SLO-noise
-// fix: requests with `User-Agent: stellaratlas-smoke/N` (the smoke
+// fix: requests with `User-Agent: stellarindex-smoke/N` (the smoke
 // timer) MUST NOT contribute to the http_requests_total counter
 // or http_request_duration_seconds histogram. Otherwise every
 // smoke fire pollutes the SLO recording rule with cold-cache
@@ -291,7 +291,7 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	// Synthetic probe — should be skipped.
 	rr2 := httptest.NewRecorder()
 	smokeReq := httptest.NewRequest(http.MethodGet, "/v1/synthetic-probe", nil)
-	smokeReq.Header.Set("User-Agent", "stellaratlas-smoke/1")
+	smokeReq.Header.Set("User-Agent", "stellarindex-smoke/1")
 	h.ServeHTTP(rr2, smokeReq)
 
 	ts := httptest.NewServer(obs.Handler())
@@ -375,15 +375,15 @@ func TestZeroSeed_F0033(t *testing.T) {
 	s := string(body)
 
 	mustContain := []string{
-		`stellaratlas_aggregator_triangulations_total{outcome="ok"} 0`,
-		`stellaratlas_aggregator_triangulations_total{outcome="missing_leg"} 0`,
-		`stellaratlas_aggregator_triangulations_total{outcome="parse_error"} 0`,
-		`stellaratlas_aggregator_triangulations_total{outcome="redis_error"} 0`,
-		`stellaratlas_stripe_platform_sync_errors_total{operation="get_account"} 0`,
-		`stellaratlas_stripe_platform_sync_errors_total{operation="upsert_subscription"} 0`,
-		`stellaratlas_stripe_platform_sync_errors_total{operation="account_update"} 0`,
-		`stellaratlas_stripe_platform_sync_errors_total{operation="list_keys"} 0`,
-		`stellaratlas_stripe_platform_sync_errors_total{operation="key_update"} 0`,
+		`stellarindex_aggregator_triangulations_total{outcome="ok"} 0`,
+		`stellarindex_aggregator_triangulations_total{outcome="missing_leg"} 0`,
+		`stellarindex_aggregator_triangulations_total{outcome="parse_error"} 0`,
+		`stellarindex_aggregator_triangulations_total{outcome="redis_error"} 0`,
+		`stellarindex_stripe_platform_sync_errors_total{operation="get_account"} 0`,
+		`stellarindex_stripe_platform_sync_errors_total{operation="upsert_subscription"} 0`,
+		`stellarindex_stripe_platform_sync_errors_total{operation="account_update"} 0`,
+		`stellarindex_stripe_platform_sync_errors_total{operation="list_keys"} 0`,
+		`stellarindex_stripe_platform_sync_errors_total{operation="key_update"} 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {

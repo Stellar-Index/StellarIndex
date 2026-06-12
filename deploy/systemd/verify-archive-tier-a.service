@@ -7,11 +7,11 @@
 # Operator wiring:
 #
 #   sudo cp deploy/systemd/verify-archive-tier-a.{service,timer} /etc/systemd/system/
-#   sudo cp /etc/default/stellaratlas-ops.example /etc/default/stellaratlas-ops  # if not yet present
+#   sudo cp /etc/default/stellarindex-ops.example /etc/default/stellarindex-ops  # if not yet present
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now verify-archive-tier-a.timer
 #
-# Configuration via /etc/default/stellaratlas-ops:
+# Configuration via /etc/default/stellarindex-ops:
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  Read creds for the
 #                                              galexie-archive S3 bucket.
 #   VERIFY_ARCHIVE_FROM                         Default 2 (genesis).
@@ -22,7 +22,7 @@
 # was tight for a ~62.5M-ledger pubnet — the nightly run completed
 # 34.7M ledgers in 8h (1207 l/s aggregate at 8 workers) then
 # exited 1/FAILURE on context deadline, permanently keeping
-# stellaratlas_verify_archive_unit_failed firing. End-to-end at the
+# stellarindex_verify_archive_unit_failed firing. End-to-end at the
 # 8-worker rate needs ~14h. Bumped the defaults to 12 workers + 16h
 # cap: each chunk is an independent walk so workers scale linearly
 # until disk I/O on /var/lib/minio saturates (per the binary's
@@ -41,8 +41,8 @@
 # ansible role ships.
 
 [Unit]
-Description=Stellar Atlas — verify-archive Tier A (nightly chain-link integrity)
-Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/archival-node-bringup.md
+Description=Stellar Index — verify-archive Tier A (nightly chain-link integrity)
+Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/archival-node-bringup.md
 After=network-online.target
 Wants=network-online.target
 
@@ -56,19 +56,19 @@ Wants=network-online.target
 # parallel and busted the 17h cap. The walk can legitimately take
 # 25h+ on r1 (single-chunk serial without ListBucket parallelism) —
 # WatchdogSec is liveness-relative, so 25h of progress survives 25h.
-# The matching Go integration is in cmd/stellaratlas-ops/main.go's
+# The matching Go integration is in cmd/stellarindex-ops/main.go's
 # verify-archive subcommand.
 Type=notify
 NotifyAccess=main
 WatchdogSec=1h
 
-EnvironmentFile=-/etc/default/stellaratlas-ops
+EnvironmentFile=-/etc/default/stellarindex-ops
 
-# Sensible defaults. Operators override via /etc/default/stellaratlas-ops.
+# Sensible defaults. Operators override via /etc/default/stellarindex-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
-Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellaratlas/verify-archive-state.json
+Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 
 # Incremental scheme (since 2026-05-14): -from-last-verified reads
@@ -91,8 +91,8 @@ Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # -to is omitted intentionally — verify-archive resolves the head
 # ledger from the manifest at start time, so we always verify up to
 # whatever the archive contained at run-launch.
-ExecStart=/usr/local/bin/stellaratlas-ops verify-archive \
-  -config /etc/stellaratlas.toml \
+ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
+  -config /etc/stellarindex.toml \
   -from ${VERIFY_ARCHIVE_FROM} \
   -tier chain \
   -workers ${VERIFY_ARCHIVE_WORKERS} \
@@ -103,7 +103,7 @@ ExecStart=/usr/local/bin/stellaratlas-ops verify-archive \
 
 User=root
 
-# Hardening. The binary reads /etc/stellaratlas.toml; it doesn't
+# Hardening. The binary reads /etc/stellarindex.toml; it doesn't
 # need write access to the filesystem (logs go to journald).
 ProtectSystem=full
 PrivateTmp=true

@@ -10,7 +10,7 @@ package reflector
 import (
 	"errors"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/scval"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // Source name constants — one per Reflector contract variant.
@@ -54,7 +54,7 @@ const DefaultDecimals uint8 = 14
 
 // DefaultResolutionSeconds is the uniform 5-min cadence every
 // Reflector contract updates on (Q3). Emitted as the
-// `stellaratlas_oracle_resolution_seconds` gauge by
+// `stellarindex_oracle_resolution_seconds` gauge by
 // [pipeline.BuildDispatcher] at registration time, so the
 // oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 300

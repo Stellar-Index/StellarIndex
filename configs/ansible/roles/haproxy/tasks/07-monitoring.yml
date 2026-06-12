@@ -38,12 +38,12 @@
         | grep -q "{{ haproxy_vip | default('0.0.0.0') }}" && MASTER=1
 
       cat > "$TMP" <<EOF
-      # HELP stellaratlas_keepalived_active 1 if keepalived service is running.
-      # TYPE stellaratlas_keepalived_active gauge
-      stellaratlas_keepalived_active $ACTIVE
-      # HELP stellaratlas_haproxy_vip_owner 1 if this host currently owns the VIP (keepalived MASTER).
-      # TYPE stellaratlas_haproxy_vip_owner gauge
-      stellaratlas_haproxy_vip_owner $MASTER
+      # HELP stellarindex_keepalived_active 1 if keepalived service is running.
+      # TYPE stellarindex_keepalived_active gauge
+      stellarindex_keepalived_active $ACTIVE
+      # HELP stellarindex_haproxy_vip_owner 1 if this host currently owns the VIP (keepalived MASTER).
+      # TYPE stellarindex_haproxy_vip_owner gauge
+      stellarindex_haproxy_vip_owner $MASTER
       EOF
       mv -f "$TMP" "$OUT"
 

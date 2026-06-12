@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // AuthMode is the operator-configured authentication policy. Maps
@@ -168,17 +168,17 @@ func writeAuthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, auth.ErrTokenExpired):
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="token expired"`)
 		writeAuthProblem(w, http.StatusUnauthorized,
-			"https://api.stellaratlas.xyz/errors/token-expired",
+			"https://api.stellarindex.io/errors/token-expired",
 			"Token expired",
 			"Your authentication token has expired; refresh and retry.")
 	case errors.Is(err, auth.ErrTokenMalformed):
 		writeAuthProblem(w, http.StatusBadRequest,
-			"https://api.stellaratlas.xyz/errors/malformed-credential",
+			"https://api.stellarindex.io/errors/malformed-credential",
 			"Malformed credential",
 			"The supplied credential could not be parsed.")
 	case errors.Is(err, auth.ErrForbidden):
 		writeAuthProblem(w, http.StatusForbidden,
-			"https://api.stellaratlas.xyz/errors/forbidden",
+			"https://api.stellarindex.io/errors/forbidden",
 			"Forbidden",
 			"The authenticated subject is not permitted to access this resource.")
 	case errors.Is(err, auth.ErrNotImplemented):
@@ -186,14 +186,14 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		// didn't wire the validator. 503 + a body that names the
 		// problem so an operator sees it on the first failed request.
 		writeAuthProblem(w, http.StatusServiceUnavailable,
-			"https://api.stellaratlas.xyz/errors/auth-not-configured",
+			"https://api.stellarindex.io/errors/auth-not-configured",
 			"Auth validator not configured",
 			"This deployment enabled an auth mode but no validator was wired into the binary.")
 	default:
 		// ErrUnauthorized + everything else fall here.
-		w.Header().Set("WWW-Authenticate", `Bearer realm="stellaratlas"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex"`)
 		writeAuthProblem(w, http.StatusUnauthorized,
-			"https://api.stellaratlas.xyz/errors/unauthorized",
+			"https://api.stellarindex.io/errors/unauthorized",
 			"Unauthorized",
 			"Authentication is required to access this resource.")
 	}
@@ -219,7 +219,7 @@ func writeAuthProblem(w http.ResponseWriter, status int, typeURL, title, detail 
 	// SEP-10 token); the magic-link cookie path is parallel and
 	// has no standard challenge token, so we advertise Bearer.
 	if status == http.StatusUnauthorized {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="stellaratlas.xyz"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(authProblem{

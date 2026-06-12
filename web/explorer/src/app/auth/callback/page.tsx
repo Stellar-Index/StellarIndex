@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { CallbackHandler } from './CallbackHandler';
 
 export const metadata: Metadata = {
-  title: 'Signing you in… — Stellar Atlas',
+  title: 'Signing you in… — Stellar Index',
   description:
     'Verifying your magic-link sign-in. You will be redirected to your account in a moment.',
   robots: { index: false, follow: false },
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
  * redirects to /account or the requested `next`).
  *
  * This page is only used when the operator has configured
- * DashboardBaseURL to stellaratlas.xyz (so the magic-link emails
+ * DashboardBaseURL to stellarindex.io (so the magic-link emails
  * point here). When DashboardBaseURL points elsewhere (e.g. a
  * dedicated dashboard SPA), users land there instead and never
  * see this page.

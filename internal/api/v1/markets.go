@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/currency"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/currency"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // DexSourceNames returns every source registered with
@@ -20,7 +20,7 @@ import (
 // implicitly because external.Registry is a package-level
 // constant — no need to memoise.
 //
-// Exported so the prewarm goroutine in cmd/stellaratlas-api can
+// Exported so the prewarm goroutine in cmd/stellarindex-api can
 // compute the SAME slice the handler does. Without that, the
 // unfiltered /v1/pools prewarm builds `PoolsFilter{Sources: nil}`
 // → cache key `[]`, while the unfiltered handler builds
@@ -41,7 +41,7 @@ func DexSourceNames() []string {
 // CexSourceNames returns every source registered with
 // Class=Exchange + Subclass=CEX, sorted for stable order. Same
 // shape and rationale as DexSourceNames — exported so the prewarm
-// goroutine in cmd/stellaratlas-api can iterate the registered CEXes
+// goroutine in cmd/stellarindex-api can iterate the registered CEXes
 // to warm `/v1/markets?source=<name>` cache slots.
 func CexSourceNames() []string {
 	out := make([]string, 0, len(external.Registry))
@@ -145,7 +145,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 500 {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-limit",
+				"https://api.stellarindex.io/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,
 				"limit must be an integer in [1, 500]")
 			return
@@ -160,7 +160,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		order = timescale.MarketsOrderPair
 	default:
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-order",
+			"https://api.stellarindex.io/errors/invalid-order",
 			"Invalid order_by", http.StatusBadRequest,
 			"order_by must be 'pair' or 'volume_24h_usd_desc'")
 		return
@@ -168,7 +168,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 
 	if err := timescale.ValidateMarketsCursor(cursor, order); err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-cursor",
+			"https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest,
 			"cursor: "+err.Error()+". Pass back the pagination.next value from a prior /v1/pools response, or omit the parameter to start at page 1.")
 		return
@@ -211,14 +211,14 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	if assetFilter != "" {
 		if _, err := canonical.ParseAsset(assetFilter); err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+				"https://api.stellarindex.io/errors/invalid-asset-id",
 				"Invalid asset", http.StatusBadRequest,
 				"asset must be a canonical asset_id (e.g. 'native', 'USDC-G…', 'fiat:USD'); got "+assetFilter+" ("+err.Error()+")")
 			return
 		}
 		if baseFilter != "" || quoteFilter != "" {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/conflicting-filters",
+				"https://api.stellarindex.io/errors/conflicting-filters",
 				"Conflicting filters", http.StatusBadRequest,
 				"asset (base OR quote) cannot be combined with base or quote (AND-shape) on /v1/pools; pick one filter shape.")
 			return
@@ -247,14 +247,14 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		if handlerTimedOut(pCtx, err) {
 			s.logger.Warn("AllPools deadline exceeded", "limit", limit, "filter", filter)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/pools-timeout",
+				"https://api.stellarindex.io/errors/pools-timeout",
 				"Pools query timed out", http.StatusServiceUnavailable,
 				"the underlying trades-hypertable scan didn't return in 8s; cache may still be warming. Retry in a few seconds.")
 			return
 		}
 		s.logger.Error("AllPools failed", "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -347,7 +347,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 500 {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-limit",
+				"https://api.stellarindex.io/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,
 				"limit must be an integer in [1, 500]")
 			return
@@ -373,7 +373,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		order = timescale.MarketsOrderVolume24hDesc
 	default:
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-order",
+			"https://api.stellarindex.io/errors/invalid-order",
 			"Invalid order_by", http.StatusBadRequest,
 			"order_by must be 'pair' or 'volume_24h_usd_desc'")
 		return
@@ -381,7 +381,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 
 	if err := timescale.ValidateMarketsCursor(cursor, order); err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-cursor",
+			"https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest,
 			"cursor: "+err.Error()+". Pass back the pagination.next value from a prior /v1/markets response, or omit the parameter to start at page 1.")
 		return
@@ -398,7 +398,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// /v1/markets cursor (#1135), and /v1/pools.
 		if _, ok := external.Registry[source]; !ok {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/unknown-source",
+				"https://api.stellarindex.io/errors/unknown-source",
 				"Unknown source", http.StatusBadRequest,
 				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
 			return
@@ -423,7 +423,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			expanded := s.expandSlugToAssetIDs(asset)
 			if len(expanded) == 0 {
 				writeProblem(w, r,
-					"https://api.stellaratlas.xyz/errors/invalid-asset-id",
+					"https://api.stellarindex.io/errors/invalid-asset-id",
 					"Invalid asset", http.StatusBadRequest,
 					"asset must be a canonical asset_id (e.g. 'native', 'USDC-G…', 'fiat:USD') or a catalogue slug (e.g. 'usdc', 'btc'); got "+asset+" ("+err.Error()+")")
 				return
@@ -433,7 +433,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 	if source != "" && asset != "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/conflicting-filters",
+			"https://api.stellarindex.io/errors/conflicting-filters",
 			"Conflicting filters", http.StatusBadRequest,
 			"source and asset cannot be combined on /v1/markets; pick one. To find a single source's markets involving a specific asset, fetch /v1/markets?source=<src> and filter client-side, or use /v1/pools?source=<src>&base=<asset>.")
 		return
@@ -490,14 +490,14 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			s.logger.Warn("DistinctPairs deadline exceeded",
 				"limit", limit, "source", source)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/markets-timeout",
+				"https://api.stellarindex.io/errors/markets-timeout",
 				"Markets query timed out", http.StatusServiceUnavailable,
 				"the underlying trades-hypertable scan didn't return in 8s; cache may still be warming. Retry in a few seconds.")
 			return
 		}
 		s.logger.Error("DistinctPairs failed", "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

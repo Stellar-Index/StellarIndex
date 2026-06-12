@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `stellaratlas_api_down`
+# Runbook — `stellarindex_api_down`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_api_down` |
+| Alert | `stellarindex_api_down` |
 | Severity | P1 (page — SEV-1) |
 | Detected by | `deploy/monitoring/rules/api.yml` |
 | Typical MTTR | 2–15 min |
@@ -19,7 +19,7 @@ severity: P1
 
 ## Symptoms
 
-- `sum(up{job=~"stellaratlas[_-]api"}) == 0` — every API host's `stellaratlas-api`
+- `sum(up{job=~"stellarindex[_-]api"}) == 0` — every API host's `stellarindex-api`
   exporter is down for ≥ 60 s.
 - `/v1/healthz` and `/v1/readyz` return non-200 (or time out) when
   HAProxy probes them on each backend.
@@ -28,7 +28,7 @@ severity: P1
 
 ## Quick diagnosis (≤ 5 min)
 
-The API tier runs as `stellaratlas-api.service` on three hosts
+The API tier runs as `stellarindex-api.service` on three hosts
 (`api-01..03`) behind two HAProxy hosts (`lb-01` / `lb-02`) sharing
 a keepalived VIP. See [ADR-0008](../../adr/0008-ha-topology.md) §1
 and [ha-plan.md §3.1](../../architecture/ha-plan.md).
@@ -37,11 +37,11 @@ and [ha-plan.md §3.1](../../architecture/ha-plan.md).
 # Are the units even running on each api host?
 for h in api-01 api-02 api-03; do
   echo "== $h =="
-  ssh root@$h "systemctl status stellaratlas-api --no-pager | head -10"
+  ssh root@$h "systemctl status stellarindex-api --no-pager | head -10"
 done
 
 # Why did they stop? Last 100 log lines.
-ssh root@api-01 "journalctl -u stellaratlas-api -n 100 --no-pager"
+ssh root@api-01 "journalctl -u stellarindex-api -n 100 --no-pager"
 
 # HAProxy's view — which backends are UP/DOWN, and why?
 ssh root@lb-01 "echo 'show servers state api_pool' | \
@@ -53,7 +53,7 @@ ssh root@api-01 "curl -sS http://127.0.0.1:3000/v1/readyz | jq"
 
 `/v1/readyz` gates on Timescale + Redis health (handler at
 `internal/api/v1/server.go::handleReadyz`; per-check
-implementations in `cmd/stellaratlas-api/main.go::storeChecker`
+implementations in `cmd/stellarindex-api/main.go::storeChecker`
 and `redisChecker`). Since wave 110 (F-1275) the handler
 distinguishes critical (Postgres → 503) from non-critical
 (Redis → 200 + `status="degraded"`); HAProxy only drains a
@@ -72,7 +72,7 @@ corrected. If readyz reports red:
    (`internal/config/validate.go`) at startup and exits non-zero
    before the first request is served. systemd records the unit as
    `failed` after `StartLimitBurst=10` retries inside 5 min. The
-   exit reason is in `journalctl -u stellaratlas-api`.
+   exit reason is in `journalctl -u stellarindex-api`.
 
 2. **Schema migration drift.** A binary that expects a column not
    yet migrated (or migrated and dropped) fails the first query
@@ -80,8 +80,8 @@ corrected. If readyz reports red:
    real traffic 500s.
 
 3. **Credential / config-file rotation without a unit restart.**
-   API reads its DSN from `/etc/stellaratlas.toml` and JWT/SEP-10
-   secrets from `/etc/default/stellaratlas-ops` at boot. Rotating
+   API reads its DSN from `/etc/stellarindex.toml` and JWT/SEP-10
+   secrets from `/etc/default/stellarindex-ops` at boot. Rotating
    Redis or Postgres credentials without rolling the unit produces
    `authentication failed` log spam and unhealthy hosts.
 
@@ -90,7 +90,7 @@ corrected. If readyz reports red:
    away. The keepalived VIP failover from `lb-01` to `lb-02`
    masks an LB host failure but not a backend-pool failure.
 
-5. **HAProxy/keepalived itself broken.** `up{job=~"stellaratlas[_-]api"}` is
+5. **HAProxy/keepalived itself broken.** `up{job=~"stellarindex[_-]api"}` is
    scraped via Prometheus's static config pointing at each
    api host's exporter, but customer traffic flows through the
    VIP. If the VIP is down (keepalived split-brain, both LBs
@@ -104,7 +104,7 @@ corrected. If readyz reports red:
       Downtime is customer-visible and a breach of our Freighter SLA.
 
 - [ ] Step 2 — find the root cause via the diagnosis above. Do NOT
-      blindly `systemctl restart stellaratlas-api` on a binary that's
+      blindly `systemctl restart stellarindex-api` on a binary that's
       crashing on startup — the restart loop will just burn the
       `StartLimitBurst` budget faster.
 
@@ -116,7 +116,7 @@ corrected. If readyz reports red:
 - [ ] Step 4 — if **config or secret** is the cause: fix the source
       (commit to `configs/` or rotate the secret in vault), run
       the relevant ansible playbook to push it out, then
-      `systemctl restart stellaratlas-api` on each host.
+      `systemctl restart stellarindex-api` on each host.
 
 - [ ] Step 5 — if a **single host** is the cause: drain it out of
       HAProxy (`disable server api_pool/api-XX` on the admin
@@ -129,7 +129,7 @@ corrected. If readyz reports red:
       the keepalived state (`MASTER` vs `BACKUP`). Force VIP to
       the healthy LB if split-brain.
 
-- [ ] Verification: `up{job=~"stellaratlas[_-]api"}` returns to 1 for every backend;
+- [ ] Verification: `up{job=~"stellarindex[_-]api"}` returns to 1 for every backend;
       `/v1/healthz` returns 200 from outside the VIP; alert clears
       within 5 min.
 
@@ -137,11 +137,11 @@ corrected. If readyz reports red:
 
 Gather for the postmortem:
 
-- `journalctl -u stellaratlas-api --since "30 min ago"` from each
+- `journalctl -u stellarindex-api --since "30 min ago"` from each
   affected host.
 - HAProxy's backend transition log (`/var/log/haproxy.log`) for
   the same window.
-- Prometheus screenshots: `up{job=~"stellaratlas[_-]api"}` per instance,
+- Prometheus screenshots: `up{job=~"stellarindex[_-]api"}` per instance,
   `http_requests_total`, `process_start_time_seconds` (restart
   count proxy).
 - The release tag running before vs during the outage from

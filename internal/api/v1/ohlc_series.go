@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // OHLCSeriesBar is one bar in the multi-bar /v1/ohlc?interval=...
@@ -121,7 +121,7 @@ func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlc
 		return ohlcInterval1w, true
 	}
 	writeProblem(w, r,
-		"https://api.stellaratlas.xyz/errors/invalid-interval",
+		"https://api.stellarindex.io/errors/invalid-interval",
 		"Invalid interval", http.StatusBadRequest,
 		"interval must be one of: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w (got "+strconv.Quote(raw)+")")
 	return "", false
@@ -139,7 +139,7 @@ func parseOHLCSeriesLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > ohlcSeriesMaxLimit {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/limit-too-large",
+			"https://api.stellarindex.io/errors/limit-too-large",
 			"Invalid limit", http.StatusBadRequest,
 			fmt.Sprintf("limit must be an integer in [1, %d]", ohlcSeriesMaxLimit))
 		return 0, false
@@ -182,7 +182,7 @@ func (s *Server) handleOHLCSeries(
 		// against a future code path that wires the storage layer
 		// directly. Translate to 400 for caller clarity.
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-interval",
+			"https://api.stellarindex.io/errors/invalid-interval",
 			"Invalid interval", http.StatusBadRequest,
 			"storage layer rejected the interval — file a bug")
 		return
@@ -196,7 +196,7 @@ func (s *Server) handleOHLCSeries(
 				"base", pair.Base.String(), "quote", pair.Quote.String(),
 				"interval", interval, "from", from, "to", to)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/ohlc-timeout",
+				"https://api.stellarindex.io/errors/ohlc-timeout",
 				"OHLC query timed out", http.StatusServiceUnavailable,
 				"the underlying CAGG didn't return in 8s; cache may still be warming.")
 			return
@@ -205,7 +205,7 @@ func (s *Server) handleOHLCSeries(
 			"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(),
 			"interval", interval, "from", from, "to", to)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -251,7 +251,7 @@ func parseOHLCSeriesFromTo(
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"Invalid `to` timestamp", http.StatusBadRequest,
 				"to must be RFC 3339")
 			return time.Time{}, time.Time{}, false
@@ -267,7 +267,7 @@ func parseOHLCSeriesFromTo(
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"Invalid `from` timestamp", http.StatusBadRequest,
 				"from must be RFC 3339")
 			return time.Time{}, time.Time{}, false
@@ -276,7 +276,7 @@ func parseOHLCSeriesFromTo(
 	}
 	if !from.Before(to) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-time",
+			"https://api.stellarindex.io/errors/invalid-time",
 			"`from` must be before `to`", http.StatusBadRequest, "")
 		return time.Time{}, time.Time{}, false
 	}

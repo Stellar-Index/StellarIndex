@@ -177,7 +177,7 @@ jobs:
             docker buildx build \
               --platform linux/amd64 \
               --build-arg VERSION=v0.0.0-pr${{ github.event.pull_request.number || 'manual' }} \
-              --tag "stellaratlas/${b}:pr-test" \
+              --tag "stellarindex/${b}:pr-test" \
               --load \
               --file "$df" \
               .
@@ -189,15 +189,15 @@ jobs:
           set -euo pipefail
           for df in docker/*.Dockerfile; do
             b=$(basename "$df" .Dockerfile)
-            echo "== smoke-test stellaratlas/${b}:pr-test --help =="
+            echo "== smoke-test stellarindex/${b}:pr-test --help =="
             # --help may exit 0 (most binaries) or non-zero with a usage
             # message (some). Either is fine — the assertion is that the
             # container starts and prints something. Container that fails
             # to start (missing libc, broken ENTRYPOINT) returns no
             # output from a quick run.
-            out=$(docker run --rm "stellaratlas/${b}:pr-test" --help 2>&1 | head -5 || true)
+            out=$(docker run --rm "stellarindex/${b}:pr-test" --help 2>&1 | head -5 || true)
             if [ -z "$out" ]; then
-              echo "::error::Image stellaratlas/${b}:pr-test produced no --help output"
+              echo "::error::Image stellarindex/${b}:pr-test produced no --help output"
               exit 1
             fi
             echo "  OK: $(echo "$out" | head -1)"

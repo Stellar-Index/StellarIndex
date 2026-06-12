@@ -1,5 +1,5 @@
 # Cloudflare Pages config for the customer dashboard
-# (app.stellaratlas.xyz).
+# (app.stellarindex.io).
 #
 # Recommended deploy path is Cloudflare Pages' git integration —
 # every push to main rebuilds and deploys without consuming the
@@ -7,6 +7,6 @@
 # docs/operations/showcase-deployment.md for the per-project
 # setup steps; the dashboard project follows the same shape.
 
-name = "stellaratlas-dashboard"
+name = "stellarindex-dashboard"
 pages_build_output_dir = "./out"
 compatibility_date = "2026-05-05"

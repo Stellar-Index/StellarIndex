@@ -7,7 +7,7 @@ status: draft — ratified after first live run
 # Runbook — Bootstrap an Archival Node
 
 **Purpose:** take a fresh Hetzner box from `root@<ip>:~#` to a fully
-configured Stellar Atlas archival node syncing pubnet. ~15 min of
+configured Stellar Index archival node syncing pubnet. ~15 min of
 Ansible + ~2–5 h background catchup.
 
 **Pairs with:** `configs/ansible/roles/archival-node/` +
@@ -24,7 +24,7 @@ is hardware-agnostic. Different hardware means different
 - [ ] You have SSH access as `root` to the new box.
 - [ ] You have the box's public IP.
 - [ ] The repo is checked out on your workstation at
-      `~/code/stellaratlas`.
+      `~/code/stellarindex`.
 - [ ] You've installed Ansible:
       `pip install --user "ansible-core>=2.16"` and
       `ansible-galaxy collection install -r configs/ansible/requirements.yml`.
@@ -53,7 +53,7 @@ If any drive is `ROTA=1` (rotational): stop. Wrong box.
 ## 2. Populate inventory + secrets
 
 ```sh
-cd ~/code/stellaratlas/configs/ansible
+cd ~/code/stellarindex/configs/ansible
 cp inventory/r1.example.yml inventory/r1.yml
 $EDITOR inventory/r1.yml
 ```

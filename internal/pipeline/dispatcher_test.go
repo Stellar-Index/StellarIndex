@@ -3,8 +3,8 @@ package pipeline
 import (
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 )
 
 // realisticGStrkey is a syntactically-valid 56-char G-prefixed

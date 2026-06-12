@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 func oracleConfigEmpty() config.OracleConfig { return config.OracleConfig{} }

@@ -3,7 +3,7 @@
 #
 # NOTE: this script is the bare-bones manual installer. Production
 # deploys SHOULD use the Ansible role at
-# `configs/ansible/roles/archival-node/tasks/17-stellaratlas-healthchecks.yml`
+# `configs/ansible/roles/archival-node/tasks/17-stellarindex-healthchecks.yml`
 # which is idempotent and tracks drift. This script remains for
 # ad-hoc bring-up of a new host before Ansible inventory exists.
 #
@@ -15,7 +15,7 @@
 # changed.
 #
 # Idempotent — re-running re-syncs the script + units. The
-# /etc/default/stellaratlas-healthchecks env file is created with
+# /etc/default/stellarindex-healthchecks env file is created with
 # placeholder values on first run (operator fills in the URLs);
 # subsequent runs preserve it.
 
@@ -24,9 +24,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." &>/dev/null && pwd)"
 
-INSTALL_DIR="/opt/stellaratlas/healthchecks"
+INSTALL_DIR="/opt/stellarindex/healthchecks"
 SYSTEMD_DIR="/etc/systemd/system"
-ENV_FILE="/etc/default/stellaratlas-healthchecks"
+ENV_FILE="/etc/default/stellarindex-healthchecks"
 
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$SCRIPT_DIR/heartbeat.sh" "$INSTALL_DIR/heartbeat.sh"
@@ -35,20 +35,20 @@ install -m 0755 "$SCRIPT_DIR/sla-probe.sh" "$INSTALL_DIR/sla-probe.sh"
 # Smoke wrapper runs r1-smoke.sh — copy it alongside so the unit
 # doesn't depend on a checkout being present on R1.
 install -m 0755 "$REPO_ROOT/scripts/dev/r1-smoke.sh" "$INSTALL_DIR/r1-smoke.sh"
-install -m 0644 "$SCRIPT_DIR/stellaratlas-heartbeat@.service" "$SYSTEMD_DIR/"
-install -m 0644 "$SCRIPT_DIR/stellaratlas-heartbeat@.timer" "$SYSTEMD_DIR/"
-install -m 0644 "$SCRIPT_DIR/stellaratlas-smoke.service" "$SYSTEMD_DIR/"
-install -m 0644 "$SCRIPT_DIR/stellaratlas-smoke.timer" "$SYSTEMD_DIR/"
-install -m 0644 "$SCRIPT_DIR/stellaratlas-sla-probe.service" "$SYSTEMD_DIR/"
-install -m 0644 "$SCRIPT_DIR/stellaratlas-sla-probe.timer" "$SYSTEMD_DIR/"
+install -m 0644 "$SCRIPT_DIR/stellarindex-heartbeat@.service" "$SYSTEMD_DIR/"
+install -m 0644 "$SCRIPT_DIR/stellarindex-heartbeat@.timer" "$SYSTEMD_DIR/"
+install -m 0644 "$SCRIPT_DIR/stellarindex-smoke.service" "$SYSTEMD_DIR/"
+install -m 0644 "$SCRIPT_DIR/stellarindex-smoke.timer" "$SYSTEMD_DIR/"
+install -m 0644 "$SCRIPT_DIR/stellarindex-sla-probe.service" "$SYSTEMD_DIR/"
+install -m 0644 "$SCRIPT_DIR/stellarindex-sla-probe.timer" "$SYSTEMD_DIR/"
 
 # Provision the env file with placeholders if missing. Operator
 # pastes the five Healthchecks.io URLs (3 heartbeats + 1 smoke
 # + 1 SLA probe; F-1267 corrected the four-vs-five count on
 # 2026-05-13) they create on the dashboard, then runs
-# `systemctl restart stellaratlas-heartbeat@*.timer \
-#                    stellaratlas-smoke.timer \
-#                    stellaratlas-sla-probe.timer`.
+# `systemctl restart stellarindex-heartbeat@*.timer \
+#                    stellarindex-smoke.timer \
+#                    stellarindex-sla-probe.timer`.
 if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<'EOF'
 # Healthchecks.io URLs.
@@ -77,13 +77,13 @@ EOF
 fi
 
 systemctl daemon-reload
-systemctl enable --now stellaratlas-heartbeat@indexer.timer
-systemctl enable --now stellaratlas-heartbeat@aggregator.timer
-systemctl enable --now stellaratlas-heartbeat@api.timer
-systemctl enable --now stellaratlas-smoke.timer
-systemctl enable --now stellaratlas-sla-probe.timer
+systemctl enable --now stellarindex-heartbeat@indexer.timer
+systemctl enable --now stellarindex-heartbeat@aggregator.timer
+systemctl enable --now stellarindex-heartbeat@api.timer
+systemctl enable --now stellarindex-smoke.timer
+systemctl enable --now stellarindex-sla-probe.timer
 
 echo "install: done"
 echo
 echo "Next: populate $ENV_FILE with real URLs from healthchecks.io,"
-echo "then 'systemctl restart stellaratlas-heartbeat@*.timer stellaratlas-smoke.timer stellaratlas-sla-probe.timer'"
+echo "then 'systemctl restart stellarindex-heartbeat@*.timer stellarindex-smoke.timer stellarindex-sla-probe.timer'"

@@ -5,21 +5,21 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_tls_cert_expiring_soon`
+# Runbook — `stellarindex_tls_cert_expiring_soon`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_tls_cert_expiring_soon` |
+| Alert | `stellarindex_tls_cert_expiring_soon` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/api.yml` + `configs/prometheus/rules.r1/api.yml` |
 | Typical MTTR | 15–60 min |
-| Impact | TLS handshake fails when cert expires. `api.stellaratlas.xyz` would 5xx every request; customer integrations break. 14-day head room means there's plenty of time to manually renew before customer-visible impact. |
+| Impact | TLS handshake fails when cert expires. `api.stellarindex.io` would 5xx every request; customer integrations break. 14-day head room means there's plenty of time to manually renew before customer-visible impact. |
 
 ## Symptoms
 
-- `stellaratlas_tls_cert_not_after_unix{host=<H>} - time() < 14 * 24 * 3600`
+- `stellarindex_tls_cert_not_after_unix{host=<H>} - time() < 14 * 24 * 3600`
 - Sustained for ≥ 1 h (one missed probe is tolerated; sustained drift is not)
 - Caddy's `caddy.log` may show recent renewal-attempt errors
 
@@ -33,10 +33,10 @@ threshold gives 56 successful probes' head room.
 ssh root@<host>
 
 # 1. Confirm the gauge value vs. NOW.
-curl -sS localhost:3000/metrics | grep stellaratlas_tls_cert_not_after_unix
+curl -sS localhost:3000/metrics | grep stellarindex_tls_cert_not_after_unix
 
 # 2. Read the actual on-disk cert Caddy is serving.
-openssl x509 -in /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/api.stellaratlas.xyz/api.stellaratlas.xyz.crt -noout -enddate
+openssl x509 -in /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/api.stellarindex.io/api.stellarindex.io.crt -noout -enddate
 
 # 3. Check Caddy's renewal log for the most recent attempt.
 journalctl -u caddy --since "30d ago" | grep -iE "renew|certificate"
@@ -86,10 +86,10 @@ provisioning sequence.
 
 ```sh
 # Probe runs every 6h; force a probe by restarting the API binary:
-systemctl restart stellaratlas-api
+systemctl restart stellarindex-api
 sleep 30
 
-curl -sS localhost:3000/metrics | grep stellaratlas_tls_cert_not_after_unix
+curl -sS localhost:3000/metrics | grep stellarindex_tls_cert_not_after_unix
 # Should show a NotAfter ~90 days in the future for Let's Encrypt.
 ```
 
@@ -99,6 +99,6 @@ The alert clears after `for: 1h` elapses with the new gauge value.
 
 - `internal/api/v1/tls_probe.go::RunTLSCertProbe` — probe
   implementation
-- `docs/reference/metrics/README.md#stellaratlas_tls_cert_not_after_unix` — metric reference
+- `docs/reference/metrics/README.md#stellarindex_tls_cert_not_after_unix` — metric reference
 - F-0051 audit finding (audit-2026-05-26) — origin
 - F-0001 cluster — root disk full could starve Caddy's renewal

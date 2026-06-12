@@ -13,9 +13,9 @@
 package completeness
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sorobanevents"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // Recognizer decides whether any decoder claims an event, without

@@ -42,8 +42,8 @@ Pre-flight: bring up the dev stack and run the API against it:
 ```sh
 make dev                      # Postgres + Redis + MinIO containers
 make db-migrate-up
-go build -o bin/stellaratlas-api ./cmd/stellaratlas-api
-./bin/stellaratlas-api -config configs/example.toml &   # listens on :3000
+go build -o bin/stellarindex-api ./cmd/stellarindex-api
+./bin/stellarindex-api -config configs/example.toml &   # listens on :3000
 ```
 
 (The config is TOML — `configs/example.toml`, whose `listen_addr`
@@ -65,7 +65,7 @@ CHAOS_TARGET=http://staging.internal:3000 ./test/chaos/run.sh
 ## Production safety
 
 Every scenario AND the runner refuse to execute when `CHAOS_TARGET`
-matches `*production*`, `*api.stellaratlas.xyz*`, or `*prod.*`. Chaos
+matches `*production*`, `*api.stellarindex.io*`, or `*prod.*`. Chaos
 in production is opt-in via the SEV playbook's quarterly drill, NOT
 this suite.
 
@@ -85,7 +85,7 @@ Scenarios prefer **pumba** (Docker chaos sidecar) for network
 manipulation when available — `pumba pause`, `pumba netem`, etc.
 When pumba isn't installed, the harness falls back to
 `docker network disconnect` + `docker stop`. Both paths exercise
-the same go-client-side code branches in the Stellar Atlas.
+the same go-client-side code branches in the Stellar Index.
 
 Install pumba:
 

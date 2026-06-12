@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/archivecompleteness"
+	"github.com/StellarIndex/stellar-index/internal/archivecompleteness"
 )
 
 // TestWriteTextfile_BasicShape — happy path: a populated snapshot

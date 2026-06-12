@@ -11,7 +11,7 @@ Decision: 2026-05-11, operator.
 Local build (any one binary):
 
 ```sh
-docker build -t stellaratlas/stellaratlas-api:local -f docker/stellaratlas-api.Dockerfile .
+docker build -t stellarindex/stellarindex-api:local -f docker/stellarindex-api.Dockerfile .
 ```
 
 All binaries (matches `make build-docker`):
@@ -63,7 +63,7 @@ debugging.
 ## Operator note: this is not the production deploy path
 
 R1 today runs the binaries directly via systemd unit files (see
-`/etc/systemd/system/stellaratlas-*.service`). These container
+`/etc/systemd/system/stellarindex-*.service`). These container
 images are for:
 
 - Self-hosted operators wanting a docker-compose drop-in

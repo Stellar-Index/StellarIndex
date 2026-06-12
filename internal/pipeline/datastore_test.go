@@ -3,7 +3,7 @@ package pipeline
 import (
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/config"
 )
 
 // TestLedgerstreamConfig_NoColdTier verifies the legacy single-

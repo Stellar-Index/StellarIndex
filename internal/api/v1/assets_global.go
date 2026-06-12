@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/currency"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/currency"
 )
 
 // GlobalAssetView is the wire shape served by `/v1/assets/{slug}`
@@ -247,7 +247,7 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 //  2. PriceReader.LatestPrice as a last resort. Pre-fix the
 //     ordering was reversed: PriceReader was tried first and
 //     storePriceReader fast-paths a `quote.Type==fiat` request to
-//     ErrPriceNotFound (see cmd/stellaratlas-api/main.go:1935),
+//     ErrPriceNotFound (see cmd/stellarindex-api/main.go:1935),
 //     so this layer never returned a value for fiat→fiat. With
 //     fx_quotes tried first, the 19 catalogue fiats with a
 //     populated circulating_supply now all get a market_cap_usd
@@ -420,7 +420,7 @@ func (s *Server) handleAssetByNetwork(w http.ResponseWriter, r *http.Request) {
 
 	if s.verifiedCurrencies == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/not-found",
+			"https://api.stellarindex.io/errors/not-found",
 			"Not found", http.StatusNotFound,
 			"Per-network drill-down requires the verified-currency catalogue.")
 		return
@@ -429,7 +429,7 @@ func (s *Server) handleAssetByNetwork(w http.ResponseWriter, r *http.Request) {
 	vc, ok := s.verifiedCurrencies.LookupBySlug(slug)
 	if !ok {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/not-found",
+			"https://api.stellarindex.io/errors/not-found",
 			"Slug not in verified-currency catalogue", http.StatusNotFound,
 			"The /assets/{slug}/{network} route requires {slug} to be a verified-currency slug; got "+slug)
 		return
@@ -444,7 +444,7 @@ func (s *Server) handleAssetByNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	if entry == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/not-found",
+			"https://api.stellarindex.io/errors/not-found",
 			"Network not in catalogue", http.StatusNotFound,
 			"verified currency "+vc.Slug+" has no entry for network "+network)
 		return
@@ -517,7 +517,7 @@ type VerifiedCurrencyListItem struct {
 func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	if s.verifiedCurrencies == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/verified-currencies-unavailable",
+			"https://api.stellarindex.io/errors/verified-currencies-unavailable",
 			"Verified-currency catalogue not wired", http.StatusServiceUnavailable,
 			"This deployment hasn't loaded the verified-currency catalogue.")
 		return

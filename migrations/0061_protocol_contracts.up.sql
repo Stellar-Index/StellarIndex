@@ -17,7 +17,7 @@
 -- silently DROP a real child's events (ADR-0035 coverage note), so this table
 -- is load-bearing for coverage — keep it forever (no retention).
 --
--- Genesis fill: `stellaratlas-ops seed-protocol-contracts -source <name>`
+-- Genesis fill: `stellarindex-ops seed-protocol-contracts -source <name>`
 -- walks the factory's creation events from the lake (cheap: the
 -- (contract_id, topic_0_sym) index on soroban_events) and upserts every
 -- child. Run once per source as a deploy precondition before relying on the
@@ -53,7 +53,7 @@ CREATE TABLE protocol_contracts (
 
 COMMENT ON TABLE protocol_contracts IS
     'Factory-descendant child-contract registry for factory-anchored '
-    'Soroban decoders (ADR-0035). Seeded by stellaratlas-ops '
+    'Soroban decoders (ADR-0035). Seeded by stellarindex-ops '
     'seed-protocol-contracts and kept current by live factory creation '
     'events. Each decoder warms its childgate.Registry from this table; an '
     'incomplete registry silently drops a real child''s events, so this is '

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestAPI_EndToEnd is the first integration test that proves the
@@ -25,7 +25,7 @@ import (
 //	  → /v1/history + /v1/vwap + /v1/ohlc + /v1/markets handlers
 //
 // Catches regressions where unit-test stubs mask real storage /
-// schema / adapter drift. Builds the same stack the stellaratlas-api
+// schema / adapter drift. Builds the same stack the stellarindex-api
 // binary builds (minus Redis, rate limit, SEP-1 metadata).
 func TestAPI_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -83,7 +83,7 @@ func TestAPI_EndToEnd(t *testing.T) {
 		t.Fatalf("refresh pools_per_source_1h: %v", err)
 	}
 
-	// Build the same v1.Server the stellaratlas-api binary builds —
+	// Build the same v1.Server the stellarindex-api binary builds —
 	// minus the adapters we don't need here.
 	srv := v1.New(v1.Options{
 		History: apiHistoryAdapter{s: store},
@@ -363,7 +363,7 @@ func TestAPI_Readyz(t *testing.T) {
 	}
 }
 
-// pgReadyChecker mirrors cmd/stellaratlas-api/main.go's
+// pgReadyChecker mirrors cmd/stellarindex-api/main.go's
 // storeChecker so the readyz integration exercises the exact Ping
 // path production uses.
 type pgReadyChecker struct{ s *timescale.Store }
@@ -573,7 +573,7 @@ func (a oracleAdapter) LatestOracleStreams(ctx context.Context) ([]c.OracleUpdat
 
 // ─── Adapters + helpers ───────────────────────────────────────────
 
-// apiHistoryAdapter mirrors cmd/stellaratlas-api/main.go's
+// apiHistoryAdapter mirrors cmd/stellarindex-api/main.go's
 // storeHistoryReader so the integration test exercises the same
 // code path production does.
 type apiHistoryAdapter struct{ s *timescale.Store }

@@ -12,7 +12,7 @@
 {# split the per-component user further (aggregator-only / api-only / #}
 {# indexer-only) — each gets its own >password and ~keypattern. #}
 {# Today the application binaries share `redis_password` so a single #}
-{# `stellaratlas` user is sufficient. #}
+{# `stellarindex` user is sufficient. #}
 
 # Disable the legacy default user. `off` means it cannot AUTH at all
 # — every connection MUST authenticate as one of the named users
@@ -46,7 +46,7 @@ user default off nopass nocommands
 # Key-pattern allow-list (`~`) restricts the user to the cache key
 # prefixes the application actually uses. Anything outside the list
 # (operator scratch keys, third-party tool spillover) is invisible.
-user stellaratlas on >{{ redis_password }} \
+user stellarindex on >{{ redis_password }} \
   -@all +@read +@write +@scripting +@pubsub +@connection \
   -@admin -@dangerous \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
@@ -85,7 +85,7 @@ user stellaratlas on >{{ redis_password }} \
 
 # Exporter user — narrow command set the oliver006/redis_exporter
 # binary needs for INFO / CLIENT / CLUSTER / CONFIG GET / DBSIZE /
-# SLOWLOG GET metric gathering. Cannot reuse the `stellaratlas`
+# SLOWLOG GET metric gathering. Cannot reuse the `stellarindex`
 # application user because that user has `-@admin -@dangerous` to
 # deny FLUSHALL / DEBUG / etc., and INFO / CLIENT / CLUSTER /
 # CONFIG / SLOWLOG all live in those denied categories.

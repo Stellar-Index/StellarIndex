@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // fakeIssuersUpstream is the in-memory stub the cache wrapper sits
@@ -203,7 +203,7 @@ func TestCachedIssuersReader_PassThroughListAssets(t *testing.T) {
 }
 
 // TestCachedIssuersReader_HitMissCounter pins the
-// stellaratlas_api_cache_ops_total{cache="issuers"} counter for the
+// stellarindex_api_cache_ops_total{cache="issuers"} counter for the
 // list_issuers op. Same regression-guard rationale as the markets +
 // coins + sources_stats variants — if a future refactor drops the
 // .Inc() on either branch the api_cache_miss_rate_high alert

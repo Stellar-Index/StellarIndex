@@ -1,5 +1,5 @@
 [Unit]
-Description=Stellar Atlas — token-supply refresh timer (every 6h)
+Description=Stellar Index — token-supply refresh timer (every 6h)
 
 [Timer]
 OnBootSec=15min

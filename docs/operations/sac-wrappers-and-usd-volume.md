@@ -49,7 +49,7 @@ and confirming the issuer's home_domain matches your expectations.
 ### 2. Append to `[supply.sac_wrappers]` on r1
 
 ```sh
-ssh root@136.243.90.96 'cat >> /etc/stellaratlas.toml' << 'EOF'
+ssh root@136.243.90.96 'cat >> /etc/stellarindex.toml' << 'EOF'
 "<C-strkey>" = "<CODE>:<G-strkey>"
 EOF
 ```
@@ -61,18 +61,18 @@ Note the **colon** separator (not the dash that the canonical
 ### 3. Restart the api + indexer + aggregator
 
 ```sh
-ssh root@136.243.90.96 'systemctl restart stellaratlas-api stellaratlas-indexer stellaratlas-aggregator'
+ssh root@136.243.90.96 'systemctl restart stellarindex-api stellarindex-indexer stellarindex-aggregator'
 ```
 
 Verify with:
 
 ```sh
-curl -s https://api.stellaratlas.xyz/v1/sac-wrappers | jq '.data | length'
+curl -s https://api.stellarindex.io/v1/sac-wrappers | jq '.data | length'
 ```
 
 ### 4. Bake into the ansible template
 
-`configs/ansible/roles/archival-node/templates/stellaratlas.toml.j2`
+`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2`
 already has a `[supply.sac_wrappers]` block — append your new
 entry there in the same PR so future re-renders don't lose it.
 
@@ -88,8 +88,8 @@ To retroactively price them:
 scp scripts/ops/recompute-usd-volume-soroban.sql root@136.243.90.96:/tmp/
 
 ssh root@136.243.90.96 \
-  'PGPASSWORD=$(cat /etc/stellaratlas/postgres-password.txt) \
-   psql -h 127.0.0.1 -U stellaratlas -d stellaratlas \
+  'PGPASSWORD=$(cat /etc/stellarindex/postgres-password.txt) \
+   psql -h 127.0.0.1 -U stellarindex -d stellarindex \
         -v ON_ERROR_STOP=1 \
         -c "SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0;" \
         -f /tmp/recompute-usd-volume-soroban.sql'
@@ -105,7 +105,7 @@ Idempotent — re-running is safe (filters on `usd_volume IS NULL`).
 
 If you add a SAC mapping pointing at a NEW USD-pegged stablecoin
 (not just USDC), also extend `[trades].usd_pegged_classic_assets`
-in `/etc/stellaratlas.toml`:
+in `/etc/stellarindex.toml`:
 
 ```toml
 [trades]
@@ -127,7 +127,7 @@ new venue), this loop crawls the active pools for a source and
 prints the config lines to paste:
 
 ```sh
-for addr in $(curl -s "https://api.stellaratlas.xyz/v1/pools?source=$SRC&limit=50" \
+for addr in $(curl -s "https://api.stellarindex.io/v1/pools?source=$SRC&limit=50" \
                 | jq -r '.data[] | .base, .quote' \
                 | grep '^C[A-Z0-9]' | sort -u); do
   asset=$(curl -s "https://api.stellar.expert/explorer/public/contract/$addr" \

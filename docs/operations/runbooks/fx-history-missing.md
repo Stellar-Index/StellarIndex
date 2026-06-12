@@ -57,11 +57,11 @@ The `fx_quotes` hypertable was added in PR #1041 (task #104,
 steps make it live on a deployment:
 
 1. **Copy the migration file** to the deployment's migrations
-   directory (`/var/lib/stellaratlas/migrations/` on r1).
-2. **Apply it** via `stellaratlas-migrate up`.
+   directory (`/var/lib/stellarindex/migrations/` on r1).
+2. **Apply it** via `stellarindex-migrate up`.
 
 Once the table exists, the forex worker (running inside
-`stellaratlas-api`) starts persisting on its next refresh tick,
+`stellarindex-api`) starts persisting on its next refresh tick,
 so live data backfills forward as it arrives. Historical depth
 needs the one-shot `fx-history-backfill` script — see step 3.
 
@@ -69,15 +69,15 @@ needs the one-shot `fx-history-backfill` script — see step 3.
 
 ```sh
 # 1. Confirm the table is missing
-sudo -u postgres psql -d stellaratlas -tA -c "SELECT to_regclass('public.fx_quotes')"
+sudo -u postgres psql -d stellarindex -tA -c "SELECT to_regclass('public.fx_quotes')"
 # → empty line means missing
 
 # 2. Confirm migration version
-sudo -u postgres psql -d stellaratlas -tA -c "SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1"
+sudo -u postgres psql -d stellarindex -tA -c "SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1"
 # → 27|f means migration 0028 hasn't been applied yet
 
 # 3. Confirm the API log shows the symptom (every ~5 min)
-journalctl -u stellaratlas-api --since "10 minutes ago" -o cat | grep "fx_quotes persist failed" | tail -1
+journalctl -u stellarindex-api --since "10 minutes ago" -o cat | grep "fx_quotes persist failed" | tail -1
 ```
 
 ## Recovery (5 min)
@@ -88,12 +88,12 @@ From your local checkout:
 
 ```sh
 scp migrations/0028_create_fx_quotes.{up,down}.sql \
-    root@<host>:/var/lib/stellaratlas/migrations/
+    root@<host>:/var/lib/stellarindex/migrations/
 ```
 
 (R1 host: `136.243.90.96`. The `migrations/` directory is the
-authoritative path the `stellaratlas-migrate` binary reads —
-confirm with `cat /etc/systemd/system/stellaratlas-migrate*.service`
+authoritative path the `stellarindex-migrate` binary reads —
+confirm with `cat /etc/systemd/system/stellarindex-migrate*.service`
 if you've moved it.)
 
 ### 2. Apply the migration
@@ -101,10 +101,10 @@ if you've moved it.)
 ```sh
 ssh root@<host> '
   set -e
-  cd /var/lib/stellaratlas
-  /usr/local/bin/stellaratlas-migrate \
+  cd /var/lib/stellarindex
+  /usr/local/bin/stellarindex-migrate \
     -migrations migrations \
-    -dsn "$STELLARATLAS_POSTGRES_DSN" \
+    -dsn "$STELLARINDEX_POSTGRES_DSN" \
     up
 '
 ```
@@ -121,11 +121,11 @@ up the new table on its next refresh tick.
 ### 3. Confirm the worker started persisting
 
 ```sh
-journalctl -u stellaratlas-api --since "5 minutes ago" -o cat \
+journalctl -u stellarindex-api --since "5 minutes ago" -o cat \
   | grep -c "fx_quotes persist failed"
 # → 0 once the next refresh tick fires (≈5 min cadence)
 
-sudo -u postgres psql -d stellaratlas -tA -c "SELECT count(*) FROM fx_quotes"
+sudo -u postgres psql -d stellarindex -tA -c "SELECT count(*) FROM fx_quotes"
 # → > 0 within ~5 min
 ```
 
@@ -140,7 +140,7 @@ currencies, daily granularity back to 1999-01-04.
 
 ```sh
 # On the operator's workstation:
-export DATABASE_URL=postgres://...:5432/stellaratlas
+export DATABASE_URL=postgres://...:5432/stellarindex
 go run ./scripts/ops/fx-history-backfill --years=25
 ```
 
@@ -158,7 +158,7 @@ writes a final summary (total chunks, total rows, elapsed).
 
 The 2026-05-10 finding exposed a process gap: a release that
 adds a migration ships the binary changes via the deploy
-workflow, but the migration files + `stellaratlas-migrate up`
+workflow, but the migration files + `stellarindex-migrate up`
 are operator-side actions not automated by the same workflow.
 Two paths forward (pick one):
 
@@ -167,7 +167,7 @@ Two paths forward (pick one):
    before the binary swap. Adds a per-deployment cost (one
    pg-connection round trip + the actual migration time) but
    eliminates the manual step entirely.
-2. **Add a startup gate** — `stellaratlas-api`'s ready check
+2. **Add a startup gate** — `stellarindex-api`'s ready check
    compares the binary's expected schema version (computed at
    build time from the embedded migrations) against
    `schema_migrations.version`; readyz returns 503 with a

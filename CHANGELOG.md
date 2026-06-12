@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Stellar Atlas (formerly Rates Engine; ADR-0036)
+All notable changes to Stellar Index (formerly Rates Engine; ADR-0036)
 will be documented in this file. Entries before 2026-06-12 reference the
 original Rates Engine naming as historical record.
 
@@ -19,14 +19,16 @@ against.
 
 ### Changed
 
-- **Rebrand: Rates Engine -> Stellar Atlas** (ADR-0036). Module path
-  `github.com/StellarAtlas/stellar-atlas`; binaries `stellaratlas-*`; env
-  vars `STELLARATLAS_*`; Prometheus namespace `stellaratlas_*`; domain
-  stellaratlas.xyz. Repositioned as a protocol explorer for the Stellar
+- **Rebrand: Rates Engine -> Stellar Index** (ADR-0037; the same-day
+  interim name "Stellar Atlas", ADR-0036, was found taken and never
+  shipped durably). Module path
+  `github.com/StellarIndex/stellar-index`; binaries `stellarindex-*`; env
+  vars `STELLARINDEX_*`; Prometheus namespace `stellarindex_*`; domain
+  stellarindex.io. Repositioned as a protocol explorer for the Stellar
   network (pricing API remains a flagship product) evolving toward a
   comprehensive blockchain explorer. Historical archives (ADRs 0001-0035,
   discovery, audits, dated entries below) intentionally keep the old name.
-  Migration plan + r1 cutover: `docs/operations/stellar-atlas-migration.md`.
+  Migration plan + r1 cutover: `docs/operations/stellar-index-migration.md`.
 
 ### Fixed
 

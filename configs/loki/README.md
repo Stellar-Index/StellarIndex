@@ -49,8 +49,8 @@ curl -sS http://localhost:3100/loki/api/v1/label/job/values \
 ```
 
 Expected jobs: `caddy, galexie, loki, prometheus, prometheus-alertmanager,
-prometheus-node-exporter, promtail, stellaratlas-aggregator,
-stellaratlas-api, stellaratlas-indexer, ssh, user@0`.
+prometheus-node-exporter, promtail, stellarindex-aggregator,
+stellarindex-api, stellarindex-indexer, ssh, user@0`.
 
 ## Querying
 
@@ -59,7 +59,7 @@ Loki's HTTP API on `:3100`:
 ```sh
 # Last 5 minutes of indexer logs containing the word "error"
 curl -sS 'http://localhost:3100/loki/api/v1/query_range' \
-  --data-urlencode 'query={job="stellaratlas-indexer"} |= "error"' \
+  --data-urlencode 'query={job="stellarindex-indexer"} |= "error"' \
   --data-urlencode 'start='$(date -d '5 minutes ago' +%s)'000000000' \
   --data-urlencode 'end='$(date +%s)'000000000' \
   --data-urlencode 'limit=20'
@@ -77,7 +77,7 @@ nftables on R1 runs in `policy drop` mode and only explicitly
 accepts the captive-core port set, so external probes to `3100`
 time out (F-1264, 2026-05-13). The host firewall landed after the
 original "no firewall" wording. Once Caddy fronts it (post-launch
-follow-up), it'll be HTTPS-only via `loki.stellaratlas.xyz` etc.
+follow-up), it'll be HTTPS-only via `loki.stellarindex.io` etc.
 
 Operator access today (the only path that works):
 - `ssh -L 3100:localhost:3100 root@136.243.90.96`

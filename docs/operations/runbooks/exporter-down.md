@@ -5,13 +5,13 @@ status: ratified
 severity: P1
 ---
 
-# Runbook — `stellaratlas_{redis,postgres,pgbackrest,minio}_exporter_down`
+# Runbook — `stellarindex_{redis,postgres,pgbackrest,minio}_exporter_down`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_<exporter>_down` (one per exporter) |
+| Alert | `stellarindex_<exporter>_down` (one per exporter) |
 | Severity | P1 (page) |
 | Detected by | `configs/prometheus/rules.r1/meta.yml` + `deploy/monitoring/rules/meta.yml` |
 | Typical MTTR | 5–15 min |
@@ -20,7 +20,7 @@ severity: P1
 ## Why this exists
 
 The 2026-05-10 SEV-2 cascade exposed a structural blindness: the
-`stellaratlas_redis_writes_blocked` alert watches
+`stellarindex_redis_writes_blocked` alert watches
 `redis_rdb_last_bgsave_status == 0`, but during the cascade
 `redis_exporter` itself was down — the metric never reached
 Prometheus, the alert evaluated against an absent series, and it
@@ -78,14 +78,14 @@ curl -sf -H "Authorization: Bearer $(cat /etc/prometheus/minio.token)" \
 - **redis_exporter** — Debian unit `prometheus-redis-exporter`,
   port 9121. Installed by
   `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`.
-  Feeds `cache.yml` + `stellaratlas_redis_writes_blocked`.
+  Feeds `cache.yml` + `stellarindex_redis_writes_blocked`.
 - **postgres_exporter** — Debian unit `prometheus-postgres-exporter`,
   port 9187. Reads `DATA_SOURCE_NAME` from
   `/etc/default/prometheus-postgres-exporter`. Feeds the `pg_*`
   alerts in `storage.yml`.
 - **pgbackrest_exporter** — unit `pgbackrest_exporter`, port 9854.
-  Feeds `stellaratlas_timescale_backup_failed` +
-  `stellaratlas_timescale_backup_none_24h`.
+  Feeds `stellarindex_timescale_backup_failed` +
+  `stellarindex_timescale_backup_none_24h`.
 - **minio** — unit `minio`, port 9000. Bearer token at
   `/etc/prometheus/minio.token`; rotate via
   `mc admin prometheus generate`. Feeds galexie-archive +

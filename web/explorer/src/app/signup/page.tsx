@@ -6,9 +6,9 @@ import { API_BASE_URL } from '@/api/client';
 import { SignInForm } from '../signin/SignInForm';
 
 export const metadata: Metadata = {
-  title: 'Create account — Stellar Atlas',
+  title: 'Create account — Stellar Index',
   description:
-    'Create your Stellar Atlas account. Magic-link email auth — no passwords. Free tier included; paid plans unlock higher rate limits + dedicated SLAs.',
+    'Create your Stellar Index account. Magic-link email auth — no passwords. Free tier included; paid plans unlock higher rate limits + dedicated SLAs.',
 };
 
 const TIERS = [
@@ -134,7 +134,7 @@ export default function SignupPage() {
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
         <strong>Anonymous reads work without an account.</strong>{' '}
         If you&rsquo;re prototyping, just hit{' '}
-        <a href="https://docs.stellaratlas.xyz" className="underline">
+        <a href="https://docs.stellarindex.io" className="underline">
           the public endpoints
         </a>{' '}
         directly — the 60 req/min IP-floor covers exploratory scripts

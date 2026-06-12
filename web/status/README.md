@@ -1,7 +1,7 @@
-# Stellar Atlas — public status page
+# Stellar Index — public status page
 
-Public status page for the Stellar Atlas API. Lives at
-`status.stellaratlas.xyz` post-launch.
+Public status page for the Stellar Index API. Lives at
+`status.stellarindex.io` post-launch.
 
 This is the shipped implementation of the status-page surface
 chosen in
@@ -66,7 +66,7 @@ Quick version:
 3. Commit + push to `main`. Cloudflare Pages picks up the change
    in 30-90 s; the API binary's next deploy embeds it.
 4. To fan out via customer-webhooks, run
-   `stellaratlas-ops emit-incident --slug <slug>` (fires the
+   `stellarindex-ops emit-incident --slug <slug>` (fires the
    `incident.sev1` / `incident.resolved` event family from
    F-1249).
 

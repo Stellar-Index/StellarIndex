@@ -1,5 +1,5 @@
 // Package canonical defines the core types every other package in
-// Stellar Atlas depends on — Trade, Price, Asset, Pair, and the
+// Stellar Index depends on — Trade, Price, Asset, Pair, and the
 // precision-safe Amount wrapper over *big.Int.
 //
 // # Why this is package zero

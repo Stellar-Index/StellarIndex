@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_stellar_archive_publish_fail`
+# Runbook — `stellarindex_stellar_archive_publish_fail`
 
 > **Deployment posture (2026-04-30).** stellar-core is **not running
 > on r1** — the daemon (and its archive-publishing path) was removed
@@ -15,7 +15,7 @@ severity: P3
 > (one-shot, completed) and is read-only today via the verify-archive
 > Tier-A integrity check. No process actively *publishes* to it.
 >
-> The metric `stellaratlas_stellar_archive_publish_errors_total` has
+> The metric `stellarindex_stellar_archive_publish_errors_total` has
 > no producer, so this alert is *inert* on r1. It remains in
 > `deploy/monitoring/rules/stellar.yml` for Phase-3 (Tier-1
 > validator rollout, ADR-0004) when stellar-core resumes
@@ -26,7 +26,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_stellar_archive_publish_fail` |
+| Alert | `stellarindex_stellar_archive_publish_fail` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/stellar.yml` |
 | Typical MTTR | 1–4 h |
@@ -34,7 +34,7 @@ severity: P3
 
 ## Symptoms
 
-- `increase(stellaratlas_stellar_archive_publish_errors_total[1h]) > 0`
+- `increase(stellarindex_stellar_archive_publish_errors_total[1h]) > 0`
   for ≥ 1 h.
 - `stellar-core/info` may show a `history_archive_state` that's
   not `Published` for recent checkpoints.

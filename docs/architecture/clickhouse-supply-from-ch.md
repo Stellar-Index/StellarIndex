@@ -104,7 +104,7 @@ ADR-0034 plan §10a ("drop + rebuild supply tables from CH") is now achievable
 
 Supply-for-every-token is **derived + materialized**:
 
-- **`stellaratlas-ops ch-supply`** (`cmd/stellaratlas-ops/ch_supply.go` +
+- **`stellarindex-ops ch-supply`** (`cmd/stellarindex-ops/ch_supply.go` +
   `internal/storage/clickhouse/{supply_reader,token_supply}.go`) streams the
   lake's mint/burn/clawback flows (`StreamMintBurnFlows`: `topic_0_sym IN
   ('mint','burn','clawback')`), decodes the amount (bare i128 **or** the

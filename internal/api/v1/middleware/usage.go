@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
-	"github.com/StellarAtlas/stellar-atlas/internal/usage"
+	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/usage"
 )
 
 // UsageTracker records per-request daily counters keyed on the

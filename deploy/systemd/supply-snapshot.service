@@ -12,7 +12,7 @@
 #
 # Configuration (override via /etc/default/supply-snapshot):
 #
-#   CONFIG_PATH    Default /etc/stellaratlas.toml
+#   CONFIG_PATH    Default /etc/stellarindex.toml
 #   ASSET          Default native (only XLM is supported at v1; the
 #                  classic + SEP-41 computers ship in follow-ups).
 #   TEXTFILE_OUTPUT  Path under node_exporter's textfile_collector
@@ -34,8 +34,8 @@
 # (a few times per year); the next timer fire reflects the change.
 
 [Unit]
-Description=Stellar Atlas — supply-snapshot writer (daily cron per ADR-0011)
-Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/supply-snapshot.md
+Description=Stellar Index — supply-snapshot writer (daily cron per ADR-0011)
+Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/supply-snapshot.md
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -44,12 +44,12 @@ Type=oneshot
 EnvironmentFile=-/etc/default/supply-snapshot
 
 # Sensible defaults. Operators override via /etc/default/supply-snapshot.
-Environment=CONFIG_PATH=/etc/stellaratlas.toml
+Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=ASSET=native
 Environment=TEXTFILE_OUTPUT=
 Environment=EXTRA_FLAGS=
 
-ExecStart=/bin/sh -c '/usr/local/bin/stellaratlas-ops supply snapshot \
+ExecStart=/bin/sh -c '/usr/local/bin/stellarindex-ops supply snapshot \
   -config ${CONFIG_PATH} \
   -asset ${ASSET} \
   $(if [ -n "${TEXTFILE_OUTPUT}" ]; then echo "-textfile-output ${TEXTFILE_OUTPUT}"; fi) \
@@ -58,8 +58,8 @@ ExecStart=/bin/sh -c '/usr/local/bin/stellaratlas-ops supply snapshot \
 # Runs as the application user — the writer only needs read on the
 # config + read/write on the Postgres asset_supply_history table,
 # both reachable as the unprivileged service account.
-User=stellaratlas
-Group=stellaratlas
+User=stellarindex
+Group=stellarindex
 
 # Hardening — config is read-only; textfile_collector dir is the
 # only writable path. Operators that change TEXTFILE_OUTPUT to a

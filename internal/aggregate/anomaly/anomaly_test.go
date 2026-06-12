@@ -4,8 +4,8 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/anomaly"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // rat is a small helper so the test cases read like prices.

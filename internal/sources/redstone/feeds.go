@@ -1,6 +1,6 @@
 package redstone
 
-import "github.com/StellarAtlas/stellar-atlas/internal/canonical"
+import "github.com/StellarIndex/stellar-index/internal/canonical"
 
 // feedEntry is one row of the RedStone feed registry: the canonical
 // (base, quote) pair a feed_id prices.

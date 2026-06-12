@@ -16,8 +16,8 @@
 # ansible role ships.
 
 [Unit]
-Description=Stellar Atlas — verify-archive Tier A (nightly chain-link integrity)
-Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/archival-node-bringup.md
+Description=Stellar Index — verify-archive Tier A (nightly chain-link integrity)
+Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/archival-node-bringup.md
 After=network-online.target
 Wants=network-online.target
 
@@ -28,14 +28,14 @@ Wants=network-online.target
 # real silence (binary hung / crashed). WatchdogSec=1h gives 1h of
 # stalled-without-progress slack — orders of magnitude more headroom
 # than any guessed wall-clock cap, and tied to liveness rather than
-# duration. Matching Go integration in cmd/stellaratlas-ops/main.go.
+# duration. Matching Go integration in cmd/stellarindex-ops/main.go.
 Type=notify
 NotifyAccess=main
 WatchdogSec=1h
 
-EnvironmentFile=-/etc/default/stellaratlas-ops
+EnvironmentFile=-/etc/default/stellarindex-ops
 
-# Defaults. Operators override via /etc/default/stellaratlas-ops.
+# Defaults. Operators override via /etc/default/stellarindex-ops.
 # MAX_RUNTIME=0 = uncapped: the binary's graceful self-cap is
 # disabled, systemd's TimeoutStartSec is the only bound. The
 # bootstrap full pass needs to run to completion to seed the
@@ -45,7 +45,7 @@ EnvironmentFile=-/etc/default/stellaratlas-ops
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
-Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellaratlas/verify-archive-state.json
+Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 
 # Incremental scheme (since 2026-05-14): -from-last-verified reads
@@ -60,8 +60,8 @@ Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # -to is omitted intentionally — verify-archive resolves the head
 # ledger from the manifest at start time, so we always verify up to
 # whatever the archive contained at run-launch.
-ExecStart=/usr/local/bin/stellaratlas-ops verify-archive \
-  -config /etc/stellaratlas.toml \
+ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
+  -config /etc/stellarindex.toml \
   -from ${VERIFY_ARCHIVE_FROM} \
   -tier chain \
   -workers ${VERIFY_ARCHIVE_WORKERS} \
@@ -72,7 +72,7 @@ ExecStart=/usr/local/bin/stellaratlas-ops verify-archive \
 
 User=root
 
-# Hardening. The binary reads /etc/stellaratlas.toml; it doesn't
+# Hardening. The binary reads /etc/stellarindex.toml; it doesn't
 # need write access to the filesystem (logs go to journald).
 ProtectSystem=full
 PrivateTmp=true

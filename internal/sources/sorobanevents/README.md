@@ -66,7 +66,7 @@ disp.SetRawEventSink(sink)
 
 ## Backfill mode
 
-`stellaratlas-ops backfill -source soroban-events -from N -to M
+`stellarindex-ops backfill -source soroban-events -from N -to M
 -parallel K` populates `soroban_events` for a historical range
 without per-source decoding (the catch-all sees every event no
 matter what). Special-cased in the backfill subcommand because

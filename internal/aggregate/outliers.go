@@ -4,7 +4,7 @@ import (
 	"math"
 	"math/big"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // FilterOutliers returns a copy of trades with prices further than

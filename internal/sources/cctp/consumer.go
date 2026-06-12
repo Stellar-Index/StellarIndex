@@ -3,7 +3,7 @@ package cctp
 import (
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // Event is the [consumer.Event] the CCTP Decoder emits — one per

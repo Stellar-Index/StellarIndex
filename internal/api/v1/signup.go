@@ -11,8 +11,8 @@ import (
 	"net/mail"
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/v1/middleware"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // SignupTracker is the v1 boundary for "has this email already
@@ -116,8 +116,8 @@ const signupDefaultRateLimitPerMin = 1000
 // their email + an optional label, gets back a freshly-minted API
 // key, and uses that key on subsequent requests for the higher
 // per-key rate-limit budget. Self-service alternative to the
-// operator-side `stellaratlas-ops mint-key` flow (which exists for
-// bootstrap — see cmd/stellaratlas-ops/mint_key.go).
+// operator-side `stellarindex-ops mint-key` flow (which exists for
+// bootstrap — see cmd/stellarindex-ops/mint_key.go).
 //
 // The endpoint defends against three kinds of abuse:
 //   - **Per-IP volume**: the standard rate-limit middleware (anon
@@ -170,7 +170,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		err := s.signups.ReserveEmail(r.Context(), emailHash)
 		if errors.Is(err, auth.ErrSignupEmailReserved) {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/already-signed-up",
+				"https://api.stellarindex.io/errors/already-signed-up",
 				"Already signed up", http.StatusConflict,
 				"this email already has an account; use POST /v1/account/keys with that account's key to mint additional keys, or contact support to recover access")
 			return
@@ -179,7 +179,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("signup tracker reserve failed",
 				"err", err, "identifier", identifier)
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/internal",
+				"https://api.stellarindex.io/errors/internal",
 				"Internal error", http.StatusInternalServerError,
 				"signup reservation failed; try again in a moment")
 			return
@@ -199,7 +199,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("signup mint failed", "err", err, "identifier", identifier)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError,
 			"signup failed; try again in a moment")
 		return
@@ -324,7 +324,7 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 	}
 	if errors.Is(err, auth.ErrSignupRateLimited) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/signup-rate-limited",
+			"https://api.stellarindex.io/errors/signup-rate-limited",
 			"Signup rate limit exceeded", http.StatusTooManyRequests,
 			"too many signups from this IP recently; wait an hour and try again, or contact support if you're a legitimate operator bulk-onboarding a team")
 		return false
@@ -343,7 +343,7 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
 			"err", err, "ip", ip)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/throttle-unavailable",
+			"https://api.stellarindex.io/errors/throttle-unavailable",
 			"Throttle layer unavailable", http.StatusServiceUnavailable,
 			"the abuse-prevention layer has been unreachable for an extended period; retry in a moment")
 		return false
@@ -367,7 +367,7 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 	if subject, ok := auth.SubjectFrom(r.Context()); ok &&
 		subject.Tier != auth.TierAnonymous && subject.Tier != "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/already-authenticated",
+			"https://api.stellarindex.io/errors/already-authenticated",
 			"Already authenticated", http.StatusBadRequest,
 			"this endpoint is for first-time signups; authenticated callers should use POST /v1/account/keys")
 		return signupRequest{}, false
@@ -375,7 +375,7 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 
 	if s.accounts == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/account-store-unavailable",
+			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return signupRequest{}, false
@@ -384,14 +384,14 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, signupBodyMaxBytes))
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/body-too-large",
+			"https://api.stellarindex.io/errors/body-too-large",
 			"Request body too large", http.StatusBadRequest,
 			"/v1/signup body must be under 4 KiB")
 		return signupRequest{}, false
 	}
 	if len(body) == 0 {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-body",
+			"https://api.stellarindex.io/errors/missing-body",
 			"Missing request body", http.StatusBadRequest,
 			"/v1/signup requires a JSON body containing an email")
 		return signupRequest{}, false
@@ -399,7 +399,7 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 	var req signupRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-body",
+			"https://api.stellarindex.io/errors/invalid-body",
 			"Malformed JSON body", http.StatusBadRequest,
 			"could not parse request body as JSON")
 		return signupRequest{}, false
@@ -408,14 +408,14 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/missing-email",
+			"https://api.stellarindex.io/errors/missing-email",
 			"Email is required", http.StatusBadRequest,
 			"the signup body must include an 'email' field")
 		return signupRequest{}, false
 	}
 	if _, err := mail.ParseAddress(req.Email); err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-email",
+			"https://api.stellarindex.io/errors/invalid-email",
 			"Invalid email", http.StatusBadRequest,
 			"the email field could not be parsed as a valid address")
 		return signupRequest{}, false
@@ -423,7 +423,7 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 
 	if len(req.Label) > 128 {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/label-too-long",
+			"https://api.stellarindex.io/errors/label-too-long",
 			"Label too long", http.StatusBadRequest,
 			"label must be 128 characters or fewer")
 		return signupRequest{}, false

@@ -1,12 +1,12 @@
 ---
-title: Release process — cutting a Stellar Atlas binary release
+title: Release process — cutting a Stellar Index binary release
 last_verified: 2026-05-05
 status: living doc
 ---
 
 # Release process
 
-End-to-end procedure for cutting a Stellar Atlas binary release. This
+End-to-end procedure for cutting a Stellar Index binary release. This
 is the runbook the on-rotation release engineer follows; it
 implements the policy ratified in
 [`docs/architecture/semver-policy.md`](../architecture/semver-policy.md).
@@ -106,7 +106,7 @@ mid-release wastes a tag and forces a `.N+1` cut.
 5. **Verify the release.**
    ```sh
    gh release view vX.Y.Z
-   gh release download vX.Y.Z -p stellaratlas-indexer-linux-amd64 -O /tmp/v.bin
+   gh release download vX.Y.Z -p stellarindex-indexer-linux-amd64 -O /tmp/v.bin
    /tmp/v.bin --version 2>&1 | head -3   # version line should show vX.Y.Z
    sha256sum /tmp/v.bin                  # cross-check against SHA256SUMS
    ```
@@ -120,7 +120,7 @@ mid-release wastes a tag and forces a `.N+1` cut.
 ## Post-flight
 
 1. **Announce.** Post the release URL to the operator channel +
-   `#stellar-atlas-public` if applicable.
+   `#stellar-index-public` if applicable.
 2. **Update `docs/operations/r1-deployment-state.md`** with the
    running version and any operator action that was taken (e.g.
    migration step, config edit).
@@ -133,7 +133,7 @@ mid-release wastes a tag and forces a `.N+1` cut.
 
 ## Rollback
 
-The Stellar Atlas ships as systemd-managed binaries on bare-metal
+The Stellar Index ships as systemd-managed binaries on bare-metal
 hosts (per [ADR-0008](../adr/0008-ha-topology.md)) — there is no
 container registry to retag and no orchestrator to roll back. A
 rollback is a binary swap on each affected host.
@@ -147,16 +147,16 @@ rollback is a binary swap on each affected host.
    task in `configs/ansible/tasks/deploy-one-binary.yml` keeps the
    last 5 previous binaries as
    `/usr/local/bin/<binary>.prev-<previous-tag>` and writes a sidecar
-   marker to `/var/lib/stellaratlas/deployed-versions/<binary>`. Check
+   marker to `/var/lib/stellarindex/deployed-versions/<binary>`. Check
    both:
    ```sh
-   ssh root@<host> 'ls -lh /usr/local/bin/stellaratlas-*.prev-* 2>/dev/null'
-   ssh root@<host> 'cat /var/lib/stellaratlas/deployed-versions/stellaratlas-api'
+   ssh root@<host> 'ls -lh /usr/local/bin/stellarindex-*.prev-* 2>/dev/null'
+   ssh root@<host> 'cat /var/lib/stellarindex/deployed-versions/stellarindex-api'
    ```
    If the wanted `.prev-<tag>` is pruned (>5 releases back),
    rebuild it from the tag (`git checkout <tag> && make build`)
    on a build host before continuing. F-1222 (codex audit-2026-05-12):
-   prior docs pointed at `/opt/stellaratlas/release-<tag>/` which the
+   prior docs pointed at `/opt/stellarindex/release-<tag>/` which the
    deploy task does not produce.
 3. **Decide the scope.** A bad indexer release does not require
    rolling back the API. Roll back only the affected binary unless
@@ -170,7 +170,7 @@ Preferred: trigger the deploy workflow with the previous tag:
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=v0.2.0 \
-  -f binaries=stellaratlas-api,stellaratlas-indexer
+  -f binaries=stellarindex-api,stellarindex-indexer
 ```
 
 The workflow does the host-side backup→swap→restart→health-probe
@@ -181,12 +181,12 @@ Fallback (manual, per host, per binary):
 
 ```sh
 PREVIOUS=v0.2.0                               # the known-good tag
-BINARY=stellaratlas-api                        # or -indexer, -aggregator
+BINARY=stellarindex-api                        # or -indexer, -aggregator
 
 ssh root@<host> "
   systemctl stop ${BINARY} && \
   cp /usr/local/bin/${BINARY}.prev-${PREVIOUS} /usr/local/bin/${BINARY} && \
-  echo ${PREVIOUS} > /var/lib/stellaratlas/deployed-versions/${BINARY} && \
+  echo ${PREVIOUS} > /var/lib/stellarindex/deployed-versions/${BINARY} && \
   systemctl start ${BINARY} && \
   systemctl status ${BINARY} --no-pager | head -20
 "

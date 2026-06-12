@@ -18,7 +18,7 @@ and [SEV playbook §4 Response flow](../../sev-playbook.md).
 
 Read aloud at drill setup.
 
-- All Stellar Atlas services up. `/v1/readyz` returns
+- All Stellar Index services up. `/v1/readyz` returns
   `status: ok`. SLA probe metrics are within target. r1 host is
   the primary region.
 - It is **14:30 UTC, Tuesday**. Routine traffic — no marketing
@@ -47,11 +47,11 @@ participants to narrate their response.
 
 | T+ | Beat |
 | --- | --- |
-| 0:00 | `stellaratlas_api_error_rate_high` fires (>1% for 2m). PagerDuty wakes oncall. |
-| 0:30 | While oncall is acknowledging, `stellaratlas_api_error_rate_critical` fires (>5% for 2m). |
-| 1:00 | `stellaratlas_timescale_disk_full` fires (<10% free). |
-| 1:30 | `stellaratlas_ingestion_insert_errors` fires for every source. |
-| 2:00 | `stellaratlas_api_price_stale` follows ~60s after the cache TTL bleeds. |
+| 0:00 | `stellarindex_api_error_rate_high` fires (>1% for 2m). PagerDuty wakes oncall. |
+| 0:30 | While oncall is acknowledging, `stellarindex_api_error_rate_critical` fires (>5% for 2m). |
+| 1:00 | `stellarindex_timescale_disk_full` fires (<10% free). |
+| 1:30 | `stellarindex_ingestion_insert_errors` fires for every source. |
+| 2:00 | `stellarindex_api_price_stale` follows ~60s after the cache TTL bleeds. |
 | 5:00 | A second incident channel question: a customer (Freighter) DMs asking why their price feed is degraded. |
 | 8:00 | Replica disk is at 30% free — failover budget exists. |
 | 12:00 | The `pgBackRest` archive is healthy; backups have NOT been corrupted. |

@@ -18,10 +18,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // fakeStripeEventStore is the test double for [v1.StripeEventStore].
@@ -847,7 +847,7 @@ func (*fakePlatformAccountsForBridgeWithError) Unsuspend(_ context.Context, _ uu
 // TestStripeWebhook_PlatformBridge_GetAccountErrorIncrementsMetric
 // pins the wave-65 (2026-05-13) observability seam: a platform-
 // store failure in `GetByStripeCustomerID` increments
-// `stellaratlas_stripe_platform_sync_errors_total{operation="get_account"}`
+// `stellarindex_stripe_platform_sync_errors_total{operation="get_account"}`
 // AND the webhook still returns 200 (Stripe retries would not
 // heal Postgres, so 5xx-ing here would just retry-storm).
 //

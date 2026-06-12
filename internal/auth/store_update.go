@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
 )
 
 // ErrKeyNotFound is returned by [RedisAPIKeyStore.UpdateRateLimit]
@@ -21,7 +21,7 @@ var ErrKeyNotFound = errors.New("auth: key_id not found")
 // UpdateRateLimit lifts (or lowers) the per-minute rate-limit budget
 // of an existing API key, identified by its public KeyID. Used by:
 //
-//   - `stellaratlas-ops upgrade-key` (operator-side manual paid
+//   - `stellarindex-ops upgrade-key` (operator-side manual paid
 //     upgrades pre-Stripe-webhook).
 //   - The future Stripe webhook handler that fires on
 //     `payment_intent.succeeded` and lifts the customer's keys to

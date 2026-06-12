@@ -16,7 +16,7 @@ alerts fire on **bad**, these queries paint **what's normal**.
 
 ## Bookmark these in Grafana
 
-Save each as a starred query in the "Stellar Atlas — Launch Watch"
+Save each as a starred query in the "Stellar Index — Launch Watch"
 folder (or drop them into a launch-week dashboard). Grafana
 variables: `$range` (default `5m`), `$instance` (drop-down across
 the API binaries).
@@ -58,7 +58,7 @@ histogram_quantile(0.99,
 ```
 
 **Bar**: p95 ≤ 200ms, p99 ≤ 500ms (Freighter RFP §SLA). The SLA
-probe (`cmd/stellaratlas-sla-probe`) is the formal evidence trail;
+probe (`cmd/stellarindex-sla-probe`) is the formal evidence trail;
 this query is the on-call's continuous view.
 
 > **Carve-out**: `/v1/markets` does a `GROUP BY base_asset,
@@ -72,13 +72,13 @@ this query is the on-call's continuous view.
 ## 4. Oracle freshness — every source, every asset
 
 ```promql
-time() - stellaratlas_oracle_last_update_unix
-  > on (source) stellaratlas_oracle_resolution_seconds * 5
+time() - stellarindex_oracle_last_update_unix
+  > on (source) stellarindex_oracle_resolution_seconds * 5
 ```
 
 Returns rows where the oracle hasn't published in 5× its declared
 resolution. Empty result = healthy. The
-`stellaratlas_oracle_stale` alert in `divergence.yml` fires at
+`stellarindex_oracle_stale` alert in `divergence.yml` fires at
 10× — this query catches the early-warning band. Reflector ticks
 every 5 min (so 25-min staleness shows here); Redstone ticks per
 batch push.
@@ -86,7 +86,7 @@ batch push.
 ## 5. Source events rate by source
 
 ```promql
-sum by (source) (rate(stellaratlas_source_events_total[$range]))
+sum by (source) (rate(stellarindex_source_events_total[$range]))
 ```
 
 **What healthy looks like**: every source registered in
@@ -98,7 +98,7 @@ abnormal **drop** rates before zero.
 ## 6. Aggregator tick health
 
 ```promql
-sum by (outcome) (rate(stellaratlas_aggregator_ticks_total[$range]))
+sum by (outcome) (rate(stellarindex_aggregator_ticks_total[$range]))
 ```
 
 **What healthy looks like**: `outcome="ok"` rate matches the
@@ -109,7 +109,7 @@ error rate is a SEV-2.
 ## 7. VWAP cache writes — pair coverage proxy
 
 ```promql
-rate(stellaratlas_aggregator_vwap_writes_total[$range])
+rate(stellarindex_aggregator_vwap_writes_total[$range])
 ```
 
 Single-counter (no labels), so this is the global VWAP-write
@@ -120,7 +120,7 @@ empty-window storms.
 ## 8. Decode errors per source
 
 ```promql
-sum by (source) (rate(stellaratlas_source_decode_errors_total[$range]))
+sum by (source) (rate(stellarindex_source_decode_errors_total[$range]))
 ```
 
 **Bar**: < 1 error per minute per source in steady state. A spike
@@ -136,7 +136,7 @@ during the first hour by querying a few popular pairs:
 ```sh
 for pair in "native,fiat:USD" "USDC-G...,fiat:USD" ; do
   base=${pair%,*}; quote=${pair##*,}
-  curl -s "https://api.stellaratlas.xyz/v1/price?base=${base}&quote=${quote}" \
+  curl -s "https://api.stellarindex.io/v1/price?base=${base}&quote=${quote}" \
     | jq '{ pair: "'$pair'", confidence: .data.confidence,
             factors: .data.confidence_factors }'
 done
@@ -149,7 +149,7 @@ divergence-spike is approaching alert thresholds.
 ## 10. Rate-limit fail-open events
 
 ```promql
-rate(stellaratlas_ratelimit_fail_open_total[$range])
+rate(stellarindex_ratelimit_fail_open_total[$range])
 ```
 
 Non-zero = Redis is misbehaving and the rate-limit middleware
@@ -160,8 +160,8 @@ the Redis dashboard for root cause.
 ## 11. Closed-bucket stream subscriber health (L3.9)
 
 ```promql
-sum by (outcome) (rate(stellaratlas_api_stream_subscribe_total[$range]))
-sum by (outcome) (rate(stellaratlas_aggregator_stream_publish_total[$range]))
+sum by (outcome) (rate(stellarindex_api_stream_subscribe_total[$range]))
+sum by (outcome) (rate(stellarindex_aggregator_stream_publish_total[$range]))
 ```
 
 **What healthy looks like**: publisher `ok` and subscriber `ok`
@@ -174,7 +174,7 @@ channel.
 
 ```promql
 sum by (source, usd_volume_populated)
-  (rate(stellaratlas_trade_inserts_total[$range]))
+  (rate(stellarindex_trade_inserts_total[$range]))
 ```
 
 **What healthy looks like**: for each off-chain CEX/FX source, the

@@ -1,8 +1,8 @@
 {
-  "name": "@stellaratlas/dashboard",
+  "name": "@stellarindex/dashboard",
   "version": "0.0.0",
   "private": true,
-  "description": "Customer dashboard SPA for the Stellar Atlas API (app.stellaratlas.xyz).",
+  "description": "Customer dashboard SPA for the Stellar Index API (app.stellarindex.io).",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",

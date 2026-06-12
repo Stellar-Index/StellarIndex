@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/cachekeys"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/obstest"
+	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obstest"
 )
 
 // captureRefresher records every RefreshPair call. Configurable
@@ -209,7 +209,7 @@ func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T)
 // TestRefreshDivergenceAll_DurationMetricRecorded pins the
 // wave-89 (2026-05-13) latency-histogram wiring: a successful
 // per-pair refresh advances
-// `stellaratlas_divergence_refresh_duration_seconds{outcome="ok"}`.
+// `stellarindex_divergence_refresh_duration_seconds{outcome="ok"}`.
 // Same shape as wave 92's customer-webhook test — guards against
 // a future refactor silently dropping the timing call.
 func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {

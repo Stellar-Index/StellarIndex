@@ -30,13 +30,13 @@
   assert:
     that:
       - >
-        ('stellaratlas_api' in groups and groups['stellaratlas_api']) or
-        ('stellaratlas_aggregator' in groups and groups['stellaratlas_aggregator']) or
-        ('stellaratlas_indexer' in groups and groups['stellaratlas_indexer'])
+        ('stellarindex_api' in groups and groups['stellarindex_api']) or
+        ('stellarindex_aggregator' in groups and groups['stellarindex_aggregator']) or
+        ('stellarindex_indexer' in groups and groups['stellarindex_indexer'])
     fail_msg: >-
       Prometheus needs targets to scrape. Populate at least one
-      of: stellaratlas_api / stellaratlas_aggregator /
-      stellaratlas_indexer.
+      of: stellarindex_api / stellarindex_aggregator /
+      stellarindex_indexer.
 
 - name: warn when alertmanager_pagerduty_key is empty
   debug:

@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/v1/middleware"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/StellarIndex/stellar-index/internal/auth"
 )
 
 // stubAPIKeyValidator returns a fixed Subject for one specific
@@ -341,7 +341,7 @@ func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
 			},
 			setHeader:  func(*http.Request) {},
 			wantStatus: http.StatusUnauthorized,
-			wantType:   "https://api.stellaratlas.xyz/errors/unauthorized",
+			wantType:   "https://api.stellarindex.io/errors/unauthorized",
 		},
 		{
 			name: "no validator wired — 503 not configured",
@@ -353,7 +353,7 @@ func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
 				r.Header.Set("Authorization", "Bearer x")
 			},
 			wantStatus: http.StatusServiceUnavailable,
-			wantType:   "https://api.stellaratlas.xyz/errors/auth-not-configured",
+			wantType:   "https://api.stellarindex.io/errors/auth-not-configured",
 		},
 	}
 	for _, tc := range cases {

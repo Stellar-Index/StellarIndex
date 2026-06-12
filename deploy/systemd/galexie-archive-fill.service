@@ -23,8 +23,8 @@
 # service user has no mc config).
 
 [Unit]
-Description=Stellar Atlas — galexie-archive scheduled catch-up (#26)
-Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/galexie-backfill.md
+Description=Stellar Index — galexie-archive scheduled catch-up (#26)
+Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/galexie-backfill.md
 After=network-online.target minio.service
 Wants=network-online.target
 

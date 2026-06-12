@@ -6,7 +6,7 @@ import { Panel } from '@/components/reveal';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -127,7 +127,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { pool } = await params;
   const label = BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
-  const canonical = `https://stellaratlas.xyz/lending/${pool}`;
+  const canonical = `https://stellarindex.io/lending/${pool}`;
   const title = `${label} — Blend lending pool`;
   const description = `Auction activity, user count, and contract metadata for the Blend pool at ${pool}.`;
   return {
@@ -164,9 +164,9 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellaratlas.xyz' },
-      { '@type': 'ListItem', position: 2, name: 'Lending', item: 'https://stellaratlas.xyz/lending' },
-      { '@type': 'ListItem', position: 3, name: poolName, item: `https://stellaratlas.xyz/lending/${pool}` },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellarindex.io' },
+      { '@type': 'ListItem', position: 2, name: 'Lending', item: 'https://stellarindex.io/lending' },
+      { '@type': 'ListItem', position: 3, name: poolName, item: `https://stellarindex.io/lending/${pool}` },
     ],
   };
 

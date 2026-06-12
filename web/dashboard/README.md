@@ -1,6 +1,6 @@
-# Stellar Atlas — customer dashboard
+# Stellar Index — customer dashboard
 
-Static-export Next.js 15 app deployed to **app.stellaratlas.xyz**
+Static-export Next.js 15 app deployed to **app.stellarindex.io**
 (Cloudflare Pages). Cookie-based auth backed by the
 `/v1/auth/{login,callback,logout}` endpoints in
 `internal/api/v1/dashboardauth/`.
@@ -12,7 +12,7 @@ pnpm install
 pnpm dev   # http://localhost:3001
 ```
 
-Talks to `https://api.stellaratlas.xyz` by default. To point at a
+Talks to `https://api.stellarindex.io` by default. To point at a
 local API:
 
 ```sh
@@ -39,5 +39,5 @@ must be configured with:
 
 The `/auth/callback` route is **server-side** (the Go API): clicking
 the magic link in the email lands at
-`https://api.stellaratlas.xyz/v1/auth/callback?token=…`, which sets
+`https://api.stellarindex.io/v1/auth/callback?token=…`, which sets
 the session cookie and 303-redirects back into this SPA.

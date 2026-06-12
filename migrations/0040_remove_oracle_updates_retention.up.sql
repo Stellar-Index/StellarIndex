@@ -43,11 +43,11 @@
 --   CALL refresh_continuous_aggregate('oracle_prices_1w',  NULL, NULL);
 --   CALL refresh_continuous_aggregate('oracle_prices_1mo', NULL, NULL);
 --
--- Run from psql against the stellaratlas DB. Each call walks every
+-- Run from psql against the stellarindex DB. Each call walks every
 -- chunk older than `end_offset` from the CAGG policy; on r1 today
 -- that range is small (raw retention has been 90d), so the total
 -- refresh wall-clock is minutes, not hours. Future re-runs after
--- stellaratlas has been preserving raw oracle history for months
+-- stellarindex has been preserving raw oracle history for months
 -- become correspondingly longer; refresh per-grain rather than as
 -- a single transaction.
 

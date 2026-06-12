@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // RESTEndpoint is Bitstamp's public v2 REST base. Trade and OHLC

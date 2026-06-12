@@ -253,7 +253,7 @@ export function OraclesView() {
           — that match the SEP-40 contract trait on-chain consumers
           already integrate against. Routing your existing on-chain{' '}
           <code className="font-mono text-xs">lastprice()</code> calls
-          through Stellar Atlas swaps in independent VWAP-backed prices
+          through Stellar Index swaps in independent VWAP-backed prices
           without touching the calling contract.
         </p>
       </Panel>

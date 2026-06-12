@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_ingestion_decode_error`
+# Runbook — `stellarindex_ingestion_decode_error`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_ingestion_decode_error` |
+| Alert | `stellarindex_ingestion_decode_error` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | hours-to-days (investigation) |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `rate(stellaratlas_source_decode_errors_total{source=...}[5m]) > 1` sustained 5 min.
+- `rate(stellarindex_source_decode_errors_total{source=...}[5m]) > 1` sustained 5 min.
 - Dashboard: *Ingestion → Decode errors* panel non-zero for the offending source.
 - Decode-error rate sometimes tracks a specific asset or contract — check the indexer's debug logs for patterns in rejected events.
 
@@ -35,12 +35,12 @@ Distinct from `orphan-events` (events were well-formed but their correlation par
 
 ```sh
 # Which source is erroring? (alert label tells you this)
-curl -s http://api:9464/metrics | grep stellaratlas_source_decode_errors_total
+curl -s http://api:9464/metrics | grep stellarindex_source_decode_errors_total
 
 # Peek the indexer's stderr for the most recent rejection reasons.
 # Source logs at debug when an event is dropped — enable temporarily
 # if the default level is info.
-ssh root@indexer-01 "journalctl -u stellaratlas-indexer -n 500 --no-pager" \
+ssh root@indexer-01 "journalctl -u stellarindex-indexer -n 500 --no-pager" \
   | grep -iE "decode|parse|malformed" | tail -30
 
 # Cross-check: is the contract the source points at the right one?
@@ -50,7 +50,7 @@ ssh root@indexer-01 "journalctl -u stellaratlas-indexer -n 500 --no-pager" \
 # Note: r1 doesn't run its own stellar-rpc (removed 2026-04-23, see
 # docs/operations/r1-deployment-state.md); point the probe at a
 # public endpoint such as SDF's mainnet RPC.
-stellaratlas-ops rpc-probe https://mainnet.sorobanrpc.com
+stellarindex-ops rpc-probe https://mainnet.sorobanrpc.com
 ```
 
 ## Typical root causes
@@ -106,7 +106,7 @@ This alert is P3 because there's no emergency runtime response — we can't un-d
 
 ### Customer comms note when `class_drop_spike` co-fires
 
-If `stellaratlas_aggregator_class_drop_spike` fires alongside this
+If `stellarindex_aggregator_class_drop_spike` fires alongside this
 alert, the affected source has dropped out of the VWAP for one or
 more pairs. The remaining sources continue to serve prices, but
 the smaller consensus may produce elevated

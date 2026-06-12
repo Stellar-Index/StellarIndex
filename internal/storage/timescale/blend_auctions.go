@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 )
 
 // blendAssetAmountRow is the JSONB element shape for the bid /

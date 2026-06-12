@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/ratelimit"
+	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 )
 
 // MaxRateLimitKeyLen caps the caller-supplied KeyFn output so a
@@ -312,7 +312,7 @@ type rlProblem struct {
 // headers added after the status line is committed.
 func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	p := rlProblem{
-		Type:     "https://api.stellaratlas.xyz/errors/throttle-unavailable",
+		Type:     "https://api.stellarindex.io/errors/throttle-unavailable",
 		Title:    "Throttle layer unavailable",
 		Status:   http.StatusServiceUnavailable,
 		Detail:   "the abuse-prevention layer has been unreachable for an extended period; retry in a moment",
@@ -330,7 +330,7 @@ func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 
 func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter int) {
 	p := rlProblem{
-		Type:     "https://api.stellaratlas.xyz/errors/rate-limited",
+		Type:     "https://api.stellarindex.io/errors/rate-limited",
 		Title:    "Rate limit exceeded",
 		Status:   http.StatusTooManyRequests,
 		Detail:   "Retry after " + strconv.Itoa(retryAfter) + "s",

@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_ingestion_cursor_stuck`
+# Runbook — `stellarindex_ingestion_cursor_stuck`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_ingestion_cursor_stuck` |
+| Alert | `stellarindex_ingestion_cursor_stuck` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | 10–30 min |
@@ -19,18 +19,18 @@ severity: P2
 
 ## Symptoms
 
-- `increase(stellaratlas_cursor_last_ledger{source=...}[5m]) == 0` AND `stellaratlas_source_enabled == 1`.
+- `increase(stellarindex_cursor_last_ledger{source=...}[5m]) == 0` AND `stellarindex_source_enabled == 1`.
 - Dashboard: *Ingestion → Cursor progress* panel shows a flat line for the offending source.
-- `stellaratlas_source_events_total` may still rise (events are being persisted) — this now points more narrowly at cursor-update failure, not at a separate legacy persister goroutine.
+- `stellarindex_source_events_total` may still rise (events are being persisted) — this now points more narrowly at cursor-update failure, not at a separate legacy persister goroutine.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Which source + how far back is the cursor?
-stellaratlas-ops list-cursors -config /etc/stellaratlas/config.toml
+stellarindex-ops list-cursors -config /etc/stellarindex/config.toml
 
 # How does that compare to the network tip?
-stellaratlas-ops detect-gaps -config /etc/stellaratlas/config.toml -threshold 100
+stellarindex-ops detect-gaps -config /etc/stellarindex/config.toml -threshold 100
 
 # If detect-gaps says "ok" but the alert fires: the source isn't
 # lagging, it's just not seeing events. Check SourceEventsTotal
@@ -54,19 +54,19 @@ Key signals:
       The cursor will advance once ledgers start flowing again.
       *(Pre-2026-04-23 deployments routed via stellar-rpc; that
       path was removed from r1 and isn't the upstream today.)*
-- [ ] Step 2 — if events are flowing but cursor is flat: capture recent logs (`journalctl -u stellaratlas-indexer -n 500 --no-pager > /tmp/indexer.log` on the indexer host) then restart the unit. The current live path updates the cursor inline after successful ledger processing, so a flat cursor usually means repeated ledger failure or DB upsert trouble.
+- [ ] Step 2 — if events are flowing but cursor is flat: capture recent logs (`journalctl -u stellarindex-indexer -n 500 --no-pager > /tmp/indexer.log` on the indexer host) then restart the unit. The current live path updates the cursor inline after successful ledger processing, so a flat cursor usually means repeated ledger failure or DB upsert trouble.
   ```sh
-  ssh root@indexer-01 "systemctl restart stellaratlas-indexer"
+  ssh root@indexer-01 "systemctl restart stellarindex-indexer"
   ```
 - [ ] Step 3 — if the cursor has regressed (persisted value < events observed): this should not happen (advance-only guard) and indicates a real bug. Capture the cursor table before restart: `psql -c "SELECT * FROM ingestion_cursors"` and attach to the postmortem.
-- [ ] Verification: `stellaratlas_cursor_last_ledger{source=...}` starts climbing again after the indexer resumes successful ledger commits.
+- [ ] Verification: `stellarindex_cursor_last_ledger{source=...}` starts climbing again after the indexer resumes successful ledger commits.
 
 ## Root cause analysis
 
 For the postmortem, gather:
 - Indexer logs around when the cursor stopped moving. Search for `cursor upsert`, `dispatcher rejected ledger`, and `dispatcher panicked`.
 - The cursor table snapshot before + after restart.
-- `stellaratlas_source_events_total` vs `stellaratlas_cursor_last_ledger` over the incident window.
+- `stellarindex_source_events_total` vs `stellarindex_cursor_last_ledger` over the incident window.
 - If the issue happened post-deploy: diff the live `ledgerstream -> dispatcher -> UpsertCursor` path rather than the retired orchestrator code.
 
 ## Known false-positive patterns
@@ -81,7 +81,7 @@ For the postmortem, gather:
   (the actual upstream) is the problem.
 - `rpc-lag.md` — only relevant if your deployment routes through
   stellar-rpc (r1 doesn't).
-- Current live path: `cmd/stellaratlas-indexer/main.go` `processAndPersistCursor`.
+- Current live path: `cmd/stellarindex-indexer/main.go` `processAndPersistCursor`.
 
 ## Changelog
 

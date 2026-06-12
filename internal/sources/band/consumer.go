@@ -1,8 +1,8 @@
 package band
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
 )
 
 // UpdateEvent is the [consumer.Event] Band's Decoder emits per

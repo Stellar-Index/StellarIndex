@@ -1,6 +1,6 @@
 # Prometheus configs — single-host R1
 
-R1 is the canary deployment for the Stellar Atlas production stack
+R1 is the canary deployment for the Stellar Index production stack
 through pre-launch. The full HA Prometheus topology lives at
 [`configs/ansible/roles/prometheus`](../ansible/roles/prometheus/)
 and expects two Prometheus + AlertManager hosts (`prom-01` and
@@ -14,7 +14,7 @@ to the ansible role topology.
 ## Files
 
 - `prometheus.r1.yml` — `/etc/prometheus/prometheus.yml` on r1.
-  Scrapes node_exporter + stellaratlas-{indexer,aggregator,api} +
+  Scrapes node_exporter + stellarindex-{indexer,aggregator,api} +
   caddy + galexie. Sends alerts to local Alertmanager on `:9093`.
 
 ## Operator install (on a fresh R1-shaped box)
@@ -41,7 +41,7 @@ curl -sS localhost:9090/api/v1/targets \
   | jq -r '.data.activeTargets[] | "\(.labels.job) \(.health)"'
 ```
 
-Expected: `caddy up | galexie up | node_exporter up | prometheus up | stellaratlas-aggregator up | stellaratlas-api up | stellaratlas-indexer up`.
+Expected: `caddy up | galexie up | node_exporter up | prometheus up | stellarindex-aggregator up | stellarindex-api up | stellarindex-indexer up`.
 
 ## Alert routing
 
@@ -64,7 +64,7 @@ port set (`11625/11626/11725/11726`), so external probes to
 `9090` / `9093` time out (F-1264, 2026-05-13). The host firewall
 landed after the original "no firewall today" wording was
 written; once Caddy is fronting these too (post-launch follow-up),
-they'll be HTTPS-only via `prometheus.stellaratlas.xyz` etc.
+they'll be HTTPS-only via `prometheus.stellarindex.io` etc.
 
 Operator access today (the only path that works):
 - `ssh -L 9090:localhost:9090 root@136.243.90.96` and visit

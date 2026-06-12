@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -161,7 +161,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
           <span className="font-mono text-[10px] text-slate-500">Stellar</span>
         </div>
         <a
-          href={`https://stellaratlas.xyz/markets/${linkSlug}`}
+          href={`https://stellarindex.io/markets/${linkSlug}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-[10px] text-slate-400 hover:text-brand-600"
@@ -177,7 +177,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
       </div>
       {points.length > 0 && <Sparkline points={points} positive={(change24h ?? 0) >= 0} />}
       <div className="mt-auto text-[10px] text-slate-400">
-        Powered by Stellar Atlas
+        Powered by Stellar Index
       </div>
     </div>
   );

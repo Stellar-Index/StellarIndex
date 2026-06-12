@@ -18,35 +18,35 @@
 # Phase-3; keeping them inert costs nothing.
 #
 # Of the two archive alerts in this file:
-#   - stellaratlas_stellar_archive_publish_fail references
-#     `stellaratlas_stellar_archive_publish_errors_total`. NOTHING IN
+#   - stellarindex_stellar_archive_publish_fail references
+#     `stellarindex_stellar_archive_publish_errors_total`. NOTHING IN
 #     THIS CODEBASE EMITS THAT METRIC (F-1329; confirmed by grep over
 #     internal/ cmd/ scripts/ 2026-06-11) — there is no
 #     stellar-archivist publish loop wired to a Prometheus counter, so
 #     this rule is INERT regardless of deployment posture. It is
 #     listed in scripts/ci/lint-metric-refs.sh as a known-inert
-#     stellaratlas_* reference (allowlisted there) until a publish-error
+#     stellarindex_* reference (allowlisted there) until a publish-error
 #     emitter is added. r1 doesn't publish a history archive anyway.
-#   - stellaratlas_stellar_archive_divergence is ACTIVE on r1: it now
-#     references `stellaratlas_verify_archive_mismatches_total{reason=~"chain|sequence|checkpoint"}`
+#   - stellarindex_stellar_archive_divergence is ACTIVE on r1: it now
+#     references `stellarindex_verify_archive_mismatches_total{reason=~"chain|sequence|checkpoint"}`
 #     (internal/obs/metrics.go) — the counter the verify-archive Tier-D
 #     job emits per chunk_idx + reason. The previous expr pointed at
-#     `stellaratlas_archive_divergence_total`, a name nothing emits
+#     `stellarindex_archive_divergence_total`, a name nothing emits
 #     (F-1329); repointed 2026-06-11.
 
 groups:
-  - name: stellaratlas.stellar
+  - name: stellarindex.stellar
     interval: 30s
     rules:
 
-      - alert: stellaratlas_stellar_core_ledger_age
-        expr: (time() - stellaratlas_stellar_core_last_ledger_time_unix) > 60
+      - alert: stellarindex_stellar_core_ledger_age
+        expr: (time() - stellarindex_stellar_core_last_ledger_time_unix) > 60
         for: 2m
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/core-lag.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/core-lag.md
         annotations:
           summary: "stellar-core ledger age {{ $value | humanizeDuration }} (SEV-1)"
           description: |
@@ -54,28 +54,28 @@ groups:
             is out of sync (catchup required) or it's disconnected from the
             network. Upstream data to our pipeline halts.
 
-      - alert: stellaratlas_stellar_core_peers_low
-        expr: stellaratlas_stellar_core_peer_count < 5
+      - alert: stellarindex_stellar_core_peers_low
+        expr: stellarindex_stellar_core_peer_count < 5
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/core-peers.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/core-peers.md
         annotations:
           summary: "stellar-core has only {{ $value }} peers"
           description: |
             stellar-core connected to < 5 peers. Quorum resilience degraded.
             Check firewall (11625 open), preferred peers list, network health.
 
-      - alert: stellaratlas_stellar_rpc_lag
-        expr: stellaratlas_stellar_rpc_latest_ledger_age_seconds > 300
+      - alert: stellarindex_stellar_rpc_lag
+        expr: stellarindex_stellar_rpc_latest_ledger_age_seconds > 300
         for: 5m
         labels:
           severity: ticket
-          team: stellaratlas
+          team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/rpc-lag.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/rpc-lag.md
         annotations:
           summary: "stellar-rpc lagging by {{ $value | humanizeDuration }}"
           description: |
@@ -83,32 +83,32 @@ groups:
             captive-core may be catching up. Indexer continues reading from
             it but with increasing freshness debt.
 
-      - alert: stellaratlas_stellar_archive_publish_fail
-        expr: increase(stellaratlas_stellar_archive_publish_errors_total[1h]) > 0
+      - alert: stellarindex_stellar_archive_publish_fail
+        expr: increase(stellarindex_stellar_archive_publish_errors_total[1h]) > 0
         for: 1h
         labels:
           severity: informational
-          team: stellaratlas
+          team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/archive-publish.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-publish.md
         annotations:
           summary: "Archive-publish errors in the last hour"
           description: |
             stellar-core failed to publish a checkpoint to our history archive.
             Not customer-visible but affects Tier-1 posture if sustained.
 
-      - alert: stellaratlas_stellar_archive_divergence
+      - alert: stellarindex_stellar_archive_divergence
         # F-1329: repointed from the never-emitted
-        # `stellaratlas_archive_divergence_total` to the real counter the
+        # `stellarindex_archive_divergence_total` to the real counter the
         # verify-archive Tier-D job emits. `reason` ∈ {chain|sequence|checkpoint};
         # any non-zero increase over a recent window is a hard correctness signal.
-        expr: increase(stellaratlas_verify_archive_mismatches_total[1h]) > 0
+        expr: increase(stellarindex_verify_archive_mismatches_total[1h]) > 0
         for: 0s
         labels:
           severity: page
-          team: stellaratlas
+          team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/archive-divergence.md
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-divergence.md
         annotations:
           summary: "Archive hash divergence detected (SEV-1)"
           description: |

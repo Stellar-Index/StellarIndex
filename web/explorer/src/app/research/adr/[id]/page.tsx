@@ -28,8 +28,8 @@ export async function generateMetadata({
   const { id } = await params;
   const adr = loadADR(id);
   if (!adr) return { title: 'ADR not found' };
-  const canonical = `https://stellaratlas.xyz/research/adr/${adr.id}`;
-  const title = `ADR-${adr.id}: ${adr.title} — Stellar Atlas research`;
+  const canonical = `https://stellarindex.io/research/adr/${adr.id}`;
+  const title = `ADR-${adr.id}: ${adr.title} — Stellar Index research`;
   const description = `Architecture decision record ${adr.id} (${adr.status}, ${adr.date}).`;
   return {
     title,
@@ -69,7 +69,7 @@ export default async function ADRPage({
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{adr.title}</h1>
         <a
-          href={`https://github.com/StellarAtlas/stellar-atlas/blob/main/${adr.source_path}`}
+          href={`https://github.com/StellarIndex/stellar-index/blob/main/${adr.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"

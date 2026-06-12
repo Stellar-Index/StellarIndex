@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: patroni
-  author: stellaratlas
+  author: stellarindex
   description: >-
     Patroni-managed Postgres + TimescaleDB cluster with etcd as
     the DCS. Implements docs/architecture/ha-plan.md §3.3.

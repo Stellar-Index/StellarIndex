@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
-  title: 'Methodology — how Stellar Atlas computes prices',
+  title: 'Methodology — how Stellar Index computes prices',
   description:
-    'Source classes, VWAP weighting, stablecoin proxy, freeze policy, closed-bucket contract, latency targets. The full methodology behind every price Stellar Atlas serves.',
+    'Source classes, VWAP weighting, stablecoin proxy, freeze policy, closed-bucket contract, latency targets. The full methodology behind every price Stellar Index serves.',
   alternates: { canonical: '/methodology' },
 };
 
@@ -14,7 +14,7 @@ export default function MethodologyPage() {
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Methodology</h1>
         <p className="text-base text-slate-600 dark:text-slate-400">
-          How every price Stellar Atlas serves is computed, from raw
+          How every price Stellar Index serves is computed, from raw
           on-chain event to the final aggregate. Each section links
           to the underlying ADR for the full rationale, alternatives
           considered, and consequences.
@@ -179,10 +179,10 @@ export default function MethodologyPage() {
         <Aside>
           Active freezes are reported in real time on{' '}
           <a
-            href="https://status.stellaratlas.xyz"
+            href="https://status.stellarindex.io"
             className="text-brand-600 hover:underline"
           >
-            status.stellaratlas.xyz
+            status.stellarindex.io
           </a>
           , and historically as Atom syndication via{' '}
           <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
@@ -252,10 +252,10 @@ export default function MethodologyPage() {
               <td className="py-2">&lt; 50 ms</td>
               <td className="py-2 text-slate-500">
                 <a
-                  href="https://status.stellaratlas.xyz"
+                  href="https://status.stellarindex.io"
                   className="text-brand-600 hover:underline"
                 >
-                  status.stellaratlas.xyz
+                  status.stellarindex.io
                 </a>
               </td>
             </tr>
@@ -339,10 +339,10 @@ export default function MethodologyPage() {
           audited per WASM-version before backfill is permitted.
           Every incident gets a public postmortem on{' '}
           <a
-            href="https://status.stellaratlas.xyz"
+            href="https://status.stellarindex.io"
             className="text-brand-600 hover:underline"
           >
-            status.stellaratlas.xyz
+            status.stellarindex.io
           </a>
           .
         </p>

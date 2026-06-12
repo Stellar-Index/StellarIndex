@@ -26,7 +26,7 @@ import (
 // entries before journald's own rate limiter kicked in, dropping
 // other-service messages that operators would actually want.
 // Visibility is preserved by the
-// `stellaratlas_http_requests_total{status="429"}` counter (see
+// `stellarindex_http_requests_total{status="429"}` counter (see
 // `internal/obs/http_middleware.go`); the per-line log adds journal
 // pressure without diagnostic value the metric doesn't already
 // carry.

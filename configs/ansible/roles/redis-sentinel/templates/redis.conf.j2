@@ -14,7 +14,7 @@ masterauth {{ redis_password }}
 # F-1213 (audit-2026-05-12): narrow ACLs in addition to requirepass.
 # When the aclfile is loaded:
 #   - The legacy `default` user is `off` — no password works for it.
-#   - Application binaries authenticate as the `stellaratlas` user
+#   - Application binaries authenticate as the `stellarindex` user
 #     (using the same password they previously sent against the
 #     default user via AUTH or HELLO AUTH).
 #   - Operator CLI access uses a separate `cli` ACL or the

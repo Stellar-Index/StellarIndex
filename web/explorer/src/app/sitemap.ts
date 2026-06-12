@@ -12,7 +12,7 @@ import { fiatSlugFor } from '@/lib/fiat-slugs';
 // time and emitted as a static file. Same applies to robots.ts.
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://stellaratlas.xyz';
+const SITE_URL = 'https://stellarindex.io';
 
 /**
  * Build a sitemap URL that matches the canonical form the explorer
@@ -36,7 +36,7 @@ function siteURL(path: string): string {
  * enumerated explicitly; dynamic /assets/[slug] entries mirror
  * generateStaticParams: live API only, no seed fallback (the
  * /docs and /status routes have moved to the dedicated
- * docs.stellaratlas.xyz and status.stellaratlas.xyz subdomains
+ * docs.stellarindex.io and status.stellarindex.io subdomains
  * and are NOT enumerated here).
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {

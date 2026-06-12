@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // RESTEndpoint is the Binance Spot REST API base for klines +
@@ -49,7 +49,7 @@ const klineMaxLimit = 1000
 // anything realistic backfill would attempt.
 //
 // The returned trades are NOT deduplicated against existing storage
-// — caller (stellaratlas-ops) is responsible for the idempotent
+// — caller (stellarindex-ops) is responsible for the idempotent
 // insert path. canonical.Trade.TxHash is deterministic from (symbol,
 // close_time_ms) so repeated backfill runs land on the same primary
 // key.

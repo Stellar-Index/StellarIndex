@@ -19,11 +19,11 @@ metrics endpoint responds:
 | aggregator | `localhost:9465/metrics` | curl exit ≠ 0 → `${URL}/fail` |
 | api        | `localhost:3000/metrics` | curl exit ≠ 0 → `${URL}/fail` |
 
-A successful probe POSTs `stellaratlas-<svc> ok :<port>`.
+A successful probe POSTs `stellarindex-<svc> ok :<port>`.
 
 ### 2. API surface smoke test — 5 min cadence
 
-`stellaratlas-smoke.timer` runs `scripts/dev/r1-smoke.sh` —
+`stellarindex-smoke.timer` runs `scripts/dev/r1-smoke.sh` —
 13 GETs covering health / catalogue / pricing / diagnostics —
 and pings `HEALTHCHECKS_URL_SMOKE` with the full smoke output as
 the ping body. Catches schema regressions that the metrics-port
@@ -33,7 +33,7 @@ A failed run pings `${URL}/fail` instead.
 
 ### 3. SLA probe — 15 min cadence
 
-`stellaratlas-sla-probe.timer` runs `stellaratlas-sla-probe`
+`stellarindex-sla-probe.timer` runs `stellarindex-sla-probe`
 against the local API for ~30 s and asserts the RFP latency +
 freshness SLAs (p95 ≤ 200 ms, p99 ≤ 500 ms, freshness ≤ 30 s).
 Pass → ping `HEALTHCHECKS_URL_SLA_PROBE`; fail → ping `${URL}/fail`.
@@ -41,7 +41,7 @@ The full JSON report rides as the ping body so operators can
 read the per-endpoint percentile breakdown straight from the
 Healthchecks dashboard.
 
-Default tuning (override via `/etc/default/stellaratlas-healthchecks`):
+Default tuning (override via `/etc/default/stellarindex-healthchecks`):
 - `SLA_PROBE_BASE_URL=http://localhost:3000/v1`
 - `SLA_PROBE_DURATION=30s`
 - `SLA_PROBE_CONCURRENCY=2`
@@ -54,7 +54,7 @@ it:
 
 - `configs/prometheus/rules.r1/*.yml` defines per-service alerts.
 - `configs/alertmanager/alertmanager.r1.yml` routes the
-  `stellaratlas_deadmansswitch` to a Healthchecks.io URL — covers
+  `stellarindex_deadmansswitch` to a Healthchecks.io URL — covers
   "Prometheus or Alertmanager itself is broken." But that single
   watchdog can't tell you *which* service died.
 - These per-binary timers fire independently, so an indexer crash
@@ -71,12 +71,12 @@ ansible-playbook -i configs/ansible/inventory/r1.yml \
   --tags healthchecks
 ```
 
-The role at `configs/ansible/roles/archival-node/tasks/17-stellaratlas-healthchecks.yml`
+The role at `configs/ansible/roles/archival-node/tasks/17-stellarindex-healthchecks.yml`
 copies the wrapper scripts + systemd units to r1, provisions the
 env-file placeholder (only if missing — operator URLs are
 preserved across applies), enables the timers, and notifies a
 per-group restart handler so a change to `smoke.sh` only
-restarts `stellaratlas-smoke.timer` (not the heartbeat or
+restarts `stellarindex-smoke.timer` (not the heartbeat or
 sla-probe timers). Closes the drift gap F-0137 caught in the
 2026-05-26 audit, where every edit under this directory needed a
 manual `install.sh` re-run.
@@ -95,7 +95,7 @@ this when the host isn't yet in Ansible inventory.
 Then on healthchecks.io, create **five Checks** (F-1267,
 2026-05-13 — was four before the SLA-probe timer joined the
 heartbeat fleet) and paste their ping URLs into
-`/etc/default/stellaratlas-healthchecks`:
+`/etc/default/stellarindex-healthchecks`:
 
 ```sh
 HEALTHCHECKS_URL_INDEXER='https://hc-ping.com/<uuid-indexer>'
@@ -108,7 +108,7 @@ HEALTHCHECKS_URL_SLA_PROBE='https://hc-ping.com/<uuid-sla-probe>'
 That's 3 binary heartbeats (indexer / aggregator / api) +
 1 smoke timer + 1 SLA-probe timer = 5 total.
 
-Then `systemctl restart stellaratlas-heartbeat@*.timer stellaratlas-smoke.timer stellaratlas-sla-probe.timer`.
+Then `systemctl restart stellarindex-heartbeat@*.timer stellarindex-smoke.timer stellarindex-sla-probe.timer`.
 
 Suggested dashboard schedules:
 - per-binary heartbeats: period 60 s, grace 120 s
@@ -118,8 +118,8 @@ Suggested dashboard schedules:
 ## Verify
 
 ```sh
-systemctl list-timers 'stellaratlas-heartbeat@*'
-journalctl -u 'stellaratlas-heartbeat@*.service' -n 30 --no-pager
+systemctl list-timers 'stellarindex-heartbeat@*'
+journalctl -u 'stellarindex-heartbeat@*.service' -n 30 --no-pager
 ```
 
 Successful runs log nothing (Type=oneshot exits 0 silently); a

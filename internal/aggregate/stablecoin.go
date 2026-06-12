@@ -1,6 +1,6 @@
 package aggregate
 
-import "github.com/StellarAtlas/stellar-atlas/internal/canonical"
+import "github.com/StellarIndex/stellar-index/internal/canonical"
 
 // Stablecoin → fiat proxy mapping — **aggregator policy, not decoder
 // policy**.

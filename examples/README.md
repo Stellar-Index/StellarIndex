@@ -1,8 +1,8 @@
-# Stellar Atlas API examples
+# Stellar Index API examples
 
 Hands-on examples for hitting the public API at
-`https://api.stellaratlas.xyz`. The OpenAPI spec at
-[`openapi/stellar-atlas.v1.yaml`](../openapi/stellar-atlas.v1.yaml)
+`https://api.stellarindex.io`. The OpenAPI spec at
+[`openapi/stellar-index.v1.yaml`](../openapi/stellar-index.v1.yaml)
 is the source of truth — these examples show common usage patterns
 in three formats so you can pick what fits your workflow.
 

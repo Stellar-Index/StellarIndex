@@ -4,7 +4,7 @@ title: Rebrand to Stellar Atlas; reposition as a protocol explorer
 status: Accepted
 date: 2026-06-12
 supersedes: []
-superseded_by: null
+superseded_by: 0037
 ---
 
 # ADR-0036: Rebrand to Stellar Atlas; reposition as a protocol explorer

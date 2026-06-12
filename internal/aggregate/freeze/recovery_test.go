@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/anomaly"
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate/freeze"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/obstest"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obstest"
 )
 
 // fakeOpenLister returns a fixed list of open pairs.
@@ -137,7 +137,7 @@ func TestRecovery_ListErrorIsNonFatal(t *testing.T) {
 // TestRecovery_SweepDurationMetricRecorded pins the wave-91
 // (2026-05-13) latency-histogram wiring: a sweep with no open
 // rows still records a sample on
-// `stellaratlas_anomaly_freeze_recovery_sweep_duration_seconds{outcome="ok"}`.
+// `stellarindex_anomaly_freeze_recovery_sweep_duration_seconds{outcome="ok"}`.
 // Same shape as the wave-92/93 regression tests for the
 // customer-webhook + divergence-refresh histograms — guards
 // against a future refactor silently dropping the timing call.

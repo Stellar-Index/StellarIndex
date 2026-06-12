@@ -5,12 +5,12 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_stellar_core_peers_low`
+# Runbook — `stellarindex_stellar_core_peers_low`
 
 > **Deployment posture (2026-04-30).** stellar-core is **not running
 > on r1** — the daemon was removed 2026-04-23
 > ([r1-deployment-state.md §Services](../r1-deployment-state.md)).
-> The metric `stellaratlas_stellar_core_peer_count` has no producer,
+> The metric `stellarindex_stellar_core_peer_count` has no producer,
 > so this alert is *inert* on r1. Galexie's embedded captive-core
 > connects out for ledger replay but does not expose a `/peers`
 > endpoint to the prometheus exporter.
@@ -24,7 +24,7 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_stellar_core_peers_low` |
+| Alert | `stellarindex_stellar_core_peers_low` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/stellar.yml` |
 | Typical MTTR | 15–60 min |
@@ -32,7 +32,7 @@ severity: P2
 
 ## Symptoms
 
-- `stellaratlas_stellar_core_peer_count < 5` for ≥ 5 min.
+- `stellarindex_stellar_core_peer_count < 5` for ≥ 5 min.
 - `stellar-core/peers` endpoint shows < 5 connected peers.
 - Dashboard: *Stellar → peer count* sitting well below steady
   state (usually 20+).

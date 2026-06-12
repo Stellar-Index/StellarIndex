@@ -3,7 +3,7 @@ package aggregate
 import (
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 func TestFiatProxy_USDPegged(t *testing.T) {

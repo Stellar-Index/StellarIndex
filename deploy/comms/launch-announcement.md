@@ -4,19 +4,19 @@ cut completes per launch-day-checklist.md §T-0 step 6).
 
 Channels:
   - Email to the RFP contacts (Stellar + Freighter)
-  - Slack: #stellar-atlas-public
+  - Slack: #stellar-index-public
   - Project handle (Twitter / Mastodon / wherever applicable)
   - Customer Slack/Discord presence if applicable
 
 Tone: factual, short, surfaces-first. The reader should be
 able to make their first request in under 60 seconds.
 
-Subject line: "Stellar Atlas — public launch (api.stellaratlas.xyz live)"
+Subject line: "Stellar Index — public launch (api.stellarindex.io live)"
 -->
 
-# Stellar Atlas — public launch
+# Stellar Index — public launch
 
-The Stellar Atlas is now live at **{{api_url}}** as of
+The Stellar Index is now live at **{{api_url}}** as of
 {{utc_time}}.
 
 ## What this is
@@ -26,17 +26,17 @@ across on-chain DEXs (Soroswap, Aquarius, Phoenix, Comet,
 SDEX), CEX feeds (Binance, Coinbase, Kraken, Bitstamp),
 oracle networks (Reflector, Redstone, Band), and FX anchors
 (ExchangeRatesApi, Polygon Forex). Source code is public at
-<https://github.com/StellarAtlas/stellar-atlas>.
+<https://github.com/StellarIndex/stellar-index>.
 
 ## First request
 
 ```sh
-curl 'https://api.stellaratlas.xyz/v1/price?base=native&quote=fiat:USD' | jq .
+curl 'https://api.stellarindex.io/v1/price?base=native&quote=fiat:USD' | jq .
 ```
 
-API documentation: <https://docs.stellaratlas.xyz>.
-Getting-started walkthrough: <https://docs.stellaratlas.xyz/getting-started>.
-Status: <https://status.stellaratlas.xyz>.
+API documentation: <https://docs.stellarindex.io>.
+Getting-started walkthrough: <https://docs.stellarindex.io/getting-started>.
+Status: <https://status.stellarindex.io>.
 
 ## What's covered today
 
@@ -52,7 +52,7 @@ Status: <https://status.stellaratlas.xyz>.
 - SLA targets per the Freighter RFP: p95 ≤ 200 ms, p99 ≤
   500 ms, ≥ 99.9 % availability, ≤ 30 s freshness.
   Continuous evidence trail via the SLA probe;
-  see <https://docs.stellaratlas.xyz/sla>.
+  see <https://docs.stellarindex.io/sla>.
 
 ## How to get a key
 
@@ -63,8 +63,8 @@ exploration; an API key bumps you to 1000 rpm.)
 
 ## Reaching us
 
-- Bug reports / feature requests: <https://github.com/StellarAtlas/stellar-atlas/issues>
-- Security: `security@stellaratlas.xyz`
-- Operational status: <https://status.stellaratlas.xyz>
+- Bug reports / feature requests: <https://github.com/StellarIndex/stellar-index/issues>
+- Security: `security@stellarindex.io`
+- Operational status: <https://status.stellarindex.io>
 
 — {{your_name}}

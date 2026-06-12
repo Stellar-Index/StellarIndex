@@ -17,7 +17,7 @@ We adopt the [Contributor Covenant, version 2.1][cc].
 Conduct violations are reported via the same private channels as
 security vulnerabilities. See [SECURITY.md](SECURITY.md) for the
 contact addresses — until a dedicated conduct mailbox exists,
-`security@stellaratlas.xyz` reaches the maintainers and will be
+`security@stellarindex.io` reaches the maintainers and will be
 handled with discretion.
 
 ## Enforcement

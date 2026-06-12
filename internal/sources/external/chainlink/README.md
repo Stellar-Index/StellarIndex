@@ -95,4 +95,4 @@ poll_interval  = "30s"
 ```
 
 The `<ALCHEMY_KEY>` placeholder is operator-supplied; it lives in r1's
-`/etc/stellaratlas/stellaratlas.toml` (chmod 600), never in the repo.
+`/etc/stellarindex/stellarindex.toml` (chmod 600), never in the repo.

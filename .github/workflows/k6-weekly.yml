@@ -9,8 +9,8 @@ name: k6-weekly
 # legitimate latency regression isn't masked by routine load.
 #
 # Secrets required (configured in repo settings → Secrets):
-#   - K6_TARGET_STAGING       — https://api.staging.stellaratlas.xyz/v1
-#   - STELLARATLAS_LOAD_API_KEY — load-test API key (vault-minted)
+#   - K6_TARGET_STAGING       — https://api.staging.stellarindex.io/v1
+#   - STELLARINDEX_LOAD_API_KEY — load-test API key (vault-minted)
 #   - ALERTMANAGER_URL_STAGING — https://alertmanager.staging…/
 #                                (used by the spike scenario; the
 #                                weekly only runs mixed-realistic
@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 30
     env:
       K6_TARGET: ${{ secrets.K6_TARGET_STAGING }}
-      STELLARATLAS_LOAD_API_KEY: ${{ secrets.STELLARATLAS_LOAD_API_KEY }}
+      STELLARINDEX_LOAD_API_KEY: ${{ secrets.STELLARINDEX_LOAD_API_KEY }}
       K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_RW_SERVER_URL }}
       SCENARIO: ${{ inputs.scenario || '06-mixed-realistic.js' }}
 
@@ -53,8 +53,8 @@ jobs:
 
       - name: Verify secrets are configured
         run: |
-          if [ -z "$K6_TARGET" ] || [ -z "$STELLARATLAS_LOAD_API_KEY" ]; then
-            echo "::error::K6_TARGET_STAGING and STELLARATLAS_LOAD_API_KEY secrets are required."
+          if [ -z "$K6_TARGET" ] || [ -z "$STELLARINDEX_LOAD_API_KEY" ]; then
+            echo "::error::K6_TARGET_STAGING and STELLARINDEX_LOAD_API_KEY secrets are required."
             exit 1
           fi
 

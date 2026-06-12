@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/api/streaming"
-	"github.com/StellarAtlas/stellar-atlas/internal/api/streampublish"
-	v1 "github.com/StellarAtlas/stellar-atlas/internal/api/v1"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/api/streaming"
+	"github.com/StellarIndex/stellar-index/internal/api/streampublish"
+	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // fakeReader returns canned snapshots keyed by pair string. The

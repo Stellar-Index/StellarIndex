@@ -3,21 +3,21 @@ package projector
 import (
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/aquarius"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/blend"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/cctp"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/childgate"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/comet"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/defindex"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/phoenix"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/redstone"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/reflector"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/rozo"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sep41_supply"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sep41_transfers"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap"
+	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
+	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
+	"github.com/StellarIndex/stellar-index/internal/sources/comet"
+	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
+	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+	"github.com/StellarIndex/stellar-index/internal/sources/redstone"
+	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
+	"github.com/StellarIndex/stellar-index/internal/sources/rozo"
+	"github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
+	"github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 )
 
 // BuildRegistry constructs the projector's source list from the
@@ -241,7 +241,7 @@ type missingConfigError struct {
 }
 
 func (e *missingConfigError) Error() string {
-	return "projector: source " + e.Source + " enabled but its oracle config is empty (check oracle.* in /etc/stellaratlas.toml)"
+	return "projector: source " + e.Source + " enabled but its oracle config is empty (check oracle.* in /etc/stellarindex.toml)"
 }
 
 // Ensure dispatcher.Decoder is the type the projector expects.

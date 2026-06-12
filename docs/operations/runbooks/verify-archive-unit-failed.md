@@ -5,13 +5,13 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `stellaratlas_verify_archive_unit_failed`
+# Runbook — `stellarindex_verify_archive_unit_failed`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_verify_archive_unit_failed` |
+| Alert | `stellarindex_verify_archive_unit_failed` |
 | Severity | P3 (ticket — no immediate customer impact) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/verify-archive.yml` |
 | Typical MTTR | 30 min (diagnosis) – several hours (re-run) |
@@ -46,16 +46,16 @@ The journal output's last lines indicate the failure mode:
 | `chain-link mismatch at ledger N: expected H1 got H2` | Real corruption — escalate (see RCA) |
 | `file does not exist: <ledger>.xdr.zst` | Missing file in galexie-archive; should also fire `archive_files_missing` |
 | `context deadline exceeded` / `max-runtime` | Run hit the 8h cap; likely an upstream slowdown |
-| `access denied` / `403` | AWS / MinIO credentials in `/etc/default/stellaratlas-ops` rotated or wrong |
+| `access denied` / `403` | AWS / MinIO credentials in `/etc/default/stellarindex-ops` rotated or wrong |
 
 ## Mitigation (≤ 15 min)
 
 - [ ] **Re-run manually with verbose logging** to confirm the failure mode is reproducible and not a transient blip:
   ```sh
   ssh r1
-  set -a; source /etc/default/stellaratlas-ops; set +a
-  /usr/local/bin/stellaratlas-ops verify-archive \
-    -config /etc/stellaratlas.toml \
+  set -a; source /etc/default/stellarindex-ops; set +a
+  /usr/local/bin/stellarindex-ops verify-archive \
+    -config /etc/stellarindex.toml \
     -from 2 \
     -tier chain \
     -workers 8 \
@@ -66,8 +66,8 @@ The journal output's last lines indicate the failure mode:
   run yet — the next scheduled timer will retry.
 - [ ] **If the failure mode is `file does not exist`**: trigger a manual `archive-completeness fix` to backfill the missing file from the public-archive fallback chain:
   ```sh
-  ssh r1 '/usr/local/bin/stellaratlas-ops archive-completeness fix \
-    -config /etc/stellaratlas.toml -from 2'
+  ssh r1 '/usr/local/bin/stellarindex-ops archive-completeness fix \
+    -config /etc/stellarindex.toml -from 2'
   ```
   Re-run verify-archive afterwards.
 - [ ] **If the failure mode is `chain-link mismatch`**: STOP. This is the corruption-detection signal the system exists to surface — do NOT auto-recover. Escalate per RCA.
@@ -86,7 +86,7 @@ Gather for the postmortem:
 - Full journal: `journalctl -u verify-archive-tier-a.service --since '24h ago'`
 - The reported chain-mismatch ledger pair — the offending hash + the expected hash
 - Comparison against another archive's same-range hashes
-- Recent commits to `cmd/stellaratlas-ops/` and `internal/ledgerstream/`
+- Recent commits to `cmd/stellarindex-ops/` and `internal/ledgerstream/`
 
 ## Known false-positive patterns
 
@@ -95,7 +95,7 @@ Gather for the postmortem:
 
 ## Related
 
-- The page-level alert `stellaratlas_verify_archive_run_stale` —
+- The page-level alert `stellarindex_verify_archive_run_stale` —
   fires when the unit hasn't completed cleanly in 36h+, indicating
   this ticket-level alert wasn't actioned in time.
 - ADR-0016 — per-region trust model that this nightly run anchors.

@@ -6,7 +6,7 @@
 # every subscriber on the same pair receives byte-identical payloads.
 # Heartbeats every 15 s keep proxies happy. Ctrl-C to stop.
 set -euo pipefail
-BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
+BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 ASSET="${1:-native}"
 QUOTE="${2:-fiat:USD}"
 

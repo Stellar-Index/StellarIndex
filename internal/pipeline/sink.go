@@ -7,31 +7,31 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/consumer"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/accounts"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/aquarius"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/band"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/blend"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/cctp"
-	claimable_balances "github.com/StellarAtlas/stellar-atlas/internal/sources/claimable_balances"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/comet"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/defindex"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/liquidity_pools"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/phoenix"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/redstone"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/reflector"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/rozo"
-	sac_balances "github.com/StellarAtlas/stellar-atlas/internal/sources/sac_balances"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sdex"
-	sep41_supply "github.com/StellarAtlas/stellar-atlas/internal/sources/sep41_supply"
-	sep41_transfers "github.com/StellarAtlas/stellar-atlas/internal/sources/sep41_transfers"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap"
-	soroswap_router "github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap_router"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/trustlines"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
+	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
+	"github.com/StellarIndex/stellar-index/internal/sources/band"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
+	claimable_balances "github.com/StellarIndex/stellar-index/internal/sources/claimable_balances"
+	"github.com/StellarIndex/stellar-index/internal/sources/comet"
+	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/liquidity_pools"
+	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+	"github.com/StellarIndex/stellar-index/internal/sources/redstone"
+	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
+	"github.com/StellarIndex/stellar-index/internal/sources/rozo"
+	sac_balances "github.com/StellarIndex/stellar-index/internal/sources/sac_balances"
+	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
+	sep41_supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
+	sep41_transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
+	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
+	"github.com/StellarIndex/stellar-index/internal/sources/trustlines"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // SinkMode controls which event classes [PersistEvents] writes when
@@ -343,7 +343,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 			// RE-DERIVABLE — but only if it's visible. Drain the remainder
 			// non-blocking (the producer has already stopped on ctx cancel, so
 			// `in` is a fixed set) to surface the exact ledger span at ERROR.
-			// The completeness timer + `stellaratlas-ops ch-rebuild -sdex-gaps`
+			// The completeness timer + `stellarindex-ops ch-rebuild -sdex-gaps`
 			// recover that range from the lake instead of it becoming a silent
 			// served-tier gap.
 			// Count EVERY undrained event, not just trade-shaped ones
@@ -398,7 +398,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 // (e.g. postgres genuinely down), drainBufferedEvents logs the exact
 // undrained ledger range at ERROR rather than dropping silently — the
 // raw ops are in the CH lake (ADR-0034), so the range is recoverable
-// via `stellaratlas-ops ch-rebuild -sdex-gaps` and the completeness timer.
+// via `stellarindex-ops ch-rebuild -sdex-gaps` and the completeness timer.
 const drainTimeout = 90 * time.Second
 
 // HandleEvent dispatches one event to its hypertable insert.
@@ -837,7 +837,7 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 // of sources (blend lending, soroswap-router + defindex log-only
 // sinks). Errors are logged at Warn — a failed bump doesn't fail
 // the underlying decode/persist; the operator's periodic
-// `stellaratlas-ops seed-entry-counts` reconciles drift.
+// `stellarindex-ops seed-entry-counts` reconciles drift.
 func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.Store, source string) {
 	if err := store.BumpSourceEntryCount(ctx, source, 1); err != nil {
 		logger.Warn("bump source entry count failed",

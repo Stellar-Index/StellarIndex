@@ -2,7 +2,7 @@
 #
 # Rendered by Ansible. Reflects r1's EFFECTIVE running config — the
 # base unit plus the override.conf drop-in (User=root + the
-# /etc/default/stellaratlas EnvironmentFile) is folded directly into
+# /etc/default/stellarindex EnvironmentFile) is folded directly into
 # this template.
 #
 # Per ADR-0011 + the supply-snapshot.timer cadence. Runs once on
@@ -10,37 +10,37 @@
 # supply-snapshot.timer schedules the cadence.
 #
 # Configuration (override via /etc/default/supply-snapshot):
-#   CONFIG_PATH      Default /etc/stellaratlas.toml
+#   CONFIG_PATH      Default /etc/stellarindex.toml
 #   ASSET            Default native (only XLM at v1).
 #   TEXTFILE_OUTPUT  Path under node_exporter's textfile_collector
 #                    dir. Empty = no metrics emit.
 #   EXTRA_FLAGS      Optional flags appended to the command line.
 
 [Unit]
-Description=Stellar Atlas — supply-snapshot writer (daily cron per ADR-0011)
-Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/supply-snapshot.md
+Description=Stellar Index — supply-snapshot writer (daily cron per ADR-0011)
+Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/supply-snapshot.md
 After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/supply-snapshot
-EnvironmentFile=-/etc/default/stellaratlas
+EnvironmentFile=-/etc/default/stellarindex
 
 # Sensible defaults. Operators override via /etc/default/supply-snapshot.
-Environment=CONFIG_PATH=/etc/stellaratlas.toml
+Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=ASSET=native
 Environment=TEXTFILE_OUTPUT=
 Environment=EXTRA_FLAGS=
 
-ExecStart=/bin/sh -c '/usr/local/bin/stellaratlas-ops supply snapshot \
+ExecStart=/bin/sh -c '/usr/local/bin/stellarindex-ops supply snapshot \
   -config ${CONFIG_PATH} \
   -asset ${ASSET} \
   $(if [ -n "${TEXTFILE_OUTPUT}" ]; then echo "-textfile-output ${TEXTFILE_OUTPUT}"; fi) \
   ${EXTRA_FLAGS}'
 
-# Runs as root for consistency with the stellaratlas-* daemons (the
-# in-repo unit set User=stellaratlas but r1 has no such user yet —
+# Runs as root for consistency with the stellarindex-* daemons (the
+# in-repo unit set User=stellarindex but r1 has no such user yet —
 # F-1205, audit-2026-05-12).
 User=root
 Group=root

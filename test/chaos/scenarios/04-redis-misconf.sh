@@ -54,7 +54,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test/chaos/scenarios/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
-REDIS_CONTAINER="${REDIS_CONTAINER:-stellaratlas-redis}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-stellarindex-redis}"
 # Dwell-time on r1 / dev = 30s (auth.DefaultSignupThrottleDwellTime
 # and ratelimit.DefaultDwellTime both lock to that value — keep this
 # constant in step or the signup-fail-closed assertion will misfire).

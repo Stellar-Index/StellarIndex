@@ -10,7 +10,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestSoroswapSkimEvent_Insert exercises the InsertSoroswapSkimEvent

@@ -16,8 +16,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/notify"
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/notify"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // newTestRig wires the in-memory fakes + a noop sender into a
@@ -47,8 +47,8 @@ func newTestRig(t *testing.T) *testRig {
 		Sender:           sender,
 		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:              now,
-		DashboardBaseURL: "https://app.stellaratlas.xyz",
-		EmailFrom:        "Stellar Atlas <hello@stellaratlas.xyz>",
+		DashboardBaseURL: "https://app.stellarindex.io",
+		EmailFrom:        "Stellar Index <hello@stellarindex.io>",
 		MagicLinkTTL:     15 * time.Minute,
 		SessionTTL:       30 * 24 * time.Hour,
 	}
@@ -171,7 +171,7 @@ func TestHandleCallback_HappyPath_FirstTimeSignupCreatesAccount(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", w.Code)
 	}
-	if loc := w.Header().Get("Location"); !strings.HasPrefix(loc, "https://app.stellaratlas.xyz/") {
+	if loc := w.Header().Get("Location"); !strings.HasPrefix(loc, "https://app.stellarindex.io/") {
 		t.Errorf("Location = %q", loc)
 	}
 	cookies := w.Result().Cookies()
@@ -319,7 +319,7 @@ func TestHandleCallback_NextParamPathOnly_RejectsOpenRedirect(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	loc := w.Header().Get("Location")
-	if !strings.HasPrefix(loc, "https://app.stellaratlas.xyz/") {
+	if !strings.HasPrefix(loc, "https://app.stellarindex.io/") {
 		t.Errorf("open-redirect through //evil.com bypassed; Location = %q", loc)
 	}
 	if strings.Contains(loc, "evil.com") {

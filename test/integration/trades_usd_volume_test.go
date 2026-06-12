@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	c "github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // TestInsertTrade_PopulatesUSDVolume proves the L2.2 caveat fix

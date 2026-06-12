@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_timescale_compression_lag`
+# Runbook — `stellarindex_timescale_compression_lag`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_timescale_compression_lag` |
+| Alert | `stellarindex_timescale_compression_lag` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Typical MTTR | 1 h – 1 day |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `stellaratlas_uncompressed_chunks_older_than_7d > 0` sustained
+- `stellarindex_uncompressed_chunks_older_than_7d > 0` sustained
   24 h.
 - Disk usage growing faster than expected.
 - `SELECT * FROM timescaledb_information.jobs WHERE proc_name =
@@ -83,7 +83,7 @@ psql -c "SELECT compress_chunk('<chunk_name>');"
                  AND c.range_end < now() - interval '7 days'
                LIMIT 10;"
       ```
-- [ ] Verification: `stellaratlas_uncompressed_chunks_older_than_7d`
+- [ ] Verification: `stellarindex_uncompressed_chunks_older_than_7d`
       drops to zero; disk usage trends back down.
 
 ## Known false-positive patterns

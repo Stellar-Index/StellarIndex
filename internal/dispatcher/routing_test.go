@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/events"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/aquarius"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/phoenix"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/reflector"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
+	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
+	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 )
 
 // TestEndToEndRouting_withRealFixtures wires all four source

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/external"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // SourcesStatsReader is the seam for /v1/sources?include=stats.
@@ -51,7 +51,7 @@ type Source struct {
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
 	BackfillAvailable bool   `json:"backfill_available"`
-	// BackfillSafe gates the `stellaratlas-ops backfill` subcommand
+	// BackfillSafe gates the `stellarindex-ops backfill` subcommand
 	// per CLAUDE.md "Soroban DeFi contracts upgrade in place".
 	// On-chain Soroban sources start `false` and only flip `true`
 	// after a per-WASM-hash audit
@@ -108,7 +108,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	classFilter := r.URL.Query().Get("class")
 	if classFilter != "" && !validSourceClasses[classFilter] {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-class",
+			"https://api.stellarindex.io/errors/invalid-class",
 			"Invalid class", http.StatusBadRequest,
 			"class must be one of: exchange, aggregator, oracle, authority_sanity")
 		return

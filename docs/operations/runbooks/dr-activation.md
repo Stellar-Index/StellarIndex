@@ -87,7 +87,7 @@ the status-page update. Both happen in parallel.
 ssh root@<dr-region-postgres-primary>
 
 # Check pgBackRest archive freshness
-pgbackrest --stanza=stellaratlas info | head -20
+pgbackrest --stanza=stellarindex info | head -20
 # → "archive (current)" + most-recent backup/WAL within ~5 min
 
 # If WAL replication lag was ≤ 5 s (the SLO target):
@@ -105,7 +105,7 @@ data; the lag IS the RPO).
 
 ```sh
 # Galexie archive completeness — the historical-replay safety net
-stellaratlas-ops archive-completeness verify \
+stellarindex-ops archive-completeness verify \
     --region <dr-region-id> \
     --tier all
 # → exit 0 + "all checkpoints reachable"
@@ -121,7 +121,7 @@ flip.
 ```sh
 # From DR-region SSH bastion:
 for host in <dr-api> <dr-aggregator> <dr-indexer>; do
-    ssh root@$host 'systemctl status stellaratlas-* --no-pager' | grep -E "Active|service"
+    ssh root@$host 'systemctl status stellarindex-* --no-pager' | grep -E "Active|service"
 done
 # → every service "active (running)" or "active (waiting)"
 ```
@@ -153,7 +153,7 @@ yet — that goes in the **Identified** entry after flip succeeds.
 
 ### 3.2 DNS flip
 
-The Cloudflare DNS records pointing `api.stellaratlas.xyz` at
+The Cloudflare DNS records pointing `api.stellarindex.io` at
 the primary region's HAProxy VIPs need to point at the DR
 region's HAProxy VIPs.
 
@@ -176,7 +176,7 @@ update the A record directly:
 
 ```sh
 # Requires Cloudflare API token in ops vault; see deploy/ops-keys.md
-cf-cli dns update stellaratlas.xyz api A <dr-haproxy-vip-1>,<dr-haproxy-vip-2>
+cf-cli dns update stellarindex.io api A <dr-haproxy-vip-1>,<dr-haproxy-vip-2>
 # TTL is 60s by design; full propagation < 2 min
 ```
 
@@ -184,11 +184,11 @@ cf-cli dns update stellaratlas.xyz api A <dr-haproxy-vip-1>,<dr-haproxy-vip-2>
 
 ```sh
 # Direct curl bypassing CDN — proves the origin is up
-curl -sS -H 'X-Trace: dr-flip-verify' https://api.stellaratlas.xyz/v1/healthz
+curl -sS -H 'X-Trace: dr-flip-verify' https://api.stellarindex.io/v1/healthz
 # → {"status": "ok", "region": "<dr-region-id>", ...}
 
 # Spot-check a real query
-curl -sS https://api.stellaratlas.xyz/v1/price?asset=native | jq '.data.price, .as_of'
+curl -sS https://api.stellarindex.io/v1/price?asset=native | jq '.data.price, .as_of'
 # → non-empty price + recent timestamp
 ```
 
@@ -219,7 +219,7 @@ metrics actually look right rather than just "running":
 
 ```sh
 # From operator workstation; SLO Grafana board
-curl -sS https://grafana.<dr-region>.stellaratlas.xyz/api/dashboards/uid/slo \
+curl -sS https://grafana.<dr-region>.stellarindex.io/api/dashboards/uid/slo \
     -H "Authorization: Bearer $GRAFANA_TOKEN" | jq -r '...'
 ```
 
@@ -234,7 +234,7 @@ Specifically watch:
 
 ```sh
 # Should match primary's pre-incident steady state within ~5 min
-stellaratlas-ops list-cursors --region <dr-region>
+stellarindex-ops list-cursors --region <dr-region>
 # → every source's last_ledger advancing
 ```
 
@@ -247,8 +247,8 @@ should be writable + readable per
 
 ```sh
 # Aggregator's anomaly + freeze counters
-curl -sS https://prometheus.<dr-region>.stellaratlas.xyz/api/v1/query \
-    --data-urlencode 'query=rate(stellaratlas_anomaly_freeze_engaged_total[5m])' | jq
+curl -sS https://prometheus.<dr-region>.stellarindex.io/api/v1/query \
+    --data-urlencode 'query=rate(stellarindex_anomaly_freeze_engaged_total[5m])' | jq
 ```
 
 A freeze-engaged spike right after flip is normal (some pairs

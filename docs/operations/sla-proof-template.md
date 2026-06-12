@@ -74,8 +74,8 @@ Dashboard snapshot: `<<grafana snapshot URL>>`
 ## Run command
 
 ```sh
-export K6_TARGET=https://api.staging.stellaratlas.xyz/v1
-export STELLARATLAS_LOAD_API_KEY="<from vault>"
+export K6_TARGET=https://api.staging.stellarindex.io/v1
+export STELLARINDEX_LOAD_API_KEY="<from vault>"
 make test-load-mixed
 ```
 

@@ -9,7 +9,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/ledgerstream"
+	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
 )
 
 // TestStream_TolerateTrailingMissing_HappyPath asserts that a

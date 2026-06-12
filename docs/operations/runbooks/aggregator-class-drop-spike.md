@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellaratlas_aggregator_class_drop_spike`
+# Runbook — `stellarindex_aggregator_class_drop_spike`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_aggregator_class_drop_spike` |
+| Alert | `stellarindex_aggregator_class_drop_spike` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 30 min |
@@ -19,8 +19,8 @@ severity: P3
 
 ## Symptoms
 
-- `sum(rate(stellaratlas_aggregator_dropped_trades_total{reason="class"}[10m]))` > 10× baseline.
-- New entries in `stellaratlas_source_events_total` for source labels
+- `sum(rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m]))` > 10× baseline.
+- New entries in `stellarindex_source_events_total` for source labels
   the registry doesn't list.
 
 ## Quick diagnosis (≤ 5 min)
@@ -28,14 +28,14 @@ severity: P3
 ```sh
 # 1) Which source is producing the unregistered traffic?
 curl -fs http://localhost:9464/metrics \
-  | grep '^stellaratlas_source_events_total{' | sort -t'"' -k2
+  | grep '^stellarindex_source_events_total{' | sort -t'"' -k2
 
 # 2) Compare against what the registry knows.
 grep -E '"[a-z][a-z0-9_-]+":\s*\{' \
   internal/sources/external/registry.go
 
 # 3) Anything in the trades table from a never-before-seen source?
-psql -d stellaratlas -c \
+psql -d stellarindex -c \
   "SELECT source, COUNT(*) AS rows, MIN(timestamp) AS first_seen
    FROM trades
    WHERE timestamp > now() - interval '1 hour'
@@ -90,7 +90,7 @@ Capture for the postmortem:
   rollout.
 - **Test fixtures leaking into prod metrics namespace**: a
   development binary scraped by prod Prometheus produces this
-  exact symptom. Check `stellaratlas_source_enabled` for sources
+  exact symptom. Check `stellarindex_source_enabled` for sources
   that should be off in this region.
 
 ## Related

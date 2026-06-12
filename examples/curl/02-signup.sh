@@ -14,11 +14,11 @@
 # acknowledgement. Local / staging deployments (any non-prod
 # `API_BASE_URL`) bypass the gate.
 set -euo pipefail
-BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
+BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 EMAIL="${1:-demo+$(date +%s)@example.com}"
 LABEL="${2:-curl-example}"
 
-if [[ "$BASE" == *"api.stellaratlas.xyz"* ]] && [[ "${CONFIRM_PROD_SIGNUP:-}" != "1" ]]; then
+if [[ "$BASE" == *"api.stellarindex.io"* ]] && [[ "${CONFIRM_PROD_SIGNUP:-}" != "1" ]]; then
   cat >&2 <<EOF
 Refusing to POST to production without confirmation.
 

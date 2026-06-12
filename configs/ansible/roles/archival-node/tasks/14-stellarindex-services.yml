@@ -1,0 +1,281 @@
+---
+# Build + install the stellarindex-* binaries, ship migrations, run
+# them against the freshly-provisioned stellarindex database (05-
+# postgres.yml), and bring up the indexer systemd service.
+#
+# Build is cross-compiled on the operator's host (delegate_to:
+# localhost) and copied up — avoids cloning a private git repo on
+# r1 and avoids running a Go toolchain there. Operator must have
+# Go ≥1.25 locally; verified in 01-preflight.yml.
+#
+# Re-applying this task is idempotent:
+#   - Binary copies are content-hash idempotent (`copy` only writes
+#     when the source bytes change).
+#   - `stellarindex-migrate up` is idempotent by design (no-op when
+#     the schema is at the latest version).
+#   - The systemd unit handler restarts only on unit-file change.
+
+- name: Cross-compile stellarindex-* binaries (localhost)
+  # F-1314 (codex audit-2026-05-13): `sla-probe` added to the
+  # bootstrap build/install list. The Healthchecks stellarindex-
+  # sla-probe.{service,timer} units invoke
+  # /usr/local/bin/stellarindex-sla-probe; pre-fix archival-node
+  # bootstrap built indexer/aggregator/api/migrate/ops only, so a
+  # fresh-host apply would enable the timer (via the healthchecks
+  # role) but find no binary under it. Bootstrap is now complete
+  # without an out-of-band ssh side-channel.
+  delegate_to: localhost
+  ansible.builtin.command:
+    chdir: "{{ playbook_dir }}/../../.."
+    argv:
+      - go
+      - build
+      - -trimpath
+      - -ldflags
+      - "-s -w"
+      - -o
+      - "{{ playbook_dir }}/../../../bin/stellarindex-{{ item }}"
+      - "./cmd/stellarindex-{{ item }}"
+  environment:
+    GOOS: linux
+    GOARCH: amd64
+    CGO_ENABLED: "0"
+  loop:
+    - indexer
+    - aggregator
+    - api
+    - migrate
+    - ops
+    - sla-probe
+  changed_when: true   # rebuild every apply; copy step decides if r1 changed
+
+- name: Install stellarindex binaries on r1
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../bin/stellarindex-{{ item }}"
+    dest: "/usr/local/bin/stellarindex-{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - indexer
+    - aggregator
+    - api
+    - migrate
+    - ops
+    - sla-probe
+  notify: Restart stellarindex-indexer
+
+# ──── Migrations (versioned schema for trades + oracle_updates + CAGGs) ───
+
+- name: Ensure migrations dir exists on r1
+  ansible.builtin.file:
+    path: /usr/local/share/stellarindex/migrations
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Sync migrations from repo to r1
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../../../migrations/"
+    dest: /usr/local/share/stellarindex/migrations/
+    delete: true
+    rsync_opts:
+      - "--exclude=.DS_Store"
+
+- name: Run pending migrations against the stellarindex database
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/stellarindex-migrate
+      - -migrations
+      - /usr/local/share/stellarindex/migrations
+      - up
+  environment:
+    STELLARINDEX_POSTGRES_DSN: "postgres://{{ postgres_user_stellarindex }}:{{ postgres_pass_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable"
+  register: migrate_result
+  changed_when: "'no change' not in (migrate_result.stdout | default(''))"
+  failed_when: migrate_result.rc != 0
+  no_log: true
+
+# ──── Indexer service ─────────────────────────────────────────────────
+
+- name: Template /etc/default/stellarindex (runtime secrets env file)
+  # EnvironmentFile loaded by the stellarindex-{indexer,aggregator,
+  # api} units. Carries the Postgres DSN (with password), the MinIO
+  # read creds, and the off-chain connector API keys — everything
+  # stellarindex.toml deliberately omits. Mode 0640, owner root.
+  ansible.builtin.template:
+    src: stellarindex.env.j2
+    dest: /etc/default/stellarindex
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify:
+    - Restart stellarindex-indexer
+    - Restart stellarindex-aggregator
+    - Restart stellarindex-api
+
+- name: Template /etc/stellarindex.toml
+  # The on-disk config carries everything except secrets. Secrets
+  # come from /etc/default/stellarindex via EnvironmentFile (the
+  # Postgres password overrides the DSN here; S3 creds + connector
+  # keys are injected the same way).
+  ansible.builtin.template:
+    src: stellarindex.toml.j2
+    dest: /etc/stellarindex.toml
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Restart stellarindex-indexer
+    - Restart stellarindex-aggregator
+    - Restart stellarindex-api
+
+- name: Install stellarindex-indexer systemd unit
+  ansible.builtin.template:
+    src: systemd/stellarindex-indexer.service.j2
+    dest: /etc/systemd/system/stellarindex-indexer.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart stellarindex-indexer
+
+- name: Enable + start stellarindex-indexer
+  ansible.builtin.systemd:
+    name: stellarindex-indexer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ──── Aggregator service ──────────────────────────────────────────────
+# Reads Timescale `trades` rows + writes CAGG rollups (per-window VWAP/TWAP).
+# /v1/price closed-bucket serving (ADR-0015) depends on this populating
+# the CAGG tables — without aggregator running, the API falls back to
+# last-trade lookups which won't satisfy the cross-region consistency
+# property. See aggregation-plan.md for the pipeline.
+
+- name: Install stellarindex-aggregator systemd unit
+  ansible.builtin.template:
+    src: systemd/stellarindex-aggregator.service.j2
+    dest: /etc/systemd/system/stellarindex-aggregator.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart stellarindex-aggregator
+
+- name: Enable + start stellarindex-aggregator
+  ansible.builtin.systemd:
+    name: stellarindex-aggregator
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ──── API service ─────────────────────────────────────────────────────
+# The public REST + SSE server. Caddy terminates TLS on :80/:443 and
+# proxies to this on the loopback :3000. Without this unit a rebuild
+# produces no public API surface.
+
+- name: Install stellarindex-api systemd unit
+  ansible.builtin.template:
+    src: systemd/stellarindex-api.service.j2
+    dest: /etc/systemd/system/stellarindex-api.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart stellarindex-api
+
+- name: Enable + start stellarindex-api
+  ansible.builtin.systemd:
+    name: stellarindex-api
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ──── Timer-driven oneshot units ──────────────────────────────────────
+# verify-archive Tier A (nightly chain-link integrity, ADR-0016),
+# archive-completeness (daily completeness verify, ADR-0017) and
+# supply-snapshot (daily supply writer, ADR-0011). Each is a oneshot
+# service fired by a systemd timer. R1 is the integrity leader; R2/R3
+# run verify-archive on a slower cadence (separate units, TBD).
+
+- name: Install compute-archive-to.sh helper
+  # archive-completeness.service's ExecStartPre derives ARCHIVE_TO
+  # from the indexer cursor. Without it ARCHIVE_TO stays 0 and the
+  # completeness verify is a no-op (F-1205, audit-2026-05-12).
+  ansible.builtin.copy:
+    src: compute-archive-to.sh
+    dest: /usr/local/sbin/compute-archive-to.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install compute-trim-cutoff.sh helper (ADR-0027 §Trim operator)
+  # galexie-archive-trim.service's ExecStartPre derives TRIM_CUTOFF
+  # = current indexer cursor − 90 days of ledgers. Same pattern as
+  # compute-archive-to.sh; the trim binary requires an explicit
+  # ledger sequence, and systemd can't do arithmetic in the unit.
+  ansible.builtin.copy:
+    src: compute-trim-cutoff.sh
+    dest: /usr/local/sbin/compute-trim-cutoff.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install verify-archive-tier-a / archive-completeness / supply-snapshot / galexie-archive-trim units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - verify-archive-tier-a.service
+    - verify-archive-tier-a.timer
+    - archive-completeness.service
+    - archive-completeness.timer
+    - supply-snapshot.service
+    - supply-snapshot.timer
+    - galexie-archive-trim.service
+    - galexie-archive-trim.timer
+  notify: Reload systemd
+
+- name: Enable + start verify-archive / completeness / supply-snapshot timers
+  # galexie-archive-trim.timer is INTENTIONALLY OMITTED from this
+  # loop — per [[feedback_cold_tier_premature_enable]] and ADR-0027
+  # §Sequencing, the monthly trim is destructive before §3 (cold-
+  # tiering enabled) + §4 (bulk-trim done). The operator runs
+  # `systemctl enable --now galexie-archive-trim.timer` by hand
+  # after the bulk-trim completes.
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - verify-archive-tier-a.timer
+    - archive-completeness.timer
+    - supply-snapshot.timer
+
+# ──── Tier D weekly cron (multi-peer fork-detection) ──────────────────
+# Per ADR-0016 §7.4: each region runs verify-archive Tier D weekly to
+# catch upstream divergence (R2 reads from aws-public-blockchain S3,
+# R3 from Vultr Object Storage; if either upstream's bytes hash to a
+# different chain than the network's signed reality, Tier D catches it).
+# Runs as root because it needs to read /etc/default/stellarindex-ops
+# for galexie-archive S3 creds. Output to journald (logger -t).
+
+- name: Install Tier D verify-archive weekly cron
+  ansible.builtin.cron:
+    name: stellarindex-verify-archive-tier-d
+    cron_file: stellarindex-verify-archive-tier-d
+    user: root
+    minute: "23"
+    hour: "4"
+    weekday: "0"   # Sunday morning
+    job: >-
+      bash -c 'set -a; source /etc/default/stellarindex-ops; set +a;
+      /usr/local/bin/stellarindex-ops verify-archive
+      -config /etc/stellarindex.toml
+      -tier peers
+      -peer-samples 50
+      -from 2 -to {{ stellarindex_live_seam_ledger | default(0) | int - 1 }}
+      2>&1 | logger -t stellarindex-tier-d'

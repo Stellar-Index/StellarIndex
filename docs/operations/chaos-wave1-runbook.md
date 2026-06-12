@@ -56,10 +56,10 @@ broken stack is noise.
 ./test/chaos/run.sh 01 03
 
 # Custom target (e.g. staging, NOT production):
-CHAOS_TARGET=http://staging.stellaratlas.xyz:8080 ./test/chaos/run.sh
+CHAOS_TARGET=http://staging.stellarindex.io:8080 ./test/chaos/run.sh
 ```
 
-The runner refuses to fire against `*.stellaratlas.xyz` production
+The runner refuses to fire against `*.stellarindex.io` production
 hosts by design — see `run.sh` head.
 
 Per-scenario output streams to stdout and is also captured in

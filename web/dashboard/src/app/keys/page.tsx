@@ -64,7 +64,7 @@ function KeysBody() {
           </h1>
           <p className="mt-1 text-sm text-ink-muted">
             Mint and manage the keys your apps use to authenticate against
-            api.stellaratlas.xyz.
+            api.stellarindex.io.
           </p>
         </div>
         {!showForm && !newKey && (

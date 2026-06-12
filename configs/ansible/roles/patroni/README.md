@@ -64,8 +64,8 @@ all:
         db-02: { ansible_host: 10.0.0.12, patroni_role: replica,   etcd_role: peer }
         db-03: { ansible_host: 10.0.0.13, patroni_role: replica,   etcd_role: peer }
       vars:
-        patroni_cluster_name: stellaratlas-r1
-        etcd_cluster_token: stellaratlas-etcd-r1
+        patroni_cluster_name: stellarindex-r1
+        etcd_cluster_token: stellarindex-etcd-r1
         patroni_postgres_version: 15
         patroni_data_dir: /var/lib/postgresql/15/main
 ```
@@ -92,7 +92,7 @@ cd configs/ansible
 
 # Promote a specific replica (operator action — not covered by
 # this role's playbook):
-ssh db-02 patronictl -c /etc/patroni/patroni.yml failover stellaratlas-r1
+ssh db-02 patronictl -c /etc/patroni/patroni.yml failover stellarindex-r1
 ```
 
 ## Restore-from-backup path
@@ -101,7 +101,7 @@ For DR rebuilds: set in inventory and run:
 
 ```yaml
 patroni_bootstrap_method: pgbackrest        # default: initdb
-patroni_pgbackrest_stanza: stellaratlas
+patroni_pgbackrest_stanza: stellarindex
 patroni_pgbackrest_restore_target: latest   # or "time:2026-04-30 14:00:00"
 ```
 
@@ -128,7 +128,7 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
 5. **Firewall** — open 5432 / 8008 / 2379 / 2380 to the internal
    network only.
 6. **Monitoring** — wire `node_exporter` textfile collectors so
-   the existing `stellaratlas_timescale_primary_down` alert
+   the existing `stellarindex_timescale_primary_down` alert
    continues firing.
 
 ## When this role IS NOT enough
@@ -139,7 +139,7 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
   Patroni-aware client wrapper does work, but PgBouncer is the
   recommended productionising step.
 - **TimescaleDB CAGG / hypertable bootstrap** — handled by
-  `cmd/stellaratlas-migrate`, not this role.
+  `cmd/stellarindex-migrate`, not this role.
 - **pgBackRest** — already partially in `archival-node` role's
   postgres tasks; this role only invokes its `restore` mode for
   DR bring-up.

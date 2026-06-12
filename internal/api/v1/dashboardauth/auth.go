@@ -27,14 +27,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // SessionCookieName is the HTTP cookie name used for dashboard
 // sessions. Distinct from any future API-side cookies so a
 // browser logged into both can't leak credentials between
 // surfaces.
-const SessionCookieName = "stellaratlas_session"
+const SessionCookieName = "stellarindex_session"
 
 // MagicLinkPlaintextLen — the random-bytes length we use for
 // magic-link tokens. 32 bytes = 256 bits = preimage-safe;

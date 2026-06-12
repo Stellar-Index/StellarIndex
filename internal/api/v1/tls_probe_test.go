@@ -21,7 +21,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // startTLSServer brings up an httptest TLS server whose leaf cert
@@ -115,8 +115,8 @@ func TestHostnameOnly(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"api.stellaratlas.xyz", "api.stellaratlas.xyz"},
-		{"api.stellaratlas.xyz:443", "api.stellaratlas.xyz"},
+		{"api.stellarindex.io", "api.stellarindex.io"},
+		{"api.stellarindex.io:443", "api.stellarindex.io"},
 		{"127.0.0.1:8443", "127.0.0.1"},
 		{"[::1]:8443", "::1"},
 	}
@@ -155,8 +155,8 @@ func TestTLSCertMetrics_HelpText(t *testing.T) {
 		t.Fatalf("Gather: %v", err)
 	}
 	wantNames := map[string]bool{
-		"stellaratlas_tls_cert_not_after_unix": false,
-		"stellaratlas_tls_cert_probe_total":    false,
+		"stellarindex_tls_cert_not_after_unix": false,
+		"stellarindex_tls_cert_probe_total":    false,
 	}
 	for _, mf := range gathered {
 		if _, want := wantNames[mf.GetName()]; want {

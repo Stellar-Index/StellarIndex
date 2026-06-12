@@ -3,7 +3,7 @@ package supply
 import (
 	"fmt"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // AssetKey produces the supply-package canonical key for a

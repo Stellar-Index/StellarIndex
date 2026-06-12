@@ -7,7 +7,7 @@ status: ratified
 # Incident (SEV) Playbook
 
 **Ratified:** 2026-04-22.
-**Binds:** every incident responder on-call for Stellar Atlas.
+**Binds:** every incident responder on-call for Stellar Index.
 **Drilled:** quarterly tabletop exercise; monthly "chaos Friday"
 live test in staging.
 
@@ -175,7 +175,7 @@ Decision tree:
 
 ### 5.1 Status page
 
-Public status page lives at `https://status.stellaratlas.xyz` —
+Public status page lives at `https://status.stellarindex.io` —
 hosted as a static Next.js export at
 [`web/status/`](../../web/status/), deployed to Cloudflare Pages
 on every push to `main`. Lives separately from the API so it
@@ -208,14 +208,14 @@ operator-triggered as part of the SEV runbook:
 
 ```sh
 # After deploying the binary that includes the new .md:
-stellaratlas-ops emit-incident \
-  -config /etc/stellaratlas.toml \
+stellarindex-ops emit-incident \
+  -config /etc/stellarindex.toml \
   -slug 2026-05-12-redis-blip \
   -event sev1
 
 # Later, after deploying the .md update with status=resolved:
-stellaratlas-ops emit-incident \
-  -config /etc/stellaratlas.toml \
+stellarindex-ops emit-incident \
+  -config /etc/stellarindex.toml \
   -slug 2026-05-12-redis-blip \
   -event resolved
 ```
@@ -239,7 +239,7 @@ Status-page states (modelled after Atlassian Statuspage):
 
 **Initial (SEV-1):**
 
-> We're investigating an incident affecting the Stellar Atlas API.
+> We're investigating an incident affecting the Stellar Index API.
 > Requests may fail or return stale data. We acknowledged this at
 > {time} and will post an update within the hour.
 
@@ -257,7 +257,7 @@ Status-page states (modelled after Atlassian Statuspage):
 
 ### 5.3 Customer Slack / Discord
 
-The `#stellaratlas-ops` Slack (internal) is primary. Major
+The `#stellarindex-ops` Slack (internal) is primary. Major
 customers have our direct channel for real-time updates during
 incidents. Update cadence there matches the status page.
 

@@ -202,8 +202,8 @@ func TestStatus_WithBackend_PageAlertDegrades(t *testing.T) {
 				PageCount:   1,
 				TicketCount: 1,
 				Active: []ActiveIncident{
-					{Name: "stellaratlas_api_down", Severity: "page"},
-					{Name: "stellaratlas_aggregator_silent", Severity: "ticket"},
+					{Name: "stellarindex_api_down", Severity: "page"},
+					{Name: "stellarindex_aggregator_silent", Severity: "ticket"},
 				},
 			},
 		},
@@ -222,8 +222,8 @@ func TestStatus_WithBackend_PageAlertDegrades(t *testing.T) {
 	if len(st.Incidents.Active) != 2 {
 		t.Fatalf("Active len = %d, want 2", len(st.Incidents.Active))
 	}
-	if st.Incidents.Active[0].Name != "stellaratlas_api_down" {
-		t.Errorf("Active[0] = %q, want stellaratlas_api_down", st.Incidents.Active[0].Name)
+	if st.Incidents.Active[0].Name != "stellarindex_api_down" {
+		t.Errorf("Active[0] = %q, want stellarindex_api_down", st.Incidents.Active[0].Name)
 	}
 
 	if st.Overall != "degraded" {
@@ -277,8 +277,8 @@ func TestPrometheusStatusBackend_QueryShape(t *testing.T) {
 		"data":{
 			"resultType":"vector",
 			"result":[
-				{"metric":{"job":"stellaratlas-indexer"},"value":[1730000000,"1730000050"]},
-				{"metric":{"job":"stellaratlas-aggregator"},"value":[1730000000,"1730000048"]}
+				{"metric":{"job":"stellarindex-indexer"},"value":[1730000000,"1730000050"]},
+				{"metric":{"job":"stellarindex-aggregator"},"value":[1730000000,"1730000048"]}
 			]
 		}
 	}`
@@ -316,9 +316,9 @@ func TestPrometheusStatusBackend_IncidentsParsesAlertsAndCounts(t *testing.T) {
 		"data":{
 			"resultType":"vector",
 			"result":[
-				{"metric":{"alertname":"stellaratlas_api_down","alertstate":"firing","severity":"page"},"value":[1730000000,"1"]},
-				{"metric":{"alertname":"stellaratlas_aggregator_silent","alertstate":"firing","severity":"ticket"},"value":[1730000000,"1"]},
-				{"metric":{"alertname":"stellaratlas_host_cpu_high","alertstate":"firing","severity":"informational"},"value":[1730000000,"1"]}
+				{"metric":{"alertname":"stellarindex_api_down","alertstate":"firing","severity":"page"},"value":[1730000000,"1"]},
+				{"metric":{"alertname":"stellarindex_aggregator_silent","alertstate":"firing","severity":"ticket"},"value":[1730000000,"1"]},
+				{"metric":{"alertname":"stellarindex_host_cpu_high","alertstate":"firing","severity":"informational"},"value":[1730000000,"1"]}
 			]
 		}
 	}`
@@ -344,9 +344,9 @@ func TestPrometheusStatusBackend_IncidentsParsesAlertsAndCounts(t *testing.T) {
 	}
 	// page first, then ticket, then informational.
 	wantOrder := []string{
-		"stellaratlas_api_down",
-		"stellaratlas_aggregator_silent",
-		"stellaratlas_host_cpu_high",
+		"stellarindex_api_down",
+		"stellarindex_aggregator_silent",
+		"stellarindex_host_cpu_high",
 	}
 	for i, want := range wantOrder {
 		if got.Active[i].Name != want {
@@ -363,8 +363,8 @@ func TestPrometheusStatusBackend_IncidentsDedupesByAlertname(t *testing.T) {
 		"data":{
 			"resultType":"vector",
 			"result":[
-				{"metric":{"alertname":"stellaratlas_host_down","alertstate":"firing","severity":"ticket","instance":"r1"},"value":[1730000000,"1"]},
-				{"metric":{"alertname":"stellaratlas_host_down","alertstate":"firing","severity":"ticket","instance":"r2"},"value":[1730000000,"1"]}
+				{"metric":{"alertname":"stellarindex_host_down","alertstate":"firing","severity":"ticket","instance":"r1"},"value":[1730000000,"1"]},
+				{"metric":{"alertname":"stellarindex_host_down","alertstate":"firing","severity":"ticket","instance":"r2"},"value":[1730000000,"1"]}
 			]
 		}
 	}`
@@ -454,7 +454,7 @@ func TestStatus_OverallRollup_F0055(t *testing.T) {
 				incidents: StatusIncidents{
 					ActiveCount: 1, PageCount: 1,
 					Active: []ActiveIncident{
-						{Name: "stellaratlas_api_down", Severity: "page"},
+						{Name: "stellarindex_api_down", Severity: "page"},
 					},
 				},
 			},

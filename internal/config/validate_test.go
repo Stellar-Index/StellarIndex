@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/config"
 )
 
 func TestValidate_DefaultPasses(t *testing.T) {
@@ -31,7 +31,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 	}{
 		"empty region id":              {func(c *config.Config) { c.Region.ID = "" }, "region.id"},
 		"capitalized region":           {func(c *config.Config) { c.Region.ID = "R1" }, "region.id"},
-		"home domain is URL":           {func(c *config.Config) { c.Region.HomeDomain = "https://stellaratlas.xyz" }, "home_domain"},
+		"home domain is URL":           {func(c *config.Config) { c.Region.HomeDomain = "https://stellarindex.io" }, "home_domain"},
 		"unknown network":              {func(c *config.Config) { c.Stellar.Network = "futurenett" }, "network"},
 		"empty rpc list":               {func(c *config.Config) { c.Stellar.RPCEndpoints = nil }, "rpc_endpoints"},
 		"rpc not url":                  {func(c *config.Config) { c.Stellar.RPCEndpoints = []string{"host:8000"} }, "rpc_endpoints"},

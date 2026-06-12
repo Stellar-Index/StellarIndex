@@ -1,8 +1,8 @@
 {
-  "name": "@stellaratlas/explorer",
+  "name": "@stellarindex/explorer",
   "version": "0.0.0",
   "private": true,
-  "description": "Public showcase site for the Stellar Atlas API (app.stellaratlas.xyz).",
+  "description": "Public showcase site for the Stellar Index API (app.stellarindex.io).",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "generate:api": "openapi-typescript ../../openapi/stellar-atlas.v1.yaml -o src/api/types.ts"
+    "generate:api": "openapi-typescript ../../openapi/stellar-index.v1.yaml -o src/api/types.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",

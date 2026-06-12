@@ -10,9 +10,9 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 type fakeMarketsReader struct {
@@ -124,7 +124,7 @@ func TestCachedMarketsReader_AllPoolsErrorIsNotCached(t *testing.T) {
 	}
 }
 
-// readCacheCounter pulls the current stellaratlas_api_cache_ops_total
+// readCacheCounter pulls the current stellarindex_api_cache_ops_total
 // value for one (cache, op, result) combination. Returns 0 when the
 // label set hasn't been incremented yet (Prometheus auto-creates on
 // first .Inc()). Lets the metric tests read absolute values without
@@ -140,7 +140,7 @@ func readCacheCounter(t *testing.T, cache, op, result string) float64 {
 
 // TestCachedMarketsReader_HitMissCounter pins the contract:
 // AllPools' miss-on-first-call + hit-on-repeat-call increments the
-// stellaratlas_api_cache_ops_total counter on the right label set.
+// stellarindex_api_cache_ops_total counter on the right label set.
 // Detection target: a future refactor that drops the metric inc on
 // either branch. Three earlier session bugs (#1185 / #1194 / #1195)
 // were prewarm-key drifts; this test guards the OBSERVABILITY of

@@ -218,12 +218,12 @@ export function DexesView() {
                       The pools query is timing out (likely a hot
                       trades-hypertable scan). Retry or check{' '}
                       <a
-                        href="https://status.stellaratlas.xyz"
+                        href="https://status.stellarindex.io"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="underline-offset-2 hover:underline"
                       >
-                        status.stellaratlas.xyz
+                        status.stellarindex.io
                       </a>
                       .
                     </div>

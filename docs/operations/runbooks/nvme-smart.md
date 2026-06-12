@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_nvme_smart_warn`
+# Runbook — `stellarindex_nvme_smart_warn`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_nvme_smart_warn` |
+| Alert | `stellarindex_nvme_smart_warn` |
 | Severity | P2 (ticket — schedule replacement, don't panic) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | hours – days (replacement lead time) |
@@ -69,7 +69,7 @@ ssh <host> 'zpool status -v'
       swap, `zpool replace`, wait for resilver.
 - [ ] Step 4 — if the host is safe to drain: drain it out of any
       HAProxy pool fronting it (`disable server <pool>/<host>` on
-      each LB), stop the relevant `stellaratlas-*` units, then
+      each LB), stop the relevant `stellarindex-*` units, then
       reboot after swapping. ZFS resilver is online-safe but
       stressed drives sometimes fail harder during resilver, so a
       clean reboot before the swap is preferable when traffic can

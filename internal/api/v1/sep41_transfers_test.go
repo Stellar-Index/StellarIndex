@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // stubSEP41TransfersReader is a no-op reader that lets us exercise

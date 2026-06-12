@@ -44,7 +44,7 @@ The week before the cut. Done while everything is still calm.
 - [ ] **Showcase site staged.** Cloudflare Pages project for
       `web/explorer/` is connected per
       [`explorer-deployment.md`](explorer-deployment.md), a
-      preview deploy succeeded, `stellaratlas.xyz` custom domain
+      preview deploy succeeded, `stellarindex.io` custom domain
       is bound but DNS still points at staging. Final cutover is
       step 5 of T-0.
 
@@ -52,24 +52,24 @@ The week before the cut. Done while everything is still calm.
 
 - [ ] **Merge freeze.** No new PRs to `main` except critical
       bug fixes flagged with the `launch-blocker` label.
-      Document the freeze in `#stellar-atlas` and pin the date.
+      Document the freeze in `#stellar-index` and pin the date.
 - [ ] **Public-flip dry-run.** Walk the
       [public-flip cut-over mechanics](public-flip.md#cut-over-mechanics)
-      against a temporary `StellarAtlas/stellar-atlas-dryrun`
+      against a temporary `StellarIndex/stellar-index-dryrun`
       repo. Verify zero diff between private working tree and
       the orphan-branch initial commit. Delete the dryrun repo.
 - [ ] **Customer demo (L6.6) scheduled.** Calendar invite sent;
       demo deck reviewed; demo URL is the soon-to-be-public
-      `api.stellaratlas.xyz` (not staging).
+      `api.stellarindex.io` (not staging).
 
 ## T-1 day — go/no-go
 
 - [ ] **Production environment is green.** Every dashboard panel
       on the SLO board reading nominal:
-      - `stellaratlas_aggregator_ticks_total` rising on `outcome="ok"`.
-      - `stellaratlas_source_events_total` rising for every
+      - `stellarindex_aggregator_ticks_total` rising on `outcome="ok"`.
+      - `stellarindex_source_events_total` rising for every
         configured source (`source_enabled=1`).
-      - `stellaratlas_aggregator_vwap_writes_total` rising.
+      - `stellarindex_aggregator_vwap_writes_total` rising.
       - No fired alerts in Alertmanager.
       - **Counter-presence sanity** (F-0100, audit-2026-05-26):
         "no fired alerts" by itself is a false-green when an
@@ -78,7 +78,7 @@ The week before the cut. Done while everything is still calm.
         and confirm the result is non-empty for every named
         family:
         ```promql
-        count by (__name__) ({__name__=~"stellaratlas_.*_total"})
+        count by (__name__) ({__name__=~"stellarindex_.*_total"})
         ```
         If a counter family is missing from the result, treat
         "no alerts" as silence-not-success and investigate
@@ -88,18 +88,18 @@ The week before the cut. Done while everything is still calm.
         a missing counter SHOULD trigger an alert in its own
         right — this step is the manual belt-and-braces check
         in case a new rule lands without the guard.
-- [ ] **SLA probe latest pass.** `cmd/stellaratlas-sla-probe`
+- [ ] **SLA probe latest pass.** `cmd/stellarindex-sla-probe`
       against the staging URL ran in the last 4 h with `verdict:
       pass`. (Or run it manually now — see "Smoke test" below.)
 - [ ] **CDN provisioned.** Per
       [`cdn-setup.md`](cdn-setup.md). DNS for
-      `api.stellaratlas.xyz` is proxied through Cloudflare;
+      `api.stellarindex.io` is proxied through Cloudflare;
       curl headers show `cf-cache-status` for the historical
       surfaces.
 - [ ] **Status page provisioned.** Per
       [`status-page-setup.md`](status-page-setup.md). The
       Cloudflare Pages deploy of `web/status/` is live at
-      `status.stellaratlas.xyz`; `internal/incidents/data/`
+      `status.stellarindex.io`; `internal/incidents/data/`
       has no open SEV entries (no `status: investigating |
       identified | monitoring` rows).
 - [ ] **Customer comms ready.** Email/Slack draft for the
@@ -131,7 +131,7 @@ Order matters. Don't skip.
    diff at step 4 MUST be zero. Stop and investigate if it
    isn't.
 
-3. **DNS flip — `api.stellaratlas.xyz`.**
+3. **DNS flip — `api.stellarindex.io`.**
    At Cloudflare, the proxied A/CNAME for `api` is already in
    place from the CDN setup. The "flip" here is **enabling
    the public rate-limit tier**: edit the API binary's
@@ -146,9 +146,9 @@ Order matters. Don't skip.
 
 4. **Smoke test the public surface.**
    ```sh
-   STELLARATLAS_PROBE_API_KEY=rek_… \
-   stellaratlas-sla-probe \
-     -base-url https://api.stellaratlas.xyz/v1 \
+   STELLARINDEX_PROBE_API_KEY=rek_… \
+   stellarindex-sla-probe \
+     -base-url https://api.stellarindex.io/v1 \
      -duration 30s \
      -concurrency 4 \
      -report-format text
@@ -160,7 +160,7 @@ Order matters. Don't skip.
    vault. Pass condition: `verdict: pass`. Any `failed_reasons`
    halts the cut → trigger rollback.
 
-5. **Showcase site goes live (`stellaratlas.xyz`).** Per
+5. **Showcase site goes live (`stellarindex.io`).** Per
    [`explorer-deployment.md`](explorer-deployment.md), the
    site is built statically from `web/explorer/` and served
    from Cloudflare Pages. Trigger a fresh build now that the
@@ -168,15 +168,15 @@ Order matters. Don't skip.
    `generateStaticParams` fetch picks up the live coin
    directory:
    ```sh
-   # CF Pages: dashboard → Workers & Pages → stellaratlas-showcase
+   # CF Pages: dashboard → Workers & Pages → stellarindex-showcase
    #          → Deployments → Retry deployment
    #
    # Or push an empty commit:
    git commit --allow-empty -m "chore(showcase): rebuild for launch"
    git push origin main
    ```
-   Pass condition: `curl -I https://stellaratlas.xyz | head -3`
-   returns 200, and `curl -I https://stellaratlas.xyz/coins/USDC/`
+   Pass condition: `curl -I https://stellarindex.io | head -3`
+   returns 200, and `curl -I https://stellarindex.io/coins/USDC/`
    is 200 (not 404).
 
 6. **Status page goes live.** Post the launch-cut maintenance
@@ -184,7 +184,7 @@ Order matters. Don't skip.
    `internal/incidents/data/<DATE>-launch-cut.md` (if a
    maintenance entry was opened pre-cut) and merging to `main`
    so Cloudflare Pages re-deploys with `status: resolved`.
-   Verify `status.stellaratlas.xyz` shows no active incidents.
+   Verify `status.stellarindex.io` shows no active incidents.
 
 7. **Send customer comms.** Email + Slack templates from T-1 day.
    Public announcement on the project handle if applicable.
@@ -203,11 +203,11 @@ Order matters. Don't skip.
 
 - The release tag is on `main`, on the public repo, and as a
   GitHub Release.
-- `https://api.stellaratlas.xyz/v1/healthz` returns 200 from
+- `https://api.stellarindex.io/v1/healthz` returns 200 from
   any external network.
-- `https://stellaratlas.xyz` returns 200 and renders live
+- `https://stellarindex.io` returns 200 and renders live
   data in the home Network panel.
-- `https://status.stellaratlas.xyz` shows "all systems
+- `https://status.stellarindex.io` shows "all systems
   operational".
 - The customer-comms message has been delivered.
 - The SLA probe has logged at least one passing run against the
@@ -227,7 +227,7 @@ rollback also includes a follow-up "we're rolling back" message.
   procedure this runbook orchestrates.
 - [`public-flip.md`](public-flip.md) — repo cut-over mechanics.
 - [`cdn-setup.md`](cdn-setup.md) — CDN provisioning.
-- [`explorer-deployment.md`](explorer-deployment.md) — `stellaratlas.xyz` (showcase site) hosting.
+- [`explorer-deployment.md`](explorer-deployment.md) — `stellarindex.io` (showcase site) hosting.
 - [`status-page-setup.md`](status-page-setup.md) — status page setup.
 - [`chaos-wave1-runbook.md`](chaos-wave1-runbook.md) — chaos
   Wave 1 execution.

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // ohlcDefaultOutlierSigma is the default σ threshold for the outlier
@@ -79,7 +79,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	reader := s.history
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/ohlc-unavailable",
+			"https://api.stellarindex.io/errors/ohlc-unavailable",
 			"OHLC serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
@@ -92,7 +92,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	pair, err := canonical.NewPair(base, quote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-pair",
+			"https://api.stellarindex.io/errors/invalid-pair",
 			"Invalid pair", http.StatusBadRequest, err.Error())
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 			"base", base.String(), "quote", quote.String(),
 			"from", from, "to", to)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -153,7 +153,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	bar, err := aggregate.ComputeOHLC(trades)
 	if errors.Is(err, aggregate.ErrNoTrades) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/no-trades",
+			"https://api.stellarindex.io/errors/no-trades",
 			"No trades in window", http.StatusNotFound,
 			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
 				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
@@ -162,7 +162,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("ComputeOHLC failed", "err", err)
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/internal",
+			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -199,7 +199,7 @@ func parseOHLCOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-sigma",
+			"https://api.stellarindex.io/errors/invalid-sigma",
 			"Invalid outlier_sigma", http.StatusBadRequest,
 			"outlier_sigma must be a non-negative finite number; omit for the default ("+strconv.FormatFloat(ohlcDefaultOutlierSigma, 'f', -1, 64)+") or 0 to disable filtering")
 		return 0, false
@@ -276,7 +276,7 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"Invalid `to` timestamp", http.StatusBadRequest,
 				"to must be RFC 3339")
 			return time.Time{}, time.Time{}, false
@@ -289,7 +289,7 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 	if windowRaw != "" {
 		if fromRaw != "" {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"`window` and `from` are mutually exclusive", http.StatusBadRequest,
 				"pass one or the other — `window=24h` is shorthand for `from=to-24h`")
 			return time.Time{}, time.Time{}, false
@@ -297,14 +297,14 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 		d, err := parseWindowDuration(windowRaw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"Invalid `window` duration", http.StatusBadRequest,
 				err.Error())
 			return time.Time{}, time.Time{}, false
 		}
 		if d <= 0 {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"`window` must be positive", http.StatusBadRequest,
 				"got "+windowRaw)
 			return time.Time{}, time.Time{}, false
@@ -314,7 +314,7 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 		parsed, err := time.Parse(time.RFC3339, fromRaw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.stellaratlas.xyz/errors/invalid-time",
+				"https://api.stellarindex.io/errors/invalid-time",
 				"Invalid `from` timestamp", http.StatusBadRequest,
 				"from must be RFC 3339")
 			return time.Time{}, time.Time{}, false
@@ -323,7 +323,7 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 	}
 	if !from.Before(to) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-time",
+			"https://api.stellarindex.io/errors/invalid-time",
 			"`from` must be before `to`", http.StatusBadRequest, "")
 		return time.Time{}, time.Time{}, false
 	}
@@ -402,7 +402,7 @@ func parseFromToClamped(w http.ResponseWriter, r *http.Request) (from, to time.T
 	}
 	if !from.Before(to) {
 		writeProblem(w, r,
-			"https://api.stellaratlas.xyz/errors/invalid-time",
+			"https://api.stellarindex.io/errors/invalid-time",
 			"`from` must be before `to` after closed-bucket clamp",
 			http.StatusBadRequest,
 			"the requested range collapsed below a single closed window — widen `from` or specify an explicit `to`")

@@ -1,6 +1,6 @@
 // Package pipeline holds the shared ingest-pipeline glue used by both
-// the long-running indexer (`cmd/stellaratlas-indexer`) and the
-// bounded-replay backfill subcommand (`cmd/stellaratlas-ops backfill`).
+// the long-running indexer (`cmd/stellarindex-indexer`) and the
+// bounded-replay backfill subcommand (`cmd/stellarindex-ops backfill`).
 //
 // What's here vs what isn't:
 //
@@ -27,30 +27,30 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/config"
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/accounts"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/aquarius"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/band"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/blend"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/cctp"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/childgate"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/claimable_balances"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/comet"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/defindex"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/liquidity_pools"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/phoenix"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/redstone"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/reflector"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/rozo"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sac_balances"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/sdex"
-	sep41supply "github.com/StellarAtlas/stellar-atlas/internal/sources/sep41_supply"
-	sep41transfers "github.com/StellarAtlas/stellar-atlas/internal/sources/sep41_transfers"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap"
-	soroswap_router "github.com/StellarAtlas/stellar-atlas/internal/sources/soroswap_router"
-	"github.com/StellarAtlas/stellar-atlas/internal/sources/trustlines"
+	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
+	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
+	"github.com/StellarIndex/stellar-index/internal/sources/band"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
+	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
+	"github.com/StellarIndex/stellar-index/internal/sources/claimable_balances"
+	"github.com/StellarIndex/stellar-index/internal/sources/comet"
+	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
+	"github.com/StellarIndex/stellar-index/internal/sources/liquidity_pools"
+	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+	"github.com/StellarIndex/stellar-index/internal/sources/redstone"
+	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
+	"github.com/StellarIndex/stellar-index/internal/sources/rozo"
+	"github.com/StellarIndex/stellar-index/internal/sources/sac_balances"
+	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
+	sep41supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
+	sep41transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
+	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
+	"github.com/StellarIndex/stellar-index/internal/sources/trustlines"
 )
 
 // BuildDispatcher constructs a dispatcher with decoders registered

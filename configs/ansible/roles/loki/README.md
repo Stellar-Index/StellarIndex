@@ -60,9 +60,9 @@ all:
     log_shippers:
       children:
         prometheus_pair: {}
-        stellaratlas_api: {}
-        stellaratlas_aggregator: {}
-        stellaratlas_indexer: {}
+        stellarindex_api: {}
+        stellarindex_aggregator: {}
+        stellarindex_indexer: {}
         haproxy_lb: {}
         redis_cluster: {}
         postgres_cluster: {}
@@ -102,14 +102,14 @@ The role expects:
   systemd unit's `EnvironmentFile=-/etc/default/loki` reads
   them directly and the upstream S3 driver expects those exact
   variable names. F-1286 (2026-05-13): earlier prose tried to
-  remap from the galexie convention's `STELLARATLAS_S3_*` names
-  via `Environment=AWS_ACCESS_KEY_ID=${STELLARATLAS_S3_ACCESS_KEY}`,
+  remap from the galexie convention's `STELLARINDEX_S3_*` names
+  via `Environment=AWS_ACCESS_KEY_ID=${STELLARINDEX_S3_ACCESS_KEY}`,
   but systemd `Environment=` does not perform `$` expansion —
   the literal `${...}` string would have been passed as the
   access key, failing S3 chunk writes while Loki looked
   process-alive. Set the two `AWS_*` env vars in
   `/etc/default/loki` directly. Galexie's separate
-  `/etc/default/galexie` still uses the `STELLARATLAS_S3_*`
+  `/etc/default/galexie` still uses the `STELLARINDEX_S3_*`
   convention; they're independent EnvironmentFile sources.
 
 Index → BoltDB on local filesystem under `/var/lib/loki/index`.
@@ -137,7 +137,7 @@ Every Promtail-shipped log entry gets these labels:
 |---|---|
 | `job` | `systemd` (constant) |
 | `instance` | the host's `inventory_hostname` |
-| `unit` | `__journal__systemd_unit` (e.g. `stellaratlas-api.service`) |
+| `unit` | `__journal__systemd_unit` (e.g. `stellarindex-api.service`) |
 | `hostname` | `__journal__hostname` |
 | `severity` | `__journal_priority_keyword` (info / warning / error / etc.) |
 

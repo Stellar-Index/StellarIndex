@@ -1,7 +1,7 @@
 # DeFindex — contract & event verification
 
 > **For the DeFindex team:** this is the set of DeFindex factories, vaults,
-> and strategy contracts Stellar Atlas ingests. Please confirm the four
+> and strategy contracts Stellar Index ingests. Please confirm the four
 > factories and help us with the **open question below** about how vaults
 > and strategies relate (so we attribute strategy events correctly).
 >

@@ -89,7 +89,7 @@ narrow until operators actually ask for it.
 ### Decode-error budgets
 
 Every external connector contributes to the same
-`stellaratlas_source_decode_errors_total{source="<venue>"}`
+`stellarindex_source_decode_errors_total{source="<venue>"}`
 counter family as the on-chain decoders. The
 [`decode-errors`](../../../docs/operations/runbooks/decode-errors.md)
 runbook covers the response. Sustained > 1/s sustained 5 min
@@ -125,7 +125,7 @@ Plus, in this package's root:
 2. Add a TOML toggle in
    [`internal/config/config.go`](../../config/config.go)
    (`ExternalConfig` struct).
-3. Wire it in `cmd/stellaratlas-indexer/main.go` (or wherever
+3. Wire it in `cmd/stellarindex-indexer/main.go` (or wherever
    external connectors are launched in the deployment).
 4. Add an ADR if the venue has unusual constraints (paid tier,
    redistribution limits, cadence ceilings).

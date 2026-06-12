@@ -10,21 +10,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/aggregate"
-	"github.com/StellarAtlas/stellar-atlas/internal/api/streaming"
-	"github.com/StellarAtlas/stellar-atlas/internal/api/v1/middleware"
-	"github.com/StellarAtlas/stellar-atlas/internal/auth"
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
-	"github.com/StellarAtlas/stellar-atlas/internal/currency"
-	"github.com/StellarAtlas/stellar-atlas/internal/currency/marketcap"
-	"github.com/StellarAtlas/stellar-atlas/internal/incidents"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/version"
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
+	"github.com/StellarIndex/stellar-index/internal/api/streaming"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/currency"
+	"github.com/StellarIndex/stellar-index/internal/currency/marketcap"
+	"github.com/StellarIndex/stellar-index/internal/incidents"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/version"
 )
 
 // ReadyChecker is the interface /readyz polls to decide whether
 // the serving-plane dependencies are responsive. Implementations
-// in cmd/stellaratlas-api/main.go:
+// in cmd/stellarindex-api/main.go:
 //
 //   - storeChecker (wraps *timescale.Store.DB().PingContext) — critical
 //   - redisChecker (wraps *redis.Client.Ping) — non-critical
@@ -55,7 +55,7 @@ type ReadyChecker interface {
 	Critical() bool
 }
 
-// Server is the HTTP handler for the Stellar Atlas v1 API.
+// Server is the HTTP handler for the Stellar Index v1 API.
 //
 // Construction: [New] returns a Server with routes mounted.
 // Call [Server.Handler] to get an http.Handler for an
@@ -233,7 +233,7 @@ type Options struct {
 	Oracle OracleReader
 	// Sep1Cache, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. The handler reads from the `issuers.sep1_payload`
-	// JSONB column populated by `stellaratlas-ops sep1-refresh`.
+	// JSONB column populated by `stellarindex-ops sep1-refresh`.
 	// Pre-2026-05-29 this was a live HTTPS fetch (MetadataResolver);
 	// the live path dominated /v1/assets/{id} p95 (~4s long tail) so
 	// it's now cron-only.
@@ -489,7 +489,7 @@ type Options struct {
 	// api.key_rate_limit_per_min) actually take effect; the older
 	// single-bucket middleware.RateLimit shape is kept for tests
 	// but production wiring uses the by-subject form. See
-	// cmd/stellaratlas-api/main.go for the canonical wire-up.
+	// cmd/stellarindex-api/main.go for the canonical wire-up.
 	RateLimit middleware.Middleware
 
 	// UsageTracker, when non-nil, is inserted at the end of the
@@ -641,7 +641,7 @@ type Options struct {
 	// body + flags.unverified_ticker_collision when the requested
 	// asset's code matches a verified currency's Stellar ticker
 	// but the issuer doesn't. Production wiring loads
-	// currency.LoadEmbedded() in cmd/stellaratlas-api/main.go. Nil
+	// currency.LoadEmbedded() in cmd/stellarindex-api/main.go. Nil
 	// keeps the warning surface off — every response serves
 	// unchanged.
 	//
@@ -653,7 +653,7 @@ type Options struct {
 
 	// MarketCaps, when non-nil, is the process-local CoinGecko-
 	// sourced market_cap_usd cache for catalogue crypto +
-	// stablecoin entries. The cmd/stellaratlas-api binary wires it
+	// stablecoin entries. The cmd/stellarindex-api binary wires it
 	// with a background refresher; tests can pass a populated
 	// stub or leave nil (handlers degrade gracefully).
 	MarketCaps *marketcap.Cache
@@ -1192,7 +1192,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// The endpoints are JSON, not user-facing HTML; crawlers
 	// hitting them waste their budget on payloads that won't rank
 	// for any meaningful search query. The companion explorer site
-	// (stellaratlas.xyz) and docs site (docs.stellaratlas.xyz) are
+	// (stellarindex.io) and docs site (docs.stellarindex.io) are
 	// where indexable content lives, with their own robots.txt
 	// directives. Without this handler Cloudflare's auto-managed
 	// robots.txt is served on GET but the API origin returns 404
@@ -1357,23 +1357,23 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 // handleSecurityTxt serves /.well-known/security.txt per RFC 9116.
 //
 // The Canonical: URL points at the explorer copy
-// (stellaratlas.xyz/.well-known/security.txt) so the two origins
+// (stellarindex.io/.well-known/security.txt) so the two origins
 // don't drift; both the explorer and API surfaces deliberately
 // share the same disclosure email + policy URL. Expires is one
 // year out — handler runs at request time so it always returns a
 // valid future date as long as the binary is up.
 func (s *Server) handleSecurityTxt(w http.ResponseWriter, _ *http.Request) {
 	expires := time.Now().UTC().AddDate(1, 0, 0).Format(time.RFC3339)
-	body := "# Stellar Atlas — security.txt (api origin)\n" +
-		"# RFC-9116. Mirrors stellaratlas.xyz/.well-known/security.txt;\n" +
+	body := "# Stellar Index — security.txt (api origin)\n" +
+		"# RFC-9116. Mirrors stellarindex.io/.well-known/security.txt;\n" +
 		"# the Canonical: URL is the authoritative copy.\n" +
 		"\n" +
-		"Contact: mailto:security@stellaratlas.xyz\n" +
+		"Contact: mailto:security@stellarindex.io\n" +
 		"Expires: " + expires + "\n" +
 		"Preferred-Languages: en\n" +
-		"Canonical: https://stellaratlas.xyz/.well-known/security.txt\n" +
-		"Policy: https://github.com/StellarAtlas/stellar-atlas/blob/main/SECURITY.md\n" +
-		"Acknowledgments: https://github.com/StellarAtlas/stellar-atlas/security/advisories\n"
+		"Canonical: https://stellarindex.io/.well-known/security.txt\n" +
+		"Policy: https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md\n" +
+		"Acknowledgments: https://github.com/StellarIndex/stellar-index/security/advisories\n"
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write([]byte(body))
@@ -1385,10 +1385,10 @@ func (s *Server) handleSecurityTxt(w http.ResponseWriter, _ *http.Request) {
 // reached the API hostname" affordance.
 func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{
-		"name":    "stellar-atlas",
+		"name":    "stellar-index",
 		"version": version.Version,
-		"docs":    "https://docs.stellaratlas.xyz",
-		"openapi": "https://docs.stellaratlas.xyz/openapi.yaml",
+		"docs":    "https://docs.stellarindex.io",
+		"openapi": "https://docs.stellarindex.io/openapi.yaml",
 	}, Flags{})
 }
 
@@ -1399,16 +1399,16 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 // (or has a per-bot exception) at least crawl what's worth
 // indexing.
 func (s *Server) handleRobotsTxt(w http.ResponseWriter, _ *http.Request) {
-	const body = `# api.stellaratlas.xyz — JSON API, not for human reading.
+	const body = `# api.stellarindex.io — JSON API, not for human reading.
 # Indexable content lives on the companion subdomains:
-#   - https://stellaratlas.xyz          — explorer + market UI
-#   - https://docs.stellaratlas.xyz     — API reference
-#   - https://status.stellaratlas.xyz   — status + incident postmortems
+#   - https://stellarindex.io          — explorer + market UI
+#   - https://docs.stellarindex.io     — API reference
+#   - https://status.stellarindex.io   — status + incident postmortems
 
 User-agent: *
 Disallow: /
 
-Sitemap: https://stellaratlas.xyz/sitemap.xml
+Sitemap: https://stellarindex.io/sitemap.xml
 `
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=86400")

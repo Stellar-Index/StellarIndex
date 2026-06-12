@@ -5,7 +5,7 @@ import { Check, Minus } from 'lucide-react';
 export const metadata: Metadata = {
   title: 'Pricing — plans, quotas, SLAs',
   description:
-    'Stellar Atlas pricing tiers. Free anonymous reads, $0 self-service Starter for higher per-key rate limits, Pro/Business/Enterprise for production volume. Same data on every tier.',
+    'Stellar Index pricing tiers. Free anonymous reads, $0 self-service Starter for higher per-key rate limits, Pro/Business/Enterprise for production volume. Same data on every tier.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -27,7 +27,7 @@ const TIERS: Tier[] = [
     price: '$0',
     priceSubtitle: 'forever',
     rateLimit: '60 req/min per IP',
-    cta: { label: 'Read the docs', href: 'https://docs.stellaratlas.xyz' },
+    cta: { label: 'Read the docs', href: 'https://docs.stellarindex.io' },
     description:
       'Anonymous public reads. Same data as the paid tiers, just rate-limited per IP. Perfect for prototyping, low-traffic embeds, and read-only integrations.',
     features: [

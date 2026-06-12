@@ -22,8 +22,8 @@ related:
   - 2-host Prometheus pair per ha-plan §7 (primary + replica),
     each running its own Prometheus + AlertManager.
   - Alertmanager cluster gossip between the two hosts for dedupe.
-  - Scrape configs built per inventory group (stellaratlas_api,
-    stellaratlas_aggregator, stellaratlas_indexer, haproxy_lb,
+  - Scrape configs built per inventory group (stellarindex_api,
+    stellarindex_aggregator, stellarindex_indexer, haproxy_lb,
     redis_cluster, postgres_cluster, plus a generic
     `node_exporter_targets` group).
   - All 17 existing rule files in `deploy/monitoring/rules/`
@@ -70,7 +70,7 @@ on port 9094 and dedupe alerts before fanout.
                          │ scrape
             ┌────────────┴────────────┐
             │  every host's metrics:  │
-            │  - stellaratlas-* :9464  │
+            │  - stellarindex-* :9464  │
             │  - haproxy :8404        │
             │  - redis-exporter :9121 │
             │  - node-exporter :9100  │
@@ -85,9 +85,9 @@ sensible scrape interval + label set:
 
 | Source | Target | Port | Interval | Path |
 |---|---|---|---|---|
-| stellaratlas-api | every host in `stellaratlas_api` | 9464 | 15s | `/metrics` |
-| stellaratlas-aggregator | every host in `stellaratlas_aggregator` | 9464 | 30s | `/metrics` |
-| stellaratlas-indexer | every host in `stellaratlas_indexer` | 9464 | 30s | `/metrics` |
+| stellarindex-api | every host in `stellarindex_api` | 9464 | 15s | `/metrics` |
+| stellarindex-aggregator | every host in `stellarindex_aggregator` | 9464 | 30s | `/metrics` |
+| stellarindex-indexer | every host in `stellarindex_indexer` | 9464 | 30s | `/metrics` |
 | HAProxy | every host in `haproxy_lb` | 8404 | 15s | `/metrics` (built-in 2.4+) |
 | redis_exporter | every host in `redis_cluster` | 9121 | 30s | `/metrics` |
 | Patroni textfile | via `node_exporter` on every host in `postgres_cluster` | 9100 | 30s | `/metrics` (textfile collector picks up /var/lib/node_exporter/textfile_collector/*.prom) |
@@ -179,11 +179,11 @@ all:
         prom-02: { ansible_host: 10.0.0.62 }
       vars:
         prometheus_retention_days: 30
-        alertmanager_slack_channel: "#stellaratlas-alerts"
+        alertmanager_slack_channel: "#stellarindex-alerts"
         # vault: alertmanager_pagerduty_key, alertmanager_slack_webhook_url
-    stellaratlas_api:        { hosts: { ... } }
-    stellaratlas_aggregator: { hosts: { ... } }
-    stellaratlas_indexer:    { hosts: { ... } }
+    stellarindex_api:        { hosts: { ... } }
+    stellarindex_aggregator: { hosts: { ... } }
+    stellarindex_indexer:    { hosts: { ... } }
     haproxy_lb:             { hosts: { ... } }
     redis_cluster:          { hosts: { ... } }
     postgres_cluster:       { hosts: { ... } }

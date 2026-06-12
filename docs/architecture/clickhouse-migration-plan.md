@@ -286,7 +286,7 @@ re-derivable from ClickHouse ← galexie, so this is safe.
 - **Remove:** `internal/sources/sorobanevents/*` (the Postgres landing-zone
   writer/reconstruct), `internal/storage/timescale/soroban_events.go` +
   `topic_samples.go`, the `backfill -source soroban-events` pseudo-source
-  in `cmd/stellaratlas-ops/backfill.go`.
+  in `cmd/stellarindex-ops/backfill.go`.
 - **Remove (this session's now-superseded recovery tooling):** the Postgres
   `ledger_ingest_log.go` + `census_backfill` (the census *logic* moves to
   the CH `ledgers` populate path), and the soroban_events-specific arms of

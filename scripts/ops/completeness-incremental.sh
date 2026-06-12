@@ -13,18 +13,18 @@
 # Healthchecks.io) surface it — the repair (ch-rebuild -write over that range)
 # stays a deliberate, reviewed action, never automatic.
 #
-# Installed as stellaratlas-completeness.service, fired hourly by
-# stellaratlas-completeness.timer. A full genesis→tip sweep (catches the rarer
+# Installed as stellarindex-completeness.service, fired hourly by
+# stellarindex-completeness.timer. A full genesis→tip sweep (catches the rarer
 # case where OLD data changed underneath us) is a separate periodic/manual run:
-#   stellaratlas-ops compute-completeness -config /etc/stellaratlas.toml -ch
+#   stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch
 set -uo pipefail
 set -a
-. /etc/default/stellaratlas-ops
+. /etc/default/stellarindex-ops
 set +a
 
-PSQL=(psql "$STELLARATLAS_POSTGRES_DSN" -tAc)
-OPS=/usr/local/bin/stellaratlas-ops
-CFG=/etc/stellaratlas.toml
+PSQL=(psql "$STELLARINDEX_POSTGRES_DSN" -tAc)
+OPS=/usr/local/bin/stellarindex-ops
+CFG=/etc/stellarindex.toml
 
 # from = lowest verified watermark across real sources (exclude the system
 # "recognition" pseudo-row). 0 (no snapshots yet, first run) => full verify.

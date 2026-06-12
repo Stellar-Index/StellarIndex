@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_timescale_connections_saturated`
+# Runbook — `stellarindex_timescale_connections_saturated`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellaratlas_timescale_connections_saturated` |
+| Alert | `stellarindex_timescale_connections_saturated` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Typical MTTR | 15–60 min |

@@ -1,7 +1,7 @@
 package statsflush
 
 import (
-	"github.com/StellarAtlas/stellar-atlas/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 )
 
 // stubStatsSource is a deterministic StatsSource for tests. The

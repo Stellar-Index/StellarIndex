@@ -5,7 +5,7 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `stellaratlas_price_divergence_warning` / `_critical`
+# Runbook — `stellarindex_price_divergence_warning` / `_critical`
 
 ## At a glance
 
@@ -22,7 +22,7 @@ severity: P2
 - `flags.divergence_warning = true` on `/v1/price` responses for the
   affected asset, driven by a `divergence_observations` row with
   `status = 'firing'` (`|delta_pct| > 5` warning / `> 10` critical).
-  There are no `stellaratlas_our_price` / `stellaratlas_reference_price`
+  There are no `stellarindex_our_price` / `stellarindex_reference_price`
   Prometheus gauges — the per-tick deltas live in the
   `divergence_observations` hypertable (migration 0019), and the
   boolean flag is the public surface.
@@ -34,7 +34,7 @@ severity: P2
 
 ```sh
 # Which asset + reference are firing right now, and by how much?
-psql -d stellaratlas -c \
+psql -d stellarindex -c \
   "SELECT asset_id, quote_id, reference, our_price, ref_price, delta_pct, observed_at
    FROM divergence_observations
    WHERE status = 'firing'
@@ -47,7 +47,7 @@ curl -s 'http://localhost:3000/v1/price?asset=native&quote=fiat:USD'
 curl -s 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd'
 
 # What sources are contributing to our aggregate for this asset?
-psql -d stellaratlas -c \
+psql -d stellarindex -c \
   "SELECT source, count(*) AS trades, max(ts) AS latest
    FROM trades
    WHERE (base_asset IN ('native', 'crypto:XLM')
@@ -150,7 +150,7 @@ psql -d stellaratlas -c \
 ## Changelog
 
 - 2026-06-12 — F-1330: rewrite diagnosis to executable form — there
-  are no `stellaratlas_our_price`/`_reference_price` gauges (deltas
+  are no `stellarindex_our_price`/`_reference_price` gauges (deltas
   live in `divergence_observations`, mig 0019); API port is :3000;
   XLM is `native`; trades columns are `ts`/`base_asset`/`quote_asset`.
 - 2026-04-23 — initial draft. Lays out the "order of magnitude"

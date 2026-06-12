@@ -1,10 +1,10 @@
 // API client for the dashboard. Every request includes
 // `credentials: 'include'` so the host-only / parent-domain
 // session cookie set by GET /v1/auth/callback rides along on
-// XHRs to api.stellaratlas.xyz.
+// XHRs to api.stellarindex.io.
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
 export class ApiError extends Error {
   status: number;

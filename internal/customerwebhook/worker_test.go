@@ -15,10 +15,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/customerwebhook"
-	"github.com/StellarAtlas/stellar-atlas/internal/obs"
-	"github.com/StellarAtlas/stellar-atlas/internal/obstest"
-	"github.com/StellarAtlas/stellar-atlas/internal/platform"
+	"github.com/StellarIndex/stellar-index/internal/customerwebhook"
+	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/StellarIndex/stellar-index/internal/obstest"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // fakeStore implements the worker's narrow DeliveryStore
@@ -131,8 +131,8 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 		gotBody      []byte
 	)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotSignature = r.Header.Get("X-StellarAtlas-Signature")
-		gotEventHdr = r.Header.Get("X-StellarAtlas-Event")
+		gotSignature = r.Header.Get("X-StellarIndex-Signature")
+		gotEventHdr = r.Header.Get("X-StellarIndex-Event")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -322,7 +322,7 @@ var _ = errors.Is
 // TestWorker_DeliveryDurationMetricRecorded pins the wave-88
 // (2026-05-13) latency-histogram wiring: a successful delivery
 // produces a sample on
-// `stellaratlas_customer_webhook_delivery_duration_seconds`
+// `stellarindex_customer_webhook_delivery_duration_seconds`
 // labelled `outcome="delivered"`. Without this test, a future
 // refactor could silently delete the timing call without any
 // signal — the existing TestWorker_DeliversOn2xx asserts the

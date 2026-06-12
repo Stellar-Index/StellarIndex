@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarAtlas/stellar-atlas/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // buildPairMap builds a small test pair map. XLMUSDT and BTCUSDT —
