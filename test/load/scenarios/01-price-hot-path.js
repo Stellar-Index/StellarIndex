@@ -10,7 +10,7 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Trend } from 'k6/metrics';
 import { baseUrl, headers } from './lib/env.js';
-import { pickWeighted } from './lib/pairs.js';
+import { pickWeighted, enc } from './lib/pairs.js';
 import { sla, rampingArrivalRate } from './lib/thresholds.js';
 import { warmPriceCache, tlsWarmup } from './lib/warmup.js';
 
@@ -39,7 +39,7 @@ export default function () {
   const useTip = Math.random() < 0.15;
   const path = useTip ? 'price/tip' : 'price';
   const r = http.get(
-    `${baseUrl}/${path}?asset=${pair.asset}&quote=${pair.quote}`,
+    `${baseUrl}/${path}?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
     { headers, tags: { endpoint: 'price' } },
   );
   priceLatency.add(r.timings.duration);

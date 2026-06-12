@@ -23,7 +23,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { baseUrl, headers } from './lib/env.js';
-import { pickWeighted } from './lib/pairs.js';
+import { pickWeighted, enc } from './lib/pairs.js';
 import { sla } from './lib/thresholds.js';
 import { silenceForRun, clearSilence } from './lib/alertmanager.js';
 import { tlsWarmup, warmPriceCache } from './lib/warmup.js';
@@ -66,7 +66,7 @@ export function teardown(data) {
 export default function () {
   const pair = pickWeighted();
   const r = http.get(
-    `${baseUrl}/price?asset=${pair.asset}&quote=${pair.quote}`,
+    `${baseUrl}/price?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
     { headers, tags: { endpoint: 'price' } },
   );
   check(r, {

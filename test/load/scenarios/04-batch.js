@@ -39,9 +39,18 @@ export function setup() {
   }
 }
 
+// POST /v1/price/batch decodes {"asset_ids": [...], "quote": "..."}
+// with DisallowUnknownFields (handlePriceBatchPost, price.go) — ONE
+// quote applies to every asset_id. The pre-G22-01 body shape was
+// {"pairs":[{asset,quote}]}, which the strict decoder 400s on. We
+// build a flat asset_ids list and pin a single fiat:USD quote (no
+// asset in the fixture equals fiat:USD, so no identity-400 aborts
+// the batch).
+const BATCH_QUOTE = 'fiat:USD';
+
 export default function () {
   // Re-pick with replacement to fill BATCH_SIZE; assets will repeat
-  // across iterations but a single batch contains distinct assets.
+  // across iterations but the handler de-dupes server-side.
   const picks = pickN(Math.min(BATCH_SIZE, PAIRS.length));
   const fill = [];
   while (fill.length + picks.length < BATCH_SIZE) {
@@ -50,7 +59,8 @@ export default function () {
   const all = [...picks, ...fill];
 
   const body = JSON.stringify({
-    pairs: all.map((p) => ({ asset: p.asset, quote: p.quote })),
+    asset_ids: all.map((p) => p.asset),
+    quote: BATCH_QUOTE,
   });
 
   const r = http.post(`${baseUrl}/price/batch`, body, {

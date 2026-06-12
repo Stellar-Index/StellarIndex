@@ -1,13 +1,17 @@
 // Scenario 07 — catalogue browse (showcase hot path).
 //
 // Models a user browsing the showcase explorer at ratesengine.net:
-// they hit /coins → click into /coins/{slug} (which fans out to
+// they hit /assets → click into an asset (which fans out to
 // /v1/issuers/{g} + /v1/changes/{type}/{id}) → tab over to
 // /markets and /issuers, with /diagnostics polling in the
 // background.
 //
+// NOTE (G22-01): the index page is /v1/assets. /v1/coins was
+// retired in rc.48 (now 404) — routing ~30% of this scenario's
+// traffic there measured the 404 path, not the catalogue hot path.
+//
 // Pass criteria:
-//   - p95 < 200 ms across {coins, issuers, issuer-detail, cursors}
+//   - p95 < 200 ms across {assets, issuers, issuer-detail, cursors}
 //   - p95 < 300 ms on /v1/markets (GROUP BY across 14-day window)
 //   - p99 < 500 ms on the lookups, < 1000 ms on /v1/markets
 //   - error rate < 0.1 %
@@ -18,8 +22,8 @@
 //
 // Traffic shape modelled on real showcase telemetry (estimated
 // pre-launch; tune post-launch as real traffic teaches us):
-//   30% /v1/coins                    — index page, cached
-//   25% /v1/issuers/{g}              — coin detail issuer card
+//   30% /v1/assets                   — index page, cached
+//   25% /v1/issuers/{g}              — asset detail issuer card
 //   20% /v1/markets                  — markets page
 //   15% /v1/issuers                  — issuers index
 //   10% /v1/diagnostics/cursors      — operator polling
@@ -56,7 +60,7 @@ export function setup() {
 
 function pickEndpoint() {
   const r = Math.random() * 100;
-  if (r < 30) return 'coins';
+  if (r < 30) return 'assets';
   if (r < 55) return 'issuer-detail';
   if (r < 75) return 'markets';
   if (r < 90) return 'issuers';
@@ -68,10 +72,10 @@ export default function () {
   let r;
 
   switch (ep) {
-    case 'coins':
-      r = http.get(`${baseUrl}/coins?limit=100`, {
+    case 'assets':
+      r = http.get(`${baseUrl}/assets?limit=100`, {
         headers,
-        tags: { endpoint: 'coins' },
+        tags: { endpoint: 'assets' },
       });
       break;
 

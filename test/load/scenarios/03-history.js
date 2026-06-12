@@ -12,12 +12,15 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { baseUrl, headers } from './lib/env.js';
-import { pickWeighted } from './lib/pairs.js';
+import { pickWeighted, enc } from './lib/pairs.js';
 import { sla, rampingArrivalRate } from './lib/thresholds.js';
 import { tlsWarmup } from './lib/warmup.js';
 
+// /v1/history takes base/asset + quote + a time range (from/to or
+// the `window=` shorthand) + `granularity=` (NOT `resolution=` — the
+// handler reads r.URL.Query().Get("granularity"), history.go:526).
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d'];
-const RESOLUTIONS = ['1m', '5m', '1h', '1d'];
+const GRANULARITIES = ['1m', '5m', '1h', '1d'];
 
 export const options = {
   scenarios: {
@@ -42,15 +45,15 @@ export default function () {
 
   if (sinceInception) {
     const r = http.get(
-      `${baseUrl}/history/since-inception?asset=${pair.asset}&quote=${pair.quote}`,
+      `${baseUrl}/history/since-inception?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
       { headers, tags: { endpoint: 'since-inception' } },
     );
     check(r, { 'status 200': (r) => r.status === 200 });
   } else {
     const window = WINDOWS[Math.floor(Math.random() * WINDOWS.length)];
-    const resolution = RESOLUTIONS[Math.floor(Math.random() * RESOLUTIONS.length)];
+    const granularity = GRANULARITIES[Math.floor(Math.random() * GRANULARITIES.length)];
     const r = http.get(
-      `${baseUrl}/history?asset=${pair.asset}&quote=${pair.quote}&window=${window}&resolution=${resolution}`,
+      `${baseUrl}/history?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}&window=${window}&granularity=${granularity}`,
       { headers, tags: { endpoint: 'history' } },
     );
     check(r, { 'status 200': (r) => r.status === 200 });

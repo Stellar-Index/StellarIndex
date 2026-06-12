@@ -19,6 +19,7 @@ flips — those need infrastructure beyond `make dev`.
 | `scenarios/01-redis-down.sh` | rate-limit fail-open + Redis-fed read paths | API `/v1/healthz` returns 200/503 throughout; recovers within 30s |
 | `scenarios/02-timescale-down.sh` | DB-backed read paths fail loudly | `/v1/markets` 5xx OR Redis-cached body; never silent-empty 200 |
 | `scenarios/03-redis-network-partition.sh` | go-redis cold-conn timeout vs connection-refused | ≤ 1 transient sample failure during 30s partition; clean recovery |
+| `scenarios/04-redis-misconf.sh` | Redis MISCONF (stop-writes-on-bgsave-error) → F-0039 cascade | cache-write GET routes 503 + Retry-After:30 (NOT 500); `/v1/price` stays 200 stale; signup fail-CLOSED post-30s-dwell; all routes recover within 30s of heal |
 
 ## Wave 2 scenarios (deferred)
 
@@ -42,8 +43,11 @@ Pre-flight: bring up the dev stack and run the API against it:
 make dev                      # Postgres + Redis + MinIO containers
 make db-migrate-up
 go build -o bin/ratesengine-api ./cmd/ratesengine-api
-./bin/ratesengine-api -config configs/dev.yaml &
+./bin/ratesengine-api -config configs/example.toml &   # listens on :3000
 ```
+
+(The config is TOML — `configs/example.toml`, whose `listen_addr`
+defaults to `0.0.0.0:3000`. There is no `configs/dev.yaml`.)
 
 Run the suite:
 
@@ -54,8 +58,8 @@ Run the suite:
 # A subset by prefix:
 ./test/chaos/run.sh 01 03
 
-# Override target (default http://localhost:8080):
-CHAOS_TARGET=http://staging.internal:8080 ./test/chaos/run.sh
+# Override target (default http://localhost:3000):
+CHAOS_TARGET=http://staging.internal:3000 ./test/chaos/run.sh
 ```
 
 ## Production safety

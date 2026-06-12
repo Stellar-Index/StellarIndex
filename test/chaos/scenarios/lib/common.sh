@@ -19,8 +19,10 @@ set -euo pipefail
 
 # CHAOS_TARGET is the API base URL the scenario hits to verify
 # behaviour. Defaults to the local docker-compose dev stack — the
-# only safe surface for chaos by default.
-CHAOS_TARGET="${CHAOS_TARGET:-http://localhost:8080}"
+# only safe surface for chaos by default. Port 3000 matches the
+# API's listen_addr default (configs/example.toml); the dev
+# compose publishes the API on the same port.
+CHAOS_TARGET="${CHAOS_TARGET:-http://localhost:3000}"
 
 # CHAOS_REPORT_DIR is where each scenario appends its row to a
 # shared run report.  Defaulted to a deterministic path so a CI run
@@ -100,11 +102,18 @@ scenario_end() {
 
 # http_status URL [TIMEOUT_SEC] → echoes 3-digit HTTP status. 000 on
 # connect/timeout failure (curl's convention).
+#
+# curl's --write-out '%{http_code}' already emits "000" to stdout on
+# a connect/timeout failure, so a trailing `|| echo "000"` would
+# DOUBLE it to "000000" (then every status comparison against "000"
+# fails and the scenario misreads a down API as some other state).
+# Swallow curl's non-zero exit with `|| true` instead — the "000"
+# it already printed is the signal.
 http_status() {
     local url="$1"
     local timeout="${2:-3}"
     curl --silent --output /dev/null --write-out '%{http_code}' \
-         --max-time "$timeout" "$url" || echo "000"
+         --max-time "$timeout" "$url" || true
 }
 
 # wait_for_status URL EXPECT_CODE [DEADLINE_SEC] [POLL_SEC]

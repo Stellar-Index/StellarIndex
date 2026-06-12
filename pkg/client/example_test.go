@@ -320,7 +320,7 @@ func ExampleClient_Status() {
 // ExampleClient_NetworkStats demonstrates fetching the home-page
 // aggregate snapshot — total 24h USD volume, active markets count,
 // indexed-assets count, latest live ledger, and source-count
-// summary. One round trip replaces fan-out across /v1/coins,
+// summary. One round trip replaces fan-out across /v1/assets,
 // /v1/markets, /v1/sources, /v1/diagnostics/cursors.
 //
 // `Volume24hUSD` is `*string` per ADR-0003 (raw cents can exceed
@@ -1114,10 +1114,11 @@ func ExampleClient_History() {
 	// kraken 11:30:05 @ 0.16480
 }
 
-// ExampleClient_Currency demonstrates fetching one fiat
-// currency's full detail — rate vs USD plus 24h/7d change,
-// 7-day history strip, and cross-rates against every other
-// listed currency. Backs the explorer's `/currencies/{ticker}
+// (The former ExampleClient_Currency example was removed: the
+// standalone `/v1/currencies/{ticker}` route was retired and folded
+// into `/v1/assets` (asset_class=fiat), and the SDK exposes no
+// Currency method. The leftover was a truncated, dangling comment
+// with no function body — see G22-09.)
 
 // ExampleClient_Cursors demonstrates the per-source ingest
 // cursor surface — which sources are caught up, which are
@@ -1253,7 +1254,14 @@ func ExampleClient_Pair() {
 // `/v1/price` provides via the closed-bucket VWAP) for lower
 // latency — most callers driving live UIs want this. The
 // `?window_seconds=` knob picks how recent a sample to consider
-// "fresh"; default 30 s matches the Freighter freshness target.
+// "fresh" (clamped to [1, 60]); it defaults to 5 s.
+//
+// The response's `price_type` reflects which path produced the
+// snapshot: "vwap" when the rolling window had trades, or
+// "last_trade" when the handler fell back to the most-recent
+// observation. It is NOT the literal string "tip" — that was never
+// a value the server emits (the surface is named "tip", the
+// price_type is not).
 func ExampleClient_PriceTip() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1262,9 +1270,9 @@ func ExampleClient_PriceTip() {
 				"asset_id": "native",
 				"quote": "fiat:USD",
 				"price": "0.16475",
-				"price_type": "tip",
+				"price_type": "vwap",
 				"observed_at": "2026-05-10T12:00:42Z",
-				"window_seconds": 30
+				"window_seconds": 5
 			},
 			"as_of": "2026-05-10T12:00:42Z",
 			"sources": ["binance"],
@@ -1277,16 +1285,16 @@ func ExampleClient_PriceTip() {
 	resp, err := c.PriceTip(context.Background(), client.PriceTipQuery{
 		Asset:         "native",
 		Quote:         "fiat:USD",
-		WindowSeconds: 30,
+		WindowSeconds: 5,
 	})
 	if err != nil {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Printf("XLM/USD tip: %s (window: %ds)\n",
-		resp.Data.Price, resp.Data.WindowSeconds)
+	fmt.Printf("XLM/USD tip: %s (type: %s, window: %ds)\n",
+		resp.Data.Price, resp.Data.PriceType, resp.Data.WindowSeconds)
 
-	// Output: XLM/USD tip: 0.16475 (window: 30s)
+	// Output: XLM/USD tip: 0.16475 (type: vwap, window: 5s)
 }
 
 // ExampleClient_Sources demonstrates listing the source registry —

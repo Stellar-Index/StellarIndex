@@ -20,7 +20,7 @@ import http from 'k6/http';
 import { check } from 'k6';
 import { Trend } from 'k6/metrics';
 import { baseUrl, apiKey } from './lib/env.js';
-import { pickWeighted } from './lib/pairs.js';
+import { pickWeighted, enc } from './lib/pairs.js';
 import { sla } from './lib/thresholds.js';
 
 const firstEvent = new Trend('sse_first_event_ms');
@@ -44,7 +44,7 @@ export const options = {
 
 export default function () {
   const pair = pickWeighted();
-  const url = `${baseUrl}/observations/stream?asset=${pair.asset}&quote=${pair.quote}`;
+  const url = `${baseUrl}/observations/stream?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`;
   const start = Date.now();
   let firstSeen = false;
 

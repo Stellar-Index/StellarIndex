@@ -15,10 +15,14 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { baseUrl, headers } from './lib/env.js';
-import { pickWeighted } from './lib/pairs.js';
+import { pickWeighted, enc } from './lib/pairs.js';
 import { sla, rampingArrivalRate } from './lib/thresholds.js';
 import { tlsWarmup } from './lib/warmup.js';
 
+// /v1/vwap + /v1/twap take base/asset + quote + a time range. They
+// do NOT parse `resolution=`. The range can be given as from/to OR
+// the `window=` shorthand (parseFromTo in ohlc.go: `window=24h` ==
+// `from=to-24h`), which is what we use here.
 const WINDOWS = ['5m', '15m', '1h', '24h'];
 
 export const options = {
@@ -44,7 +48,7 @@ export default function () {
   const useTwap = Math.random() < 0.4;
   const path = useTwap ? 'twap' : 'vwap';
   const r = http.get(
-    `${baseUrl}/${path}?asset=${pair.asset}&quote=${pair.quote}&window=${window}`,
+    `${baseUrl}/${path}?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}&window=${window}`,
     { headers, tags: { endpoint: path } },
   );
   check(r, {

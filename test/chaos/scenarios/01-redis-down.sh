@@ -17,7 +17,7 @@
 #   - internal/api/middleware/ratelimit (fail-open behaviour)
 #
 # Assumes the docker-compose dev stack (`make dev`) is running and
-# the API is reachable at $CHAOS_TARGET (default http://localhost:8080).
+# the API is reachable at $CHAOS_TARGET (default http://localhost:3000).
 
 set -euo pipefail
 

@@ -235,11 +235,16 @@ heal_redis_misconf
 # Give the API time to observe the healed Redis. The next cache
 # write will succeed and the 503 surface will revert.
 assert_recovers_within "$ORACLE_URL" "200" 30
-assert_recovers_within "$VWAP_URL"   "200" 30 || \
-    log "/v1/vwap may legitimately remain 404 no-trades; checking it's not 503"
-# Lenient final assertion: VWAP can be 200 or 404 depending on data
-# state. The contract is "not 503"; a 5xx after heal is a stuck-state
-# regression.
+# Lenient final assertion for /v1/vwap: on a fresh stack the pair may
+# legitimately have NO trades and return 404 — that is NOT a
+# regression (the contract here is "not stuck at 503"). The previous
+# code used assert_recovers_within, which calls die()→exit on a
+# non-200, so the trailing `|| log ...` NEVER fired and a no-trades
+# 404 produced a FALSE regression verdict (G22-05). Use a non-fatal
+# wait that simply gives recovery time, then let the 200|404
+# case-check below be the real assertion.
+wait_for_status "$VWAP_URL" "200" 30 || \
+    log "/v1/vwap did not reach 200 within 30s (may be legitimate no-trades 404)"
 post_heal_vwap="$(http_status "$VWAP_URL" 5)"
 case "$post_heal_vwap" in
     200|404) log "/v1/vwap post-heal: $post_heal_vwap (acceptable)" ;;

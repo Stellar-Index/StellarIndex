@@ -8,7 +8,7 @@
 # Usage:
 #   ./test/chaos/run.sh                  # run all scenarios
 #   ./test/chaos/run.sh 01 03            # run a subset (matches by prefix)
-#   CHAOS_TARGET=http://staging:8080 \
+#   CHAOS_TARGET=http://staging:3000 \
 #     ./test/chaos/run.sh                # override target
 #
 # Exits non-zero if any scenario fails. CI consumers can rely on the
@@ -22,7 +22,7 @@ SCENARIO_DIR="$SCRIPT_DIR/scenarios"
 # Production-safety guard. Same shape as the lib/common.sh check, but
 # we duplicate it here so the runner refuses to even iterate scenarios
 # against a prod-shaped target.
-case "${CHAOS_TARGET:-http://localhost:8080}" in
+case "${CHAOS_TARGET:-http://localhost:3000}" in
     *production*|*api.ratesengine.net*|*prod.*)
         echo "FATAL: CHAOS_TARGET=$CHAOS_TARGET looks like production. Refusing." >&2
         exit 2
@@ -52,9 +52,13 @@ if [ "${#selected[@]}" -eq 0 ]; then
     exit 2
 fi
 
-# Run each in sequence. Failures DO halt the run — the per-scenario
-# trap heals state, so a "fail-fast on first failure" run is
-# expected to leave the docker stack healthy.
+# Run each in sequence. A scenario failure does NOT halt the run —
+# the loop records the failure and continues to the next scenario
+# (the harness is more useful as "run all and tell me everything
+# that's broken" than "stop at first fail"). Each scenario's own
+# EXIT trap heals the state it perturbed, so the docker stack stays
+# healthy between scenarios. The overall run exits non-zero iff any
+# scenario failed (see the summary block below).
 total=0
 passed=0
 failed_names=()

@@ -29,13 +29,19 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { baseUrl, headers } from './lib/env.js';
-import { pickWeighted, pickN } from './lib/pairs.js';
+import { pickWeighted, pickN, enc } from './lib/pairs.js';
 import { sla, rampingArrivalRate } from './lib/thresholds.js';
 import { tlsWarmup, warmPriceCache } from './lib/warmup.js';
 
 const HISTORY_WINDOWS = ['1h', '6h', '24h', '7d'];
-const HISTORY_RESOLUTIONS = ['5m', '1h', '1d'];
+// /v1/history reads `granularity=`, not `resolution=` (history.go).
+const HISTORY_GRANULARITIES = ['5m', '1h', '1d'];
 const VWAP_WINDOWS = ['5m', '15m', '1h', '24h'];
+
+// Single quote pinned for the batch sub-mix — POST /v1/price/batch
+// applies one quote to every asset_id (price.go). fiat:USD is not in
+// the asset fixture, so no identity-400 aborts the batch.
+const BATCH_QUOTE = 'fiat:USD';
 
 export const options = {
   scenarios: {
@@ -75,14 +81,14 @@ export default function () {
   switch (ep) {
     case 'price':
       r = http.get(
-        `${baseUrl}/price?asset=${pair.asset}&quote=${pair.quote}`,
+        `${baseUrl}/price?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
         { headers, tags: { endpoint: 'price' } },
       );
       break;
 
     case 'price-tip':
       r = http.get(
-        `${baseUrl}/price/tip?asset=${pair.asset}&quote=${pair.quote}`,
+        `${baseUrl}/price/tip?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
         { headers, tags: { endpoint: 'price' } },
       );
       break;
@@ -90,7 +96,8 @@ export default function () {
     case 'batch': {
       const picks = pickN(10);
       const body = JSON.stringify({
-        pairs: picks.map((p) => ({ asset: p.asset, quote: p.quote })),
+        asset_ids: picks.map((p) => p.asset),
+        quote: BATCH_QUOTE,
       });
       r = http.post(`${baseUrl}/price/batch`, body, {
         headers: { ...headers, 'Content-Type': 'application/json' },
@@ -102,7 +109,7 @@ export default function () {
     case 'vwap': {
       const w = VWAP_WINDOWS[Math.floor(Math.random() * VWAP_WINDOWS.length)];
       r = http.get(
-        `${baseUrl}/vwap?asset=${pair.asset}&quote=${pair.quote}&window=${w}`,
+        `${baseUrl}/vwap?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}&window=${w}`,
         { headers, tags: { endpoint: 'vwap' } },
       );
       break;
@@ -111,7 +118,7 @@ export default function () {
     case 'twap': {
       const w = VWAP_WINDOWS[Math.floor(Math.random() * VWAP_WINDOWS.length)];
       r = http.get(
-        `${baseUrl}/twap?asset=${pair.asset}&quote=${pair.quote}&window=${w}`,
+        `${baseUrl}/twap?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}&window=${w}`,
         { headers, tags: { endpoint: 'twap' } },
       );
       break;
@@ -119,9 +126,9 @@ export default function () {
 
     case 'history': {
       const w = HISTORY_WINDOWS[Math.floor(Math.random() * HISTORY_WINDOWS.length)];
-      const res = HISTORY_RESOLUTIONS[Math.floor(Math.random() * HISTORY_RESOLUTIONS.length)];
+      const g = HISTORY_GRANULARITIES[Math.floor(Math.random() * HISTORY_GRANULARITIES.length)];
       r = http.get(
-        `${baseUrl}/history?asset=${pair.asset}&quote=${pair.quote}&window=${w}&resolution=${res}`,
+        `${baseUrl}/history?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}&window=${w}&granularity=${g}`,
         { headers, tags: { endpoint: 'history' } },
       );
       break;
@@ -133,14 +140,16 @@ export default function () {
       // Holding open inside this iteration would block all VUs;
       // instead we measure the connection-accept latency only.
       r = http.get(
-        `${baseUrl}/observations/stream?asset=${pair.asset}&quote=${pair.quote}`,
+        `${baseUrl}/observations/stream?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
         { headers: { ...headers, 'Accept': 'text/event-stream' }, tags: { endpoint: 'stream' }, timeout: '5s' },
       );
       break;
 
     case 'oracle-lastprice':
+      // /v1/oracle/lastprice (SEP-40) reads `asset` only; quote is
+      // implicit USD. Extra quote= is ignored harmlessly.
       r = http.get(
-        `${baseUrl}/oracle/lastprice?asset=${pair.asset}&quote=${pair.quote}`,
+        `${baseUrl}/oracle/lastprice?asset=${enc(pair.asset)}`,
         { headers, tags: { endpoint: 'oracle' } },
       );
       break;

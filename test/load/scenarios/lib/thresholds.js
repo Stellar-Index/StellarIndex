@@ -48,7 +48,7 @@ export const sla = {
     // chunk window so we allow a slightly looser p99 than
     // single-key lookups; everything else stays under the
     // standard 200 ms / 500 ms gate.
-    'http_req_duration{endpoint:coins}':              ['p(95)<200', 'p(99)<500'],
+    'http_req_duration{endpoint:assets}':             ['p(95)<200', 'p(99)<500'],
     'http_req_duration{endpoint:issuers}':            ['p(95)<200', 'p(99)<500'],
     'http_req_duration{endpoint:issuer-detail}':      ['p(95)<200', 'p(99)<500'],
     'http_req_duration{endpoint:markets}':            ['p(95)<300', 'p(99)<1000'],

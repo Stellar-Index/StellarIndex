@@ -10,11 +10,11 @@
 
 import http from 'k6/http';
 import { baseUrl, headers } from './env.js';
-import { PAIRS } from './pairs.js';
+import { PAIRS, enc } from './pairs.js';
 
 export function warmPriceCache() {
   for (const p of PAIRS) {
-    http.get(`${baseUrl}/price?asset=${p.asset}&quote=${p.quote}`, {
+    http.get(`${baseUrl}/price?asset=${enc(p.asset)}&quote=${enc(p.quote)}`, {
       headers,
       tags: { endpoint: 'warmup' },
     });
