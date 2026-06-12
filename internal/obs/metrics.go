@@ -24,7 +24,12 @@ func init() {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 
-	// Register every application metric.
+	// Register every application metric (split into a helper to keep
+	// init() under the funlen ceiling as the metric set grows).
+	registerAppMetrics()
+}
+
+func registerAppMetrics() {
 	Registry.MustRegister(
 		HTTPRequestsTotal,
 		HTTPRequestDuration,
@@ -100,6 +105,8 @@ func init() {
 
 		StripePlatformSyncErrorsTotal,
 
+		ChLiveSinkLedgersTotal,
+
 		MarketsSkippedRowsTotal,
 
 		PostgresPingTotal,
@@ -135,6 +142,9 @@ func init() {
 	}
 	for _, op := range []string{"get_account", "upsert_subscription", "account_update", "list_keys", "key_update"} {
 		StripePlatformSyncErrorsTotal.WithLabelValues(op)
+	}
+	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
+		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -1492,6 +1502,33 @@ var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 		Help: "Stripe webhook platform-store side-effect failures, labelled by operation. Non-zero = bridge degraded; customer dashboard state drifting from Stripe billing state.",
 	},
 	[]string{"operation"},
+)
+
+// ChLiveSinkLedgersTotal — count of ledgers processed by the
+// ClickHouse real-time dual-sink (ADR-0034 #18), labelled by
+// `outcome`:
+//   - "written"  — durably flushed to ClickHouse (post-Flush).
+//   - "buffered" — accepted into the in-memory buffer (pre-flush);
+//     written - buffered ≈ the unflushed backlog and is the
+//     early-warning signal of a CH write stall.
+//   - "dropped"  — bounded-dropped: a full channel (live ingest
+//     out-paced the worker) or a full Sink buffer during a
+//     sustained CH outage (G12-01). The ch-live-catchup gap-scan
+//     timer heals dropped ledgers; a steady non-zero climb means
+//     the live edge of the lake is degrading.
+//   - "errored"  — a failed Add / Flush operation. A climb is a
+//     CH write-path fault (down / wedged / disk-full).
+//
+// The indexer's periodic stats goroutine samples the LiveSink's
+// monotonic counters and emits the per-tick DELTA. Pre-seeded with
+// all four label values so the series exist at boot when the sink
+// is enabled.
+var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ratesengine_ch_live_sink_ledgers_total",
+		Help: "Ledgers processed by the ClickHouse real-time dual-sink, labelled by outcome (written|buffered|dropped|errored).",
+	},
+	[]string{"outcome"},
 )
 
 // MarketsSkippedRowsTotal — count of trades rows the /v1/markets

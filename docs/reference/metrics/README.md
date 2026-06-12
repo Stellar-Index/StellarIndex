@@ -444,6 +444,34 @@ counts to verify the closed-bucket fanout path: steady publishes
 with zero subscribers means clients aren't connecting; zero
 publishes with active subscribers means the producer is starved.
 
+### `ratesengine_ch_live_sink_ledgers_total`
+
+Counter, label `outcome` (`written` | `buffered` | `dropped` |
+`errored`).
+
+Ledgers processed by the ClickHouse real-time dual-sink (ADR-0034
+#18), the inline non-blocking fan-out that keeps the Tier-1 lake
+within seconds of the chain. Emitted only when the dual-sink is
+enabled (`storage.clickhouse_live_sink`); the indexer's periodic
+stats goroutine samples the `LiveSink`'s monotonic counters and adds
+the per-tick delta.
+
+- `written` — ledgers DURABLY flushed to ClickHouse (post-`Flush`).
+- `buffered` — ledgers accepted into the in-memory buffer
+  (pre-flush). `buffered − written` ≈ the unflushed backlog; a
+  growing gap is the early-warning signal of a CH write stall
+  before any drop happens.
+- `dropped` — bounded-dropped ledgers: a full worker channel (live
+  ingest out-paced the worker) or a full Sink buffer during a
+  sustained CH outage (G12-01 cap, default 4096 ledgers). Dropping
+  is deliberately preferred over unbounded heap growth on the
+  shared r1 host; the `ch-live-catchup` gap-scan timer re-fills
+  dropped ledgers and the projector stalls at the hole rather than
+  losing data. A steady non-zero climb means the live edge of the
+  lake is degrading and CH or the host needs attention.
+- `errored` — failed `Add` / `Flush` operations (CH down, wedged,
+  or disk-full). A climb is a CH write-path fault.
+
 ## Oracle layer (indexer binary, reflector + future sources)
 
 ### `ratesengine_oracle_last_update_unix`
@@ -1101,6 +1129,14 @@ any row that increments this counter.
 
 ## Changelog
 
+- 2026-06-12 — added `ratesengine_ch_live_sink_ledgers_total`
+  (`outcome=written|buffered|dropped|errored`), emitted by the
+  indexer's periodic stats goroutine when the ClickHouse real-time
+  dual-sink is enabled. Closes G12-02: the LiveSink counters were
+  previously never exported despite the code comment claiming they
+  were, and `written` was bumped on buffer-enqueue rather than
+  durable flush (now split into `buffered` vs `written`). Pairs
+  with the G12-01 bounded-drop buffer cap (`dropped` outcome).
 - 2026-06-01 — added `ratesengine_markets_skipped_rows_total`
   to surface non-canonical rows in the trades table that the
   /v1/markets scanner is skipping. Closes the 2026-06-01
