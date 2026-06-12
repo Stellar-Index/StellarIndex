@@ -34,19 +34,31 @@ func TestDecoder_Name(t *testing.T) {
 }
 
 func TestDecoder_Matches_pairAndFactoryTopics(t *testing.T) {
+	// Contract-gated (F-1347): topic symbols aren't unique across
+	// protocols, so Matches() requires the emitter to be the canonical
+	// factory (for new_pair) or a REGISTERED pair (for pair events).
 	d := NewDecoder()
+	registered := makeContractStrkey(t, 0x42)
+	d.SeedPair(registered, canonical.Asset{}, canonical.Asset{})
+	foreign := makeContractStrkey(t, 0x77) // not in the registry
+
 	for _, tc := range []struct {
 		name string
 		ev   events.Event
 		want bool
 	}{
-		{"pair swap", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSwap}}, true},
-		{"pair sync", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSync}}, true},
-		{"pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}}, true},
-		{"pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}}, true},
-		{"factory new_pair", events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolNewPair}}, true},
-		{"unrelated topic", events.Event{Topic: []string{TopicSymbolSwap, TopicPrefixPair}}, false},
-		{"empty topic", events.Event{Topic: nil}, false},
+		// Pair events from a REGISTERED pair match.
+		{"registered pair swap", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSwap}, ContractID: registered}, true},
+		{"registered pair sync", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSync}, ContractID: registered}, true},
+		{"registered pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}, ContractID: registered}, true},
+		{"registered pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}, ContractID: registered}, true},
+		// Pair events from an UNREGISTERED contract (topic collision) do NOT.
+		{"foreign pair swap", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSwap}, ContractID: foreign}, false},
+		// new_pair only from the canonical factory contract.
+		{"factory new_pair from factory", events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolNewPair}, ContractID: MainnetFactory}, true},
+		{"new_pair from a foreign contract (injection)", events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolNewPair}, ContractID: foreign}, false},
+		{"unrelated topic", events.Event{Topic: []string{TopicSymbolSwap, TopicPrefixPair}, ContractID: registered}, false},
+		{"empty topic", events.Event{Topic: nil, ContractID: registered}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := d.Matches(tc.ev); got != tc.want {
@@ -75,7 +87,10 @@ func makeNewPairEvent(t *testing.T, token0, token1, pair string) events.Event {
 		TxHash:         "factorytx0",
 		OperationIndex: 0,
 		LedgerClosedAt: "2026-04-23T12:00:00Z",
-		ContractID:     pair,
+		// new_pair is emitted BY the factory, so its ContractID is the
+		// factory address — not the created pair (the pair is carried in
+		// the body). The dispatcher's Matches() gates new_pair on this.
+		ContractID: MainnetFactory,
 	}
 }
 
@@ -232,9 +247,21 @@ func makeSkimEvent(t *testing.T, pair string, amt0, amt1 *big.Int) events.Event 
 
 func TestDecoder_Matches_skimTopic(t *testing.T) {
 	d := NewDecoder()
-	ev := events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSkim}}
-	if !d.Matches(ev) {
-		t.Error("Matches(skim) = false, want true (skim is now classified)")
+	pair := makeContractStrkey(t, 0x42)
+	// Skim from a registered pair matches; from a foreign contract it
+	// does not (F-1347 contract gate).
+	skimFrom := func(c string) events.Event {
+		return events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSkim}, ContractID: c}
+	}
+	if d.Matches(skimFrom(pair)) {
+		t.Error("Matches(skim) = true before the pair is registered, want false")
+	}
+	d.SeedPair(pair, canonical.Asset{}, canonical.Asset{})
+	if !d.Matches(skimFrom(pair)) {
+		t.Error("Matches(skim from registered pair) = false, want true")
+	}
+	if d.Matches(skimFrom(makeContractStrkey(t, 0x99))) {
+		t.Error("Matches(skim from foreign contract) = true, want false")
 	}
 }
 

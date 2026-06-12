@@ -127,13 +127,41 @@ func (d *Decoder) SeedPair(pair string, token0, token1 canonical.Asset) {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Claims any Soroswap pair-
-// contract event (swap/sync/deposit/withdraw) or Soroswap factory
-// new_pair event. Non-trade events match so SeedPair gets a shot at
-// the factory new_pair payload — but Decode returns zero outputs for
-// those.
-func (*Decoder) Matches(ev events.Event) bool {
-	return classify(&ev) != ""
+// Matches implements [dispatcher.Decoder]. Topic symbols are NOT unique
+// across protocols (every AMM emits "swap"/"sync"/"skim", and any
+// contract can emit a `("SoroswapFactory","new_pair")`-shaped event), so
+// matching by topic alone would absorb other protocols' events as
+// Soroswap trades. We gate on CONTRACT IDENTITY:
+//
+//   - factory `new_pair` events match ONLY when emitted by the canonical
+//     Soroswap factory (MainnetFactory). This is the load-bearing gate:
+//     without it a foreign contract could inject a pair→tokens mapping
+//     into the registry and have its own swaps mis-attributed as
+//     Soroswap trades (G6-02 / F-1347).
+//   - pair-contract events (swap/sync/deposit/withdraw/skim) match ONLY
+//     when the emitter is a REGISTERED Soroswap pair. The registry is
+//     seeded from factory new_pair events (live), a startup DB warm, and
+//     the genesis factory walk (`ratesengine-ops seed-soroswap-pairs`),
+//     so a real pair is always present before its events arrive
+//     (chronological: a pair's new_pair precedes its first swap), while
+//     a topic-collision from a non-Soroswap contract is rejected.
+//
+// COVERAGE NOTE: completeness of the pair registry is therefore a hard
+// requirement — an un-seeded real pair would have its events dropped.
+// The swap path already depended on the registry (token resolution), so
+// this only extends the same dependency to skim/deposit/withdraw.
+func (d *Decoder) Matches(ev events.Event) bool {
+	kind := classify(&ev)
+	if kind == "" {
+		return false
+	}
+	if kind == EventNewPair {
+		return ev.ContractID == MainnetFactory
+	}
+	d.mu.RLock()
+	_, known := d.pairTokens[ev.ContractID]
+	d.mu.RUnlock()
+	return known
 }
 
 // Decode implements [dispatcher.Decoder].
