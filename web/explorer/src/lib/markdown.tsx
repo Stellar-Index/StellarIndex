@@ -211,6 +211,30 @@ function renderBlock(b: Block, i: number): React.ReactElement {
   }
 }
 
+// isSafeHref allowlists the URL schemes a markdown link may carry.
+// The corpus is build-time-trusted today, but defence-in-depth: a
+// `[click](javascript:alert(1))` link must never render as a live
+// anchor. We permit absolute http/https/mailto and relative refs
+// (path / anchor / query). Anything else (javascript:, data:,
+// vbscript:, file:, …) is rejected and rendered as plain text.
+function isSafeHref(href: string): boolean {
+  const h = href.trim();
+  if (h === '') return false;
+  // Relative references — no scheme, can't be javascript:.
+  if (/^[/#?]/.test(h) || h.startsWith('./') || h.startsWith('../')) {
+    return true;
+  }
+  // A scheme is everything up to the first ':' (before any /?#).
+  const schemeMatch = h.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (!schemeMatch) {
+    // No scheme and not caught above (e.g. "example.com/x" or a bare
+    // word) — treat as relative, which is harmless.
+    return true;
+  }
+  const scheme = schemeMatch[1]!.toLowerCase();
+  return scheme === 'http' || scheme === 'https' || scheme === 'mailto';
+}
+
 // Inline tokenizer — same shape as MarkdownLite in changelog/page.tsx
 // but kept here so research pages don't depend on changelog code.
 function Inline({ text }: { text: string }) {
@@ -272,7 +296,12 @@ function Inline({ text }: { text: string }) {
               {t.value}
             </code>
           );
-        if (t.kind === 'link')
+        if (t.kind === 'link') {
+          // Reject disallowed schemes (javascript:, data:, …) — render
+          // the label as plain text rather than a live anchor.
+          if (!isSafeHref(t.href)) {
+            return <span key={i}>{t.value}</span>;
+          }
           return (
             <a
               key={i}
@@ -284,6 +313,7 @@ function Inline({ text }: { text: string }) {
               {t.value}
             </a>
           );
+        }
         return <span key={i}>{t.value}</span>;
       })}
     </>
