@@ -262,3 +262,34 @@ func TestGenerateID_PropagatesError(t *testing.T) {
 		t.Errorf("generateID error = %v, want %v", err, want)
 	}
 }
+
+// Regression (2026-06-12): a freshly minted operator key must be USABLE —
+// store.Create marks PermissionsAll and the Redis validator must carry the
+// permission posture onto the Subject. Pre-fix, Create left the closed
+// posture (PermissionsAll=false) AND Lookup dropped the fields entirely,
+// so every mint-key'd key 403'd on all endpoints ("this key has no
+// permission entries"; 210k/210k k6 requests failed).
+func TestRedisStore_CreateThenLookup_isFullAccess(t *testing.T) {
+	store, mr, now := newTestStore(t)
+	_, plaintext, err := store.Create(context.Background(), CreateAPIKeyRequest{
+		Identifier: "mint-roundtrip",
+		Label:      "regression",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	v := NewRedisAPIKeyValidator(rdb)
+	v.now = func() time.Time { return now }
+	sub, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if !sub.AllowAllPermissions {
+		t.Fatal("AllowAllPermissions = false — a freshly minted key would 403 every endpoint (closed posture)")
+	}
+	if len(sub.AllowPermissions) != 0 || len(sub.DenyPermissions) != 0 {
+		t.Fatalf("unexpected permission entries on a full-access mint: %+v / %+v", sub.AllowPermissions, sub.DenyPermissions)
+	}
+}

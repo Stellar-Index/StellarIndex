@@ -159,6 +159,14 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		RateLimitPerMin: req.RateLimitPerMin,
 		CreatedAt:       s.now().UTC(),
 		ExpiresAt:       req.ExpiresAt,
+		// Operator-minted keys are full-access by default — matching the
+		// dashboard issuance default (Permissions.All=true). Without this
+		// the permission middleware's closed posture (no allow entries +
+		// PermissionsAll=false) 403s EVERY request from a freshly minted
+		// key ("this key has no permission entries") — caught 2026-06-12
+		// when a mint-key'd load-test key failed 210k/210k requests.
+		// Per-endpoint restriction stays a dashboard feature.
+		PermissionsAll: true,
 	}
 	body, err := json.Marshal(rec)
 	if err != nil {
