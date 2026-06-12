@@ -63,62 +63,65 @@ type ReadyChecker interface {
 //
 // Thread-safe.
 type Server struct {
-	logger               *slog.Logger
-	checks               []ReadyChecker
-	assets               AssetReader
-	prices               PriceReader
-	history              HistoryReader
-	markets              MarketsReader
-	oracle               OracleReader
-	sep1Cache            Sep1CachedReader
-	accounts             AccountStore
-	signups              SignupTracker
-	signupIPThrottle     SignupIPThrottle
-	signupVerifier       SignupVerifier
-	signupVerifyEmailer  SignupVerifyEmailer
-	apiKeyEmailVerifier  APIKeyEmailVerifier
-	stripe               *StripeWebhookConfig
-	divergence           DivergenceLooker
-	freeze               FrozenLooker
-	supply               SupplyLooker
-	tokenSupply          TokenSupplyReader
-	volume               VolumeReader
-	change24h            Change24hReader
-	changesum            ChangeSummaryReader
-	coins                CoinsReader
-	issuers              IssuersReader
-	sep41Transfers       SEP41TransfersReader
-	cursors              CursorsReader
-	coverageReader       SourceCoverageReader
-	completenessReader   CompletenessReader
-	networkStats         NetworkStatsReader
-	sourcesStats         SourcesStatsReader
-	lending              LendingReader
-	currencies           CurrenciesReader
-	fxHistory            FXHistoryReader
-	sessionPeeker        SessionPeeker
-	incidents            []incidents.Incident
-	sep10                auth.SEP10Validator
-	cors                 middleware.Middleware
-	auth                 middleware.Middleware
-	keyPolicy            middleware.Middleware
-	rateLimit            middleware.Middleware
-	monthlyQuota         middleware.Middleware
-	touchUsage           middleware.Middleware
-	requireEmailVerified middleware.Middleware
-	usageTracker         middleware.Middleware
-	usageReader          UsageReader
-	hub                  *streaming.Hub
-	confidence           ConfidenceLooker
-	triangulated         TriangulatedPriceLooker
-	cdnEnabled           bool
-	statusBackend        StatusBackend
-	regionName           string
-	regionDeployment     string
-	dashboardAuth        DashboardAuthMounter
-	dashboardKeys        DashboardAuthMounter
-	dashboardWebhooks    DashboardAuthMounter
-	sessionAuth          middleware.Middleware
+	logger                  *slog.Logger
+	checks                  []ReadyChecker
+	assets                  AssetReader
+	prices                  PriceReader
+	history                 HistoryReader
+	markets                 MarketsReader
+	oracle                  OracleReader
+	sep1Cache               Sep1CachedReader
+	accounts                AccountStore
+	signups                 SignupTracker
+	signupIPThrottle        SignupIPThrottle
+	signupVerifier          SignupVerifier
+	signupVerifyEmailer     SignupVerifyEmailer
+	apiKeyEmailVerifier     APIKeyEmailVerifier
+	stripe                  *StripeWebhookConfig
+	divergence              DivergenceLooker
+	freeze                  FrozenLooker
+	supply                  SupplyLooker
+	tokenSupply             TokenSupplyReader
+	volume                  VolumeReader
+	change24h               Change24hReader
+	changesum               ChangeSummaryReader
+	coins                   CoinsReader
+	issuers                 IssuersReader
+	sep41Transfers          SEP41TransfersReader
+	cursors                 CursorsReader
+	coverageReader          SourceCoverageReader
+	completenessReader      CompletenessReader
+	protocolContractsReader ProtocolContractsReader
+	protocolStats           ProtocolStatsReader
+	soroswapPairs           SoroswapPairsReader
+	networkStats            NetworkStatsReader
+	sourcesStats            SourcesStatsReader
+	lending                 LendingReader
+	currencies              CurrenciesReader
+	fxHistory               FXHistoryReader
+	sessionPeeker           SessionPeeker
+	incidents               []incidents.Incident
+	sep10                   auth.SEP10Validator
+	cors                    middleware.Middleware
+	auth                    middleware.Middleware
+	keyPolicy               middleware.Middleware
+	rateLimit               middleware.Middleware
+	monthlyQuota            middleware.Middleware
+	touchUsage              middleware.Middleware
+	requireEmailVerified    middleware.Middleware
+	usageTracker            middleware.Middleware
+	usageReader             UsageReader
+	hub                     *streaming.Hub
+	confidence              ConfidenceLooker
+	triangulated            TriangulatedPriceLooker
+	cdnEnabled              bool
+	statusBackend           StatusBackend
+	regionName              string
+	regionDeployment        string
+	dashboardAuth           DashboardAuthMounter
+	dashboardKeys           DashboardAuthMounter
+	dashboardWebhooks       DashboardAuthMounter
+	sessionAuth             middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +
@@ -415,6 +418,25 @@ type Options struct {
 	// them absent (UI falls back to the gap_free coverage signal).
 	CompletenessReader CompletenessReader
 
+	// ProtocolContracts, when non-nil, backs the contract registry
+	// (instance lists + counts) on /v1/protocols*. Production wiring
+	// is timescale.Store directly (ListProtocolContracts). Nil keeps
+	// the directory serving with empty contract lists / zero counts.
+	ProtocolContracts ProtocolContractsReader
+
+	// ProtocolStats, when non-nil, backs the per-protocol events_24h
+	// column on /v1/protocols*. Production wiring is timescale.Store
+	// directly (CountRecentEventsBySource). Nil serves zeros.
+	ProtocolStats ProtocolStatsReader
+
+	// SoroswapPairs, when non-nil, supplies soroswap's contract list
+	// on /v1/protocols* from the soroswap_pairs registry (its pair
+	// set carries token identities and predates protocol_contracts).
+	// Production wiring is timescale.Store directly
+	// (LoadSoroswapPairRegistry). Nil serves soroswap with an empty
+	// contract list / zero count.
+	SoroswapPairs SoroswapPairsReader
+
 	// NetworkStats, when non-nil, backs GET /v1/network/stats —
 	// the consolidated home-page aggregate (24h volume, markets,
 	// assets indexed, latest ledger). Production wiring is
@@ -690,68 +712,71 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:               logger,
-		checks:               opts.ReadyChecks,
-		assets:               opts.Assets,
-		prices:               opts.Prices,
-		history:              opts.History,
-		markets:              opts.Markets,
-		oracle:               opts.Oracle,
-		sep1Cache:            opts.Sep1Cache,
-		accounts:             opts.Accounts,
-		signups:              opts.Signups,
-		signupIPThrottle:     opts.SignupIPThrottle,
-		signupVerifier:       opts.SignupVerifier,
-		signupVerifyEmailer:  opts.SignupVerifyEmailer,
-		apiKeyEmailVerifier:  opts.APIKeyEmailVerifier,
-		stripe:               opts.Stripe,
-		divergence:           opts.Divergence,
-		freeze:               opts.Freeze,
-		supply:               opts.Supply,
-		tokenSupply:          opts.TokenSupply,
-		volume:               opts.Volume,
-		change24h:            opts.Change24h,
-		changesum:            opts.ChangeSummary,
-		coins:                opts.Coins,
-		issuers:              opts.Issuers,
-		sep41Transfers:       opts.SEP41Transfers,
-		cursors:              opts.Cursors,
-		coverageReader:       opts.CoverageReader,
-		completenessReader:   opts.CompletenessReader,
-		networkStats:         opts.NetworkStats,
-		sourcesStats:         opts.SourcesStats,
-		lending:              opts.Lending,
-		currencies:           opts.Currencies,
-		fxHistory:            opts.FXHistory,
-		sessionPeeker:        opts.SessionPeeker,
-		sep10:                opts.SEP10,
-		cors:                 opts.CORS,
-		auth:                 opts.Auth,
-		keyPolicy:            opts.KeyPolicy,
-		rateLimit:            opts.RateLimit,
-		monthlyQuota:         opts.MonthlyQuota,
-		touchUsage:           opts.TouchUsage,
-		requireEmailVerified: opts.RequireEmailVerified,
-		usageTracker:         opts.UsageTracker,
-		usageReader:          opts.UsageReader,
-		hub:                  opts.Hub,
-		confidence:           opts.Confidence,
-		triangulated:         opts.Triangulated,
-		cdnEnabled:           opts.CDNEnabled,
-		statusBackend:        opts.StatusBackend,
-		regionName:           valueOr(opts.RegionName, "unknown"),
-		regionDeployment:     valueOr(opts.RegionDeployment, "production"),
-		dashboardAuth:        opts.DashboardAuth,
-		dashboardKeys:        opts.DashboardKeys,
-		dashboardWebhooks:    opts.DashboardWebhooks,
-		sessionAuth:          opts.SessionAuth,
-		verifiedCurrencies:   opts.VerifiedCurrencies,
-		marketCaps:           opts.MarketCaps,
-		backfillCoverage:     opts.BackfillCoverage,
-		globalPrice:          opts.GlobalPrice,
-		globalPriceOpts:      globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		sacWrappers:          opts.SACWrappers,
-		usdPeggedClassics:    opts.USDPeggedClassics,
+		logger:                  logger,
+		checks:                  opts.ReadyChecks,
+		assets:                  opts.Assets,
+		prices:                  opts.Prices,
+		history:                 opts.History,
+		markets:                 opts.Markets,
+		oracle:                  opts.Oracle,
+		sep1Cache:               opts.Sep1Cache,
+		accounts:                opts.Accounts,
+		signups:                 opts.Signups,
+		signupIPThrottle:        opts.SignupIPThrottle,
+		signupVerifier:          opts.SignupVerifier,
+		signupVerifyEmailer:     opts.SignupVerifyEmailer,
+		apiKeyEmailVerifier:     opts.APIKeyEmailVerifier,
+		stripe:                  opts.Stripe,
+		divergence:              opts.Divergence,
+		freeze:                  opts.Freeze,
+		supply:                  opts.Supply,
+		tokenSupply:             opts.TokenSupply,
+		volume:                  opts.Volume,
+		change24h:               opts.Change24h,
+		changesum:               opts.ChangeSummary,
+		coins:                   opts.Coins,
+		issuers:                 opts.Issuers,
+		sep41Transfers:          opts.SEP41Transfers,
+		cursors:                 opts.Cursors,
+		coverageReader:          opts.CoverageReader,
+		completenessReader:      opts.CompletenessReader,
+		protocolContractsReader: opts.ProtocolContracts,
+		protocolStats:           opts.ProtocolStats,
+		soroswapPairs:           opts.SoroswapPairs,
+		networkStats:            opts.NetworkStats,
+		sourcesStats:            opts.SourcesStats,
+		lending:                 opts.Lending,
+		currencies:              opts.Currencies,
+		fxHistory:               opts.FXHistory,
+		sessionPeeker:           opts.SessionPeeker,
+		sep10:                   opts.SEP10,
+		cors:                    opts.CORS,
+		auth:                    opts.Auth,
+		keyPolicy:               opts.KeyPolicy,
+		rateLimit:               opts.RateLimit,
+		monthlyQuota:            opts.MonthlyQuota,
+		touchUsage:              opts.TouchUsage,
+		requireEmailVerified:    opts.RequireEmailVerified,
+		usageTracker:            opts.UsageTracker,
+		usageReader:             opts.UsageReader,
+		hub:                     opts.Hub,
+		confidence:              opts.Confidence,
+		triangulated:            opts.Triangulated,
+		cdnEnabled:              opts.CDNEnabled,
+		statusBackend:           opts.StatusBackend,
+		regionName:              valueOr(opts.RegionName, "unknown"),
+		regionDeployment:        valueOr(opts.RegionDeployment, "production"),
+		dashboardAuth:           opts.DashboardAuth,
+		dashboardKeys:           opts.DashboardKeys,
+		dashboardWebhooks:       opts.DashboardWebhooks,
+		sessionAuth:             opts.SessionAuth,
+		verifiedCurrencies:      opts.VerifiedCurrencies,
+		marketCaps:              opts.MarketCaps,
+		backfillCoverage:        opts.BackfillCoverage,
+		globalPrice:             opts.GlobalPrice,
+		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
+		sacWrappers:             opts.SACWrappers,
+		usdPeggedClassics:       opts.USDPeggedClassics,
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
 		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
 		// old 30s TTL the cache expired for 30 of every 60 seconds
@@ -974,6 +999,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/diagnostics/cursors", s.handleCursors)
 	s.mux.HandleFunc("GET /v1/diagnostics/ingestion", s.handleDiagnosticsIngestion)
 	s.mux.HandleFunc("GET /v1/coverage", s.handleCoverageVerdicts)
+
+	// Protocols pillar (explorer-ux-plan §5): directory + per-protocol
+	// detail. Static registry always serves; dynamic joins degrade.
+	s.mux.HandleFunc("GET /v1/protocols", s.handleProtocolsList)
+	s.mux.HandleFunc("GET /v1/protocols/{name}", s.handleProtocolDetail)
 
 	// Live-ingest frontier — a lightweight slice of the ingestion
 	// snapshot (latest ingested ledger + lag). /tip is a 2s-cached

@@ -59,6 +59,47 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 // then sees an empty registry and (correctly, per ADR-0035) drops every
 // child event until seeded; running the genesis walk is a deploy
 // precondition.
+// ListProtocolContracts returns every registered child contract for
+// source as full rows (contract + deploying factory + first-observed
+// ledger), ordered by first_ledger then contract_id so the API serves
+// a stable, chronologically-meaningful listing. The flat-ID
+// LoadProtocolContracts above stays as the decoder-warmup seam; this
+// richer projection backs GET /v1/protocols/{name}.
+//
+// first_ledger is NULL when the seeding path didn't know it; that maps
+// to FirstLedger 0 here (and the NULLs sort last).
+func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]ProtocolContract, error) {
+	if source == "" {
+		return nil, errors.New("timescale: ListProtocolContracts: empty source")
+	}
+	const q = `
+		SELECT contract_id, factory_id, COALESCE(first_ledger, 0)
+		  FROM protocol_contracts
+		 WHERE source = $1
+		 ORDER BY first_ledger ASC NULLS LAST, contract_id ASC
+	`
+	rows, err := s.db.QueryContext(ctx, q, source)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListProtocolContracts %s: %w", source, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]ProtocolContract, 0, 64)
+	for rows.Next() {
+		pc := ProtocolContract{Source: source}
+		var firstLedger int64
+		if err := rows.Scan(&pc.ContractID, &pc.FactoryID, &firstLedger); err != nil {
+			return nil, fmt.Errorf("timescale: ListProtocolContracts %s scan: %w", source, err)
+		}
+		pc.FirstLedger = uint32(firstLedger) //nolint:gosec // ledger sequences fit uint32
+		out = append(out, pc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ListProtocolContracts %s rows: %w", source, err)
+	}
+	return out, nil
+}
+
 func (s *Store) LoadProtocolContracts(ctx context.Context, source string) ([]string, error) {
 	if source == "" {
 		return nil, errors.New("timescale: LoadProtocolContracts: empty source")

@@ -13,7 +13,7 @@
 
 services:
   k6:
-    image: grafana/k6:0.50.0
+    image: grafana/k6:1.0.0
     environment:
       - K6_TARGET
       - STELLARINDEX_LOAD_API_KEY

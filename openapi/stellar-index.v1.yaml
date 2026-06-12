@@ -70,6 +70,11 @@ tags:
     description: |
       Metadata about the deployment itself — source catalogue,
       build info — not the trade / oracle / price data.
+  - name: protocols
+    description: |
+      Per-protocol surfaces — the directory + deep-dive backing the
+      explorer's Protocols pillar, plus protocol-scoped listings
+      (lending pools).
 
 security:
   - {}                          # anonymous allowed on most endpoints
@@ -2093,6 +2098,101 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+  /protocols:
+    get:
+      tags: [protocols]
+      summary: Protocol directory — one row per indexed protocol.
+      description: |
+        The directory backing the explorer's Protocols pillar: every
+        indexed protocol's hand-curated identity (category, one-line
+        description, genesis ledger, verified factory / trust-root
+        contracts) joined with three dynamic columns — registered
+        contract-instance count (`protocol_contracts`; the
+        `soroswap_pairs` registry for soroswap), trailing-24h decoded
+        event count across the protocol's served tables, and the
+        latest ADR-0033 completeness verdict summary (the same
+        `completeness_snapshots` row `/coverage` serves in full).
+
+        The static registry always serves; each dynamic join degrades
+        independently to zero / absent when its reader isn't wired,
+        so the endpoint never 5xxes on a partial deployment. Served
+        with `public, max-age=60`.
+      responses:
+        "200":
+          description: Every indexed protocol, registry-ordered.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [protocols, total_protocols]
+                        properties:
+                          protocols:
+                            type: array
+                            items:
+                              { $ref: "#/components/schemas/ProtocolRow" }
+                          total_protocols: { type: integer }
+  /protocols/{name}:
+    get:
+      tags: [protocols]
+      summary: Protocol deep-dive — directory row + contract registry + event vocabulary.
+      description: |
+        Everything the directory row carries plus the registered
+        contract instances (`protocol_contracts` rows with deploying
+        factory + first-observed ledger for ADR-0035-gated sources;
+        the pair registry with token identities for soroswap; empty
+        for sources without a registry), the `event_kinds` vocabulary
+        the decoder emits, and the repo-relative `verification_page`
+        when a public write-up exists. Served with
+        `public, max-age=60`.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Canonical protocol name from the directory (`blend`, `soroswap`, …).
+          schema: { type: string, example: blend }
+      responses:
+        "200":
+          description: The protocol's full detail view.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - { $ref: "#/components/schemas/ProtocolRow" }
+                          - type: object
+                            required: [contracts, event_kinds]
+                            properties:
+                              contracts:
+                                type: array
+                                items:
+                                  type: object
+                                  required: [contract_id]
+                                  properties:
+                                    contract_id: { type: string, description: Instance C-strkey. }
+                                    factory_id: { type: string, description: Deploying factory C-strkey (gated sources only). }
+                                    first_ledger: { type: integer, format: int64, description: First-observed ledger (absent when unknown). }
+                                    token0: { type: string, description: Pair token0 C-strkey (soroswap only). }
+                                    token1: { type: string, description: Pair token1 C-strkey (soroswap only). }
+                              event_kinds:
+                                type: array
+                                items: { type: string, example: blend.position }
+                              verification_page:
+                                type: string
+                                example: docs/protocols/blend.md
+        "404":
+          description: Unknown protocol name.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
   /ledger/tip:
     get:
       tags: [meta]
@@ -3837,6 +3937,42 @@ components:
           items: { type: string }
         flags: { $ref: "#/components/schemas/Flags" }
       required: [as_of, flags]
+
+    # One protocol-directory row (/protocols and the base of
+    # /protocols/{name}'s detail view).
+    ProtocolRow:
+      type: object
+      required:
+        [name, category, description, genesis_ledger, factories,
+         contract_count, events_24h]
+      properties:
+        name: { type: string, example: blend }
+        category:
+          type: string
+          enum: [dex, amm, lending, yield, bridge, oracle, token]
+        description: { type: string }
+        genesis_ledger:
+          type: integer
+          format: int64
+          description: First ledger this protocol could have data at.
+        factories:
+          type: array
+          description: Verified factory / trust-root contract C-strkeys (ADR-0035); empty for factory-less sources.
+          items: { type: string }
+        contract_count:
+          type: integer
+          description: Registered contract instances (protocol_contracts; soroswap_pairs for soroswap).
+        events_24h:
+          type: integer
+          format: int64
+          description: Trailing-24h decoded events across the protocol's served tables.
+        completeness:
+          type: object
+          description: Latest ADR-0033 verdict summary; absent when no snapshot exists. Full verdict on /coverage.
+          required: [complete, watermark_ledger]
+          properties:
+            complete: { type: boolean }
+            watermark_ledger: { type: integer, format: int64 }
 
     # Health
     HealthResponse:

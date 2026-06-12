@@ -123,7 +123,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	logger := mkLogger(cfg.Obs)
-	logger.Info("starting",
+	logger.Info(
+		"starting",
 		"version", version.String(),
 		"region", cfg.Region.ID,
 		"listen", cfg.API.ListenAddr,
@@ -321,7 +322,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			middleware.SkipHealthAndMetrics,
 			logger.With("component", "ratelimit"),
 		)
-		logger.Info("rate-limit tiers wired",
+		logger.Info(
+			"rate-limit tiers wired",
 			"anon_per_min", cfg.API.AnonRateLimitPerMin,
 			"key_per_min", cfg.API.KeyRateLimitPerMin,
 			"anon_enabled", anonBucket != nil,
@@ -457,7 +459,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			Threshold:            cfg.Divergence.Threshold,
 			MinSourcesForWarning: cfg.Divergence.MinSourcesForWarning,
 			PerReferenceTimeout: time.Duration(
-				cfg.Divergence.PerReferenceTimeoutSeconds) * time.Second,
+				cfg.Divergence.PerReferenceTimeoutSeconds,
+			) * time.Second,
 		})
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
@@ -859,7 +862,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Cursors:              store,
 		CoverageReader:       store,
 		CompletenessReader:   store,
-		NetworkStats:         store,
+		// Protocols pillar (/v1/protocols*): contract registry, 24h
+		// event census, soroswap pair registry. All three optional —
+		// the directory degrades to zeros/empties when absent.
+		ProtocolContracts: store,
+		ProtocolStats:     store,
+		SoroswapPairs:     store,
+		NetworkStats:      store,
 		// Wrap with a 60s TTL cache. The underlying SQL aggregations
 		// (24h trades-hypertable scan grouped by source) take 5-10s;
 		// the explorer hits these on every /dexes + /exchanges page
@@ -2373,7 +2382,8 @@ type storeChange24hReader struct {
 }
 
 func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonical.Asset) (string, error) {
-	row, err := r.s.ClosedVWAP1mAtOrBefore(ctx,
+	row, err := r.s.ClosedVWAP1mAtOrBefore(
+		ctx,
 		canonical.Pair{Base: asset, Quote: usdQuoteAsset},
 		time.Now().Add(-24*time.Hour),
 	)
@@ -2389,7 +2399,8 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 		if peg.Equal(asset) {
 			continue
 		}
-		pegRow, pegErr := r.s.ClosedVWAP1mAtOrBefore(ctx,
+		pegRow, pegErr := r.s.ClosedVWAP1mAtOrBefore(
+			ctx,
 			canonical.Pair{Base: asset, Quote: peg},
 			time.Now().Add(-24*time.Hour),
 		)

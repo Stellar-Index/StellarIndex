@@ -40,3 +40,11 @@ func TestLoadProtocolContracts_rejectsEmptySource(t *testing.T) {
 		t.Errorf("err=%v should mention empty source", err)
 	}
 }
+
+func TestListProtocolContracts_rejectsEmptySource(t *testing.T) {
+	s := &Store{}
+	_, err := s.ListProtocolContracts(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "empty source") {
+		t.Errorf("err=%v should mention empty source", err)
+	}
+}
