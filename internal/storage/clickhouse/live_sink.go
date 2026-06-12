@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -20,6 +21,15 @@ type LiveSinkOptions struct {
 	FlushInterval time.Duration
 	// WriteTimeout caps one flush (default 30s).
 	WriteTimeout time.Duration
+	// MaxBufferLedgers caps how many ledgers the underlying Sink holds in
+	// memory before it starts BOUNDED-DROPPING incoming extracts during a
+	// sustained ClickHouse outage (G12-01; default 4096). The channel
+	// (BufferSize) bounds the worker's INBOX; this bounds the Sink's per-table
+	// row slices, which the channel cap does NOT (a failing flush keeps them
+	// intact while the worker keeps appending). Combined, the live path's CH
+	// backlog is bounded at ~BufferSize + MaxBufferLedgers ledgers; beyond that
+	// the ch-live-catchup gap-scan timer heals the gap.
+	MaxBufferLedgers int
 	// Logger for worker warn/error lines; nil → slog.Default().
 	Logger *slog.Logger
 }
@@ -55,10 +65,11 @@ type LiveSink struct {
 	stopping chan struct{}
 	done     chan struct{}
 
-	mu      sync.Mutex
-	written uint64
-	dropped uint64
-	errored uint64
+	mu       sync.Mutex
+	written  uint64 // ledgers DURABLY flushed to CH (post-Flush, not enqueue).
+	buffered uint64 // ledgers accepted into the in-memory buffer (pre-flush).
+	dropped  uint64 // ledgers dropped: full channel (PushLedger) or full buffer (Add).
+	errored  uint64 // failed Add / Flush operations (a sustained-outage signal).
 }
 
 // NewLiveSink opens a CH connection (flushEvery high — the worker controls flush
@@ -74,6 +85,9 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = 30 * time.Second
 	}
+	if opts.MaxBufferLedgers <= 0 {
+		opts.MaxBufferLedgers = 4096
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -84,6 +98,9 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	if err != nil {
 		return nil, err
 	}
+	// G12-01: cap the underlying Sink's in-memory buffers so a sustained CH
+	// outage can't grow the heap unbounded on the shared r1 host.
+	sink.SetMaxBufferLedgers(opts.MaxBufferLedgers)
 	// The decode-at-ingest supply path writes stellar.supply_flows in every
 	// flush; ensure it exists before the worker starts (idempotent).
 	if err := EnsureSupplyFlowsTable(ctx, addr); err != nil {
@@ -144,20 +161,37 @@ func (l *LiveSink) add(ext LedgerExtract) {
 	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
 	defer cancel()
 	if err := l.sink.Add(ctx, ext); err != nil {
+		// G12-01: a full buffer is a bounded DROP (heals via ch-live-catchup),
+		// not a write ERROR. Distinguish so the metric/log don't conflate a
+		// healthy back-pressure drop with a genuine CH write failure.
+		if errors.Is(err, ErrBufferFull) {
+			l.bump(&l.dropped)
+			l.logger.Warn("clickhouse live-sink: buffer full — extract dropped",
+				"ledger", ext.Ledger.LedgerSeq, "cap_ledgers", l.sink.BufferedLedgers())
+			return
+		}
 		l.bump(&l.errored)
 		l.logger.Warn("clickhouse live-sink: add failed", "ledger", ext.Ledger.LedgerSeq, "err", err)
 		return
 	}
-	l.bump(&l.written)
+	// G12-02: count buffer-enqueue as `buffered`, NOT `written`. `written` is
+	// reserved for ledgers DURABLY flushed to CH (doFlush), so the metric
+	// can't claim durability the lake doesn't have during a CH stall.
+	l.bump(&l.buffered)
 }
 
 func (l *LiveSink) doFlush() {
 	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
 	defer cancel()
+	// Snapshot how many ledgers are about to be flushed so a success can
+	// credit `written` accurately (Flush clears the buffer on success).
+	pending := uint64(l.sink.BufferedLedgers())
 	if err := l.sink.Flush(ctx); err != nil {
 		l.bump(&l.errored)
-		l.logger.Warn("clickhouse live-sink: flush failed", "err", err)
+		l.logger.Warn("clickhouse live-sink: flush failed", "err", err, "buffered_ledgers", pending)
+		return
 	}
+	l.add64(&l.written, pending)
 }
 
 // Stop signals shutdown, drains the buffer + final flush, closes the CH conn.
@@ -178,8 +212,18 @@ func (l *LiveSink) bump(p *uint64) {
 	l.mu.Unlock()
 }
 
-// WrittenCount / DroppedCount / ErroredCount expose worker counters for metrics
-// + the shutdown log line.
-func (l *LiveSink) WrittenCount() uint64 { l.mu.Lock(); defer l.mu.Unlock(); return l.written }
-func (l *LiveSink) DroppedCount() uint64 { l.mu.Lock(); defer l.mu.Unlock(); return l.dropped }
-func (l *LiveSink) ErroredCount() uint64 { l.mu.Lock(); defer l.mu.Unlock(); return l.errored }
+func (l *LiveSink) add64(p *uint64, n uint64) {
+	l.mu.Lock()
+	*p += n
+	l.mu.Unlock()
+}
+
+// WrittenCount / BufferedCount / DroppedCount / ErroredCount expose worker
+// counters for metrics + the shutdown log line. WrittenCount is ledgers
+// DURABLY flushed to CH (post-Flush); BufferedCount is ledgers accepted into
+// the in-memory buffer (pre-flush) — the two diverge by the unflushed backlog,
+// which during a CH stall is the early-warning signal.
+func (l *LiveSink) WrittenCount() uint64  { l.mu.Lock(); defer l.mu.Unlock(); return l.written }
+func (l *LiveSink) BufferedCount() uint64 { l.mu.Lock(); defer l.mu.Unlock(); return l.buffered }
+func (l *LiveSink) DroppedCount() uint64  { l.mu.Lock(); defer l.mu.Unlock(); return l.dropped }
+func (l *LiveSink) ErroredCount() uint64  { l.mu.Lock(); defer l.mu.Unlock(); return l.errored }

@@ -16,9 +16,23 @@ import (
 // ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows.
 // Decoder-INDEPENDENT: it records the shape + raw XDR, not protocol meaning.
 //
-// Scope (Phase-2 PoC): ledgers, transactions, operations, operation_results,
-// contract_events. ledger_entry_changes is deferred (not in the PoC gates;
-// needs per-op change attribution) — Extract.Changes stays nil for now.
+// Scope: ledgers, transactions, operations, operation_results, contract_events,
+// supply_flows.
+//
+// KNOWN GAP — ledger_entry_changes (G12-03, ADR-0034 accepted exclusion).
+// Extract.Changes is ALWAYS nil: this extractor does NOT attribute per-op
+// LedgerEntry mutations (created/updated/removed/state) from the tx-meta
+// changes streams. The stellar.ledger_entry_changes table is schema'd and
+// flushChanges runs every Flush, but over a permanently-empty slice — so the
+// lake currently has NO substrate to re-derive the LedgerEntry-based supply
+// observers (account/trustline/claimable/LP-reserve; ADR-0034's "re-derive
+// from the lake" promise). Those observers still run live off the dispatcher's
+// LedgerEntryChangeDecoder hook and write Postgres directly; they just can't be
+// rebuilt from CH. Closing the gap is a large change (walk each
+// LedgerTransaction's GetChanges() + the tx-meta v3/v4 op-change + fee-meta
+// streams, strkey-encode keys, base64 the entry/key XDR, attribute op_index
+// incl. -1 for fee/tx-level) and is deliberately deferred — see the
+// flushChanges docstring in sink.go and the ADR-0034 exclusion note.
 //
 // Resilient like dispatcher.CensusLedger: a per-tx read error is skipped +
 // tolerated, not fatal, so one bad tx can't lose a whole ledger.

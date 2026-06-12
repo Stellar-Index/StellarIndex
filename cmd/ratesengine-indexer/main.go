@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -387,14 +388,25 @@ func run(cfgPath string, dryRun bool) error {
 			return fmt.Errorf("clickhouse live-sink: %w", err)
 		}
 		chLiveSink.Start()
+		// G12-02: sample the LiveSink's monotonic counters and emit the
+		// ratesengine_ch_live_sink_ledgers_total delta on a short interval, so a
+		// CH write stall (buffered climbing past written) or a bounded-drop
+		// surfaces in Prometheus, not just the shutdown log line.
+		chSinkMetricsStop, chSinkMetricsDone := watchCHLiveSink(rootCtx, chLiveSink, logger.With("component", "ch-live-sink"))
 		defer func() {
+			chSinkMetricsStop()
+			<-chSinkMetricsDone
 			chLiveSink.Stop()
 			logger.Info("ch live-sink drained on shutdown",
 				"written", chLiveSink.WrittenCount(),
+				"buffered", chLiveSink.BufferedCount(),
 				"dropped", chLiveSink.DroppedCount(),
 				"errored", chLiveSink.ErroredCount())
 		}()
-		logger.Info("ClickHouse real-time dual-sink enabled", "addr", cfg.Storage.ClickHouseAddr)
+		// G20-06: log the EFFECTIVE address (post-fallback), not the raw
+		// possibly-empty cfg value — the prior line printed "" when the operator
+		// enabled the sink without setting clickhouse_addr.
+		logger.Info("ClickHouse real-time dual-sink enabled", "addr", chAddr)
 	}
 
 	setSourceEnabled(cfg.Ingestion.EnabledSources, true)
@@ -519,7 +531,27 @@ func run(cfgPath string, dryRun bool) error {
 				// catch-up timer). Extract is a 2nd decode of the LCM, negligible
 				// at the live rate.
 				if chLiveSink != nil {
-					if ext, eerr := clickhouse.ExtractLedger(lcm, cfg.Stellar.Passphrase()); eerr == nil {
+					ext, eerr := clickhouse.ExtractLedger(lcm, cfg.Stellar.Passphrase())
+					if eerr != nil {
+						// G20-06: do NOT silently swallow the extract error — a
+						// persistent failure means the lake's live edge is silently
+						// stalling. Count it (errored outcome) and emit a sampled
+						// WARN so a meta-version break (which would fail EVERY
+						// ledger) is loud without flooding the log.
+						obs.ChLiveSinkLedgersTotal.WithLabelValues("errored").Inc()
+						logCHExtractErrSampled(logger, lcm.LedgerSequence(), eerr)
+					} else {
+						// G20-06: surface a tx-read undercount. A non-zero value
+						// means this ledger's contract_events are incomplete (a bad
+						// tx, or a future TransactionMeta version breaking
+						// GetTransactionEvents for every tx in lock-step) — a climb
+						// would otherwise masquerade as clean empty ledgers.
+						if ext.TxReadErrors > 0 || ext.TxEventReadErrors > 0 {
+							logger.Warn("ch live-sink: ledger extracted with read undercount",
+								"ledger", ext.Ledger.LedgerSeq,
+								"tx_read_errors", ext.TxReadErrors,
+								"tx_event_read_errors", ext.TxEventReadErrors)
+						}
 						chLiveSink.PushLedger(ext)
 					}
 				}
@@ -968,6 +1000,69 @@ func emitDiscoveryDropMetricDelta(prev, current uint64, logger *slog.Logger) uin
 		)
 	}
 	return current
+}
+
+// chExtractErrLog samples ClickHouse-extract failure WARNs (G20-06): a
+// meta-version break fails EVERY ledger, so log only 1-in-256 to stay loud
+// without flooding. The Prometheus counter (errored outcome) carries the true
+// rate; this is just the human breadcrumb.
+var chExtractErrLog atomic.Uint64
+
+func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
+	if n := chExtractErrLog.Add(1); n%256 != 1 {
+		return
+	}
+	logger.Warn("ch live-sink: extract failed (sampled 1/256) — lake live edge stalling",
+		"ledger", ledger, "err", err, "errors_so_far", chExtractErrLog.Load())
+}
+
+// watchCHLiveSink samples the ClickHouse dual-sink's monotonic counters every
+// 15 s and emits the per-tick delta on ratesengine_ch_live_sink_ledgers_total
+// (G12-02). Follows the [watchDiscoveryDrops] (cancel, done) shape so main's
+// shutdown sequence stays uniform. Note: the indexer's own fan-out closure
+// already increments the `errored` outcome directly for ExtractLedger failures
+// (which never reach the LiveSink), so this watcher only mirrors the LiveSink's
+// internal written/buffered/dropped/errored, keeping the two error sources
+// additive on the same series.
+func watchCHLiveSink(parent context.Context, sink *clickhouse.LiveSink, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		var lastWritten, lastBuffered, lastDropped, lastErrored uint64
+		emit := func(outcome string, prev, current uint64) uint64 {
+			if current > prev {
+				obs.ChLiveSinkLedgersTotal.WithLabelValues(outcome).Add(float64(current - prev))
+			}
+			return current
+		}
+		flush := func() {
+			lastWritten = emit("written", lastWritten, sink.WrittenCount())
+			lastBuffered = emit("buffered", lastBuffered, sink.BufferedCount())
+			// Drops are the operationally-interesting outcome — WARN when the
+			// counter advances this tick (the metric carries the precise rate).
+			dropped := sink.DroppedCount()
+			if dropped > lastDropped {
+				logger.Warn("ch live-sink: ledgers bounded-dropped since last tick",
+					"delta", dropped-lastDropped, "dropped_total", dropped)
+			}
+			lastDropped = emit("dropped", lastDropped, dropped)
+			lastErrored = emit("errored", lastErrored, sink.ErroredCount())
+		}
+		for {
+			select {
+			case <-ticker.C:
+				flush()
+			case <-ctx.Done():
+				flush()
+				return
+			}
+		}
+	}()
+	return cancel, done
 }
 
 // watchPostgresPing fires a [timescale.Store.PingContext] every

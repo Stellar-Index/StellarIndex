@@ -92,3 +92,28 @@ doc §10; clean-cutover guarantee (one authoritative path at all times) in
 This supersedes ADR-0029 (the Postgres landing zone) and amends the
 coverage/projection ADRs to read from ClickHouse + reconcile against the
 LCM census.
+
+## Accepted exclusion: ledger_entry_changes not yet populated (G12-03)
+
+The Tier-1 lake materialises ledgers, transactions, operations,
+operation_results, contract_events, and supply_flows. The
+`stellar.ledger_entry_changes` table is schema'd (and the write path is
+wired through `Sink.flushChanges`), but the structural extractor
+(`internal/storage/clickhouse/extract.go::ExtractLedger`) does **not** yet
+populate `Extract.Changes` — it stays `nil`. So the "re-derive from the lake"
+promise above holds for every Soroban-event-derived and op/tx-derived entity,
+but **NOT** for the **LedgerEntry-based supply observers**
+(account/trustline/claimable/LP-reserve, ADR-0034 supply Algorithm 1/2): those
+have no lake substrate to rebuild from today. They continue to run live off the
+dispatcher's `LedgerEntryChangeDecoder` hook into Postgres, so production
+serving is unaffected — only *bulk re-derivation of that observer class* is
+blocked.
+
+This is an **accepted exclusion**, not a silent gap: the cost of per-op change
+attribution (walking each `LedgerTransaction`'s `GetChanges()` plus the
+tx-meta op-change and fee-meta streams, strkey-encoding ledger keys, and
+attributing `op_index` including `-1` for fee/tx-level changes) is a large,
+self-contained piece of work that is deferred until a re-derivation need for
+the LedgerEntry supply class actually arises. When it lands, the write path
+needs no change — only `ExtractLedger` does. Tracked in code by the docstrings
+on `ExtractLedger` and `Sink.flushChanges`.

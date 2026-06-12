@@ -7,6 +7,7 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -146,12 +147,21 @@ type LedgerExtract struct {
 	TxEventReadErrors int
 }
 
+// ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already
+// at maxBufferLedgers and the flush that should have drained it is failing (a
+// sustained ClickHouse outage). The incoming extract is DROPPED rather than
+// appended, capping heap growth on the shared host (G12-01). It is a distinct
+// sentinel so callers (the LiveSink worker) can count it as a bounded DROP, not
+// a write ERROR — the ch-live-catchup gap-scan timer heals the hole later.
+var ErrBufferFull = errors.New("clickhouse: sink buffer full — extract dropped (bounded-drop, heals via ch-live-catchup)")
+
 // Sink buffers extracts and flushes them to ClickHouse in batches. Not safe
 // for concurrent use by multiple goroutines — give each backfill worker its
 // own Sink (ClickHouse handles concurrent connections well).
 type Sink struct {
-	conn       driver.Conn
-	flushEvery int
+	conn             driver.Conn
+	flushEvery       int
+	maxBufferLedgers int // hard cap on buffered ledgers; 0 = unbounded (backfill).
 
 	ledgers     []LedgerRow
 	txs         []TransactionRow
@@ -161,6 +171,19 @@ type Sink struct {
 	changes     []LedgerEntryChangeRow
 	supplyFlows []SupplyFlowRow
 }
+
+// SetMaxBufferLedgers caps how many ledgers' worth of rows the Sink will hold
+// in memory before [Add] starts dropping incoming extracts with [ErrBufferFull]
+// (G12-01). The cap bounds heap growth during a sustained ClickHouse outage,
+// where every Flush fails and would otherwise keep the buffers intact while the
+// worker keeps appending. 0 (the default) means unbounded — correct for
+// backfill Sinks, whose caller retries the SAME range on flush failure rather
+// than streaming new ledgers on top. The LiveSink sets a finite cap because its
+// producer (live ingest) never stops feeding it.
+func (s *Sink) SetMaxBufferLedgers(n int) { s.maxBufferLedgers = n }
+
+// BufferedLedgers reports how many ledgers are currently buffered (unflushed).
+func (s *Sink) BufferedLedgers() int { return len(s.ledgers) }
 
 // Open dials ClickHouse (native protocol) at addr (e.g. "127.0.0.1:9300")
 // against the `stellar` database and pings it. flushEvery is the ledger-count
@@ -173,8 +196,14 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 		Addr: []string{addr},
 		Auth: clickhouse.Auth{Database: "stellar"},
 		Settings: clickhouse.Settings{
-			// keep memory modest; the server cap is the hard ceiling.
-			"max_execution_time": 0,
+			// G12-04: `max_execution_time` is a TIME limit (seconds), not a
+			// memory bound — the prior "keep memory modest" comment was wrong,
+			// and 0 = UNLIMITED, which is exactly what let a heavy FINAL
+			// gate/reconcile read wedge CH on 2026-06-11. This Sink is the WRITE
+			// path (cheap appends), so a generous-but-finite ceiling is purely a
+			// safety net against a pathological INSERT…SELECT; the read-path caps
+			// live on openRead in gate.go where the heavy-FINAL query class runs.
+			"max_execution_time": 300,
 		},
 		DialTimeout:     10 * time.Second,
 		MaxOpenConns:    4,
@@ -193,7 +222,21 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 
 // Add buffers one ledger's extract, auto-flushing when the ledger threshold
 // is reached.
+//
+// G12-01 bounded-drop: if a finite cap is set (SetMaxBufferLedgers) and the
+// buffer is already AT the cap, the incoming extract is DROPPED and
+// [ErrBufferFull] is returned — the buffer is NOT grown. This only happens once
+// the cap is reached, which (given flushEvery < cap) means flushes have been
+// failing long enough to back up — i.e. a sustained CH outage. Dropping the
+// NEWEST extract (rather than evicting an already-buffered older one) keeps the
+// flat per-table slices intact and is O(1); the ch-live-catchup gap-scan timer
+// re-fills the dropped (older, below-tip) ledgers later. Bounded heap is
+// strictly safer than unbounded growth on the shared r1 host (Postgres
+// co-tenant; see the 2026-06-11 CH-root-fill incident).
 func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
+	if s.maxBufferLedgers > 0 && len(s.ledgers) >= s.maxBufferLedgers {
+		return ErrBufferFull
+	}
 	s.ledgers = append(s.ledgers, e.Ledger)
 	s.txs = append(s.txs, e.Txs...)
 	s.ops = append(s.ops, e.Ops...)
@@ -336,7 +379,19 @@ func (s *Sink) flushEvents(ctx context.Context) error {
 	return wrapSend(b.Send(), "contract_events")
 }
 
+// flushChanges writes stellar.ledger_entry_changes.
+//
+// KNOWN GAP (G12-03, ADR-0034 accepted exclusion): s.changes is currently
+// ALWAYS empty — ExtractLedger does not populate Extract.Changes (see its
+// docstring). This method therefore runs every Flush over a nil slice and is a
+// no-op in practice. It is kept wired so that, the day per-op LedgerEntry-change
+// attribution is implemented in the extractor, the write path needs no change.
+// Until then the lake has NO substrate to re-derive the LedgerEntry-based
+// supply observers; do not assume stellar.ledger_entry_changes is populated.
 func (s *Sink) flushChanges(ctx context.Context) error {
+	if len(s.changes) == 0 {
+		return nil // G12-03: always taken today — Extract.Changes is never populated.
+	}
 	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare ledger_entry_changes: %w", err)

@@ -44,9 +44,22 @@ type TableFootprint struct {
 // openRead dials ClickHouse for read-only gate queries.
 func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr:        []string{addr},
-		Auth:        clickhouse.Auth{Database: "stellar"},
-		Settings:    clickhouse.Settings{"max_execution_time": 0},
+		Addr: []string{addr},
+		Auth: clickhouse.Auth{Database: "stellar"},
+		Settings: clickhouse.Settings{
+			// G12-04: this is the heavy-FINAL gate/reconcile read class. We keep
+			// `max_execution_time` UNLIMITED on purpose — a legitimate FINAL
+			// stream over a full-history window runs for many minutes and we do
+			// NOT want it aborted mid-stream (see the ReadTimeout note below).
+			// What actually wedged CH on 2026-06-11 was MEMORY (the FINAL merge
+			// + the system.log spam loop on the full root), not wall time — so
+			// the right guard here is a per-query memory ceiling, conservative
+			// enough never to clip a healthy streaming read but low enough to
+			// fail a pathological query before it starves Postgres on the shared
+			// host. 12 GiB is well under the ~32–48 GB CH server cap (ADR-0034).
+			"max_execution_time": 0,
+			"max_memory_usage":   12 * 1024 * 1024 * 1024,
+		},
 		DialTimeout: 10 * time.Second,
 		// ReadTimeout is per network read, not per query. A FINAL stream over a
 		// whole 1M-ledger partition can stall between blocks (merge compute) or
