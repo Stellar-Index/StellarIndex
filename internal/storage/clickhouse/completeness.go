@@ -88,6 +88,18 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 	return watermark(from, uint32(chMax), uint32(firstGap)), nil
 }
 
+// substrateWindow is the per-query ledger span for the substrate audit.
+// Both substrate checks need a full sort of the range they inspect (the
+// window functions), and a whole-lake span (63M+ ledgers at 2026-06-12,
+// growing forever) exceeds CH's 12 GiB query memory cap — first in the
+// AggregatingTransform, then (with external spill enabled) in the
+// MergingSortedTransform. Windowing is the durable fix: both properties
+// are LOCAL (contiguity between neighbours; hash-link between
+// neighbours), so checking windows with a 1-ledger overlap proves
+// exactly the same claim at bounded memory, at any lake size. 5M rows
+// sorts comfortably in-memory per query.
+const substrateWindow = 5_000_000
+
 // SubstrateProblem returns the earliest ledger in [from,to] where the CH lake's
 // substrate fails (ADR-0033 Claim 1): a missing ledger (contiguity gap) or a
 // hash-chain break (prev_hash != the prior ledger's ledger_hash). Returns
@@ -97,6 +109,10 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 //
 // Both checks run over a per-ledger dedup (GROUP BY ledger_seq, argMax by
 // ingested_at) so ReplacingMergeTree duplicate parts don't create false breaks.
+// The audit runs in substrateWindow-sized spans with a 1-ledger overlap (the
+// seam link is checked by the next window's WHERE ledger_seq > seam-1 bound),
+// returning the FIRST problem found so the windowing is observationally
+// identical to the old single-query form.
 func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	conn, oerr := openRead(ctx, addr)
 	if oerr != nil {
@@ -104,14 +120,6 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 	}
 	defer func() { _ = conn.Close() }()
 
-	// First contiguity gap (first missing ledger), 0 if none.
-	//
-	// SETTINGS on both substrate queries: the GROUP BY/sort over the full
-	// ledger range (63M+ rows and growing) exceeded the 12 GiB query memory
-	// limit at tip 63.0M (2026-06-12). Spill to disk instead of failing —
-	// CH tmp_path lives on the big ZFS pool, and the substrate check is a
-	// batch audit where minutes are fine and a false-FAIL verdict is not.
-	const spill = ` SETTINGS max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 	const gapQ = `
 		SELECT toUInt64(ifNull((SELECT min(gap_start) FROM (
 			SELECT ledger_seq + 1 AS gap_start
@@ -122,12 +130,7 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 				FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?)
 			)
 			WHERE nxt > ledger_seq + 1
-		)), 0))` + spill
-	var firstGap uint64
-	if qerr := conn.QueryRow(ctx, gapQ, from, to).Scan(&firstGap); qerr != nil {
-		return 0, false, "", fmt.Errorf("clickhouse: substrate contiguity [%d,%d]: %w", from, to, qerr)
-	}
-
+		)), 0))`
 	// First hash-chain break: prev_hash != the immediately-prior ledger's hash.
 	const chainQ = `
 		SELECT toUInt64(ifNull((SELECT min(ledger_seq) FROM (
@@ -138,20 +141,40 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 				FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
 				GROUP BY ledger_seq
 			)
-		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))` + spill
-	var firstBreak uint64
-	if qerr := conn.QueryRow(ctx, chainQ, from, to, from).Scan(&firstBreak); qerr != nil {
-		return 0, false, "", fmt.Errorf("clickhouse: substrate hash-chain [%d,%d]: %w", from, to, qerr)
-	}
+		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 
-	switch {
-	case firstGap == 0 && firstBreak == 0:
-		return 0, false, "", nil
-	case firstGap != 0 && (firstBreak == 0 || firstGap <= firstBreak):
-		return uint32(firstGap), true, fmt.Sprintf("substrate: missing ledger at %d", firstGap), nil
-	default:
-		return uint32(firstBreak), true, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
+	for wlo := uint64(from); wlo <= uint64(to); wlo += substrateWindow {
+		whi := wlo + substrateWindow
+		if whi > uint64(to) {
+			whi = uint64(to)
+		}
+		// Window starts one ledger BEFORE the span it certifies (except the
+		// very first), so the seam pair (wlo-1, wlo) is hash-checked and a
+		// gap at the seam is caught by contiguity over [wlo-1, whi].
+		qlo := wlo
+		if qlo > uint64(from) {
+			qlo--
+		}
+
+		var firstGap uint64
+		if qerr := conn.QueryRow(ctx, gapQ, qlo, whi).Scan(&firstGap); qerr != nil {
+			return 0, false, "", fmt.Errorf("clickhouse: substrate contiguity [%d,%d]: %w", qlo, whi, qerr)
+		}
+		var firstBreak uint64
+		if qerr := conn.QueryRow(ctx, chainQ, qlo, whi, qlo).Scan(&firstBreak); qerr != nil {
+			return 0, false, "", fmt.Errorf("clickhouse: substrate hash-chain [%d,%d]: %w", qlo, whi, qerr)
+		}
+
+		switch {
+		case firstGap == 0 && firstBreak == 0:
+			continue
+		case firstGap != 0 && (firstBreak == 0 || firstGap <= firstBreak):
+			return uint32(firstGap), true, fmt.Sprintf("substrate: missing ledger at %d", firstGap), nil
+		default:
+			return uint32(firstBreak), true, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
+		}
 	}
+	return 0, false, "", nil
 }
 
 // watermark is the pure interpretation of a ContiguousWatermark query result:
