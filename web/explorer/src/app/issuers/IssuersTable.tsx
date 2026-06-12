@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useIssuers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
+import { isSafeHomeDomain } from '@/lib/safe-domain';
 
 /**
  * Live issuer directory backed by `/v1/issuers`. Ranked by total
@@ -156,15 +157,22 @@ export function IssuersTable() {
                   </Link>
                 </Td>
                 <Td>
-                  {row.home_domain ? (
+                  {isSafeHomeDomain(row.home_domain) ? (
                     <a
                       href={`https://${row.home_domain}`}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noreferrer noopener nofollow"
                       className="text-xs hover:text-brand-600 hover:underline"
                     >
                       {row.home_domain}
                     </a>
+                  ) : row.home_domain ? (
+                    // Attacker-controlled on-chain value that doesn't
+                    // parse as a strict hostname — render as plain
+                    // text, never a clickable link (phishing guard).
+                    <span className="text-xs text-slate-500" title="Unverified issuer-supplied domain">
+                      {row.home_domain}
+                    </span>
                   ) : (
                     <span className="text-xs text-slate-400">—</span>
                   )}

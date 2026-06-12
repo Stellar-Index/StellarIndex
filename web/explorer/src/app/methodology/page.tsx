@@ -55,8 +55,19 @@ export default function MethodologyPage() {
           ]}
         />
         <Aside>
-          The full per-venue registry — including \`include_in_vwap\`,
-          \`paid\`, \`backfill_safe\`, and 24h trade counts — is at{' '}
+          The full per-venue registry — including{' '}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+            include_in_vwap
+          </code>
+          ,{' '}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+            paid
+          </code>
+          ,{' '}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+            backfill_safe
+          </code>
+          , and 24h trade counts — is at{' '}
           <Link href="/sources" className="text-brand-600 hover:underline">
             /sources
           </Link>
@@ -76,8 +87,11 @@ export default function MethodologyPage() {
           VWAP = Σ(price<sub>i</sub> × volume<sub>i</sub>) / Σ(volume<sub>i</sub>)
         </Formula>
         <p>
-          where each trade i is from a source with class =
-          \`exchange\`. No per-venue weighting tier or boost — the
+          where each trade i is from a source with class ={' '}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+            exchange
+          </code>
+          . No per-venue weighting tier or boost — the
           weight is the trade&apos;s quote-side volume, period. A million
           dollars of XLM/USD trading at $0.12 on Coinbase counts the
           same as a million dollars of XLM/USD trading at $0.12 on
@@ -130,10 +144,15 @@ export default function MethodologyPage() {
         subtitle="When the API stops serving a price"
       >
         <p>
-          Some failures shouldn&apos;t be smoothed over with a stale or
-          confidence-flagged number. For those, the API returns
-          <strong> 503 frozen</strong> rather than a misleading rate.
-          Freeze triggers (
+          Some failures shouldn&apos;t be smoothed over with a fresh
+          number the aggregate can no longer stand behind. For those,
+          the API keeps serving the{' '}
+          <strong>last known-good value</strong> but stamps it with{' '}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+            flags.frozen=true
+          </code>{' '}
+          so consumers know not to act on it — rather than silently
+          returning a misleading live rate. Freeze triggers (
           <ADRRef id="0019" />
           ):
         </p>

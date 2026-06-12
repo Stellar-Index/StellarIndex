@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 
 /**
@@ -246,14 +247,26 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         )}
         {detail.home_domain && (
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            <a
-              href={`https://${detail.home_domain}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="font-mono hover:text-brand-600 hover:underline"
-            >
-              {detail.home_domain}
-            </a>
+            {/* home_domain is attacker-controlled on-chain data — only
+                link it when it parses as a strict hostname, else render
+                as plain text (phishing guard, WA-02). */}
+            {isSafeHomeDomain(detail.home_domain) ? (
+              <a
+                href={`https://${detail.home_domain}`}
+                target="_blank"
+                rel="noreferrer noopener nofollow"
+                className="font-mono hover:text-brand-600 hover:underline"
+              >
+                {detail.home_domain}
+              </a>
+            ) : (
+              <span
+                className="font-mono text-slate-500"
+                title="Unverified issuer-supplied domain"
+              >
+                {detail.home_domain}
+              </span>
+            )}
           </p>
         )}
       </header>
@@ -343,12 +356,12 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               ledger entries, operations log
             </span>
           </li>
-          {detail.home_domain && (
+          {isSafeHomeDomain(detail.home_domain) && (
             <li>
               <a
                 href={`https://${detail.home_domain}/.well-known/stellar.toml`}
                 target="_blank"
-                rel="noreferrer noopener"
+                rel="noreferrer noopener nofollow"
                 className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
               >
                 stellar.toml

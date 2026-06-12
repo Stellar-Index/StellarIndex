@@ -29,7 +29,7 @@ const CURATED: { slug: string; description: string }[] = [
   {
     slug: 'release-process',
     description:
-      'How a binary release is cut. CHANGELOG promotion, tag push, automated GitHub release, container build, and container push to ghcr.io. Includes the manual fallback path when CI is unavailable.',
+      'How a binary release is cut. CHANGELOG promotion, tag push, cross-compiled binaries, SHA256SUMS, and an automated GitHub release with auto-extracted notes. Includes the manual fallback path when CI is unavailable.',
   },
   {
     slug: 'deploy-workflow',

@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 
+import { assetHrefFor } from '@/lib/fiat-slugs';
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
 
@@ -132,7 +134,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
           <span className="font-mono text-[10px] text-slate-500">{cur.name}</span>
         </div>
         <a
-          href={`https://ratesengine.net/currencies/${upper}`}
+          href={`https://ratesengine.net${assetHrefFor(upper)}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-[10px] text-slate-400 hover:text-brand-600"

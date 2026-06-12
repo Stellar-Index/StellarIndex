@@ -11,6 +11,16 @@ import { Markdown } from '@/lib/markdown';
 // status site polls the live API but this surface is built once
 // per release from the embedded markdown corpus.
 
+// PUBLIC_REPO_URL is the base URL of the PUBLIC source repo (e.g.
+// https://github.com/<org>/<repo>), set at build time once the
+// repo is published at the v1.0 public flip. While unset the
+// "View source on GitHub" link is omitted entirely — linking the
+// private repo would 404 for every customer (WB-07). Trailing
+// slash trimmed so `${PUBLIC_REPO_URL}/blob/main/...` is clean.
+const PUBLIC_REPO_URL = (
+  process.env.NEXT_PUBLIC_PUBLIC_REPO_URL ?? ''
+).replace(/\/+$/, '');
+
 export const dynamic = 'error';
 export const dynamicParams = false;
 
@@ -90,15 +100,22 @@ export default async function IncidentPage({
           {inc.title}
         </h1>
         <Timeline started_at={inc.started_at} resolved_at={inc.resolved_at} />
-        <a
-          href={`https://github.com/RatesEngine/rates-engine/blob/main/${inc.source_path}`}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-xs text-ink-faint hover:text-brand-600"
-        >
-          View source on GitHub
-          <ExternalLink className="h-3 w-3" />
-        </a>
+        {/* The repo is private until the v1.0 public flip, so a
+            "View source" link would 404 for every customer. Gate it
+            behind a build-time env flag that holds the PUBLIC repo's
+            base URL (e.g. https://github.com/<org>/<repo>); when
+            unset, drop the link entirely (WB-07). */}
+        {PUBLIC_REPO_URL && (
+          <a
+            href={`${PUBLIC_REPO_URL}/blob/main/${inc.source_path}`}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-1 text-xs text-ink-faint hover:text-brand-600"
+          >
+            View source on GitHub
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
       </header>
 
       <article>
