@@ -17,6 +17,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **projector-replay silently no-oped** — the rewind called UpsertCursor,
+  whose monotonic-forward guard (F-0020) matched zero rows on a backward
+  write; the command printed success while the cursor stayed at tip. New
+  dedicated `RewindCursor` store method (backward-only UPDATE; errors on
+  missing row) wired into the subcommand. Found when the blend
+  TRUNCATE+replay re-derive wrote nothing.
+
 ### Changed
 
 - **Rebrand: Rates Engine -> Stellar Index** (ADR-0037; the same-day

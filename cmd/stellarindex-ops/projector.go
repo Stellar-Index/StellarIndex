@@ -94,7 +94,11 @@ func projectorReplay(args []string) error {
 			"dry-run: would UpsertCursor(projector, %q, %d)\n", *source, rewindTo)
 		return nil
 	}
-	if err := store.UpsertCursor(ctx, "projector", *source, rewindTo); err != nil {
+	// RewindCursor, NOT UpsertCursor: the upsert path carries a
+	// monotonic-forward guard (F-0020) that silently no-ops on a
+	// backward write — which made this whole subcommand a no-op that
+	// printed success (caught 2026-06-12).
+	if err := store.RewindCursor(ctx, "projector", *source, rewindTo); err != nil {
 		return fmt.Errorf("rewind cursor: %w", err)
 	}
 	_, _ = fmt.Fprintf(os.Stdout,

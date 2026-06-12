@@ -156,3 +156,41 @@ func (s *Store) UpsertCursor(ctx context.Context, source, sub string, lastLedger
 	}
 	return nil
 }
+
+// RewindCursor moves an existing cursor BACKWARD to lastLedger — the
+// deliberate-rewind path that UpsertCursor's monotonic-forward guard
+// (WHERE EXCLUDED.last_ledger > last_ledger, F-0020) intentionally
+// refuses. `projector-replay` is the only production caller: rewinding
+// the projector's per-source cursor is how historical re-projection
+// works (ADR-0032 Phase 5).
+//
+// Without this method projector-replay silently NO-OPed: it called
+// UpsertCursor with a lower ledger, the guard matched zero rows, the
+// command printed success, and the projector stayed at tip (found
+// 2026-06-12 during the deliverable re-derives — the blend TRUNCATE +
+// replay wrote nothing until this landed).
+//
+// Errors if the cursor row doesn't exist — a rewind of a source that
+// has never run is operator error, not a seed path (use UpsertCursor /
+// the projector's own first cycle for that). Refuses to move FORWARD:
+// fast-forwarding a cursor skips data and has its own deliberate SQL
+// procedures; this method is single-purpose by design.
+func (s *Store) RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
+	const q = `
+        UPDATE ingestion_cursors
+           SET last_ledger = $3, last_updated = now()
+         WHERE source = $1 AND sub_source = $2 AND last_ledger > $3
+    `
+	res, err := s.db.ExecContext(ctx, q, source, sub, lastLedger)
+	if err != nil {
+		return fmt.Errorf("timescale: RewindCursor: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("timescale: RewindCursor rows: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("timescale: RewindCursor (%s,%s): no row rewound — cursor missing or already at/below ledger %d", source, sub, lastLedger)
+	}
+	return nil
+}
