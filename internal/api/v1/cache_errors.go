@@ -117,7 +117,7 @@ func IsCacheUnavailable(err error) bool {
 func writeCacheUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Retry-After", "30")
 	writeProblem(w, r,
-		"https://api.ratesengine.net/errors/cache-unavailable",
+		"https://api.stellaratlas.xyz/errors/cache-unavailable",
 		"Cache temporarily unavailable", http.StatusServiceUnavailable,
-		"the cache layer reported a write-block (likely Redis bgsave failure); retry shortly. See https://api.ratesengine.net/v1/readyz for live health.")
+		"the cache layer reported a write-block (likely Redis bgsave failure); retry shortly. See https://api.stellaratlas.xyz/v1/readyz for live health.")
 }

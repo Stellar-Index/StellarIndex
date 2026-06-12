@@ -18,35 +18,35 @@
 # Phase-3; keeping them inert costs nothing.
 #
 # Of the two archive alerts in this file:
-#   - ratesengine_stellar_archive_publish_fail references
-#     `ratesengine_stellar_archive_publish_errors_total`. NOTHING IN
+#   - stellaratlas_stellar_archive_publish_fail references
+#     `stellaratlas_stellar_archive_publish_errors_total`. NOTHING IN
 #     THIS CODEBASE EMITS THAT METRIC (F-1329; confirmed by grep over
 #     internal/ cmd/ scripts/ 2026-06-11) — there is no
 #     stellar-archivist publish loop wired to a Prometheus counter, so
 #     this rule is INERT regardless of deployment posture. It is
 #     listed in scripts/ci/lint-metric-refs.sh as a known-inert
-#     ratesengine_* reference (allowlisted there) until a publish-error
+#     stellaratlas_* reference (allowlisted there) until a publish-error
 #     emitter is added. r1 doesn't publish a history archive anyway.
-#   - ratesengine_stellar_archive_divergence is ACTIVE on r1: it now
-#     references `ratesengine_verify_archive_mismatches_total{reason=~"chain|sequence|checkpoint"}`
+#   - stellaratlas_stellar_archive_divergence is ACTIVE on r1: it now
+#     references `stellaratlas_verify_archive_mismatches_total{reason=~"chain|sequence|checkpoint"}`
 #     (internal/obs/metrics.go) — the counter the verify-archive Tier-D
 #     job emits per chunk_idx + reason. The previous expr pointed at
-#     `ratesengine_archive_divergence_total`, a name nothing emits
+#     `stellaratlas_archive_divergence_total`, a name nothing emits
 #     (F-1329); repointed 2026-06-11.
 
 groups:
-  - name: ratesengine.stellar
+  - name: stellaratlas.stellar
     interval: 30s
     rules:
 
-      - alert: ratesengine_stellar_core_ledger_age
-        expr: (time() - ratesengine_stellar_core_last_ledger_time_unix) > 60
+      - alert: stellaratlas_stellar_core_ledger_age
+        expr: (time() - stellaratlas_stellar_core_last_ledger_time_unix) > 60
         for: 2m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: stellar
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/core-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/core-lag.md
         annotations:
           summary: "stellar-core ledger age {{ $value | humanizeDuration }} (SEV-1)"
           description: |
@@ -54,28 +54,28 @@ groups:
             is out of sync (catchup required) or it's disconnected from the
             network. Upstream data to our pipeline halts.
 
-      - alert: ratesengine_stellar_core_peers_low
-        expr: ratesengine_stellar_core_peer_count < 5
+      - alert: stellaratlas_stellar_core_peers_low
+        expr: stellaratlas_stellar_core_peer_count < 5
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: stellar
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/core-peers.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/core-peers.md
         annotations:
           summary: "stellar-core has only {{ $value }} peers"
           description: |
             stellar-core connected to < 5 peers. Quorum resilience degraded.
             Check firewall (11625 open), preferred peers list, network health.
 
-      - alert: ratesengine_stellar_rpc_lag
-        expr: ratesengine_stellar_rpc_latest_ledger_age_seconds > 300
+      - alert: stellaratlas_stellar_rpc_lag
+        expr: stellaratlas_stellar_rpc_latest_ledger_age_seconds > 300
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: stellar
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/rpc-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/rpc-lag.md
         annotations:
           summary: "stellar-rpc lagging by {{ $value | humanizeDuration }}"
           description: |
@@ -83,32 +83,32 @@ groups:
             captive-core may be catching up. Indexer continues reading from
             it but with increasing freshness debt.
 
-      - alert: ratesengine_stellar_archive_publish_fail
-        expr: increase(ratesengine_stellar_archive_publish_errors_total[1h]) > 0
+      - alert: stellaratlas_stellar_archive_publish_fail
+        expr: increase(stellaratlas_stellar_archive_publish_errors_total[1h]) > 0
         for: 1h
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: stellar
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/archive-publish.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/archive-publish.md
         annotations:
           summary: "Archive-publish errors in the last hour"
           description: |
             stellar-core failed to publish a checkpoint to our history archive.
             Not customer-visible but affects Tier-1 posture if sustained.
 
-      - alert: ratesengine_stellar_archive_divergence
+      - alert: stellaratlas_stellar_archive_divergence
         # F-1329: repointed from the never-emitted
-        # `ratesengine_archive_divergence_total` to the real counter the
+        # `stellaratlas_archive_divergence_total` to the real counter the
         # verify-archive Tier-D job emits. `reason` ∈ {chain|sequence|checkpoint};
         # any non-zero increase over a recent window is a hard correctness signal.
-        expr: increase(ratesengine_verify_archive_mismatches_total[1h]) > 0
+        expr: increase(stellaratlas_verify_archive_mismatches_total[1h]) > 0
         for: 0s
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: stellar
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/archive-divergence.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/archive-divergence.md
         annotations:
           summary: "Archive hash divergence detected (SEV-1)"
           description: |

@@ -5,9 +5,9 @@ import { BookOpen } from 'lucide-react';
 import { loadArchitectureDocs } from '@/lib/architecture';
 
 export const metadata: Metadata = {
-  title: 'Architecture narratives — Rates Engine research',
+  title: 'Architecture narratives — Stellar Atlas research',
   description:
-    'Long-form architecture narratives covering the Rates Engine ingest pipeline, aggregation methodology, and operational invariants.',
+    'Long-form architecture narratives covering the Stellar Atlas ingest pipeline, aggregation methodology, and operational invariants.',
 };
 
 export default function ArchitectureIndexPage() {
@@ -19,7 +19,7 @@ export default function ArchitectureIndexPage() {
           Architecture narratives
         </h1>
         <p className="max-w-3xl text-base text-slate-600 dark:text-slate-400">
-          The long-form designs behind every Rates Engine subsystem.{' '}
+          The long-form designs behind every Stellar Atlas subsystem.{' '}
           <Link href="/research" className="underline decoration-dotted">
             Back to research
           </Link>

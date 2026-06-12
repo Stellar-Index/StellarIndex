@@ -34,7 +34,7 @@ nvme2n1 / nvme3n1 : untouched, full 7.68T (ZFS raidz2 vdevs)
 ```
 
 ZFS pool `data` (raidz2, ~13.3 TB usable) with 5 datasets currently:
-- `data/os` → `/var/lib/ratesengine`
+- `data/os` → `/var/lib/stellaratlas`
 - `data/postgres` → `/var/lib/postgresql` (recordsize=8K, logbias=throughput)
 - `data/galexie` → `/var/lib/galexie`
 - `data/minio` → `/var/lib/minio`
@@ -50,22 +50,22 @@ Phase-3 validator work.
 
 | Service | State 2026-05-03 | Notes |
 |---------|------------------|-------|
-| postgresql@15-main | active | TimescaleDB extension installed 2026-05-03; all 15 migrations applied. `ratesengine` role + DB created. |
+| postgresql@15-main | active | TimescaleDB extension installed 2026-05-03; all 15 migrations applied. `stellaratlas` role + DB created. |
 | redis-server | active | Single-node, installed 2026-05-03 alongside the application bringup. |
 | ~~stellar-core~~ | **REMOVED 2026-04-23** | Primary daemon dropped — archive pipeline doesn't need it; see [archival-nodes.md](../discovery/data-sources/archival-nodes.md) for revival path in Phase 3. |
 | ~~stellar-rpc~~ | **REMOVED 2026-04-23** | Redundant for our data path — our own indexer consumes galexie's MinIO output directly via `ingest.ApplyLedgerMetadata`. Public API is `/v1/price` + `/v1/vwap` + `/v1/twap` + `/v1/ohlc` + …, not `/rpc`. See §Architecture below. |
 | galexie | active, exporting | Own captive-core; uploading `FC4A....xdr.zst` objects to MinIO galexie-live at ~1/ledger. ~100 objects/5min at steady state. **The single stellar-core on the box.** |
-| minio | active | Buckets: `galexie-live`, `galexie-archive`, `backups`. `ratesengine-reader` MinIO user (read-only on both galexie buckets) created 2026-04-26; password rotated + persisted to `/etc/default/ratesengine` 2026-05-03. |
-| **ratesengine-indexer** | **active (NEW 2026-05-03)** | Reads galexie-live tail via S3 GetObject; cursor-resumable. Live tail of pubnet from L62,403,000+. Dispatches to 11 source decoders + writes to `trades` + `oracle_updates` hypertables. Listens for /metrics on `127.0.0.1:9464`. |
-| **ratesengine-aggregator** | **active (NEW 2026-05-03)** | Tick-driven VWAP/TWAP/divergence/freeze/supply orchestration. Writes per-pair closed-bucket VWAPs to Redis cache (`vwap:<pair>:<window>`) + the `prices_1m` CAGG. Listens for /metrics on `127.0.0.1:9465` (auto-shifted off the indexer's :9464 default per #540). |
-| **ratesengine-api** | **active (NEW 2026-05-03)** | Public REST + SSE. `auth_mode=none` for the bringup phase. Listens on `0.0.0.0:3000`. /v1/healthz + /v1/readyz green; /v1/price serves real closed-bucket VWAPs. |
+| minio | active | Buckets: `galexie-live`, `galexie-archive`, `backups`. `stellaratlas-reader` MinIO user (read-only on both galexie buckets) created 2026-04-26; password rotated + persisted to `/etc/default/stellaratlas` 2026-05-03. |
+| **stellaratlas-indexer** | **active (NEW 2026-05-03)** | Reads galexie-live tail via S3 GetObject; cursor-resumable. Live tail of pubnet from L62,403,000+. Dispatches to 11 source decoders + writes to `trades` + `oracle_updates` hypertables. Listens for /metrics on `127.0.0.1:9464`. |
+| **stellaratlas-aggregator** | **active (NEW 2026-05-03)** | Tick-driven VWAP/TWAP/divergence/freeze/supply orchestration. Writes per-pair closed-bucket VWAPs to Redis cache (`vwap:<pair>:<window>`) + the `prices_1m` CAGG. Listens for /metrics on `127.0.0.1:9465` (auto-shifted off the indexer's :9464 default per #540). |
+| **stellaratlas-api** | **active (NEW 2026-05-03)** | Public REST + SSE. `auth_mode=none` for the bringup phase. Listens on `0.0.0.0:3000`. /v1/healthz + /v1/readyz green; /v1/price serves real closed-bucket VWAPs. |
 | node_exporter | active | :9100 |
 | ~~stellar-core-prometheus-exporter~~ | **REMOVED 2026-04-23** | Scraped primary /info endpoint; captives don't expose one. |
 | node-healthcheck.timer | active | 5-min push to Healthchecks.io UUID 4cb3daba |
 
 ### 2026-05-03 first application bringup
 
-The ratesengine application stack (indexer + aggregator + api)
+The stellaratlas application stack (indexer + aggregator + api)
 ran against r1 for the first time on 2026-05-03. Sequence
 captured here so R2 / R3 bringup follows the same path:
 
@@ -73,22 +73,22 @@ captured here so R2 / R3 bringup follows the same path:
 2. `apt install timescaledb-2-postgresql-15` (via PackageCloud
    apt repo); enabled `timescaledb` in `shared_preload_libraries`;
    restarted postgres; `CREATE EXTENSION timescaledb`.
-3. Generated `ratesengine` postgres password to
-   `/etc/ratesengine/postgres-password.txt` (mode 600).
-4. Rotated `ratesengine-reader` MinIO user's secret; stored in
-   `/etc/default/ratesengine`.
+3. Generated `stellaratlas` postgres password to
+   `/etc/stellaratlas/postgres-password.txt` (mode 600).
+4. Rotated `stellaratlas-reader` MinIO user's secret; stored in
+   `/etc/default/stellaratlas`.
 5. scp'd 4 binaries + migrations dir to r1.
-6. Ran `ratesengine-migrate up` — 15/15 migrations applied
+6. Ran `stellaratlas-migrate up` — 15/15 migrations applied
    after fixing migration 0005's TimescaleDB unique-index bug
    (PR #540 — the partition column `time` must be in the index).
-7. Wrote `/etc/systemd/system/ratesengine-{indexer,aggregator,api}.service`
-   units pointing at `/etc/default/ratesengine` for env.
+7. Wrote `/etc/systemd/system/stellaratlas-{indexer,aggregator,api}.service`
+   units pointing at `/etc/default/stellaratlas` for env.
 8. `systemctl enable --now` for each service in dependency order:
    indexer (live tail) → aggregator (VWAP tick) → api.
 9. End-to-end smoke: `/v1/price?asset=native&quote=USDC:GA5Z…` returned a real closed-bucket VWAP.
 10. Kicked off historical backfill `L50,457,424 → L62,400,000`
     via `nohup /usr/local/bin/run-historical-backfill.sh`. Logs
-    at `/var/log/ratesengine/backfill.log`. Idempotent on
+    at `/var/log/stellaratlas/backfill.log`. Idempotent on
     re-runs (trades hypertable's unique index is the dedupe).
 
 ### Architecture after 2026-04-23 trim
@@ -97,7 +97,7 @@ captured here so R2 / R3 bringup follows the same path:
 Stellar pubnet ─(SCP)─► galexie's captive-core ─► galexie ─► MinIO galexie-live
                                                                   │
                                                                   ▼
-                                                       cmd/ratesengine-indexer (Galexie → ledgerstream → dispatcher)
+                                                       cmd/stellaratlas-indexer (Galexie → ledgerstream → dispatcher)
                                                                   │
                                                                   ▼
                                                              TimescaleDB
@@ -188,7 +188,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    ```sql
    CREATE USER postgres_exporter;
    GRANT pg_monitor TO postgres_exporter;
-   GRANT CONNECT ON DATABASE ratesengine TO postgres_exporter;
+   GRANT CONNECT ON DATABASE stellaratlas TO postgres_exporter;
    ```
    Then swap `user=postgres` → `user=postgres_exporter` in
    `/etc/default/prometheus-postgres-exporter` and reload. `pg_monitor`
@@ -254,7 +254,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    stage → backup → atomic install → restart → /v1/healthz probe →
    automatic rollback on failure. Backups land at
    `/usr/local/bin/<binary>.prev-<previous-tag>` (5 retained).
-   Sidecar version files at `/var/lib/ratesengine/deployed-versions/<binary>`
+   Sidecar version files at `/var/lib/stellaratlas/deployed-versions/<binary>`
    track the running tag. **One-time setup needed:** 4 GitHub
    secrets per region (`R1_HOST`, `R1_USER`, `DEPLOY_SSH_PRIVATE_KEY`,
    `R1_SSH_KNOWN_HOSTS`). Operator runbook in
@@ -269,7 +269,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    API key (Starter tier, 1000 req/min). The key authenticates on
    every subsequent request via `Authorization: Bearer <key>`.
    Operator change on r1: `[api].auth_mode = "apikey_optional"` in
-   `/etc/ratesengine.toml`. Public surface (price queries,
+   `/etc/stellaratlas.toml`. Public surface (price queries,
    /v1/healthz, showcase) keeps serving anonymously at the
    60/min anon-tier rate-limit; authenticated requests get the
    per-key budget. Invalid keys → 401.
@@ -278,11 +278,11 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    for the application services (this session) and the full release
    pipeline (cut-release.sh + release.yml + deploy.yml + Dockerfiles
    from the prior session). v0.0.0-rc.1 cut as the first pipeline
-   smoke test; release page at github.com/RatesEngine/rates-engine/
+   smoke test; release page at github.com/StellarAtlas/stellar-atlas/
    releases/tag/v0.0.0-rc.1 with the six binaries (linux/amd64
    only — arm64 dropped 2026-05-08, GHCR job dropped because no
    consumer existed) plus SHA256SUMS. The current `cmd/` set is
-   six: ratesengine-{indexer, aggregator, api, ops, migrate,
+   six: stellaratlas-{indexer, aggregator, api, ops, migrate,
    sla-probe} — earlier "12 binaries" prose was stale (F-1221,
    audit-2026-05-12).
 
@@ -295,7 +295,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    - /v1/account/me with garbage key → 401 ✓
 
    **Follow-up gaps** (operator-tracked, not blocking):
-   - The mint-key CLI (`ratesengine-ops mint-key`) is operator-side
+   - The mint-key CLI (`stellaratlas-ops mint-key`) is operator-side
      bootstrap; signup is the public counterpart. Both produce
      keys via the same `RedisAPIKeyStore.Create` path.
    - Stripe webhook handler that lifts the per-key
@@ -317,8 +317,8 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    backfill that populated `galexie-archive` stopped on 2026-04-28
    at a verified tip of **62,249,727**; live galexie writes to
    `galexie-live` (per `/etc/galexie/galexie.toml`). Anything that
-   reads from `galexie-archive` (eg `ratesengine-ops wasm-history`,
-   `ratesengine-ops backfill`, `ratesengine-ops verify-archive-chunks`)
+   reads from `galexie-archive` (eg `stellaratlas-ops wasm-history`,
+   `stellaratlas-ops backfill`, `stellaratlas-ops verify-archive-chunks`)
    MUST bound `-to` ≤ 62,249,727 OR fail with "ledger object …
    does not exist" on the partial trailing partition
    (FC49CDFF--62272000-62335999, currently 24,695/64,000 files).
@@ -333,7 +333,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
      after live ingest catches up, OR
    - Configure live galexie to write to `galexie-archive` directly
      and decommission `galexie-live`, OR
-   - Make `ratesengine-ops` walkers consult both buckets at
+   - Make `stellaratlas-ops` walkers consult both buckets at
      read-time (code change in `internal/datastore`).
    The first option is the simplest and matches the discovery
    plan's original design ("aws s3 sync post-mirror into
@@ -384,7 +384,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
      default windows are `[5m, 1h, 24h]` — a 1m lookup missed every
      read.
 
-   Operator config on r1 (added to `/etc/ratesengine.toml`):
+   Operator config on r1 (added to `/etc/stellaratlas.toml`):
 
    ```toml
    [aggregate]
@@ -443,7 +443,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
 
 5d. **CEX/aggregator/sanity connectors enabled on r1.**
    (Done 2026-05-05 12:31 CEST.) Until today r1 ran on-chain-only —
-   `[external]` section was absent from `/etc/ratesengine.toml`
+   `[external]` section was absent from `/etc/stellaratlas.toml`
    and every venue defaulted to `enabled=false`. Closed both the
    `crypto:XLM/fiat:USD` 404 (gap noted in 5a above) and the
    RFP §4.7 CEX-coverage commitment.
@@ -461,7 +461,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
      [external.ecb]       enabled = true   # 9 pairs (poller, daily anchor)
    ```
 
-   Backup at `/etc/ratesengine.toml.bak.pre-cex-20260505-123044`.
+   Backup at `/etc/stellaratlas.toml.bak.pre-cex-20260505-123044`.
 
    Post-restart verification (T+~90s):
    - All 4 CEX streamers connected; trade rate at T+2min: binance
@@ -501,7 +501,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    write-only policy.~~ **Done — PR #156 (2026-04-23):** `galexie-writer`
    has write-only on `galexie-live`; `galexie-archive-writer` has
    write-only on `galexie-archive` (used during the historical fill);
-   `ratesengine-reader` has read on both (PR #162, 2026-04-26).
+   `stellaratlas-reader` has read on both (PR #162, 2026-04-26).
 
 8. Galexie's resume-from-last-ledger behaviour: wrapper currently
    restarts from `archive_tip - 128` every time. Long-term should
@@ -551,7 +551,7 @@ These are all now fixed in the role, but noted so the lessons survive:
    and copy (NOT symlink) out of `/root/go/bin/` into `/usr/local/bin/`
    because `/root` is mode 0700.
 
-7. `[HISTORY.ratesengine]` (our local history-archive block with
+7. `[HISTORY.stellaratlas]` (our local history-archive block with
    `put`/`mkdir` commands) must ONLY appear in the PRIMARY
    stellar-core config — never in any captive. Captive-cores that
    see `put`/`mkdir` assume they're supposed to publish checkpoints
@@ -583,7 +583,7 @@ and rolled R1 + applied operator-side config changes.
 
 **Binary deploy** via `gh workflow run deploy.yml`:
 
-  - `ratesengine-indexer` / `ratesengine-aggregator` / `ratesengine-api`
+  - `stellaratlas-indexer` / `stellaratlas-aggregator` / `stellaratlas-api`
     all on `v0.5.0-rc.49` (build 2026-05-12T15:28:59Z, commit
     `e5b684f2`).
 
@@ -604,18 +604,18 @@ and rolled R1 + applied operator-side config changes.
 
 **TOML config roll** (F-1266):
 
-  - `[supply]` block added to `/etc/ratesengine.toml` with 8
+  - `[supply]` block added to `/etc/stellaratlas.toml` with 8
     `watched_classic_assets` (USDC / EURC / AQUA / yXLM / VELO /
     BLND / PHO / KALE — mirroring `internal/currency/data/seed.yaml`).
   - `watched_sep41_contracts` and `sdf_reserve_accounts` set to
     empty (operator opt-in).
   - Aggregator + indexer restarted to pick up the new config.
     Indexer log line `"supply observers wired" watched_classic_assets=8`.
-  - Pre-roll backup at `/etc/ratesengine.toml.bak-pre-supply`.
+  - Pre-roll backup at `/etc/stellaratlas.toml.bak-pre-supply`.
 
 **Alert state delta**:
 
-  - `ratesengine_ingestion_source_stopped` family went from 5
+  - `stellaratlas_ingestion_source_stopped` family went from 5
     firing (pre-rc.49) → 2 firing (band + ecb only — both
     genuinely low-volume Soroban/FX sources). F-1212b's
     30m × 15m widened window working as designed.
@@ -651,7 +651,7 @@ R1 was running a pre-F-1223 Caddyfile that didn't block
 `/metrics`. Public hit returned 200 with the full Prometheus
 metrics surface — Go runtime stats, request counters, per-source
 ingest gauges all readable by anyone hitting
-`https://api.ratesengine.net/metrics`. Codex audit-2026-05-12.
+`https://api.stellaratlas.xyz/metrics`. Codex audit-2026-05-12.
 
 Roll:
 
@@ -679,15 +679,15 @@ Roll:
   - `scp deploy/systemd/{sla-probe,archive-completeness,supply-snapshot,verify-archive-tier-a}.{service,timer}` → `/etc/systemd/system/`
   - Created `/var/lib/node_exporter/textfile_collector/` (missing).
   - Drop-in override at `/etc/systemd/system/<svc>.service.d/override.conf`
-    setting `User=root` since the in-repo `User=ratesengine` user
-    doesn't exist on R1 yet (every existing ratesengine-* daemon
+    setting `User=root` since the in-repo `User=stellaratlas` user
+    doesn't exist on R1 yet (every existing stellaratlas-* daemon
     runs as root; consistent posture for the oneshot units until
     we cut over to a dedicated user).
   - `systemctl daemon-reload && systemctl enable --now <timer>`.
 
 Post-roll `systemctl list-timers --all` shows all four scheduled:
 
-  - `ratesengine-sla-probe.timer` — every 15 min
+  - `stellaratlas-sla-probe.timer` — every 15 min
   - `archive-completeness.timer` — every 4 h
   - `supply-snapshot.timer` — daily
   - `verify-archive-tier-a.timer` — weekly
@@ -718,13 +718,13 @@ Post-roll `systemctl list-timers --all` shows all four scheduled:
     indexer cursor and subtracts 64 ledgers of safety margin,
     writing the value to `/run/archive-completeness.env` which
     the EnvironmentFile pulls in. Fires every 4 h.
-  - **`ratesengine-sla-probe.timer`** — ⚠️ DISABLED. Binary updated on R1 to
+  - **`stellaratlas-sla-probe.timer`** — ⚠️ DISABLED. Binary updated on R1 to
     v0.5.0-rc.49-r1-patch (uses `/assets` not `/coins`). Still
     incompatible with anon-tier rate-limits at any reasonable
-    load. Needs vault-minted `RATESENGINE_PROBE_API_KEY` at
-    Partner/Operator tier in `/etc/default/ratesengine-healthchecks` before
+    load. Needs vault-minted `STELLARATLAS_PROBE_API_KEY` at
+    Partner/Operator tier in `/etc/default/stellaratlas-healthchecks` before
     re-enabling.
-  - In-repo `ratesengine-sla-probe.service` had an unquoted
+  - In-repo `stellaratlas-sla-probe.service` had an unquoted
     `Environment=PAIRS=-pair native,fiat:USD` that systemd
     parsed as two assignments — fixed (now
     `Environment="PAIRS=..."`).
@@ -790,20 +790,20 @@ decision tracked under F-1209.
 
 Firing alerts (14 total):
 
-  - 3× `ratesengine_ingestion_source_stopped` — blend, ecb,
+  - 3× `stellaratlas_ingestion_source_stopped` — blend, ecb,
     phoenix (genuinely low-volume; F-1212b's wider window doesn't
     catch the long-tail). Not a deploy-blocker.
-  - 2× `ratesengine_api_cache_miss_rate_high`
-  - 1× `ratesengine_supply_snapshot_never_initialized` — supply
+  - 2× `stellaratlas_api_cache_miss_rate_high`
+  - 1× `stellaratlas_supply_snapshot_never_initialized` — supply
     pipeline starting fresh post-rc.49 config roll; clears once
     the first snapshot lands per `docs/operations/runbooks/
     aggregator-supply-refresh-never-initialized.md`
-  - 1× `ratesengine_slo_latency_burn_slow` (F-1267 territory)
-  - 1× `ratesengine_slo_availability_burn_slow`
-  - 1× `ratesengine_host_memory_high` (F-1209 — operator action)
-  - 1× `ratesengine_external_poller_stale`
-  - 1× `ratesengine_deadmansswitch` — alertmanager heartbeat
-  - 1× `ratesengine_aggregator_supply_refresh_never_initialized`
+  - 1× `stellaratlas_slo_latency_burn_slow` (F-1267 territory)
+  - 1× `stellaratlas_slo_availability_burn_slow`
+  - 1× `stellaratlas_host_memory_high` (F-1209 — operator action)
+  - 1× `stellaratlas_external_poller_stale`
+  - 1× `stellaratlas_deadmansswitch` — alertmanager heartbeat
+  - 1× `stellaratlas_aggregator_supply_refresh_never_initialized`
 
 ## Credentials (pointers, not values)
 

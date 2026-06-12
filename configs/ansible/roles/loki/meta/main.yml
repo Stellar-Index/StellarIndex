@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: loki
-  author: ratesengine
+  author: stellaratlas
   description: >-
     Loki single-binary log aggregator + Promtail journal-shipping
     agents per docs/architecture/ha-plan.md §7. Single host runs

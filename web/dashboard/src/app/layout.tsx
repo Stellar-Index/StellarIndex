@@ -3,9 +3,9 @@ import './globals.css';
 import { AuthProvider } from '@/lib/auth';
 import { Toaster } from 'sonner';
 
-const SITE_NAME = 'Rates Engine — Dashboard';
+const SITE_NAME = 'Stellar Atlas — Dashboard';
 const SITE_DESCRIPTION =
-  'Manage your Rates Engine API keys, monitor usage, and configure billing.';
+  'Manage your Stellar Atlas API keys, monitor usage, and configure billing.';
 
 export const metadata: Metadata = {
   title: {

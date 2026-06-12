@@ -69,7 +69,7 @@ shape; the choices above are inputs, not outputs.
 - Open firewall ports for Patroni's REST API (8008) + etcd
   (2379/2380) on the internal network only.
 - Wire `node_exporter` textfile collectors so the existing
-  `ratesengine_timescale_primary_down` alert continues firing.
+  `stellaratlas_timescale_primary_down` alert continues firing.
 - Add a one-shot `patroni-bootstrap-restore` task for the
   initial-from-pgBackRest bring-up on a fresh cluster.
 
@@ -79,7 +79,7 @@ shape; the choices above are inputs, not outputs.
 - Postgres tuning beyond what Patroni's bootstrap uses (handled
   by the existing `archival-node` role's postgres tasks).
 - TimescaleDB CAGG / hypertable bootstrap (handled by
-  `ratesengine-migrate` separately).
+  `stellaratlas-migrate` separately).
 
 ## Why Patroni vs the alternatives
 
@@ -157,8 +157,8 @@ all:
       patroni_role: replica
       etcd_role: peer
   vars:
-    patroni_cluster_name: ratesengine-r1
-    etcd_cluster_token: ratesengine-etcd-r1
+    patroni_cluster_name: stellaratlas-r1
+    etcd_cluster_token: stellaratlas-etcd-r1
     patroni_postgres_version: 15
     patroni_data_dir: /var/lib/postgresql/15/main
     patroni_synchronous_mode: true
@@ -206,7 +206,7 @@ bootstrap:
         max_wal_senders: 10
         wal_keep_size: 1024MB
         archive_mode: 'on'
-        archive_command: 'pgbackrest --stanza=ratesengine archive-push %p'
+        archive_command: 'pgbackrest --stanza=stellaratlas archive-push %p'
         # TimescaleDB:
         shared_preload_libraries: 'timescaledb,pg_stat_statements'
 
@@ -287,7 +287,7 @@ backup (e.g. DR rebuild) need:
 ```yaml
 # Inventory
 patroni_bootstrap_method: pgbackrest        # default: initdb
-patroni_pgbackrest_stanza: ratesengine
+patroni_pgbackrest_stanza: stellaratlas
 patroni_pgbackrest_restore_target: latest   # or "time:2026-04-30 14:00:00"
 ```
 

@@ -1,7 +1,7 @@
 // Shared env / auth helpers for every k6 scenario.
 //
 // Operators export K6_TARGET (the API base URL, including /v1) and
-// RATESENGINE_LOAD_API_KEY (the load-test API key, minted from
+// STELLARATLAS_LOAD_API_KEY (the load-test API key, minted from
 // vault) before running k6. Scenarios import baseUrl + apiKey and
 // must NEVER hard-code these values.
 //
@@ -13,23 +13,23 @@
 const ENV = (typeof __ENV !== 'undefined') ? __ENV : {};
 
 export const baseUrl = (ENV.K6_TARGET || '').replace(/\/$/, '');
-export const apiKey = ENV.RATESENGINE_LOAD_API_KEY || '';
+export const apiKey = ENV.STELLARATLAS_LOAD_API_KEY || '';
 
 const PROD_HOSTS = [
-  'api.ratesengine.net',
-  'api.ratesengine.io',
+  'api.stellaratlas.xyz',
+  'api.stellaratlas.io',
   'rates.stellar.org',
 ];
 
 if (!baseUrl) {
   throw new Error(
-    'K6_TARGET is required (e.g. https://api.staging.ratesengine.net/v1). ' +
+    'K6_TARGET is required (e.g. https://api.staging.stellaratlas.xyz/v1). ' +
     'Export it before running k6.',
   );
 }
 if (!apiKey) {
   throw new Error(
-    'RATESENGINE_LOAD_API_KEY is required. Export the load-test ' +
+    'STELLARATLAS_LOAD_API_KEY is required. Export the load-test ' +
     'API key (mint from vault) before running k6.',
   );
 }
@@ -44,5 +44,5 @@ for (const h of PROD_HOSTS) {
 
 export const headers = {
   'X-API-Key': apiKey,
-  'User-Agent': 'ratesengine-k6/1.0',
+  'User-Agent': 'stellaratlas-k6/1.0',
 };

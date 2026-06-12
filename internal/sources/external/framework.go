@@ -48,7 +48,7 @@ import (
 // aggregated values with their own governance — folding them into our
 // VWAP would impose their methodology on our output).
 //
-// Rates Engine v1 policy: only [ClassExchange] contributes to VWAP.
+// Stellar Atlas v1 policy: only [ClassExchange] contributes to VWAP.
 // Everything else is reported alongside for transparency and
 // divergence checking, but excluded from the computed price. Operators
 // can override per-source via config.
@@ -180,7 +180,7 @@ type Metadata struct {
 	// historical on-chain artifact. SDEX is also true (classic
 	// Stellar, no WASM upgrades).
 	//
-	// This flag gates `ratesengine-ops backfill` from running a
+	// This flag gates `stellaratlas-ops backfill` from running a
 	// source against historical ranges before its decoder has been
 	// audited. Default-false for on-chain Soroban sources; flip to
 	// true per-source as `wasm-history` audits land.

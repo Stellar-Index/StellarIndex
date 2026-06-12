@@ -7,7 +7,7 @@
 # Every alert here has a runbook at docs/operations/runbooks/.
 
 groups:
-  - name: ratesengine.projector
+  - name: stellaratlas.projector
     interval: 30s
     rules:
 
@@ -16,14 +16,14 @@ groups:
       # ledgerstream tip every Interval. Sustained > 256 ledgers
       # (≈21 minutes of bucket time) is the first sign that a
       # decode is hot-looping or that postgres writes are slow.
-      - alert: ratesengine_projector_lag_high
+      - alert: stellaratlas_projector_lag_high
         expr: |
-          max by (source) (ratesengine_projector_lag_ledgers) > 256
+          max by (source) (stellaratlas_projector_lag_ledgers) > 256
         for: 10m
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
           summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
           description: |
@@ -40,14 +40,14 @@ groups:
       # retries next cycle. Sustained error rate means the source
       # is stuck (decoder panic, bad row in landing zone, downstream
       # PK constraint failure).
-      - alert: ratesengine_projector_error_rate_high
+      - alert: stellaratlas_projector_error_rate_high
         expr: |
-          sum by (source) (rate(ratesengine_projector_runs_total{outcome="error"}[15m])) > 0.05
+          sum by (source) (rate(stellaratlas_projector_runs_total{outcome="error"}[15m])) > 0.05
         for: 15m
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
           summary: "Projector source {{ $labels.source }} cycle errors sustained"
           description: |

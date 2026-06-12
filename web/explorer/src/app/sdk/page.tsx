@@ -5,25 +5,25 @@ import { ExternalLink } from 'lucide-react';
 import { CopyableSnippet } from '../widgets/CopyableSnippet';
 
 export const metadata: Metadata = {
-  title: 'Go SDK — Rates Engine',
+  title: 'Go SDK — Stellar Atlas',
   description:
-    'Official Go SDK for the Rates Engine API. Idiomatic typed client, SemVer-stable surface, paste-ready examples for every common pattern.',
+    'Official Go SDK for the Stellar Atlas API. Idiomatic typed client, SemVer-stable surface, paste-ready examples for every common pattern.',
   alternates: { canonical: '/sdk' },
 };
 
-const INSTALL = `go get github.com/RatesEngine/rates-engine/pkg/client`;
+const INSTALL = `go get github.com/StellarAtlas/stellar-atlas/pkg/client`;
 
 const QUICKSTART = `package main
 
 import (
     "context"
     "fmt"
-    "github.com/RatesEngine/rates-engine/pkg/client"
+    "github.com/StellarAtlas/stellar-atlas/pkg/client"
 )
 
 func main() {
     c := client.New(client.Options{
-        BaseURL: "https://api.ratesengine.net",
+        BaseURL: "https://api.stellaratlas.xyz",
         APIKey:  "rek_…", // optional; anonymous works at the public rate-limit
     })
 
@@ -142,7 +142,7 @@ export default function SDKPage() {
           Go SDK
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Idiomatic Go client for the Rates Engine API
+          Idiomatic Go client for the Stellar Atlas API
         </h1>
         <p className="max-w-2xl text-base text-slate-600 dark:text-slate-400">
           Typed, SemVer-stable, no surprises. Anonymous mode for the
@@ -158,7 +158,7 @@ export default function SDKPage() {
         <p className="text-sm text-slate-600 dark:text-slate-400">
           Single dependency. The module path follows the canonical{' '}
           <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">
-            github.com/RatesEngine/rates-engine
+            github.com/StellarAtlas/stellar-atlas
           </code>{' '}
           repo path.
         </p>
@@ -246,7 +246,7 @@ export default function SDKPage() {
         <ul className="mt-3 space-y-2 text-slate-600 dark:text-slate-400">
           <li>
             <a
-              href="https://pkg.go.dev/github.com/RatesEngine/rates-engine/pkg/client"
+              href="https://pkg.go.dev/github.com/StellarAtlas/stellar-atlas/pkg/client"
               target="_blank"
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 text-brand-600 hover:underline"
@@ -257,7 +257,7 @@ export default function SDKPage() {
           </li>
           <li>
             <a
-              href="https://github.com/RatesEngine/rates-engine/tree/main/pkg/client"
+              href="https://github.com/StellarAtlas/stellar-atlas/tree/main/pkg/client"
               target="_blank"
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 text-brand-600 hover:underline"
@@ -268,7 +268,7 @@ export default function SDKPage() {
           </li>
           <li>
             <a
-              href="https://docs.ratesengine.net"
+              href="https://docs.stellaratlas.xyz"
               target="_blank"
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 text-brand-600 hover:underline"
@@ -282,7 +282,7 @@ export default function SDKPage() {
             client for your favourite language from the OpenAPI spec
             at{' '}
             <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] dark:bg-slate-800">
-              openapi/rates-engine.v1.yaml
+              openapi/stellar-atlas.v1.yaml
             </code>
             . First-party clients beyond Go land as the demand
             surfaces.

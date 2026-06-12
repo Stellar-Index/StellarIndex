@@ -4,19 +4,19 @@ cut completes per launch-day-checklist.md §T-0 step 6).
 
 Channels:
   - Email to the RFP contacts (Stellar + Freighter)
-  - Slack: #rates-engine-public
+  - Slack: #stellar-atlas-public
   - Project handle (Twitter / Mastodon / wherever applicable)
   - Customer Slack/Discord presence if applicable
 
 Tone: factual, short, surfaces-first. The reader should be
 able to make their first request in under 60 seconds.
 
-Subject line: "Rates Engine — public launch (api.ratesengine.net live)"
+Subject line: "Stellar Atlas — public launch (api.stellaratlas.xyz live)"
 -->
 
-# Rates Engine — public launch
+# Stellar Atlas — public launch
 
-The Rates Engine is now live at **{{api_url}}** as of
+The Stellar Atlas is now live at **{{api_url}}** as of
 {{utc_time}}.
 
 ## What this is
@@ -26,17 +26,17 @@ across on-chain DEXs (Soroswap, Aquarius, Phoenix, Comet,
 SDEX), CEX feeds (Binance, Coinbase, Kraken, Bitstamp),
 oracle networks (Reflector, Redstone, Band), and FX anchors
 (ExchangeRatesApi, Polygon Forex). Source code is public at
-<https://github.com/RatesEngine/rates-engine>.
+<https://github.com/StellarAtlas/stellar-atlas>.
 
 ## First request
 
 ```sh
-curl 'https://api.ratesengine.net/v1/price?base=native&quote=fiat:USD' | jq .
+curl 'https://api.stellaratlas.xyz/v1/price?base=native&quote=fiat:USD' | jq .
 ```
 
-API documentation: <https://docs.ratesengine.net>.
-Getting-started walkthrough: <https://docs.ratesengine.net/getting-started>.
-Status: <https://status.ratesengine.net>.
+API documentation: <https://docs.stellaratlas.xyz>.
+Getting-started walkthrough: <https://docs.stellaratlas.xyz/getting-started>.
+Status: <https://status.stellaratlas.xyz>.
 
 ## What's covered today
 
@@ -52,7 +52,7 @@ Status: <https://status.ratesengine.net>.
 - SLA targets per the Freighter RFP: p95 ≤ 200 ms, p99 ≤
   500 ms, ≥ 99.9 % availability, ≤ 30 s freshness.
   Continuous evidence trail via the SLA probe;
-  see <https://docs.ratesengine.net/sla>.
+  see <https://docs.stellaratlas.xyz/sla>.
 
 ## How to get a key
 
@@ -63,8 +63,8 @@ exploration; an API key bumps you to 1000 rpm.)
 
 ## Reaching us
 
-- Bug reports / feature requests: <https://github.com/RatesEngine/rates-engine/issues>
-- Security: `security@ratesengine.net`
-- Operational status: <https://status.ratesengine.net>
+- Bug reports / feature requests: <https://github.com/StellarAtlas/stellar-atlas/issues>
+- Security: `security@stellaratlas.xyz`
+- Operational status: <https://status.stellaratlas.xyz>
 
 — {{your_name}}

@@ -206,16 +206,16 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
-# ──── ratesengine-reader (read-only on both buckets) ──────────────
-# Used by ratesengine-ops verify-archive today, and by the indexer +
+# ──── stellaratlas-reader (read-only on both buckets) ──────────────
+# Used by stellaratlas-ops verify-archive today, and by the indexer +
 # api once they have systemd units. Scoped to BOTH galexie-live and
 # galexie-archive because the indexer stitches across them at the
 # seam. NOT a writer — galexie-writer / galexie-archive-writer cover
 # the write paths separately.
 
-- name: Render ratesengine-reader MinIO policy
+- name: Render stellaratlas-reader MinIO policy
   ansible.builtin.copy:
-    dest: /etc/minio/policies/ratesengine-reader.json
+    dest: /etc/minio/policies/stellaratlas-reader.json
     owner: root
     group: root
     mode: "0644"
@@ -242,7 +242,7 @@
         ]
       }
 
-- name: Install / update ratesengine-reader MinIO policy
+- name: Install / update stellaratlas-reader MinIO policy
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -250,11 +250,11 @@
       - policy
       - create
       - local
-      - ratesengine-reader
-      - /etc/minio/policies/ratesengine-reader.json
+      - stellaratlas-reader
+      - /etc/minio/policies/stellaratlas-reader.json
   changed_when: false
 
-- name: Create ratesengine-reader MinIO user (vault-supplied creds)
+- name: Create stellaratlas-reader MinIO user (vault-supplied creds)
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -262,12 +262,12 @@
       - user
       - add
       - local
-      - "{{ ratesengine_reader_access_key }}"
-      - "{{ ratesengine_reader_secret_key }}"
+      - "{{ stellaratlas_reader_access_key }}"
+      - "{{ stellaratlas_reader_secret_key }}"
   changed_when: false
   no_log: true
 
-- name: Attach ratesengine-reader policy to ratesengine-reader user
+- name: Attach stellaratlas-reader policy to stellaratlas-reader user
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -275,28 +275,28 @@
       - policy
       - attach
       - local
-      - ratesengine-reader
+      - stellaratlas-reader
       - --user
-      - "{{ ratesengine_reader_access_key }}"
+      - "{{ stellaratlas_reader_access_key }}"
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
-- name: Template /etc/default/ratesengine-ops (env vars for verify-archive + indexer/api)
-  # Sourced both by interactive `ratesengine-ops` invocations and
-  # by the ratesengine-indexer.service systemd unit (07-galexie /
-  # ratesengine-indexer task wires EnvironmentFile to this file).
+- name: Template /etc/default/stellaratlas-ops (env vars for verify-archive + indexer/api)
+  # Sourced both by interactive `stellaratlas-ops` invocations and
+  # by the stellaratlas-indexer.service systemd unit (07-galexie /
+  # stellaratlas-indexer task wires EnvironmentFile to this file).
   #
   # The AWS SDK that powers the datastore reader (verify-archive +
   # indexer ledgerstream) reads creds from AWS_ACCESS_KEY_ID /
-  # AWS_SECRET_ACCESS_KEY. The RATESENGINE_S3_* duplicates are for
-  # config-load.go's ApplyEnvOverrides path. RATESENGINE_POSTGRES_DSN
+  # AWS_SECRET_ACCESS_KEY. The STELLARATLAS_S3_* duplicates are for
+  # config-load.go's ApplyEnvOverrides path. STELLARATLAS_POSTGRES_DSN
   # carries the application-db password so the file-on-disk
-  # /etc/ratesengine.toml stays password-free.
+  # /etc/stellaratlas.toml stays password-free.
   #
-  # Mode 0640 + group root for now; tighten to a `ratesengine`
+  # Mode 0640 + group root for now; tighten to a `stellaratlas`
   # service group once the indexer/api have a dedicated user.
   ansible.builtin.copy:
-    dest: /etc/default/ratesengine-ops
+    dest: /etc/default/stellaratlas-ops
     owner: root
     group: root
     mode: "0640"
@@ -305,11 +305,11 @@
       # `ansible-playbook ... --tags minio`.
       #
       # Source manually for interactive use:
-      #   set -a; source /etc/default/ratesengine-ops; set +a
-      #   ratesengine-ops verify-archive -config /etc/ratesengine.toml ...
-      AWS_ACCESS_KEY_ID={{ ratesengine_reader_access_key }}
-      AWS_SECRET_ACCESS_KEY={{ ratesengine_reader_secret_key }}
-      RATESENGINE_S3_ACCESS_KEY={{ ratesengine_reader_access_key }}
-      RATESENGINE_S3_SECRET_KEY={{ ratesengine_reader_secret_key }}
-      RATESENGINE_POSTGRES_DSN=postgres://{{ postgres_user_ratesengine }}:{{ postgres_pass_ratesengine }}@127.0.0.1:5432/{{ postgres_db_ratesengine }}?sslmode=disable
+      #   set -a; source /etc/default/stellaratlas-ops; set +a
+      #   stellaratlas-ops verify-archive -config /etc/stellaratlas.toml ...
+      AWS_ACCESS_KEY_ID={{ stellaratlas_reader_access_key }}
+      AWS_SECRET_ACCESS_KEY={{ stellaratlas_reader_secret_key }}
+      STELLARATLAS_S3_ACCESS_KEY={{ stellaratlas_reader_access_key }}
+      STELLARATLAS_S3_SECRET_KEY={{ stellaratlas_reader_secret_key }}
+      STELLARATLAS_POSTGRES_DSN=postgres://{{ postgres_user_stellaratlas }}:{{ postgres_pass_stellaratlas }}@127.0.0.1:5432/{{ postgres_db_stellaratlas }}?sslmode=disable
   no_log: true

@@ -1,6 +1,6 @@
-# Rates Engine — customer dashboard
+# Stellar Atlas — customer dashboard
 
-Static-export Next.js 15 app deployed to **app.ratesengine.net**
+Static-export Next.js 15 app deployed to **app.stellaratlas.xyz**
 (Cloudflare Pages). Cookie-based auth backed by the
 `/v1/auth/{login,callback,logout}` endpoints in
 `internal/api/v1/dashboardauth/`.
@@ -12,7 +12,7 @@ pnpm install
 pnpm dev   # http://localhost:3001
 ```
 
-Talks to `https://api.ratesengine.net` by default. To point at a
+Talks to `https://api.stellaratlas.xyz` by default. To point at a
 local API:
 
 ```sh
@@ -39,5 +39,5 @@ must be configured with:
 
 The `/auth/callback` route is **server-side** (the Go API): clicking
 the magic link in the email lands at
-`https://api.ratesengine.net/v1/auth/callback?token=…`, which sets
+`https://api.stellaratlas.xyz/v1/auth/callback?token=…`, which sets
 the session cookie and 303-redirects back into this SPA.

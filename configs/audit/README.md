@@ -1,6 +1,6 @@
 # `configs/audit/` — auditor inputs
 
-Curated source-of-truth lists feeding the `ratesengine-ops wasm-history`
+Curated source-of-truth lists feeding the `stellaratlas-ops wasm-history`
 and related audit tooling. Maintained in repo (rather than ad-hoc on
 r1) so audits are reproducible.
 
@@ -8,7 +8,7 @@ r1) so audits are reproducible.
 
 ### `wasm-walk-contracts.yaml`
 
-The input list for `ratesengine-ops wasm-history` walks. One entry per
+The input list for `stellaratlas-ops wasm-history` walks. One entry per
 Soroban source we ingest. (Earlier versions of this README also
 described an `_unattributed` block for contracts whose
 ContractInstance entries were TTL-evicted from RPC; that block was
@@ -26,9 +26,9 @@ yq '.aquarius.contracts | join(",")' configs/audit/wasm-walk-contracts.yaml \
   | ssh root@r1 "cat > /tmp/aquarius-input.txt"
 
 # Run the walk on r1 (off the curated list)
-ssh root@r1 "set -a; . /etc/default/ratesengine-ops; set +a; \
-  ratesengine-ops wasm-history \
-    -config /etc/ratesengine.toml \
+ssh root@r1 "set -a; . /etc/default/stellaratlas-ops; set +a; \
+  stellaratlas-ops wasm-history \
+    -config /etc/stellaratlas.toml \
     -from 50457424 -to \$(date +%s)-derived-current-tip \
     -contracts \$(cat /tmp/aquarius-input.txt) \
     -parallel 8 \

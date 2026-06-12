@@ -51,7 +51,7 @@ func (s *Store) UpsertSoroswapPair(ctx context.Context, pairStrkey, token0Strkey
 //
 // Returns an empty slice (not nil + nil error) when the table is
 // empty — that's the steady-state for a fresh deployment that hasn't
-// run `ratesengine-ops seed-soroswap-pairs` yet.
+// run `stellaratlas-ops seed-soroswap-pairs` yet.
 func (s *Store) LoadSoroswapPairRegistry(ctx context.Context) ([]SoroswapPair, error) {
 	const q = `
 		SELECT pair_strkey, token0_strkey, token1_strkey

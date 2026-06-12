@@ -2,7 +2,7 @@
 # Redis cache alerts — per ADR-0007 key schema + HA plan §3.4 topology.
 
 groups:
-  - name: ratesengine.cache
+  - name: stellaratlas.cache
     interval: 30s
     rules:
 
@@ -10,14 +10,14 @@ groups:
       # `redis_up{role="master"}` matched no series and this PAGE was
       # dead. `redis_up` (1 = exporter reached the server, 0 = it could
       # not) is the direct liveness signal.
-      - alert: ratesengine_redis_master_down
+      - alert: stellaratlas_redis_master_down
         expr: redis_up == 0
         for: 30s
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: cache
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-master-down.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-master-down.md
         annotations:
           summary: "Redis master {{ $labels.instance }} down (SEV-1)"
           description: |
@@ -25,28 +25,28 @@ groups:
             promote a replica within 30 s — until it does, API handlers for
             keys on this shard fall back to Timescale with stale_flag=true.
 
-      - alert: ratesengine_redis_memory_saturated
+      - alert: stellaratlas_redis_memory_saturated
         expr: (redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: cache
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-memory.md
         annotations:
           summary: "Redis {{ $labels.instance }} memory {{ $value | humanize }}% used"
           description: |
             At > 90 % memory for 5+ minutes. allkeys-lru will start evicting
             rate-limit counters + asset-metadata caches. Plan a scale-up.
 
-      - alert: ratesengine_redis_evictions_high
+      - alert: stellaratlas_redis_evictions_high
         expr: rate(redis_evicted_keys_total[5m]) > 100
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: cache
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-memory.md
         annotations:
           summary: "Redis {{ $labels.instance }} evicting {{ $value | humanize }}/s keys"
           description: |
@@ -63,16 +63,16 @@ groups:
       # the never-emitted `redis_expected_slaves` precisely so it stays
       # non-firing on r1; it is TRACKED in scripts/ci/lint-metric-refs.sh's
       # KNOWN_INERT list. Drop both when r1 grows replicas.
-      - alert: ratesengine_redis_replication_broken
+      - alert: stellaratlas_redis_replication_broken
         # INERT on r1: redis_expected_slaves has no producer; single-node.
         expr: |
           redis_connected_slaves < on(instance) redis_expected_slaves
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: cache
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-replication.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-replication.md
         annotations:
           summary: "Redis master {{ $labels.instance }} missing replicas"
           description: |

@@ -22,7 +22,7 @@ import (
 // Every logger is stamped with a `binary` attribute so a unified
 // log aggregator (Loki) can filter per-binary without grepping
 // path prefixes. binaryName is what gets stamped — pass the
-// program's basename (e.g. "ratesengine-indexer").
+// program's basename (e.g. "stellaratlas-indexer").
 //
 // Output goes to stderr because that's what systemd's StandardError
 // captures into the journal by default; stdout is reserved for

@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: prometheus
-  author: ratesengine
+  author: stellaratlas
   description: >-
     Prometheus + AlertManager 2-host pair per
     docs/architecture/ha-plan.md §7. Each host independently

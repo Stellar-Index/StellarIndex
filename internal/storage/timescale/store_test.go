@@ -47,7 +47,7 @@ func TestConfigurePool_AppliesAllFourSettings(t *testing.T) {
 }
 
 // TestStorePingContext_NilSafe — the resilience-ping goroutine in
-// cmd/ratesengine-indexer/main.go probes via [Store.PingContext];
+// cmd/stellaratlas-indexer/main.go probes via [Store.PingContext];
 // a nil receiver during shutdown teardown MUST not panic. Returning
 // nil is the documented behaviour.
 func TestStorePingContext_NilSafe(t *testing.T) {

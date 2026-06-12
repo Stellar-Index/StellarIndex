@@ -1,4 +1,4 @@
-# Public status page — `status.ratesengine.net`
+# Public status page — `status.stellaratlas.xyz`
 
 The status page is a custom Next.js static-export app at
 [`web/status/`](../../web/status). It replaces the previous
@@ -30,13 +30,13 @@ excluded so the page focuses on what customers actually consume.
 
 ## Hosting
 
-Cloudflare Pages project `ratesengine-status` with custom
-domain `status.ratesengine.net`. Bootstrap config managed by
+Cloudflare Pages project `stellaratlas-status` with custom
+domain `status.stellaratlas.xyz`. Bootstrap config managed by
 [`scripts/ops/cf-pages-bootstrap.sh`](../../scripts/ops/cf-pages-bootstrap.sh):
 - Root: `web/status`
 - Build command: `pnpm install --frozen-lockfile && pnpm build`
 - Output: `out`
-- Env: `NEXT_PUBLIC_API_BASE_URL=https://api.ratesengine.net`,
+- Env: `NEXT_PUBLIC_API_BASE_URL=https://api.stellaratlas.xyz`,
   `NODE_VERSION=20`, `PNPM_VERSION=10`
 
 ## Why not cstate / Statuspage.io

@@ -1,9 +1,9 @@
-// Package v1 is the HTTP serving plane for the Rates Engine public
+// Package v1 is the HTTP serving plane for the Stellar Atlas public
 // API v1.
 //
 // # Source of truth
 //
-// The OpenAPI specification at openapi/rates-engine.v1.yaml is the
+// The OpenAPI specification at openapi/stellar-atlas.v1.yaml is the
 // wire contract. This package implements it. If the two diverge,
 // either (a) update the spec + regenerate docs, or (b) fix the
 // handler. Never silently ship a handler that disagrees with the
@@ -67,6 +67,6 @@
 // # References
 //
 //   - [docs/reference/api-design.md] — design doc.
-//   - [openapi/rates-engine.v1.yaml] — wire contract.
+//   - [openapi/stellar-atlas.v1.yaml] — wire contract.
 //   - [ADR-0007] — Redis cache schema (cachekeys).
 package v1

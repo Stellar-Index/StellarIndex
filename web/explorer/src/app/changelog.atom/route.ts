@@ -1,4 +1,4 @@
-// /changelog.atom — RFC-4287 syndication feed of Rates Engine
+// /changelog.atom — RFC-4287 syndication feed of Stellar Atlas
 // product releases. Same shape contract as /v1/incidents.atom on
 // the API side: subscribers in Feedly, Slack RSS bot, etc. get
 // pushed every new release with no polling.
@@ -21,15 +21,15 @@ import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 // merges (regression of task #38), the atom feed silently goes
 // stale — visible only by diffing the feed's first <updated>
 // timestamp against the latest CHANGELOG.md commit time. Probe:
-//   curl -s https://ratesengine.net/changelog.atom | head -20
+//   curl -s https://stellaratlas.xyz/changelog.atom | head -20
 // If the first entry's date < last main commit touching CHANGELOG.md,
 // CF Pages rebuild is wedged; manually trigger from the dashboard
 // or push any commit to main.
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://ratesengine.net';
-const FEED_TITLE = 'Rates Engine — release notes';
-const FEED_AUTHOR = 'Rates Engine';
+const SITE_URL = 'https://stellaratlas.xyz';
+const FEED_TITLE = 'Stellar Atlas — release notes';
+const FEED_AUTHOR = 'Stellar Atlas';
 
 export function GET() {
   // Drop the Unreleased section from the syndication feed —
@@ -68,8 +68,8 @@ ${entries}
 }
 
 function renderEntry(r: Release): string {
-  const id = `urn:ratesengine:release:${versionSlug(r.version)}`;
-  const title = `Rates Engine ${r.version}`;
+  const id = `urn:stellaratlas:release:${versionSlug(r.version)}`;
+  const title = `Stellar Atlas ${r.version}`;
   const url = `${SITE_URL}/changelog#${versionSlug(r.version)}`;
   const published = atomDate(r.date);
   // Body is the original markdown wrapped in CDATA so feed

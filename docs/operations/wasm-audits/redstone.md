@@ -46,7 +46,7 @@ hotfix-window analysis below.
 | Adapter | `CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG` |
 
 The address is configured via `cfg.Oracle.Redstone.AdapterContract`
-in `ratesengine.toml`; the value above is the published mainnet
+in `stellaratlas.toml`; the value above is the published mainnet
 contract per `docs/discovery/oracles/redstone.md`. Redstone uses a
 **single Adapter contract** that owns price storage for every feed
 (plus thin per-feed proxies that read from the adapter — proxies
@@ -157,7 +157,7 @@ allow-list update is silently dropped — list lives in
 
 ## WASM timeline
 
-Output from `ratesengine-ops wasm-history` over the post-Soroban
+Output from `stellaratlas-ops wasm-history` over the post-Soroban
 window — full archive on r1, walked 2026-04-29:
 
 ```json
@@ -238,7 +238,7 @@ into any consumer's price-feed registry.
 backfill replay overlapping L58,758,722 → L58,759,141, verify
 that range is empty of redstone trades on r1:
 
-    psql -h localhost ratesengine -c "
+    psql -h localhost stellaratlas -c "
       SELECT count(*) FROM trades
        WHERE source = 'redstone'
          AND ledger BETWEEN 58758722 AND 58759141"

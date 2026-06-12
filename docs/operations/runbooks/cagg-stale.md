@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_timescale_cagg_stale`
+# Runbook — `stellaratlas_timescale_cagg_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_timescale_cagg_stale` |
+| Alert | `stellaratlas_timescale_cagg_stale` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `time() - ratesengine_cagg_last_refresh_unix > 5 * refresh_interval_seconds`
+- `time() - stellaratlas_cagg_last_refresh_unix > 5 * refresh_interval_seconds`
   for some `cagg` for ≥ 5 min.
 - `SELECT * FROM timescaledb_information.job_stats` shows
   `last_run_status != 'Success'` or `last_finish` well behind

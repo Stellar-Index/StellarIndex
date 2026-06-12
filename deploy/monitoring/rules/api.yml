@@ -3,29 +3,29 @@
 #
 # Job-label convention (F-1222 audit-2026-05-12). The multi-host
 # rules in this directory use UNDERSCORED job names
-# (`ratesengine_api`, `ratesengine_aggregator`, …) matching the
+# (`stellaratlas_api`, `stellaratlas_aggregator`, …) matching the
 # ansible-rendered scrape config at
 # `configs/ansible/roles/prometheus/templates/prometheus.yml.j2`.
 # R1's single-host deployment uses HYPHENATED job names
-# (`ratesengine-api`, …) matching its systemd units; the R1-
+# (`stellaratlas-api`, …) matching its systemd units; the R1-
 # specific overlay at `configs/prometheus/rules.r1/` is the
 # source of truth for R1's Prometheus. Editing only one half
 # silently breaks the other deployment shape — keep both in
 # sync when changing alert expressions.
 
 groups:
-  - name: ratesengine.api
+  - name: stellaratlas.api
     interval: 30s
     rules:
 
-      - alert: ratesengine_api_down
-        expr: sum(up{job="ratesengine_api"}) == 0
+      - alert: stellaratlas_api_down
+        expr: sum(up{job="stellaratlas_api"}) == 0
         for: 60s
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-down.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/api-down.md
         annotations:
           summary: "Every API pod is down (SEV-1)"
           description: |
@@ -33,17 +33,17 @@ groups:
             full public outage — customers see connection errors. Follow the
             api-down runbook immediately.
 
-      - alert: ratesengine_api_latency_p95_high
+      - alert: stellaratlas_api_latency_p95_high
         expr: |
           histogram_quantile(0.95,
-            sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine_api"}[5m]))
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="stellaratlas_api"}[5m]))
           ) > 0.5
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "API p95 {{ $value | humanizeDuration }} > 500ms"
           description: |
@@ -51,17 +51,17 @@ groups:
             target). Typical root cause: Redis cache miss storm → Timescale
             saturation. Check Redis eviction rate + Postgres connection pool.
 
-      - alert: ratesengine_api_latency_p99_high
+      - alert: stellaratlas_api_latency_p99_high
         expr: |
           histogram_quantile(0.99,
-            sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine_api"}[5m]))
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="stellaratlas_api"}[5m]))
           ) > 2
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "API p99 {{ $value | humanizeDuration }} > 2s"
           description: |
@@ -69,39 +69,39 @@ groups:
             Tail latency is usually a specific slow endpoint — check the
             per-endpoint breakdown.
 
-      - alert: ratesengine_api_error_rate_high
+      - alert: stellaratlas_api_error_rate_high
         expr: |
-          sum(rate(http_requests_total{job="ratesengine_api",status=~"5.."}[5m]))
-            / sum(rate(http_requests_total{job="ratesengine_api"}[5m])) > 0.01
+          sum(rate(http_requests_total{job="stellaratlas_api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="stellaratlas_api"}[5m])) > 0.01
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
           description: |
             Sustained > 1 % 5xx responses. At 5 % we escalate to SEV-1 via
             the critical variant.
 
-      - alert: ratesengine_api_error_rate_critical
+      - alert: stellaratlas_api_error_rate_critical
         expr: |
-          sum(rate(http_requests_total{job="ratesengine_api",status=~"5.."}[5m]))
-            / sum(rate(http_requests_total{job="ratesengine_api"}[5m])) > 0.05
+          sum(rate(http_requests_total{job="stellaratlas_api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="stellaratlas_api"}[5m])) > 0.05
         for: 2m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
           description: |
             > 5 % of requests returning 5xx. Customers are broken; declare
             SEV-1 and follow the api-5xx runbook.
 
-      - alert: ratesengine_api_price_stale
+      - alert: stellaratlas_api_price_stale
         # F-0104: the staleness gauge is emitted by the aggregator
         # at end-of-tick. Under cascade the aggregator tick wedges,
         # the gauge stops being scraped, and a bare `> 120` would
@@ -113,15 +113,15 @@ groups:
         # aggregator_silent (F-0080) and the exporter-down meta-
         # alerts (F-0085).
         expr: |
-          ratesengine_price_staleness_seconds > 120
+          stellaratlas_price_staleness_seconds > 120
           OR
-          absent_over_time(ratesengine_price_staleness_seconds[10m]) == 1
+          absent_over_time(stellaratlas_price_staleness_seconds[10m]) == 1
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-stale.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/price-stale.md
         annotations:
           summary: "Price for {{ $labels.asset }} is {{ $value }}s stale"
           description: |
@@ -139,21 +139,21 @@ groups:
       # RATIO not absolute count: a low-traffic cache that serves
       # 1 req/s with 100 % miss is fine, a hot cache that serves
       # 1000 req/s with 50 % miss is a phantom-key drift.
-      - alert: ratesengine_api_cache_miss_rate_high
+      - alert: stellaratlas_api_cache_miss_rate_high
         expr: |
           (
-            sum by (cache, op) (rate(ratesengine_api_cache_ops_total{result="miss"}[5m]))
+            sum by (cache, op) (rate(stellaratlas_api_cache_ops_total{result="miss"}[5m]))
             /
-            sum by (cache, op) (rate(ratesengine_api_cache_ops_total[5m]))
+            sum by (cache, op) (rate(stellaratlas_api_cache_ops_total[5m]))
           ) > 0.5
           and
-          sum by (cache, op) (rate(ratesengine_api_cache_ops_total[5m])) > 0.1
+          sum by (cache, op) (rate(stellaratlas_api_cache_ops_total[5m])) > 0.1
         for: 10m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
         annotations:
           summary: "API cache {{ $labels.cache }}/{{ $labels.op }} miss rate {{ $value | humanizePercentage }}"
           description: |
@@ -172,15 +172,15 @@ groups:
       # Permanent failures (`exhausted`) mean we hit the 15-attempt
       # retry budget — operator should review the deliveries log
       # before the customer notices the gap.
-      - alert: ratesengine_customer_webhook_delivery_failing
+      - alert: stellaratlas_customer_webhook_delivery_failing
         expr: |
-          sum(rate(ratesengine_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.1
+          sum(rate(stellaratlas_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.1
         for: 15m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
         annotations:
           summary: "Customer webhook delivery failing at {{ $value | humanize }}/s"
           description: |
@@ -193,15 +193,15 @@ groups:
                AND created_at > now() - interval '15 min'
              GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
 
-      - alert: ratesengine_customer_webhook_delivery_exhausted
+      - alert: stellaratlas_customer_webhook_delivery_exhausted
         expr: |
-          sum(rate(ratesengine_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])) > 0
+          sum(rate(stellaratlas_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])) > 0
         for: 1h
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
         annotations:
           summary: "Customer webhook deliveries permanently failed (budget exhausted)"
           description: |
@@ -218,15 +218,15 @@ groups:
       # operator-visible signal that the bridge is degraded:
       # customer dashboard / Postgres-backed key state is drifting
       # from their Stripe billing state.
-      - alert: ratesengine_stripe_platform_sync_errors
+      - alert: stellaratlas_stripe_platform_sync_errors
         expr: |
-          sum(rate(ratesengine_stripe_platform_sync_errors_total[15m])) > 0
+          sum(rate(stellaratlas_stripe_platform_sync_errors_total[15m])) > 0
         for: 15m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
         annotations:
           summary: "Stripe platform bridge degraded: {{ $value | humanize }} errors/s"
           description: |
@@ -247,16 +247,16 @@ groups:
       # leaf NotAfter as a Unix-seconds gauge. Fire at <14 days
       # remaining so the operator has a fortnight to manually
       # renew if Caddy's auto-path is stuck.
-      - alert: ratesengine_tls_cert_expiring_soon
+      - alert: stellaratlas_tls_cert_expiring_soon
         expr: |
-          ratesengine_tls_cert_not_after_unix - time() < 14 * 24 * 3600
-          and ratesengine_tls_cert_not_after_unix > 0
+          stellaratlas_tls_cert_not_after_unix - time() < 14 * 24 * 3600
+          and stellaratlas_tls_cert_not_after_unix > 0
         for: 1h
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: api
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
         annotations:
           summary: "TLS cert for {{ $labels.host }} expires in <14 days"
           description: |
@@ -266,4 +266,4 @@ groups:
             this alert firing means the renewal hasn't happened
             (rate limit, DNS issue, ACME quota, Caddy stuck).
 
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md

@@ -167,7 +167,7 @@ func fetchCoinbaseCandles(ctx context.Context, endpoint string, q url.Values) ([
 	}
 	// Coinbase requires a User-Agent — unlike most public APIs,
 	// empty User-Agent returns 400.
-	req.Header.Set("User-Agent", "ratesengine/1.0")
+	req.Header.Set("User-Agent", "stellaratlas/1.0")
 	req.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}

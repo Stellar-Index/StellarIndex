@@ -5,10 +5,10 @@ status: archived
 severity: P2
 ---
 
-# Runbook — `ratesengine_ingestion_lag_high`
+# Runbook — `stellaratlas_ingestion_lag_high`
 
 This alert is currently retired. The pre-dispatcher orchestrator emitted
-`ratesengine_source_lag_ledgers`; the current `ledgerstream -> dispatcher`
+`stellaratlas_source_lag_ledgers`; the current `ledgerstream -> dispatcher`
 indexer does not. Keep this file only as historical operator context until a
 replacement per-source lag signal lands.
 
@@ -16,7 +16,7 @@ replacement per-source lag signal lands.
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_ingestion_lag_high` |
+| Alert | `stellaratlas_ingestion_lag_high` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | 15–60 min (backfill), longer if the bottleneck is write-side |
@@ -24,7 +24,7 @@ replacement per-source lag signal lands.
 
 ## Symptoms
 
-- `ratesengine_source_lag_ledgers{source=<X>} > 1000` for ≥ 10 min.
+- `stellaratlas_source_lag_ledgers{source=<X>} > 1000` for ≥ 10 min.
 - `source_last_event_unix` still advancing (so the source isn't
   stopped — it's just slow).
 - `price-stale.md` may also fire for assets that source quotes.
@@ -34,16 +34,16 @@ replacement per-source lag signal lands.
 ```sh
 # Who's behind and by how much?
 curl -s http://indexer:9464/metrics |
-  awk '/ratesengine_source_lag_ledgers/ && $2 > 100 {print}'
+  awk '/stellaratlas_source_lag_ledgers/ && $2 > 100 {print}'
 
 # Is the source's processing rate > production rate?
 #   Production: ~1 ledger/5 s = 0.2 ledger/s
 #   If the source processes < 0.2 ledger/s it'll never catch up.
 curl -s http://prometheus:9090/api/v1/query --data-urlencode \
-  'query=rate(ratesengine_source_events_total{source="<X>"}[5m])'
+  'query=rate(stellaratlas_source_events_total{source="<X>"}[5m])'
 
 # Is the RPC also lagging? If so, we can't catch up faster than it.
-ratesengine-ops rpc-probe http://stellar-rpc:8000
+stellaratlas-ops rpc-probe http://stellar-rpc:8000
 
 # Is persistence the bottleneck (insert errors rising)?
 curl -s http://indexer:9464/metrics | grep insert_errors_total
@@ -91,14 +91,14 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
       run gap-detection then backfill the affected range:
       ```sh
       # 1. Identify the lagging cursor + the (from, to) range
-      ratesengine-ops detect-gaps -config /etc/ratesengine/config.toml \
+      stellaratlas-ops detect-gaps -config /etc/stellaratlas/config.toml \
           -threshold 50
       # 2. Backfill the named range. -dry-run first to see scope.
-      ratesengine-ops backfill -config /etc/ratesengine/config.toml \
+      stellaratlas-ops backfill -config /etc/stellaratlas/config.toml \
           -from <FIRST_LEDGER> -to <LAST_LEDGER> \
           -source <SOURCE_NAME> -dry-run
       # 3. Drop -dry-run to commit.
-      ratesengine-ops backfill -config /etc/ratesengine/config.toml \
+      stellaratlas-ops backfill -config /etc/stellaratlas/config.toml \
           -from <FIRST_LEDGER> -to <LAST_LEDGER> \
           -source <SOURCE_NAME> -resume
       ```

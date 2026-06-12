@@ -3,7 +3,7 @@
 # r1-smoke.sh — exercise the launch-critical API surface against
 # a deployment. Defaults to R1 over its internal address; pass
 # API_BASE_URL to point elsewhere (e.g. http://localhost:3000 in
-# dev or https://api.ratesengine.net post-DNS-cutover).
+# dev or https://api.stellaratlas.xyz post-DNS-cutover).
 #
 # Each check runs independently — one failing endpoint doesn't
 # short-circuit the others, so a single run reports every break.
@@ -106,7 +106,7 @@ expect_status() {
   done
 
   local body status
-  # User-Agent: ratesengine-smoke/N — the API's obs.HTTPMetrics
+  # User-Agent: stellaratlas-smoke/N — the API's obs.HTTPMetrics
   # middleware excludes synthetic traffic from histograms so the
   # SLO recording rule isn't polluted by the smoke timer's cold-
   # cache fan-out (every 5 min × N endpoints).
@@ -122,7 +122,7 @@ expect_status() {
   # global default.
   local url
   url="$(printf '%s%s' "$API_BASE_URL" "$path")"
-  body="$(curl -sS -m "$per_check_timeout" -A "ratesengine-smoke/1" -w "\n%{http_code}" "$url" 2>&1)" || {
+  body="$(curl -sS -m "$per_check_timeout" -A "stellaratlas-smoke/1" -w "\n%{http_code}" "$url" 2>&1)" || {
     printf "  %sFAIL%s %-32s %s%s (timeout=%ss)%s\n" "$RED" "$OFF" "$name" "$DIM" "curl error" "$per_check_timeout" "$OFF"
     FAILS=$((FAILS + 1))
     return

@@ -11,7 +11,7 @@ import { API_BASE_URL } from '@/api/client';
  * `/v1/status.overall`. Sits between the Navbar and the page
  * content; renders nothing when overall = "ok" or unknown.
  *
- * Why in-product instead of just on status.ratesengine.net:
+ * Why in-product instead of just on status.stellaratlas.xyz:
  * a consumer or developer reading prices doesn't naturally
  * navigate to a separate status domain to discover the API
  * is degraded — so a stale chart looks like normal data
@@ -121,7 +121,7 @@ export function DegradedBanner() {
         </span>
         <span className="ml-auto text-xs">
           <Link
-            href="https://status.ratesengine.net"
+            href="https://status.stellaratlas.xyz"
             target="_blank"
             rel="noopener noreferrer"
             className="underline-offset-2 hover:underline"

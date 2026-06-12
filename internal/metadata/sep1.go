@@ -238,7 +238,7 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 		return nil, fmt.Errorf("sep1: new request: %w", err)
 	}
 	req.Header.Set("Accept", "text/plain, application/toml, */*;q=0.1")
-	req.Header.Set("User-Agent", "rates-engine/metadata (+https://ratesengine.net)")
+	req.Header.Set("User-Agent", "stellar-atlas/metadata (+https://stellaratlas.xyz)")
 
 	resp, err := r.client.Do(req)
 	if err != nil {

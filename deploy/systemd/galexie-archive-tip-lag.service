@@ -15,8 +15,8 @@
 # ~/.mc/config.json (same as galexie-archive-fill.service per #26).
 
 [Unit]
-Description=Rates Engine — galexie-archive tip-lag metric updater (#31)
-Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+Description=Stellar Atlas — galexie-archive tip-lag metric updater (#31)
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
 After=minio.service
 Wants=minio.service
 

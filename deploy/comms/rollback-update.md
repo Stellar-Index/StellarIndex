@@ -7,7 +7,7 @@ Tone: honest. State what was broken, what was rolled back,
 what the customer-visible impact was, what's next. No
 speculation about root cause until the postmortem ships.
 
-Subject: "Rates Engine — {{tag}} rolled back ({{symptom}})"
+Subject: "Stellar Atlas — {{tag}} rolled back ({{symptom}})"
 -->
 
 # {{tag}} rolled back
@@ -52,7 +52,7 @@ hot-patch on top of {{tag}}." -->
 ## What's next
 
 A postmortem will be published at
-<https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/postmortems/>
+<https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/postmortems/>
 within {{postmortem_eta}}, including:
 
 - The root-cause mechanism.
@@ -61,6 +61,6 @@ within {{postmortem_eta}}, including:
   would have caught this pre-launch.
 
 Until then, things are stable on {{previous_tag}}. Status:
-<https://status.ratesengine.net>.
+<https://status.stellaratlas.xyz>.
 
 — {{your_name}}

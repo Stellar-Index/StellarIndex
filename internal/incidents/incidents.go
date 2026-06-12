@@ -4,7 +4,7 @@
 // handlers.
 //
 // The directory is the source of truth for the incidents shown
-// on status.ratesengine.net. Files are checked in; this package
+// on status.stellaratlas.xyz. Files are checked in; this package
 // is read-only at runtime — there is no admin write path.
 //
 // File naming follows `<YYYY-MM-DD>-<short-slug>.md`. Files

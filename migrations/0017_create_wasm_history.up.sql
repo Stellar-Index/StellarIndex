@@ -1,7 +1,7 @@
 -- 0017 up — `wasm_versions` + `contract_wasm_history`.
 --
 -- WASM history made into a queryable, postgres-resident first-class
--- citizen. Today the data lives in `ratesengine-ops wasm-history` JSONL
+-- citizen. Today the data lives in `stellaratlas-ops wasm-history` JSONL
 -- output on r1; usable for one-shot audits but invisible to the API.
 -- This migration is the foundation for the protocol/contract explorer
 -- pages (per docs/architecture/showcase-site-data-inventory.md §7.10)

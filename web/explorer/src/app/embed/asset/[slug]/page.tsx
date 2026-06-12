@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -94,7 +94,7 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
  * so the global Navbar / Footer don't render.
  *
  * Recommended iframe shape:
- *   <iframe src="https://ratesengine.net/embed/asset/USDC"
+ *   <iframe src="https://stellaratlas.xyz/embed/asset/USDC"
  *           width="320" height="160" frameborder="0"
  *           sandbox="allow-scripts"></iframe>
  *
@@ -131,7 +131,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
           </span>
         </div>
         <a
-          href={`https://ratesengine.net/assets/${slug}`}
+          href={`https://stellaratlas.xyz/assets/${slug}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-[10px] text-slate-400 hover:text-brand-600"
@@ -149,7 +149,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
       </div>
       {points.length > 0 && <Sparkline points={points} />}
       <div className="mt-auto flex items-center justify-between text-[10px] text-slate-400">
-        <span>Powered by Rates Engine</span>
+        <span>Powered by Stellar Atlas</span>
         {coin.volume_24h_usd && (
           <span className="font-mono tabular-nums">
             ${formatCompact(Number(coin.volume_24h_usd))} 24h vol

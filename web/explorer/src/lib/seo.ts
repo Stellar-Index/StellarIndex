@@ -20,7 +20,7 @@ export const SITE_OG_IMAGES = [
     url: SITE_OG_IMAGE_PATH,
     width: 1200,
     height: 630,
-    alt: 'Rates Engine — Stellar pricing explorer',
+    alt: 'Stellar Atlas — Stellar pricing explorer',
     type: 'image/svg+xml',
   },
 ];

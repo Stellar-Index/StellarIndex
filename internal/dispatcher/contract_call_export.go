@@ -7,7 +7,7 @@ import "github.com/stellar/go-stellar-sdk/xdr"
 // SCVal args, and the auth-tree CallPath ([] for the top-level call).
 //
 // It exists so off-line tooling — specifically the completeness
-// projection re-derive (ratesengine-ops compute-completeness) — can replay
+// projection re-derive (stellaratlas-ops compute-completeness) — can replay
 // exactly what the live dispatcher routes to ContractCallDecoders over the
 // certified ClickHouse lake, without reaching into the dispatcher's
 // unexported call-tree internals. Event-less ContractCall sources (band,

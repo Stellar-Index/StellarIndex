@@ -130,7 +130,7 @@ type SourceCoverageReader interface {
 // CompletenessReader is the ADR-0033 Phase 6 read seam for the
 // per-source watermark verdict. Production wiring is
 // timescale.Store.ListCompletenessSnapshots, populated by
-// `ratesengine-ops compute-completeness` (cron). Nil reader / empty
+// `stellaratlas-ops compute-completeness` (cron). Nil reader / empty
 // slice → the completeness_* fields stay absent and the UI falls back
 // to the gap_free coverage signal; never a regression.
 type CompletenessReader interface {
@@ -235,7 +235,7 @@ type BackfillCoverageRow struct {
 	// single PROVEN gap pins it — so it is the honest 100%-confidence
 	// signal that supersedes density/gap_free as the headline.
 	// Populated by overlayCompleteness from completeness_snapshots
-	// (written by `ratesengine-ops compute-completeness`); absent when
+	// (written by `stellaratlas-ops compute-completeness`); absent when
 	// not yet computed for this source.
 	CompletenessPct float64 `json:"completeness_pct,omitempty"`
 	// CompletenessWatermark is the highest fully-verified ledger.
@@ -454,7 +454,7 @@ type SourceHealthRow struct {
 	BackfillSafe  bool   `json:"backfill_safe"`
 	TradeCount24h int64  `json:"trade_count_24h"`
 	// Entries24h is the trailing-24h per-source event count from the
-	// universal ratesengine_source_events_total counter (Prometheus) —
+	// universal stellaratlas_source_events_total counter (Prometheus) —
 	// non-zero for every active source, on-chain or external, unlike
 	// trade_count_24h which is trades-table-only (and 0 for oracles,
 	// bridges, FX) and which a trades-scan timeout can silently zero.

@@ -55,14 +55,14 @@ shows up.
 Cold-read fix paths, in order of ambition:
 
 1. **CDN in front of R1.** Cache-Control already emits `s-maxage=N`
-   directives. When `api.ratesengine.net` lands behind Cloudflare /
+   directives. When `api.stellaratlas.xyz` lands behind Cloudflare /
    equivalent, customers see edge-cache hits for shareable URLs
    regardless of Redis TTL. **Smallest change; operator action.**
 2. **Stale-while-revalidate cache.** Serve the warm value
    immediately while refreshing async. Customer never sees a cold
    read; Redis stays continuously hot. ~50 LOC each on top of the
    existing `cachedOracleReader` / `cachedAssetReader` /
-   `cachedMarketsReader` wrappers in `cmd/ratesengine-api/main.go`.
+   `cachedMarketsReader` wrappers in `cmd/stellaratlas-api/main.go`.
 3. **Materialised tables.** `markets_summary` and
    `assets_catalogue` tables maintained by the indexer on every
    trade insert; `Store.DistinctPairs` / `DistinctAssets` read
@@ -90,7 +90,7 @@ latency, so this is a "nice to have" rather than urgent.
 The smoke timer at 5 min fires past the 30 s/60 s cache TTLs and
 always sees cold reads. With nothing but synthetic traffic on R1
 today, the SLO `slow-request-ratio` recording rule is dominated by
-those cold reads — the `ratesengine_slo_latency_burn_*` alerts
+those cold reads — the `stellaratlas_slo_latency_burn_*` alerts
 keep firing for a real-on-R1 reason that's invisible to actual
 customers (because customers polling at <1-min cadence see warm
 reads).

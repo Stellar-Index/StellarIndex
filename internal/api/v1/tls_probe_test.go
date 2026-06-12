@@ -115,8 +115,8 @@ func TestHostnameOnly(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"api.ratesengine.net", "api.ratesengine.net"},
-		{"api.ratesengine.net:443", "api.ratesengine.net"},
+		{"api.stellaratlas.xyz", "api.stellaratlas.xyz"},
+		{"api.stellaratlas.xyz:443", "api.stellaratlas.xyz"},
 		{"127.0.0.1:8443", "127.0.0.1"},
 		{"[::1]:8443", "::1"},
 	}
@@ -155,8 +155,8 @@ func TestTLSCertMetrics_HelpText(t *testing.T) {
 		t.Fatalf("Gather: %v", err)
 	}
 	wantNames := map[string]bool{
-		"ratesengine_tls_cert_not_after_unix": false,
-		"ratesengine_tls_cert_probe_total":    false,
+		"stellaratlas_tls_cert_not_after_unix": false,
+		"stellaratlas_tls_cert_probe_total":    false,
 	}
 	for _, mf := range gathered {
 		if _, want := wantNames[mf.GetName()]; want {

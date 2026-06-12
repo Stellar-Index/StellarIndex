@@ -1,5 +1,5 @@
 ---
-# Manual-trigger Cloudflare Pages deploy for status.ratesengine.net.
+# Manual-trigger Cloudflare Pages deploy for status.stellaratlas.xyz.
 #
 # **The recommended publish path is Cloudflare's git integration**
 # — it auto-deploys on every push to main without consuming GitHub
@@ -7,11 +7,11 @@
 # fallback as docs-deploy.yml + explorer-deploy.yml.
 #
 # Builds the Next.js static-export status page at web/status/
-# and pushes it to the `ratesengine-status` Pages project.
+# and pushes it to the `stellaratlas-status` Pages project.
 #
 # Required secrets (set once in repo settings):
 #   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on
-#                             ratesengine-status
+#                             stellaratlas-status
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
 
 name: status-page
@@ -28,9 +28,9 @@ on:
           - production
           - preview
       api_base_url:
-        description: "NEXT_PUBLIC_API_BASE_URL bake-in (default https://api.ratesengine.net)"
+        description: "NEXT_PUBLIC_API_BASE_URL bake-in (default https://api.stellaratlas.xyz)"
         required: false
-        default: "https://api.ratesengine.net"
+        default: "https://api.stellaratlas.xyz"
 
 permissions:
   contents: read
@@ -86,5 +86,5 @@ jobs:
           workingDirectory: web/status
           command: >-
             pages deploy out
-            --project-name ratesengine-status
+            --project-name stellaratlas-status
             --branch ${{ github.event.inputs.environment == 'production' && 'main' || github.ref_name }}

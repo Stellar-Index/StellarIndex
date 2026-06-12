@@ -47,11 +47,11 @@ specified CAGG over the `[start, end)` window. `NULL, NULL` means
 "every chunk older than the CAGG's `end_offset` policy" — i.e.
 the full preserved raw range minus the freshest few minutes.
 
-Run from psql against the `ratesengine` DB as the `ratesengine`
+Run from psql against the `stellaratlas` DB as the `stellaratlas`
 role:
 
 ```sh
-psql "$RATESENGINE_POSTGRES_DSN"
+psql "$STELLARATLAS_POSTGRES_DSN"
 ```
 
 ### Trades CAGGs (migration 0002)

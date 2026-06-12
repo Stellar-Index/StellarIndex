@@ -28,7 +28,7 @@ import (
 const MaxKeysPerAccount = 25
 
 // Config wires the handlers' dependencies. Constructed once in
-// cmd/ratesengine-api/main.go alongside the dashboardauth
+// cmd/stellaratlas-api/main.go alongside the dashboardauth
 // handlers.
 //
 // The runtime auth validator still reads keys from Redis during
@@ -398,7 +398,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 // audit-2026-05-12).
 //
 // Operator-issued or partner-issued keys aren't created through this
-// handler — they go through ratesengine-ops and are not subject to
+// handler — they go through stellaratlas-ops and are not subject to
 // this clamp. See [platform.Tier.MaxRateLimitPerMin] for the
 // per-tier ladder.
 func clampRateLimitToTier(requested int, tier platform.Tier) int {
@@ -509,7 +509,7 @@ func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type":     "https://api.ratesengine.net/errors/dashboard",
+		"type":     "https://api.stellaratlas.xyz/errors/dashboard",
 		"title":    http.StatusText(status),
 		"status":   status,
 		"detail":   detail,

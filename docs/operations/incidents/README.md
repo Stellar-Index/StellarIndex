@@ -10,9 +10,9 @@ The customer-facing incident posts now live at
 **[`internal/incidents/data/`](../../../internal/incidents/data/)**.
 
 They were moved out of `docs/operations/incidents/` so the
-ratesengine-api binary can `go:embed` them at build time and serve
+stellaratlas-api binary can `go:embed` them at build time and serve
 the parsed corpus via `GET /v1/incidents`. The public status page
-(status.ratesengine.net) reads from that endpoint instead of the
+(status.stellaratlas.xyz) reads from that endpoint instead of the
 hardcoded array it shipped with previously.
 
 ## Why the move

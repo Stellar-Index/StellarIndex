@@ -1,4 +1,4 @@
-# Rates Engine
+# Stellar Atlas
 
 **Status:** Pre-v1. Core system shipped end-to-end (ingestion +
 storage + REST API + aggregator: VWAP/TWAP, triangulation,
@@ -35,14 +35,14 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
 
 - **Hosted UI / explorer:** the explorer (`web/explorer/`) is a
   static-export Next.js site rendered at
-  <https://ratesengine.net>. Browse coins, markets, issuers,
+  <https://stellaratlas.xyz>. Browse coins, markets, issuers,
   sources, diagnostics; every panel reveals the exact API call
   that produced it. Build locally via
   `cd web/explorer && pnpm build` (output: `web/explorer/out/`).
   Operator runbook: [`docs/operations/explorer-deployment.md`](docs/operations/explorer-deployment.md).
 - **Users of the hosted API:** [`docs/getting-started.md`](docs/getting-started.md)
   walks from zero to your first authenticated request in five
-  minutes. Rendered at <https://docs.ratesengine.net>.
+  minutes. Rendered at <https://docs.stellaratlas.xyz>.
 - **API examples:** [`examples/curl/`](examples/curl/) — ten runnable
   shell scripts covering signup, account info, price, OHLC, history,
   oracle latest, markets, and the SSE price stream.
@@ -52,7 +52,7 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
 - **Reference docs:** generated Redocly output at
   [`docs/reference/api/index.html`](docs/reference/api/index.html)
   (regenerate via `make docs-api`); also published to
-  <https://docs.ratesengine.net> by the
+  <https://docs.stellaratlas.xyz> by the
   [`api-docs` workflow](.github/workflows/api-docs.yml).
 - **Self-hosting:** `make dev` boots the full local stack
   (TimescaleDB + Redis + MinIO). See
@@ -79,7 +79,7 @@ configs/               example.toml + Ansible roles (configs/ansible/)
 openapi/               API spec — source of truth for reference docs
 examples/              curl scripts + Postman collection for the public API
 deploy/                docker-compose (dev) / systemd (production) / monitoring (Prometheus rules) / status-page
-web/explorer/          Next.js static-export explorer rendered at ratesengine.net
+web/explorer/          Next.js static-export explorer rendered at stellaratlas.xyz
 test/                  integration + load + chaos + fixtures
 docs/                  architecture / ADR / operations / reference / discovery
 ```
@@ -155,11 +155,11 @@ long-form rationale; each becomes a numbered ADR.
 
 ## Contact
 
-- Security: <security@ratesengine.net> — see [SECURITY.md](SECURITY.md)
+- Security: <security@stellaratlas.xyz> — see [SECURITY.md](SECURITY.md)
   for the disclosure process (the GPG key for encrypted reports is not
   yet published; SECURITY.md tracks where it will land)
 - Code: [CONTRIBUTING.md](CONTRIBUTING.md)
-- General: <hello@ratesengine.net>
+- General: <hello@stellaratlas.xyz>
 
 ---
 

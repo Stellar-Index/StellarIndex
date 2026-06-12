@@ -11,7 +11,7 @@ import (
 //   - Tests that want to assert "an email was sent" without
 //     pretending to be Resend
 //   - Dev environments before the operator has configured
-//     RATESENGINE_RESEND_API_KEY (lets the auth flow run end-
+//     STELLARATLAS_RESEND_API_KEY (lets the auth flow run end-
 //     to-end with magic-link tokens viewable via the in-memory
 //     Sent slice)
 //

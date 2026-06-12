@@ -4,36 +4,36 @@
 # infrastructure — but they escalate as P2 when the numbers are bad.
 
 groups:
-  - name: ratesengine.divergence
+  - name: stellaratlas.divergence
     interval: 60s
     rules:
 
       # ── INERT (F-1329) — NO PRODUCER ──────────────────────────────
       # The two price-divergence alerts below reference
-      # `ratesengine_our_price` / `ratesengine_reference_price` as
+      # `stellaratlas_our_price` / `stellaratlas_reference_price` as
       # Prometheus gauges. NOTHING EXPORTS THESE AS METRICS. The
       # divergence worker (internal/divergence/worker.go) computes
       # our_price / ref_price / delta_pct but writes them to Postgres
       # (divergence_observations) + the Redis div:<asset> cache and
       # surfaces them via the API's `flags.divergence_warning` — not via
       # the Prometheus registry. The LIVE Prometheus signal for the same
-      # failure is `ratesengine_divergence_refresh_error_dominant` below,
+      # failure is `stellaratlas_divergence_refresh_error_dominant` below,
       # which DOES use an emitted metric. Exposing a per-asset price gauge
       # would add high-cardinality series and is out of scope here. These
       # two rules are kept (the runbook + intent survive) but INERT and
       # TRACKED in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list.
-      - alert: ratesengine_price_divergence_warning
-        # INERT: ratesengine_our_price / ratesengine_reference_price have no
+      - alert: stellaratlas_price_divergence_warning
+        # INERT: stellaratlas_our_price / stellaratlas_reference_price have no
         # Prometheus producer (divergence values live in PG + Redis, not the registry).
         expr: |
-          abs(ratesengine_our_price - ratesengine_reference_price)
-            / ratesengine_reference_price > 0.05
+          abs(stellaratlas_our_price - stellaratlas_reference_price)
+            / stellaratlas_reference_price > 0.05
         for: 2m
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: divergence
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-divergence.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/price-divergence.md
         annotations:
           summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference"
           description: |
@@ -41,18 +41,18 @@ groups:
             ({{ $labels.reference_source }}) by > 5 % sustained 2 min.
             Normal during rapid market moves; investigate if sustained.
 
-      - alert: ratesengine_price_divergence_critical
+      - alert: stellaratlas_price_divergence_critical
         # INERT: see the price_divergence_warning block above — no Prometheus
-        # producer for ratesengine_our_price / ratesengine_reference_price.
+        # producer for stellaratlas_our_price / stellaratlas_reference_price.
         expr: |
-          abs(ratesengine_our_price - ratesengine_reference_price)
-            / ratesengine_reference_price > 0.10
+          abs(stellaratlas_our_price - stellaratlas_reference_price)
+            / stellaratlas_reference_price > 0.10
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: divergence
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/price-divergence.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/price-divergence.md
         annotations:
           summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference (critical)"
           description: |
@@ -60,16 +60,16 @@ groups:
             a bad ingest (wrong decimals, stale source contributing) rather
             than a real market move.
 
-      - alert: ratesengine_oracle_stale
+      - alert: stellaratlas_oracle_stale
         expr: |
-          (time() - ratesengine_oracle_last_update_unix)
-            > 10 * ratesengine_oracle_resolution_seconds
+          (time() - stellaratlas_oracle_last_update_unix)
+            > 10 * stellaratlas_oracle_resolution_seconds
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: divergence
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/oracle-stale.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/oracle-stale.md
         annotations:
           summary: "Oracle {{ $labels.source }} stale for {{ $labels.asset }}"
           description: |
@@ -88,19 +88,19 @@ groups:
       # rate is non-zero (avoids firing during cold start when both
       # rates are 0). 30-min sustained is the trigger — shorter
       # windows catch transient blips that recover on their own.
-      - alert: ratesengine_divergence_refresh_error_dominant
+      - alert: stellaratlas_divergence_refresh_error_dominant
         expr: |
-          sum(rate(ratesengine_divergence_refresh_total{outcome="refresh_error"}[5m]))
+          sum(rate(stellaratlas_divergence_refresh_total{outcome="refresh_error"}[5m]))
             >
-          sum(rate(ratesengine_divergence_refresh_total{outcome="ok"}[5m]))
+          sum(rate(stellaratlas_divergence_refresh_total{outcome="ok"}[5m]))
           and
-          sum(rate(ratesengine_divergence_refresh_total{outcome=~"refresh_error|ok"}[5m])) > 0
+          sum(rate(stellaratlas_divergence_refresh_total{outcome=~"refresh_error|ok"}[5m])) > 0
         for: 30m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: divergence
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
         annotations:
           summary: "Divergence-cache refresh failing more often than succeeding (P3)"
           description: |

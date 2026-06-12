@@ -16,7 +16,7 @@
 #   - Run ON the host against localhost  → pure server compute
 #       ssh root@r1 'bash -s' < scripts/dev/api-latency-sweep.sh
 #   - Run from a VPS against the public URL → + network + edge/Caddy
-#       API_BASE_URL=https://api.ratesengine.net bash …api-latency-sweep.sh
+#       API_BASE_URL=https://api.stellaratlas.xyz bash …api-latency-sweep.sh
 #   - Point at r2/r3 the same way → cross-region comparison
 #
 # Usage / knobs (env):
@@ -110,7 +110,7 @@ if [ "${1:-}" = "--spec-check" ]; then
 import re, sys
 covered = set(sys.argv[1].split())
 inpaths=False; cur=None; gets=[]
-for ln in open('openapi/rates-engine.v1.yaml'):
+for ln in open('openapi/stellar-atlas.v1.yaml'):
     if re.match(r'^paths:', ln): inpaths=True; continue
     if inpaths:
         if re.match(r'^[A-Za-z]', ln): break

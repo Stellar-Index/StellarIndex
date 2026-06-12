@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_slo_latency_burn_medium`
+# Runbook — `stellaratlas_slo_latency_burn_medium`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_slo_latency_burn_medium` |
+| Alert | `stellaratlas_slo_latency_burn_medium` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/slo.yml` |
 | Typical MTTR | 30–90 min |

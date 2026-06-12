@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_redis_replication_broken`
+# Runbook — `stellaratlas_redis_replication_broken`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_redis_replication_broken` |
+| Alert | `stellaratlas_redis_replication_broken` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/cache.yml` |
 | Typical MTTR | 15–45 min |

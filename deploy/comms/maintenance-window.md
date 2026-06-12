@@ -8,7 +8,7 @@ Channels:
   - Status page: open a "scheduled maintenance" issue
   - Customer email: opt-in list per the customer-comms log
 
-Subject: "Rates Engine — scheduled maintenance {{utc_start}}"
+Subject: "Stellar Atlas — scheduled maintenance {{utc_start}}"
 -->
 
 # Scheduled maintenance — {{title}}
@@ -38,12 +38,12 @@ Subject: "Rates Engine — scheduled maintenance {{utc_start}}"
 ## Rollback plan
 
 If anything misbehaves we revert per
-<https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/rollback.md>.
+<https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/rollback.md>.
 Status page reflects the live state as we go.
 
 ## Questions
 
 Reply to this email or open an issue at
-<https://github.com/RatesEngine/rates-engine/issues>.
+<https://github.com/StellarAtlas/stellar-atlas/issues>.
 
 — {{your_name}}

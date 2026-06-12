@@ -1,0 +1,26 @@
+[Unit]
+Description=Stellar Atlas SLA probe (RFP latency + freshness pass/fail)
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/configs/healthchecks/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/stellaratlas/healthchecks/sla-probe.sh
+EnvironmentFile=-/etc/default/stellaratlas-healthchecks
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# F-1300 (codex audit-2026-05-13): the wrapper defaults
+# SLA_PROBE_TEXTFILE_OUTPUT to
+# /var/lib/node_exporter/textfile_collector/sla_probe.prom so the
+# alerts in deploy/monitoring/rules/sla-probe.yml have real series
+# to evaluate. ProtectSystem=strict makes /var read-only; without
+# ReadWritePaths every probe run failed with EROFS on the textfile.
+# The archival-node role provisions the directory with mode 0775 +
+# group stellaratlas; DynamicUser is in the stellaratlas
+# SupplementaryGroup so it can write here.
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+SupplementaryGroups=stellaratlas

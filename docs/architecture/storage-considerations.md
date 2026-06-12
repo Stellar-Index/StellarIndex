@@ -89,18 +89,18 @@ manual PPA + reboot.
 
 | Touchpoint | Reads | Writes | Cadence |
 |---|---|---|---|
-| `archive-completeness.service` (`ratesengine-ops archive-completeness verify`) | `ledger/` + `history/` only | `ledger/` (fix mode pulls missing checkpoints from SDF mirrors) | Nightly timer + `fix` on detection |
+| `archive-completeness.service` (`stellaratlas-ops archive-completeness verify`) | `ledger/` + `history/` only | `ledger/` (fix mode pulls missing checkpoints from SDF mirrors) | Nightly timer + `fix` on detection |
 | `verify-archive-tier-a.service` (`-tier chain`) | **NOTHING from /srv/history-archive** — only LCM chain in MinIO | n/a | Nightly timer (scheduled) |
 | `verify-archive -tier checkpoint` (Tier B) | `ledger/` + `history/` | n/a | Operator-invoked only (no scheduled cron) |
 | `verify-archive -tier archivist` (Tier E) | Full archive (all subdirs) | n/a | **Operator-invoked only; never run in 30d journal** |
-| `ratesengine-ops` 5x subcommands w/ `-archive-root` flag | `ledger/` paths | n/a | Operator-invoked |
+| `stellaratlas-ops` 5x subcommands w/ `-archive-root` flag | `ledger/` paths | n/a | Operator-invoked |
 
 ### Non-touchpoints (verified)
 
-- `ratesengine-indexer`, `ratesengine-aggregator`, `ratesengine-api`: **none read /srv/history-archive**.
+- `stellaratlas-indexer`, `stellaratlas-aggregator`, `stellaratlas-api`: **none read /srv/history-archive**.
 - Galexie's captive-core: uses its own ephemeral state in `/var/lib/galexie/captive*`, NOT this archive.
 - Caddy/nginx: no `/archive` routes. Not externally exposed.
-- ratesengine.toml's `history_archive_url`: points at SDF upstream (`https://history.stellar.org/prd/core-live/core_live_001`), NOT at this local path. The local mirror is a **cache**, not the canonical source.
+- stellaratlas.toml's `history_archive_url`: points at SDF upstream (`https://history.stellar.org/prd/core-live/core_live_001`), NOT at this local path. The local mirror is a **cache**, not the canonical source.
 
 ### Maintenance flow
 
@@ -201,7 +201,7 @@ ADR-0017 contracts 3+4 currently SATISFIED. Daemon is keeping `ledger/` current.
 
 **Touchpoints affected:** galexie-archive bucket reads fall back through TieredDataStore to aws-public-blockchain. Hot reads (above the trim cutoff) unchanged.
 
-**Status:** Tool exists (`ratesengine-ops trim-galexie-archive`); §3 was prematurely enabled once and rolled back due to wrong-region cold endpoint config (see `feedback_cold_tier_premature_enable.md`). Needs to be done with §3+§4 together.
+**Status:** Tool exists (`stellaratlas-ops trim-galexie-archive`); §3 was prematurely enabled once and rolled back due to wrong-region cold endpoint config (see `feedback_cold_tier_premature_enable.md`). Needs to be done with §3+§4 together.
 
 **Trade-off against operator stance:** Introduces a STEADY-STATE dependency on `aws-public-blockchain` for every read in the trimmed range. Operator preference: minimize external dependencies. Move A's external dependency (SDF for DR rebuild) is *contingent*; Move D's is *operational*.
 
@@ -317,7 +317,7 @@ This restores all four subdirs in seconds.
 
 - [ ] Has Tier E ever been documented as a routine practice anywhere we haven't searched? (Searched 10 ops docs; only `archival-node-bringup.md` mentions it in the bring-up sequence, and even there Tier A+B are the success criteria.)
 - [ ] What's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either? (Audit finding: R2/R3 are deferred and the "trust" relationship is theoretical.)
-- [ ] Does `cmd/ratesengine-ops/trim_galexie_archive.go` cover `galexie-live` bucket too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
+- [ ] Does `cmd/stellaratlas-ops/trim_galexie_archive.go` cover `galexie-live` bucket too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
 - [ ] Confirm MinIO du for `galexie-archive` vs `galexie-live` per-bucket breakdown (du is slow over 4.96 TB; still pending).
 
 ---

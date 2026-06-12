@@ -81,8 +81,8 @@
     state: present
   become_user: postgres
 
-# ──── ratesengine application database ─────────────────────────────
-# Used by ratesengine-indexer / aggregator / api. Owns the trades +
+# ──── stellaratlas application database ─────────────────────────────
+# Used by stellaratlas-indexer / aggregator / api. Owns the trades +
 # oracle_updates hypertables + price-aggregate CAGGs. TimescaleDB
 # extension is enabled at db-create time so migrations don't need
 # superuser to CREATE EXTENSION.
@@ -116,19 +116,19 @@
 - name: Flush handlers (postgres restart needed before timescaledb extension is usable)
   ansible.builtin.meta: flush_handlers
 
-- name: Create ratesengine Postgres role
+- name: Create stellaratlas Postgres role
   community.postgresql.postgresql_user:
-    name: "{{ postgres_user_ratesengine }}"
-    password: "{{ postgres_pass_ratesengine }}"
+    name: "{{ postgres_user_stellaratlas }}"
+    password: "{{ postgres_pass_stellaratlas }}"
     encrypted: true
     state: present
   become_user: postgres
   no_log: true
 
-- name: Create ratesengine Postgres database
+- name: Create stellaratlas Postgres database
   community.postgresql.postgresql_db:
-    name: "{{ postgres_db_ratesengine }}"
-    owner: "{{ postgres_user_ratesengine }}"
+    name: "{{ postgres_db_stellaratlas }}"
+    owner: "{{ postgres_user_stellaratlas }}"
     encoding: "UTF8"
     lc_collate: "en_US.UTF-8"
     lc_ctype: "en_US.UTF-8"
@@ -136,16 +136,16 @@
     state: present
   become_user: postgres
 
-- name: Enable timescaledb extension on ratesengine db
+- name: Enable timescaledb extension on stellaratlas db
   community.postgresql.postgresql_ext:
-    login_db: "{{ postgres_db_ratesengine }}"
+    login_db: "{{ postgres_db_stellaratlas }}"
     name: "timescaledb"
     state: present
   become_user: postgres
 
-- name: Enable pg_stat_statements on ratesengine db
+- name: Enable pg_stat_statements on stellaratlas db
   community.postgresql.postgresql_ext:
-    login_db: "{{ postgres_db_ratesengine }}"
+    login_db: "{{ postgres_db_stellaratlas }}"
     name: "pg_stat_statements"
     state: present
   become_user: postgres

@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_aggregator_silent`
+# Runbook — `stellaratlas_aggregator_silent`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_aggregator_silent` |
+| Alert | `stellaratlas_aggregator_silent` |
 | Severity | **P1** (page) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 5–20 min |
@@ -19,7 +19,7 @@ severity: P1
 
 ## Symptoms
 
-- `sum(rate(ratesengine_aggregator_vwap_writes_total[5m])) == 0` for ≥ 5 min.
+- `sum(rate(stellaratlas_aggregator_vwap_writes_total[5m])) == 0` for ≥ 5 min.
 - `/metrics` on the aggregator binary shows the counter not advancing
   between scrapes.
 - `/v1/vwap?pair=...` responses carry an `observed_at` lagging the
@@ -30,8 +30,8 @@ severity: P1
 
 ```sh
 # 1) Is the binary alive at all?
-systemctl status ratesengine-aggregator
-journalctl -u ratesengine-aggregator -n 50 --no-pager
+systemctl status stellaratlas-aggregator
+journalctl -u stellaratlas-aggregator -n 50 --no-pager
 
 # 2) What does the orchestrator say about its last tick?
 # F-1301 (codex audit-2026-05-13): aggregator binary auto-shifts
@@ -40,14 +40,14 @@ journalctl -u ratesengine-aggregator -n 50 --no-pager
 # aggregator; :9464 is the INDEXER's port. Use :9465 when probing
 # the aggregator. Override via AGGREGATOR_METRICS_PORT env if your
 # deployment pinned a different port.
-curl -fs "http://localhost:${AGGREGATOR_METRICS_PORT:-9465}/metrics" | grep -E '^ratesengine_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
+curl -fs "http://localhost:${AGGREGATOR_METRICS_PORT:-9465}/metrics" | grep -E '^stellaratlas_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
 
 # 3) Is Redis reachable and accepting writes?
 redis-cli -h <redis_host> -a "$REDIS_PASSWORD" PING
 redis-cli -h <redis_host> -a "$REDIS_PASSWORD" SET _aggregator_probe "$(date -Iseconds)" EX 60
 
 # 4) Is Timescale serving trades for the configured pair set?
-psql -d ratesengine -c "SELECT pair, COUNT(*) FROM trades WHERE timestamp > now() - interval '5 minutes' GROUP BY pair ORDER BY 2 DESC LIMIT 10;"
+psql -d stellaratlas -c "SELECT pair, COUNT(*) FROM trades WHERE timestamp > now() - interval '5 minutes' GROUP BY pair ORDER BY 2 DESC LIMIT 10;"
 ```
 
 Three signal-pairs to read off the metrics dump:
@@ -63,7 +63,7 @@ Three signal-pairs to read off the metrics dump:
 - [ ] **If Redis is the proximate cause** (PING fails / writes error): fail
       Redis over to its standby node before touching the aggregator. The
       aggregator retries on the next tick, no restart needed.
-- [ ] **If the tick loop is wedged**: `systemctl restart ratesengine-aggregator`.
+- [ ] **If the tick loop is wedged**: `systemctl restart stellaratlas-aggregator`.
       The orchestrator's first-tick-immediate behaviour means VWAP writes
       resume within `interval_seconds` (default 30 s) of restart.
 - [ ] **If empty windows are the cause** (Timescale has trades but every
@@ -78,7 +78,7 @@ Three signal-pairs to read off the metrics dump:
 
 Capture for the postmortem:
 
-- `journalctl -u ratesengine-aggregator --since='15 minutes ago'`
+- `journalctl -u stellaratlas-aggregator --since='15 minutes ago'`
 - A `/metrics` snapshot before and after recovery (paste both
   `ticks_total` and `dropped_trades_total` series).
 - Any concurrent Timescale or Redis incidents from the same window.
@@ -102,7 +102,7 @@ Capture for the postmortem:
 
 - ADR-0007 (cache strategy) — explains why VWAP is pre-computed
   rather than on-query.
-- `ratesengine_aggregator_outlier_storm` — often co-fires when a
+- `stellaratlas_aggregator_outlier_storm` — often co-fires when a
   market event simultaneously drives VWAP writes to zero (every
   trade σ-rejected) and floods the outlier counter.
 - `aggregator-outlier-storm.md` — sister runbook; check its

@@ -1,4 +1,4 @@
-// Package client is the official Go SDK for the Rates Engine
+// Package client is the official Go SDK for the Stellar Atlas
 // public API.
 //
 // # Stability
@@ -21,7 +21,7 @@
 //
 //	func main() {
 //	    c := client.New(client.Options{
-//	        BaseURL: "https://api.ratesengine.net",
+//	        BaseURL: "https://api.stellaratlas.xyz",
 //	        APIKey:  "rek_…",  // optional; anonymous works at low rate-limit
 //	    })
 //	    p, err := c.Price(context.Background(), client.PriceQuery{

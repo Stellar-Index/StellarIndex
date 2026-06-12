@@ -137,7 +137,7 @@ func TestRecovery_ListErrorIsNonFatal(t *testing.T) {
 // TestRecovery_SweepDurationMetricRecorded pins the wave-91
 // (2026-05-13) latency-histogram wiring: a sweep with no open
 // rows still records a sample on
-// `ratesengine_anomaly_freeze_recovery_sweep_duration_seconds{outcome="ok"}`.
+// `stellaratlas_anomaly_freeze_recovery_sweep_duration_seconds{outcome="ok"}`.
 // Same shape as the wave-92/93 regression tests for the
 // customer-webhook + divergence-refresh histograms — guards
 // against a future refactor silently dropping the timing call.

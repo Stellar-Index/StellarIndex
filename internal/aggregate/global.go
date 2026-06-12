@@ -56,7 +56,7 @@ type GlobalPriceResult struct {
 
 // GlobalPriceReader is the storage seam [ComputeGlobalPrice] reads
 // against. Each method maps to one tier of the fallback chain; the
-// production wiring in cmd/ratesengine-api/main.go provides a thin
+// production wiring in cmd/stellaratlas-api/main.go provides a thin
 // adapter over *timescale.Store + the existing Redis triangulation
 // looker.
 type GlobalPriceReader interface {

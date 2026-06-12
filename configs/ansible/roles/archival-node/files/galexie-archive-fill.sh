@@ -104,4 +104,4 @@ xargs -a /tmp/galexie-fill.needs-work.txt -P "$PARALLEL" -I {} bash -c '
 '
 
 echo "=== $(date -Iseconds) Done ===" | tee -a "$LOG"
-echo "Next: ratesengine-ops verify-archive -tier all -from 2 -to <last-mirrored-ledger>" | tee -a "$LOG"
+echo "Next: stellaratlas-ops verify-archive -tier all -from 2 -to <last-mirrored-ledger>" | tee -a "$LOG"

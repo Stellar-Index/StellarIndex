@@ -68,7 +68,7 @@ func (s *Subscriber) Channel() string { return s.channel }
 // to retry.
 //
 // One Subscriber per binary; safe to invoke as a long-lived
-// goroutine. The matching `cmd/ratesengine-api/main.go` wiring
+// goroutine. The matching `cmd/stellaratlas-api/main.go` wiring
 // runs Run inside an errgroup alongside the HTTP server.
 func (s *Subscriber) Run(ctx context.Context) error {
 	pubsub := s.cache.Subscribe(ctx, s.channel)

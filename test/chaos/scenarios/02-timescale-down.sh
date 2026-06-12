@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test/chaos/scenarios/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
-TIMESCALE_CONTAINER="${TIMESCALE_CONTAINER:-ratesengine-timescale}"
+TIMESCALE_CONTAINER="${TIMESCALE_CONTAINER:-stellaratlas-timescale}"
 HEALTH_URL="$CHAOS_TARGET/v1/healthz"
 
 chaos_setup

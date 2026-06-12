@@ -5,13 +5,13 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `ratesengine_sla_probe_unit_failed_alert`
+# Runbook — `stellaratlas_sla_probe_unit_failed_alert`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_sla_probe_unit_failed_alert` |
+| Alert | `stellaratlas_sla_probe_unit_failed_alert` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/sla-probe.yml` |
 | Typical MTTR | depends on the underlying breach |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `ratesengine_sla_probe_unit_failed > 0` for ≥ 30 min.
+- `stellaratlas_sla_probe_unit_failed > 0` for ≥ 30 min.
 - Most-recent JSON report in journald carries a non-empty
   `failed_reasons` array.
 - Often (not always) accompanied by one of the per-breach alerts
@@ -31,7 +31,7 @@ severity: P3
 
 ```sh
 # Pull the most-recent failed-reasons array — it names the breach.
-sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq -r '.failed_reasons[]'
+sudo journalctl -u stellaratlas-sla-probe.service -n 1 --output=cat | jq -r '.failed_reasons[]'
 ```
 
 Output is one of:
@@ -75,7 +75,7 @@ companion, that's a signal to add the per-breach rule.
 
 - None expected — the probe's verdict is deterministic from the
   measured values. If this fires without a real breach, that's a
-  bug in `cmd/ratesengine-sla-probe/main.go::computeVerdict`.
+  bug in `cmd/stellaratlas-sla-probe/main.go::computeVerdict`.
 
 ## Related
 

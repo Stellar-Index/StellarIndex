@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_node_root_disk_warning`
+# Runbook — `stellaratlas_node_root_disk_warning`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_node_root_disk_warning` |
+| Alert | `stellaratlas_node_root_disk_warning` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Typical MTTR | 30–60 min |

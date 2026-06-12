@@ -5,13 +5,13 @@ status: ratified
 severity: P2
 ---
 
-# Runbook — `ratesengine_supply_snapshot_circulating_zero`
+# Runbook — `stellaratlas_supply_snapshot_circulating_zero`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_supply_snapshot_circulating_zero` |
+| Alert | `stellaratlas_supply_snapshot_circulating_zero` |
 | Severity | P2 (page) |
 | Detected by | `deploy/monitoring/rules/supply-snapshot.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,10 +19,10 @@ severity: P2
 
 ## Coverage caveat — timer-path-only alert
 
-`ratesengine_supply_snapshot_circulating_xlm` is emitted by
+`stellaratlas_supply_snapshot_circulating_xlm` is emitted by
 `internal/supply/textfile.go`, which only runs from the systemd-
 timer path (`supply-snapshot.timer` →
-`ratesengine-ops supply snapshot`). The aggregator-resident
+`stellaratlas-ops supply snapshot`). The aggregator-resident
 goroutine path (gated by `[supply] aggregator_refresh_enabled =
 true`) writes directly to `asset_supply_history` without going
 through the textfile, so this alert **cannot fire** on a
@@ -33,7 +33,7 @@ and want a `circulating ≤ 0` signal, the equivalent check is at
 the API layer (e.g. probe `/v1/assets/native` and assert
 `circulating_supply > 0`); a follow-up alert will be needed.
 
-- `ratesengine_supply_snapshot_circulating_xlm{asset_key="XLM"} <= 0`
+- `stellaratlas_supply_snapshot_circulating_xlm{asset_key="XLM"} <= 0`
   for ≥ 5 min.
 - Per ADR-0011 native XLM circulating = total − Σ(SDF reserves).
   A non-positive value means either:
@@ -45,15 +45,15 @@ the API layer (e.g. probe `/v1/assets/native` and assert
 
 ```sh
 # 1. What's the latest snapshot?
-ratesengine-ops supply audit native -config /etc/ratesengine.toml
+stellaratlas-ops supply audit native -config /etc/stellaratlas.toml
 
 # 2. What does the operator config say?
-grep -A 100 "^\[supply" /etc/ratesengine.toml
+grep -A 100 "^\[supply" /etc/stellaratlas.toml
 
 # 3. Sum the reserve balances and compare to frozen total.
 python3 -c "
 import re, sys
-content = open('/etc/ratesengine.toml').read()
+content = open('/etc/stellaratlas.toml').read()
 balances = re.findall(r'^\\s*\"?([A-Z0-9]+)\"?\\s*=\\s*\"?(\\d+)\"?', content, re.M)
 total = sum(int(b) for _, b in balances if len(_) == 56)
 print(f'sum of reserve balances: {total} stroops = {total/1e7:.2f} XLM')
@@ -62,7 +62,7 @@ print(f'difference:             {500018068120000000 - total} stroops')
 "
 
 # 4. Dry-run with current config to confirm reproduction.
-ratesengine-ops supply snapshot -config /etc/ratesengine.toml -dry-run
+stellaratlas-ops supply snapshot -config /etc/stellaratlas.toml -dry-run
 ```
 
 ## Typical root causes
@@ -86,7 +86,7 @@ ratesengine-ops supply snapshot -config /etc/ratesengine.toml -dry-run
 3. **XLMComputer bug.** Should not happen — the algorithm is
    trivial — but if a recent code change broke it, this would
    fire.
-   - Signal: `ratesengine-ops supply snapshot -dry-run` produces
+   - Signal: `stellaratlas-ops supply snapshot -dry-run` produces
      the same wrong value with verified-correct config.
    - Mitigation: roll back the writer binary; file a P2 bug.
 

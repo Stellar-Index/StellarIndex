@@ -23,7 +23,7 @@ import (
 // ID + TransactionIndex are left empty — they're metadata for
 // stellar-rpc replays, not used by any decoder.
 //
-// Used by `ratesengine-ops <source>-backfill` subcommands to walk
+// Used by `stellaratlas-ops <source>-backfill` subcommands to walk
 // soroban_events for a historical range and re-feed the same Go
 // decoder live ingest uses, persisting to the per-source hypertable.
 func Reconstruct(row Row) (events.Event, error) {

@@ -1,6 +1,6 @@
 // Package pipeline holds the shared ingest-pipeline glue used by both
-// the long-running indexer (`cmd/ratesengine-indexer`) and the
-// bounded-replay backfill subcommand (`cmd/ratesengine-ops backfill`).
+// the long-running indexer (`cmd/stellaratlas-indexer`) and the
+// bounded-replay backfill subcommand (`cmd/stellaratlas-ops backfill`).
 //
 // What's here vs what isn't:
 //

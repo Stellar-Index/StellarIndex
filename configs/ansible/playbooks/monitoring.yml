@@ -16,8 +16,8 @@
 # Per-deployment configuration (set in inventory `vars:`):
 #   - alertmanager_healthchecks_deadmansswitch_url
 #   - alertmanager_slack_webhook_url       (defaults: empty → no chat fanout)
-#   - alertmanager_slack_channel           (defaults: "#ratesengine-alerts")
-#   - alertmanager_slack_channel_pages     (defaults: "#ratesengine-pages")
+#   - alertmanager_slack_channel           (defaults: "#stellaratlas-alerts")
+#   - alertmanager_slack_channel_pages     (defaults: "#stellaratlas-pages")
 #   - alertmanager_discord_webhook_url     (optional)
 #   - alertmanager_pagerduty_key           (optional)
 #

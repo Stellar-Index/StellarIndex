@@ -8,7 +8,7 @@ status: living doc
 
 End-to-end procedure for provisioning a new archival node (or
 rebuilding one from disaster) from the moment the box is reachable
-to the moment `ratesengine-indexer` is committing rows to
+to the moment `stellaratlas-indexer` is committing rows to
 TimescaleDB. Distilled from the messy r1 bring-up of 2026-04-23 →
 2026-04-27 — every step here is one we learned the hard way.
 
@@ -27,8 +27,8 @@ Before any ansible runs against the target host:
 | Root SSH access | `inventory/<host>.yml` (`ansible_user: root`) | Hetzner installimage default; harden later, not yet |
 | ansible-vault password | Operator's password manager | Won't be on disk |
 | Inventory file | `configs/ansible/inventory/<host>.yml` | Copy from `r1.example.yml`, fill in disk serials + IP |
-| Inventory secrets | `configs/ansible/inventory/<host>.secrets.yml` | `ansible-vault create` if new; needs `postgres_pass_*`, `minio_root_password`, `galexie_s3_*`, `ratesengine_reader_secret_key`, `ratesengine_pass_ratesengine` |
-| Local Go ≥ 1.25 | Operator's machine | Required by the cross-compile step in `14-ratesengine-services.yml`. Confirm with `go version` |
+| Inventory secrets | `configs/ansible/inventory/<host>.secrets.yml` | `ansible-vault create` if new; needs `postgres_pass_*`, `minio_root_password`, `galexie_s3_*`, `stellaratlas_reader_secret_key`, `stellaratlas_pass_stellaratlas` |
+| Local Go ≥ 1.25 | Operator's machine | Required by the cross-compile step in `14-stellaratlas-services.yml`. Confirm with `go version` |
 
 The stellar-archivist binary should be available on the host —
 the role doesn't install it today (Phase-1 gap; tracked under
@@ -51,9 +51,9 @@ ansible-playbook playbooks/archival-node.yml \
 
 This creates: ZFS pool + datasets, MinIO single-node + buckets +
 IAM (`galexie-writer`, `galexie-archive-writer`,
-`ratesengine-reader`), Postgres 15 + TimescaleDB extension +
-`ratesengine` db/role, galexie service (live tail starts ingesting
-immediately), all five `ratesengine-*` binaries cross-compiled
+`stellaratlas-reader`), Postgres 15 + TimescaleDB extension +
+`stellaratlas` db/role, galexie service (live tail starts ingesting
+immediately), all five `stellaratlas-*` binaries cross-compiled
 locally and copied up, migrations applied, indexer systemd unit
 installed (initially **stopped** — see step 5).
 
@@ -63,10 +63,10 @@ Verify after apply:
 ssh <host> 'systemctl is-active galexie minio postgresql@15-main'
 # All three should print: active
 ssh <host> 'mc admin user list local'
-# Three users: galexie-writer, galexie-archive-writer, ratesengine-reader
+# Three users: galexie-writer, galexie-archive-writer, stellaratlas-reader
 ssh <host> 'mc ls local/'
 # Three buckets: galexie-archive (empty), galexie-live (filling), backups
-ssh <host> 'sudo -u postgres psql -d ratesengine -c "\dt"'
+ssh <host> 'sudo -u postgres psql -d stellaratlas -c "\dt"'
 # trades, oracle_updates, ingestion_cursors, schema_migrations
 ```
 
@@ -179,11 +179,11 @@ ssh <host> 'zfs list -Ho used data/minio'
 
 ```sh
 ssh <host>
-set -a; source /etc/default/ratesengine-ops; set +a
+set -a; source /etc/default/stellaratlas-ops; set +a
 tmux new-window -t gbackfill -n verify-A
 tmux send-keys -t gbackfill:verify-A "
-ratesengine-ops verify-archive \
-  -config /etc/ratesengine.toml \
+stellaratlas-ops verify-archive \
+  -config /etc/stellaratlas.toml \
   -tier all \
   -from 2 -to <SEAM-1> \
   2>&1 | tee /var/log/galexie-verify.log
@@ -211,27 +211,27 @@ without a cursor on a fresh node). Set the real seam now:
 
 ```yaml
 # inventory/<host>.yml
-ratesengine_live_seam_ledger: <SEAM>          # from step 1
-ratesengine_backfill_from_ledger: 2           # genesis
-ratesengine_enabled_sources:
+stellaratlas_live_seam_ledger: <SEAM>          # from step 1
+stellaratlas_backfill_from_ledger: 2           # genesis
+stellaratlas_enabled_sources:
   - soroswap
   - aquarius
   - phoenix
   # add others as their per-WASM-hash audit completes
 ```
 
-Re-apply just the ratesengine bits:
+Re-apply just the stellaratlas bits:
 
 ```sh
 ansible-playbook playbooks/archival-node.yml \
-  --tags ratesengine \
+  --tags stellaratlas \
   --inventory inventory/<host>.yml \
   --extra-vars "@inventory/<host>.secrets.yml" \
   --ask-vault-pass
 ```
 
-This re-templates `/etc/ratesengine.toml` with the seam value and
-restarts `ratesengine-indexer.service`. The indexer log should
+This re-templates `/etc/stellaratlas.toml` with the seam value and
+restarts `stellaratlas-indexer.service`. The indexer log should
 show:
 
 ```
@@ -244,9 +244,9 @@ ledgerstream: live-only seam=<SEAM>
 Watch:
 
 ```sh
-ssh <host> 'journalctl -fu ratesengine-indexer'
+ssh <host> 'journalctl -fu stellaratlas-indexer'
 # In another window:
-ssh <host> 'sudo -u postgres psql -d ratesengine -c "
+ssh <host> 'sudo -u postgres psql -d stellaratlas -c "
   SELECT source, count(*), max(ts), max(ledger)
   FROM trades GROUP BY source ORDER BY 2 DESC;
 "'
@@ -302,11 +302,11 @@ ssh <host> 'systemd-run --unit=sweep ... && /usr/local/bin/refetch-history-archi
 
 ```sh
 # Re-run migrations:
-ssh <host> 'set -a; source /etc/default/ratesengine-ops; set +a; \
-  ratesengine-migrate -migrations /usr/local/share/ratesengine/migrations up'
+ssh <host> 'set -a; source /etc/default/stellaratlas-ops; set +a; \
+  stellaratlas-migrate -migrations /usr/local/share/stellaratlas/migrations up'
 
 # Ingestion cursor is gone, so the indexer needs an explicit
-# starting point — set ratesengine_backfill_from_ledger: 2 in
+# starting point — set stellaratlas_backfill_from_ledger: 2 in
 # inventory and re-apply, then watch the archive phase replay.
 ```
 
@@ -330,7 +330,7 @@ via step 4. Procedure:
    On a fresh deploy with an empty bucket it falls back to querying
    SDF's `.well-known/stellar-history.json` and starting from the
    archive tip minus a checkpoint-margin.
-4. Update `ratesengine_live_seam_ledger` in inventory if galexie
+4. Update `stellaratlas_live_seam_ledger` in inventory if galexie
    restarted at a different ledger than before — query the new
    process args.
 5. Re-run migrations + restart indexer (it'll replay from genesis
@@ -386,7 +386,7 @@ Differences from the recipe above:
   s3_region          = "us-east-2"
   ```
 
-  AWS public bucket access is anonymous — no `RATESENGINE_S3_*` creds
+  AWS public bucket access is anonymous — no `STELLARATLAS_S3_*` creds
   needed for the archive read path; galexie's S3 client falls back
   to anonymous when no credentials are configured. (`galexie-live/`
   for R2's own captive-core export still uses an authenticated
@@ -398,11 +398,11 @@ Differences from the recipe above:
   No `/srv/history-archive` needed. Wall-clock ~30-45 min for
   Tier A + D.
 - **Step 6 (indexer apply + start)** — same as R1 but
-  `ratesengine_live_seam_ledger` in inventory points at *R2's own
+  `stellaratlas_live_seam_ledger` in inventory points at *R2's own
   galexie-append start*, not R1's. Otherwise identical.
 
 R2 also runs the **Tier D weekly cron** (per
-`14-ratesengine-services.yml`) — same defence-in-depth as R1.
+`14-stellaratlas-services.yml`) — same defence-in-depth as R1.
 
 End-to-end R2 bring-up: **~1–2 h** (compute + EBS provisioning +
 ansible apply + Tier A+D verify), vs ~10–13 h for R1. The
@@ -446,7 +446,7 @@ Differences from the recipe above:
   no `/srv/history-archive` needed. ~30-45 min.
 - **Step 6 (indexer apply + start)** — config points the indexer's
   archive bucket at `vultr-objstor/galexie-archive` instead of the
-  local MinIO bucket. `ratesengine_live_seam_ledger` is R3's own
+  local MinIO bucket. `stellaratlas_live_seam_ledger` is R3's own
   galexie-append start ledger.
 
 R3 captive-core for galexie-live runs locally on the bare metal NVMe

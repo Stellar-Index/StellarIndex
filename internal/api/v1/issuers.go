@@ -27,7 +27,7 @@ type IssuersReader interface {
 //
 // OrgName is the issuer's organisation name from SEP-1
 // (`[DOCUMENTATION].ORG_NAME` in stellar.toml). Populated by
-// the `ratesengine-ops sep1-refresh` job; empty when never
+// the `stellaratlas-ops sep1-refresh` job; empty when never
 // resolved or when the issuer has no documentation block.
 type IssuerListEntry struct {
 	GStrkey               string `json:"g_strkey"`
@@ -49,7 +49,7 @@ type Issuer struct {
 	// OrgName is the issuer's organisation name extracted from
 	// SEP-1 (`[DOCUMENTATION].ORG_NAME`). Same field as the
 	// listing endpoint surfaces; populated by the
-	// `ratesengine-ops sep1-refresh` job.
+	// `stellaratlas-ops sep1-refresh` job.
 	OrgName string `json:"org_name,omitempty"`
 	// ScamReason is non-empty when the issuer is flagged as scam /
 	// malicious by the curated `known_scams.go` map (sourced from
@@ -84,7 +84,7 @@ type IssuedAsset struct {
 func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	if s.issuers == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/issuers-unavailable",
+			"https://api.stellaratlas.xyz/errors/issuers-unavailable",
 			"Issuers unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the issuer reader yet.")
 		return
@@ -94,7 +94,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 500 {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-limit",
+				"https://api.stellaratlas.xyz/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,
 				"limit must be 1-500")
 			return
@@ -121,7 +121,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 		if handlerTimedOut(listCtx, err) {
 			s.logger.Warn("ListIssuers deadline exceeded", "limit", limit)
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/issuers-timeout",
+				"https://api.stellaratlas.xyz/errors/issuers-timeout",
 				"Issuers list timed out", http.StatusServiceUnavailable,
 				"the issuer registry scan didn't return in 8s; retry shortly.")
 			return
@@ -135,14 +135,14 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			// permanent availability failure. #34 residual.
 			s.logger.Warn("issuers list: transient storage error", "err", err)
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/issuers-transient",
+				"https://api.stellaratlas.xyz/errors/issuers-transient",
 				"Issuers list temporarily unavailable", http.StatusServiceUnavailable,
 				"the storage layer hit a transient error; retry shortly.")
 			return
 		}
 		s.logger.Warn("issuers list", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/issuers-error",
+			"https://api.stellaratlas.xyz/errors/issuers-error",
 			"Issuers list failed", http.StatusInternalServerError,
 			"Storage layer returned an error.")
 		return
@@ -170,7 +170,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	if s.issuers == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/issuers-unavailable",
+			"https://api.stellaratlas.xyz/errors/issuers-unavailable",
 			"Issuers unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the issuer reader yet.")
 		return
@@ -179,7 +179,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	gStrkey := r.PathValue("g_strkey")
 	if gStrkey == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-g-strkey",
+			"https://api.stellaratlas.xyz/errors/invalid-g-strkey",
 			"Invalid G-strkey", http.StatusBadRequest,
 			"g_strkey path segment is required")
 		return
@@ -201,7 +201,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	row, err := s.issuers.GetIssuer(iCtx, gStrkey)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/issuer-not-found",
+			"https://api.stellaratlas.xyz/errors/issuer-not-found",
 			"Issuer not found", http.StatusNotFound,
 			"This G-strkey hasn't been observed as an issuer.")
 		return
@@ -210,14 +210,14 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		if handlerTimedOut(iCtx, err) {
 			s.logger.Warn("GetIssuer deadline exceeded", "g_strkey", gStrkey)
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/issuer-timeout",
+				"https://api.stellaratlas.xyz/errors/issuer-timeout",
 				"Issuer read timed out", http.StatusServiceUnavailable,
 				"the issuer + asset list scan didn't return in 8s; retry shortly.")
 			return
 		}
 		s.logger.Warn("issuer read", "g_strkey", gStrkey, "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/issuer-error",
+			"https://api.stellaratlas.xyz/errors/issuer-error",
 			"Issuer read failed", http.StatusInternalServerError,
 			"Storage layer returned an error.")
 		return

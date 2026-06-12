@@ -1,10 +1,10 @@
 // API client for the dashboard. Every request includes
 // `credentials: 'include'` so the host-only / parent-domain
 // session cookie set by GET /v1/auth/callback rides along on
-// XHRs to api.ratesengine.net.
+// XHRs to api.stellaratlas.xyz.
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
 
 export class ApiError extends Error {
   status: number;

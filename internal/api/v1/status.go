@@ -130,7 +130,7 @@ type StatusBackend interface {
 
 	// SourceEntries24h returns the per-source count of events
 	// ingested in the trailing 24h, from the same per-source counter
-	// (ratesengine_source_events_total) that backs active_sources.
+	// (stellaratlas_source_events_total) that backs active_sources.
 	// Universal across on-chain and external sources and cheap (a
 	// Prometheus range-increase, not a trades-hypertable scan).
 	// Sources with no events in the window are absent from the map.
@@ -150,7 +150,7 @@ func (p *PrometheusStatusBackend) Heartbeats(ctx context.Context) (map[string]ti
 	// The metric's timestamp is the scrape time — we want the
 	// latest scrape time per job, which we derive from
 	// timestamp(up{job=...}).
-	const q = `timestamp(up{job=~"ratesengine-indexer|ratesengine-aggregator|ratesengine-api"})`
+	const q = `timestamp(up{job=~"stellaratlas-indexer|stellaratlas-aggregator|stellaratlas-api"})`
 	res, err := p.queryVector(ctx, q)
 	if err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func (p *PrometheusStatusBackend) Heartbeats(ctx context.Context) (map[string]ti
 	out := make(map[string]time.Time, len(res))
 	for _, sample := range res {
 		job, _ := sample.Labels["job"].(string)
-		short := strings.TrimPrefix(job, "ratesengine-")
+		short := strings.TrimPrefix(job, "stellaratlas-")
 		if t, ok := sample.Float(); ok {
 			out[short] = time.Unix(int64(t), 0).UTC()
 		}
@@ -173,15 +173,15 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 		target *float64
 	}{
 		{
-			`histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine-api"}[5m])))`,
+			`histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellaratlas-api"}[5m])))`,
 			&out.P50Ms,
 		},
 		{
-			`histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine-api"}[5m])))`,
+			`histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellaratlas-api"}[5m])))`,
 			&out.P95Ms,
 		},
 		{
-			`histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="ratesengine-api"}[5m])))`,
+			`histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellaratlas-api"}[5m])))`,
 			&out.P99Ms,
 		},
 	} {
@@ -204,7 +204,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 	// Active sources: those whose source_enabled == 1 AND have
 	// emitted an event in the last 10 minutes.
 	if res, err := p.queryVector(ctx,
-		`count(rate(ratesengine_source_events_total[10m]) > 0)`); err == nil {
+		`count(rate(stellaratlas_source_events_total[10m]) > 0)`); err == nil {
 		for _, s := range res {
 			if v, ok := s.Float(); ok {
 				out.ActiveSources = int(v)
@@ -214,7 +214,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 
 	// Total sources configured as enabled.
 	if res, err := p.queryVector(ctx,
-		`count(ratesengine_source_enabled == 1)`); err == nil {
+		`count(stellaratlas_source_enabled == 1)`); err == nil {
 		for _, s := range res {
 			if v, ok := s.Float(); ok {
 				out.TotalSources = int(v)
@@ -225,7 +225,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 	// Last aggregator tick — the timestamp of the most recent
 	// vwap-write counter increment.
 	if res, err := p.queryVector(ctx,
-		`max(timestamp(ratesengine_aggregator_vwap_writes_total))`); err == nil {
+		`max(timestamp(stellaratlas_aggregator_vwap_writes_total))`); err == nil {
 		for _, s := range res {
 			if v, ok := s.Float(); ok && v > 0 {
 				out.LastAggregatorTick = time.Unix(int64(v), 0).UTC()
@@ -245,7 +245,7 @@ func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncident
 	// recording-rule artefacts that show up in ALERTS as
 	// alertname="" when severity isn't set.
 	res, err := p.queryVector(ctx,
-		`ALERTS{alertstate="firing",alertname!="ratesengine_deadmansswitch",alertname!=""}`)
+		`ALERTS{alertstate="firing",alertname!="stellaratlas_deadmansswitch",alertname!=""}`)
 	if err != nil {
 		return out, err
 	}
@@ -326,7 +326,7 @@ func (s promSample) Float() (float64, bool) {
 
 // SourceEntries24h implements [StatusBackend]. See the interface doc.
 func (p *PrometheusStatusBackend) SourceEntries24h(ctx context.Context) (map[string]int64, error) {
-	const q = `sum by (source) (increase(ratesengine_source_events_total[24h]))`
+	const q = `sum by (source) (increase(stellaratlas_source_events_total[24h]))`
 	res, err := p.queryVector(ctx, q)
 	if err != nil {
 		return nil, err

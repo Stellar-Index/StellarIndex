@@ -54,7 +54,7 @@ const (
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
 	if s.history == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/observations-unavailable",
+			"https://api.stellaratlas.xyz/errors/observations-unavailable",
 			"Observations serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
@@ -71,7 +71,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	pair, err := canonical.NewPair(asset, quote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-pair",
+			"https://api.stellaratlas.xyz/errors/invalid-pair",
 			"Invalid pair", http.StatusBadRequest, err.Error())
 		return
 	}
@@ -81,7 +81,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	aggregate := r.URL.Query().Get("aggregate")
 	if aggregate != "" && aggregate != "latest" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-aggregate",
+			"https://api.stellaratlas.xyz/errors/invalid-aggregate",
 			"Invalid aggregate parameter", http.StatusBadRequest,
 			`aggregate must be "latest" or omitted`)
 		return
@@ -109,7 +109,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 		s.logger.Error("LatestTradePerSource failed (stream prelude)",
 			"err", err, "asset", asset.String(), "quote", quote.String(), "source", source)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -267,7 +267,7 @@ func parseObservationsIntervalSeconds(w http.ResponseWriter, r *http.Request) (i
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < minObservationsIntervalSeconds || n > maxObservationsIntervalSeconds {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-interval",
+			"https://api.stellaratlas.xyz/errors/invalid-interval",
 			"Invalid interval_seconds", http.StatusBadRequest,
 			"interval_seconds must be an integer in [1, 60]")
 		return 0, false

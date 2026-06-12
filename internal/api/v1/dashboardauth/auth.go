@@ -34,7 +34,7 @@ import (
 // sessions. Distinct from any future API-side cookies so a
 // browser logged into both can't leak credentials between
 // surfaces.
-const SessionCookieName = "ratesengine_session"
+const SessionCookieName = "stellaratlas_session"
 
 // MagicLinkPlaintextLen — the random-bytes length we use for
 // magic-link tokens. 32 bytes = 256 bits = preimage-safe;

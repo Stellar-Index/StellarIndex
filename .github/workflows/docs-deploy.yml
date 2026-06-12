@@ -1,5 +1,5 @@
 ---
-# Manual-trigger Cloudflare Pages deploy for docs.ratesengine.net.
+# Manual-trigger Cloudflare Pages deploy for docs.stellaratlas.xyz.
 #
 # **The recommended publish path is Cloudflare's git integration**
 # — it auto-deploys on every push to main without consuming GitHub
@@ -12,13 +12,13 @@
 #      (e.g. mid-rotation of the CF GitHub app token, or after a
 #      project was created without git integration).
 #
-# Mirrors explorer-deploy.yml but for the `ratesengine-docs` project.
+# Mirrors explorer-deploy.yml but for the `stellaratlas-docs` project.
 # The docs site is a small static directory (Scalar's index.html +
 # the OpenAPI YAML); no build step needed.
 #
 # Required secrets (set once in repo settings):
 #   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on
-#                             ratesengine-docs
+#                             stellaratlas-docs
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
 
 name: docs-deploy
@@ -63,8 +63,8 @@ jobs:
             echo "::error::docs/reference/api/index.html missing"
             exit 1
           }
-          test -f docs/reference/api/rates-engine.v1.yaml || {
-            echo "::error::docs/reference/api/rates-engine.v1.yaml missing"
+          test -f docs/reference/api/stellar-atlas.v1.yaml || {
+            echo "::error::docs/reference/api/stellar-atlas.v1.yaml missing"
             exit 1
           }
           ls -la docs/reference/api/
@@ -76,5 +76,5 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: >-
             pages deploy docs/reference/api
-            --project-name ratesengine-docs
+            --project-name stellaratlas-docs
             --branch ${{ github.event.inputs.environment == 'production' && 'main' || github.ref_name }}

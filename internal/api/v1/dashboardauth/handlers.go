@@ -68,12 +68,12 @@ type Config struct {
 	// the legacy Suspend-on-conflict recovery path. F-1255.
 	EmailLocker EmailLocker
 	// DashboardBaseURL is the absolute URL of the customer
-	// dashboard SPA (typically https://app.ratesengine.net).
+	// dashboard SPA (typically https://app.stellaratlas.xyz).
 	// The magic-link callback URL embedded in emails is
 	// `{DashboardBaseURL}/auth/callback?token=<plaintext>`.
 	DashboardBaseURL string
 	// EmailFrom is the From: address (e.g.
-	// `Rates Engine <hello@ratesengine.net>`).
+	// `Stellar Atlas <hello@stellaratlas.xyz>`).
 	EmailFrom string
 	// MagicLinkTTL — link validity. Default 15 minutes.
 	MagicLinkTTL time.Duration
@@ -85,7 +85,7 @@ type Config struct {
 	// http://localhost during dev).
 	CookieSecure bool
 	// CookieDomain — empty = host-only cookie (recommended for
-	// app.ratesengine.net). Set to ".ratesengine.net" if a
+	// app.stellaratlas.xyz). Set to ".stellaratlas.xyz" if a
 	// future surface needs the cookie shared across subdomains.
 	CookieDomain string
 }
@@ -637,7 +637,7 @@ func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type":     "https://api.ratesengine.net/errors/auth",
+		"type":     "https://api.stellaratlas.xyz/errors/auth",
 		"title":    http.StatusText(status),
 		"status":   status,
 		"detail":   detail,

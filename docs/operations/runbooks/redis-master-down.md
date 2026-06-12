@@ -5,13 +5,13 @@ status: ratified (Sentinel-driven failover is the default after `redis-sentinel`
 severity: P1
 ---
 
-# Runbook — `ratesengine_redis_master_down`
+# Runbook — `stellaratlas_redis_master_down`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_redis_master_down` |
+| Alert | `stellaratlas_redis_master_down` |
 | Severity | P1 (page — SEV-1) |
 | Detected by | `deploy/monitoring/rules/cache.yml` |
 | Typical MTTR | 1–15 min (Sentinel-driven failover: < 1 min; manual: longer) |
@@ -21,7 +21,7 @@ severity: P1
 
 - `redis_up{role="master"} == 0` for ≥ 30 s on some shard.
 - API latency rises (cache miss → Timescale path).
-- `ratesengine_ratelimit_fail_open_total` counter jumps — this
+- `stellaratlas_ratelimit_fail_open_total` counter jumps — this
   metric is the deliberate "Redis outage" signal (fail-open by
   design per HA plan §3.4).
 - API logs: "redis get: connection refused" or
@@ -92,8 +92,8 @@ primary automatically — no app restart required.
 - [ ] Step 1 — check Sentinel's view first. If failover is in
       progress, hold — it should complete in 15–30 s.
       `redis-cli -h cache-01 -p 26379 -a "$REDIS_PASSWORD" \
-       SENTINEL get-master-addr-by-name ratesengine-r1-cache`
-      returns the current primary; `ratesengine_redis_sentinel_primary`
+       SENTINEL get-master-addr-by-name stellaratlas-r1-cache`
+      returns the current primary; `stellaratlas_redis_sentinel_primary`
       gauge sums to 1 across hosts when steady-state.
 - [ ] Step 2 — verify clients reconnected. API + aggregator logs
       should show `redis configured mode=sentinel` at startup;
@@ -108,12 +108,12 @@ completed within 60 s OR `SENTINEL ckquorum` reports < 2 alive
 sentinels.
 
 - [ ] Step 1 — confirm the stuck state:
-      `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL ckquorum ratesengine-r1-cache`
-      and `SENTINEL master ratesengine-r1-cache` (look for
+      `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL ckquorum stellaratlas-r1-cache`
+      and `SENTINEL master stellaratlas-r1-cache` (look for
       `last-ok-ping-reply` > 10000 ms or `flags` containing
       `s_down,o_down`).
 - [ ] Step 2 — force a promotion:
-      `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL failover ratesengine-r1-cache`.
+      `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL failover stellaratlas-r1-cache`.
       Do this with a clear head; forcing failover on a transient
       network blip can split-brain if Sentinels rejoin and
       disagree on who's primary.
@@ -125,7 +125,7 @@ sentinels.
       `redis-cli info replication` on the new primary should
       show every follower's `lag` column at 0–1.
 - [ ] Verification: `redis_up{role="master"} == 1` (single
-      instance), `ratesengine_redis_sentinel_primary` sums to 1
+      instance), `stellaratlas_redis_sentinel_primary` sums to 1
       across hosts, API logs show "redis: reconnected",
       `ratelimit_fail_open_total` rate drops to zero (it's
       cumulative — watch the rate, not the gauge).

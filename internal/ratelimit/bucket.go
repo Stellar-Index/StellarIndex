@@ -80,7 +80,7 @@ func WithClock(now func() time.Time) Option {
 }
 
 // WithKeyPrefix overrides the "rl:" key prefix — useful only when
-// sharing a Redis with another non-ratesengine caller, which we don't.
+// sharing a Redis with another non-stellaratlas caller, which we don't.
 // Exposed for completeness + test isolation.
 func WithKeyPrefix(prefix string) Option {
 	return func(b *Bucket) { b.keyPrefix = prefix }

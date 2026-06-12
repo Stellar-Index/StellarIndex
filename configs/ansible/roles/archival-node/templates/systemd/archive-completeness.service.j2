@@ -3,7 +3,7 @@
 # Rendered by Ansible. Reflects r1's EFFECTIVE running config — the
 # base unit plus the compute-to.conf + override.conf drop-ins are
 # folded directly into this template (the role runs every
-# ratesengine-* unit as root, and ARCHIVE_TO must be computed at
+# stellaratlas-* unit as root, and ARCHIVE_TO must be computed at
 # start time or the verify is a no-op).
 #
 # Per ADR-0017 §"Daily completeness cron". Runs once on each timer
@@ -11,15 +11,15 @@
 # archive-completeness.timer schedules the cadence.
 
 [Unit]
-Description=Rates Engine — archive-completeness verify (daily cron per ADR-0017)
-Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/archive-completeness.md
+Description=Stellar Atlas — archive-completeness verify (daily cron per ADR-0017)
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/archive-completeness.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/archive-completeness
-EnvironmentFile=-/etc/default/ratesengine
+EnvironmentFile=-/etc/default/stellaratlas
 # ARCHIVE_TO is computed at start time from the indexer cursor —
 # compute-archive-to.sh writes ARCHIVE_TO=<n> to the runtime env
 # file below, which then overrides the Environment= default.
@@ -33,15 +33,15 @@ Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
 Environment=WORKERS=8
 
 ExecStartPre=/usr/local/sbin/compute-archive-to.sh
-ExecStart=/usr/local/bin/ratesengine-ops archive-completeness verify \
+ExecStart=/usr/local/bin/stellaratlas-ops archive-completeness verify \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \
   -textfile-output ${TEXTFILE_OUTPUT} \
   -output-file ${REPORT_OUTPUT}
 
-# Runs as root for consistency with the ratesengine-* daemons (the
-# in-repo unit set User=ratesengine but r1 has no such user yet —
+# Runs as root for consistency with the stellaratlas-* daemons (the
+# in-repo unit set User=stellaratlas but r1 has no such user yet —
 # F-1205, audit-2026-05-12).
 User=root
 Group=root

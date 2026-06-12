@@ -16,7 +16,7 @@ go 1.25.10
 require (
 	github.com/BurntSushi/toml v1.6.0 // TOML parser for config/ + metadata/sep1.go
 	github.com/alicebob/miniredis/v2 v2.37.0 // In-memory Redis for ratelimit/ tests (test-only)
-	github.com/golang-migrate/migrate/v4 v4.19.1 // Schema migrations; cmd/ratesengine-migrate (ADR-0006)
+	github.com/golang-migrate/migrate/v4 v4.19.1 // Schema migrations; cmd/stellaratlas-migrate (ADR-0006)
 	github.com/lib/pq v1.12.3 // Postgres driver (ADR-0006)
 	github.com/prometheus/client_golang v1.23.2 // /metrics + counters/gauges in internal/obs
 	github.com/redis/go-redis/v9 v9.19.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache

@@ -43,7 +43,7 @@ import (
 func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	if s.history == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/observations-unavailable",
+			"https://api.stellaratlas.xyz/errors/observations-unavailable",
 			"Observations serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
@@ -62,7 +62,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 		// Identity-pair was already rejected upstream; any other
 		// validation error here is unexpected. Surface as 400.
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-pair",
+			"https://api.stellaratlas.xyz/errors/invalid-pair",
 			"Invalid pair", http.StatusBadRequest, err.Error())
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 		// nonexistent data). Same fail-fast guard as /v1/markets.
 		if _, ok := external.Registry[source]; !ok {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/unknown-source",
+				"https://api.stellaratlas.xyz/errors/unknown-source",
 				"Unknown source", http.StatusBadRequest,
 				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
 			return
@@ -89,7 +89,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	aggregate := r.URL.Query().Get("aggregate")
 	if aggregate != "" && aggregate != "latest" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-aggregate",
+			"https://api.stellaratlas.xyz/errors/invalid-aggregate",
 			"Invalid aggregate parameter", http.StatusBadRequest,
 			`aggregate must be "latest" or omitted`)
 		return
@@ -210,7 +210,7 @@ func (s *Server) fetchObservationsOrWriteError(
 		s.logger.Warn("computeObservations deadline exceeded",
 			"asset", asset.String(), "quote", quote.String(), "source", source)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/observations-timeout",
+			"https://api.stellaratlas.xyz/errors/observations-timeout",
 			"Observations query timed out", http.StatusServiceUnavailable,
 			"the trades hypertable scan didn't return in 8s; retry shortly.")
 		return nil, false
@@ -226,7 +226,7 @@ func (s *Server) fetchObservationsOrWriteError(
 		"err", err, "asset", asset.String(), "quote", quote.String(),
 		"source", source)
 	writeProblem(w, r,
-		"https://api.ratesengine.net/errors/internal",
+		"https://api.stellaratlas.xyz/errors/internal",
 		"Internal error", http.StatusInternalServerError, "")
 	return nil, false
 }
@@ -257,14 +257,14 @@ func rejectObservationsTierParams(w http.ResponseWriter, r *http.Request) bool {
 	q := r.URL.Query()
 	if q.Get("granularity") != "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-observations-param",
+			"https://api.stellaratlas.xyz/errors/invalid-observations-param",
 			"granularity is not valid on /v1/observations", http.StatusBadRequest,
 			"granularity is a closed-bucket concept (ADR-0018); /v1/observations is raw per-source")
 		return false
 	}
 	if q.Get("window_seconds") != "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-observations-param",
+			"https://api.stellaratlas.xyz/errors/invalid-observations-param",
 			"window_seconds is not valid on /v1/observations", http.StatusBadRequest,
 			"window_seconds is a tip-surface concept (ADR-0018); /v1/observations does not aggregate")
 		return false
@@ -284,7 +284,7 @@ func parseObservationsAssetQuote(w http.ResponseWriter, r *http.Request) (canoni
 	asset, err := canonical.ParseAsset(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest, err.Error())
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
@@ -293,7 +293,7 @@ func parseObservationsAssetQuote(w http.ResponseWriter, r *http.Request) (canoni
 		q, err := canonical.ParseAsset(raw)
 		if err != nil {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-quote",
+				"https://api.stellaratlas.xyz/errors/invalid-quote",
 				"Invalid quote identifier", http.StatusBadRequest, err.Error())
 			return canonical.Asset{}, canonical.Asset{}, false
 		}
@@ -301,7 +301,7 @@ func parseObservationsAssetQuote(w http.ResponseWriter, r *http.Request) (canoni
 	}
 	if asset.Equal(quote) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/identity-price",
+			"https://api.stellaratlas.xyz/errors/identity-price",
 			"Asset and quote are the same", http.StatusBadRequest,
 			"price of an asset in itself is always 1; parameters must differ")
 		return canonical.Asset{}, canonical.Asset{}, false

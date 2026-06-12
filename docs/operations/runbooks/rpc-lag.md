@@ -5,12 +5,12 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_stellar_rpc_lag`
+# Runbook — `stellaratlas_stellar_rpc_lag`
 
 > **Deployment posture (2026-04-30).** stellar-rpc is **not running
 > on r1** — the daemon was removed 2026-04-23
 > ([r1-deployment-state.md §Services](../r1-deployment-state.md)).
-> The metric `ratesengine_stellar_rpc_latest_ledger_age_seconds`
+> The metric `stellaratlas_stellar_rpc_latest_ledger_age_seconds`
 > has no producer, so this alert is *inert* on r1.
 >
 > Production ingest reads Galexie's MinIO output directly via
@@ -27,7 +27,7 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_stellar_rpc_lag` |
+| Alert | `stellaratlas_stellar_rpc_lag` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/stellar.yml` |
 | Typical MTTR | 5–30 min |
@@ -35,15 +35,15 @@ severity: P2
 
 ## Symptoms
 
-- `ratesengine_stellar_rpc_latest_ledger_age_seconds > 300` sustained 5 min.
-- Upstream: all `ratesengine_source_lag_ledgers` climb together — the hallmark of a shared-upstream issue (vs single-source).
+- `stellaratlas_stellar_rpc_latest_ledger_age_seconds > 300` sustained 5 min.
+- Upstream: all `stellaratlas_source_lag_ledgers` climb together — the hallmark of a shared-upstream issue (vs single-source).
 - API `/v1/readyz` may still return 200 (we only probe Timescale + Redis there, not the RPC).
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Direct probe — version + latestLedger + event retention
-ratesengine-ops rpc-probe http://stellar-rpc:8000
+stellaratlas-ops rpc-probe http://stellar-rpc:8000
 
 # Check the RPC's own self-reported health. It returns an
 # error envelope when stale rather than HTTP error:
@@ -78,7 +78,7 @@ Key signals:
 - [ ] Step 2 — if captive-core catching up: wait. Inform stakeholders the API's price-freshness SLA is in a degraded window.
 - [ ] Step 3 — if host resource issue: scale the RPC node or restart. Keep in mind a restart triggers another catchup window.
 - [ ] Step 4 — if network partition: check peer connectivity, firewall rules, and core-peers metric if you have one.
-- [ ] Verification: `ratesengine_stellar_rpc_latest_ledger_age_seconds` drops back under 300 s; source-stopped alerts that tracked this clear on their own within the next poll cycle.
+- [ ] Verification: `stellaratlas_stellar_rpc_latest_ledger_age_seconds` drops back under 300 s; source-stopped alerts that tracked this clear on their own within the next poll cycle.
 
 ## Related
 

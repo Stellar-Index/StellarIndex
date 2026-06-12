@@ -1,7 +1,7 @@
 // AlertManager-silence helpers.
 //
 // The 99-spike scenario will legitimately trip
-// `ratesengine_api_latency_p95_high` mid-spike. Without a silence,
+// `stellaratlas_api_latency_p95_high` mid-spike. Without a silence,
 // on-call gets paged for the planned spike — design note §6.
 //
 // silenceForRun posts a silence to AlertManager covering the

@@ -32,7 +32,7 @@ route:
     # When the heartbeat stops (Prometheus or Alertmanager itself
     # is broken), healthchecks.io pages us via a separate channel.
     # See docs/operations/runbooks/deadmansswitch.md.
-    - matchers: [alertname = "ratesengine_deadmansswitch"]
+    - matchers: [alertname = "stellaratlas_deadmansswitch"]
       receiver: deadmansswitch
       group_interval: 60s
       repeat_interval: 60s
@@ -79,7 +79,7 @@ receivers:
   - name: chat-page
     slack_configs:
       - api_url: ${SLACK_WEBHOOK_URL}
-        channel: '#ratesengine-pages'
+        channel: '#stellaratlas-pages'
         send_resolved: true
         title: '🚨 PAGE — {{ .GroupLabels.alertname }}'
         text: |
@@ -93,7 +93,7 @@ receivers:
   - name: chat-default
     slack_configs:
       - api_url: ${SLACK_WEBHOOK_URL}
-        channel: '#ratesengine-alerts'
+        channel: '#stellaratlas-alerts'
         send_resolved: true
         title: '{{ .GroupLabels.alertname }}'
         text: |

@@ -1,8 +1,8 @@
 {
-  "name": "@ratesengine/dashboard",
+  "name": "@stellaratlas/dashboard",
   "version": "0.0.0",
   "private": true,
-  "description": "Customer dashboard SPA for the Rates Engine API (app.ratesengine.net).",
+  "description": "Customer dashboard SPA for the Stellar Atlas API (app.stellaratlas.xyz).",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",

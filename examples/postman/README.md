@@ -1,8 +1,8 @@
 # Postman / Insomnia / Bruno collection
 
-`rates-engine.postman_collection.json` is a Postman v2.1 collection
+`stellar-atlas.postman_collection.json` is a Postman v2.1 collection
 auto-generated from
-[`openapi/rates-engine.v1.yaml`](../../openapi/rates-engine.v1.yaml).
+[`openapi/stellar-atlas.v1.yaml`](../../openapi/stellar-atlas.v1.yaml).
 The OpenAPI spec is the source of truth — regenerate after any
 spec change with:
 
@@ -11,7 +11,7 @@ make docs-postman
 ```
 
 This is the customer-facing canonical path. The docs-site build
-pipeline (docs.ratesengine.net) regenerates its own copy at
+pipeline (docs.stellaratlas.xyz) regenerates its own copy at
 build time; nothing else in the repo writes to this file.
 
 ## Importing
@@ -26,11 +26,11 @@ build time; nothing else in the repo writes to this file.
 
 The collection ships with two collection-level variables:
 
-- `baseUrl` — defaults to `https://api.ratesengine.net`. Override
+- `baseUrl` — defaults to `https://api.stellaratlas.xyz`. Override
   to hit a local indexer (`http://localhost:3000`).
 - `bearerToken` — your API key plaintext. Required only for
   `/v1/account/*`, `/v1/account/keys`, and any other authed
   endpoint. Get one by running the `POST /v1/signup` request in
   the collection first.
 
-In Postman: Collections → Rates Engine API → Variables tab.
+In Postman: Collections → Stellar Atlas API → Variables tab.

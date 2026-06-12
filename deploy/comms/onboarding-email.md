@@ -6,10 +6,10 @@ the self-service flow.
 Tone: warm but information-dense. Goal is "first successful
 request within 5 minutes of receiving this".
 
-Subject: "Re: Rates Engine API access — getting started"
+Subject: "Re: Stellar Atlas API access — getting started"
 -->
 
-# Welcome to Rates Engine, {{customer_name}}
+# Welcome to Stellar Atlas, {{customer_name}}
 
 Your API key:
 
@@ -24,7 +24,7 @@ code. Rotate any time via `POST /v1/account/keys`.)
 
 ```sh
 curl -H "Authorization: Bearer {{api_key}}" \
-  'https://api.ratesengine.net/v1/price?base=native&quote=fiat:USD' | jq .
+  'https://api.stellaratlas.xyz/v1/price?base=native&quote=fiat:USD' | jq .
 ```
 
 Expected response (illustrative):
@@ -67,8 +67,8 @@ Expected response (illustrative):
 | `/v1/assets/{id}` | Asset detail (supply, market cap, FDV, 24h volume) |
 | `/v1/price/stream` (SSE) | Push notifications on every closed bucket |
 
-Full API reference: <https://docs.ratesengine.net>.
-Walkthrough: <https://docs.ratesengine.net/getting-started>.
+Full API reference: <https://docs.stellaratlas.xyz>.
+Walkthrough: <https://docs.stellaratlas.xyz/getting-started>.
 
 ## Rate limits
 
@@ -79,8 +79,8 @@ budget is left in the current window. 429 responses include
 
 ## Help
 
-- Bug reports / feature requests: <https://github.com/RatesEngine/rates-engine/issues>
-- Status: <https://status.ratesengine.net>
+- Bug reports / feature requests: <https://github.com/StellarAtlas/stellar-atlas/issues>
+- Status: <https://status.stellaratlas.xyz>
 - Direct support: reply to this email.
 
 Welcome aboard.

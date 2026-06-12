@@ -26,13 +26,13 @@
       haproxy role assumes a 2-LB-host topology (per ha-plan §3.1);
       detected {{ groups['haproxy_lb'] | length }} hosts
 
-- name: assert ratesengine_api inventory group is populated
+- name: assert stellaratlas_api inventory group is populated
   assert:
     that:
-      - "'ratesengine_api' in groups"
-      - groups['ratesengine_api'] | length >= 1
+      - "'stellaratlas_api' in groups"
+      - groups['stellaratlas_api'] | length >= 1
     fail_msg: >-
-      ratesengine_api inventory group is required (HAProxy needs
+      stellaratlas_api inventory group is required (HAProxy needs
       a backend pool to route to)
 
 - name: assert vault contents present

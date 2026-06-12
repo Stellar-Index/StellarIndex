@@ -12,8 +12,8 @@
 # materialized view once the extractor decodes the amount into a column) is the
 # documented follow-up.
 set -uo pipefail
-set -a; . /etc/default/ratesengine-ops; set +a
-OPS=${OPS:-/usr/local/bin/ratesengine-ops-ch}
-CFG=${CFG:-/etc/ratesengine.toml}
+set -a; . /etc/default/stellaratlas-ops; set +a
+OPS=${OPS:-/usr/local/bin/stellaratlas-ops-ch}
+CFG=${CFG:-/etc/stellaratlas.toml}
 echo "$(date -u) ch-supply-refresh: recomputing stellar.token_supply"
 exec "$OPS" ch-supply -config "$CFG" -from 2 -to 999999999 -final=false -write -top 0

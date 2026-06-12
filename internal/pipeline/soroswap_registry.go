@@ -29,7 +29,7 @@ const upsertHookTimeout = 2 * time.Second
 //
 //  1. WithSeededPairTokensDecoder — preloaded from the
 //     soroswap_pairs table. Empty table is fine (returns an empty
-//     seed); operators run `ratesengine-ops seed-soroswap-pairs`
+//     seed); operators run `stellaratlas-ops seed-soroswap-pairs`
 //     once on first deployment to bootstrap.
 //  2. WithPairUpsertHook — bound to store.UpsertSoroswapPair so
 //     every live factory new_pair event persists through to the

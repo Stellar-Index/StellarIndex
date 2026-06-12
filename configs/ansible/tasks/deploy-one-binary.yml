@@ -1,17 +1,17 @@
 ---
 # Deploy one binary atomically with rollback-on-failure.
 # Included from playbooks/deploy-binary.yml; expects:
-#   binary               — name of the binary (e.g. "ratesengine-api")
+#   binary               — name of the binary (e.g. "stellaratlas-api")
 #   version              — SemVer tag being deployed
 #   local_dist_dir       — controller-side path holding "<binary>-linux-amd64"
 #   install_dir          — usually /usr/local/bin
-#   api_port             — only consulted for ratesengine-api
-#   api_health_path      — only consulted for ratesengine-api
+#   api_port             — only consulted for stellaratlas-api
+#   api_health_path      — only consulted for stellaratlas-api
 #   health_grace_seconds — sleep before health probe
 #
 # Per-binary sequence:
 #   1. Resolve the previously-deployed version from the sidecar file
-#      /var/lib/ratesengine/deployed-versions/<binary>; if missing,
+#      /var/lib/stellaratlas/deployed-versions/<binary>; if missing,
 #      fall back to a timestamp (this is fine on the first ever
 #      deploy via this workflow — older manual installs don't have
 #      sidecar files).
@@ -39,7 +39,7 @@
 
 - name: "[{{ binary }}] Ensure deployed-versions directory exists"
   ansible.builtin.file:
-    path: /var/lib/ratesengine/deployed-versions
+    path: /var/lib/stellaratlas/deployed-versions
     state: directory
     owner: root
     group: root
@@ -47,7 +47,7 @@
 
 - name: "[{{ binary }}] Read previous deployed version from sidecar"
   ansible.builtin.slurp:
-    src: "/var/lib/ratesengine/deployed-versions/{{ binary }}"
+    src: "/var/lib/stellaratlas/deployed-versions/{{ binary }}"
   register: sidecar
   ignore_errors: true
 
@@ -87,7 +87,7 @@
     - name: "[{{ binary }}] Write sidecar version marker"
       ansible.builtin.copy:
         content: "{{ version }}"
-        dest: "/var/lib/ratesengine/deployed-versions/{{ binary }}"
+        dest: "/var/lib/stellaratlas/deployed-versions/{{ binary }}"
         owner: root
         group: root
         mode: "0644"
@@ -125,7 +125,7 @@
         seconds: "{{ health_grace_seconds | int }}"
 
     - name: "[{{ binary }}] Health probe — API endpoint"
-      when: binary == 'ratesengine-api'
+      when: binary == 'stellaratlas-api'
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ api_port }}{{ api_health_path }}"
         status_code: 200
@@ -136,7 +136,7 @@
       until: probe.status is defined and probe.status == 200
 
     - name: "[{{ binary }}] Health probe — systemd active"
-      when: binary != 'ratesengine-api' and binary not in cli_binaries
+      when: binary != 'stellaratlas-api' and binary not in cli_binaries
       ansible.builtin.command:
         cmd: "systemctl is-active {{ binary }}.service"
       changed_when: false
@@ -170,7 +170,7 @@
     - name: "[{{ binary }}] Restore sidecar version marker"
       ansible.builtin.copy:
         content: "{{ backup_tag }}"
-        dest: "/var/lib/ratesengine/deployed-versions/{{ binary }}"
+        dest: "/var/lib/stellaratlas/deployed-versions/{{ binary }}"
         owner: root
         group: root
         mode: "0644"

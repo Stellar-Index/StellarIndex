@@ -158,7 +158,7 @@ func TestWriteProblem_RFC9457Shape(t *testing.T) {
 	var captured *Problem
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/test",
+			"https://api.stellaratlas.xyz/errors/test",
 			"Test error",
 			http.StatusBadRequest,
 			"a thing went wrong",
@@ -181,7 +181,7 @@ func TestWriteProblem_RFC9457Shape(t *testing.T) {
 		t.Fatalf("decode problem: %v", err)
 	}
 	captured = &p
-	if captured.Type != "https://api.ratesengine.net/errors/test" {
+	if captured.Type != "https://api.stellaratlas.xyz/errors/test" {
 		t.Errorf("Type = %q", captured.Type)
 	}
 	if captured.Title != "Test error" {
@@ -210,7 +210,7 @@ func TestWriteProblem_RFC9457Shape(t *testing.T) {
 func TestWriteProblem_401SetsWWWAuthenticate(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/unauthorized",
+			"https://api.stellaratlas.xyz/errors/unauthorized",
 			"Authentication required",
 			http.StatusUnauthorized,
 			"sign in",
@@ -246,7 +246,7 @@ func TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate(t *testing.T) {
 		http.StatusServiceUnavailable,
 	} {
 		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			writeProblem(w, r, "https://api.ratesengine.net/errors/x", "x", status, "x")
+			writeProblem(w, r, "https://api.stellaratlas.xyz/errors/x", "x", status, "x")
 		})
 		h := middleware.RequestID(inner)
 		req := httptest.NewRequest(http.MethodGet, "/v1/x", nil)

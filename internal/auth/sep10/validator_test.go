@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	testWebDomain  = "auth.ratesengine.test"
-	testHomeDomain = "ratesengine.test"
+	testWebDomain  = "auth.stellaratlas.test"
+	testHomeDomain = "stellaratlas.test"
 )
 
 var testJWTSecret = []byte("test-jwt-secret-must-be-32-bytes-or-more!!")

@@ -5,13 +5,13 @@ status: ratified
 severity: P1
 ---
 
-# Runbook — `ratesengine_timescale_primary_down`
+# Runbook — `stellaratlas_timescale_primary_down`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_timescale_primary_down` |
+| Alert | `stellaratlas_timescale_primary_down` |
 | Severity | **P1** (SEV-1) |
 | Detected by | Prometheus rule; also `api_price_stale` + `api_error_rate_critical` will light up once failover begins |
 | Typical MTTR | 60 s automatic Patroni failover; ≤ 15 min if manual intervention needed |
@@ -19,9 +19,9 @@ severity: P1
 
 ## Symptoms
 
-- Alert `ratesengine_timescale_primary_down` fires — `up{role="primary"}` = 0 for > 30 s.
+- Alert `stellaratlas_timescale_primary_down` fires — `up{role="primary"}` = 0 for > 30 s.
 - API latency spikes on write endpoints (`POST /v1/account/keys` etc.) — reads from Redis hot path still work.
-- `ratesengine_ingestion_cursor_stuck` lights up across all sources within ~60 s.
+- `stellaratlas_ingestion_cursor_stuck` lights up across all sources within ~60 s.
 - Patroni dashboard: primary missing from cluster view.
 
 ## Quick diagnosis (≤ 5 min)
@@ -31,7 +31,7 @@ that distinguishes "API hitting a real DB problem" from
 "Prometheus scrape blip":
 
 ```sh
-curl -fsS https://api.ratesengine.net/v1/readyz | jq .checks.postgres
+curl -fsS https://api.stellaratlas.xyz/v1/readyz | jq .checks.postgres
 # Expect: {"status": "ok", ...} when DB is reachable.
 # {"status": "error", "detail": "connection refused" | ...} → real DB outage.
 ```
@@ -53,12 +53,12 @@ etcdctl --endpoints=http://etcd-1.internal:2379 get /service/$PATRONI_CLUSTER_NA
 # Should return the primary host. Empty = no leader elected.
 # F-1283 (codex audit-2026-05-13): the etcd role renders HTTP
 # (not HTTPS) client URLs and Patroni namespaces under
-# `/service/<scope>/`, not `/ratesengine/`. Earlier prose
+# `/service/<scope>/`, not `/stellaratlas/`. Earlier prose
 # named both wrong.
 
 # And directly poke the primary's psql:
-PGCONNECT_TIMEOUT=3 psql -h db-primary.internal -U ratesengine \
-  -d ratesengine -c 'SELECT pg_is_in_recovery();'
+PGCONNECT_TIMEOUT=3 psql -h db-primary.internal -U stellaratlas \
+  -d stellaratlas -c 'SELECT pg_is_in_recovery();'
 # Any error = primary unreachable.
 ```
 
@@ -82,7 +82,7 @@ Verify post-failover:
 - [ ] DNS / PgBouncer routes to new primary:
       `psql -h db-primary.internal -c 'SELECT inet_server_addr();'`
       returns the promoted host.
-- [ ] Indexer logs resume inserting trades (`journalctl -u ratesengine-indexer -f`).
+- [ ] Indexer logs resume inserting trades (`journalctl -u stellaratlas-indexer -f`).
 - [ ] Prometheus alert clears within 60 s of the new leader.
 
 If automatic failover happened cleanly → continue to RCA.
@@ -110,7 +110,7 @@ If etcd is fine but Patroni refuses to promote:
 # Manually promote a specific replica — only when sure it's
 # sync-replica (not async). Forcing promotion of an async replica
 # loses up to ~5s of writes.
-patronictl -c /etc/patroni/patroni.yml failover ratesengine --candidate db-replica-sync.internal
+patronictl -c /etc/patroni/patroni.yml failover stellaratlas --candidate db-replica-sync.internal
 # Confirm yes to the prompt.
 ```
 
@@ -119,12 +119,12 @@ patronictl -c /etc/patroni/patroni.yml failover ratesengine --candidate db-repli
 - Declare the incident on status page — writes unavailable.
 - Promote the async replica (in R3 per multi-region-topology.md §5.3):
   ```sh
-  patronictl failover ratesengine --candidate db-replica-async.internal
+  patronictl failover stellaratlas --candidate db-replica-async.internal
   ```
   Accept the ≤ 5 s RPO data loss.
 - On return, reconcile cursor state: the indexer's idempotent
   upserts (ON CONFLICT DO NOTHING) handle most duplicate writes.
-  Check `ratesengine_ingestion_cursor_stuck` clears within 2 min.
+  Check `stellaratlas_ingestion_cursor_stuck` clears within 2 min.
 
 ### D. Complete cluster loss (asteroid scenario)
 
@@ -146,9 +146,9 @@ Gather for the postmortem:
 - Recent deploys: anything touching `deploy/timescale-statefulset.yaml` or the Ansible `archival-node` role in the last 24 h?
 
 Common root causes observed in similar systems:
-1. **Disk full** — WAL couldn't write; Postgres halted writes. Catches: `ratesengine_timescale_disk_warning` fires BEFORE this one usually. If it didn't, tune thresholds.
+1. **Disk full** — WAL couldn't write; Postgres halted writes. Catches: `stellaratlas_timescale_disk_warning` fires BEFORE this one usually. If it didn't, tune thresholds.
 2. **OOMKill** — Postgres process killed by the kernel. Check dmesg. Often means `shared_buffers` + `work_mem` × active_connections exceeded host RAM.
-3. **Kernel / ZFS issue** — NVMe drive dropped, ZFS pool degraded. Catches: `ratesengine_zfs_pool_degraded` fires first.
+3. **Kernel / ZFS issue** — NVMe drive dropped, ZFS pool degraded. Catches: `stellaratlas_zfs_pool_degraded` fires first.
 4. **Runaway query** — a long-running SELECT blocked WAL recycling. pg_stat_activity shows it.
 5. **Patroni config drift** — manual edit on one node disagreed with another; etcd-based decision got stuck.
 

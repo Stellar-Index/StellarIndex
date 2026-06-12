@@ -81,7 +81,7 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 	// without an Unwrap method) the call returns
 	// http.ErrNotSupported — which we tolerate, because those
 	// transports don't enforce the per-write deadline that this
-	// fix counters either. The middleware chain in cmd/ratesengine-
+	// fix counters either. The middleware chain in cmd/stellaratlas-
 	// api/main.go exposes Unwrap() on every wrapper so production
 	// SSE connections do reach this seam.
 	rc := http.NewResponseController(w)

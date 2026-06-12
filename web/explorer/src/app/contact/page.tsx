@@ -11,9 +11,9 @@ import {
 } from 'lucide-react';
 
 export const metadata: Metadata = {
-  title: 'Contact — Rates Engine',
+  title: 'Contact — Stellar Atlas',
   description:
-    'How to reach the Rates Engine team. Security disclosures, sales for higher rate-limit tiers, GitHub for general issues, status feed for incident updates.',
+    'How to reach the Stellar Atlas team. Security disclosures, sales for higher rate-limit tiers, GitHub for general issues, status feed for incident updates.',
   alternates: { canonical: '/contact' },
 };
 
@@ -32,24 +32,24 @@ const CHANNELS: Channel[] = [
     title: 'Security disclosures',
     blurb:
       'Found a vulnerability? Email the security team directly — never open a public issue. We respond within 24 hours and credit the reporter on resolution per the disclosure policy in SECURITY.md.',
-    destination: 'security@ratesengine.net',
-    href: 'mailto:security@ratesengine.net',
+    destination: 'security@stellaratlas.xyz',
+    href: 'mailto:security@stellaratlas.xyz',
   },
   {
     icon: KeyRound,
     title: 'Sales — Pro / Business / Enterprise',
     blurb:
       'Need higher than the 1,000 req/min Starter rate-limit, named on-call, dedicated regional capacity, or a Slack channel? Email sales with the tier you need (Pro = 10K rpm, Business = 50K rpm, Enterprise = custom) and your traffic profile.',
-    destination: 'sales@ratesengine.net',
-    href: 'mailto:sales@ratesengine.net',
+    destination: 'sales@stellaratlas.xyz',
+    href: 'mailto:sales@stellaratlas.xyz',
   },
   {
     icon: Github,
     title: 'General issues + feature requests',
     blurb:
       "Open a GitHub issue. Bug? Open it under Issues. Feature idea? Open under Discussions. The team triages daily; we don't run a separate support email for general questions.",
-    destination: 'github.com/RatesEngine/rates-engine',
-    href: 'https://github.com/RatesEngine/rates-engine/issues',
+    destination: 'github.com/StellarAtlas/stellar-atlas',
+    href: 'https://github.com/StellarAtlas/stellar-atlas/issues',
     external: true,
   },
   {
@@ -57,8 +57,8 @@ const CHANNELS: Channel[] = [
     title: 'Incident updates',
     blurb:
       'Status page shows live system state. Subscribe to /v1/incidents.atom (Feedly, Slack RSS bot, etc.) for push-style notifications when an incident posts or resolves.',
-    destination: 'status.ratesengine.net',
-    href: 'https://status.ratesengine.net',
+    destination: 'status.stellaratlas.xyz',
+    href: 'https://status.stellaratlas.xyz',
     external: true,
   },
   {
@@ -86,7 +86,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'How do I become an early customer / design partner?',
-    a: 'Email sales@ratesengine.net with your use-case + scale. Pre-launch we’re lining up a small set of design partners across wallets, fintechs, and on-chain DeFi for the v1 cutover.',
+    a: 'Email sales@stellaratlas.xyz with your use-case + scale. Pre-launch we’re lining up a small set of design partners across wallets, fintechs, and on-chain DeFi for the v1 cutover.',
   },
 ];
 

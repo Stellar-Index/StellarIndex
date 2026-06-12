@@ -98,7 +98,7 @@ KNOWN_PEERS = [
 # block below via the HISTORY field (the preferred 1:1 pairing).
 {% if cfg_mode == 'full' %}
 
-[HISTORY.ratesengine]
+[HISTORY.stellaratlas]
 get = "cp /srv/history-archive/{0} {1}"
 put = "cp {0} /srv/history-archive/{1}"
 mkdir = "mkdir -p /srv/history-archive/{0}"
@@ -112,7 +112,7 @@ mkdir = "mkdir -p /srv/history-archive/{0}"
 # from publicnode/lobstr/etc — cuts replay time from 24-48h to
 # ~5-12h. Falls back to the per-validator HISTORY URLs below if a
 # specific file is missing from the mirror. get-only: a captive
-# core must never publish (see the [HISTORY.ratesengine] note).
+# core must never publish (see the [HISTORY.stellaratlas] note).
 [HISTORY.localmirror]
 get = "cp /srv/history-archive/{0} {1}"
 {% endif %}

@@ -49,7 +49,7 @@ export function AssetLabel({
   // emits a non-canonical-cased fingerprint.
   if (/^C[A-Za-z0-9]{55}$/.test(canonical)) {
     // The native XLM SAC is intentionally absent from the operator
-    // wrapper map (configs/ansible/.../ratesengine.toml.j2 — it isn't
+    // wrapper map (configs/ansible/.../stellaratlas.toml.j2 — it isn't
     // a wrapper of a classic asset and the on-chain usd_volume
     // validator rejects mapping it). Hardcode the well-known C-strkey
     // here so Soroban DEX rows that emit XLM as base/quote render

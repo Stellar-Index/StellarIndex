@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_alertmanager_config_bad`
+# Runbook — `stellaratlas_alertmanager_config_bad`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_alertmanager_config_bad` |
+| Alert | `stellaratlas_alertmanager_config_bad` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/meta.yml` |
 | Typical MTTR | 5–30 min |

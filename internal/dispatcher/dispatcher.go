@@ -273,7 +273,7 @@ type Dispatcher struct {
 	eventsSeen map[string]int
 
 	// Error counters — read via Stats(). Production wiring in
-	// cmd/ratesengine-indexer increments obs.SourceDecodeErrorsTotal
+	// cmd/stellaratlas-indexer increments obs.SourceDecodeErrorsTotal
 	// per source name on decode failures; internal counters here are
 	// for test assertions.
 	decodeErrors  map[string]int

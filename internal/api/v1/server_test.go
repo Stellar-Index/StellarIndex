@@ -329,8 +329,8 @@ func TestRootReturnsWelcomeEnvelope(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("body not envelope JSON: %v", err)
 	}
-	if env.Data["name"] != "rates-engine" {
-		t.Errorf("name = %q, want rates-engine", env.Data["name"])
+	if env.Data["name"] != "stellar-atlas" {
+		t.Errorf("name = %q, want stellar-atlas", env.Data["name"])
 	}
 	if env.Data["docs"] == "" {
 		t.Error("docs should be non-empty")
@@ -457,7 +457,7 @@ func TestRobotsTxt(t *testing.T) {
 	if !strings.Contains(string(body), "User-agent: *") {
 		t.Errorf("body missing User-agent directive: %q", body)
 	}
-	if !strings.Contains(string(body), "Sitemap: https://ratesengine.net/sitemap.xml") {
+	if !strings.Contains(string(body), "Sitemap: https://stellaratlas.xyz/sitemap.xml") {
 		t.Errorf("body missing Sitemap pointer: %q", body)
 	}
 }
@@ -546,9 +546,9 @@ func TestSecurityTxt(t *testing.T) {
 	}
 	s := string(body)
 	for _, want := range []string{
-		"Contact: mailto:security@ratesengine.net",
+		"Contact: mailto:security@stellaratlas.xyz",
 		"Expires: ",
-		"Canonical: https://ratesengine.net/.well-known/security.txt",
+		"Canonical: https://stellaratlas.xyz/.well-known/security.txt",
 		"Policy: https://github.com/StellarAtlas/stellar-atlas/blob/main/SECURITY.md",
 	} {
 		if !strings.Contains(s, want) {

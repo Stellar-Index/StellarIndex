@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_ingestion_insert_errors`
+# Runbook — `stellaratlas_ingestion_insert_errors`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_ingestion_insert_errors` |
+| Alert | `stellaratlas_ingestion_insert_errors` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,31 +19,31 @@ severity: P2
 
 ## Symptoms
 
-- `ratesengine_source_insert_errors_total{source=...,kind=trade|oracle}` rises above 6/min sustained.
-- `ratesengine_source_events_total` may still rise — the consumer is pulling events, it's the writer that's failing.
+- `stellaratlas_source_insert_errors_total{source=...,kind=trade|oracle}` rises above 6/min sustained.
+- `stellaratlas_source_events_total` may still rise — the consumer is pulling events, it's the writer that's failing.
 - Dashboard view: *Ingestion → Insert errors* panel non-zero for > 5 min.
-- The offending source's `ratesengine_source_last_event_unix` may freeze (if persistence blocks until retry).
+- The offending source's `stellaratlas_source_last_event_unix` may freeze (if persistence blocks until retry).
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Which source + which kind is failing?
 curl -s http://api:9464/metrics |
-  grep ratesengine_source_insert_errors_total
+  grep stellaratlas_source_insert_errors_total
 
 # Is it the storage layer itself?
-ratesengine-ops rpc-probe https://mainnet.sorobanrpc.com   # rules out upstream — r1 has no local stellar-rpc, point at a public endpoint
+stellaratlas-ops rpc-probe https://mainnet.sorobanrpc.com   # rules out upstream — r1 has no local stellar-rpc, point at a public endpoint
 kubectl exec -it timescale-0 -- psql -c "SELECT now(), pg_is_in_recovery();"
 
 # Actual failure reason is in the indexer's logs:
-kubectl logs deploy/ratesengine-indexer | grep "insert trade failed\|insert oracle update failed" | tail
+kubectl logs deploy/stellaratlas-indexer | grep "insert trade failed\|insert oracle update failed" | tail
 ```
 
 If the log line says:
 - `connection refused` → Timescale is down or network partitioned. Jump to `timescale-primary-down.md`.
 - `disk full` / `no space` → Timescale volume out of space. Scale PVC or evict old chunks.
 - `duplicate key value` → should be impossible; the idempotent ON CONFLICT swallows these. If you see this, the primary-key invariant is broken and this is a data-integrity incident, not a capacity one. Escalate.
-- `violates check constraint` → a source sent malformed data (negative amounts, bad tx_hash). Decode bug, not a storage bug; check `ratesengine_source_decode_errors_total` on the same source.
+- `violates check constraint` → a source sent malformed data (negative amounts, bad tx_hash). Decode bug, not a storage bug; check `stellaratlas_source_decode_errors_total` on the same source.
 
 ## Mitigation (≤ 15 min)
 
@@ -58,25 +58,25 @@ Events that fail here are LOST (we have no retry queue today — see the alert a
       the gap:
   ```sh
   # 1. Identify the lagging cursor + the (from, to) range
-  ratesengine-ops detect-gaps -config /etc/ratesengine/config.toml \
+  stellaratlas-ops detect-gaps -config /etc/stellaratlas/config.toml \
       -threshold 50
   # 2. Backfill the named range — dry-run first to confirm scope.
-  ratesengine-ops backfill -config /etc/ratesengine/config.toml \
+  stellaratlas-ops backfill -config /etc/stellaratlas/config.toml \
       -from <FIRST_LEDGER> -to <LAST_LEDGER> \
       -source <SOURCE_NAME> -dry-run
   # 3. Drop -dry-run to commit.
-  ratesengine-ops backfill -config /etc/ratesengine/config.toml \
+  stellaratlas-ops backfill -config /etc/stellaratlas/config.toml \
       -from <FIRST_LEDGER> -to <LAST_LEDGER> \
       -source <SOURCE_NAME> -resume
   ```
 - [ ] Step 3 — if the underlying issue is fixed: watch the rate decline. Alert clears when the 5m rate drops below 0.1/s.
-- [ ] Verification: `ratesengine_source_insert_errors_total` stops incrementing (use `rate()[1m]` to see it go to 0).
+- [ ] Verification: `stellaratlas_source_insert_errors_total` stops incrementing (use `rate()[1m]` to see it go to 0).
 
 ## Root cause analysis
 
 For the postmortem, gather:
 - Timescale logs from `/var/log/postgresql/` covering the affected window.
-- `ratesengine_source_insert_errors_total` series by `(source, kind)` over the incident.
+- `stellaratlas_source_insert_errors_total` series by `(source, kind)` over the incident.
 - Indexer stderr with the full error strings (Timescale wraps them verbosely).
 - Did the alert fire for ONE source or ALL? One-source = decode/schema issue; all-sources = shared storage issue.
 

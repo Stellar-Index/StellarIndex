@@ -5,13 +5,13 @@ status: ratified
 severity: P2
 ---
 
-# Runbook — `ratesengine_sla_probe_freshness_breach`
+# Runbook — `stellaratlas_sla_probe_freshness_breach`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_sla_probe_freshness_breach` |
+| Alert | `stellaratlas_sla_probe_freshness_breach` |
 | Severity | P2 (page) |
 | Detected by | `deploy/monitoring/rules/sla-probe.yml` |
 | Typical MTTR | 30–90 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `ratesengine_sla_probe_freshness_sec{endpoint="price"} > 30`
+- `stellaratlas_sla_probe_freshness_sec{endpoint="price"} > 30`
   for ≥ 30 min.
 - The probe's JSON report shows the `observed_at` returned by
   `/v1/price` (or `/v1/oracle/latest` if that endpoint also has
@@ -34,12 +34,12 @@ The freshness chain has three stages — bisect by which one's lagging:
 
 ```sh
 # 1. Pull the probe's JSON report; note observed_at + the wall-clock delta.
-# F-1309 (codex audit-2026-05-13): unit name is `ratesengine-sla-probe`,
+# F-1309 (codex audit-2026-05-13): unit name is `stellaratlas-sla-probe`,
 # not `sla-probe`; the legacy name pre-dates the systemd unit rename.
-sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq '.per_endpoint[] | select(.endpoint=="price")'
+sudo journalctl -u stellaratlas-sla-probe.service -n 1 --output=cat | jq '.per_endpoint[] | select(.endpoint=="price")'
 
 # 2. Direct API check on the same pair.
-curl -s 'https://api.ratesengine.net/v1/price?asset=native&quote=fiat:USD' | jq
+curl -s 'https://api.stellaratlas.xyz/v1/price?asset=native&quote=fiat:USD' | jq
 
 # 3. What does Redis say for the cache key?
 # F-1309: aggregator writes `vwap:<base>:<quote>:<window-seconds>`,
@@ -68,24 +68,24 @@ reading the wrong key.
    the `vwap:<base>:<quote>:<window>` cache keys, so `/v1/price`
    falls back to the Postgres read which has the right value but
    slower path; freshness lags as the aggregator's tick gap grows.
-   - Signal: `rate(ratesengine_aggregator_ticks_total[5m]) == 0`
+   - Signal: `rate(stellaratlas_aggregator_ticks_total[5m]) == 0`
      (the [aggregator-silent](aggregator-silent.md) alert fires
-     on this directly via `ratesengine_aggregator_vwap_writes_total`).
+     on this directly via `stellaratlas_aggregator_vwap_writes_total`).
    - Mitigation: restart the aggregator binary; investigate why
      it stopped.
 
 2. **Indexer lag**. The dispatcher is behind on LCM consumption,
    so even fresh ledger data isn't producing closed buckets.
-   - Signal: `time() - ratesengine_source_last_event_unix > 30`
+   - Signal: `time() - stellaratlas_source_last_event_unix > 30`
      for the dominant sources (the
      [source-stopped](source-stopped.md) alert covers the
-     per-source case via `rate(ratesengine_source_events_total[5m]) == 0`).
+     per-source case via `rate(stellaratlas_source_events_total[5m]) == 0`).
    - Mitigation: see `core-lag.md`.
 
 3. **CAGG refresh policy is paused or lagging.** The `prices_1m`
    CAGG isn't materializing recent buckets even though raw trades
    are present.
-   - Signal: `ratesengine_timescale_cagg_stale` fires too.
+   - Signal: `stellaratlas_timescale_cagg_stale` fires too.
    - Mitigation: see `cagg-stale.md`.
 
 4. **No trades for the asset in the last 30 s.** Legitimate market

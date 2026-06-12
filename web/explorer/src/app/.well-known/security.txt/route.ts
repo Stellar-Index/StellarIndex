@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://ratesengine.net';
+const SITE_URL = 'https://stellaratlas.xyz';
 
 export function GET() {
   const now = new Date();
@@ -18,15 +18,15 @@ export function GET() {
   expires.setUTCFullYear(now.getUTCFullYear() + 1);
 
   const lines = [
-    `# Rates Engine — security.txt`,
+    `# Stellar Atlas — security.txt`,
     `# RFC-9116. Mirrors ${SITE_URL}/research → SECURITY.md.`,
     ``,
-    `Contact: mailto:security@ratesengine.net`,
+    `Contact: mailto:security@stellaratlas.xyz`,
     `Expires: ${expires.toISOString()}`,
     `Preferred-Languages: en`,
     `Canonical: ${SITE_URL}/.well-known/security.txt`,
-    `Policy: https://github.com/RatesEngine/rates-engine/blob/main/SECURITY.md`,
-    `Acknowledgments: https://github.com/RatesEngine/rates-engine/security/advisories`,
+    `Policy: https://github.com/StellarAtlas/stellar-atlas/blob/main/SECURITY.md`,
+    `Acknowledgments: https://github.com/StellarAtlas/stellar-atlas/security/advisories`,
     ``,
   ].join('\n');
 

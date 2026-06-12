@@ -11,21 +11,21 @@
 # data on the new metric series.
 
 groups:
-  - name: ratesengine.aggregator
+  - name: stellaratlas.aggregator
     interval: 30s
     rules:
 
-      - alert: ratesengine_aggregator_silent
+      - alert: stellaratlas_aggregator_silent
         expr: |
-          sum(rate(ratesengine_aggregator_vwap_writes_total[5m])) == 0
+          sum(rate(stellaratlas_aggregator_vwap_writes_total[5m])) == 0
           OR
-          absent_over_time(ratesengine_aggregator_vwap_writes_total[10m]) == 1
+          absent_over_time(stellaratlas_aggregator_vwap_writes_total[10m]) == 1
         for: 5m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: aggregator
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-silent.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-silent.md
         annotations:
           summary: "Aggregator has stopped writing VWAP cache (P1)"
           description: |
@@ -35,18 +35,18 @@ groups:
             attempt. /v1/vwap responses fall back to raw aggregation —
             slow, and the freshness signal API consumers depend on goes
             quiet within 60 s.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-silent.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-silent.md
 
-      - alert: ratesengine_aggregator_outlier_storm
+      - alert: stellaratlas_aggregator_outlier_storm
         expr: |
-          sum(rate(ratesengine_aggregator_dropped_trades_total{reason="outlier"}[10m]))
-            > 5 * sum(rate(ratesengine_aggregator_dropped_trades_total{reason="outlier"}[1h] offset 1h))
+          sum(rate(stellaratlas_aggregator_dropped_trades_total{reason="outlier"}[10m]))
+            > 5 * sum(rate(stellaratlas_aggregator_dropped_trades_total{reason="outlier"}[1h] offset 1h))
         for: 15m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: aggregator
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
         annotations:
           summary: "Outlier-filter drop rate >5× baseline (P3)"
           description: |
@@ -57,22 +57,22 @@ groups:
             window with anomalies; occasionally an upstream connector
             mis-decoding amounts. Either way the VWAP signal is
             degraded — a paged divergence alert is likely to follow.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
-      - alert: ratesengine_aggregator_fx_snap_fallback_dominant
+      - alert: stellaratlas_aggregator_fx_snap_fallback_dominant
         expr: |
-          sum(rate(ratesengine_aggregator_fx_snap_fallback_total[15m]))
+          sum(rate(stellaratlas_aggregator_fx_snap_fallback_total[15m]))
           /
           clamp_min(
-            sum(rate(ratesengine_aggregator_triangulations_total{outcome="ok"}[15m])),
+            sum(rate(stellaratlas_aggregator_triangulations_total{outcome="ok"}[15m])),
             1
           ) > 0.5
         for: 30m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: aggregator
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
         annotations:
           summary: "FX snap fallback >50% of triangulations for 30m+ (P3)"
           description: |
@@ -83,18 +83,18 @@ groups:
             consistency. Investigate FX ingestion: polygon-forex /
             exchangeratesapi connector health, and the trades hypertable's
             FX rows.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
 
-      - alert: ratesengine_aggregator_class_drop_spike
+      - alert: stellaratlas_aggregator_class_drop_spike
         expr: |
-          sum(rate(ratesengine_aggregator_dropped_trades_total{reason="class"}[10m]))
-            > 10 * sum(rate(ratesengine_aggregator_dropped_trades_total{reason="class"}[1h] offset 1h))
+          sum(rate(stellaratlas_aggregator_dropped_trades_total{reason="class"}[10m]))
+            > 10 * sum(rate(stellaratlas_aggregator_dropped_trades_total{reason="class"}[1h] offset 1h))
         for: 15m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: aggregator
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
         annotations:
           summary: "Class-filter drop rate >10× baseline (P3)"
           description: |
@@ -105,7 +105,7 @@ groups:
             fail-closed fallback IncludeInVWAP=false). Less common:
             an existing aggregator/oracle source unexpectedly
             increased volume.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
 
       # F-1253 (audit-2026-05-12): explicit alert on aggregator
       # cache-write-error rate. The May-10 SEV-2 (root-FS full →
@@ -116,20 +116,20 @@ groups:
       # `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
       # explicitly recommends "alert on aggregator WARN rate (not
       # just service-up status)" — this is the metric realisation:
-      # the new ratesengine_aggregator_vwap_cache_write_errors_total
+      # the new stellaratlas_aggregator_vwap_cache_write_errors_total
       # counter (internal/obs/metrics.go) increments on every
       # cache Set failure, and any sustained non-zero rate is an
       # operator-page-worthy signal because it means the customer
       # surface is silently degraded.
-      - alert: ratesengine_aggregator_cache_write_errors
+      - alert: stellaratlas_aggregator_cache_write_errors
         expr: |
-          sum(rate(ratesengine_aggregator_vwap_cache_write_errors_total[5m])) > 0
+          sum(rate(stellaratlas_aggregator_vwap_cache_write_errors_total[5m])) > 0
         for: 2m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: aggregator
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
           summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
           description: |
@@ -139,4 +139,4 @@ groups:
             BGSAVE is failing because the root FS is full
             (stop-writes-on-bgsave-error=yes default — May-10 SEV-2
             class). Recovery: free disk → BGSAVE → cache rebuilds.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md

@@ -97,7 +97,7 @@
       {# With lockdown on, the dedicated `redis_exporter` ACL #}
       {# user (defined in users.acl.j2) gates INFO/CLIENT/ #}
       {# CLUSTER/CONFIG-GET/DBSIZE/SLOWLOG-GET — the commands #}
-      {# the exporter needs but that the `ratesengine` #}
+      {# the exporter needs but that the `stellaratlas` #}
       {# application user denies via `-@admin -@dangerous`. #}
       {# Same `redis_password` either way; the `-redis.user` #}
       {# flag is what differentiates the ACL roles when lockdown #}
@@ -164,9 +164,9 @@
       IS_PRIMARY=$([[ "$PRIMARY" == "$MY_HOST" ]] && echo 1 || echo 0)
 
       cat > "$TMP" <<EOF
-      # HELP ratesengine_redis_sentinel_primary 1 if this host is the Sentinel-elected primary.
-      # TYPE ratesengine_redis_sentinel_primary gauge
-      ratesengine_redis_sentinel_primary $IS_PRIMARY
+      # HELP stellaratlas_redis_sentinel_primary 1 if this host is the Sentinel-elected primary.
+      # TYPE stellaratlas_redis_sentinel_primary gauge
+      stellaratlas_redis_sentinel_primary $IS_PRIMARY
       EOF
       mv -f "$TMP" "$OUT"
 

@@ -54,7 +54,7 @@ const DefaultDecimals uint8 = 14
 
 // DefaultResolutionSeconds is the uniform 5-min cadence every
 // Reflector contract updates on (Q3). Emitted as the
-// `ratesengine_oracle_resolution_seconds` gauge by
+// `stellaratlas_oracle_resolution_seconds` gauge by
 // [pipeline.BuildDispatcher] at registration time, so the
 // oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 300

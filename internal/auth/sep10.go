@@ -28,7 +28,7 @@ import (
 //
 // The production implementation lives in
 // [internal/auth/sep10.Validator] — `sep10.NewValidator(sep10.Options{…})`
-// is built by `cmd/ratesengine-api/main.go`'s `buildSEP10Validator`.
+// is built by `cmd/stellaratlas-api/main.go`'s `buildSEP10Validator`.
 // [NoopSEP10Validator] in this package is the graceful-degradation
 // fallback used when the deployment hasn't configured the required
 // env vars (signing seed + JWT secret); every method returns

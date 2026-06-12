@@ -21,7 +21,7 @@
   hits the same cap.
 
 **Fix.** Direct URL:
-<https://github.com/organizations/RatesEngine/settings/billing/spending_limit>
+<https://github.com/organizations/StellarAtlas/settings/billing/spending_limit>
 → "GitHub Actions" → set new monthly limit. Or wait for the next
 billing cycle (usage resets on the org's billing date).
 
@@ -32,7 +32,7 @@ usage; if the org plan is a paid tier with included minutes, only
 that plan's overage limit needs the bump.
 
 **Verify.** `gh workflow run deploy.yml -f region=r1 -f version=v0.5.0-rc.34
--f binaries=ratesengine-api` should now queue + succeed.
+-f binaries=stellaratlas-api` should now queue + succeed.
 
 ---
 
@@ -44,10 +44,10 @@ Once Actions runs again, deploy:
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=v0.5.0-rc.34 \
-  -f binaries=ratesengine-api,ratesengine-aggregator,ratesengine-indexer
+  -f binaries=stellaratlas-api,stellaratlas-aggregator,stellaratlas-indexer
 ```
 
-The `ratesengine-indexer` slot is the key one. r1's indexer has been
+The `stellaratlas-indexer` slot is the key one. r1's indexer has been
 on `rc.29` since 2026-05-07 — it predates the SAC-wrapper-aware
 `usd_volume` insertion path. Every Soroban DEX trade ingested since
 then has been written with `usd_volume = NULL`, which is why Comet
@@ -57,10 +57,10 @@ Phoenix trade volumes are similarly under-counted.
 **Verify post-deploy:**
 
 ```sh
-curl -sS https://api.ratesengine.net/v1/version | jq '.data.version'
+curl -sS https://api.stellaratlas.xyz/v1/version | jq '.data.version'
 # expect: "v0.5.0-rc.34"
 
-curl -sS 'https://api.ratesengine.net/v1/sources?include=stats' \
+curl -sS 'https://api.stellaratlas.xyz/v1/sources?include=stats' \
   | jq '.data[] | select(.name=="comet")'
 # new trades will start showing volume_24h_usd > 0 within minutes
 ```
@@ -79,8 +79,8 @@ Script: `scripts/ops/recompute-usd-volume-soroban.sql` is idempotent
 
 ```sh
 ssh root@r1
-PGPASSWORD=$(cat /etc/ratesengine/postgres-password.txt) \
-  psql -h 127.0.0.1 -U ratesengine -d ratesengine \
+PGPASSWORD=$(cat /etc/stellaratlas/postgres-password.txt) \
+  psql -h 127.0.0.1 -U stellaratlas -d stellaratlas \
        -v ON_ERROR_STOP=1 \
        -f /path/to/recompute-usd-volume-soroban.sql
 ```
@@ -101,7 +101,7 @@ Expect ~124K row updates. Per-source post-fix volume on the
 null` for every asset because none of the three supply algorithms
 are running on r1.
 
-**Required config.** Add to `/etc/ratesengine.toml`:
+**Required config.** Add to `/etc/stellaratlas.toml`:
 
 ```toml
 [supply]
@@ -129,7 +129,7 @@ watched_classic_assets = [
 sudo cp deploy/systemd/supply-snapshot.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now supply-snapshot.timer
-sudo systemctl restart ratesengine-aggregator
+sudo systemctl restart stellaratlas-aggregator
 ```
 
 **Verify.**
@@ -140,7 +140,7 @@ journalctl -u supply-snapshot.service --since '1 min ago' --no-pager
 # expect: writer attributes a row to asset_supply_history for each
 # watched asset class.
 
-curl -sS https://api.ratesengine.net/v1/assets/native | jq '.data.circulating_supply'
+curl -sS https://api.stellaratlas.xyz/v1/assets/native | jq '.data.circulating_supply'
 # expect: a non-null integer-string after the next aggregator
 # goroutine tick (~5 min default cadence).
 ```
@@ -157,8 +157,8 @@ Hit each of these and confirm green:
 | `/v1/coins?limit=5` | `circulating_supply` and `market_cap_usd` populated for at least XLM + USDC |
 | `/v1/sources?include=stats` | `comet` volume_24h_usd > 0 |
 | `/v1/issuers` | 27 anchors with org_name + 19 issuers with `scam_reason` |
-| `https://ratesengine.net/aggregators/` | each card lists mainnet contract addresses |
-| `https://ratesengine.net/divergences/` | Chainlink card lists 3 wired feeds |
+| `https://stellaratlas.xyz/aggregators/` | each card lists mainnet contract addresses |
+| `https://stellaratlas.xyz/divergences/` | Chainlink card lists 3 wired feeds |
 
 When each row is green, the Phase-2 user-visible regression list from
 2026-05-08 is closed.

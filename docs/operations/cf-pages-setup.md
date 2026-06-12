@@ -1,19 +1,19 @@
 # Cloudflare Pages — bootstrap
 
 Provisions the three customer-facing surfaces on Cloudflare
-Pages, plus DNS + the `api.ratesengine.net` proxy:
+Pages, plus DNS + the `api.stellaratlas.xyz` proxy:
 
 | Surface | Project | Domain |
 |---|---|---|
-| Showcase site | `ratesengine-showcase` | `ratesengine.net` |
-| Customer dashboard | `ratesengine-dashboard` | `app.ratesengine.net` |
-| Status page | `ratesengine-status` | `status.ratesengine.net` |
-| API (proxied) | (n/a — Caddy on r1) | `api.ratesengine.net` → `136.243.90.96` |
+| Showcase site | `stellaratlas-showcase` | `stellaratlas.xyz` |
+| Customer dashboard | `stellaratlas-dashboard` | `app.stellaratlas.xyz` |
+| Status page | `stellaratlas-status` | `status.stellaratlas.xyz` |
+| API (proxied) | (n/a — Caddy on r1) | `api.stellaratlas.xyz` → `136.243.90.96` |
 
 ## One-time prerequisite (already done)
 
 Cloudflare's GitHub app must be authorised against the
-`RatesEngine` org once. Visit
+`StellarAtlas` org once. Visit
 `https://dash.cloudflare.com/<account-id>/pages/new/connect` and
 click through the OAuth grant. After that, every project this
 script creates can wire its `git source` programmatically — no
@@ -29,7 +29,7 @@ further dashboard clicks.
 #      Account → Account Settings → Read
 #      Zone    → Zone → Read
 #      Zone    → DNS → Edit
-#    Zone resources: Include → Specific zone → ratesengine.net
+#    Zone resources: Include → Specific zone → stellaratlas.xyz
 #    Account resources: Include → <your account>
 
 export CLOUDFLARE_API_TOKEN=cf_pat_...
@@ -48,10 +48,10 @@ patch any drift. Safe to run from CI on every change to
 
 ## What it does
 
-1. Verifies the API token + looks up the `ratesengine.net`
+1. Verifies the API token + looks up the `stellaratlas.xyz`
    zone (warns + skips DNS if the zone isn't on Cloudflare).
 2. For each of the three Pages projects: creates it pointing
-   at `RatesEngine/rates-engine` with the right
+   at `StellarAtlas/stellar-atlas` with the right
    `root_dir` / `build_command` / `output_dir` / env vars,
    or PATCHes the existing project to converge on those
    values.
@@ -70,37 +70,37 @@ handles it; no GitHub Actions minutes consumed).
 open "https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/pages"
 
 # DNS resolution (should return Cloudflare IPs once propagated)
-dig +short ratesengine.net app.ratesengine.net status.ratesengine.net
-dig +short api.ratesengine.net   # → 136.243.90.96 behind orange-cloud
+dig +short stellaratlas.xyz app.stellaratlas.xyz status.stellaratlas.xyz
+dig +short api.stellaratlas.xyz   # → 136.243.90.96 behind orange-cloud
 
 # Surface health
-curl -sI https://ratesengine.net | head -3
-curl -sI https://app.ratesengine.net | head -3
-curl -s  https://api.ratesengine.net/v1/healthz
+curl -sI https://stellaratlas.xyz | head -3
+curl -sI https://app.stellaratlas.xyz | head -3
+curl -s  https://api.stellaratlas.xyz/v1/healthz
 ```
 
 ## After this lands
 
 Two operator steps remain to make the dashboard fully live:
 
-1. **Set the dashboard config block** in `/etc/ratesengine.toml`
+1. **Set the dashboard config block** in `/etc/stellaratlas.toml`
    on r1 so the auth flow mounts:
 
    ```toml
    [api.dashboard]
-   base_url       = "https://app.ratesengine.net"
-   email_from     = "Rates Engine <hello@ratesengine.net>"
+   base_url       = "https://app.stellaratlas.xyz"
+   email_from     = "Stellar Atlas <hello@stellaratlas.xyz>"
    cookie_secure  = true
-   cookie_domain  = ".ratesengine.net"
+   cookie_domain  = ".stellaratlas.xyz"
    ```
 
-2. **Add the Resend API key** to `/etc/default/ratesengine`:
+2. **Add the Resend API key** to `/etc/default/stellaratlas`:
 
    ```sh
-   RATESENGINE_RESEND_API_KEY=re_...
+   STELLARATLAS_RESEND_API_KEY=re_...
    ```
 
-   Then `systemctl restart ratesengine-api`.
+   Then `systemctl restart stellaratlas-api`.
 
 ## Fallback paths
 
@@ -108,7 +108,7 @@ Two operator steps remain to make the dashboard fully live:
   is paused (e.g. mid-rotation of the GitHub-app token):
   ```sh
   cd web/explorer && pnpm build && \
-    wrangler pages deploy out --project-name ratesengine-showcase
+    wrangler pages deploy out --project-name stellaratlas-showcase
   ```
 - **GitHub Actions workflow** — `showcase-deploy.yml` exists for
   the same case + hotfix-of-arbitrary-commit needs. Trigger via
@@ -130,12 +130,12 @@ Two operator steps remain to make the dashboard fully live:
   for CF to issue the cert. Check
   `https://dash.cloudflare.com/<account>/pages/view/<project>/domains`.
 
-## Known discrepancy: CF project still named `ratesengine-showcase`
+## Known discrepancy: CF project still named `stellaratlas-showcase`
 
 The repo + every code path now refers to "explorer", but the
-Cloudflare Pages project itself is still `ratesengine-showcase`.
+Cloudflare Pages project itself is still `stellaratlas-showcase`.
 CF doesn't support project rename. The cutover (create new
-`ratesengine-explorer` project → reassign `ratesengine.net` +
-`www.ratesengine.net` custom domains → delete old project) is
+`stellaratlas-explorer` project → reassign `stellaratlas.xyz` +
+`www.stellaratlas.xyz` custom domains → delete old project) is
 tracked separately. User-facing UX is unaffected; the CF-side
 label is the only mismatch.

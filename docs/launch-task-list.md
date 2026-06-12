@@ -66,10 +66,10 @@ For each requirement:
 | RFP § | Code evidence | Status |
 |---|---|---|
 | Classic asset identity (code + issuer + home_domain) | `internal/canonical/asset.go` Asset type; `internal/sources/accounts/` AccountEntry observer; `internal/metadata/lcm_resolver.go` HomeDomainFor | ✅ |
-| SEP-41 Soroban token identity + events | `internal/sources/sep41_supply/` decoder; `internal/canonical/discovery/` Sniffer + AsyncSink (`cmd/ratesengine-indexer/main.go:disp.SetDiscoverySink`) | ✅ |
+| SEP-41 Soroban token identity + events | `internal/sources/sep41_supply/` decoder; `internal/canonical/discovery/` Sniffer + AsyncSink (`cmd/stellaratlas-indexer/main.go:disp.SetDiscoverySink`) | ✅ |
 | SAC-wrapped classic recognised as canonical | `internal/canonical/asset.go` SAC contract handling; `[supply.sac_wrappers]` config in `internal/config/config.go:Supply` | ✅ |
-| Auto-discovery of new SEP-41 contracts | `internal/canonical/discovery/Sniffer` + `discovered_assets` hypertable (`migrations/0006_create_discovered_assets.up.sql`) + `ratesengine_discovery_dropped_hits_total` backpressure metric | ✅ |
-| `home_domain` → `stellar.toml` SEP-1 resolution | `internal/metadata/sep1.go` Resolver + `cache.go` Redis cache + `cmd/ratesengine-api/main.go:177` wiring | ✅ |
+| Auto-discovery of new SEP-41 contracts | `internal/canonical/discovery/Sniffer` + `discovered_assets` hypertable (`migrations/0006_create_discovered_assets.up.sql`) + `stellaratlas_discovery_dropped_hits_total` backpressure metric | ✅ |
+| `home_domain` → `stellar.toml` SEP-1 resolution | `internal/metadata/sep1.go` Resolver + `cache.go` Redis cache + `cmd/stellaratlas-api/main.go:177` wiring | ✅ |
 
 ### A2. Oracle coverage — Chainlink, Redstone, Band, Reflector + others
 
@@ -78,7 +78,7 @@ For each requirement:
 | **Reflector** (DEX / CEX / FX, three contracts) | `internal/sources/reflector/`; registry entries `reflector-{dex,cex,fx}` (`internal/sources/external/registry.go:41-43`); BackfillSafe=true | ✅ |
 | **Redstone** (Adapter + 19 per-feed contracts) | `internal/sources/redstone/`; ContractCallDecoder consumes `write_prices(updater, feed_ids, payload)` op args; registry `redstone` BackfillSafe=true | ✅ |
 | **Band** (StandardReference contract) | `internal/sources/band/` ContractCallDecoder watching `relay()` / `force_relay()` (no events emitted); registry `band` BackfillSafe=true | ✅ |
-| **Chainlink** (HTTP cross-check, no on-chain Stellar) | `internal/divergence/chainlink/` reference; wired in `cmd/ratesengine-api/main.go::buildDivergenceReferences` | ✅ |
+| **Chainlink** (HTTP cross-check, no on-chain Stellar) | `internal/divergence/chainlink/` reference; wired in `cmd/stellaratlas-api/main.go::buildDivergenceReferences` | ✅ |
 | SEP-40 output compatibility (so others can consume our prices) | `/v1/oracle/lastprice` (`internal/api/v1/oracle_sep40.go`); `/v1/oracle/prices`; `/v1/oracle/x_last_price`; `/v1/oracle/latest` (raw observations) | ✅ |
 | DIA mainnet | testnet-only at audit time | ⏳ post-launch |
 
@@ -92,7 +92,7 @@ For each requirement:
 | Phoenix | `internal/sources/phoenix/` 8-event-per-swap correlator | ✅ |
 | Comet | `internal/sources/comet/` shared `("POOL", ...)` topic decoder | ✅ |
 | Blend (auctions as directional signals; not VWAP) | `internal/sources/blend/`; `migrations/0009_create_blend_auctions.up.sql` | ✅ |
-| CEX feeds (Binance, Coinbase, Kraken, Bitstamp) | `internal/sources/external/{binance,coinbase,kraken,bitstamp}/`; runner wires via `setSourceEnabled` (`cmd/ratesengine-indexer/main.go:233`) | ✅ |
+| CEX feeds (Binance, Coinbase, Kraken, Bitstamp) | `internal/sources/external/{binance,coinbase,kraken,bitstamp}/`; runner wires via `setSourceEnabled` (`cmd/stellaratlas-indexer/main.go:233`) | ✅ |
 
 ### A4. VWAP with configurable USD-volume threshold
 
@@ -126,7 +126,7 @@ For each requirement:
 | `/v1/chart` opinionated chart contract (ADR-0020) | `internal/api/v1/chart.go::handleChart` | ✅ |
 | OHLC continuous aggregates (1m / 15m / 1h / 4h / 1d / 1w / 1mo) | `migrations/0002_create_price_aggregates.up.sql` — 7 CAGGs + `add_continuous_aggregate_policy` auto-refresh | ✅ |
 | Retention: 1h+ indefinite, 1m + 15m capped at 30d | `migrations/0002` `add_retention_policy('prices_{1m,15m}', INTERVAL '30 days')`; no retention on 1h+ | ✅ |
-| **CAGG `twap` column is NOT real TWAP** (arithmetic mean) | `migrations/0002` notes; `/v1/twap` ignores the column and computes from raw trades | ✅ (caveated; `cmd/ratesengine-aggregator/main.go` carries the warning) |
+| **CAGG `twap` column is NOT real TWAP** (arithmetic mean) | `migrations/0002` notes; `/v1/twap` ignores the column and computes from raw trades | ✅ (caveated; `cmd/stellaratlas-aggregator/main.go` carries the warning) |
 
 ### A7. Supported timeframes / granularities (1h, 24h, 1w, 1mo, 1yr, all-time)
 
@@ -190,13 +190,13 @@ Same as A6 / A7. **✅**
 | Circulating Supply (SEP-41 Algorithm 3) | `internal/sources/sep41_supply/`; `migrations/0015_create_sep41_supply_events.up.sql`; `internal/supply/StorageSEP41SupplyReader` | ✅ |
 | Total Supply | same observers, no exclusions | ✅ |
 | Max Supply | SEP-1 stellar.toml overlay + operator-config; `internal/metadata/` | ✅ |
-| **Indexer wiring of all 6 LCM observers** | `cmd/ratesengine-indexer/main.go::pipeline.{RegisterSupplyEntryDecoders,RegisterSupplyEventDecoders}` driven by `[supply.*]` config | ✅ |
+| **Indexer wiring of all 6 LCM observers** | `cmd/stellaratlas-indexer/main.go::pipeline.{RegisterSupplyEntryDecoders,RegisterSupplyEventDecoders}` driven by `[supply.*]` config | ✅ |
 
 ### C2. `change_24h_pct`
 
 | Aspect | Code evidence | Status |
 |---|---|---|
-| OpenAPI declares the field | `openapi/rates-engine.v1.yaml:1400` | — |
+| OpenAPI declares the field | `openapi/stellar-atlas.v1.yaml:1400` | — |
 | Go handler / SDK populate it | **No code path** — no `Change24hPct` field in `pkg/client/types.go::AssetDetail`; `assets_f2.go` does not compute it | ❌ — spec/code drift |
 
 The proposal does not commit to this field; the *Freighter RFP API
@@ -211,7 +211,7 @@ window) or remove from OpenAPI. **Decision needed before launch.**
 
 | Metric | Target | Code evidence | Status |
 |---|---|---|---|
-| API latency p95 | ≤ 200 ms | `cmd/ratesengine-sla-probe/`; k6 scenarios under `test/load/scenarios/`; SLO rules `deploy/monitoring/rules/slo.yml` | ⚠ — probe shipped (#283/290/294), k6 scenarios shipped (#L5.1–5.3); **no actual SLA-proof report file under `docs/operations/sla-proof-YYYY-MM-DD.md`** — template at `docs/operations/sla-proof-template.md` waits for a real run |
+| API latency p95 | ≤ 200 ms | `cmd/stellaratlas-sla-probe/`; k6 scenarios under `test/load/scenarios/`; SLO rules `deploy/monitoring/rules/slo.yml` | ⚠ — probe shipped (#283/290/294), k6 scenarios shipped (#L5.1–5.3); **no actual SLA-proof report file under `docs/operations/sla-proof-YYYY-MM-DD.md`** — template at `docs/operations/sla-proof-template.md` waits for a real run |
 | API latency p99 | ≤ 500 ms | same | ⚠ |
 | Responsiveness | ≥ 99.9 % | HA topology (ADR-0008); Patroni / Sentinel / HAProxy ansible roles | ⚠ — synthetic gate measurable; production-traffic verification post-launch |
 | Data freshness | ≤ 30 s | `internal/aggregate/orchestrator/orchestrator.go` Tick cadence; `flags.stale` on envelope | ✅ |
@@ -230,7 +230,7 @@ window) or remove from OpenAPI. **Decision needed before launch.**
 | Bulk: current price + 24hr % change | Current price ✅; 24h % change → see C2 ❌ | ⚠ |
 | API key auth + per-key quotas | `internal/auth/apikey_redis.go::RedisAPIKeyValidator`; `/v1/account/keys` self-service issuance | ✅ |
 | SEP-10 Web Auth | `internal/auth/sep10/`; `/v1/auth/sep10/{challenge,token}` | ✅ |
-| API reference documentation | `make docs-api` regenerates `docs/reference/api/index.html` from `openapi/rates-engine.v1.yaml`; `.github/workflows/api-docs.yml` deploys to GitHub Pages | ✅ |
+| API reference documentation | `make docs-api` regenerates `docs/reference/api/index.html` from `openapi/stellar-atlas.v1.yaml`; `.github/workflows/api-docs.yml` deploys to GitHub Pages | ✅ |
 | Self-service onboarding | `docs/getting-started.md`; `/v1/account/keys` POST issues a fresh key | ✅ |
 
 ---
@@ -261,7 +261,7 @@ update, or add it to the Alertmanager config as a route option.
 
 ### F3. Public status page (proposal §Incident Detection)
 
-`status.ratesengine.net` — no `deploy/` artefacts, no DNS, no
+`status.stellaratlas.xyz` — no `deploy/` artefacts, no DNS, no
 status worker. **🟡 — L4.11 in launch-readiness-backlog.**
 
 ### F4. Self-hosted deployment templates (proposal §Self-Hosted Deployment)
@@ -305,7 +305,7 @@ r1 since at least rc.39.
 
 ### G2. Wire `streaming.Hub` end-to-end so `/v1/price/stream` actually serves (§A5, §F1) — ✅ **shipped**
 
-`cmd/ratesengine-api/main.go::main` constructs `streaming.NewHub(0)`
+`cmd/stellaratlas-api/main.go::main` constructs `streaming.NewHub(0)`
 (line 400) and passes it as `Options.Hub` (line 563);
 `streampublish.New(hub, priceReader, cfg.API.Streaming.PollInterval, …)`
 (line 602) drives the publisher goroutine for operator-configured
@@ -421,8 +421,8 @@ reflect current code; `configs/example.toml`'s every key has a
 internal; v1.0 not tagged.
 
 **Acceptance:** `git tag v1.0.0` ratified; public-repo flip done
-per `docs/operations/public-flip.md`; DNS for `api.ratesengine.net`
-+ `status.ratesengine.net` flipped; rate-limit middleware reads
+per `docs/operations/public-flip.md`; DNS for `api.stellaratlas.xyz`
++ `status.stellaratlas.xyz` flipped; rate-limit middleware reads
 production tier limits; first 24-h post-launch watch (L6.7) on
 rotation.
 
@@ -458,7 +458,7 @@ populates the per-class hypertables, so the F2 reader returns NULL.
 [`docs/review-2026-05-10.md`](review-2026-05-10.md).
 
 **Acceptance:** Populate the watched-set arrays in
-`/etc/ratesengine.toml` on r1 (minimum: USDC, USDT, EURC, AQUA,
+`/etc/stellaratlas.toml` on r1 (minimum: USDC, USDT, EURC, AQUA,
 yXLM, SHX, VELO, BTC, ETH, PYUSD, plus operator additions).
 Restart the indexer. Re-curl `/v1/coins/USDC` and verify
 non-null F2 fields.
@@ -479,7 +479,7 @@ a supported auth mechanism alongside API keys.
 
 **Acceptance:** Generate a Stellar keypair dedicated to the
 SEP-10 server (NOT a validator key, NOT an issuer key). Set
-both fields in r1 config. Restart `ratesengine-api`. Re-curl
+both fields in r1 config. Restart `stellaratlas-api`. Re-curl
 `/v1/auth/sep10/challenge?account=G…` and verify 200 + a valid
 challenge transaction XDR.
 
@@ -605,7 +605,7 @@ gate the public flip; each can ship as time allows.
 
 | ID | Item | Origin |
 |---|---|---|
-| J1 | [OPERATOR] CF Pages project rename: `ratesengine-showcase` → `ratesengine-explorer` | UI cleanup; aliases work today |
+| J1 | [OPERATOR] CF Pages project rename: `stellaratlas-showcase` → `stellaratlas-explorer` | UI cleanup; aliases work today |
 | J2 | Site IA restructure follow-ups (explorer navigation polish) | UX polish |
 | J3 | Lending pool detail pages — surface pair-level data instead of contract address only | Feature, post-MVP |
 | J4 | DefIndex + Soroswap-router data on `/aggregators` page (in-progress at session close) | Feature |

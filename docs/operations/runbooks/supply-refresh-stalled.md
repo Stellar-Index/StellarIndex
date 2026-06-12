@@ -5,13 +5,13 @@ status: ratified
 severity: P2
 ---
 
-# Runbook — `ratesengine_aggregator_supply_refresh_stalled`
+# Runbook — `stellaratlas_aggregator_supply_refresh_stalled`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_aggregator_supply_refresh_stalled` |
+| Alert | `stellaratlas_aggregator_supply_refresh_stalled` |
 | Severity | P2 (page) |
 | Detected by | `deploy/monitoring/rules/supply-refresh.yml` |
 | Typical MTTR | 15–30 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `time() - max(timestamp(ratesengine_aggregator_supply_refresh_total{outcome="ok"})) > 30 * 60`
+- `time() - max(timestamp(stellaratlas_aggregator_supply_refresh_total{outcome="ok"})) > 30 * 60`
   for ≥ 5 min.
 - Aggregator's logger emits no `supply refresh ok` lines for the
   same window.
@@ -28,11 +28,11 @@ severity: P2
 
 ```sh
 # 1. Aggregator process up?
-sudo systemctl status ratesengine-aggregator
+sudo systemctl status stellaratlas-aggregator
 
 # 2. Are any goroutines progressing? (Other counters should
 #    be incrementing if the orchestrator is alive.)
-curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_ticks_total
+curl -s http://localhost:9465/metrics | grep stellaratlas_aggregator_ticks_total
 
 # 3. What's the most-recent supply refresh outcome label?
 #    The metric is keyed by (asset_key, outcome) — if every asset_key
@@ -40,10 +40,10 @@ curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_ticks_total
 #    asset_key has stalled while others tick, the failure is
 #    per-asset and `error_dominant` should ALSO be firing.
 curl -s http://localhost:9465/metrics | \
-  awk '/^ratesengine_aggregator_supply_refresh_total\{/' | sort
+  awk '/^stellaratlas_aggregator_supply_refresh_total\{/' | sort
 
 # 4. Recent supply-refresh logs.
-sudo journalctl -u ratesengine-aggregator --since "1 hour ago" -n 200 | \
+sudo journalctl -u stellaratlas-aggregator --since "1 hour ago" -n 200 | \
   grep -E "supply refresh|supply-refresh"
 ```
 
@@ -55,7 +55,7 @@ sudo journalctl -u ratesengine-aggregator --since "1 hour ago" -n 200 | \
 
 2. **Orchestrator wedged.** Process is running but no goroutine
    is making progress. The orchestrator's own tick counter
-   (`ratesengine_aggregator_ticks_total`) is also stalled.
+   (`stellaratlas_aggregator_ticks_total`) is also stalled.
    - Mitigation: restart the binary. File a P2 bug for the wedge.
 
 3. **Every tick failing.** Goroutine is alive but every
@@ -76,7 +76,7 @@ sudo journalctl -u ratesengine-aggregator --since "1 hour ago" -n 200 | \
 
 - [ ] Step 1 — Check process health (Quick diagnosis #1).
 - [ ] Step 2 — If process is up but stalled: check
-      `ratesengine_aggregator_ticks_total` — if THAT also stalled,
+      `stellaratlas_aggregator_ticks_total` — if THAT also stalled,
       the orchestrator is wedged; restart.
 - [ ] Step 3 — If process is up + orchestrator is ticking but
       supply isn't: confirm `aggregator_refresh_enabled = true` in

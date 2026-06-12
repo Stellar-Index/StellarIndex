@@ -58,7 +58,7 @@ export function AppShell({
       <aside className="flex w-60 flex-col border-r border-surface-line bg-surface">
         <div className="border-b border-surface-line px-5 py-4">
           <Link href="/" className="text-base font-semibold text-ink">
-            Rates Engine
+            Stellar Atlas
           </Link>
           <p className="mt-0.5 text-xs text-ink-faint">Customer dashboard</p>
         </div>

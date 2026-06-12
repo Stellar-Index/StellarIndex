@@ -847,7 +847,7 @@ func (*fakePlatformAccountsForBridgeWithError) Unsuspend(_ context.Context, _ uu
 // TestStripeWebhook_PlatformBridge_GetAccountErrorIncrementsMetric
 // pins the wave-65 (2026-05-13) observability seam: a platform-
 // store failure in `GetByStripeCustomerID` increments
-// `ratesengine_stripe_platform_sync_errors_total{operation="get_account"}`
+// `stellaratlas_stripe_platform_sync_errors_total{operation="get_account"}`
 // AND the webhook still returns 200 (Stripe retries would not
 // heal Postgres, so 5xx-ing here would just retry-storm).
 //

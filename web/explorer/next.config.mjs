@@ -4,7 +4,7 @@ const nextConfig = {
 
   // Static-export the entire site. Deployed to Cloudflare Pages
   // (or rsync'd to r1 nginx behind Cloudflare CDN) — same vendor
-  // story as api.ratesengine.net per docs/operations/cdn-setup.md.
+  // story as api.stellaratlas.xyz per docs/operations/cdn-setup.md.
   // Dynamic routes (/coins/[slug], /contracts/[id], etc.) use
   // client-side rendering: the build emits a shell, the page
   // hydrates and fetches data from the API based on the URL.
@@ -35,7 +35,7 @@ const nextConfig = {
   // Sourcemaps in production help when debugging from issue reports.
   productionBrowserSourceMaps: true,
 
-  // All API access is client-side from the browser to api.ratesengine.net,
+  // All API access is client-side from the browser to api.stellaratlas.xyz,
   // which is already CDN-cached per cdn-setup.md. No server-side fetches
   // needed — that's the entire point of the static-export architecture.
   //
@@ -46,7 +46,7 @@ const nextConfig = {
   // builds get "dev".
   env: {
     NEXT_PUBLIC_API_BASE_URL:
-      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net',
+      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz',
     NEXT_PUBLIC_BUILD_SHA:
       process.env.CF_PAGES_COMMIT_SHA ??
       process.env.GITHUB_SHA ??

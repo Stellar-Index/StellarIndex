@@ -20,7 +20,7 @@
 -- counter idempotent under backfill re-walks: replaying a ledger
 -- range whose trades already exist does not inflate the tally.
 --
--- Authoritative reconciliation: `ratesengine-ops seed-entry-counts`
+-- Authoritative reconciliation: `stellaratlas-ops seed-entry-counts`
 -- recomputes the tally from a full GROUP BY over trades +
 -- oracle_updates and overwrites this table. Run it once after the
 -- all-time backfill completes to absorb (a) pre-counter history and
@@ -40,7 +40,7 @@ CREATE TABLE source_entry_counts (
 COMMENT ON TABLE source_entry_counts IS
     'Per-source running tally of ingested entries (trades + '
     'oracle_updates). Bumped atomically + idempotently by the '
-    'writers; authoritatively reseeded by ratesengine-ops '
+    'writers; authoritatively reseeded by stellaratlas-ops '
     'seed-entry-counts. Powers the `entries` column on '
     '/v1/diagnostics/ingestion. See migration 0035.';
 

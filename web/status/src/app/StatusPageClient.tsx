@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
 
 // Polled every 30 s — same cadence as Healthchecks.io's hosted
 // status pages and well inside the 60-s indexer/aggregator
@@ -179,7 +179,7 @@ interface IngestionSnapshot {
     backfill_safe: boolean;
     trade_count_24h: number;
     // entries_24h: universal trailing-24h per-source event count
-    // (ratesengine_source_events_total). Non-zero for every active
+    // (stellaratlas_source_events_total). Non-zero for every active
     // source, unlike trade_count_24h (trades-table only).
     entries_24h: number;
     volume_24h_usd?: string;
@@ -657,8 +657,8 @@ function Header() {
   return (
     <header className="flex items-center justify-between">
       <div>
-        <a href="https://ratesengine.net" className="text-sm text-ink-muted">
-          ← Rates Engine
+        <a href="https://stellaratlas.xyz" className="text-sm text-ink-muted">
+          ← Stellar Atlas
         </a>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">
           System status

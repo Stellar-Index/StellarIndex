@@ -172,7 +172,7 @@ WHERE topic_0_sym = 'POOL'
 ```
 
 The SCVal-body extraction in SQL is more painful than re-using the
-Go decoder; a `ratesengine-ops comet-backfill` subcommand that
+Go decoder; a `stellaratlas-ops comet-backfill` subcommand that
 walks `soroban_events` and calls `decodeLiquidityEvent` in-process
 is the cleaner path. Tracked as a follow-up.
 

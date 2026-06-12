@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { SignInForm } from './SignInForm';
 
 export const metadata: Metadata = {
-  title: 'Sign in — Rates Engine',
+  title: 'Sign in — Stellar Atlas',
   description:
-    'Sign in to your Rates Engine account. Magic-link email auth — no passwords.',
+    'Sign in to your Stellar Atlas account. Magic-link email auth — no passwords.',
 };
 
 export default function SignInPage() {

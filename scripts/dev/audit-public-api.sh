@@ -12,14 +12,14 @@
 #
 # Usage:
 #   bash scripts/dev/audit-public-api.sh
-#   API_BASE_URL=https://api.ratesengine.net bash scripts/dev/audit-public-api.sh
+#   API_BASE_URL=https://api.stellaratlas.xyz bash scripts/dev/audit-public-api.sh
 #
 # Exit code = number of failed checks (0 = all green). Bodies of
 # failed responses are printed so the caller can see why.
 
 set -uo pipefail
 
-API_BASE_URL="${API_BASE_URL:-https://api.ratesengine.net}"
+API_BASE_URL="${API_BASE_URL:-https://api.stellaratlas.xyz}"
 TIMEOUT="${AUDIT_TIMEOUT:-10}"
 FAILS=0
 TOTAL=0
@@ -36,14 +36,14 @@ fi
 # USDC issuer (Centre) — the canonical USDC contract on Stellar.
 # Pinned here so a single edit covers every audit case using USDC
 # as base or quote. Same value lives as the default example in
-# openapi/rates-engine.v1.yaml#components.parameters.Base.
+# openapi/stellar-atlas.v1.yaml#components.parameters.Base.
 readonly USDC="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 audit() {
   local label="$1" path="$2"
   local body status
   TOTAL=$((TOTAL + 1))
-  body=$(/usr/bin/curl -sS -m "$TIMEOUT" -A "ratesengine-audit/1" \
+  body=$(/usr/bin/curl -sS -m "$TIMEOUT" -A "stellaratlas-audit/1" \
     -w "\n%{http_code}" "${API_BASE_URL}${path}" 2>&1) || {
     printf "  %sFAIL%s %-44s %scurl error%s\n" "$RED" "$OFF" "$label" "$DIM" "$OFF"
     FAILS=$((FAILS + 1))

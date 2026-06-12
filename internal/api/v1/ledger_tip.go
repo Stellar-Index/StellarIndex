@@ -43,7 +43,7 @@ type LedgerTipView struct {
 func (s *Server) handleLedgerTip(w http.ResponseWriter, r *http.Request) {
 	if s.cursors == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/ledger-tip-unavailable",
+			"https://api.stellaratlas.xyz/errors/ledger-tip-unavailable",
 			"Ledger tip not available", http.StatusServiceUnavailable,
 			"this deployment has no CursorsReader wired — check binary configuration")
 		return
@@ -56,13 +56,13 @@ func (s *Server) handleLedgerTip(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("ledgerTip failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
 	if !ok {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/ledger-tip-unavailable",
+			"https://api.stellaratlas.xyz/errors/ledger-tip-unavailable",
 			"Ledger tip not available", http.StatusServiceUnavailable,
 			"the live-ingest cursor has not been established yet — the indexer "+
 				"has not committed its first ledger on this deployment")
@@ -117,5 +117,5 @@ func findLedgerstreamCursor(rows []timescale.Cursor) (timescale.Cursor, bool) {
 }
 
 // cursorSourceLedgerstream is the ingestion_cursors.source value the
-// live indexer writes (cmd/ratesengine-indexer's cursorSource const).
+// live indexer writes (cmd/stellaratlas-indexer's cursorSource const).
 const cursorSourceLedgerstream = "ledgerstream"

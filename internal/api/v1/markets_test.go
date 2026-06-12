@@ -254,7 +254,7 @@ func TestMarkets_UnknownSource400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.ratesengine.net/errors/unknown-source" {
+	if p.Type != "https://api.stellaratlas.xyz/errors/unknown-source" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -311,7 +311,7 @@ func TestMarkets_InvalidAsset400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.ratesengine.net/errors/invalid-asset-id" {
+	if p.Type != "https://api.stellaratlas.xyz/errors/invalid-asset-id" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -329,7 +329,7 @@ func TestMarkets_SourceAndAssetTogether400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.ratesengine.net/errors/conflicting-filters" {
+	if p.Type != "https://api.stellaratlas.xyz/errors/conflicting-filters" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -360,7 +360,7 @@ func TestPools_InvalidAsset400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.ratesengine.net/errors/invalid-asset-id" {
+	if p.Type != "https://api.stellaratlas.xyz/errors/invalid-asset-id" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
@@ -429,7 +429,7 @@ func TestPools_AssetAndBaseTogether400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.ratesengine.net/errors/conflicting-filters" {
+	if p.Type != "https://api.stellaratlas.xyz/errors/conflicting-filters" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }

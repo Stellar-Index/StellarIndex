@@ -502,7 +502,7 @@ type Orchestrator struct {
 	// successful VWAP cache-write per pair (keyed by `pair.Base.String()`,
 	// matching the `asset` label on `obs.PriceStalenessSeconds`). Used
 	// by `emitStalenessGauges` at end-of-Tick to drive the
-	// `ratesengine_api_price_stale` alert (F-1306, codex audit-2026-05-13).
+	// `stellaratlas_api_price_stale` alert (F-1306, codex audit-2026-05-13).
 	// Bounded by len(cfg.Pairs) — a small operator-curated allow-list,
 	// so cardinality fits well inside Prometheus's per-metric comfort
 	// zone. Same single-Tick-at-a-time invariant as prevVWAPs, so no
@@ -630,7 +630,7 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	obs.AggregatorTicksTotal.WithLabelValues(outcome).Inc()
 
 	// F-1306 (codex audit-2026-05-13): emit per-asset staleness so the
-	// `ratesengine_api_price_stale` alert has a producer. Runs at end-of-
+	// `stellaratlas_api_price_stale` alert has a producer. Runs at end-of-
 	// Tick whether or not any window wrote, so pairs with no fresh
 	// trades climb past the alert threshold even though Tick doesn't
 	// publish anything new for them.
@@ -639,7 +639,7 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	return nil
 }
 
-// emitStalenessGauges sets `ratesengine_price_staleness_seconds` for
+// emitStalenessGauges sets `stellaratlas_price_staleness_seconds` for
 // every configured pair to `time.Since(lastWriteAt[asset]).Seconds()`.
 // Pairs that have never written carry the wall-clock age since the
 // aggregator started (orchestrator construction time would be cleaner
@@ -836,7 +836,7 @@ func (o *Orchestrator) refreshPairWindow(
 
 	// F-1306 (codex audit-2026-05-13): record the wall-clock write
 	// time per pair so emitStalenessGauges can drive the
-	// `ratesengine_price_staleness_seconds` series the api alert
+	// `stellaratlas_price_staleness_seconds` series the api alert
 	// rule queries. Pair-level (not pair×window) — staleness reads
 	// off the asset/quote shape that customers see via /v1/price.
 	o.lastWriteAt[pair.Base.String()] = now

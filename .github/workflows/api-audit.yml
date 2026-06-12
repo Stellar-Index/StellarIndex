@@ -1,7 +1,7 @@
 name: api-audit
 
 # Smoke-audits every documented public /v1/* endpoint against
-# api.ratesengine.net using the same example values published in
+# api.stellaratlas.xyz using the same example values published in
 # the OpenAPI spec. Catches the documentation-vs-implementation
 # drift class reported 2026-05-08 (Scalar default test requests
 # returning 400 because the published examples used short asset
@@ -30,9 +30,9 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: 'Override target (default https://api.ratesengine.net)'
+        description: 'Override target (default https://api.stellaratlas.xyz)'
         required: false
-        default: 'https://api.ratesengine.net'
+        default: 'https://api.stellaratlas.xyz'
 
 permissions:
   contents: read
@@ -46,5 +46,5 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - name: Run audit script
         env:
-          API_BASE_URL: ${{ github.event.inputs.api_base_url || 'https://api.ratesengine.net' }}
+          API_BASE_URL: ${{ github.event.inputs.api_base_url || 'https://api.stellaratlas.xyz' }}
         run: bash scripts/dev/audit-public-api.sh

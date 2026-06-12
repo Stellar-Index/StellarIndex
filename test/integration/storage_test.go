@@ -485,9 +485,9 @@ func startTimescale(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	pg, err := tcpostgres.Run(ctx,
 		"timescale/timescaledb:2.17.2-pg15",
-		tcpostgres.WithDatabase("ratesengine"),
-		tcpostgres.WithUsername("ratesengine"),
-		tcpostgres.WithPassword("ratesengine-test"),
+		tcpostgres.WithDatabase("stellaratlas"),
+		tcpostgres.WithUsername("stellaratlas"),
+		tcpostgres.WithPassword("stellaratlas-test"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).WithStartupTimeout(60*time.Second),

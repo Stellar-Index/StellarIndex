@@ -168,17 +168,17 @@ func writeAuthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, auth.ErrTokenExpired):
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="token expired"`)
 		writeAuthProblem(w, http.StatusUnauthorized,
-			"https://api.ratesengine.net/errors/token-expired",
+			"https://api.stellaratlas.xyz/errors/token-expired",
 			"Token expired",
 			"Your authentication token has expired; refresh and retry.")
 	case errors.Is(err, auth.ErrTokenMalformed):
 		writeAuthProblem(w, http.StatusBadRequest,
-			"https://api.ratesengine.net/errors/malformed-credential",
+			"https://api.stellaratlas.xyz/errors/malformed-credential",
 			"Malformed credential",
 			"The supplied credential could not be parsed.")
 	case errors.Is(err, auth.ErrForbidden):
 		writeAuthProblem(w, http.StatusForbidden,
-			"https://api.ratesengine.net/errors/forbidden",
+			"https://api.stellaratlas.xyz/errors/forbidden",
 			"Forbidden",
 			"The authenticated subject is not permitted to access this resource.")
 	case errors.Is(err, auth.ErrNotImplemented):
@@ -186,14 +186,14 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		// didn't wire the validator. 503 + a body that names the
 		// problem so an operator sees it on the first failed request.
 		writeAuthProblem(w, http.StatusServiceUnavailable,
-			"https://api.ratesengine.net/errors/auth-not-configured",
+			"https://api.stellaratlas.xyz/errors/auth-not-configured",
 			"Auth validator not configured",
 			"This deployment enabled an auth mode but no validator was wired into the binary.")
 	default:
 		// ErrUnauthorized + everything else fall here.
-		w.Header().Set("WWW-Authenticate", `Bearer realm="ratesengine"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stellaratlas"`)
 		writeAuthProblem(w, http.StatusUnauthorized,
-			"https://api.ratesengine.net/errors/unauthorized",
+			"https://api.stellaratlas.xyz/errors/unauthorized",
 			"Unauthorized",
 			"Authentication is required to access this resource.")
 	}
@@ -219,7 +219,7 @@ func writeAuthProblem(w http.ResponseWriter, status int, typeURL, title, detail 
 	// SEP-10 token); the magic-link cookie path is parallel and
 	// has no standard challenge token, so we advertise Bearer.
 	if status == http.StatusUnauthorized {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="ratesengine.net"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stellaratlas.xyz"`)
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(authProblem{

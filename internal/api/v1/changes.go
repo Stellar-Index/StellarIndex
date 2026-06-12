@@ -130,7 +130,7 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	if s.changesum == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/change-summary-unavailable",
+			"https://api.stellaratlas.xyz/errors/change-summary-unavailable",
 			"Change summary unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the change-summary reader yet.")
 		return
@@ -139,7 +139,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	entityType := r.PathValue("entity_type")
 	if _, ok := allowedChangeSummaryEntityTypes[entityType]; !ok {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-entity-type",
+			"https://api.stellaratlas.xyz/errors/invalid-entity-type",
 			"Invalid entity_type", http.StatusBadRequest,
 			"entity_type must be one of: coin, protocol, pair, source")
 		return
@@ -147,7 +147,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	entityID := r.PathValue("id")
 	if entityID == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-entity-id",
+			"https://api.stellaratlas.xyz/errors/invalid-entity-id",
 			"Invalid entity_id", http.StatusBadRequest,
 			"id path segment is required")
 		return
@@ -179,7 +179,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hit && errors.Is(err, sql.ErrNoRows) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/change-summary-not-found",
+			"https://api.stellaratlas.xyz/errors/change-summary-not-found",
 			"Change summary not found", http.StatusNotFound,
 			"The change-summary worker hasn't computed a row for this entity yet.")
 		return
@@ -188,7 +188,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("change-summary read",
 			"entity_type", entityType, "entity_id", entityID, "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/change-summary-error",
+			"https://api.stellaratlas.xyz/errors/change-summary-error",
 			"Change summary read failed", http.StatusInternalServerError,
 			"Storage layer returned an error.")
 		return

@@ -21,7 +21,7 @@ status: planning
 | Styling | **TailwindCSS** + **shadcn/ui** | Utility-first, zero-runtime CSS, copy-paste components — no design-system maintenance overhead |
 | Charts | **TradingView Lightweight Charts** | BSD-licensed, ~30 KB gzipped, has every chart feature we need (OHLC, lines, areas, markers); no licensing cost |
 | Data fetching | **TanStack Query (React Query v5)** | Cache, refetch-on-focus, optimistic updates, request dedup — battle-tested |
-| API types | **`openapi-typescript`** | Generates `web/explorer/src/api/types.ts` from `openapi/rates-engine.v1.yaml`. Single source of truth. CI check fails if regen drifts. |
+| API types | **`openapi-typescript`** | Generates `web/explorer/src/api/types.ts` from `openapi/stellar-atlas.v1.yaml`. Single source of truth. CI check fails if regen drifts. |
 | Validation | **Zod** | Runtime validation at the API boundary (defends against contract drift) |
 | MDX | **`@next/mdx`** + **`next-mdx-remote`** | Research articles authored as `.mdx` files |
 | OG images | **`satori` + `@resvg/resvg-js`** (build-time) for known routes; small Cloudflare Worker for dynamic. | Pure SVG → PNG; no Vercel-specific dep. Build-time covers most routes; the Worker is ~50 lines for the long-tail. |
@@ -53,8 +53,8 @@ No language change. Extensions to the existing stack:
 | **Build target** | **`output: 'export'`** in `next.config.mjs` | Static HTML + JS bundle; ~5 MB total. No SSR, no edge runtime, no vendor lock-in. |
 | **v1 hosting** | **Cloudflare Pages** | Same vendor as the API CDN; git-push deploys with per-PR previews; free tier covers v1 traffic. Same operational story as `cdn-setup.md`. |
 | **v1 fallback** | rsync → r1 nginx → Cloudflare CDN | If we want full self-hosted: `next build` produces `out/`, rsync to r1, nginx serves under Cloudflare. Same TLS termination as the API. |
-| **API origin** | `api.ratesengine.net` (existing, behind Cloudflare per `cdn-setup.md`) | No change |
-| **Showcase domain** | `ratesengine.net` (the explorer / showcase). Customer dashboard lives at the separate `app.ratesengine.net`; see [`web/dashboard/README.md`](../../web/dashboard/README.md). | CNAME → Cloudflare Pages OR A → r1; Cloudflare proxied (orange cloud) either way. Single-vendor CDN story. |
+| **API origin** | `api.stellaratlas.xyz` (existing, behind Cloudflare per `cdn-setup.md`) | No change |
+| **Showcase domain** | `stellaratlas.xyz` (the explorer / showcase). Customer dashboard lives at the separate `app.stellaratlas.xyz`; see [`web/dashboard/README.md`](../../web/dashboard/README.md). | CNAME → Cloudflare Pages OR A → r1; Cloudflare proxied (orange cloud) either way. Single-vendor CDN story. |
 | **Dynamic routes** | Client-side rendering (CSR) for long-tail (`/contracts/{id}`, `/tx/{hash}`, `/accounts/{G}`); pre-rendered via `generateStaticParams` for high-traffic (top-N coins, all protocols, all sources) | TanStack Query handles client-side fetch + cache; SEO targets the pre-rendered set; long-tail is JS-rendered (Google handles it) |
 | **OG images** | Build-time generation via `satori` + `@resvg/resvg-js` for pre-rendered routes; small Cloudflare Worker (~50 lines) for dynamic | `@vercel/og` is a Vercel runtime; Satori is the underlying library and runs anywhere. |
 | **Build env** | Node 20 LTS, pnpm 10 | Faster + smaller node_modules than npm |
@@ -175,7 +175,7 @@ Each phase lists tickets with **acceptance criteria** (AC), **dependencies** (De
 
 | # | Ticket | AC | Est |
 |---|---|---|---|
-| 0.1 | Bootstrap `web/explorer/` with Next.js 15 + TS + Tailwind + shadcn | `pnpm install && pnpm dev` runs, `/` returns 200 with "Hello, ratesengine" | S |
+| 0.1 | Bootstrap `web/explorer/` with Next.js 15 + TS + Tailwind + shadcn | `pnpm install && pnpm dev` runs, `/` returns 200 with "Hello, stellaratlas" | S |
 | 0.2 | Add `make web-dev` / `make web-build` / `make web-typecheck` / `make web-lint` targets | All targets work; `make verify` includes web checks | S |
 | 0.3 | Set up `openapi-typescript` generation | `pnpm generate:api` produces `src/api/types.ts`; CI fails if regen drifts | S |
 | 0.4 | Add `web/explorer/` job to CI workflow | Typecheck + lint + build all pass on green branch | S |
@@ -393,7 +393,7 @@ Each kind has its own directory + detail page set, with kind-appropriate scorebo
 | 13.4 | A11y pass: WCAG 2.1 AA across all routes | axe-core CI pass | M |
 | 13.5 | Skeleton states everywhere (no layout shift) | CLS < 0.1 | M |
 | 13.6 | Error boundaries on every route | Graceful fallback UI for any 500 | S |
-| 13.7 | Status page integration (link to status.ratesengine.net) | | S |
+| 13.7 | Status page integration (link to status.stellaratlas.xyz) | | S |
 | 13.8 | Robots.txt + sitemap | | S |
 | 13.9 | Analytics (privacy-respecting — Plausible or simple-analytics) | | S |
 | 13.10 | Security pass: CSP headers, no inline scripts, all third-party deps reviewed | | M |
@@ -468,7 +468,7 @@ From the data-inventory doc §20, here's where each lands:
 ## 7. Cross-references
 
 - Data inventory (the WHAT): [`explorer-data-inventory.md`](explorer-data-inventory.md)
-- API source-of-truth: [`../../openapi/rates-engine.v1.yaml`](../../openapi/rates-engine.v1.yaml)
+- API source-of-truth: [`../../openapi/stellar-atlas.v1.yaml`](../../openapi/stellar-atlas.v1.yaml)
 - Coverage matrix (RFP × delivery): [`coverage-matrix.md`](coverage-matrix.md)
 - Aggregation policy: [`aggregation-plan.md`](aggregation-plan.md)
 - ADRs: [`../adr/`](../adr/)

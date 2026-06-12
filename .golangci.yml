@@ -1,4 +1,4 @@
-# golangci-lint config for Rates Engine.
+# golangci-lint config for Stellar Atlas.
 #
 # Lives at repo root. Applied via `make lint` and in CI. Any rule
 # change requires a PR + rationale; we don't weaken lint "just to

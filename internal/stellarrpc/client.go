@@ -100,7 +100,7 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 	httpReq.Header.Set("Accept", "application/json")
 	// Identifiable User-Agent so stellar-rpc operators can correlate
 	// traffic in their logs (mirrors internal/metadata/sep1.go).
-	httpReq.Header.Set("User-Agent", "rates-engine/stellarrpc (+https://ratesengine.net)")
+	httpReq.Header.Set("User-Agent", "stellar-atlas/stellarrpc (+https://stellaratlas.xyz)")
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {

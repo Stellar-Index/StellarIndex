@@ -37,7 +37,7 @@ Rules:
 
 - **Never** launch a recovery backfill while another heavy backfill
   (`backfill-router`, another `backfill`, a census run) is active. Check:
-  `pgrep -af "ratesengine-ops (backfill|census-backfill)"`.
+  `pgrep -af "stellaratlas-ops (backfill|census-backfill)"`.
 - **Cap CPU per worker**: `GOMAXPROCS=2 nice -n 19`. Go defaults
   `GOMAXPROCS` to the core count (20), so N unbounded workers oversubscribe
   ~N×20 — this is what spiked load to 60 and stalled ingest.
@@ -51,21 +51,21 @@ Rules:
 ## Recovery sequence (run in order, one heavy job at a time)
 
 All commands run on r1 with the env sourced:
-`set -a; . /etc/default/ratesengine; set +a` (provides
-`$RATESENGINE_POSTGRES_DSN` + S3 creds). Historical ledgers live in the
+`set -a; . /etc/default/stellaratlas; set +a` (provides
+`$STELLARATLAS_POSTGRES_DSN` + S3 creds). Historical ledgers live in the
 **`galexie-archive`** bucket (R1 full mirror), not `galexie-live`.
 
 ### 0. Deploy the committed forward fixes (if not already live)
 
 soroswap/phoenix `op_index` fanout (commits `f7397cc2`, `7c017dac`) need a
-ratesengine-indexer + ops redeploy + indexer restart. aquarius/comet +
+stellaratlas-indexer + ops redeploy + indexer restart. aquarius/comet +
 the `event_index` fix are already deployed.
 
 ### 1. Substrate: census-backfill → `ledger_ingest_log`
 
 ```
-GOMAXPROCS=2 nice -n 19 ratesengine-ops census-backfill \
-  -config /etc/ratesengine.toml -from 50457424 -to <tip> \
+GOMAXPROCS=2 nice -n 19 stellaratlas-ops census-backfill \
+  -config /etc/stellaratlas.toml -from 50457424 -to <tip> \
   -bucket galexie-archive -resume
 ```
 
@@ -79,7 +79,7 @@ reconciliation.
 ### 2. `soroban_events` re-backfill (recover the ~55% loss)
 
 ```
-GOMAXPROCS=2 nice -n 19 ratesengine-ops backfill -source soroban-events \
+GOMAXPROCS=2 nice -n 19 stellaratlas-ops backfill -source soroban-events \
   -from 50457424 -to <tip> -bucket galexie-archive -parallel <2-4>
 ```
 
@@ -102,7 +102,7 @@ DELETE FROM trades
    AND ledger BETWEEN <from> AND <to>;
 ```
 ```
-GOMAXPROCS=2 nice -n 19 ratesengine-ops backfill \
+GOMAXPROCS=2 nice -n 19 stellaratlas-ops backfill \
   -source aquarius,comet,soroswap,phoenix \
   -from <from> -to <to> -bucket galexie-archive
 ```
@@ -116,9 +116,9 @@ identities — the backfill path seeds it.
 ### 4. Truthful watermarks + verification
 
 ```
-ratesengine-ops compute-completeness -config /etc/ratesengine.toml
-ratesengine-ops verify-recognition   -config /etc/ratesengine.toml -from 50457424 -to <tip>
-ratesengine-ops verify-reconciliation -config /etc/ratesengine.toml -from <from> -to <to>
+stellaratlas-ops compute-completeness -config /etc/stellaratlas.toml
+stellaratlas-ops verify-recognition   -config /etc/stellaratlas.toml -from 50457424 -to <tip>
+stellaratlas-ops verify-reconciliation -config /etc/stellaratlas.toml -from <from> -to <to>
 ```
 
 `compute-completeness` writes `completeness_snapshots`; the API overlays

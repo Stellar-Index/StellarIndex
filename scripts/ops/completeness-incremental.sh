@@ -13,18 +13,18 @@
 # Healthchecks.io) surface it — the repair (ch-rebuild -write over that range)
 # stays a deliberate, reviewed action, never automatic.
 #
-# Installed as ratesengine-completeness.service, fired hourly by
-# ratesengine-completeness.timer. A full genesis→tip sweep (catches the rarer
+# Installed as stellaratlas-completeness.service, fired hourly by
+# stellaratlas-completeness.timer. A full genesis→tip sweep (catches the rarer
 # case where OLD data changed underneath us) is a separate periodic/manual run:
-#   ratesengine-ops compute-completeness -config /etc/ratesengine.toml -ch
+#   stellaratlas-ops compute-completeness -config /etc/stellaratlas.toml -ch
 set -uo pipefail
 set -a
-. /etc/default/ratesengine-ops
+. /etc/default/stellaratlas-ops
 set +a
 
-PSQL=(psql "$RATESENGINE_POSTGRES_DSN" -tAc)
-OPS=/usr/local/bin/ratesengine-ops
-CFG=/etc/ratesengine.toml
+PSQL=(psql "$STELLARATLAS_POSTGRES_DSN" -tAc)
+OPS=/usr/local/bin/stellaratlas-ops
+CFG=/etc/stellaratlas.toml
 
 # from = lowest verified watermark across real sources (exclude the system
 # "recognition" pseudo-row). 0 (no snapshots yet, first run) => full verify.

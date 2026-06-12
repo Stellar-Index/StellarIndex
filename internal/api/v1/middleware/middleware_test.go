@@ -255,7 +255,7 @@ func TestLogger_ServerErrorLogsAtErrorLevel(t *testing.T) {
 // generator) can produce thousands of 429s per second and flood the
 // systemd journal — r1 evidence on 2026-05-04 saw 343 k suppressed
 // messages in a single 60 s window. Visibility is preserved by the
-// `ratesengine_http_requests_total{status="429"}` counter.
+// `stellaratlas_http_requests_total{status="429"}` counter.
 func TestLogger_Skips429(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))

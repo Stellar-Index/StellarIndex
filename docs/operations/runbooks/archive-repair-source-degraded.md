@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `ratesengine_archive_repair_source_degraded`
+# Runbook — `stellaratlas_archive_repair_source_degraded`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_archive_repair_source_degraded` |
+| Alert | `stellaratlas_archive_repair_source_degraded` |
 | Severity | P3 |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/archive-completeness.yml` |
 | Typical MTTR | None — this is informational, not a customer-facing problem |

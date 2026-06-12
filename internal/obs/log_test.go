@@ -12,7 +12,7 @@ import (
 // binary attribute so Loki dashboards can filter per-binary.
 func TestNewLogger_StampsBinaryAttr(t *testing.T) {
 	t.Parallel()
-	logger := obs.NewLogger(config.ObsConfig{LogFormat: "json"}, "ratesengine-test")
+	logger := obs.NewLogger(config.ObsConfig{LogFormat: "json"}, "stellaratlas-test")
 	if logger == nil {
 		t.Fatal("NewLogger returned nil")
 	}
@@ -70,9 +70,9 @@ func TestNewLogger_LogFormatCaseInsensitive(t *testing.T) {
 // rather than stamping a blank value.
 func TestNewLogger_BinaryAttrNonEmpty(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"ratesengine-indexer", "ratesengine-aggregator", "ratesengine-api"} {
-		if !strings.HasPrefix(name, "ratesengine-") {
-			t.Fatalf("test asserts binary names start with ratesengine-")
+	for _, name := range []string{"stellaratlas-indexer", "stellaratlas-aggregator", "stellaratlas-api"} {
+		if !strings.HasPrefix(name, "stellaratlas-") {
+			t.Fatalf("test asserts binary names start with stellaratlas-")
 		}
 		logger := obs.NewLogger(config.ObsConfig{LogFormat: "json"}, name)
 		if logger == nil {

@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_node_root_disk_full`
+# Runbook — `stellaratlas_node_root_disk_full`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_node_root_disk_full` |
+| Alert | `stellaratlas_node_root_disk_full` |
 | Severity | **P1** (page) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Typical MTTR | 15–60 min |

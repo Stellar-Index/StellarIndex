@@ -8,7 +8,7 @@
 #   docker compose -f test/load/docker-compose.k6.yaml \
 #     run --rm k6 run /scripts/01-price-hot-path.js
 #
-# K6_TARGET + RATESENGINE_LOAD_API_KEY must be exported in the
+# K6_TARGET + STELLARATLAS_LOAD_API_KEY must be exported in the
 # host shell; docker-compose passes them through.
 
 services:
@@ -16,7 +16,7 @@ services:
     image: grafana/k6:0.50.0
     environment:
       - K6_TARGET
-      - RATESENGINE_LOAD_API_KEY
+      - STELLARATLAS_LOAD_API_KEY
       # Wire to the same Prometheus the production stack uses.
       # Operator overrides via .env if pointing at a local Prom.
       - K6_PROMETHEUS_RW_SERVER_URL=${K6_PROMETHEUS_RW_SERVER_URL:-}

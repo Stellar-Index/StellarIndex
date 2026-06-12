@@ -23,7 +23,7 @@ SCENARIO_DIR="$SCRIPT_DIR/scenarios"
 # we duplicate it here so the runner refuses to even iterate scenarios
 # against a prod-shaped target.
 case "${CHAOS_TARGET:-http://localhost:3000}" in
-    *production*|*api.ratesengine.net*|*prod.*)
+    *production*|*api.stellaratlas.xyz*|*prod.*)
         echo "FATAL: CHAOS_TARGET=$CHAOS_TARGET looks like production. Refusing." >&2
         exit 2
         ;;

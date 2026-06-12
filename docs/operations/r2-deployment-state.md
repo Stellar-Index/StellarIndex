@@ -57,9 +57,9 @@ direct per ADR-0016. Saves ~5 TB of EBS we don't need.
 |---|---|---|
 | postgresql@15-main | {{TBD}} | Patroni-managed; replica of R1's primary (sync via `synchronous_commit=remote_apply`). |
 | galexie | {{TBD}} | Reads `s3://aws-public-blockchain` direct; writes galexie-live to local MinIO. |
-| ratesengine-indexer | {{TBD}} | Reads MinIO for galexie-live + AWS S3 for galexie-archive. |
-| ratesengine-aggregator | {{TBD}} | Standby until Patroni elects R2 leader. |
-| ratesengine-api | {{TBD}} | Serves regional traffic via `api-r2.ratesengine.net`. |
+| stellaratlas-indexer | {{TBD}} | Reads MinIO for galexie-live + AWS S3 for galexie-archive. |
+| stellaratlas-aggregator | {{TBD}} | Standby until Patroni elects R2 leader. |
+| stellaratlas-api | {{TBD}} | Serves regional traffic via `api-r2.stellaratlas.xyz`. |
 | minio | {{TBD}} | galexie-live only (no archive mirror). |
 | node_exporter | {{TBD}} | :9100 |
 | node-healthcheck.timer | {{TBD}} | 5-min push to Healthchecks.io UUID {{TBD}}. |
@@ -90,7 +90,7 @@ aws-public-blockchain S3 ─┐ (free egress, sub-15ms RTT)
               MinIO galexie-live (local, EBS-backed)
                           │
                           ▼
-              cmd/ratesengine-indexer
+              cmd/stellaratlas-indexer
                           │
                           ▼
               TimescaleDB (replica from R1; sync replication)
@@ -101,9 +101,9 @@ aws-public-blockchain S3 ─┐ (free egress, sub-15ms RTT)
 
 ## DNS
 
-- `api-r2.ratesengine.net` → R2's HAProxy frontend IP / ALB
+- `api-r2.stellaratlas.xyz` → R2's HAProxy frontend IP / ALB
   (Cloudflare DNS-only, grey cloud — the public-facing record
-  `api.ratesengine.net` is the proxied one)
+  `api.stellaratlas.xyz` is the proxied one)
 - {{TBD: ALB DNS name if using AWS ALB instead of HAProxy}}
 
 ## Cross-references

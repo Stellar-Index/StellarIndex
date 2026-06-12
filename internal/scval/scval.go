@@ -120,7 +120,7 @@ func EncodeArgsAsScVec(b64Args []string) ([]byte, error) {
 // — the schema commits to that exact shape (see EncodeArgsAsScVec)
 // so a mismatch indicates a corrupt row, not a decoder concern.
 //
-// Used by `ratesengine-ops projector-replay` (and the lake-replay
+// Used by `stellaratlas-ops projector-replay` (and the lake-replay
 // rebuild paths) that reconstruct events.Event values from
 // soroban_events rows and feed them back through the live decoders.
 // (The per-source `<source>-backfill` subcommands this once named

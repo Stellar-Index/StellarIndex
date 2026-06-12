@@ -6,7 +6,7 @@ import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 export const metadata: Metadata = {
   title: 'Changelog',
   description:
-    'Every release of Rates Engine — features added, bugs fixed, and the architectural changes behind them. Source: CHANGELOG.md.',
+    'Every release of Stellar Atlas — features added, bugs fixed, and the architectural changes behind them. Source: CHANGELOG.md.',
   alternates: { canonical: '/changelog' },
 };
 
@@ -39,7 +39,7 @@ export default function ChangelogPage() {
           </code>{' '}
           on{' '}
           <a
-            href="https://github.com/RatesEngine/rates-engine/blob/main/CHANGELOG.md"
+            href="https://github.com/StellarAtlas/stellar-atlas/blob/main/CHANGELOG.md"
             target="_blank"
             rel="noreferrer noopener"
             className="text-brand-600 hover:underline dark:text-brand-400"
@@ -64,7 +64,7 @@ export default function ChangelogPage() {
           CHANGELOG.md not found at build time — this page is a
           stub. See the{' '}
           <a
-            href="https://github.com/RatesEngine/rates-engine/blob/main/CHANGELOG.md"
+            href="https://github.com/StellarAtlas/stellar-atlas/blob/main/CHANGELOG.md"
             target="_blank"
             rel="noreferrer noopener"
             className="underline"
@@ -87,7 +87,7 @@ export default function ChangelogPage() {
         </Link>
         <span className="mx-2">·</span>
         <a
-          href="https://github.com/RatesEngine/rates-engine/releases"
+          href="https://github.com/StellarAtlas/stellar-atlas/releases"
           target="_blank"
           rel="noreferrer noopener"
           className="text-brand-600 hover:underline"
@@ -131,7 +131,7 @@ function ReleaseCard({ release }: { release: Release }) {
           )}
           {!isUnreleased && (
             <a
-              href={`https://github.com/RatesEngine/rates-engine/releases/tag/${release.version}`}
+              href={`https://github.com/StellarAtlas/stellar-atlas/releases/tag/${release.version}`}
               target="_blank"
               rel="noreferrer noopener"
               className="rounded border border-slate-200 px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600 dark:border-slate-700"

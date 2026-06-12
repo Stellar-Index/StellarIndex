@@ -183,7 +183,7 @@ The mismatch was diagnosed and the decoder rewritten:
    (`BlendStrategy`, `blend_pool_address`, `harvest`, `keeper`,
    `__constructor`; no `DeFindexVault` / vault strings). The three
    curated "vault" addresses are strategy contracts.
-2. **Real schema captured on-chain.** `ratesengine-ops
+2. **Real schema captured on-chain.** `stellaratlas-ops
    scan-soroban-events` (the new in-infra event dumper, commit
    `57781f59`) against galexie LCM showed the contracts emit:
    - `("BlendStrategy","deposit")` body `ScvMap{from:Address,
@@ -318,7 +318,7 @@ didn't list that topic prefix.
 
 `BackfillSafe: true` flipped in
 `internal/sources/external/registry.go`.
-`ratesengine-ops backfill --source=defindex` is now unblocked.
+`stellaratlas-ops backfill --source=defindex` is now unblocked.
 Per CLAUDE.md's "Soroban DeFi contracts upgrade in place" rule,
 any future `update_contract` on the strategy contracts must
 trigger a new audit cycle (re-check the new hash's data section).

@@ -87,7 +87,7 @@ func TestAPIError_DecodesProblemJSON(t *testing.T) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{
-			"type": "https://api.ratesengine.net/errors/asset-not-found",
+			"type": "https://api.stellaratlas.xyz/errors/asset-not-found",
 			"title": "Asset not found",
 			"status": 404,
 			"detail": "USDC-G... has no known issuer",
@@ -195,8 +195,8 @@ func TestUserAgent(t *testing.T) {
 
 	c := client.New(client.Options{BaseURL: ts.URL})
 	_, _ = c.Price(context.Background(), client.PriceQuery{Asset: "native"})
-	if !strings.HasPrefix(sawUA, "ratesengine-go-sdk/") {
-		t.Errorf("User-Agent = %q, want ratesengine-go-sdk/* prefix", sawUA)
+	if !strings.HasPrefix(sawUA, "stellaratlas-go-sdk/") {
+		t.Errorf("User-Agent = %q, want stellaratlas-go-sdk/* prefix", sawUA)
 	}
 }
 

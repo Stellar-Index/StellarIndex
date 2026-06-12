@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_deadmansswitch`
+# Runbook — `stellaratlas_deadmansswitch`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_deadmansswitch` |
+| Alert | `stellaratlas_deadmansswitch` |
 | Semantics | **Inverted** — this alert fires constantly by design; you page when it **stops** firing. |
 | Severity | P1 when it stops (escalated via the external watchdog) |
 | Detected by | `deploy/monitoring/rules/meta.yml` |
@@ -70,7 +70,7 @@ amtool --alertmanager.url=http://alertmanager:9093 config routes show
 4. **Someone silenced the alert** in AlertManager. Deadmansswitch
    should never be silenced; if it is, that's a config mistake.
 
-5. **The `ratesengine.meta` rule group is disabled** (misconfig
+5. **The `stellaratlas.meta` rule group is disabled** (misconfig
    or rule-loading error). `alertmanager_config_last_reload_successful`
    / `prometheus_rule_group_iterations_total` will tell you.
 

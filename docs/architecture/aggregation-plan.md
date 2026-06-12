@@ -108,10 +108,10 @@ consume four counters from `internal/obs/metrics.go`:
 
 | Counter | Labels | Used by |
 | --- | --- | --- |
-| `ratesengine_aggregator_ticks_total` | `outcome` (ok/error) | `aggregator_silent` alert |
-| `ratesengine_aggregator_vwap_writes_total` | — | `aggregator_silent` alert |
-| `ratesengine_aggregator_empty_windows_total` | — | (Operator dashboards; see runbooks) |
-| `ratesengine_aggregator_dropped_trades_total` | `reason` (class/outlier) | `aggregator_outlier_storm` + `aggregator_class_drop_spike` alerts |
+| `stellaratlas_aggregator_ticks_total` | `outcome` (ok/error) | `aggregator_silent` alert |
+| `stellaratlas_aggregator_vwap_writes_total` | — | `aggregator_silent` alert |
+| `stellaratlas_aggregator_empty_windows_total` | — | (Operator dashboards; see runbooks) |
+| `stellaratlas_aggregator_dropped_trades_total` | `reason` (class/outlier) | `aggregator_outlier_storm` + `aggregator_class_drop_spike` alerts |
 
 Alert runbooks at:
 
@@ -199,8 +199,8 @@ landed during the launch-readiness sweep:
   PR #429), writes `div:<asset>` to Redis with a 5-min TTL, and
   the API's `flags.divergence_warning` reads the cache. Per-Tick
   outcomes labelled by `ok / no_vwap / parse_error / refresh_error`
-  via `ratesengine_divergence_refresh_total`; sustained
-  refresh_error → `ratesengine_divergence_refresh_error_dominant`
+  via `stellaratlas_divergence_refresh_total`; sustained
+  refresh_error → `stellaratlas_divergence_refresh_error_dominant`
   alert (P3).
 
 ## Deferred — natural follow-ups

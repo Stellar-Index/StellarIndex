@@ -5,13 +5,13 @@ status: ratified
 severity: P2
 ---
 
-# Runbook — `ratesengine_verify_archive_run_stale`
+# Runbook — `stellaratlas_verify_archive_run_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_verify_archive_run_stale` |
+| Alert | `stellaratlas_verify_archive_run_stale` |
 | Severity | P2 (page) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/verify-archive.yml` |
 | Typical MTTR | 1 hour (diagnose + re-enable timer or kick off fresh run) |
@@ -22,7 +22,7 @@ severity: P2
 - The `verify-archive-tier-a.timer` last-trigger timestamp is more
   than 36h ago (24h cadence + 12h cushion).
 - Sustained for 10 minutes — rules out a node_exporter scrape blip.
-- Likely accompanied by `ratesengine_verify_archive_unit_failed`
+- Likely accompanied by `stellaratlas_verify_archive_unit_failed`
   on each preceding night — the ticket-level alert that should
   have caught this earlier.
 
@@ -60,7 +60,7 @@ Three branches:
   ```sh
   ssh r1 'journalctl -u verify-archive-tier-a.service -f' &
   # Monitor heartbeat output. If progress is steady but slow, increase
-  # max-runtime via /etc/default/ratesengine-ops; if frozen at one
+  # max-runtime via /etc/default/stellaratlas-ops; if frozen at one
   # ledger, kill and investigate.
   ```
 - [ ] **Communicate degradation**: while this alert is firing, R2/R3 should consider setting `flags.reduced_redundancy=true` on their API responses. Per ADR-0017 §"Graceful degradation" the flag fires when R1's last successful verify is older than the documented threshold; with the L4.10 per-region trust wiring still pending the operator may need to flip a config value manually.
@@ -96,12 +96,12 @@ Gather:
 
 ## Operator hygiene — `/tmp/va-*.log` cleanup (F-0008)
 
-Manual `ratesengine-ops verify-archive` invocations against a long
+Manual `stellaratlas-ops verify-archive` invocations against a long
 range produce multi-GB stdout that operators typically capture with
 shell redirection, e.g.:
 
 ```sh
-ratesengine-ops verify-archive --from 0 --to 0 > /tmp/va-full.log 2>&1
+stellaratlas-ops verify-archive --from 0 --to 0 > /tmp/va-full.log 2>&1
 ```
 
 The captured logs survive the run. The 2026-05-26 audit found
@@ -114,11 +114,11 @@ operator is in the best position to do.
 
 ```sh
 LOGFILE=$(mktemp /tmp/va-XXXXXX.log)
-trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/ratesengine/ 2>/dev/null || rm -f "$LOGFILE" "${LOGFILE}.gz"' EXIT
-ratesengine-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
+trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/stellaratlas/ 2>/dev/null || rm -f "$LOGFILE" "${LOGFILE}.gz"' EXIT
+stellaratlas-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
 ```
 
-That way the log either lands under `/var/log/ratesengine/` (where
+That way the log either lands under `/var/log/stellaratlas/` (where
 the rc.83-era logrotate config picks it up — F-0009 closure) or is
 deleted on exit. The default behaviour (orphan in `/tmp`) is what
 the audit flagged.

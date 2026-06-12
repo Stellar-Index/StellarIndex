@@ -15,7 +15,7 @@ Operational companion to [ADR-0011](../adr/0011-supply-algorithm.md)
 - Asset-class scope (XLM via the systemd timer; classic + SEP-41
   via the aggregator-resident refresher)
 
-The implementation lives in `cmd/ratesengine-ops/supply.go` (the
+The implementation lives in `cmd/stellaratlas-ops/supply.go` (the
 `supply snapshot` subcommand) and `internal/supply/config_reader.go`
 (the operator-managed `ReserveBalanceReader`).
 
@@ -128,7 +128,7 @@ up in the next snapshot automatically.
   archive-completeness verify (02:17) and verify-archive-tier-a
   (03:23) so the three operator timers don't all fire at once.
 - `deploy/systemd/supply-snapshot.service` — calls
-  `ratesengine-ops supply snapshot -config $CONFIG_PATH -asset $ASSET`.
+  `stellaratlas-ops supply snapshot -config $CONFIG_PATH -asset $ASSET`.
 
 ### Operator wiring
 
@@ -141,7 +141,7 @@ sudo systemctl enable --now supply-snapshot.timer
 Override defaults via `/etc/default/supply-snapshot`:
 
 ```sh
-CONFIG_PATH=/etc/ratesengine.toml      # default
+CONFIG_PATH=/etc/stellaratlas.toml      # default
 ASSET=native                            # default; only `native` at v1
 EXTRA_FLAGS="-ledger 50000000"          # pin to a specific ledger
                                         # (default: max from ingestion_cursors)
@@ -153,8 +153,8 @@ Before enabling the timer, validate the config + reserve balances
 with a dry-run:
 
 ```sh
-sudo -u ratesengine /usr/local/bin/ratesengine-ops supply snapshot \
-  -config /etc/ratesengine.toml -dry-run
+sudo -u stellaratlas /usr/local/bin/stellaratlas-ops supply snapshot \
+  -config /etc/stellaratlas.toml -dry-run
 ```
 
 The output lists `total_supply` / `circulating_supply` /
@@ -178,10 +178,10 @@ the three algorithms — XLM (always), classic
 (`watched_classic_assets`), and SEP-41
 (`watched_sep41_contracts`). One `Refresher.Tick` goroutine per
 watched asset; the per-tick outcome counter
-(`ratesengine_aggregator_supply_refresh_total`) labels by
+(`stellaratlas_aggregator_supply_refresh_total`) labels by
 outcome.
 
-The CLI subcommand (`ratesengine-ops supply snapshot`) supports
+The CLI subcommand (`stellaratlas-ops supply snapshot`) supports
 `-asset native` only at present; multi-asset CLI support will
 follow if operators need ad-hoc snapshots for non-XLM assets
 outside the aggregator goroutine cadence.
@@ -204,14 +204,14 @@ partial write never appears in a scrape.
 ### Metric set
 
 ```
-ratesengine_supply_snapshot_total_xlm{asset_key=}             gauge   XLM
-ratesengine_supply_snapshot_circulating_xlm{asset_key=}       gauge   XLM
-ratesengine_supply_snapshot_max_xlm{asset_key=}               gauge   XLM (only when set)
-ratesengine_supply_snapshot_ledger{asset_key=}                gauge   ledger seq
-ratesengine_supply_snapshot_observed_at_seconds{asset_key=}   gauge   unix
-ratesengine_supply_snapshot_run_duration_seconds              gauge   seconds
-ratesengine_supply_snapshot_unit_failed{asset_key=}           gauge   1 on fail, 0 on pass
-ratesengine_supply_snapshot_last_success_timestamp{asset_key=} gauge  unix; only on pass
+stellaratlas_supply_snapshot_total_xlm{asset_key=}             gauge   XLM
+stellaratlas_supply_snapshot_circulating_xlm{asset_key=}       gauge   XLM
+stellaratlas_supply_snapshot_max_xlm{asset_key=}               gauge   XLM (only when set)
+stellaratlas_supply_snapshot_ledger{asset_key=}                gauge   ledger seq
+stellaratlas_supply_snapshot_observed_at_seconds{asset_key=}   gauge   unix
+stellaratlas_supply_snapshot_run_duration_seconds              gauge   seconds
+stellaratlas_supply_snapshot_unit_failed{asset_key=}           gauge   1 on fail, 0 on pass
+stellaratlas_supply_snapshot_last_success_timestamp{asset_key=} gauge  unix; only on pass
 ```
 
 Values are emitted in **XLM** units (not stroops) for human-
@@ -225,10 +225,10 @@ Four alerts in `deploy/monitoring/rules/supply-snapshot.yml`:
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
-| `ratesengine_supply_snapshot_unit_failed_alert` | unit_failed=1 sustained 30 min | P3 ticket |
-| `ratesengine_supply_snapshot_stale` | last_success > 36 h | P3 ticket |
-| `ratesengine_supply_snapshot_critical_stale` | last_success > 72 h | **P2** page |
-| `ratesengine_supply_snapshot_circulating_zero` | circulating ≤ 0 (XLM only) | **P2** page |
+| `stellaratlas_supply_snapshot_unit_failed_alert` | unit_failed=1 sustained 30 min | P3 ticket |
+| `stellaratlas_supply_snapshot_stale` | last_success > 36 h | P3 ticket |
+| `stellaratlas_supply_snapshot_critical_stale` | last_success > 72 h | **P2** page |
+| `stellaratlas_supply_snapshot_circulating_zero` | circulating ≤ 0 (XLM only) | **P2** page |
 
 Each has a runbook under `docs/operations/runbooks/supply-snapshot-*.md`.
 
@@ -237,7 +237,7 @@ Each has a runbook under `docs/operations/runbooks/supply-snapshot-*.md`.
 After the first cron fire, check the snapshot landed:
 
 ```sh
-ratesengine-ops supply audit native -config /etc/ratesengine.toml
+stellaratlas-ops supply audit native -config /etc/stellaratlas.toml
 ```
 
 The output prints `total_supply` / `circulating` / `max_supply` /
@@ -273,7 +273,7 @@ When enabled, the aggregator runs the supply-snapshot refresher
 on the configured cadence inside its own goroutine — the same
 chained-fallback reader as the systemd-timer path (live LCM →
 operator-static fallback). Per-tick outcomes are emitted as
-`ratesengine_aggregator_supply_refresh_total{outcome=…}` counters.
+`stellaratlas_aggregator_supply_refresh_total{outcome=…}` counters.
 
 The two paths are mutually exclusive — operators that flip
 `aggregator_refresh_enabled = true` should disable the systemd

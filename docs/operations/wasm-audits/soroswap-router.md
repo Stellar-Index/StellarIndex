@@ -118,5 +118,5 @@ canonical `merged.json` from the 2026-05-19 r1 wasm-history walk.
 life, both decoded functions present, no event schema to drift.
 `BackfillSafe` flipped `true` in
 `internal/sources/external/registry.go` (2026-05-19).
-`ratesengine-ops backfill --source=soroswap-router` is now
+`stellaratlas-ops backfill --source=soroswap-router` is now
 unblocked.

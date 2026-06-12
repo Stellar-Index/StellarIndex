@@ -5,13 +5,13 @@ status: ratified
 severity: P2
 ---
 
-# Runbook — `ratesengine_sla_probe_stale`
+# Runbook — `stellaratlas_sla_probe_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_sla_probe_stale` |
+| Alert | `stellaratlas_sla_probe_stale` |
 | Severity | P2 (page) |
 | Detected by | `deploy/monitoring/rules/sla-probe.yml` |
 | Typical MTTR | 15 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `(time() - ratesengine_sla_probe_last_pass_timestamp) > 90 * 60`
+- `(time() - stellaratlas_sla_probe_last_pass_timestamp) > 90 * 60`
   for ≥ 5 min.
 - Either the systemd timer isn't running, or every recent run has
   failed (which would also fire `_unit_failed_alert`).
@@ -28,26 +28,26 @@ severity: P2
 
 ```sh
 # 1. Is the timer scheduled?
-sudo systemctl status ratesengine-sla-probe.timer
-sudo systemctl list-timers ratesengine-sla-probe.timer
+sudo systemctl status stellaratlas-sla-probe.timer
+sudo systemctl list-timers stellaratlas-sla-probe.timer
 
 # 2. When did the unit last run?
-sudo journalctl -u ratesengine-sla-probe.service --since "2 hours ago" -n 50
+sudo journalctl -u stellaratlas-sla-probe.service --since "2 hours ago" -n 50
 
 # 3. Is the textfile being written?
 ls -la /var/lib/node_exporter/textfile_collector/sla_probe.prom
 
 # 4. Force a one-off run.
-sudo systemctl start ratesengine-sla-probe.service
-sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq .
+sudo systemctl start stellaratlas-sla-probe.service
+sudo journalctl -u stellaratlas-sla-probe.service -n 1 --output=cat | jq .
 ```
 
 ## Typical root causes
 
-1. **Timer disabled** — operator ran `systemctl stop ratesengine-sla-probe.timer`
+1. **Timer disabled** — operator ran `systemctl stop stellaratlas-sla-probe.timer`
    for maintenance and forgot to re-enable. `systemctl status` shows
    `inactive`.
-   - Mitigation: `sudo systemctl enable --now ratesengine-sla-probe.timer`.
+   - Mitigation: `sudo systemctl enable --now stellaratlas-sla-probe.timer`.
 
 2. **Service unit failing every run** — fires alongside this alert
    in journald.
@@ -63,11 +63,11 @@ sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq .
      `--collector.textfile.directory` flag points at the right path.
 
 4. **TEXTFILE_OUTPUT environment variable unset** — operators who
-   skipped the `/etc/default/ratesengine-healthchecks` config don't write the
+   skipped the `/etc/default/stellaratlas-healthchecks` config don't write the
    textfile, so node_exporter never sees the metric.
    - Signal: file doesn't exist at all.
    - Mitigation: add `TEXTFILE_OUTPUT=/var/lib/node_exporter/...`
-     to `/etc/default/ratesengine-healthchecks`; reload the service.
+     to `/etc/default/stellaratlas-healthchecks`; reload the service.
 
 ## Mitigation
 
@@ -75,7 +75,7 @@ sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq .
       is silent.
 - [ ] Step 2 — Apply the matching fix from "Typical root causes."
 - [ ] Step 3 — Force a probe run via
-      `sudo systemctl start ratesengine-sla-probe.service` and confirm
+      `sudo systemctl start stellaratlas-sla-probe.service` and confirm
       `last_pass_timestamp` updates.
 - [ ] Verification: alert clears within 5 min after a successful
       probe run lands in node_exporter.
@@ -84,7 +84,7 @@ sudo journalctl -u ratesengine-sla-probe.service -n 1 --output=cat | jq .
 
 - **Fresh deploy** of the probe — the gauge has never been set, so
   `time() - 0` is a huge number. Filter the alert with `for: 5m`
-  (already in place) plus `unless on(instance) ratesengine_sla_probe_unit_failed`
+  (already in place) plus `unless on(instance) stellaratlas_sla_probe_unit_failed`
   if this becomes a recurring deploy-time false positive.
 
 ## Related

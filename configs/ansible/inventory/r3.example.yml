@@ -24,7 +24,7 @@ all:
     # ───── Region identity ─────────────────────────────────────────
     region_id:           "r3"
     region_name:         "Singapore"
-    home_domain:         "ratesengine.net"
+    home_domain:         "stellaratlas.xyz"
 
     # ───── Stellar network ─────────────────────────────────────────
     stellar_network:     "pubnet"
@@ -71,10 +71,10 @@ all:
     galexie_s3_region:    "{{ region_id }}"
 
     # Archive bucket → Vultr Object Storage Singapore endpoint.
-    # The bucket name is operator-chosen; suggest "ratesengine-
+    # The bucket name is operator-chosen; suggest "stellaratlas-
     # galexie-archive" with the live r1 mirror as the source.
     galexie_archive_endpoint: "https://sgp1.vultrobjects.com"
-    galexie_archive_bucket:   "ratesengine-galexie-archive"
+    galexie_archive_bucket:   "stellaratlas-galexie-archive"
     galexie_archive_region:   "sgp1"
     # galexie_archive_access_key ← r3.secrets.yml (Vultr Object Storage key)
     # galexie_archive_secret_key ← r3.secrets.yml
@@ -84,7 +84,7 @@ all:
     # Below this, indexer reads from the Vultr Object Storage archive
     # bucket. Set to the ledger where r3's galexie-live tail first
     # started writing.
-    ratesengine_live_seam_ledger: 0      # update to the actual seam at provision time
+    stellaratlas_live_seam_ledger: 0      # update to the actual seam at provision time
 
     # ───── Postgres replication ────────────────────────────────────
     # r3 runs as an async replica of r1's primary postgres. Trans-
@@ -94,13 +94,13 @@ all:
     # Replication config lives in postgresql.conf via the role's
     # template; this inventory just declares the role.
     postgres_replication_role: "async-replica"
-    postgres_replication_primary_host: "r1-01.ratesengine.net"
+    postgres_replication_primary_host: "r1-01.stellaratlas.xyz"
 
     # ───── Observability targets ───────────────────────────────────
     prometheus_scrape_allow_cidrs:
       - "10.0.0.0/8"               # tighten to scraper subnet
       - "127.0.0.1/32"
-    loki_push_url: "https://loki.ratesengine.net/loki/api/v1/push"
+    loki_push_url: "https://loki.stellaratlas.xyz/loki/api/v1/push"
 
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
@@ -111,7 +111,7 @@ all:
   children:
     archival_nodes:
       hosts:
-        r3-01.ratesengine.net:
+        r3-01.stellaratlas.xyz:
           ansible_host:         "X.X.X.X"      # Vultr-assigned IP
           ansible_user:         "root"
           ansible_port:         22

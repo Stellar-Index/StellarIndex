@@ -72,7 +72,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, _ any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusInternalServerError)
 	body := map[string]any{
-		"type":     "https://api.ratesengine.net/errors/internal",
+		"type":     "https://api.stellaratlas.xyz/errors/internal",
 		"title":    "Internal error",
 		"status":   http.StatusInternalServerError,
 		"instance": r.URL.RequestURI(),

@@ -1,19 +1,19 @@
 ---
-title: SemVer policy for Rates Engine
+title: SemVer policy for Stellar Atlas
 last_verified: 2026-05-05
 status: ratified
 ---
 
 # SemVer policy
 
-The Rates Engine ships **two version dimensions**, each governed by
+The Stellar Atlas ships **two version dimensions**, each governed by
 SemVer (`vX.Y.Z`) but with independent tag namespaces and
 independent semantics.
 
 | Surface | Tag form | Bump rules |
 |---|---|---|
 | **`pkg/*` Go modules** (e.g. `pkg/client`) | `pkg/<name>/vX.Y.Z` | Standard Go-module SemVer (API surface) |
-| **Binary releases** (`ratesengine-api`, `ratesengine-indexer`, …) | `vX.Y.Z` (root tag) | Operator-impact SemVer (config / wire / behaviour) |
+| **Binary releases** (`stellaratlas-api`, `stellaratlas-indexer`, …) | `vX.Y.Z` (root tag) | Operator-impact SemVer (config / wire / behaviour) |
 
 The two clocks tick independently. A binary release `v0.4.0` may
 contain `pkg/client v0.2.1` while bundling unchanged versions of
@@ -30,7 +30,7 @@ packages can be refactored, renamed, or deleted in any PR.
 
 Currently shipped:
 - `pkg/client` — Go SDK for the public API
-  ([#201](https://github.com/RatesEngine/rates-engine/pull/201)).
+  ([#201](https://github.com/StellarAtlas/stellar-atlas/pull/201)).
   Wire-shape types (`Envelope`, `Flags`, `Pagination`,
   `AssetDetail`, …) live in `pkg/client/types.go` rather than a
   separate `pkg/types` package — see CLAUDE.md "Repo map" for the
@@ -148,11 +148,11 @@ Until we tag `v1.0.0`:
 
 Any of the following bumps minor (pre-v1) or major (post-v1):
 
-1. **Config schema break** — a field in `/etc/ratesengine.toml` is removed, renamed, or its default semantics change in a way that affects existing operator configs
+1. **Config schema break** — a field in `/etc/stellaratlas.toml` is removed, renamed, or its default semantics change in a way that affects existing operator configs
 2. **API wire-shape change** — JSON response shape changes for an existing endpoint (field removed, field renamed, type changed)
 3. **API endpoint removal or rename** — operators with hardcoded URLs break
 4. **CLI flag removal** — operators with hardcoded systemd unit `ExecStart=` lines break
-5. **DB migration that requires manual backfill** — `ratesengine-migrate up` is not sufficient; operator must run a separate one-off SQL/script
+5. **DB migration that requires manual backfill** — `stellaratlas-migrate up` is not sufficient; operator must run a separate one-off SQL/script
 6. **Source-connector removal** — an enabled source goes away; operators relying on its data must reconfigure
 7. **Behaviour change in fallback semantics** — VWAP→TWAP→last-trade fallback chain behaves differently in a way operators must learn
 
@@ -160,10 +160,10 @@ Any of the following bumps the **minor** version (additive):
 
 1. New API endpoint
 2. New CLI flag (with safe default if omitted)
-3. New `/etc/ratesengine.toml` field (with safe default if omitted)
+3. New `/etc/stellaratlas.toml` field (with safe default if omitted)
 4. New source connector (`enabled = false` by default — see `[external]` block convention)
 5. New aggregation feature behind an opt-in flag
-6. New migration that runs forward-only via `ratesengine-migrate up`
+6. New migration that runs forward-only via `stellaratlas-migrate up`
 7. New observability metric
 
 Any of the following is **patch**-only:
@@ -185,8 +185,8 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The release builds every binary at this commit. `ratesengine-api
---version` and `ratesengine-indexer --version` both report
+The release builds every binary at this commit. `stellaratlas-api
+--version` and `stellaratlas-indexer --version` both report
 `v0.2.0` for that release. The Makefile's `git describe --tags
 --always --dirty` populates `internal/version.Version` at build
 time via `-ldflags`.

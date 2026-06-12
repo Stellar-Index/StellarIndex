@@ -5,7 +5,7 @@
 # reflector-dex / reflector-cex / reflector-fx / redstone / band.
 # Optional `source` filter narrows to a single oracle.
 set -euo pipefail
-BASE="${API_BASE_URL:-https://api.ratesengine.net}"
+BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
 ASSET="${1:-native}"
 
 if [ "${2:-}" ]; then

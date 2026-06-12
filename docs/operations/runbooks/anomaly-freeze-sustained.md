@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_anomaly_freeze_sustained`
+# Runbook — `stellaratlas_anomaly_freeze_sustained`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_anomaly_freeze_sustained` |
+| Alert | `stellaratlas_anomaly_freeze_sustained` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/anomaly.yml` |
 | Typical MTTR | 30–90 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `rate(ratesengine_anomaly_freeze_engaged_total[1h]) > 0` consistently for ≥ 1 hour.
+- `rate(stellaratlas_anomaly_freeze_engaged_total[1h]) > 0` consistently for ≥ 1 hour.
 - `/v1/price` responses for one or more `(asset, quote)` pairs carry `flags.frozen=true` AND `flags.single_source=true` for the duration.
 - Customer-side: prices appear stuck for affected pairs.
 
@@ -27,13 +27,13 @@ severity: P2
 
 ```sh
 # Which asset class is frozen + how often
-curl -s http://localhost:9090/api/v1/query?query='sum%20by%20(asset_class)%20(rate(ratesengine_anomaly_freeze_engaged_total[1h]))'
+curl -s http://localhost:9090/api/v1/query?query='sum%20by%20(asset_class)%20(rate(stellaratlas_anomaly_freeze_engaged_total[1h]))'
 
 # Sample the affected pair's flags via the API
 curl -s 'http://localhost:3000/v1/price?asset=native&quote=fiat:USD' | jq '.flags'
 
 # Recent freeze events from the durable mirror
-sudo -u postgres psql -d ratesengine -c "SELECT asset_id, quote_id, frozen_at, recovered_at, reason FROM freeze_events WHERE recovered_at IS NULL ORDER BY frozen_at DESC LIMIT 20;"
+sudo -u postgres psql -d stellaratlas -c "SELECT asset_id, quote_id, frozen_at, recovered_at, reason FROM freeze_events WHERE recovered_at IS NULL ORDER BY frozen_at DESC LIMIT 20;"
 ```
 
 Key signals:

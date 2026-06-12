@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# sla-probe.sh — wrapper around `ratesengine-sla-probe` that
+# sla-probe.sh — wrapper around `stellaratlas-sla-probe` that
 # reports pass/fail to Healthchecks.io. Distinct from smoke.sh:
 # that one verifies the API surface (schema + data integrity);
 # this one drives load and asserts the RFP latency + freshness
@@ -11,13 +11,13 @@
 # Healthchecks.io so operators reading the dashboard see exactly
 # which percentile / endpoint tripped.
 #
-# URL comes from /etc/default/ratesengine-healthchecks
+# URL comes from /etc/default/stellaratlas-healthchecks
 # (HEALTHCHECKS_URL_SLA_PROBE). Empty URL silently runs the probe
 # for journal-only coverage.
 
 set -uo pipefail
 
-PROBE_BIN="${PROBE_BIN:-/usr/local/bin/ratesengine-sla-probe}"
+PROBE_BIN="${PROBE_BIN:-/usr/local/bin/stellaratlas-sla-probe}"
 BASE_URL="${SLA_PROBE_BASE_URL:-http://localhost:3000/v1}"
 # F-1305 (codex audit-2026-05-13): 30s default keeps the probe
 # cheap on a quiet deployment, but on a single-instance host
@@ -25,7 +25,7 @@ BASE_URL="${SLA_PROBE_BASE_URL:-http://localhost:3000/v1}"
 # requests is too sensitive to single-timeout jitter — one
 # straggler at 99.9% availability = unit_failed=1. Operators on
 # memory-pressured single-instance hosts should override to
-# SLA_PROBE_DURATION=120s (or longer) in /etc/default/ratesengine-
+# SLA_PROBE_DURATION=120s (or longer) in /etc/default/stellaratlas-
 # healthchecks for a smoother percentile.
 DURATION="${SLA_PROBE_DURATION:-30s}"
 # F-1305 / F-1311 (codex audit-2026-05-13): default concurrency=1

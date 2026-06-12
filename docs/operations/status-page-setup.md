@@ -1,13 +1,13 @@
 ---
-title: Public status page at `status.ratesengine.net`
+title: Public status page at `status.stellaratlas.xyz`
 last_verified: 2026-05-12
 status: operator runbook
 ---
 
 # Public status page setup
 
-The Rates Engine public status page lives at
-`https://status.ratesengine.net`. The source lives in this repo at
+The Stellar Atlas public status page lives at
+`https://status.stellaratlas.xyz`. The source lives in this repo at
 [`web/status/`](../../web/status/) — a static Next.js export
 deployed to Cloudflare Pages on every push to `main`.
 
@@ -42,7 +42,7 @@ deploy:                        ← Cloudflare Pages auto-deploy on push
   trigger:                       push to main
   build:                         `pnpm install && pnpm build`
   output:                        web/status/out
-  domain:                        status.ratesengine.net (apex CNAME)
+  domain:                        status.stellaratlas.xyz (apex CNAME)
 ```
 
 The page is **independent of the API by construction** — Cloudflare
@@ -64,7 +64,7 @@ uptime calculation.
    page within ~2 minutes; after the API binary is also
    redeployed, dashboard webhook subscribers receive the
    `incident.sev1` / `incident.resolved` callbacks via
-   `ratesengine-ops emit-incident` (F-1249, codex audit-2026-05-12).
+   `stellaratlas-ops emit-incident` (F-1249, codex audit-2026-05-12).
 
 The binding runbook for SEV-1 / SEV-2 updates is
 [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md).

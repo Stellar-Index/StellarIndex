@@ -26,7 +26,7 @@ var ErrInvalidConfig = errors.New("config: invalid")
 // connect + RPC probe burn 5+ seconds.
 //
 // DO NOT import source packages from config (cycle avoidance, see
-// contractIDPattern). When you add a source in cmd/ratesengine-indexer/
+// contractIDPattern). When you add a source in cmd/stellaratlas-indexer/
 // main.go buildSources(), mirror the name here.
 var KnownSources = map[string]struct{}{
 	"soroswap":        {},
@@ -556,7 +556,7 @@ func (o ObsConfig) validate() error {
 		// so an operator who sets this thinks they enabled tracing
 		// when actually nothing in the binary consumes the field.
 		// Re-allow once an OTel TracerProvider + exporter are wired
-		// in cmd/ratesengine-{api,indexer,aggregator}/main.go.
+		// in cmd/stellaratlas-{api,indexer,aggregator}/main.go.
 		return fmt.Errorf("%w: obs.trace_exporter %q is reserved for the future tracing rollout and is not yet wired in this build; set to \"none\"",
 			ErrInvalidConfig, o.TraceExporter)
 	default:

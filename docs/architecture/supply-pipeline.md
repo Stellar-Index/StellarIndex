@@ -126,7 +126,7 @@ chain reader:
 ```
 
 For Algorithm 1 (XLM) specifically: `supplyAggregatorChainReader`
-in `cmd/ratesengine-aggregator/main.go` wraps
+in `cmd/stellaratlas-aggregator/main.go` wraps
 `supply.LCMReserveBalanceReader` (live) with
 `supply.ConfigReserveBalanceReader` (static). When the
 AccountEntry observer hasn't backfilled the SDF reserves yet,
@@ -147,14 +147,14 @@ write `asset_supply_history` rows:
 
 ### A. systemd-timer driven
 
-`ratesengine-ops supply snapshot` subcommand, fired by
+`stellaratlas-ops supply snapshot` subcommand, fired by
 `deploy/systemd/supply-snapshot.timer` daily at 04:42 UTC. Per
 [supply-snapshot runbook](../operations/supply-snapshot.md).
 
 XLM only at v1; the CLI rejects classic + SEP-41 with a "use
 the goroutine path" message.
 
-Metrics: `ratesengine_supply_snapshot_*` textfile-emitted via
+Metrics: `stellaratlas_supply_snapshot_*` textfile-emitted via
 `internal/supply/textfile.go`. Alerts in
 `deploy/monitoring/rules/supply-snapshot.yml`.
 
@@ -162,12 +162,12 @@ Metrics: `ratesengine_supply_snapshot_*` textfile-emitted via
 
 `[supply] aggregator_refresh_enabled = true` runs a
 `supply.Refresher` goroutine per watched asset inside
-`ratesengine-aggregator`. One goroutine per
+`stellaratlas-aggregator`. One goroutine per
 `(XLM | classic asset | SEP-41 contract)` on the
 `aggregator_refresh_cadence` (default 5m).
 
 Covers all three algorithms. Per-tick outcome counter
-`ratesengine_aggregator_supply_refresh_total{asset_key, outcome}`
+`stellaratlas_aggregator_supply_refresh_total{asset_key, outcome}`
 labels by both asset and outcome so operators can chart per-
 asset bootstrap progress + isolate failure modes per asset.
 Alerts in `deploy/monitoring/rules/supply-refresh.yml`.
@@ -198,7 +198,7 @@ the float-rounding tolerance signals indexer corruption upstream.
 
 The aggregator's `supply.CrossCheckRefresher`
 (`internal/supply/crosscheck_refresher.go`, wired in
-`cmd/ratesengine-aggregator/main.go::buildCrossCheckRefresher`) ticks
+`cmd/stellaratlas-aggregator/main.go::buildCrossCheckRefresher`) ticks
 on the same `aggregator_refresh_cadence` as the per-asset supply
 refreshers above. Pairs are derived at boot from the ∩ of:
 
@@ -210,12 +210,12 @@ Per tick, for each pair the refresher reads the latest snapshot for
 both the classic and the SAC sides via `Store.LatestSupply`, runs
 `supply.CrossCheck`, and emits:
 
-- `ratesengine_supply_cross_check_divergence_stroops{classic_key}` —
+- `stellaratlas_supply_cross_check_divergence_stroops{classic_key}` —
   gauge holding the absolute stroop divergence on within/over outcomes.
-- `ratesengine_supply_cross_check_total{outcome}` — counter labelled
+- `stellaratlas_supply_cross_check_total{outcome}` — counter labelled
   by `within | over | missing_snapshot | read_error`.
 
-The supply.yml alert (`ratesengine_supply_cross_check_divergence`)
+The supply.yml alert (`stellaratlas_supply_cross_check_divergence`)
 fires when the gauge stays > 1 for ≥ 5 min. Runbook:
 [`supply-cross-check-divergence`](../operations/runbooks/supply-cross-check-divergence.md).
 
@@ -278,7 +278,7 @@ The aggregator-refresh metric labels each tick with one of:
 | `write_error` | `InsertSupply` failed | storage layer down; route to `pg-conns-saturated` runbook |
 
 Sustained non-`ok` for ≥ 30 min triggers
-`ratesengine_aggregator_supply_refresh_error_dominant`; no `ok`
+`stellaratlas_aggregator_supply_refresh_error_dominant`; no `ok`
 in ≥ 30 min triggers `_stalled`.
 
 The cross-check refresher emits its own per-outcome counter:
@@ -326,7 +326,7 @@ internal/storage/timescale/      (Insert{Supply, AccountObservation, TrustlineOb
         ↓
 internal/supply/                 (XLMComputer, ClassicComputer, SEP41Computer, Refresher, CrossCheckRefresher, chained readers)
         ↓
-cmd/ratesengine-aggregator/      (buildSupplyRefreshers + buildCrossCheckRefresher; runSupplyRefresh + runCrossCheckRefresh — one goroutine per asset, plus one for cross-check)
+cmd/stellaratlas-aggregator/      (buildSupplyRefreshers + buildCrossCheckRefresher; runSupplyRefresh + runCrossCheckRefresh — one goroutine per asset, plus one for cross-check)
         ↓
 internal/api/v1/assets_f2.go     (populateMarketCap, F2 field rendering)
         ↓

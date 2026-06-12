@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_timescale_replica_lag`
+# Runbook — `stellaratlas_timescale_replica_lag`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_timescale_replica_lag` |
+| Alert | `stellaratlas_timescale_replica_lag` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Typical MTTR | 15–60 min |

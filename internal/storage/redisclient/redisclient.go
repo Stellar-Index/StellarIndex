@@ -4,7 +4,7 @@
 // topology per ADR-0024) and falling back to a plain Client
 // against [config.StorageConfig.RedisAddr] for dev / single-node.
 //
-// Both binaries (cmd/ratesengine-api, cmd/ratesengine-aggregator)
+// Both binaries (cmd/stellaratlas-api, cmd/stellaratlas-aggregator)
 // use this builder so the Sentinel migration happens in one
 // place, not two. Tests hit a real redis via miniredis or the
 // integration harness — neither path uses Sentinel, so the
@@ -34,7 +34,7 @@ import (
 // [redis.UniversalClient.Close] on shutdown.
 func Build(cfg config.StorageConfig) redis.UniversalClient {
 	// Username is empty by default (legacy default-user path) and
-	// set to "ratesengine" (or per-component) when the operator
+	// set to "stellaratlas" (or per-component) when the operator
 	// flipped redis_acl_lockdown=true in the redis-sentinel ansible
 	// role. F-1213 (audit-2026-05-12).
 	if len(cfg.RedisSentinelAddrs) > 0 {

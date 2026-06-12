@@ -27,7 +27,7 @@
 //     this is the catch-all).
 //   - [Capture] converts a [events.Event] into a [Row] suitable for
 //     batched insert.
-//   - The consumer (cmd/ratesengine-indexer / ratesengine-ops
+//   - The consumer (cmd/stellaratlas-indexer / stellaratlas-ops
 //     backfill) wires an [AsyncSink] that batches Rows and calls
 //     [timescale.Store.InsertSorobanEventsBatch].
 //

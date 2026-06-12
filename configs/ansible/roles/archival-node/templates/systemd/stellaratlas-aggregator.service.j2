@@ -1,0 +1,24 @@
+[Unit]
+Description=Stellar Atlas — aggregator (VWAP/TWAP/divergence/freeze/supply tick)
+After=network-online.target postgresql@{{ postgres_version }}-main.service redis-server.service stellaratlas-indexer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/stellaratlas
+EnvironmentFile=/etc/default/stellaratlas
+ExecStart=/usr/local/bin/stellaratlas-aggregator -config /etc/stellaratlas.toml
+ExecStop=/bin/kill -TERM $MAINPID
+
+LimitNOFILE=1048576
+Restart=on-failure
+RestartSec=10s
+
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

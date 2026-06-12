@@ -10,18 +10,18 @@
 # See the multi-host file for the alert rationale.
 
 groups:
-  - name: ratesengine.ledgerstream_tier
+  - name: stellaratlas.ledgerstream_tier
     interval: 60s
     rules:
 
-      - alert: ratesengine_ledgerstream_tier_both_missing
-        expr: increase(ratesengine_ledgerstream_tier_read_total{outcome="both_missing"}[5m]) > 0
+      - alert: stellaratlas_ledgerstream_tier_both_missing
+        expr: increase(stellaratlas_ledgerstream_tier_read_total{outcome="both_missing"}[5m]) > 0
         for: 5m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: ledgerstream
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md
         annotations:
           summary: "LCM read missed BOTH tiers in the last 5 min — indexer cannot progress"
           description: |

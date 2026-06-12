@@ -13,7 +13,7 @@ import { Panel } from '@/components/reveal';
 // Curated by hand from each issuer's own docs + the Phase-1 audit
 // pages under docs/discovery/. One-line addition extends the map.
 const CURATED_ASSET_ABOUT: Record<string, string> = {
-  XLM: `Stellar Lumens (XLM) is the native asset of the Stellar network — the public blockchain that Rates Engine indexes natively. Lumens pay transaction fees, fund minimum account reserves (currently 1 XLM per base reserve unit + 0.5 per ledger entry), and serve as a convenient bridge asset for path-payments between any two issued tokens.
+  XLM: `Stellar Lumens (XLM) is the native asset of the Stellar network — the public blockchain that Stellar Atlas indexes natively. Lumens pay transaction fees, fund minimum account reserves (currently 1 XLM per base reserve unit + 0.5 per ledger entry), and serve as a convenient bridge asset for path-payments between any two issued tokens.
 
 XLM has a fixed maximum supply of ~50B; the Stellar Development Foundation periodically retires from its inflation pool. Unlike Bitcoin's purely-mined supply curve, lumen supply changes are governed by SDF allocation policy and the on-chain governance hooks the SCP consensus protocol exposes.`,
   USDC: `USD Coin (USDC) on Stellar is issued by Circle Internet Financial — the same regulated issuer that runs the Ethereum-native USDC. Each USDC is backed 1:1 by USD-denominated reserves (cash + short-duration U.S. treasuries) held in segregated accounts and attested to monthly by Deloitte.

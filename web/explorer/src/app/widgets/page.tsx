@@ -6,11 +6,11 @@ import { CopyableSnippet } from './CopyableSnippet';
 export const metadata: Metadata = {
   title: 'Widgets — embeddable price cards',
   description:
-    'Drop-in iframe widgets for embedding live Rates Engine prices into wallets, dashboards, and product pages. No script, no API key, no build step.',
+    'Drop-in iframe widgets for embedding live Stellar Atlas prices into wallets, dashboards, and product pages. No script, no API key, no build step.',
   alternates: { canonical: '/widgets' },
 };
 
-const SITE_URL = 'https://ratesengine.net';
+const SITE_URL = 'https://stellaratlas.xyz';
 
 // Slug forms — what `generateStaticParams` in the embed routes
 // actually pre-renders (per the /v1/coins listing's `slug` field).
@@ -54,7 +54,7 @@ export default function WidgetsPage() {
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Widgets</h1>
         <p className="max-w-3xl text-base text-slate-600 dark:text-slate-400">
-          Drop-in iframe widgets for live Rates Engine prices. Paste
+          Drop-in iframe widgets for live Stellar Atlas prices. Paste
           one snippet — no script, no API key, no build step. Each
           widget renders the same data the explorer pulls from the
           public API; sizes auto-adjust to fit their container.
@@ -163,7 +163,7 @@ export default function WidgetsPage() {
         <ul className="mt-3 space-y-2 text-slate-600 dark:text-slate-400">
           <li>
             <strong>No auth, no API key.</strong> The widgets read
-            from the public tier of the Rates Engine API. Sites with
+            from the public tier of the Stellar Atlas API. Sites with
             extreme traffic should host their own copy or use{' '}
             <Link href="/signup" className="text-brand-600 hover:underline">
               a Starter key
@@ -188,7 +188,7 @@ export default function WidgetsPage() {
             <strong>Apex domain only.</strong> Embed against the apex
             (
             <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs dark:bg-slate-800">
-              ratesengine.net
+              stellaratlas.xyz
             </code>
             ), not a preview deployment. Cloudflare-Pages preview URLs
             are firewalled from external embedding.

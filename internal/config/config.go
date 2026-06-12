@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Config is the root configuration for every Rates Engine binary.
+// Config is the root configuration for every Stellar Atlas binary.
 //
 // Fields carry four struct tags:
 //
@@ -353,10 +353,10 @@ type SoroswapConfig struct {
 type RegionConfig struct {
 	ID         string `toml:"id" doc:"Short region identifier, lowercase (r1/r2/r3)." default:"r1"`
 	Name       string `toml:"name" doc:"Human-readable region name (London, Ashburn, …)." default:"London"`
-	HomeDomain string `toml:"home_domain" doc:"DNS home domain for this org (used in stellar.toml + SCP quorum sub-quorum)." default:"ratesengine.net"`
+	HomeDomain string `toml:"home_domain" doc:"DNS home domain for this org (used in stellar.toml + SCP quorum sub-quorum)." default:"stellaratlas.xyz"`
 }
 
-// StellarConfig points a Rates Engine binary at the stellar-core +
+// StellarConfig points a Stellar Atlas binary at the stellar-core +
 // stellar-rpc endpoints it reads from. Empty values disable the
 // corresponding client.
 type StellarConfig struct {
@@ -401,7 +401,7 @@ func (s StellarConfig) Passphrase() string {
 // strings NEVER include passwords directly — use the `env:` tag
 // pattern to reference a secret store.
 type StorageConfig struct {
-	PostgresDSN string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"RATESENGINE_POSTGRES_DSN" default:"postgres://ratesengine@127.0.0.1:5432/ratesengine?sslmode=disable"`
+	PostgresDSN string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"STELLARATLAS_POSTGRES_DSN" default:"postgres://stellaratlas@127.0.0.1:5432/stellaratlas?sslmode=disable"`
 	RedisAddr   string `toml:"redis_addr" doc:"Redis master address host:port. Used when redis_sentinel_addrs is empty (single-node / direct mode). When sentinel addrs are set, this is ignored." default:"127.0.0.1:6379"`
 	// Sentinel mode: when redis_sentinel_addrs is non-empty, the
 	// client uses go-redis FailoverClient and asks Sentinel for the
@@ -409,15 +409,15 @@ type StorageConfig struct {
 	// the production topology; redis_addr is the fallback for
 	// dev/single-node deployments.
 	RedisSentinelAddrs []string `toml:"redis_sentinel_addrs" doc:"List of Sentinel host:port addresses. Non-empty enables FailoverClient mode (production HA per ADR-0024); empty falls back to single-node redis_addr." default:"[]"`
-	RedisMasterName    string   `toml:"redis_master_name" doc:"Sentinel master name as set in inventory (e.g. ratesengine-r1-cache). Required when redis_sentinel_addrs is non-empty." default:""`
-	RedisPassword      string   `toml:"redis_password_env" doc:"Env var holding the Redis password (reference, not the password itself). Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — they're the same secret per the role." env:"RATESENGINE_REDIS_PASSWORD" default:""`
-	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'ratesengine' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
+	RedisMasterName    string   `toml:"redis_master_name" doc:"Sentinel master name as set in inventory (e.g. stellaratlas-r1-cache). Required when redis_sentinel_addrs is non-empty." default:""`
+	RedisPassword      string   `toml:"redis_password_env" doc:"Env var holding the Redis password (reference, not the password itself). Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — they're the same secret per the role." env:"STELLARATLAS_REDIS_PASSWORD" default:""`
+	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'stellaratlas' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
 	S3Endpoint         string   `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
 	S3Region           string   `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
 	S3BucketArchive    string   `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
 	S3BucketLive       string   `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
-	S3AccessKeyEnv     string   `toml:"s3_access_key_env" doc:"Env var holding S3 access key ID." env:"RATESENGINE_S3_ACCESS_KEY" default:"RATESENGINE_S3_ACCESS_KEY"`
-	S3SecretKeyEnv     string   `toml:"s3_secret_key_env" doc:"Env var holding S3 secret access key." env:"RATESENGINE_S3_SECRET_KEY" default:"RATESENGINE_S3_SECRET_KEY"`
+	S3AccessKeyEnv     string   `toml:"s3_access_key_env" doc:"Env var holding S3 access key ID." env:"STELLARATLAS_S3_ACCESS_KEY" default:"STELLARATLAS_S3_ACCESS_KEY"`
+	S3SecretKeyEnv     string   `toml:"s3_secret_key_env" doc:"Env var holding S3 secret access key." env:"STELLARATLAS_S3_SECRET_KEY" default:"STELLARATLAS_S3_SECRET_KEY"`
 
 	// Cold-tier (LCM cache tiering — ADR-0027). When
 	// S3ColdBucketArchive is non-empty, ledger reads cascade hot
@@ -618,8 +618,8 @@ type TriangulationChainConfig struct {
 // APIConfig controls the public REST+SSE server.
 type APIConfig struct {
 	ListenAddr          string   `toml:"listen_addr" doc:"Bind address for the HTTP server." default:"0.0.0.0:3000"`
-	ExternalBaseURL     string   `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.ratesengine.net/v1)." default:"https://api.ratesengine.net/v1"`
-	TLSCertProbeHosts   []string `toml:"tls_cert_probe_hosts" doc:"Public hostnames whose TLS leaf cert NotAfter the API binary should periodically probe and surface as ratesengine_tls_cert_not_after_unix{host}. Each entry may include :port; bare hostnames default to :443. The probe goroutine ticks every 6h. F-0051 (audit-2026-05-26): Caddy auto-renews Let's Encrypt 30d before expiry but silent renewal failures (DNS, rate limit, ACME quota) would otherwise only surface at cert expiry. Empty list disables the probe." default:"[\"api.ratesengine.net\",\"status.ratesengine.net\",\"ratesengine.net\"]"`
+	ExternalBaseURL     string   `toml:"external_base_url" doc:"Public-facing base URL (e.g. https://api.stellaratlas.xyz/v1)." default:"https://api.stellaratlas.xyz/v1"`
+	TLSCertProbeHosts   []string `toml:"tls_cert_probe_hosts" doc:"Public hostnames whose TLS leaf cert NotAfter the API binary should periodically probe and surface as stellaratlas_tls_cert_not_after_unix{host}. Each entry may include :port; bare hostnames default to :443. The probe goroutine ticks every 6h. F-0051 (audit-2026-05-26): Caddy auto-renews Let's Encrypt 30d before expiry but silent renewal failures (DNS, rate limit, ACME quota) would otherwise only surface at cert expiry. Empty list disables the probe." default:"[\"api.stellaratlas.xyz\",\"status.stellaratlas.xyz\",\"stellaratlas.xyz\"]"`
 	AuthMode            string   `toml:"auth_mode" doc:"Authentication mode — none / apikey / apikey_optional / sep10. 'none' attaches anonymous Subject to every request. 'apikey' requires Authorization: Bearer <key> on every request; missing → 401. 'apikey_optional' is the freemium shape — anonymous floor (60/min) without a key, per-key tier (1000/min default) with a valid key, invalid key → 401. 'sep10' requires a SEP-10 JWT. The API binary wires real validators when the required dependencies are present; deployments that opt into auth without satisfying those fail loud rather than silently demoting to anonymous." default:"none"`
 	AuthBackend         string   `toml:"auth_backend" doc:"Backing store for API-key validation. 'redis' (default) uses the legacy apikey:<hash> JSON records minted by /v1/signup. 'postgres' uses the platform.api_keys table (the dashboard's source of truth) with Redis as a read-through cache — required for keys minted from the dashboard to authenticate against the runtime API. Cutover knob: deployments running both /v1/signup keys and dashboard-minted keys should use 'postgres' (the validator falls back to Postgres on Redis cache miss + writes back, so existing legacy keys keep working transparently)." default:"redis"`
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
@@ -642,11 +642,11 @@ type APIConfig struct {
 	Streaming                      StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
 	Stripe                         StripeConfig    `toml:"stripe" doc:"Stripe webhook handler — paid-tier upgrades wired to POST /v1/webhooks/stripe. Empty signing_secret leaves the endpoint 503."`
 	PrometheusURL                  string          `toml:"prometheus_url" doc:"Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only)." default:""`
-	Dashboard                      DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — magic-link email login + cookie sessions backing the dashboard SPA at app.ratesengine.net. Empty leaves /v1/auth/{login,callback,logout} returning 503."`
+	Dashboard                      DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — magic-link email login + cookie sessions backing the dashboard SPA at app.stellaratlas.xyz. Empty leaves /v1/auth/{login,callback,logout} returning 503."`
 }
 
 // DashboardConfig wires the magic-link email login flow + cookie
-// sessions for the customer dashboard at app.ratesengine.net.
+// sessions for the customer dashboard at app.stellaratlas.xyz.
 //
 // Empty (no BaseURL or no Resend API key) leaves the auth
 // endpoints unwired; main.go logs a warn at startup and the
@@ -654,15 +654,15 @@ type APIConfig struct {
 // soon" surface until the operator has configured these.
 //
 // The Resend API key lives in an env var (default
-// RATESENGINE_RESEND_API_KEY) so it doesn't sit in the TOML
+// STELLARATLAS_RESEND_API_KEY) so it doesn't sit in the TOML
 // alongside non-secret config — same pattern as
 // StripeConfig.SigningSecret.
 type DashboardConfig struct {
-	BaseURL string `toml:"base_url" doc:"Absolute URL of the customer dashboard SPA (e.g. https://app.ratesengine.net). The magic-link callback URL embedded in emails is {base_url}/auth/callback?token=<plaintext>." default:""`
+	BaseURL string `toml:"base_url" doc:"Absolute URL of the customer dashboard SPA (e.g. https://app.stellaratlas.xyz). The magic-link callback URL embedded in emails is {base_url}/auth/callback?token=<plaintext>." default:""`
 
-	EmailFrom string `toml:"email_from" doc:"From: address for transactional emails (e.g. 'Rates Engine <hello@ratesengine.net>'). Must match a domain Resend has verified for the configured API key." default:"Rates Engine <hello@ratesengine.net>"`
+	EmailFrom string `toml:"email_from" doc:"From: address for transactional emails (e.g. 'Stellar Atlas <hello@stellaratlas.xyz>'). Must match a domain Resend has verified for the configured API key." default:"Stellar Atlas <hello@stellaratlas.xyz>"`
 
-	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"RATESENGINE_RESEND_API_KEY"`
+	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"STELLARATLAS_RESEND_API_KEY"`
 
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
@@ -670,7 +670,7 @@ type DashboardConfig struct {
 
 	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the session cookie. Production = true; dev (http://localhost) = false." default:"true"`
 
-	CookieDomain string `toml:"cookie_domain" doc:"Cookie Domain attribute. Empty (default) means a host-only cookie scoped to the API host. Set to '.ratesengine.net' if a future surface needs the cookie shared across subdomains." default:""`
+	CookieDomain string `toml:"cookie_domain" doc:"Cookie Domain attribute. Empty (default) means a host-only cookie scoped to the API host. Set to '.stellaratlas.xyz' if a future surface needs the cookie shared across subdomains." default:""`
 }
 
 // StripeConfig wires the /v1/webhooks/stripe handler. Stripe
@@ -683,10 +683,10 @@ type DashboardConfig struct {
 //
 // Operator gets the secret from the Stripe dashboard (Webhooks →
 // signing secret, format `whsec_…`). Stored in the env-overridden
-// secret (RATESENGINE_STRIPE_WEBHOOK_SECRET) so it doesn't sit in
-// /etc/ratesengine.toml in cleartext on operator workstations.
+// secret (STELLARATLAS_STRIPE_WEBHOOK_SECRET) so it doesn't sit in
+// /etc/stellaratlas.toml in cleartext on operator workstations.
 type StripeConfig struct {
-	SigningSecret string `toml:"signing_secret" doc:"Stripe webhook signing secret (whsec_…). Empty disables the endpoint." env:"RATESENGINE_STRIPE_WEBHOOK_SECRET" default:""`
+	SigningSecret string `toml:"signing_secret" doc:"Stripe webhook signing secret (whsec_…). Empty disables the endpoint." env:"STELLARATLAS_STRIPE_WEBHOOK_SECRET" default:""`
 }
 
 // StreamingConfig configures the closed-bucket SSE producer
@@ -722,16 +722,16 @@ type StreamingConfig struct {
 // AND an unset / empty env var fails loud at startup rather than
 // silently 503-ing on every challenge.
 type SEP10Config struct {
-	SeedEnv       string        `toml:"seed_env" doc:"Environment variable holding the server signing keypair S-strkey. Operators rotate this on a schedule; ansible-vault stores the actual value." default:"RATESENGINE_SEP10_SEED"`
-	JWTSecretEnv  string        `toml:"jwt_secret_env" doc:"Environment variable holding the HMAC-SHA256 JWT secret (≥ 32 bytes of entropy required)." default:"RATESENGINE_SEP10_JWT_SECRET"`
-	WebAuthDomain string        `toml:"web_auth_domain" doc:"SEP-10 web_auth_domain — the host that serves /v1/auth/sep10/*. Carried inside the challenge tx so clients verify before signing. Typically the API's external host (e.g. api.ratesengine.net)." default:"api.ratesengine.net"`
-	HomeDomain    string        `toml:"home_domain" doc:"Issuer home_domain. Carried in the JWT iss claim and in the challenge's first manage_data op. Typically same as the project root domain." default:"ratesengine.net"`
+	SeedEnv       string        `toml:"seed_env" doc:"Environment variable holding the server signing keypair S-strkey. Operators rotate this on a schedule; ansible-vault stores the actual value." default:"STELLARATLAS_SEP10_SEED"`
+	JWTSecretEnv  string        `toml:"jwt_secret_env" doc:"Environment variable holding the HMAC-SHA256 JWT secret (≥ 32 bytes of entropy required)." default:"STELLARATLAS_SEP10_JWT_SECRET"`
+	WebAuthDomain string        `toml:"web_auth_domain" doc:"SEP-10 web_auth_domain — the host that serves /v1/auth/sep10/*. Carried inside the challenge tx so clients verify before signing. Typically the API's external host (e.g. api.stellaratlas.xyz)." default:"api.stellaratlas.xyz"`
+	HomeDomain    string        `toml:"home_domain" doc:"Issuer home_domain. Carried in the JWT iss claim and in the challenge's first manage_data op. Typically same as the project root domain." default:"stellaratlas.xyz"`
 	ChallengeTTL  time.Duration `toml:"challenge_ttl" doc:"How long a SEP-10 challenge is valid for signing. SDK requires ≥ 1s; SEP-10 spec recommends 15m." default:"15m"`
 	JWTTTL        time.Duration `toml:"jwt_ttl" doc:"Lifetime of an issued JWT. Clients refresh by repeating the challenge → verify flow." default:"1h"`
 }
 
 // SupplyConfig configures the supply-snapshot writer (run via
-// `ratesengine-ops supply snapshot` or as the in-aggregator
+// `stellaratlas-ops supply snapshot` or as the in-aggregator
 // goroutine when [SupplyConfig.AggregatorRefreshEnabled] is true).
 // Per ADR-0011 we don't fabricate values; for native XLM that means
 // the writer needs the configured SDF reserve account list (whose
@@ -935,7 +935,7 @@ type ObsConfig struct {
 func defaultAPIConfig() APIConfig {
 	return APIConfig{
 		ListenAddr:          "0.0.0.0:3000",
-		ExternalBaseURL:     "https://api.ratesengine.net/v1",
+		ExternalBaseURL:     "https://api.stellaratlas.xyz/v1",
 		AuthMode:            "none",
 		AuthBackend:         "redis",
 		AnonRateLimitPerMin: 60,
@@ -946,21 +946,21 @@ func defaultAPIConfig() APIConfig {
 		// F-0051: probe the public TLS leaf certs by default so silent
 		// Let's Encrypt renewal failures surface before expiry (the alert
 		// series only exists when this is populated).
-		TLSCertProbeHosts: []string{"api.ratesengine.net", "status.ratesengine.net", "ratesengine.net"},
+		TLSCertProbeHosts: []string{"api.stellaratlas.xyz", "status.stellaratlas.xyz", "stellaratlas.xyz"},
 		// F-1218: pre-launch safe default is to require email-ownership
 		// proof on signup-minted keys; operators opt out explicitly.
 		SignupRequireEmailVerification: true,
 		SEP10: SEP10Config{
-			SeedEnv:       "RATESENGINE_SEP10_SEED",
-			JWTSecretEnv:  "RATESENGINE_SEP10_JWT_SECRET",
-			WebAuthDomain: "api.ratesengine.net",
-			HomeDomain:    "ratesengine.net",
+			SeedEnv:       "STELLARATLAS_SEP10_SEED",
+			JWTSecretEnv:  "STELLARATLAS_SEP10_JWT_SECRET",
+			WebAuthDomain: "api.stellaratlas.xyz",
+			HomeDomain:    "stellaratlas.xyz",
 			ChallengeTTL:  15 * time.Minute,
 			JWTTTL:        1 * time.Hour,
 		},
 		Dashboard: DashboardConfig{
-			EmailFrom:           "Rates Engine <hello@ratesengine.net>",
-			ResendAPIKeyEnv:     "RATESENGINE_RESEND_API_KEY",
+			EmailFrom:           "Stellar Atlas <hello@stellaratlas.xyz>",
+			ResendAPIKeyEnv:     "STELLARATLAS_RESEND_API_KEY",
 			MagicLinkTTLMinutes: 15,
 			SessionTTLDays:      30,
 			CookieSecure:        true, // dev (http://localhost) overrides to false
@@ -977,7 +977,7 @@ func Default() Config {
 		Region: RegionConfig{
 			ID:         "r1",
 			Name:       "London",
-			HomeDomain: "ratesengine.net",
+			HomeDomain: "stellaratlas.xyz",
 		},
 		Stellar: StellarConfig{
 			Network:           "pubnet",
@@ -986,7 +986,7 @@ func Default() Config {
 			HistoryArchiveURL: "https://history.stellar.org/prd/core-live/core_live_001",
 		},
 		Storage: StorageConfig{
-			PostgresDSN: "postgres://ratesengine@127.0.0.1:5432/ratesengine?sslmode=disable",
+			PostgresDSN: "postgres://stellaratlas@127.0.0.1:5432/stellaratlas?sslmode=disable",
 			RedisAddr:   "127.0.0.1:6379",
 			// RedisSentinelAddrs / RedisMasterName left empty — Default()
 			// targets dev / single-node. Production inventories override
@@ -997,8 +997,8 @@ func Default() Config {
 			S3Region:           "r1",
 			S3BucketArchive:    "galexie-archive",
 			S3BucketLive:       "galexie-live",
-			S3AccessKeyEnv:     "RATESENGINE_S3_ACCESS_KEY",
-			S3SecretKeyEnv:     "RATESENGINE_S3_SECRET_KEY",
+			S3AccessKeyEnv:     "STELLARATLAS_S3_ACCESS_KEY",
+			S3SecretKeyEnv:     "STELLARATLAS_S3_SECRET_KEY",
 			ClickHouseAddr:     "127.0.0.1:9300",
 		},
 		Ingestion: IngestionConfig{

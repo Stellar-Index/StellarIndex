@@ -4,7 +4,7 @@
 # behind ticker X". Phase 1.1 of the multi-network assets migration
 # (R-018; docs/architecture/multi-network-assets-migration.md).
 #
-# This file is embedded into the ratesengine-api binary at build
+# This file is embedded into the stellaratlas-api binary at build
 # time via `//go:embed`. Changing the catalogue requires a code
 # change + redeploy — that's intentional, the catalogue is part of
 # the trust surface. Phase 1.2 will add runtime CoinGecko / CMC

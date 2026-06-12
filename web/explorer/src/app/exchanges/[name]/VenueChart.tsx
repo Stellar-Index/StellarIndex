@@ -168,12 +168,12 @@ export function VenueChart({ venue }: { venue: string }) {
           Couldn&apos;t load pairs for this venue ({pairsError}). Refresh to
           retry, or check{' '}
           <a
-            href="https://status.ratesengine.net"
+            href="https://status.stellaratlas.xyz"
             target="_blank"
             rel="noreferrer"
             className="underline"
           >
-            status.ratesengine.net
+            status.stellaratlas.xyz
           </a>
           .
         </div>

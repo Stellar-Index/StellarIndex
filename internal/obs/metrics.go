@@ -125,7 +125,7 @@ func registerAppMetrics() {
 	// increase() but whose label combinations never appear in
 	// /metrics output until the first event fires. Without
 	// pre-seeding, PromQL queries against e.g.
-	// `rate(ratesengine_aggregator_triangulations_total{outcome="ok"}[15m])`
+	// `rate(stellaratlas_aggregator_triangulations_total{outcome="ok"}[15m])`
 	// resolve to "no data" (gap, not zero) until the first
 	// triangulation succeeds — which makes `absent()` / `<= 0` checks
 	// ambiguous and the audit found multiple alerts whose underlying
@@ -164,9 +164,9 @@ func Handler() http.Handler {
 // route pattern (not raw URL — avoids cardinality blow-up on IDs),
 // and status class.
 //
-// Alert rules reference this via `http_requests_total{status=~"5..", job=~"ratesengine[-_]api"}`.
-// (F-1276, audit-2026-05-13: scrape jobs use `ratesengine_api` on HA
-// multi-host and `ratesengine-api` on R1; rules match both via regex.
+// Alert rules reference this via `http_requests_total{status=~"5..", job=~"stellaratlas[-_]api"}`.
+// (F-1276, audit-2026-05-13: scrape jobs use `stellaratlas_api` on HA
+// multi-host and `stellaratlas-api` on R1; rules match both via regex.
 // Earlier comment said `job="api"` which never matched any series.)
 var HTTPRequestsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -219,7 +219,7 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 // counter — operators read absolute value, not deltas.
 var IngestGapLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_ingest_gap_ledgers",
+		Name: "stellaratlas_ingest_gap_ledgers",
 		Help: "Total missing ledgers in contiguous data-coverage gaps (>= detector min-gap-size) per (source, table). Data-derived; complements cursor-coverage density.",
 	},
 	[]string{"source", "table"},
@@ -234,7 +234,7 @@ var IngestGapLedgers = prometheus.NewGaugeVec(
 // flaky-write pattern).
 var IngestGapCount = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_ingest_gap_count",
+		Name: "stellaratlas_ingest_gap_count",
 		Help: "Number of contiguous data-coverage gaps (>= detector min-gap-size) per (source, table) at the most recent detector cycle.",
 	},
 	[]string{"source", "table"},
@@ -248,7 +248,7 @@ var IngestGapCount = prometheus.NewGaugeVec(
 // alert on it.
 var IngestGapMaxSize = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_ingest_gap_max_size_ledgers",
+		Name: "stellaratlas_ingest_gap_max_size_ledgers",
 		Help: "Size of the largest contiguous data-coverage gap per (source, table) at the most recent detector cycle.",
 	},
 	[]string{"source", "table"},
@@ -262,7 +262,7 @@ var IngestGapMaxSize = prometheus.NewGaugeVec(
 // connection blip).
 var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_ingest_gap_detector_runs_total",
+		Name: "stellaratlas_ingest_gap_detector_runs_total",
 		Help: "Periodic data-gap detector runs, by (source, table, outcome). Rate goes to zero if the worker has wedged.",
 	},
 	[]string{"source", "table", "outcome"},
@@ -281,7 +281,7 @@ var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 // per target per cycle).
 var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_ingest_source_distinct_ledgers",
+		Name: "stellaratlas_ingest_source_distinct_ledgers",
 		Help: "Distinct-ledger count per (source, table) at the most recent gap-detector cycle. Numerator of the ADR-0031 data-derived density signal.",
 	},
 	[]string{"source", "table"},
@@ -298,7 +298,7 @@ var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 // would be redundant + the consumer needs only one read.
 var IngestGapDetectorTip = prometheus.NewGauge(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_ingest_gap_detector_tip_ledger",
+		Name: "stellaratlas_ingest_gap_detector_tip_ledger",
 		Help: "Live ledgerstream tip ledger at the most recent gap-detector cycle. Upper bound of the [genesis, tip] window used by ADR-0031's density computation.",
 	},
 )
@@ -308,7 +308,7 @@ var IngestGapDetectorTip = prometheus.NewGauge(
 // outcomes (see wave-100 obstest patterns).
 var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name: "ratesengine_ingest_gap_detector_duration_seconds",
+		Name: "stellaratlas_ingest_gap_detector_duration_seconds",
 		Help: "Wall-clock duration of one data-gap detector cycle, by (source, table, outcome). Buckets extend to 600s because soroban_events scans on r1 measure ~300s against ~50M distinct ledgers.",
 		// Extended buckets to 600 because the soroban_events scan on
 		// r1 is ~300s; the original 60s cap put every successful
@@ -327,10 +327,10 @@ var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 // keeping up. A sustained > 1000 value means the projector is
 // falling behind (decoder error storm, downstream sink saturated,
 // or projector stopped). Paging alert
-// `ratesengine_projector_lag_high` fires on sustained drift.
+// `stellaratlas_projector_lag_high` fires on sustained drift.
 var ProjectorLagLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_projector_lag_ledgers",
+		Name: "stellaratlas_projector_lag_ledgers",
 		Help: "Per-source projector lag in ledgers (tip - last_projected). 0 = caught up. Sustained > 1000 = falling behind.",
 	},
 	[]string{"source"},
@@ -341,7 +341,7 @@ var ProjectorLagLedgers = prometheus.NewGaugeVec(
 // rate sustained 5+ minutes means the source's loop wedged).
 var ProjectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_projector_runs_total",
+		Name: "stellaratlas_projector_runs_total",
 		Help: "Per-source projector cycle outcomes (ok, error, idle). Rate goes to zero if the source's loop has wedged.",
 	},
 	[]string{"source", "outcome"},
@@ -354,7 +354,7 @@ var ProjectorRunsTotal = prometheus.NewCounterVec(
 // verify the projector keeps pace with live ingest.
 var ProjectorEventsDecoded = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_projector_events_decoded_total",
+		Name: "stellaratlas_projector_events_decoded_total",
 		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
 	},
 	[]string{"source", "outcome"},
@@ -363,7 +363,7 @@ var ProjectorEventsDecoded = prometheus.NewCounterVec(
 // ProjectorCycleDurationSeconds measures wall-clock per cycle.
 var ProjectorCycleDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "ratesengine_projector_cycle_duration_seconds",
+		Name:    "stellaratlas_projector_cycle_duration_seconds",
 		Help:    "Wall-clock duration of one projector cycle per source.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 	},
@@ -413,13 +413,13 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 // tests + log-greps, so an operator dashboard on hit-rate is the
 // cheapest detector.
 //
-// Alert idea: `rate(ratesengine_api_cache_ops_total{result="miss"}
-// [5m]) / rate(ratesengine_api_cache_ops_total[5m]) > 0.5` sustained
+// Alert idea: `rate(stellaratlas_api_cache_ops_total{result="miss"}
+// [5m]) / rate(stellaratlas_api_cache_ops_total[5m]) > 0.5` sustained
 // 10 min on any (cache, op) is suspicious — prewarm should keep
 // hot ops > 90% hit.
 var APICacheOpsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_api_cache_ops_total",
+		Name: "stellaratlas_api_cache_ops_total",
 		Help: "Cache reads through API in-memory cache wrappers, labelled by cache name + op + result (hit|miss).",
 	},
 	[]string{"cache", "op", "result"},
@@ -431,7 +431,7 @@ var APICacheOpsTotal = prometheus.NewCounterVec(
 // event the consumer emits to its out-channel.
 var SourceEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_source_events_total",
+		Name: "stellaratlas_source_events_total",
 		Help: "Total events emitted by each ingestion source.",
 	},
 	[]string{"source"},
@@ -441,7 +441,7 @@ var SourceEventsTotal = prometheus.NewCounterVec(
 // network tip a source is. Zero at tip.
 var SourceLagLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_source_lag_ledgers",
+		Name: "stellaratlas_source_lag_ledgers",
 		Help: "How many ledgers behind the network tip each source currently is.",
 	},
 	[]string{"source"},
@@ -451,7 +451,7 @@ var SourceLagLedgers = prometheus.NewGaugeVec(
 // the source's most recent observed event.
 var SourceLastEventUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_source_last_event_unix",
+		Name: "stellaratlas_source_last_event_unix",
 		Help: "Timestamp of the most recent event per source (Unix seconds).",
 	},
 	[]string{"source"},
@@ -468,7 +468,7 @@ var SourceLastEventUnix = prometheus.NewGaugeVec(
 // every insert (last_insert_unix stops climbing), the gap between
 // the two grows. Direct alert template:
 //
-//	time() - ratesengine_source_last_insert_unix{source="sdex"} > 3600
+//	time() - stellaratlas_source_last_insert_unix{source="sdex"} > 3600
 //
 // catches the live r1 2026-05-28 pattern (157 SDEX insert-attempts/
 // min, all duplicates, max(ts) 11 h old) within an hour of recurrence.
@@ -477,8 +477,8 @@ var SourceLastEventUnix = prometheus.NewGaugeVec(
 // fire.
 var SourceLastInsertUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_source_last_insert_unix",
-		Help: "Wall-clock timestamp of the most recent successfully-inserted trade row per source (Unix seconds). Stops advancing during a stuck-cursor / duplicate-flood pattern — the gap vs ratesengine_source_last_event_unix is the diagnostic signature.",
+		Name: "stellaratlas_source_last_insert_unix",
+		Help: "Wall-clock timestamp of the most recent successfully-inserted trade row per source (Unix seconds). Stops advancing during a stuck-cursor / duplicate-flood pattern — the gap vs stellaratlas_source_last_event_unix is the diagnostic signature.",
 	},
 	[]string{"source"},
 )
@@ -488,7 +488,7 @@ var SourceLastInsertUnix = prometheus.NewGaugeVec(
 // zero with "but it was supposed to be running".
 var SourceEnabled = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_source_enabled",
+		Name: "stellaratlas_source_enabled",
 		Help: "1 if source is configured enabled; 0 otherwise.",
 	},
 	[]string{"source"},
@@ -512,7 +512,7 @@ var SourceEnabled = prometheus.NewGaugeVec(
 // pipeline.processor delta loop.
 var SourceMatchedEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_source_matched_events_total",
+		Name: "stellaratlas_source_matched_events_total",
 		Help: "Inputs each source's decoder Matches() claimed (the denominator of decoder error-rate).",
 	},
 	[]string{"source"},
@@ -522,7 +522,7 @@ var SourceMatchedEventsTotal = prometheus.NewCounterVec(
 // (SCVal parse errors, malformed event schemas, etc.).
 var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_source_decode_errors_total",
+		Name: "stellaratlas_source_decode_errors_total",
 		Help: "Events that failed to decode, per source.",
 	},
 	[]string{"source"},
@@ -543,7 +543,7 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 // sustained per-source non-zero rate.
 var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_source_unknown_symbols_total",
+		Name: "stellaratlas_source_unknown_symbols_total",
 		Help: "Asset slots skipped from a decoded event because the symbol/feed id isn't in the canonical allow-list.",
 	},
 	[]string{"source"},
@@ -566,7 +566,7 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 // == 0` for sources expected to contribute.
 var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_external_poller_polls_total",
+		Name: "stellaratlas_external_poller_polls_total",
 		Help: "External poller invocations, labelled by source and outcome (success | error | skipped).",
 	},
 	[]string{"source", "outcome"},
@@ -591,7 +591,7 @@ var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 // false) or the host TCP keepalive is off (now enabled, F-0029).
 var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_cex_stream_disconnect_total",
+		Name: "stellaratlas_cex_stream_disconnect_total",
 		Help: "CEX WebSocket stream disconnects by source and reason (reset | broken_pipe | timeout | dial | server_requested | other). F-0029.",
 	},
 	[]string{"source", "reason"},
@@ -606,7 +606,7 @@ var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
 // requiring multi-window rate math, which is much easier to alert on.
 var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_external_poller_last_success_unix",
+		Name: "stellaratlas_external_poller_last_success_unix",
 		Help: "UNIX seconds of the most recent successful PollOnce, per source. Zero = never succeeded since startup.",
 	},
 	[]string{"source"},
@@ -623,7 +623,7 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 // events or the contract shape shifted.
 var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_source_orphan_events_total",
+		Name: "stellaratlas_source_orphan_events_total",
 		Help: "Events that arrived without their required correlation partner, per source.",
 	},
 	[]string{"source"},
@@ -635,7 +635,7 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 // when the buffer starts shedding records under write pressure.
 var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_discovery_dropped_hits_total",
+		Name: "stellaratlas_discovery_dropped_hits_total",
 		Help: "Discovery hits dropped because the async discovery sink buffer was full.",
 	},
 )
@@ -649,7 +649,7 @@ var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
 // alerting.
 var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_discovery_skipped_hits_total",
+		Name: "stellaratlas_discovery_skipped_hits_total",
 		Help: "Discovery hits skipped because (contract_id, event_type) was already enqueued in this process.",
 	},
 )
@@ -667,7 +667,7 @@ var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 // to help.
 var Sep1CacheOpsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_sep1_cache_ops_total",
+		Name: "stellaratlas_sep1_cache_ops_total",
 		Help: "SEP-1 resolver cache operations by outcome.",
 	},
 	[]string{"result"},
@@ -681,7 +681,7 @@ var Sep1CacheOpsTotal = prometheus.NewCounterVec(
 // the redis readyz probe turning red.
 var RateLimitFailOpenTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_ratelimit_fail_open_total",
+		Name: "stellaratlas_ratelimit_fail_open_total",
 		Help: "Requests that bypassed rate-limiting because Redis errored.",
 	},
 )
@@ -697,7 +697,7 @@ var RateLimitFailOpenTotal = prometheus.NewCounter(
 // type-switch doesn't recognise.
 var SourceInsertErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_source_insert_errors_total",
+		Name: "stellaratlas_source_insert_errors_total",
 		Help: "Events that failed to persist to the store, per source + kind (trade/oracle/panic).",
 	},
 	[]string{"source", "kind"},
@@ -708,7 +708,7 @@ var SourceInsertErrorsTotal = prometheus.NewCounterVec(
 // cursors (increase == 0 over time).
 var CursorLastLedger = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_cursor_last_ledger",
+		Name: "stellaratlas_cursor_last_ledger",
 		Help: "Last ledger committed to the per-source cursor.",
 	},
 	[]string{"source"},
@@ -734,7 +734,7 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 // alert-worthy on its own.
 var DivergenceRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_divergence_refresh_total",
+		Name: "stellaratlas_divergence_refresh_total",
 		Help: "Aggregator divergence-cache refresh outcomes per Tick (ok|no_vwap|parse_error|refresh_error).",
 	},
 	[]string{"outcome"},
@@ -758,7 +758,7 @@ var DivergenceRefreshTotal = prometheus.NewCounterVec(
 // default 5 s) compounded across multiple references.
 var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "ratesengine_divergence_refresh_duration_seconds",
+		Name:    "stellaratlas_divergence_refresh_duration_seconds",
 		Help:    "Per-pair divergence-refresh latency, labelled by outcome (ok|no_vwap|parse_error|refresh_error).",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
@@ -780,7 +780,7 @@ var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 // (low-tens of series at maturity).
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_trade_inserts_total",
+		Name: "stellaratlas_trade_inserts_total",
 		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts not unique-row inserts (ON CONFLICT DO NOTHING dedupe is invisible to this counter).",
 	},
 	[]string{"source", "usd_volume_populated"},
@@ -801,7 +801,7 @@ var TradeInsertsTotal = prometheus.NewCounterVec(
 // outcomes per registered source (low-tens of series at maturity).
 var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_trade_insert_outcome_total",
+		Name: "stellaratlas_trade_insert_outcome_total",
 		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when ON CONFLICT DO NOTHING short-circuited (indicates cursor replay or stuck-tip).",
 	},
 	[]string{"source", "outcome"},
@@ -822,7 +822,7 @@ var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 // maturity.
 var StreamPublishTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_stream_publish_total",
+		Name: "stellaratlas_stream_publish_total",
 		Help: "Closed-bucket envelopes published to the streaming Hub, labelled by stream surface (e.g. price_stream).",
 	},
 	[]string{"stream"},
@@ -842,7 +842,7 @@ var StreamPublishTotal = prometheus.NewCounterVec(
 // docs/architecture/aggregation-plan.md.
 var PriceStalenessSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_price_staleness_seconds",
+		Name: "stellaratlas_price_staleness_seconds",
 		Help: "Age of the most recent aggregated price per asset (seconds). Writers MUST restrict to a top-N allow-list.",
 	},
 	[]string{"asset"},
@@ -858,7 +858,7 @@ var PriceStalenessSeconds = prometheus.NewGaugeVec(
 // as PriceStalenessSeconds.
 var OracleLastUpdateUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_oracle_last_update_unix",
+		Name: "stellaratlas_oracle_last_update_unix",
 		Help: "Timestamp of the most recent oracle observation, per source and asset.",
 	},
 	[]string{"source", "asset"},
@@ -869,7 +869,7 @@ var OracleLastUpdateUnix = prometheus.NewGaugeVec(
 // to qualify "no update in > 10× resolution".
 var OracleResolutionSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_oracle_resolution_seconds",
+		Name: "stellaratlas_oracle_resolution_seconds",
 		Help: "Declared resolution interval of each oracle source (seconds).",
 	},
 	[]string{"source"},
@@ -884,7 +884,7 @@ var OracleResolutionSeconds = prometheus.NewGaugeVec(
 // is the tick-level rollup.
 var AggregatorTicksTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_ticks_total",
+		Name: "stellaratlas_aggregator_ticks_total",
 		Help: "Aggregator orchestrator tick count, labelled by outcome (ok|error).",
 	},
 	[]string{"outcome"},
@@ -895,7 +895,7 @@ var AggregatorTicksTotal = prometheus.NewCounterVec(
 // bounded — the per-pair lens lives in the Redis key namespace.
 var AggregatorVWAPWritesTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_vwap_writes_total",
+		Name: "stellaratlas_aggregator_vwap_writes_total",
 		Help: "Cumulative VWAP cache writes performed by the aggregator.",
 	},
 )
@@ -906,7 +906,7 @@ var AggregatorVWAPWritesTotal = prometheus.NewCounter(
 // reason as VWAPWritesTotal.
 var AggregatorEmptyWindowsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_empty_windows_total",
+		Name: "stellaratlas_aggregator_empty_windows_total",
 		Help: "Aggregator (pair, window) refreshes that produced zero eligible trades.",
 	},
 )
@@ -922,7 +922,7 @@ var AggregatorEmptyWindowsTotal = prometheus.NewCounter(
 // the sibling aggregator counters.
 var AggregatorWindowTruncatedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_window_truncated_total",
+		Name: "stellaratlas_aggregator_window_truncated_total",
 		Help: "Aggregator (pair, window) fetches that hit MaxTradesPerWindow — VWAP computed over a partial (newest-N) trade slice.",
 	},
 )
@@ -943,7 +943,7 @@ var AggregatorWindowTruncatedTotal = prometheus.NewCounter(
 // upstream-of-stale signal.
 var AggregatorVWAPCacheWriteErrorsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_vwap_cache_write_errors_total",
+		Name: "stellaratlas_aggregator_vwap_cache_write_errors_total",
 		Help: "Aggregator VWAP cache writes that returned a Redis error. Cumulative since process start.",
 	},
 )
@@ -960,7 +960,7 @@ var AggregatorVWAPCacheWriteErrorsTotal = prometheus.NewCounter(
 // Unset when no StreamPublisher is wired (no fan-out path).
 var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_stream_publish_total",
+		Name: "stellaratlas_aggregator_stream_publish_total",
 		Help: "Closed-bucket stream publishes attempted by the aggregator, labelled by outcome.",
 	},
 	[]string{"outcome"},
@@ -982,7 +982,7 @@ var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 // /v1/price/stream returns 503 instead of fanning out).
 var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_api_stream_subscribe_total",
+		Name: "stellaratlas_api_stream_subscribe_total",
 		Help: "Closed-bucket Redis pub/sub messages processed by the API subscriber, labelled by outcome.",
 	},
 	[]string{"outcome"},
@@ -1012,7 +1012,7 @@ var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 // F-1270 (audit-2026-05-12).
 var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_customer_webhook_delivery_attempts_total",
+		Name: "stellaratlas_customer_webhook_delivery_attempts_total",
 		Help: "Customer-webhook delivery attempts, labelled by outcome.",
 	},
 	[]string{"outcome"},
@@ -1036,7 +1036,7 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 // enforces before treating a request as a network_error.
 var CustomerWebhookDeliveryDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "ratesengine_customer_webhook_delivery_duration_seconds",
+		Name:    "stellaratlas_customer_webhook_delivery_duration_seconds",
 		Help:    "Customer-webhook outbound HTTP POST latency, labelled by outcome (delivered|server_error|client_error|network_error|build_error). Body-drain time is included.",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 	},
@@ -1057,15 +1057,15 @@ var CustomerWebhookDeliveryDurationSeconds = prometheus.NewHistogramVec(
 //     will block the response).
 //
 // Why a counter, not a startup-only warning: the startup warning in
-// warnOpenCORS (cmd/ratesengine-api/main.go) fires once at boot and
+// warnOpenCORS (cmd/stellaratlas-api/main.go) fires once at boot and
 // is forgotten. Per-request visibility lets operators dashboard
 // actual cross-origin traffic patterns and alert when a wildcard
 // policy starts handling real cross-origin requests in production
-// — the silent failure mode of `RATESENGINE_ALLOWED_ORIGINS=*`
+// — the silent failure mode of `STELLARATLAS_ALLOWED_ORIGINS=*`
 // slipping into prod with credentialed auth_mode. F-1244.
 var APICORSDecisionsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_api_cors_decisions_total",
+		Name: "stellaratlas_api_cors_decisions_total",
 		Help: "Per-request CORS decisions. Outcome ∈ {no_origin, allowed_origin, allowed_wildcard, denied}.",
 	},
 	[]string{"outcome"},
@@ -1079,7 +1079,7 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // distress flooding the window with anomalies).
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_dropped_trades_total",
+		Name: "stellaratlas_aggregator_dropped_trades_total",
 		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier).",
 	},
 	[]string{"reason"},
@@ -1094,7 +1094,7 @@ var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 // drives the launch-readiness L2.1 caveat audit.
 var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_dropped_windows_total",
+		Name: "stellaratlas_aggregator_dropped_windows_total",
 		Help: "Windows the orchestrator suppressed at the window-level filter step, labelled by reason (min_usd_volume).",
 	},
 	[]string{"reason"},
@@ -1114,15 +1114,15 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 // bound by the curated asset set with deployed SAC contracts (low
 // dozens at launch, hundreds at maturity).
 //
-// Emitted by `cmd/ratesengine-aggregator/main.go::buildCrossCheckRefresher`
+// Emitted by `cmd/stellaratlas-aggregator/main.go::buildCrossCheckRefresher`
 // once per `[supply].aggregator_refresh_cadence` tick when both the
 // classic side and the SAC side of a wrapper are in the watched-sets.
-// The CLI `ratesengine-ops supply audit <asset> -cross-check <counterpart>`
+// The CLI `stellaratlas-ops supply audit <asset> -cross-check <counterpart>`
 // path remains for ad-hoc operator inspection but does not update the
 // gauge — only the aggregator's periodic refresher does.
 var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_supply_cross_check_divergence_stroops",
+		Name: "stellaratlas_supply_cross_check_divergence_stroops",
 		Help: "Absolute stroop difference between classic and SAC-wrapped supply for the same asset; alert when > 1 (ADR-0011).",
 	},
 	[]string{"classic_key"},
@@ -1140,7 +1140,7 @@ var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 // genuine divergence.
 var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_supply_cross_check_total",
+		Name: "stellaratlas_supply_cross_check_total",
 		Help: "Cross-check evaluations, labelled by outcome (within|over|missing_snapshot|read_error).",
 	},
 	[]string{"outcome"},
@@ -1148,7 +1148,7 @@ var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 
 // ─── verify-archive metrics ───────────────────────────────────────
 //
-// Emitted by `ratesengine-ops verify-archive` when the operator
+// Emitted by `stellaratlas-ops verify-archive` when the operator
 // passes -metrics-listen ADDR. One-shot diagnostic command, but the
 // run can take hours on full pubnet sweeps — live metrics let
 // operators dashboard the bottleneck during the run rather than
@@ -1170,7 +1170,7 @@ var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 // cardinality stays bound to the small AssetClass enum.
 var AnomalyFreezeEngagedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_anomaly_freeze_engaged_total",
+		Name: "stellaratlas_anomaly_freeze_engaged_total",
 		Help: "ActionFreeze decisions emitted by the aggregator anomaly checker, labelled by asset class.",
 	},
 	[]string{"class"},
@@ -1183,7 +1183,7 @@ var AnomalyFreezeEngagedTotal = prometheus.NewCounterVec(
 // recovery worker's poll interval.
 var AnomalyFreezeRecoveredTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_anomaly_freeze_recovered_total",
+		Name: "stellaratlas_anomaly_freeze_recovered_total",
 		Help: "Freeze rows closed by the recovery worker after the Redis marker TTL elapsed.",
 	},
 )
@@ -1195,7 +1195,7 @@ var AnomalyFreezeRecoveredTotal = prometheus.NewCounter(
 // (postgres write path issue).
 var AnomalyFreezeRecoverySweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_anomaly_freeze_recovery_sweeps_total",
+		Name: "stellaratlas_anomaly_freeze_recovery_sweeps_total",
 		Help: "Freeze recovery-worker sweep cycles. Outcome ∈ {ok, partial, error}.",
 	},
 	[]string{"outcome"},
@@ -1220,7 +1220,7 @@ var AnomalyFreezeRecoverySweepsTotal = prometheus.NewCounterVec(
 // existing recovery-sweep error counter covers correctness.
 var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "ratesengine_anomaly_freeze_recovery_sweep_duration_seconds",
+		Name:    "stellaratlas_anomaly_freeze_recovery_sweep_duration_seconds",
 		Help:    "Freeze recovery-worker sweep latency, labelled by outcome (ok|partial|error). Sweep does ListOpen (Postgres) + per-row Redis GET + maybe MarkRecovered (Postgres write).",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
@@ -1235,7 +1235,7 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 // baseline indicate upstream regression worth investigating.
 var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_triangulations_total",
+		Name: "stellaratlas_aggregator_triangulations_total",
 		Help: "Aggregator triangulation outcomes per tick × chain × window. Outcome ∈ {ok, missing_leg, parse_error, redis_error}.",
 	},
 	[]string{"outcome"},
@@ -1254,7 +1254,7 @@ var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 // operator-configured triangulation chain set.
 var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_fx_snap_fallback_total",
+		Name: "stellaratlas_aggregator_fx_snap_fallback_total",
 		Help: "Triangulations that fell back to cached VWAP for an FX leg because FXQuoteAtOrBefore returned no row at-or-before the bucket end.",
 	},
 	[]string{"leg"},
@@ -1269,7 +1269,7 @@ var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 // indicate the storage layer needs investigation.
 var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_baseline_refresh_total",
+		Name: "stellaratlas_aggregator_baseline_refresh_total",
 		Help: "Baseline refresh outcomes per pair × refresh cycle. Outcome ∈ {ok, not_enough_samples, read_error, write_error}.",
 	},
 	[]string{"outcome"},
@@ -1297,7 +1297,7 @@ var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 // progress per watched asset rather than as one aggregate.
 var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_supply_refresh_total",
+		Name: "stellaratlas_aggregator_supply_refresh_total",
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, no_ledger, no_observation, compute_error, stale_component, missing_freshness, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
@@ -1320,7 +1320,7 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 // histogram + log timestamp when per-asset latency matters.
 var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "ratesengine_aggregator_supply_refresh_duration_seconds",
+		Name:    "stellaratlas_aggregator_supply_refresh_duration_seconds",
 		Help:    "Supply-snapshot refresh tick latency, labelled by outcome. Asset-level granularity available via per-tick log timestamps.",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
@@ -1346,7 +1346,7 @@ var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 // Redis is misbehaving.
 var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_aggregator_confidence_compute_total",
+		Name: "stellaratlas_aggregator_confidence_compute_total",
 		Help: "Confidence-score compute outcomes per (pair, window) × tick. See package docs for the full label vocabulary.",
 	},
 	[]string{"outcome"},
@@ -1357,7 +1357,7 @@ var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 // the primary signal for spotting a stalled chunk vs a slow one.
 var VerifyArchiveLedgersVerified = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_verify_archive_ledgers_verified_total",
+		Name: "stellaratlas_verify_archive_ledgers_verified_total",
 		Help: "Ledgers walked + verified by verify-archive, per chunk_idx.",
 	},
 	[]string{"chunk_idx"},
@@ -1370,7 +1370,7 @@ var VerifyArchiveLedgersVerified = prometheus.NewCounterVec(
 // leading vs trailing.
 var VerifyArchiveCurrentLedger = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_verify_archive_current_ledger",
+		Name: "stellaratlas_verify_archive_current_ledger",
 		Help: "Most-recent ledger sequence verified by each chunk_idx.",
 	},
 	[]string{"chunk_idx"},
@@ -1381,7 +1381,7 @@ var VerifyArchiveCurrentLedger = prometheus.NewGaugeVec(
 // or hard fail under -fail-on-missed); matched=hash-equal proof.
 var VerifyArchiveCheckpointsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_verify_archive_checkpoints_total",
+		Name: "stellaratlas_verify_archive_checkpoints_total",
 		Help: "Tier B checkpoint outcomes per verify-archive chunk_idx, labelled by outcome (matched|missed).",
 	},
 	[]string{"chunk_idx", "outcome"},
@@ -1394,7 +1394,7 @@ var VerifyArchiveCheckpointsTotal = prometheus.NewCounterVec(
 // from "chunk aborted for an unrelated reason (canceled context)".
 var VerifyArchiveMismatchesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_verify_archive_mismatches_total",
+		Name: "stellaratlas_verify_archive_mismatches_total",
 		Help: "Chain breaks, sequence gaps, and checkpoint mismatches per verify-archive chunk_idx + reason (chain|sequence|checkpoint).",
 	},
 	[]string{"chunk_idx", "reason"},
@@ -1412,15 +1412,15 @@ var VerifyArchiveMismatchesTotal = prometheus.NewCounterVec(
 // restart. The pool now retires conns every `PoolConnMaxLifetime`
 // regardless of liveness; this counter is the OBSERVABILITY signal
 // so the next cascade surfaces in minutes via
-// `ratesengine_postgres_ping_failing` instead of hours of silent
+// `stellaratlas_postgres_ping_failing` instead of hours of silent
 // drift.
 //
-// Alert on `rate(ratesengine_postgres_ping_total{outcome="error"}[5m]) > 0`
+// Alert on `rate(stellaratlas_postgres_ping_total{outcome="error"}[5m]) > 0`
 // for 2 m → page. A handful of failures during postgres restart is
 // expected; a sustained non-zero rate means the pool is wedged.
 var PostgresPingTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_postgres_ping_total",
+		Name: "stellaratlas_postgres_ping_total",
 		Help: "Indexer postgres-resilience ping outcomes. Sustained error rate ⇒ pool is dead and the lifetime safety-net hasn't refreshed yet (F-0151).",
 	},
 	[]string{"outcome"},
@@ -1437,7 +1437,7 @@ var PostgresPingTotal = prometheus.NewCounterVec(
 // is the page signal. F-0151.
 var PostgresPingFailureStreak = prometheus.NewGauge(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_postgres_ping_failure_streak",
+		Name: "stellaratlas_postgres_ping_failure_streak",
 		Help: "Indexer postgres-ping consecutive failure count (resets to 0 on the next success). F-0151.",
 	},
 )
@@ -1462,8 +1462,8 @@ var PostgresPingFailureStreak = prometheus.NewGauge(
 // [TLSCertProbeTotal] tracks probe outcome.
 var TLSCertNotAfterUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
-		Name: "ratesengine_tls_cert_not_after_unix",
-		Help: "Unix-seconds NotAfter timestamp of the leaf TLS cert observed at the configured host. Set by the API binary's self-probe (F-0051). Probe failures keep the last-known value; pair with ratesengine_tls_cert_probe_total{outcome=error} to detect a stuck probe.",
+		Name: "stellaratlas_tls_cert_not_after_unix",
+		Help: "Unix-seconds NotAfter timestamp of the leaf TLS cert observed at the configured host. Set by the API binary's self-probe (F-0051). Probe failures keep the last-known value; pair with stellaratlas_tls_cert_probe_total{outcome=error} to detect a stuck probe.",
 	},
 	[]string{"host"},
 )
@@ -1476,7 +1476,7 @@ var TLSCertNotAfterUnix = prometheus.NewGaugeVec(
 // the gauge ages out via the alert rule's `14 day` threshold.
 var TLSCertProbeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_tls_cert_probe_total",
+		Name: "stellaratlas_tls_cert_probe_total",
 		Help: "TLS cert self-probe outcomes per host. outcome ∈ {ok, dial_error, no_cert, timeout}. F-0051.",
 	},
 	[]string{"host", "outcome"},
@@ -1498,7 +1498,7 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 //     (get_account|upsert_subscription|account_update|list_keys|key_update)
 var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_stripe_platform_sync_errors_total",
+		Name: "stellaratlas_stripe_platform_sync_errors_total",
 		Help: "Stripe webhook platform-store side-effect failures, labelled by operation. Non-zero = bridge degraded; customer dashboard state drifting from Stripe billing state.",
 	},
 	[]string{"operation"},
@@ -1525,7 +1525,7 @@ var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 // is enabled.
 var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "ratesengine_ch_live_sink_ledgers_total",
+		Name: "stellaratlas_ch_live_sink_ledgers_total",
 		Help: "Ledgers processed by the ClickHouse real-time dual-sink, labelled by outcome (written|buffered|dropped|errored).",
 	},
 	[]string{"outcome"},
@@ -1544,7 +1544,7 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 // up. Bounded label set (none) so the metric is always emitted.
 var MarketsSkippedRowsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "ratesengine_markets_skipped_rows_total",
+		Name: "stellaratlas_markets_skipped_rows_total",
 		Help: "Count of trades rows skipped by the /v1/markets scanner because base/quote did not parse as canonical asset strings. Non-zero indicates non-pipeline writes; investigate and clean up.",
 	},
 )

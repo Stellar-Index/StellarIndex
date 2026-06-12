@@ -9,7 +9,7 @@ status: completed
 **Last verified:** 2026-06-12
 **Status:** Completed (shipped rc.91–rc.98 per ADR-0032 Phase 5; the
 plan below is retained as the historical rollout record).
-**Owners:** ratesengine eng
+**Owners:** stellaratlas eng
 
 ADR-0031 (data-derived coverage signal) and ADR-0032 (per-source
 tables as projections) are tightly coupled. ADR-0032 reshapes the
@@ -47,7 +47,7 @@ rollback if anything goes sideways.
 - `internal/storage/timescale/gap_detector.go` — extend
   `scanOneGapDetectorTarget` to ALSO query `COUNT(DISTINCT ledger)`
   alongside the LAG-gap query. Emits new gauge
-  `ratesengine_ingest_distinct_ledgers{source, table}`.
+  `stellaratlas_ingest_distinct_ledgers{source, table}`.
 - `internal/obs/metrics.go` — register
   `IngestSourceDistinctLedgers`.
 - `internal/storage/timescale/per_source_gaps.go` — add a small
@@ -110,7 +110,7 @@ is documentated, not bug.
     helpers DELETED
 - `internal/api/v1/diagnostics_ingestion_density_test.go` —
   tests rewritten to use the v2 path.
-- `cmd/ratesengine-ops/drain_cascade_window.go` —
+- `cmd/stellaratlas-ops/drain_cascade_window.go` —
   `writeDrainBackfillCursor` DELETED (the rc.89 cursor-credit
   fix is now redundant; cursors aren't a coverage signal).
 - Delete the SQL row inserted as the operator-fix on
@@ -119,7 +119,7 @@ is documentated, not bug.
 **Verification:**
 - Pre-switchover: density_v2 has been stable for 7 days (Phase 1).
 - Post-switchover: status-page density numbers identical to the
-  previous day. Alert rule `ratesengine_ingest_gap_detected`
+  previous day. Alert rule `stellaratlas_ingest_gap_detected`
   unchanged — same source of truth.
 
 **Risk:** Moderate. Status-page customers see numbers driven by a
@@ -154,14 +154,14 @@ ON CONFLICT DO NOTHING absorbs duplicates.
   into a shared registry).
 - `internal/projector/projector_test.go` (NEW) — integration
   test against testcontainers postgres.
-- `cmd/ratesengine-indexer/main.go` — wires the projector into
+- `cmd/stellaratlas-indexer/main.go` — wires the projector into
   the running indexer (one goroutine per source). New config:
   `[projector] enabled = true, parallelism = 8`.
 - `internal/obs/metrics.go` — adds
   `projector_lag_ledgers{source}` gauge + 
   `projector_events_decoded_total{source, outcome}` counter.
 - `deploy/monitoring/rules/projector.yml` (NEW) — alert rule
-  `ratesengine_projector_lag_high` fires when
+  `stellaratlas_projector_lag_high` fires when
   `projector_lag_ledgers > 1000` sustained 15min.
 
 **Verification:**
@@ -223,24 +223,24 @@ code still present in binary.
   (lines 334-770 roughly — anything that calls
   `store.Insert<protocol>*`). The `persistTrade` function stays
   (out-of-scope — non-Soroban path).
-- `cmd/ratesengine-ops/blend_backfill.go` (~165 LoC)
-- `cmd/ratesengine-ops/cctp_backfill.go` (~160 LoC)
-- `cmd/ratesengine-ops/comet_liquidity_backfill.go` (~165 LoC)
-- `cmd/ratesengine-ops/phoenix_backfill.go` (~180 LoC)
-- `cmd/ratesengine-ops/rozo_backfill.go` (~150 LoC)
-- `cmd/ratesengine-ops/sep41_transfers_backfill.go` (~200 LoC)
-- `cmd/ratesengine-ops/soroswap_skim_backfill.go` (~155 LoC)
-- `cmd/ratesengine-ops/drain_cascade_window.go` (~280 LoC)
-- `cmd/ratesengine-ops/drain_cascade_window_test.go` (~200 LoC)
-- `cmd/ratesengine-ops/main.go` — `case "blend-backfill":`
+- `cmd/stellaratlas-ops/blend_backfill.go` (~165 LoC)
+- `cmd/stellaratlas-ops/cctp_backfill.go` (~160 LoC)
+- `cmd/stellaratlas-ops/comet_liquidity_backfill.go` (~165 LoC)
+- `cmd/stellaratlas-ops/phoenix_backfill.go` (~180 LoC)
+- `cmd/stellaratlas-ops/rozo_backfill.go` (~150 LoC)
+- `cmd/stellaratlas-ops/sep41_transfers_backfill.go` (~200 LoC)
+- `cmd/stellaratlas-ops/soroswap_skim_backfill.go` (~155 LoC)
+- `cmd/stellaratlas-ops/drain_cascade_window.go` (~280 LoC)
+- `cmd/stellaratlas-ops/drain_cascade_window_test.go` (~200 LoC)
+- `cmd/stellaratlas-ops/main.go` — `case "blend-backfill":`
   + 6 sibling cases + `case "drain-cascade-window":` all
   deleted from the subcommand switch.
 - `docs/operations/runbooks/cascade-window-drain.md` —
   superseded by projector-replay runbook (NEW, separate file).
 
 **Files ADDED / UPDATED:**
-- `cmd/ratesengine-ops/projector.go` (NEW, ~150 LoC) — operator
-  subcommand `ratesengine-ops projector --source X --replay
+- `cmd/stellaratlas-ops/projector.go` (NEW, ~150 LoC) — operator
+  subcommand `stellaratlas-ops projector --source X --replay
   --from N --to M`. Wraps the same projector package code.
 - `docs/operations/runbooks/projector-replay.md` (NEW) —
   replaces cascade-window-drain.md.
@@ -315,10 +315,10 @@ Total: ~3-4 weeks calendar, ~4-6 PR-days engineering effort.
   Soroban events is unchanged — it just gets called by a
   different driver.
 - Does not introduce a new binary. The projector is a component
-  inside `cmd/ratesengine-indexer/`.
-- Does not change the alert surface. `ratesengine_ingest_gap_detected`
+  inside `cmd/stellaratlas-indexer/`.
+- Does not change the alert surface. `stellaratlas_ingest_gap_detected`
   continues firing on the same conditions; adds
-  `ratesengine_projector_lag_high` as a complementary alert.
+  `stellaratlas_projector_lag_high` as a complementary alert.
 
 ## Open questions
 

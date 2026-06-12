@@ -33,7 +33,7 @@ shape per region.
       Route53 permissions.**
 - [ ] **Vultr account provisioned + Bare Metal Singapore SKU
       ordered + Vultr Object Storage bucket created.**
-- [ ] **Cloudflare zone for `ratesengine.net` under operator
+- [ ] **Cloudflare zone for `stellaratlas.xyz` under operator
       control.**
 - [ ] **`r2.yml` + `r3.yml` inventories prepared** (copy from
       `configs/ansible/inventory/r2.example.yml` and
@@ -75,7 +75,7 @@ Watch for:
 ### Pass condition
 
 ```sh
-ssh r2 "systemctl status ratesengine-{indexer,aggregator,api}"
+ssh r2 "systemctl status stellaratlas-{indexer,aggregator,api}"
 # All three units active (running)
 
 ssh r2 "curl -sf http://localhost:8080/v1/healthz"
@@ -119,7 +119,7 @@ on Vultr's ingress bandwidth. Procedure in
 ### Pass condition
 
 ```sh
-ssh r3 "systemctl status ratesengine-{indexer,aggregator,api}"
+ssh r3 "systemctl status stellaratlas-{indexer,aggregator,api}"
 ssh r3 "curl -sf http://localhost:8080/v1/healthz"
 ssh r3 "psql -c 'SELECT pg_is_in_recovery();'"
 # Same shape as R2 pass condition; R3 is also a replica (async).
@@ -138,7 +138,7 @@ already lay down Patroni + etcd. This stage verifies it.)
 # From R1 — confirm both replicas are visible.
 ssh r1 "patronictl -c /etc/patroni.yml list"
 # Expected output:
-#  + Cluster: ratesengine ----------+----+-----------+
+#  + Cluster: stellaratlas ----------+----+-----------+
 #  | Member | Host | Role | State | TL | Lag in MB |
 #  | r1     | ...  | Leader | running | 12 |        |
 #  | r2     | ...  | Replica | running | 12 |        0 |
@@ -180,22 +180,22 @@ L4.17 ✅.
 
 ```
 0. Pre-reqs (already done in cdn-setup.md):
-   - api.ratesengine.net is proxied through Cloudflare.
-   - DNS for ratesengine.net under Cloudflare control.
+   - api.stellaratlas.xyz is proxied through Cloudflare.
+   - DNS for stellaratlas.xyz under Cloudflare control.
 
 1. Per-region origin records:
-   - api-r1.ratesengine.net → R1's HAProxy frontend IP
-   - api-r2.ratesengine.net → R2's ALB / HAProxy frontend
-   - api-r3.ratesengine.net → R3's HAProxy frontend
+   - api-r1.stellaratlas.xyz → R1's HAProxy frontend IP
+   - api-r2.stellaratlas.xyz → R2's ALB / HAProxy frontend
+   - api-r3.stellaratlas.xyz → R3's HAProxy frontend
    All Proxy: DNS-only (grey cloud) — operator wants the
    public-facing record (api.) proxied; per-region origins
    stay direct.
 
 2. Cloudflare Load Balancer (Smart Routing / GeoIP):
-   - Pool: ratesengine-api-pool
-     - Origin 1: api-r1.ratesengine.net  weight=1
-     - Origin 2: api-r2.ratesengine.net  weight=1
-     - Origin 3: api-r3.ratesengine.net  weight=1
+   - Pool: stellaratlas-api-pool
+     - Origin 1: api-r1.stellaratlas.xyz  weight=1
+     - Origin 2: api-r2.stellaratlas.xyz  weight=1
+     - Origin 3: api-r3.stellaratlas.xyz  weight=1
    - Health check: GET /v1/healthz, expect 200 within 5s,
      check every 30s. 3 consecutive failures → unhealthy
      (under-30s eviction).
@@ -203,7 +203,7 @@ L4.17 ✅.
      fallback ordering r1→r2→r3.
 
 3. Public-facing record:
-   - api.ratesengine.net → Cloudflare Load Balancer
+   - api.stellaratlas.xyz → Cloudflare Load Balancer
    - Proxy: Proxied (orange cloud)
 ```
 
@@ -212,9 +212,9 @@ L4.17 ✅.
 ```sh
 # From three different network egress points (or via curl --resolve):
 for region in r1 r2 r3; do
-  curl -sH "Host: api.ratesengine.net" \
-    --resolve api.ratesengine.net:443:$(dig +short api-${region}.ratesengine.net | head -1) \
-    https://api.ratesengine.net/v1/healthz | jq .
+  curl -sH "Host: api.stellaratlas.xyz" \
+    --resolve api.stellaratlas.xyz:443:$(dig +short api-${region}.stellaratlas.xyz | head -1) \
+    https://api.stellaratlas.xyz/v1/healthz | jq .
 done
 # Each region's healthz should return 200 with its own region label
 # (if the binary stamps cfg.Region.ID into the response).
@@ -223,7 +223,7 @@ done
 ```sh
 # Smoke test that GeoIP routing actually picks the right region.
 # Requires a VPN or remote shell:
-curl -s https://api.ratesengine.net/v1/healthz \
+curl -s https://api.stellaratlas.xyz/v1/healthz \
   -w '%{remote_ip}\n' -o /dev/null
 # IP should be the closest region's HAProxy frontend.
 ```
@@ -260,9 +260,9 @@ ssh r1 "sudo systemctl stop haproxy keepalived"
 #    Run from any non-r1 host:
 while true; do
   date -u
-  curl -sH "Host: api.ratesengine.net" \
-    --resolve api.ratesengine.net:443:r2-ip-here:443 \
-    https://api.ratesengine.net/v1/healthz \
+  curl -sH "Host: api.stellaratlas.xyz" \
+    --resolve api.stellaratlas.xyz:443:r2-ip-here:443 \
+    https://api.stellaratlas.xyz/v1/healthz \
     -w 'http=%{http_code} t=%{time_total}\n' -o /dev/null
   sleep 5
 done

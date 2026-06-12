@@ -156,7 +156,7 @@ host in each region:
    checkpoints.
 3. For the three most recent checkpoints in common, compares the
    bucket-hash lists byte-for-byte.
-4. Mismatch → Prometheus counter `ratesengine_archive_divergence_total{a,b}`
+4. Mismatch → Prometheus counter `stellaratlas_archive_divergence_total{a,b}`
    increments + AlertManager fires P1.
 
 The hourly rhythm matches the checkpoint cadence (every 64 ledgers
@@ -357,7 +357,7 @@ real drift event surfaces.
 
 ### 8.1 Public API
 
-- `api.ratesengine.net` is a Cloudflare-managed anycast record.
+- `api.stellaratlas.xyz` is a Cloudflare-managed anycast record.
 - Cloudflare Load Balancer with:
   - GeoIP steering → closest healthy region.
   - Health checks per-region at `/readyz` every 15 s.
@@ -368,7 +368,7 @@ real drift event surfaces.
 
 ### 8.2 Admin / internal
 
-- `admin.ratesengine.net`: A-record to the ops jump host in the
+- `admin.stellaratlas.xyz`: A-record to the ops jump host in the
   primary region. Failover manual.
 - Region-specific hostnames (`r1.api.internal`, `r2.api.internal`,
   `r3.api.internal`) for cross-region pod-to-pod comms and

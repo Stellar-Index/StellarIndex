@@ -16,7 +16,7 @@ import (
 //
 // Configured via the Resend API token (resend_api_key).
 // Production deployments populate it from
-// `RATESENGINE_RESEND_API_KEY`; nil token → constructor returns
+// `STELLARATLAS_RESEND_API_KEY`; nil token → constructor returns
 // an error so deployments missing the key fail loud rather
 // than silently dropping mail.
 type ResendSender struct {

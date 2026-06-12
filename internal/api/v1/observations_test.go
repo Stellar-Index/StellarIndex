@@ -98,7 +98,7 @@ func TestObservations_UnknownSource400(t *testing.T) {
 	}
 	var p v1.Problem
 	mustDecode(t, resp, &p)
-	if p.Type != "https://api.ratesengine.net/errors/unknown-source" {
+	if p.Type != "https://api.stellaratlas.xyz/errors/unknown-source" {
 		t.Errorf("Type = %q", p.Type)
 	}
 }

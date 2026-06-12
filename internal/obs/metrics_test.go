@@ -54,23 +54,23 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	expected := []string{
 		"http_requests_total",
 		"http_request_duration_seconds",
-		"ratesengine_source_events_total",
-		"ratesengine_source_lag_ledgers",
-		"ratesengine_source_last_event_unix",
-		"ratesengine_source_enabled",
-		"ratesengine_source_decode_errors_total",
-		"ratesengine_source_orphan_events_total",
-		"ratesengine_source_insert_errors_total",
-		"ratesengine_ratelimit_fail_open_total",
-		"ratesengine_sep1_cache_ops_total",
-		"ratesengine_cursor_last_ledger",
-		"ratesengine_price_staleness_seconds",
-		"ratesengine_oracle_last_update_unix",
-		"ratesengine_oracle_resolution_seconds",
-		"ratesengine_aggregator_ticks_total",
-		"ratesengine_aggregator_vwap_writes_total",
-		"ratesengine_aggregator_empty_windows_total",
-		"ratesengine_aggregator_dropped_trades_total",
+		"stellaratlas_source_events_total",
+		"stellaratlas_source_lag_ledgers",
+		"stellaratlas_source_last_event_unix",
+		"stellaratlas_source_enabled",
+		"stellaratlas_source_decode_errors_total",
+		"stellaratlas_source_orphan_events_total",
+		"stellaratlas_source_insert_errors_total",
+		"stellaratlas_ratelimit_fail_open_total",
+		"stellaratlas_sep1_cache_ops_total",
+		"stellaratlas_cursor_last_ledger",
+		"stellaratlas_price_staleness_seconds",
+		"stellaratlas_oracle_last_update_unix",
+		"stellaratlas_oracle_resolution_seconds",
+		"stellaratlas_aggregator_ticks_total",
+		"stellaratlas_aggregator_vwap_writes_total",
+		"stellaratlas_aggregator_empty_windows_total",
+		"stellaratlas_aggregator_dropped_trades_total",
 		// Language-native + process metrics from collectors.
 		"go_goroutines",
 		"process_open_fds",
@@ -270,7 +270,7 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 }
 
 // TestHTTPMetrics_SyntheticUASkipsHistogram pins the SLO-noise
-// fix: requests with `User-Agent: ratesengine-smoke/N` (the smoke
+// fix: requests with `User-Agent: stellaratlas-smoke/N` (the smoke
 // timer) MUST NOT contribute to the http_requests_total counter
 // or http_request_duration_seconds histogram. Otherwise every
 // smoke fire pollutes the SLO recording rule with cold-cache
@@ -291,7 +291,7 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	// Synthetic probe — should be skipped.
 	rr2 := httptest.NewRecorder()
 	smokeReq := httptest.NewRequest(http.MethodGet, "/v1/synthetic-probe", nil)
-	smokeReq.Header.Set("User-Agent", "ratesengine-smoke/1")
+	smokeReq.Header.Set("User-Agent", "stellaratlas-smoke/1")
 	h.ServeHTTP(rr2, smokeReq)
 
 	ts := httptest.NewServer(obs.Handler())
@@ -375,15 +375,15 @@ func TestZeroSeed_F0033(t *testing.T) {
 	s := string(body)
 
 	mustContain := []string{
-		`ratesengine_aggregator_triangulations_total{outcome="ok"} 0`,
-		`ratesengine_aggregator_triangulations_total{outcome="missing_leg"} 0`,
-		`ratesengine_aggregator_triangulations_total{outcome="parse_error"} 0`,
-		`ratesengine_aggregator_triangulations_total{outcome="redis_error"} 0`,
-		`ratesengine_stripe_platform_sync_errors_total{operation="get_account"} 0`,
-		`ratesengine_stripe_platform_sync_errors_total{operation="upsert_subscription"} 0`,
-		`ratesengine_stripe_platform_sync_errors_total{operation="account_update"} 0`,
-		`ratesengine_stripe_platform_sync_errors_total{operation="list_keys"} 0`,
-		`ratesengine_stripe_platform_sync_errors_total{operation="key_update"} 0`,
+		`stellaratlas_aggregator_triangulations_total{outcome="ok"} 0`,
+		`stellaratlas_aggregator_triangulations_total{outcome="missing_leg"} 0`,
+		`stellaratlas_aggregator_triangulations_total{outcome="parse_error"} 0`,
+		`stellaratlas_aggregator_triangulations_total{outcome="redis_error"} 0`,
+		`stellaratlas_stripe_platform_sync_errors_total{operation="get_account"} 0`,
+		`stellaratlas_stripe_platform_sync_errors_total{operation="upsert_subscription"} 0`,
+		`stellaratlas_stripe_platform_sync_errors_total{operation="account_update"} 0`,
+		`stellaratlas_stripe_platform_sync_errors_total{operation="list_keys"} 0`,
+		`stellaratlas_stripe_platform_sync_errors_total{operation="key_update"} 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {

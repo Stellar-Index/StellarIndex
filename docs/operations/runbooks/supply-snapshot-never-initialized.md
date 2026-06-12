@@ -5,20 +5,20 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `ratesengine_supply_snapshot_never_initialized`
+# Runbook — `stellaratlas_supply_snapshot_never_initialized`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_supply_snapshot_never_initialized` (P3, ticket) |
+| Alert | `stellaratlas_supply_snapshot_never_initialized` (P3, ticket) |
 | Detected by | `deploy/monitoring/rules/supply-snapshot.yml` |
 | Typical MTTR | 10 min (one-shot operator action) |
 | Impact | `/v1/assets/{id}` F2 fields (circulating / total / max / market_cap_usd / fdv_usd) render as `null` for every asset. |
 
 ## Why this exists separately from `_stale`
 
-`_stale` fires when `ratesengine_supply_snapshot_last_success_timestamp`
+`_stale` fires when `stellaratlas_supply_snapshot_last_success_timestamp`
 is *older than 36 h*. That requires the metric to have existed at
 some point — Prometheus's `time() - <missing>` is `no data`, not
 infinity, so a deployment that has *never* written a snapshot is
@@ -52,10 +52,10 @@ systemctl status supply-snapshot.timer  --no-pager
 systemctl status supply-snapshot.service --no-pager  # most recent run
 
 # 3. Is the goroutine path enabled instead?
-grep -A 1 'aggregator_refresh_enabled' /etc/ratesengine.toml
+grep -A 1 'aggregator_refresh_enabled' /etc/stellaratlas.toml
 # absent or =false → not enabled
 # =true            → check aggregator logs for "supply-refresh" lines
-journalctl -u ratesengine-aggregator --since '2 days ago' | grep -E 'supply-refresh|supply.*ok|supply.*err'
+journalctl -u stellaratlas-aggregator --since '2 days ago' | grep -E 'supply-refresh|supply.*ok|supply.*err'
 ```
 
 ## Resolution
@@ -76,7 +76,7 @@ sudo journalctl -u supply-snapshot.service --no-pager -n 50
 # Expect: a "wrote snapshot for asset XLM" log line + zero exit.
 
 # Verify the metric appears (once node_exporter rescrapes the .prom):
-curl -s http://localhost:9100/metrics | grep ratesengine_supply_snapshot_last_success_timestamp
+curl -s http://localhost:9100/metrics | grep stellaratlas_supply_snapshot_last_success_timestamp
 # Expect a single line with a recent unix timestamp.
 ```
 
@@ -85,17 +85,17 @@ The alert clears within 5 min of a successful first run.
 ### Path B — aggregator-resident goroutine (sub-minute cadence)
 
 ```sh
-# Edit /etc/ratesengine.toml:
+# Edit /etc/stellaratlas.toml:
 [supply]
 aggregator_refresh_enabled = true
 # Optional: aggregator_refresh_cadence = "5m" (default)
 
-sudo systemctl restart ratesengine-aggregator
-sudo journalctl -u ratesengine-aggregator -f | grep -E 'supply-refresh'
+sudo systemctl restart stellaratlas-aggregator
+sudo journalctl -u stellaratlas-aggregator -f | grep -E 'supply-refresh'
 # Expect a "supply-refresh" tick line within `aggregator_refresh_cadence`.
 
 # Verify the metric appears in the aggregator's /metrics:
-curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_supply_refresh_total
+curl -s http://localhost:9465/metrics | grep stellaratlas_aggregator_supply_refresh_total
 # Expect at least one outcome="ok" line per watched asset_key.
 ```
 
@@ -129,12 +129,12 @@ After enabling either path, the following should be true within
 # Alert clears in Prometheus.
 
 # Database has rows.
-sudo -u postgres psql -d ratesengine -c \
+sudo -u postgres psql -d stellaratlas -c \
   "SELECT asset_key, count(*) AS rows, max(time) AS latest
    FROM asset_supply_history GROUP BY asset_key ORDER BY asset_key"
 
 # API surfaces the data.
-curl -s 'https://api.ratesengine.net/v1/assets/native' | jq '.data.circulating_supply'
+curl -s 'https://api.stellaratlas.xyz/v1/assets/native' | jq '.data.circulating_supply'
 # Expect a numeric string, not null.
 ```
 

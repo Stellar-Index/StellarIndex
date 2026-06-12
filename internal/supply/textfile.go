@@ -18,7 +18,7 @@ import (
 //
 // Atomic write protocol matches the established pattern in
 // internal/archivecompleteness/metrics.go::WriteTextfileAtomic and
-// cmd/ratesengine-sla-probe/textfile.go::writeTextfileAtomic —
+// cmd/stellaratlas-sla-probe/textfile.go::writeTextfileAtomic —
 // `<path>.tmp` first, rename into place. node_exporter skips
 // `.tmp` files, so a partial write never appears in a scrape.
 func WriteSnapshotTextfile(path string, snap Supply, durationSec float64, pass bool) error {
@@ -44,14 +44,14 @@ func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) er
 
 // writeSnapshotMetrics emits the full success-path metric set:
 //
-//	ratesengine_supply_snapshot_total_xlm{asset_key=}
-//	ratesengine_supply_snapshot_circulating_xlm{asset_key=}
-//	ratesengine_supply_snapshot_max_xlm{asset_key=}              (only when set)
-//	ratesengine_supply_snapshot_ledger{asset_key=}
-//	ratesengine_supply_snapshot_observed_at_seconds{asset_key=}
-//	ratesengine_supply_snapshot_run_duration_seconds
-//	ratesengine_supply_snapshot_unit_failed{asset_key=}          0
-//	ratesengine_supply_snapshot_last_success_timestamp{asset_key=}
+//	stellaratlas_supply_snapshot_total_xlm{asset_key=}
+//	stellaratlas_supply_snapshot_circulating_xlm{asset_key=}
+//	stellaratlas_supply_snapshot_max_xlm{asset_key=}              (only when set)
+//	stellaratlas_supply_snapshot_ledger{asset_key=}
+//	stellaratlas_supply_snapshot_observed_at_seconds{asset_key=}
+//	stellaratlas_supply_snapshot_run_duration_seconds
+//	stellaratlas_supply_snapshot_unit_failed{asset_key=}          0
+//	stellaratlas_supply_snapshot_last_success_timestamp{asset_key=}
 //
 // XLM units (not stroops) for human-readable Grafana panels —
 // stroops × 10^-7. NUMERIC stroop precision is preserved in
@@ -62,41 +62,41 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 	asset := snap.AssetKey
 
 	if err := writeGauge(w,
-		"ratesengine_supply_snapshot_total_xlm",
+		"stellaratlas_supply_snapshot_total_xlm",
 		"Total supply in XLM units (stroops × 10^-7).",
 		asset, stroopsToXLM(snap.TotalSupply)); err != nil {
 		return err
 	}
 	if err := writeGauge(w,
-		"ratesengine_supply_snapshot_circulating_xlm",
+		"stellaratlas_supply_snapshot_circulating_xlm",
 		"Circulating supply in XLM units.",
 		asset, stroopsToXLM(snap.CirculatingSupply)); err != nil {
 		return err
 	}
 	if snap.MaxSupply != nil {
 		if err := writeGauge(w,
-			"ratesengine_supply_snapshot_max_xlm",
+			"stellaratlas_supply_snapshot_max_xlm",
 			"Max supply in XLM units (omitted for uncapped assets).",
 			asset, stroopsToXLM(snap.MaxSupply)); err != nil {
 			return err
 		}
 	}
 	if err := writeGaugeInt(w,
-		"ratesengine_supply_snapshot_ledger",
+		"stellaratlas_supply_snapshot_ledger",
 		"Ledger sequence the snapshot was attributed to.",
 		asset, int64(snap.LedgerSequence)); err != nil {
 		return err
 	}
 	if err := writeGaugeInt(w,
-		"ratesengine_supply_snapshot_observed_at_seconds",
+		"stellaratlas_supply_snapshot_observed_at_seconds",
 		"Unix timestamp of the snapshot's observed_at.",
 		asset, snap.ObservedAt.Unix()); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w,
-		"# HELP ratesengine_supply_snapshot_run_duration_seconds Wall-clock duration of the most recent snapshot run.\n"+
-			"# TYPE ratesengine_supply_snapshot_run_duration_seconds gauge\n"+
-			"ratesengine_supply_snapshot_run_duration_seconds %.3f\n",
+		"# HELP stellaratlas_supply_snapshot_run_duration_seconds Wall-clock duration of the most recent snapshot run.\n"+
+			"# TYPE stellaratlas_supply_snapshot_run_duration_seconds gauge\n"+
+			"stellaratlas_supply_snapshot_run_duration_seconds %.3f\n",
 		durationSec); err != nil {
 		return err
 	}
@@ -105,14 +105,14 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 		failed = 1
 	}
 	if err := writeGaugeInt(w,
-		"ratesengine_supply_snapshot_unit_failed",
+		"stellaratlas_supply_snapshot_unit_failed",
 		"1 when the most recent run failed, 0 on success.",
 		asset, int64(failed)); err != nil {
 		return err
 	}
 	if pass {
 		if err := writeGaugeInt(w,
-			"ratesengine_supply_snapshot_last_success_timestamp",
+			"stellaratlas_supply_snapshot_last_success_timestamp",
 			"Unix timestamp of the most recent successful snapshot.",
 			asset, time.Now().Unix()); err != nil {
 			return err
@@ -127,15 +127,15 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 // (so the staleness alert keys on the previous-scrape value).
 func writeFailureMetrics(w io.Writer, assetRaw string, durationSec float64) error {
 	if err := writeGaugeInt(w,
-		"ratesengine_supply_snapshot_unit_failed",
+		"stellaratlas_supply_snapshot_unit_failed",
 		"1 when the most recent run failed, 0 on success.",
 		assetRaw, 1); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(w,
-		"# HELP ratesengine_supply_snapshot_run_duration_seconds Wall-clock duration of the most recent snapshot run.\n"+
-			"# TYPE ratesengine_supply_snapshot_run_duration_seconds gauge\n"+
-			"ratesengine_supply_snapshot_run_duration_seconds %.3f\n",
+		"# HELP stellaratlas_supply_snapshot_run_duration_seconds Wall-clock duration of the most recent snapshot run.\n"+
+			"# TYPE stellaratlas_supply_snapshot_run_duration_seconds gauge\n"+
+			"stellaratlas_supply_snapshot_run_duration_seconds %.3f\n",
 		durationSec)
 	return err
 }

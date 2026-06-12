@@ -5,14 +5,14 @@ status: draft
 severity: P2 (direct-threshold) / P1 (SLO burn-rate fast)
 ---
 
-# Runbook — `ratesengine_api_latency_p95_high` / `_p99_high` (+ SLO burn-rate variants)
+# Runbook — `stellaratlas_api_latency_p95_high` / `_p99_high` (+ SLO burn-rate variants)
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Direct-threshold alerts | `ratesengine_api_latency_p95_high` (> 500 ms), `ratesengine_api_latency_p99_high` (> 2 s) — `deploy/monitoring/rules/api.yml` |
-| SLO burn-rate alerts | `ratesengine_slo_latency_burn_{fast,medium,slow}` (per ADR-0009 multi-window pattern) — `deploy/monitoring/rules/slo.yml` |
+| Direct-threshold alerts | `stellaratlas_api_latency_p95_high` (> 500 ms), `stellaratlas_api_latency_p99_high` (> 2 s) — `deploy/monitoring/rules/api.yml` |
+| SLO burn-rate alerts | `stellaratlas_slo_latency_burn_{fast,medium,slow}` (per ADR-0009 multi-window pattern) — `deploy/monitoring/rules/slo.yml` |
 | Severity | P2 (ticket) for direct-threshold; **P1** for fast/medium burn, P3 for slow burn |
 | Typical MTTR | 15–60 min |
 | Impact | Requests complete but slowly. Freighter's wallet feels sluggish; clients with tight timeouts may give up and retry. Not customer-visible as an outage, but breaches our SLA (p95 ≤ 200 ms, p99 ≤ 500 ms). |
@@ -52,7 +52,7 @@ tolerate the symptom until the alert clears.
 ```sh
 # Which endpoint is slow?
 curl -s http://prometheus:9090/api/v1/query --data-urlencode \
-  'query=histogram_quantile(0.95, sum by (route, le) (rate(http_request_duration_seconds_bucket{job=~"ratesengine[_-]api"}[5m])))' | \
+  'query=histogram_quantile(0.95, sum by (route, le) (rate(http_request_duration_seconds_bucket{job=~"stellaratlas[_-]api"}[5m])))' | \
   jq -r '.data.result[] | "\(.metric.route): \(.value[1])s"' | sort -k2 -rn | head
 
 # Is Redis healthy? Cache-miss storms are the common trigger.
@@ -61,7 +61,7 @@ curl -s http://api:9464/metrics | grep sep1_cache_ops_total
 
 # Is Timescale the bottleneck?
 psql -c "SELECT state, count(*), max(now()-query_start) AS oldest
-         FROM pg_stat_activity WHERE application_name LIKE 'ratesengine%'
+         FROM pg_stat_activity WHERE application_name LIKE 'stellaratlas%'
          GROUP BY state;"
 ```
 
@@ -71,7 +71,7 @@ psql -c "SELECT state, count(*), max(now()-query_start) AS oldest
    evicted / TTL'd; suddenly every `/v1/price?asset=X` request is
    a full Timescale query. This cascades because Timescale
    saturates → every request slows → pileup.
-   - Signal: `ratesengine_sep1_cache_ops_total{result="miss"}`
+   - Signal: `stellaratlas_sep1_cache_ops_total{result="miss"}`
      rate jumps; Redis eviction rate > 100/s.
    - Mitigation: warm the cache or scale Redis memory; see
      `redis-memory.md`.
@@ -86,12 +86,12 @@ psql -c "SELECT state, count(*), max(now()-query_start) AS oldest
 3. **CAGG not refreshed**. `/v1/vwap` / `/v1/twap` fall back to a
    raw-trades aggregation when the CAGG is stale; that path is
    O(trades) not O(buckets) and can take seconds.
-   - Signal: `ratesengine_timescale_cagg_stale` usually fires too.
+   - Signal: `stellaratlas_timescale_cagg_stale` usually fires too.
    - Mitigation: refresh the CAGG manually; see `cagg-stale.md`.
 
 4. **Noisy neighbor on the host**. Another tenant on the same node
    pegs CPU or IO.
-   - Signal: `ratesengine_host_cpu_high` fires on the same instance.
+   - Signal: `stellaratlas_host_cpu_high` fires on the same instance.
    - Mitigation: scale horizontally or move to a dedicated node.
 
 5. **GC pressure** from a runaway allocation pattern (we've seen

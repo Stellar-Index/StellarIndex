@@ -28,7 +28,7 @@ type NetworkStatsReader interface {
 //     build.
 //   - /v1/status.freshness.total_sources counts sources the
 //     operator has ENABLED in their region config (Prometheus
-//     `count(ratesengine_source_enabled == 1)`); a strict subset.
+//     `count(stellaratlas_source_enabled == 1)`); a strict subset.
 //   - /v1/status.freshness.active_sources further narrows to
 //     sources that have emitted an event in the last 10 minutes.
 //
@@ -59,7 +59,7 @@ type NetworkStats struct {
 func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 	if s.networkStats == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/network-stats-unavailable",
+			"https://api.stellaratlas.xyz/errors/network-stats-unavailable",
 			"Network stats unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the network-stats reader yet.")
 		return
@@ -68,7 +68,7 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Warn("network stats", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/network-stats-error",
+			"https://api.stellaratlas.xyz/errors/network-stats-error",
 			"Network stats failed", http.StatusInternalServerError,
 			"Storage layer returned an error.")
 		return

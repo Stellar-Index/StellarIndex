@@ -1,7 +1,7 @@
 # Blend — contract & event verification
 
 > **For the Blend team:** this is the complete set of Blend contracts and
-> events Rates Engine ingests and attributes to Blend. Please confirm the
+> events Stellar Atlas ingests and attributes to Blend. Please confirm the
 > two pool factories and the pool list are correct and complete (especially
 > any factory or pool **not** listed here).
 >

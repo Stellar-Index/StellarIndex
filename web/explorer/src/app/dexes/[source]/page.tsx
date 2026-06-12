@@ -72,7 +72,7 @@ export async function generateMetadata({
   const { source } = await params;
   const info = DEX_INFO[source];
   if (!info) return { title: 'DEX not found' };
-  const canonical = `https://ratesengine.net/dexes/${encodeURIComponent(source)}`;
+  const canonical = `https://stellaratlas.xyz/dexes/${encodeURIComponent(source)}`;
   const title = `${info.name} — every pool, live`;
   const description = `All ${info.name} pools observed in the last 14 days, with per-pool 24h trade count + last trade. Source: /v1/markets?source=${source}.`;
   return {
@@ -98,9 +98,9 @@ export default async function SourceDetailPage({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://ratesengine.net' },
-      { '@type': 'ListItem', position: 2, name: 'DEXes', item: 'https://ratesengine.net/dexes' },
-      { '@type': 'ListItem', position: 3, name: info.name, item: `https://ratesengine.net/dexes/${source}` },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellaratlas.xyz' },
+      { '@type': 'ListItem', position: 2, name: 'DEXes', item: 'https://stellaratlas.xyz/dexes' },
+      { '@type': 'ListItem', position: 3, name: info.name, item: `https://stellaratlas.xyz/dexes/${source}` },
     ],
   };
 

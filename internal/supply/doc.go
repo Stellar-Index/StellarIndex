@@ -45,5 +45,5 @@
 //   - [CrosscheckRefresher] — SAC-wrapped classic ↔ SEP-41
 //     cross-check (operator monitoring hook); textfile-format
 //     snapshot writer at [WriteSnapshotTextfile] for the
-//     ratesengine-ops `supply-snapshot` timer.
+//     stellaratlas-ops `supply-snapshot` timer.
 package supply

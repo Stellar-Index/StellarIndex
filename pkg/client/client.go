@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-// DefaultBaseURL is the public Rates Engine endpoint. Override via
+// DefaultBaseURL is the public Stellar Atlas endpoint. Override via
 // [Options.BaseURL] for staging / self-hosted deployments.
-const DefaultBaseURL = "https://api.ratesengine.net"
+const DefaultBaseURL = "https://api.stellaratlas.xyz"
 
 // DefaultTimeout is the per-request timeout applied when
 // [Options.HTTPClient] is nil. Hot-path calls (Price, Observations)
@@ -25,7 +25,7 @@ const DefaultTimeout = 30 * time.Second
 // userAgent is sent on every request so server-side telemetry can
 // distinguish SDK callers from raw HTTP clients. Bump the version
 // in tandem with the SDK module's tag.
-const userAgent = "ratesengine-go-sdk/0.1.0"
+const userAgent = "stellaratlas-go-sdk/0.1.0"
 
 // Options configures a [Client] at construction.
 type Options struct {

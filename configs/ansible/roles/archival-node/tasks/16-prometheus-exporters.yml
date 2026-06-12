@@ -99,7 +99,7 @@
 # to a dedicated `postgres_exporter` role:
 #   CREATE USER postgres_exporter;
 #   GRANT pg_monitor TO postgres_exporter;
-#   GRANT CONNECT ON DATABASE ratesengine TO postgres_exporter;
+#   GRANT CONNECT ON DATABASE stellaratlas TO postgres_exporter;
 # then swap `user=postgres` for `user=postgres_exporter` here.
 
 - name: Install prometheus-postgres-exporter Debian package

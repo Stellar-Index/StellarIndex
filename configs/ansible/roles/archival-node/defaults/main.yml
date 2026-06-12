@@ -17,14 +17,14 @@
 # When provisioning a new region, copy r1.example.yml → rN.yml and
 # override only the [Per-region] knobs. The inventory file is also
 # the right place for the per-region cron settings (verify-archive
-# tier flags) and for the ratesengine_live_seam_ledger value (each
+# tier flags) and for the stellaratlas_live_seam_ledger value (each
 # region has its own seam where its galexie-live bucket starts).
 
 # ───── Region ────────────────────────────────────────────────────────
 # [Per-region: r1=FSN1 (Hetzner Falkenstein), r2=US-East-1, r3=Singapore]
 region_id:           "r1"
 region_name:         "FSN1"
-home_domain:         "ratesengine.net"
+home_domain:         "stellaratlas.xyz"
 
 # ───── Which subsystems to run on this host ──────────────────────────
 run_postgres:        true
@@ -36,7 +36,7 @@ run_stellar_core:    false
 run_galexie:         true
 # stellar-rpc is NOT part of this role. Our indexer reads galexie's
 # MinIO output directly via ingest.ApplyLedgerMetadata, so
-# stellar-rpc's JSON-RPC surface isn't on the Rates Engine data
+# stellar-rpc's JSON-RPC surface isn't on the Stellar Atlas data
 # path. It was removed from r1 on 2026-04-23 and the role's
 # stellar-rpc task/templates were deleted on 2026-05-22 — see
 # docs/operations/r1-deployment-state.md for the rationale.
@@ -69,7 +69,7 @@ zfs_datasets:
     recordsize: "128K"
     compression: "zstd"
     atime: "off"
-    mountpoint: "/var/lib/ratesengine"
+    mountpoint: "/var/lib/stellaratlas"
   - name: "postgres"
     recordsize: "8K"
     compression: "zstd"
@@ -164,19 +164,19 @@ postgres_user_core:      "stellar_core"
 # CAGGs (see migrations/). TimescaleDB extension is enabled at db
 # create time so the migrations can `CREATE EXTENSION IF NOT EXISTS
 # timescaledb` without elevation.
-postgres_db_ratesengine:    "ratesengine"
-postgres_user_ratesengine:  "ratesengine"
-# postgres_pass_ratesengine ← set in ansible-vault secrets file
+postgres_db_stellaratlas:    "stellaratlas"
+postgres_user_stellaratlas:  "stellaratlas"
+# postgres_pass_stellaratlas ← set in ansible-vault secrets file
 
-# ───── ratesengine-indexer / aggregator / api services ───────────────
-run_ratesengine: true
+# ───── stellaratlas-indexer / aggregator / api services ───────────────
+run_stellaratlas: true
 
 # Indexer source fleet. Region-INVARIANT by design (ADR-0015 closed-
 # bucket contract — every region must produce byte-equivalent
 # aggregate output from the same inputs), so the full 13-source set
 # is the default rather than a per-region knob. Matches r1's live
-# /etc/ratesengine.toml.
-ratesengine_enabled_sources:
+# /etc/stellaratlas.toml.
+stellaratlas_enabled_sources:
   - "soroswap"
   - "soroswap-router"
   - "defindex"
@@ -196,7 +196,7 @@ ratesengine_enabled_sources:
 # pick an explicit ledger to avoid accidental genesis re-ingest.
 # [Per-region: each region picks its own backfill floor — r1's live
 #  value is 62403000. Set in inventory.]
-ratesengine_backfill_from_ledger: 0
+stellaratlas_backfill_from_ledger: 0
 
 # First ledger present in the galexie-live bucket. Below this the
 # indexer reads from galexie-archive. Set to whatever galexie-append.sh
@@ -209,7 +209,7 @@ ratesengine_backfill_from_ledger: 0
 #  region's *own* galexie-live bucket starts emitting. R1's seam was
 #  the cutover from archive-fill to live-tail (~April 2026). R2/R3
 #  will have later seams set when their indexers first start.]
-ratesengine_live_seam_ledger: 0
+stellaratlas_live_seam_ledger: 0
 
 # ───── Stellar network / quorum ──────────────────────────────────────
 stellar_network:         "pubnet"
@@ -447,14 +447,14 @@ minio_buckets:
   - "galexie-archive"
   - "backups"
 
-# ───── ratesengine-reader (read-only on both buckets) ────────────────
-# Used by ratesengine-ops verify-archive and (eventually) the indexer
+# ───── stellaratlas-reader (read-only on both buckets) ────────────────
+# Used by stellaratlas-ops verify-archive and (eventually) the indexer
 # + api. galexie-writer / galexie-archive-writer are write-only and
 # scoped per bucket; this is the read counterpart, scoped to BOTH
 # buckets because the indexer stitches across them at the live/archive
 # seam.
-ratesengine_reader_access_key: "ratesengine-reader"
-# ratesengine_reader_secret_key ← vault
+stellaratlas_reader_access_key: "stellaratlas-reader"
+# stellaratlas_reader_secret_key ← vault
 
 # ───── Firewall ──────────────────────────────────────────────────────
 # Ports open on the public interface. Everything else rejects.

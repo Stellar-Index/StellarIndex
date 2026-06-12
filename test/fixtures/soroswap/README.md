@@ -67,5 +67,5 @@ buffer uses — then runs both through `decodeSwap`.
   then, the `new_pair` decoder is covered by the SDK-encoded tests
   in `decode_test.go`.
 - **WASM hash not yet resolved.** Fixtures currently land under
-  `v1-2026-04-23/` (tag + date label). When `ratesengine-ops
+  `v1-2026-04-23/` (tag + date label). When `stellaratlas-ops
   resolve-wasm` lands, re-label to the true WASM hash.

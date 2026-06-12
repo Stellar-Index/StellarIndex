@@ -35,12 +35,12 @@ const tlsCertProbeTimeout = 10 * time.Second
 // which auto-renews Let's Encrypt 30 days before expiry. If
 // renewal fails (DNS, rate limit, ACME quota) we historically
 // discovered only at cert expiry. This probe gives a
-// `ratesengine_tls_cert_not_after_unix` gauge that an alert can
+// `stellaratlas_tls_cert_not_after_unix` gauge that an alert can
 // chart against `time()` to catch a stuck renewal cycle.
 //
 // Failure semantics: the gauge is NOT cleared on probe failure —
 // the last-known value stays put. Operators rely on the paired
-// `ratesengine_tls_cert_probe_total{outcome}` counter to detect
+// `stellaratlas_tls_cert_probe_total{outcome}` counter to detect
 // a sustained probe error (e.g. host unreachable for >24 h).
 //
 // First probe runs immediately on goroutine start so a fresh

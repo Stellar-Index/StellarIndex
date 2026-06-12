@@ -87,7 +87,7 @@ type DiscoveredAsset struct {
 
 // ListDiscovered returns rows from `discovered_assets` ordered by
 // first_seen_at DESC. Used by the operator-facing "what's new"
-// query (a future ratesengine-ops subcommand) and integration
+// query (a future stellaratlas-ops subcommand) and integration
 // tests.
 //
 // limit caps the result count; pass 0 for no limit. Returns an

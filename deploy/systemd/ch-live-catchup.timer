@@ -1,5 +1,5 @@
 [Unit]
-Description=Rates Engine — CH live fan-out catch-up timer (every 10 min)
+Description=Stellar Atlas — CH live fan-out catch-up timer (every 10 min)
 
 [Timer]
 OnBootSec=5min

@@ -2,7 +2,7 @@
 
 ## Files
 
-- `Caddyfile.api` — fronts `api.ratesengine.net` → `localhost:3000`. Auto-HTTPS via Let's Encrypt's tls-alpn-01 challenge. Used on R1 today.
+- `Caddyfile.api` — fronts `api.stellaratlas.xyz` → `localhost:3000`. Auto-HTTPS via Let's Encrypt's tls-alpn-01 challenge. Used on R1 today.
 
 ## Why Caddy (vs HAProxy / Nginx / Cloudflare)
 
@@ -37,7 +37,7 @@ systemctl reload caddy
 
 ## API-side wiring
 
-The API needs `trusted_proxy_cidrs = ["127.0.0.1/32"]` in `/etc/ratesengine.toml`'s `[api]` section so it honours Caddy's `X-Forwarded-*` headers (without that, request-logger + rate-limit middleware key on `127.0.0.1` for every request — a real correctness bug for per-client rate limiting). R1 has this set as of 2026-05-05.
+The API needs `trusted_proxy_cidrs = ["127.0.0.1/32"]` in `/etc/stellaratlas.toml`'s `[api]` section so it honours Caddy's `X-Forwarded-*` headers (without that, request-logger + rate-limit middleware key on `127.0.0.1` for every request — a real correctness bug for per-client rate limiting). R1 has this set as of 2026-05-05.
 
 ## Real client IP under Cloudflare
 
@@ -55,11 +55,11 @@ If we ever move Caddy to a non-CF-fronted box (direct internet exposure), DELETE
 
 Auto-HTTPS via Let's Encrypt requires:
 
-1. `api.ratesengine.net` A record → `136.243.90.96` (or AAAA for IPv6)
+1. `api.stellaratlas.xyz` A record → `136.243.90.96` (or AAAA for IPv6)
 2. Ports 80 and 443 reachable from the public internet
 3. The DNS lookup completes globally (≤ 1 hour after creation; usually faster)
 
-Until the A record exists, Caddy retries acquisition every few minutes and logs `NXDOMAIN looking up A for api.ratesengine.net`. The `:443` listener is up and Caddy serves a self-signed fallback cert for testing on the IP directly. Once the DNS lands, the next ACME retry succeeds and the cert is auto-served from then on (Caddy renews automatically at 1/3-of-lifetime).
+Until the A record exists, Caddy retries acquisition every few minutes and logs `NXDOMAIN looking up A for api.stellaratlas.xyz`. The `:443` listener is up and Caddy serves a self-signed fallback cert for testing on the IP directly. Once the DNS lands, the next ACME retry succeeds and the cert is auto-served from then on (Caddy renews automatically at 1/3-of-lifetime).
 
 ## Smoke tests
 
@@ -67,21 +67,21 @@ After deploy + DNS landing:
 
 ```sh
 # Public TLS
-curl -sf https://api.ratesengine.net/v1/healthz             # 200
-curl -sI https://api.ratesengine.net/v1/healthz | grep -i strict-transport
+curl -sf https://api.stellaratlas.xyz/v1/healthz             # 200
+curl -sI https://api.stellaratlas.xyz/v1/healthz | grep -i strict-transport
 # Should see: Strict-Transport-Security: max-age=31536000; includeSubDomains
 
 # HTTP redirects to HTTPS
-curl -sI http://api.ratesengine.net/v1/healthz | head -1
+curl -sI http://api.stellaratlas.xyz/v1/healthz | head -1
 # Should see: HTTP/1.1 308 Permanent Redirect
 
 # Active health-check working — kill the API and curl should 502
-sudo systemctl stop ratesengine-api
+sudo systemctl stop stellaratlas-api
 sleep 15
-curl -sI https://api.ratesengine.net/v1/healthz | head -1   # 502
-sudo systemctl start ratesengine-api
+curl -sI https://api.stellaratlas.xyz/v1/healthz | head -1   # 502
+sudo systemctl start stellaratlas-api
 ```
 
 ## Future: showcase
 
-The `Caddyfile.api` ships a commented-out `ratesengine.net` block ready to serve the static Next.js export from `/var/www/showcase` if/when the showcase moves off Cloudflare Pages. Today the showcase is Cloudflare Pages so the block stays inert.
+The `Caddyfile.api` ships a commented-out `stellaratlas.xyz` block ready to serve the static Next.js export from `/var/www/showcase` if/when the showcase moves off Cloudflare Pages. Today the showcase is Cloudflare Pages so the block stays inert.

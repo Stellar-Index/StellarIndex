@@ -90,9 +90,9 @@ Operational follow-ups:
 - [x] Add Prometheus alert rule on `node_filesystem_avail_bytes /
       node_filesystem_size_bytes < 0.15` for `/` — shipped in
       commit 922ebd72 / PR #1229 as
-      `ratesengine_node_root_disk_warning` (< 20% for 10m, P2)
-      and `ratesengine_node_root_disk_full` (< 10% for 1m, P1).
-      Catches the gap that `ratesengine_timescale_disk_full`
+      `stellaratlas_node_root_disk_warning` (< 20% for 10m, P2)
+      and `stellaratlas_node_root_disk_full` (< 10% for 1m, P1).
+      Catches the gap that `stellaratlas_timescale_disk_full`
       only watched `/var/lib/postgresql`.
 - [~] Move WASM-audit one-time stderr captures to a dedicated dir
       (acknowledged 2026-06-10 — deferred cosmetic hygiene)

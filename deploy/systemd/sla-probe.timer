@@ -1,7 +1,7 @@
 # systemd timer: periodic SLA-probe runs against the production API.
 #
 # Companion to sla-probe.service. Drives the executable SLA-evidence
-# CLI (cmd/ratesengine-sla-probe) on a fixed cadence so the
+# CLI (cmd/stellaratlas-sla-probe) on a fixed cadence so the
 # RFP-stated SLA targets are continuously verified rather than
 # spot-checked.
 #
@@ -24,8 +24,8 @@
 # evidence sample.
 
 [Unit]
-Description=Periodic Rates Engine SLA probe (every 15 min)
-Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/sla-probe.md
+Description=Periodic Stellar Atlas SLA probe (every 15 min)
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/sla-probe.md
 
 [Timer]
 OnCalendar=*:0/15:00 UTC

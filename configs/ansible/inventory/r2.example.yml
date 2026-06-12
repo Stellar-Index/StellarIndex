@@ -21,7 +21,7 @@ all:
     # ───── Region identity ─────────────────────────────────────────
     region_id:           "r2"
     region_name:         "US-East-1"
-    home_domain:         "ratesengine.net"
+    home_domain:         "stellaratlas.xyz"
 
     # ───── Stellar network ─────────────────────────────────────────
     stellar_network:     "pubnet"
@@ -78,13 +78,13 @@ all:
     # Below this, indexer reads from the AWS public archive bucket
     # (galexie_archive_*). Set to the ledger where r2's galexie-live
     # tail first started writing.
-    ratesengine_live_seam_ledger: 0      # update to the actual seam at provision time
+    stellaratlas_live_seam_ledger: 0      # update to the actual seam at provision time
 
     # ───── Observability targets ───────────────────────────────────
     prometheus_scrape_allow_cidrs:
       - "10.0.0.0/8"               # AWS VPC CIDR — tighten to scraper subnet
       - "127.0.0.1/32"
-    loki_push_url: "https://loki.ratesengine.net/loki/api/v1/push"
+    loki_push_url: "https://loki.stellaratlas.xyz/loki/api/v1/push"
 
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
@@ -95,7 +95,7 @@ all:
   children:
     archival_nodes:
       hosts:
-        r2-01.ratesengine.net:
+        r2-01.stellaratlas.xyz:
           ansible_host:         "X.X.X.X"      # AWS-assigned EIP
           ansible_user:         "ubuntu"        # default for AWS Ubuntu AMIs
           ansible_port:         22

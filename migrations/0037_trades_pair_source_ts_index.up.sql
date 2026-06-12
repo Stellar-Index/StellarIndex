@@ -36,10 +36,10 @@
 --   CREATE INDEX CONCURRENTLY trades_pair_source_ts_idx
 --       ON trades (base_asset, quote_asset, source, ts DESC, ledger DESC);
 --
--- then run `ratesengine-migrate up`: the IF NOT EXISTS below sees
+-- then run `stellaratlas-migrate up`: the IF NOT EXISTS below sees
 -- the name already present and is a no-op. On a fresh archival-node
 -- bring-up the `trades` table is still empty when migrations run
--- (14-ratesengine-services.yml applies migrations before the indexer
+-- (14-stellaratlas-services.yml applies migrations before the indexer
 -- starts), so the in-transaction build is instant — no hand step.
 
 CREATE INDEX IF NOT EXISTS trades_pair_source_ts_idx
