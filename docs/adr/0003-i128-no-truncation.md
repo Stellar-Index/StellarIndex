@@ -9,6 +9,18 @@ superseded_by: null
 
 # ADR-0003: i128 / u128 values preserved end-to-end; never truncated to int64
 
+> **Reality note (2026-06-12, F-1353 / D2-10).** Two enforcement
+> mechanisms claimed below are **not implemented**: there is no custom
+> golangci analyzer flagging `int64` amount-shaped parameters
+> (`.golangci.yml` has no such rule or plugin), and `make
+> db-migrate-status` only prints migration state — it does not refuse
+> `BIGINT` / `DOUBLE PRECISION` amount columns. The decision itself is
+> in force and is enforced in practice by code review (CODEOWNERS on
+> `internal/canonical/`) and the round-trip fixture tests in
+> `internal/canonical/amount_test.go` (incl. the KALIEN-incident
+> regression), which DO exist. Also: the public amount type lives in
+> `pkg/client`, not the `pkg/types` path named below.
+
 ## Context
 
 Soroban stores token quantities (balances, allowances, mint/burn

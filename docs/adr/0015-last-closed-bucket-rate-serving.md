@@ -9,6 +9,17 @@ superseded_by: null
 
 # ADR-0015: API rates served from last-closed bucket, never in-progress
 
+> **Amendment (2026-06-12, F-1353 / D2-01).** The 30-second default
+> window and the `window` query parameter described below were never
+> shipped. The served default is the **1-minute closed bucket**
+> (Timescale-backed `/v1/price`) and the **5-minute cached VWAP**
+> (aggregator), with no client-selectable `window`. The closed-bucket
+> invariant (serve the last *closed* bucket, never an in-progress one)
+> holds as stated; only the bucket *size* and the parameterisation
+> differ. The current contract is restated in ADR-0018
+> (API consistency surfaces). The decision below is preserved as the
+> original record per the immutability rule.
+
 ## Context
 
 The Rates Engine deploys to three geographically-separated regions

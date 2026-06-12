@@ -9,6 +9,14 @@ superseded_by: null
 
 # ADR-0017: Archive completeness invariants and dual-archive integrity model
 
+> **Amendment (2026-06-12, F-1353 / D2-02).** The four daily hard
+> contracts enumerated below were subsequently narrowed in scope to
+> **cross-anchor verification only** (F-0019). Cold readers must not
+> treat the full four-contract guarantee as currently enforced — the
+> shipped daemon runs the cross-anchor cross-compare, not the entire
+> original contract set. The decision below is preserved as the
+> original record per the immutability rule.
+
 ## Context
 
 Two physical archives back the indexer + the verifier. They serve

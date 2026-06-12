@@ -10,6 +10,16 @@ superseded_by: null
 
 # ADR-0013: Adopt go-stellar-sdk/xdr for SCVal decoding in source connectors
 
+> **Amendment (2026-06-12, F-1353 / D2-08).** This ADR weighs decoding
+> options against a stellar-rpc `getEvents` ingest path. That path was
+> **removed from production on 2026-04-23** (invariant 6): production
+> ingest now reads Galexie MinIO LedgerCloseMeta directly, and
+> `internal/stellarrpc` survives only as the `rpc-probe` diagnostic and
+> fixture-capture client. The SCVal-decoding decision (adopt
+> go-stellar-sdk/xdr) stands; the surrounding RPC-transport framing is
+> historical. See
+> [docs/architecture/ingest-pipeline.md](../architecture/ingest-pipeline.md).
+
 ## Context
 
 The on-chain source connectors (`internal/sources/soroswap`,

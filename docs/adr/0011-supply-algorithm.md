@@ -9,6 +9,15 @@ superseded_by: null
 
 # ADR-0011: Supply algorithm — total / circulating / max
 
+> **Reality note (2026-06-12, F-1354 / D2-03).** The SEP-1
+> `max_supply` precedence step and the `self_declared` API flag
+> described below are **not wired into production**: `supply.Overlay`
+> (`internal/supply/overlay.go`) has zero callers, so the SEP-1
+> max_supply fallback never runs and `self_declared` is never stamped.
+> The on-chain supply derivation (XLM / classic / SEP-41) is live; the
+> issuer-declared overlay is dead code retained against future
+> activation. The decision below is preserved as the original record.
+
 ## Context
 
 Freighter RFP §V2 (requirement F2.4 in
