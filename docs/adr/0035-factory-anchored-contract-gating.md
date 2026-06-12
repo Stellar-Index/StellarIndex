@@ -191,10 +191,54 @@ update + a documented re-derive precondition:
 - [x] Soroswap (F-1347) — reference (own `soroswap_pairs` registry; carries tokens).
 - [x] Blend (factory `deploy` → pool registry) — first consumer of the generic
   `childgate.Registry` + `protocol_contracts` table (migration 0061).
-- [ ] Aquarius (pool factory).
-- [ ] Phoenix (factory → pool registry).
-- [ ] DeFindex (factory → vault registry).
+- [ ] Phoenix — NEEDS WORK BEFORE GATING (see readiness below).
+- [ ] DeFindex — NEEDS WORK BEFORE GATING (see readiness below).
+- [ ] Aquarius — NEEDS WORK BEFORE GATING (see readiness below).
 - [ ] Comet (shared WASM — allowlist / WASM-hash; see Open above).
+
+### Per-protocol readiness (assessed 2026-06-12)
+
+Soroswap and Blend were the highest-collision-risk decoders (generic
+topics — `swap`/`sync`, and `supply`/`claim`/`set_admin`/`deploy` that
+SACs and other DeFi also emit) and are done. The remaining four each have
+a concrete blocker that must be resolved **before** gating, because
+gating on a wrong factory model would silently drop real events — the one
+failure this ADR must never introduce. They are listed in implementation
+order; each is its own change with the blocker resolved first.
+
+- **Phoenix.** Factory `CB4SVAWJ…` is verified and the creation event is
+  documented (`("create","liquidity_pool")` → `lp_contract_address` in the
+  body, `phoenix.md:118`). BLOCKERS: (1) the decoder does not decode the
+  `create` event today, so a factory `create` classification + child
+  extraction must be added first; (2) `phoenix.md` leaves open whether the
+  MULTIHOP contract (`CCLZRD4E…`) emits its own swap events or only relays
+  to pools — if it emits directly, a pool-only gate drops multihop swaps.
+  Resolve (2) empirically against the lake (does `CCLZRD4E…` appear as a
+  swap emitter?) before choosing the gated set. Mitigation: phoenix topics
+  are String-encoded (`MustEncodeString`), so they don't collide with the
+  far more common Symbol-encoded `swap` — collision risk is already lower
+  than soroswap/blend.
+- **DeFindex.** Three layers: `DeFindexFactory` (create/n_fee) →
+  `DeFindexVault` → `BlendStrategy`. The vault layer is cleanly
+  factory-anchored, but `BlendStrategy` contracts are (per the dispatcher
+  comment) "not a hand-curated contract set" and may be SHARED strategy
+  contracts, not factory-created children — so the strategy layer can't be
+  gated by the vault factory. Needs the factory address pinned AND the
+  factory→vault→strategy ownership chain verified (is a strategy created by
+  its vault, or deployed independently?). Topics are namespaced strings
+  (`DeFindexVault`/`BlendStrategy`), so collision risk is low — gating is
+  more correctness-hardening than collision-fixing here.
+- **Aquarius.** Router-centric (`CBQDHNBF…` is the entry point / "pool
+  factory"); pools emit the `trade` event. BLOCKER: `aquarius.md` has open
+  TODOs on pool enumeration ("ask Aquarius for / derive from router reads
+  the pool registry") — the pool-creation event shape is NOT pinned, and
+  the decoder has no creation-event handling. Needs the router's
+  pool-creation event (topic + body carrying the pool address) verified
+  before a registry can be built. `trade` (Symbol) is moderately generic,
+  so gating has real value here once the creation event is known.
+- **Comet.** Shared Balancer-v1 WASM, no factory namespace — see "Open:
+  Comet" above. Adopts an operator allowlist or WASM-hash gate, not the
+  factory fan-out.
 
 ## Related
 
