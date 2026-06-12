@@ -12,7 +12,24 @@ import (
 
 	"github.com/RatesEngine/rates-engine/internal/events"
 	"github.com/RatesEngine/rates-engine/internal/scval"
+	"github.com/RatesEngine/rates-engine/internal/sources/childgate"
 )
+
+// makeDeployEvent builds a Pool-Factory `deploy` event announcing
+// poolAddr — ContractID is the factory (deploy is emitted BY the
+// factory; the new pool is carried in the body), so it passes the
+// ADR-0035 gate.
+func makeDeployEvent(t *testing.T, poolAddr string) events.Event {
+	t.Helper()
+	return events.Event{
+		ContractID:     MainnetPoolFactory,
+		Topic:          []string{TopicSymbolDeploy},
+		Value:          encodeScVal(t, addressScVal(t, poolAddr)),
+		Ledger:         51_600_000,
+		TxHash:         "blenddeploytx0",
+		LedgerClosedAt: "2026-04-29T12:00:00Z",
+	}
+}
 
 // ─── Fixture helpers ─────────────────────────────────────────────
 
@@ -354,55 +371,78 @@ func TestDecodeDeleteAuction_HappyPath(t *testing.T) {
 // ─── dispatcher.Decoder boundary ───────────────────────────────
 
 func TestDecoder_Matches(t *testing.T) {
-	d := NewDecoder()
-	cases := []struct {
-		top0 string
-		want bool
-	}{
-		// Auction events.
-		{TopicSymbolNewAuction, true},
-		{TopicSymbolFillAuction, true},
-		{TopicSymbolDeleteAuction, true},
+	// Contract-gated (ADR-0035 / F-1347): a topic match is necessary but
+	// NOT sufficient — every business event must come from a REGISTERED
+	// pool, and `deploy` must come from the canonical Pool Factory. A
+	// registered pool's events match; the identical topics from an
+	// unregistered (foreign) contract do not.
+	const registeredPool = "CDPOOLREGISTEREDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	const foreign = "CDFOREIGNCONTRACTBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	d := NewDecoder(childgate.WithSeed([]string{registeredPool}))
 
-		// Money-market events (#25).
-		{TopicSymbolSupply, true},
-		{TopicSymbolWithdraw, true},
-		{TopicSymbolSupplyCollateral, true},
-		{TopicSymbolWithdrawCollateral, true},
-		{TopicSymbolBorrow, true},
-		{TopicSymbolRepay, true},
-		{TopicSymbolFlashLoan, true},
-
-		// Emission / credit-risk events.
-		{TopicSymbolGulp, true},
-		{TopicSymbolClaim, true},
-		{TopicSymbolReserveEmissions, true},
-		{TopicSymbolGulpEmissions, true},
-		{TopicSymbolBadDebt, true},
-		{TopicSymbolDefaultedDebt, true},
-
-		// Admin / status / factory events.
-		{TopicSymbolSetAdmin, true},
-		{TopicSymbolUpdatePool, true},
-		{TopicSymbolQueueSetReserve, true},
-		{TopicSymbolCancelSetReserve, true},
-		{TopicSymbolSetReserve, true},
-		{TopicSymbolSetStatus, true},
-		{TopicSymbolDeploy, true},
-
-		// Non-Blend topic + empty.
-		{scval.MustEncodeSymbol("not_a_blend_topic"), false},
-		{"", false},
+	businessTopics := []string{
+		// Auction.
+		TopicSymbolNewAuction, TopicSymbolFillAuction, TopicSymbolDeleteAuction,
+		// Money-market (#25).
+		TopicSymbolSupply, TopicSymbolWithdraw, TopicSymbolSupplyCollateral,
+		TopicSymbolWithdrawCollateral, TopicSymbolBorrow, TopicSymbolRepay, TopicSymbolFlashLoan,
+		// Emission / credit-risk.
+		TopicSymbolGulp, TopicSymbolClaim, TopicSymbolReserveEmissions,
+		TopicSymbolGulpEmissions, TopicSymbolBadDebt, TopicSymbolDefaultedDebt,
+		// Admin / status.
+		TopicSymbolSetAdmin, TopicSymbolUpdatePool, TopicSymbolQueueSetReserve,
+		TopicSymbolCancelSetReserve, TopicSymbolSetReserve, TopicSymbolSetStatus,
 	}
-	for _, tc := range cases {
-		topics := []string{tc.top0}
-		if tc.top0 == "" {
-			topics = nil
+	for _, top0 := range businessTopics {
+		// From a registered pool: matches.
+		if !d.Matches(events.Event{Topic: []string{top0}, ContractID: registeredPool}) {
+			t.Errorf("topic[0]=%q from registered pool: Matches=false, want true", top0)
 		}
-		got := d.Matches(events.Event{Topic: topics})
-		if got != tc.want {
-			t.Errorf("topic[0]=%q Matches=%v want %v", tc.top0, got, tc.want)
+		// Identical topic from a foreign contract (collision): rejected.
+		if d.Matches(events.Event{Topic: []string{top0}, ContractID: foreign}) {
+			t.Errorf("topic[0]=%q from FOREIGN contract: Matches=true, want false (topic collision must not attribute to Blend)", top0)
 		}
+	}
+
+	// deploy: matches only from the canonical Pool Factory.
+	if !d.Matches(events.Event{Topic: []string{TopicSymbolDeploy}, ContractID: MainnetPoolFactory}) {
+		t.Error("deploy from MainnetPoolFactory: Matches=false, want true")
+	}
+	if d.Matches(events.Event{Topic: []string{TopicSymbolDeploy}, ContractID: foreign}) {
+		t.Error("deploy from FOREIGN contract: Matches=true, want false (registry-injection guard)")
+	}
+
+	// Non-Blend topic + empty: rejected regardless of emitter.
+	if d.Matches(events.Event{Topic: []string{scval.MustEncodeSymbol("not_a_blend_topic")}, ContractID: registeredPool}) {
+		t.Error("non-Blend topic from registered pool: Matches=true, want false")
+	}
+	if d.Matches(events.Event{Topic: nil, ContractID: registeredPool}) {
+		t.Error("empty topic: Matches=true, want false")
+	}
+}
+
+// TestDecoder_Decode_deployRegistersPool pins the fan-out: decoding a
+// factory `deploy` event registers the announced pool, so its
+// subsequent business events then pass the gate (ADR-0035).
+func TestDecoder_Decode_deployRegistersPool(t *testing.T) {
+	d := NewDecoder()
+	poolAddr := contractStrkeyFromSeed(t, 0x55)
+	deploy := makeDeployEvent(t, poolAddr)
+
+	// Before decode, the pool is unknown → a supply from it is rejected.
+	supply := events.Event{Topic: []string{TopicSymbolSupply}, ContractID: poolAddr}
+	if d.Matches(supply) {
+		t.Fatal("pool matched before its deploy was decoded")
+	}
+	if !d.Matches(deploy) {
+		t.Fatal("deploy from factory did not match")
+	}
+	if _, err := d.Decode(deploy); err != nil {
+		t.Fatalf("Decode(deploy): %v", err)
+	}
+	// After decoding the deploy, the pool is registered → its events pass.
+	if !d.Matches(supply) {
+		t.Fatal("pool not registered after its deploy was decoded")
 	}
 }
 
