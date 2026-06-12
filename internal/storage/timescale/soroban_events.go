@@ -305,10 +305,18 @@ type LedgerGap struct {
 // Implementation uses the LAG() window-function pattern: order
 // distinct ledgers, compare each row to its predecessor, emit a
 // gap when the difference > 1 AND the gap size meets the
-// threshold. Cheap on a hypertable with a btree on (ledger_close_time,
-// ledger) — postgres uses the index for the ORDER BY scan and
-// streams rows through the window function without sorting in
-// memory.
+// threshold.
+//
+// Chunk-pruning (ADR-0033): soroban_events is partitioned by
+// ledger_close_time, NOT ledger, so a `WHERE ledger BETWEEN` filter
+// alone forces a SELECT DISTINCT across every chunk in the table.
+// When ledger_ingest_log fully covers [from,to] we bound
+// ledger_close_time exactly (see [Store.SorobanEventsTimeBound]) and
+// prune to the day-chunks that hold the range — the same pattern
+// StreamSorobanEvents uses. The fullyCovered guard is a correctness
+// requirement: a partial time bound could exclude in-range ledgers
+// and fabricate phantom gaps, so without full coverage we fall back
+// to the (correct, slower) unpruned distinct scan.
 func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGapSize int64) ([]LedgerGap, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps: to (%d) < from (%d)", to, from)
@@ -316,11 +324,17 @@ func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGa
 	if minGapSize < 1 {
 		minGapSize = 1
 	}
-	const q = `
+	args := []any{from, to, minGapSize}
+	timeBound := ""
+	if lo, hi, covered, terr := s.SorobanEventsTimeBound(ctx, uint32(from), uint32(to)); terr == nil && covered {
+		args = append(args, lo, hi)
+		timeBound = " AND ledger_close_time BETWEEN $4 AND $5"
+	}
+	q := `
         WITH ledgers AS (
           SELECT DISTINCT ledger
             FROM soroban_events
-           WHERE ledger BETWEEN $1 AND $2
+           WHERE ledger BETWEEN $1 AND $2` + timeBound + `
         ),
         ordered AS (
           SELECT ledger, LAG(ledger) OVER (ORDER BY ledger) AS prev_l
@@ -334,7 +348,7 @@ func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGa
            AND ledger - prev_l - 1 >= $3
          ORDER BY gap_start
     `
-	rows, err := s.db.QueryContext(ctx, q, from, to, minGapSize)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps [%d,%d, min %d]: %w", from, to, minGapSize, err)
 	}

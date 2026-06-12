@@ -1196,6 +1196,7 @@ const getCoinBySlugSQL = `
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
+		     AND bucket >= now() - INTERVAL '24 hours'
 		   ORDER BY bucket DESC LIMIT 1
 		),
 		xlm_usd_1h AS (
@@ -1424,6 +1425,7 @@ const getNativeCoinSQL = `
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
+		     AND bucket >= now() - INTERVAL '24 hours'
 		   ORDER BY bucket DESC LIMIT 1
 		),
 		xlm_usd_1h AS (
