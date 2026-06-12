@@ -51,3 +51,31 @@ registered another way).
 | pool `trade` | `trades` (source=aquarius) |
 | pool `deposit` / `withdraw` / `update_reserves` / `reserves_sync` | liquidity / reserves tracking |
 | router `add_pool` | (candidate) pool registration |
+
+## ✅ Pool enumeration — answered (2026-06-12, lake-derived)
+
+The Dune community dashboard (claw, "Aquarius Base Metrics") revealed the
+derivation: **the router's own `swap`/`deposit`/`withdraw`/`add_pool`
+events carry the pool address in the event data** (`data.vec[0]`). The
+router is the factory-equivalent trust root — fan-out via event *data*
+rather than creation events. Replaying that derivation over our lake:
+
+- **174 distinct pools** from 56,769 router events (zero parse errors);
+  **all 174 also emit pool-level `trade` events** (174/174 overlap with
+  the trade-emitter set).
+- **4 additional contracts** emit the full Aquarius pool signature
+  (`trade` + `update_reserves` + `pool_state` + `rewards_gauge_add` +
+  `claim_fees`, all from ledger ~61.9M+) but haven't appeared in router
+  event data yet — recent pools, pending first routed swap.
+- **Authoritative set: 178 pools** (list reproducible from the lake:
+  decode `data.vec[0].address` of router-emitted events from
+  `CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK`).
+
+**Gate design (ADR-0035 variant):** trust root = the router; a pool is
+registered when the ROUTER's event data announces it (+ the 4
+signature-matched recents pending router confirmation). Remaining
+question for the team narrows to: ① confirm the router is the sole entry
+point that announces every pool (incl. how pools are created — we see
+only 6 `add_pool` events vs 178 pools, so most predate our lake or
+register otherwise), and ② is the `trade` topic emitted by anything that
+is NOT an Aquarius pool?
