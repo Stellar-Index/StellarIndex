@@ -1,4 +1,4 @@
-# Cloudflare Pages config for the Rates Engine showcase.
+# Cloudflare Pages config for the Stellar Atlas showcase.
 #
 # Recommended deploy path is the dashboard's git integration —
 # every push to main rebuilds + deploys without hitting our GitHub
@@ -9,6 +9,6 @@
 # git integration is the sole publisher this file is harmless
 # scaffolding.
 
-name = "ratesengine-showcase"
+name = "stellaratlas-showcase"
 pages_build_output_dir = "./out"
 compatibility_date = "2026-05-05"

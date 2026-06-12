@@ -6,7 +6,7 @@ status: ratified
 
 # SEV drill framework
 
-Rates Engine validates its incident-response posture (Coverage
+Stellar Atlas validates its incident-response posture (Coverage
 matrix item **#20 SEV-1/SEV-2 dry-run**) through a three-tier
 exercise cadence pinned in
 [sev-playbook.md §8](../sev-playbook.md):

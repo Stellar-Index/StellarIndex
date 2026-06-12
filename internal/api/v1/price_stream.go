@@ -43,7 +43,7 @@ func PriceStreamTopic(asset, quote canonical.Asset) string {
 func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 	if s.hub == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/stream-unavailable",
+			"https://api.stellaratlas.xyz/errors/stream-unavailable",
 			"Closed-bucket stream not configured", http.StatusServiceUnavailable,
 			"this deployment has no streaming Hub wired — typically because the aggregator publish path isn't running yet")
 		return
@@ -63,7 +63,7 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 	// URL.
 	if r.URL.Query().Get("granularity") != "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-stream-param",
+			"https://api.stellaratlas.xyz/errors/invalid-stream-param",
 			"granularity is not valid on /v1/price/stream", http.StatusBadRequest,
 			"the closed-bucket stream is fixed at 1m; use /v1/history/since-inception for other granularities")
 		return

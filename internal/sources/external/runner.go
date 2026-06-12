@@ -223,7 +223,7 @@ func runPoller(
 		// 1-hour feed updates. Pre-2026-06-01 this branch returned
 		// without updating LastSuccessUnix, so a healthy chainlink
 		// poller (polling every 30s, but feeds updating hourly)
-		// looked stale to `ratesengine_external_poller_stale`
+		// looked stale to `stellaratlas_external_poller_stale`
 		// within ~10-15 min. The outcome counter still bumps
 		// "skipped" so operators can tell skip from success; but
 		// the timestamp bumps too because the poller is alive +

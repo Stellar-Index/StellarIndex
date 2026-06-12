@@ -1,5 +1,5 @@
 ---
-title: Showcase site deployment (`ratesengine.net`)
+title: Showcase site deployment (`stellaratlas.xyz`)
 last_verified: 2026-05-04
 status: operator runbook
 ---
@@ -22,10 +22,10 @@ every route (including the top-100 coin slugs from
 no runtime dependency on Node.
 
 The API is contacted **client-side** from the browser to
-`https://api.ratesengine.net` — set via the
+`https://api.stellaratlas.xyz` — set via the
 `NEXT_PUBLIC_API_BASE_URL` env var at build time. Same-origin
 hosting is not required and not desirable: keeping the showcase
-domain separate from `api.ratesengine.net` means the API can
+domain separate from `api.stellaratlas.xyz` means the API can
 serve when the showcase is down, and vice versa.
 
 ## Build locally
@@ -55,7 +55,7 @@ sufficient, Git-driven deploys.
 
 1. **Connect the repo.** Cloudflare dashboard → Workers & Pages →
    Create application → Pages → Connect to Git → select the
-   `RatesEngine/rates-engine` repository.
+   `StellarAtlas/stellar-atlas` repository.
 
 2. **Build configuration.**
    - Framework preset: `Next.js (Static HTML Export)`.
@@ -67,12 +67,12 @@ sufficient, Git-driven deploys.
    - Branch: `main` for production; PR previews flip on by default.
 
 3. **Environment variables.**
-   - `NEXT_PUBLIC_API_BASE_URL` = `https://api.ratesengine.net`
+   - `NEXT_PUBLIC_API_BASE_URL` = `https://api.stellaratlas.xyz`
      (production). Override per-environment for previews if you
      want them pointing at a staging API.
 
 4. **Bind the domain.** Custom domains → Add custom domain →
-   `ratesengine.net` (and `www.ratesengine.net` as a redirect
+   `stellaratlas.xyz` (and `www.stellaratlas.xyz` as a redirect
    target). Cloudflare proxies the apex through their edge so a
    single A record (or `@` CNAME flattening) is enough; there's
    no separate origin to point at.
@@ -84,7 +84,7 @@ sufficient, Git-driven deploys.
 ### What you get
 
 - Every PR gets a preview deployment at
-  `<pr-hash>.ratesengine-showcase.pages.dev` — useful for
+  `<pr-hash>.stellaratlas-showcase.pages.dev` — useful for
   reviewing UI changes before merge.
 - Production deploys on every push to `main` after the existing
   CI gates pass (the `web/explorer` job in `.github/workflows/`
@@ -99,7 +99,7 @@ sufficient, Git-driven deploys.
 PR merge into main
   → GitHub Actions runs `web/explorer` job (build + lint)
   → Cloudflare Pages webhook fires, runs build
-  → New version deploys to ratesengine.net within ~2 min
+  → New version deploys to stellaratlas.xyz within ~2 min
 ```
 
 Rolling back is a single click in the CF dashboard — Pages keeps
@@ -116,7 +116,7 @@ output. It applies on every response:
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy` denying camera / mic / geolocation / payment / USB / accelerometer
 - `Content-Security-Policy` restricting `connect-src` to `self` +
-  `https://api.ratesengine.net` (so fetch only reaches the API
+  `https://api.stellaratlas.xyz` (so fetch only reaches the API
   origin), with `'unsafe-inline'` allowed on `script-src` /
   `style-src` because Next.js static export emits inline
   bootstrap and Tailwind utility styles
@@ -141,11 +141,11 @@ gh workflow run showcase-deploy.yml --ref main \
 # Preview deploy from a branch:
 gh workflow run showcase-deploy.yml --ref my-branch \
     -f environment=preview \
-    -f api_base_url=https://api.staging.ratesengine.net
+    -f api_base_url=https://api.staging.stellaratlas.xyz
 ```
 
 One-time setup: add two repo secrets (`CLOUDFLARE_API_TOKEN` with
-`Pages:Edit` scoped to the `ratesengine-showcase` project, and
+`Pages:Edit` scoped to the `stellaratlas-showcase` project, and
 `CLOUDFLARE_ACCOUNT_ID`).
 
 The workflow intentionally doesn't fire on push — that path is
@@ -171,7 +171,7 @@ demo setups.
 
 ```sh
 cd web/explorer && pnpm build
-rsync -av --delete out/ root@r1.ratesengine.net:/var/www/showcase/
+rsync -av --delete out/ root@r1.stellaratlas.xyz:/var/www/showcase/
 ```
 
 `/etc/nginx/sites-available/showcase`:
@@ -179,7 +179,7 @@ rsync -av --delete out/ root@r1.ratesengine.net:/var/www/showcase/
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name ratesengine.net;
+    server_name stellaratlas.xyz;
     root /var/www/showcase;
     index index.html;
     location / {
@@ -196,16 +196,16 @@ server {
 
 ```sh
 # Page renders
-curl -sI https://ratesengine.net | head -3
+curl -sI https://stellaratlas.xyz | head -3
 
 # Sitemap is present
-curl -sI https://ratesengine.net/sitemap.xml | head -3
+curl -sI https://stellaratlas.xyz/sitemap.xml | head -3
 
 # /coins/USDC pre-rendered (not a 404)
-curl -sI https://ratesengine.net/coins/USDC/ | head -3
+curl -sI https://stellaratlas.xyz/coins/USDC/ | head -3
 
 # Robots is correct
-curl -s https://ratesengine.net/robots.txt
+curl -s https://stellaratlas.xyz/robots.txt
 ```
 
 If the build environment couldn't reach the API at build time, the

@@ -1,4 +1,4 @@
-# Rates Engine — example configuration.
+# Stellar Atlas — example configuration.
 #
 # Copy this file, edit the fields you care about, point a binary at
 # it with `-config path/to/your.toml`. Any field omitted here falls
@@ -19,7 +19,7 @@
 [region]
 id          = "r1"
 name        = "London"
-home_domain = "ratesengine.net"
+home_domain = "stellaratlas.xyz"
 
 # ──────────────────────────────────────────────────────────────────
 # Stellar — where does my ledger data come from?
@@ -50,35 +50,35 @@ history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
 # Secrets come from env vars named in the *_env fields.
 # ──────────────────────────────────────────────────────────────────
 [storage]
-# DSN — override the password at runtime via RATESENGINE_POSTGRES_DSN.
-postgres_dsn       = "postgres://ratesengine@127.0.0.1:5432/ratesengine?sslmode=disable"
+# DSN — override the password at runtime via STELLARATLAS_POSTGRES_DSN.
+postgres_dsn       = "postgres://stellaratlas@127.0.0.1:5432/stellaratlas?sslmode=disable"
 
 redis_addr         = "127.0.0.1:6379"
-# redis_password_env = "RATESENGINE_REDIS_PASSWORD"   # uncomment + set env
+# redis_password_env = "STELLARATLAS_REDIS_PASSWORD"   # uncomment + set env
 #
 # redis_username (F-1213, codex audit-2026-05-12). Empty (default)
-# AUTHs as Redis's legacy 'default' user. Set to 'ratesengine' (or
+# AUTHs as Redis's legacy 'default' user. Set to 'stellaratlas' (or
 # the operator's per-component user) when `redis_acl_lockdown` is
 # enabled in the ansible role — without a username the broker-side
 # ACL rejects the connection, so the two settings must be flipped
 # together. The Ansible template at
-# `configs/ansible/roles/archival-node/templates/ratesengine.toml.j2`
+# `configs/ansible/roles/archival-node/templates/stellaratlas.toml.j2`
 # already renders this when the lockdown variable is set.
-# redis_username     = "ratesengine"
+# redis_username     = "stellaratlas"
 
 # Production: enable Sentinel mode per ADR-0024. When
 # redis_sentinel_addrs is non-empty the binary uses
 # go-redis FailoverClient and asks Sentinel for the current
 # primary; redis_addr is ignored. Leave empty for dev / single-node.
 # redis_sentinel_addrs = ["cache-01.internal:26379", "cache-02.internal:26379", "cache-03.internal:26379"]
-# redis_master_name    = "ratesengine-r1-cache"
+# redis_master_name    = "stellaratlas-r1-cache"
 
 s3_endpoint        = "http://127.0.0.1:9000"
 s3_region          = "r1"
 s3_bucket_archive  = "galexie-archive"
 s3_bucket_live     = "galexie-live"
-s3_access_key_env  = "RATESENGINE_S3_ACCESS_KEY"
-s3_secret_key_env  = "RATESENGINE_S3_SECRET_KEY"
+s3_access_key_env  = "STELLARATLAS_S3_ACCESS_KEY"
+s3_secret_key_env  = "STELLARATLAS_S3_SECRET_KEY"
 
 # ──────────────────────────────────────────────────────────────────
 # Ingestion — which on-chain source connectors to run on this
@@ -166,7 +166,7 @@ cursor_store_scheme   = "postgres"
   # demo key via env (preferred over toml so secrets don't land in
   # the file):
   #
-  #   COINGECKO_DEMO_API_KEY=cg-demo-... systemctl restart ratesengine-indexer
+  #   COINGECKO_DEMO_API_KEY=cg-demo-... systemctl restart stellaratlas-indexer
   #
   # For a Pro key, set COINGECKO_API_KEY instead — Pro wins when
   # both are configured. Anonymous polling still works (the poller
@@ -231,7 +231,7 @@ windows = [
 # ──────────────────────────────────────────────────────────────────
 [api]
 listen_addr              = "0.0.0.0:3000"
-external_base_url        = "https://api.ratesengine.net/v1"
+external_base_url        = "https://api.stellaratlas.xyz/v1"
 auth_mode                = "none"            # none | apikey | sep10
 anon_rate_limit_per_min  = 60
 key_rate_limit_per_min   = 1000
@@ -239,7 +239,7 @@ cdn_enabled              = true
 # allowed_origins — CORS allow-list for browser clients.
 #
 # Recommended: leave at the default ["*"] for any deployment that
-# offers Rates Engine as a public Stellar pricing API. The
+# offers Stellar Atlas as a public Stellar pricing API. The
 # product's read tier is no-auth, used from customer wallets,
 # embed widgets, dashboards, and SDK consumers running in
 # arbitrary browsers — narrowing this to your own hostname

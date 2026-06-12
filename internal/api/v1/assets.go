@@ -19,14 +19,14 @@ import (
 
 // Sep1CachedReader is the narrow dependency /v1/assets/{id} uses to
 // apply the SEP-1 overlay. Returns the parsed payload the
-// `ratesengine-ops sep1-refresh` cron persisted in `issuers.sep1_payload`.
+// `stellaratlas-ops sep1-refresh` cron persisted in `issuers.sep1_payload`.
 //
 // Pre-2026-05-29 the assets handler resolved SEP-1 live via HTTPS
 // (capped at 500ms via [sep1OverlayTimeout]) on every uncached
 // request. That call dominated /v1/assets/{id} p95 (4+s on cold
 // issuers) and triggered the slo_latency_burn alerts. The handler
 // now uses the cron-populated DB column instead; the live-fetch
-// path lives only in `cmd/ratesengine-ops/sep1_refresh.go`.
+// path lives only in `cmd/stellaratlas-ops/sep1_refresh.go`.
 type Sep1CachedReader interface {
 	GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*timescale.IssuerSep1Cached, error)
 }
@@ -312,7 +312,7 @@ type UnverifiedWarning struct {
 //
 // This is the SCAFFOLDING path used when no AssetReader is wired
 // (tests, the dev binary before the storage layer is up). The
-// production cmd/ratesengine-api path uses its own assetToDetail
+// production cmd/stellaratlas-api path uses its own assetToDetail
 // that consults the operator's curated home-domain map; this stub
 // version doesn't have access to that map, so HomeDomain stays nil
 // and the overlay handler stamps sep1_status="not_applicable" via
@@ -373,7 +373,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 500 {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-limit",
+				"https://api.stellaratlas.xyz/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,
 				"limit must be an integer in [1, 500]")
 			return
@@ -456,7 +456,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("ListAssets failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError,
 			"")
 		return
@@ -512,7 +512,7 @@ func (s *Server) handleAssetListFromCoins(
 		}
 		s.logger.Error("ListCoinsExt (assets listing) failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -630,7 +630,7 @@ var externalNetworks = map[string]struct{}{
 func (s *Server) handleAssetListExternalNetwork(w http.ResponseWriter, r *http.Request, network string, limit int, cursor string) {
 	if _, ok := externalNetworks[network]; !ok {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-network",
+			"https://api.stellaratlas.xyz/errors/invalid-network",
 			"Unknown network", http.StatusBadRequest,
 			"network must be one of: stellar, ethereum, solana, polygon, base, arbitrum, tron, bitcoin, bsc, avalanche, xrpl")
 		return
@@ -833,7 +833,7 @@ func parseOffsetCursor(w http.ResponseWriter, r *http.Request, cursor string) (i
 	n, err := strconv.Atoi(cursor)
 	if err != nil || n < 0 {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-cursor",
+			"https://api.stellaratlas.xyz/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest,
 			"cursor must be the integer pagination.next value from a prior response, or omitted to start at page 1.")
 		return 0, false
@@ -1049,7 +1049,7 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 		}
 		s.logger.Error("ListCoinsExt (unified) failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -1194,14 +1194,14 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	parsed, err := canonical.ParseAsset(rawID)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE>")
 		return
 	}
 	if err := parsed.Validate(); err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -1228,7 +1228,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 
 	// Backfill HomeDomain from the curated known-issuers map when
 	// the storage row doesn't carry one (classic assets ingested
-	// before `ratesengine-ops sep1-refresh` ran, or issuers whose
+	// before `stellaratlas-ops sep1-refresh` ran, or issuers whose
 	// SEP-1 lookup never persisted because they aren't in the
 	// watched set). Mirrors enrichIssuer's policy on /v1/issuers,
 	// which is how that endpoint returns home_domain="centre.io"
@@ -1303,7 +1303,7 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 	d, err := reader.GetAsset(r.Context(), parsed)
 	if errors.Is(err, ErrAssetNotFound) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/asset-not-found",
+			"https://api.stellaratlas.xyz/errors/asset-not-found",
 			"Asset not found", http.StatusNotFound,
 			"no trades or oracle observations for "+parsed.String())
 		return AssetDetail{}, true
@@ -1314,7 +1314,7 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 		}
 		s.logger.Error("GetAsset failed", "err", err, "asset_id", parsed.String())
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return AssetDetail{}, true
 	}
@@ -1448,14 +1448,14 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 	parsed, err := canonical.ParseAsset(rawID)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE>")
 		return
 	}
 	if err := parsed.Validate(); err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -1467,7 +1467,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 		d, err := reader.GetAsset(r.Context(), parsed)
 		if errors.Is(err, ErrAssetNotFound) {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/asset-not-found",
+				"https://api.stellaratlas.xyz/errors/asset-not-found",
 				"Asset not found", http.StatusNotFound,
 				"no trades or oracle observations for "+parsed.String())
 			return
@@ -1478,7 +1478,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 			}
 			s.logger.Error("GetAsset failed (metadata)", "err", err, "asset_id", parsed.String())
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/internal",
+				"https://api.stellaratlas.xyz/errors/internal",
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}

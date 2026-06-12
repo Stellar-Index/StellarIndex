@@ -20,8 +20,8 @@
 #   REPORT_OUTPUT      JSON report path (operator audit trail)
 
 [Unit]
-Description=Rates Engine — archive-completeness verify (daily cron per ADR-0017)
-Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/archive-completeness.md
+Description=Stellar Atlas — archive-completeness verify (daily cron per ADR-0017)
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/archive-completeness.md
 After=network-online.target
 Wants=network-online.target
 
@@ -36,7 +36,7 @@ Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_co
 Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
 Environment=WORKERS=8
 
-ExecStart=/usr/local/bin/ratesengine-ops archive-completeness verify \
+ExecStart=/usr/local/bin/stellaratlas-ops archive-completeness verify \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \

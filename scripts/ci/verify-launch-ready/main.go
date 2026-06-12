@@ -274,7 +274,7 @@ func surfaceLabel(s string) string {
 func report(rows []Row, listAll bool, skip map[string]struct{}) {
 	bySurface := groupBySurface(rows)
 
-	fmt.Println(bold("Rates Engine — Launch Readiness Check"))
+	fmt.Println(bold("Stellar Atlas — Launch Readiness Check"))
 	fmt.Println(strings.Repeat("=", 40))
 	if len(skip) > 0 {
 		fmt.Printf("(skipping %d row(s) for gating: %s)\n",

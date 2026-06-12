@@ -1,5 +1,5 @@
 // Package config defines the root configuration shape for every
-// Rates Engine binary, plus the loader + the struct-tag-based doc
+// Stellar Atlas binary, plus the loader + the struct-tag-based doc
 // generator that emits docs/reference/config/README.md.
 //
 // # Shape
@@ -16,7 +16,7 @@
 // MUST have the `doc:"…"` tag or CI fails (lint-docs.sh §1 checks
 // that every exported field round-trips into the reference doc).
 //
-// Add the field → `go run ./cmd/ratesengine-ops docs-config >
+// Add the field → `go run ./cmd/stellaratlas-ops docs-config >
 // docs/reference/config/README.md` → commit both in the same PR.
 //
 // # Invariants
@@ -30,7 +30,7 @@
 //     apply defaults first.
 //   - Secrets (passwords, API keys) are never in this file. They
 //     come from environment variables or a secret store, referenced
-//     by name here (e.g. `Password: "env:RATESENGINE_PG_PASSWORD"`).
+//     by name here (e.g. `Password: "env:STELLARATLAS_PG_PASSWORD"`).
 //
 // See:
 //   - docs/reference/config/README.md — generated reference.

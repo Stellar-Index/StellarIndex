@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `ratesengine_stripe_platform_sync_errors`
+# Runbook — `stellaratlas_stripe_platform_sync_errors`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_stripe_platform_sync_errors` (P3 / ticket) |
+| Alert | `stellaratlas_stripe_platform_sync_errors` (P3 / ticket) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/api.yml` (and the R1 single-host overlay at `configs/prometheus/rules.r1/api.yml` once added). |
 | Typical MTTR | 15–60 min: the failing layer is named in the metric label, and Stripe redelivers automatically once the underlying store is healthy. |
 | Impact | Customer's API is on the new tier (Redis rate-limit applied), but their dashboard view of account tier / subscription / per-key budget is drifting from billing reality. No data loss — Stripe redelivers webhooks for ≤ 30 days. |
@@ -33,7 +33,7 @@ runs two paths in sequence:
    platform-store path any healthier.
 
 Each failure inside path (2) increments
-`ratesengine_stripe_platform_sync_errors_total{operation=…}`.
+`stellaratlas_stripe_platform_sync_errors_total{operation=…}`.
 Any non-zero rate over 15 min trips this alert.
 
 The `operation` label tells you which store call is failing:
@@ -50,10 +50,10 @@ The `operation` label tells you which store call is failing:
 
 ```sh
 # Which operation is failing, and how often?
-curl -s http://r1:9100/metrics | grep ratesengine_stripe_platform_sync_errors_total
+curl -s http://r1:9100/metrics | grep stellaratlas_stripe_platform_sync_errors_total
 
 # Recent webhook activity in the API logs.
-ssh r1 'journalctl -u ratesengine-api --since "30 min ago" \
+ssh r1 'journalctl -u stellaratlas-api --since "30 min ago" \
   | grep -E "stripe webhook" | tail -50'
 ```
 
@@ -96,20 +96,20 @@ Postgres-side problem. Check connection pool, replication lag, or
 schema drift:
 
 ```sh
-ssh r1 'sudo -u postgres psql ratesengine -c "\d accounts"'
-ssh r1 'sudo -u postgres psql ratesengine -c "SELECT count(*) FROM pg_stat_activity WHERE datname='\''ratesengine'\'';"'
+ssh r1 'sudo -u postgres psql stellaratlas -c "\d accounts"'
+ssh r1 'sudo -u postgres psql stellaratlas -c "SELECT count(*) FROM pg_stat_activity WHERE datname='\''stellaratlas'\'';"'
 ```
 
 Check whether the most recent migration applied cleanly:
 
 ```sh
-ssh r1 'ratesengine-migrate version'
+ssh r1 'stellaratlas-migrate version'
 ```
 
 If a migration is pending, applying it usually clears the alert:
 
 ```sh
-ssh r1 'ratesengine-migrate up'
+ssh r1 'stellaratlas-migrate up'
 ```
 
 ### Persistent low-rate errors (one specific key/account)
@@ -132,7 +132,7 @@ violation introduced by a manual fix elsewhere.
 ## After the alert clears
 
 1. Confirm the metric rate has dropped to 0 over a fresh 15 min
-   window: `rate(ratesengine_stripe_platform_sync_errors_total[15m])`.
+   window: `rate(stellaratlas_stripe_platform_sync_errors_total[15m])`.
 2. Spot-check that affected accounts caught up: their `tier` field
    matches their Stripe subscription, and their dashboard keys
    show the lifted `rate_limit_per_min`.
@@ -157,7 +157,7 @@ violation introduced by a manual fix elsewhere.
 
 ## Why this exists
 
-`ratesengine_stripe_platform_sync_errors_total` was introduced on
+`stellaratlas_stripe_platform_sync_errors_total` was introduced on
 2026-05-13 to close the long-standing TODO from the F-1219 wave-32
 remediation. The webhook had always logged platform-store failures
 but never surfaced them as a metric, leaving operators blind to a

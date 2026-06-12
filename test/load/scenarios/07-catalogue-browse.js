@@ -1,6 +1,6 @@
 // Scenario 07 — catalogue browse (showcase hot path).
 //
-// Models a user browsing the showcase explorer at ratesengine.net:
+// Models a user browsing the showcase explorer at stellaratlas.xyz:
 // they hit /assets → click into an asset (which fans out to
 // /v1/issuers/{g} + /v1/changes/{type}/{id}) → tab over to
 // /markets and /issuers, with /diagnostics polling in the

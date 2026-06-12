@@ -1,6 +1,6 @@
-# Rates Engine — Ansible bootstrap
+# Stellar Atlas — Ansible bootstrap
 
-Config-management entrypoint for Rates Engine hosts. The primary
+Config-management entrypoint for Stellar Atlas hosts. The primary
 role is `archival-node` — it takes a bare Ubuntu 24.04 (or 22.04)
 install and brings it up as a Stellar archival node running
 **Galexie + Postgres 15 + MinIO** by default, with ZFS, a

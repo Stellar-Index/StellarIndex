@@ -5,12 +5,12 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 
 | Source rule | R1 rule | Adaptation |
 |-------------|---------|------------|
-| `api.yml` | `api.yml` | `job="api"` → `job="ratesengine-api"` |
-| `aggregator.yml` | `aggregator.yml` | `job="aggregator"` → `job="ratesengine-aggregator"` |
-| `ingestion.yml` | `ingestion.yml` | `job="indexer"` → `job="ratesengine-indexer"`. Source-stopped window widened to 30 min rate / 15 min for (F-1212b — see file header for rationale). |
+| `api.yml` | `api.yml` | `job="api"` → `job="stellaratlas-api"` |
+| `aggregator.yml` | `aggregator.yml` | `job="aggregator"` → `job="stellaratlas-aggregator"` |
+| `ingestion.yml` | `ingestion.yml` | `job="indexer"` → `job="stellaratlas-indexer"`. Source-stopped window widened to 30 min rate / 15 min for (F-1212b — see file header for rationale). |
 | `infra.yml` | `infra.yml` | `job="node"` → `job="node_exporter"` |
 | `meta.yml` | `meta.yml` | scrape regex narrowed to R1 jobs |
-| `slo.yml` | `slo.yml` | `job="api"` → `job="ratesengine-api"` |
+| `slo.yml` | `slo.yml` | `job="api"` → `job="stellaratlas-api"` |
 | `anomaly.yml` | `anomaly.yml` | as-is (no job-label refs) |
 | `divergence.yml` | `divergence.yml` | as-is |
 | `external-pollers.yml` | `external-pollers.yml` | as-is |

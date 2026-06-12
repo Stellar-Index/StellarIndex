@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Every significant architectural choice in Rates Engine is captured
+Every significant architectural choice in Stellar Atlas is captured
 here as an **ADR** — a numbered, dated, immutable record.
 
 ## Rules

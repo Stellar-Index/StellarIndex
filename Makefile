@@ -1,4 +1,4 @@
-# Rates Engine — canonical build / test / ops commands.
+# Stellar Atlas — canonical build / test / ops commands.
 #
 # Every non-trivial task should have a make target. If a contributor
 # has to memorise a shell incantation, that's a bug — add a target.
@@ -26,19 +26,19 @@ LD_FLAGS        := -X $(MODULE)/internal/version.Version=$(VERSION) \
 
 # Binaries we build
 BINARIES := \
-  ratesengine-indexer \
-  ratesengine-aggregator \
-  ratesengine-api \
-  ratesengine-ops \
-  ratesengine-migrate \
-  ratesengine-sla-probe
+  stellaratlas-indexer \
+  stellaratlas-aggregator \
+  stellaratlas-api \
+  stellaratlas-ops \
+  stellaratlas-migrate \
+  stellaratlas-sla-probe
 
 # Packages that hold integration tests (gated by build tag). Includes
-# cmd/ratesengine-ops, which carries `//go:build integration` tests
+# cmd/stellaratlas-ops, which carries `//go:build integration` tests
 # (verify-archive chunk orchestration) — F-1334: omitting it let an
 # interface-signature change break the ops integration test undetected
 # (the build-check below only compiled ./test/integration/...).
-INT_TEST_PKGS := ./test/integration/... ./cmd/ratesengine-ops/...
+INT_TEST_PKGS := ./test/integration/... ./cmd/stellaratlas-ops/...
 
 # Default test-cover threshold per package (staticcheck in CI enforces the per-package floor)
 COVER_THRESHOLD := 70
@@ -123,13 +123,13 @@ PROM_OUT ?= experimental-prometheus-rw
 .PHONY: test-load-guard
 test-load-guard:
 	@if [ -z "$$K6_TARGET" ]; then \
-	  echo "K6_TARGET is required (e.g. https://api.staging.ratesengine.net/v1)"; exit 2; \
+	  echo "K6_TARGET is required (e.g. https://api.staging.stellaratlas.xyz/v1)"; exit 2; \
 	fi
-	@if [ -z "$$RATESENGINE_LOAD_API_KEY" ]; then \
-	  echo "RATESENGINE_LOAD_API_KEY is required (mint from vault)"; exit 2; \
+	@if [ -z "$$STELLARATLAS_LOAD_API_KEY" ]; then \
+	  echo "STELLARATLAS_LOAD_API_KEY is required (mint from vault)"; exit 2; \
 	fi
 	@case "$$K6_TARGET" in \
-	  *api.ratesengine.net*|*api.ratesengine.io*|*rates.stellar.org*) \
+	  *api.stellaratlas.xyz*|*api.stellaratlas.io*|*rates.stellar.org*) \
 	    echo "Refusing to load-test production target $$K6_TARGET"; exit 2;; \
 	esac
 
@@ -202,7 +202,7 @@ lint-imports: ## Import-boundary lint (production ingest doesn't import stellar-
 
 .PHONY: lint-openapi-urls
 lint-openapi-urls: ## ADR-0018 URL-discipline check on the OpenAPI spec
-	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/rates-engine.v1.yaml
+	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-atlas.v1.yaml
 
 .PHONY: verify-launch-ready
 verify-launch-ready: ## Single-pane status check on the launch-readiness backlog
@@ -218,7 +218,7 @@ verify-launch-ready-single-region: ## verify-launch-ready against the project's 
 		-skip-ids L4.14,L4.15,L4.16,L4.17,L5.6,L5.8
 
 .PHONY: lint-metric-refs
-lint-metric-refs: ## F-1329 dead-alert guard: every ratesengine_* expr token must resolve to an emitter or KNOWN_INERT
+lint-metric-refs: ## F-1329 dead-alert guard: every stellaratlas_* expr token must resolve to an emitter or KNOWN_INERT
 	@./scripts/ci/lint-metric-refs.sh
 
 .PHONY: monitoring-check
@@ -237,7 +237,7 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@promtool check rules deploy/monitoring/rules/*.yml
 	@promtool check rules configs/prometheus/rules.r1/*.yml
 	@# F-1329: promtool only checks PromQL SYNTAX, not whether a metric
-	@# has a producer. This guard catches dead ratesengine_* references
+	@# has a producer. This guard catches dead stellaratlas_* references
 	@# (an alert that can never fire because nothing emits its metric).
 	@./scripts/ci/lint-metric-refs.sh
 
@@ -283,15 +283,15 @@ build: ## Build all binaries into bin/
 .PHONY: build-docker
 build-docker: ## Build all per-binary Docker images locally (Dockerfiles in docker/)
 	@for b in $(BINARIES); do \
-	  echo "Building docker image ratesengine/$$b:local"; \
-	  docker build --build-arg VERSION=$(VERSION) -t ratesengine/$$b:local -f docker/$$b.Dockerfile . || exit 1; \
+	  echo "Building docker image stellaratlas/$$b:local"; \
+	  docker build --build-arg VERSION=$(VERSION) -t stellaratlas/$$b:local -f docker/$$b.Dockerfile . || exit 1; \
 	done
 
 .PHONY: smoke-docker
 smoke-docker: ## Smoke-test all per-binary Docker images (requires `make build-docker` first)
 	@for b in $(BINARIES); do \
-	  echo "Smoke ratesengine/$$b:local --help"; \
-	  docker run --rm ratesengine/$$b:local --help 2>&1 | head -5 || exit 1; \
+	  echo "Smoke stellaratlas/$$b:local --help"; \
+	  docker run --rm stellaratlas/$$b:local --help 2>&1 | head -5 || exit 1; \
 	done
 
 .PHONY: smoke
@@ -306,15 +306,15 @@ pre-launch-check: ## Verify R1 is in production-ready shape before DNS cutover. 
 
 .PHONY: db-migrate-up
 db-migrate-up: ## Apply pending migrations
-	@$(GO) run ./cmd/ratesengine-migrate up
+	@$(GO) run ./cmd/stellaratlas-migrate up
 
 .PHONY: db-migrate-down
 db-migrate-down: ## Revert most recent migration
-	@$(GO) run ./cmd/ratesengine-migrate down 1
+	@$(GO) run ./cmd/stellaratlas-migrate down 1
 
 .PHONY: db-migrate-status
 db-migrate-status: ## Show migration state
-	@$(GO) run ./cmd/ratesengine-migrate status
+	@$(GO) run ./cmd/stellaratlas-migrate status
 
 ##@ Documentation
 
@@ -325,16 +325,16 @@ docs: docs-all ## Alias for docs-all
 docs-all: docs-api docs-config docs-metrics ## Regenerate all reference docs
 
 .PHONY: docs-api
-docs-api: ## Regenerate API reference from openapi/rates-engine.v1.yaml (Redocly via npx — no global install required)
+docs-api: ## Regenerate API reference from openapi/stellar-atlas.v1.yaml (Redocly via npx — no global install required)
 	@./scripts/dev/docs-api.sh
 
 .PHONY: docs-postman
-docs-postman: ## Regenerate examples/postman/rates-engine.postman_collection.json from the OpenAPI spec
+docs-postman: ## Regenerate examples/postman/stellar-atlas.postman_collection.json from the OpenAPI spec
 	@./scripts/dev/docs-postman.sh
 
 .PHONY: docs-config
 docs-config: ## Regenerate config reference from struct tags
-	@$(GO) run ./cmd/ratesengine-ops docs-config > docs/reference/config/README.md
+	@$(GO) run ./cmd/stellaratlas-ops docs-config > docs/reference/config/README.md
 
 .PHONY: docs-metrics
 docs-metrics: ## (no-op) Metrics reference is hand-edited — drift is guarded by 'make lint-docs'
@@ -396,7 +396,7 @@ web-format: ## Format the showcase site (prettier)
 web-generate-api: ## Regenerate web/explorer/src/api/types.ts from OpenAPI
 	cd $(WEB_EXPLORER_DIR) && pnpm generate:api
 
-##@ Dashboard SPA (web/dashboard/) — customer-facing app.ratesengine.net
+##@ Dashboard SPA (web/dashboard/) — customer-facing app.stellaratlas.xyz
 
 WEB_DASHBOARD_DIR := web/dashboard
 
@@ -420,7 +420,7 @@ dashboard-typecheck: ## Typecheck the dashboard
 dashboard-lint: ## Lint the dashboard
 	cd $(WEB_DASHBOARD_DIR) && pnpm lint
 
-##@ Status page (web/status/) — public-facing status.ratesengine.net
+##@ Status page (web/status/) — public-facing status.stellaratlas.xyz
 
 WEB_STATUS_DIR := web/status
 

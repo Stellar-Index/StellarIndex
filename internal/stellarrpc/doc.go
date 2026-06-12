@@ -8,7 +8,7 @@
 // docs/architecture/ingest-pipeline.md. This package's remaining
 // callers are:
 //
-//   - cmd/ratesengine-ops/main.go's `rpc-probe` operator diagnostic
+//   - cmd/stellaratlas-ops/main.go's `rpc-probe` operator diagnostic
 //     (one-shot health/liveness check against any stellar-rpc).
 //   - internal/sources/soroswap/factory_seed.go — boot-time
 //     factory sweep via simulateTransaction to seed the
@@ -66,6 +66,6 @@
 //	    log.Warnf("rpc stale: %s", h.Status)
 //	}
 //
-// See [cmd/ratesengine-ops]'s `rpc-probe` subcommand for a real
+// See [cmd/stellaratlas-ops]'s `rpc-probe` subcommand for a real
 // example.
 package stellarrpc

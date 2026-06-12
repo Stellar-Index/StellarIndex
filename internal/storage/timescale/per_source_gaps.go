@@ -74,7 +74,7 @@ type GapDetectorTarget struct {
 	// sparsity envelope; it can mask a real gap that lands just under
 	// the threshold, so it is NOT a 100%-confidence signal. The
 	// completeness WATERMARK (completeness_snapshots, computed by
-	// `ratesengine-ops compute-completeness`) is the confidence
+	// `stellaratlas-ops compute-completeness`) is the confidence
 	// signal: it proves quiet-vs-gap from the LCM census + hash chain
 	// with NO threshold. Keep MinGapSizeOverride for "page me if a
 	// dense source goes quiet" tripwires; do not read it as coverage.

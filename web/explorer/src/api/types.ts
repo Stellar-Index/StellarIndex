@@ -1224,7 +1224,7 @@ export interface paths {
          *
          *     Bucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)
          *     will ship via the aggregator binary (see
-         *     cmd/ratesengine-aggregator) on a different response shape —
+         *     cmd/stellaratlas-aggregator) on a different response shape —
          *     not this endpoint.
          */
         get: {
@@ -2136,7 +2136,7 @@ export interface paths {
                             /**
                              * @description Issuer's organisation name from SEP-1
                              *     `[DOCUMENTATION].ORG_NAME`. Populated by
-                             *     the `ratesengine-ops sep1-refresh` job;
+                             *     the `stellaratlas-ops sep1-refresh` job;
                              *     empty until the issuer's stellar.toml
                              *     has been resolved.
                              */
@@ -2439,9 +2439,9 @@ export interface paths {
                 };
                 /**
                  * @description Either `max_age` didn't parse as a positive Go duration
-                 *     (`type=https://api.ratesengine.net/errors/invalid-max-age`),
+                 *     (`type=https://api.stellaratlas.xyz/errors/invalid-max-age`),
                  *     or `status` was set to a value other than `active` /
-                 *     `stale` (`type=https://api.ratesengine.net/errors/invalid-status`).
+                 *     `stale` (`type=https://api.stellaratlas.xyz/errors/invalid-status`).
                  *     Body is the standard problem+json envelope.
                  */
                 400: {
@@ -2482,7 +2482,7 @@ export interface paths {
          *     skipped at parse time. New incidents ship with a redeploy.
          *
          *     Powers the "Incident history" section on
-         *     status.ratesengine.net. Distinct from `/v1/status` which
+         *     status.stellaratlas.xyz. Distinct from `/v1/status` which
          *     reports the *currently active* incidents from Alertmanager.
          */
         get: {
@@ -3121,7 +3121,7 @@ export interface paths {
          *
          *     F-1259 (codex audit-2026-05-12) — the previous "placeholder,
          *     returns empty list" wording reflected the pre-launch state;
-         *     the counter is now wired in `cmd/ratesengine-api/main.go`
+         *     the counter is now wired in `cmd/stellaratlas-api/main.go`
          *     whenever Redis is reachable. Deployments without Redis
          *     (e.g. local dev with `-no-redis`) still return an empty
          *     envelope — the absence of the counter is reflected on
@@ -3369,9 +3369,9 @@ export interface paths {
          *     (F-1219). Those side effects are best-effort — they do NOT
          *     5xx — because Stripe retries against an unhealthy Postgres
          *     would just retry-storm. Failures are surfaced via the
-         *     `ratesengine_stripe_platform_sync_errors_total{operation}`
+         *     `stellaratlas_stripe_platform_sync_errors_total{operation}`
          *     counter; the alert
-         *     `ratesengine_stripe_platform_sync_errors` (P3 / ticket)
+         *     `stellaratlas_stripe_platform_sync_errors` (P3 / ticket)
          *     fires on any non-zero rate over 15 min. See the runbook
          *     at `docs/operations/runbooks/stripe-platform-sync-errors.md`
          *     for per-`operation` triage.
@@ -3888,7 +3888,7 @@ export interface paths {
          * Customer dashboard — register a new webhook.
          * @description Session-gated. Returns the signing secret ONCE — store it
          *     server-side immediately and use it to HMAC-verify the
-         *     X-RatesEngine-Signature header on inbound POSTs. URL must
+         *     X-StellarAtlas-Signature header on inbound POSTs. URL must
          *     be https://. Owner / admin / member roles can register;
          *     viewer + billing 403. Capped at 10 webhooks per account.
          */
@@ -4132,7 +4132,7 @@ export interface paths {
          *
          *     Distinct from `/auth/sep10/*` (programmatic API auth via a
          *     signed Stellar challenge). This endpoint is the entry point
-         *     for the cookie-based dashboard SPA at app.ratesengine.net.
+         *     for the cookie-based dashboard SPA at app.stellaratlas.xyz.
          *
          *     Returns 503 when the deployment hasn't configured the
          *     dashboard auth flow (api.dashboard.base_url empty).
@@ -4189,7 +4189,7 @@ export interface paths {
          * Customer dashboard — consume a magic-link token + mint a session cookie.
          * @description Reads the `token` query parameter, atomically marks it
          *     consumed in `magic_link_tokens`, and on success sets an
-         *     HttpOnly + Secure session cookie (`ratesengine_session`)
+         *     HttpOnly + Secure session cookie (`stellaratlas_session`)
          *     and redirects (303) into the dashboard.
          *
          *     First-time emails get a free-tier account + owner-role
@@ -4498,7 +4498,7 @@ export interface components {
             id: string;
             /** @description Operator-friendly label, 1–200 chars. */
             name: string;
-            /** @description HTTPS endpoint. Worker POSTs JSON with HMAC-SHA-256 signature in X-RatesEngine-Signature. */
+            /** @description HTTPS endpoint. Worker POSTs JSON with HMAC-SHA-256 signature in X-StellarAtlas-Signature. */
             url: string;
             /**
              * @description Closed enum of event types the customer subscribed to.
@@ -4528,7 +4528,7 @@ export interface components {
             /**
              * @description HMAC-SHA-256 signing key plaintext. Returned exactly
              *     once. Store server-side + use it to verify the
-             *     X-RatesEngine-Signature header on inbound webhook
+             *     X-StellarAtlas-Signature header on inbound webhook
              *     POSTs. Format: `wsec_<64 hex chars>`.
              */
             secret: string;
@@ -4570,7 +4570,7 @@ export interface components {
         /**
          * @description Body of an `incident.sev1` or `incident.resolved` webhook
          *     delivery. Fired by the operator command
-         *     `ratesengine-ops emit-incident` from the Markdown corpus
+         *     `stellaratlas-ops emit-incident` from the Markdown corpus
          *     at `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`.
          *
          *     `incident.sev1` fires when an operator publishes a new
@@ -4784,12 +4784,12 @@ export interface components {
                 /**
                  * @description Sources that have emitted an event in the last 10
                  *     minutes (Prometheus
-                 *     `count(rate(ratesengine_source_events_total[10m]) > 0)`).
+                 *     `count(rate(stellaratlas_source_events_total[10m]) > 0)`).
                  */
                 active_sources?: number;
                 /**
                  * @description Sources the operator has ENABLED in this region
-                 *     (Prometheus `count(ratesengine_source_enabled == 1)`).
+                 *     (Prometheus `count(stellaratlas_source_enabled == 1)`).
                  *     Different from `/v1/network/stats.total_sources`,
                  *     which counts every source REGISTERED in the binary
                  *     regardless of enable state — typically a strict
@@ -4815,7 +4815,7 @@ export interface components {
             /** @description Alertmanager `alertname` label. */
             name: string;
             /**
-             * @description Severity bucket per the Rates Engine alerting taxonomy.
+             * @description Severity bucket per the Stellar Atlas alerting taxonomy.
              * @enum {string}
              */
             severity: "page" | "ticket" | "informational";
@@ -5445,7 +5445,7 @@ export interface components {
             paid: boolean;
             /** @description Whether the source supports historical backfill via its native API. */
             backfill_available: boolean;
-            /** @description Whether `ratesengine-ops backfill` will run on this source. On-chain Soroban sources start `false` and only flip `true` after a per-WASM-hash audit (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always `true`. */
+            /** @description Whether `stellaratlas-ops backfill` will run on this source. On-chain Soroban sources start `false` and only flip `true` after a per-WASM-hash audit (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always `true`. */
             backfill_safe: boolean;
             /** @description Default per-source weight for weighted-aggregation paths (when those land). */
             default_weight: number;
@@ -5606,7 +5606,7 @@ export interface components {
             content: {
                 /**
                  * @example {
-                 *       "type": "https://api.ratesengine.net/errors/asset-not-found",
+                 *       "type": "https://api.stellaratlas.xyz/errors/asset-not-found",
                  *       "title": "Asset not found",
                  *       "status": 404,
                  *       "detail": "No trades observed for asset_id=XYZ-G...",
@@ -5625,7 +5625,7 @@ export interface components {
             content: {
                 /**
                  * @example {
-                 *       "type": "https://api.ratesengine.net/errors/missing-asset",
+                 *       "type": "https://api.stellaratlas.xyz/errors/missing-asset",
                  *       "title": "Missing asset parameter",
                  *       "status": 400,
                  *       "detail": "asset query parameter is required",
@@ -5648,7 +5648,7 @@ export interface components {
             content: {
                 /**
                  * @example {
-                 *       "type": "https://api.ratesengine.net/errors/rate-limited",
+                 *       "type": "https://api.stellaratlas.xyz/errors/rate-limited",
                  *       "title": "Rate limit exceeded",
                  *       "status": 429,
                  *       "detail": "anonymous tier limited to 60 requests per minute; retry in 23 seconds",
@@ -5667,7 +5667,7 @@ export interface components {
             content: {
                 /**
                  * @example {
-                 *       "type": "https://api.ratesengine.net/errors/internal",
+                 *       "type": "https://api.stellaratlas.xyz/errors/internal",
                  *       "title": "Internal error",
                  *       "status": 500,
                  *       "detail": "see X-Request-ID in server logs",
@@ -5686,7 +5686,7 @@ export interface components {
             content: {
                 /**
                  * @example {
-                 *       "type": "https://api.ratesengine.net/errors/account-store-unavailable",
+                 *       "type": "https://api.stellaratlas.xyz/errors/account-store-unavailable",
                  *       "title": "Account store not configured",
                  *       "status": 503,
                  *       "detail": "this deployment has no AccountStore wired — typically because Redis is unavailable",

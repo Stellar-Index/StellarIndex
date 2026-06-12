@@ -12,7 +12,7 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). |
-| Tool | `ratesengine-ops projector-replay -source <name> -from <ledger>` |
+| Tool | `stellaratlas-ops projector-replay -source <name> -from <ledger>` |
 | Typical wall time | ≤ 5 s SQL + projector catch-up (≈ 1 min per 100k ledgers per source) |
 | Impact | None — the projector tails `soroban_events` (ADR-0029); replay just rewinds a cursor. `ON CONFLICT DO NOTHING` makes re-writes idempotent. |
 
@@ -27,11 +27,11 @@ is the **only** catch-up path for projected (Soroban-derived)
 sources — one cursor-rewind:
 
 ```sh
-ratesengine-ops projector-replay -config /etc/ratesengine.toml \
+stellaratlas-ops projector-replay -config /etc/stellaratlas.toml \
   -source <name> -from <ledger>
 ```
 
-The projector goroutine in `ratesengine-indexer` is already
+The projector goroutine in `stellaratlas-indexer` is already
 tailing `soroban_events`; rewinding the per-source cursor makes it
 re-project the requested window on its next cycle (≤ 5 s
 projector interval). Per-source tables use ON CONFLICT DO NOTHING
@@ -41,13 +41,13 @@ so re-writes are idempotent.
 
 ```sh
 # 1. Where is the projector's per-source cursor right now?
-ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
+ssh root@136.243.90.96 'psql -U stellaratlas -d stellaratlas -c \
   "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors \
    WHERE source = '"'"'projector'"'"' ORDER BY sub_source"'
 
 # 2. What rows are actually present in the per-source table for
 #    the range you want to backfill?
-ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
+ssh root@136.243.90.96 'psql -U stellaratlas -d stellaratlas -c \
   "SELECT MIN(ledger), MAX(ledger), COUNT(*) FROM trades \
    WHERE source = '"'"'aquarius'"'"' AND ledger BETWEEN 62000000 AND 62100000"'
 
@@ -55,7 +55,7 @@ ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
 #    the per-source's topic? If there are events but no rows in
 #    the per-source table, replay will populate. If no events,
 #    nothing to do.
-ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
+ssh root@136.243.90.96 'psql -U stellaratlas -d stellaratlas -c \
   "SELECT COUNT(*) FROM soroban_events \
    WHERE ledger BETWEEN 62000000 AND 62100000 AND topic_0_sym = '"'"'swap'"'"'"'
 ```
@@ -64,11 +64,11 @@ ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
 
 ```sh
 # Dry-run first to see what would happen.
-ratesengine-ops projector-replay -config /etc/ratesengine.toml \
+stellaratlas-ops projector-replay -config /etc/stellaratlas.toml \
   -source aquarius -from 62000000 -dry-run
 
 # Live.
-ratesengine-ops projector-replay -config /etc/ratesengine.toml \
+stellaratlas-ops projector-replay -config /etc/stellaratlas.toml \
   -source aquarius -from 62000000
 ```
 
@@ -84,7 +84,7 @@ After replay, the projector cycle log lines (one per minute when
 catching up) show progress:
 
 ```sh
-ssh root@136.243.90.96 'journalctl -u ratesengine-indexer -n 100 -f | grep projector'
+ssh root@136.243.90.96 'journalctl -u stellaratlas-indexer -n 100 -f | grep projector'
 ```
 
 `projector_lag_ledgers{source="<name>"}` falls to 0 once the

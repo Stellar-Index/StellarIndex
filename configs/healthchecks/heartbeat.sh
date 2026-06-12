@@ -6,7 +6,7 @@
 # name (indexer / aggregator / api) is the systemd template
 # instance — passed via %i.
 #
-# URLs come from /etc/default/ratesengine-healthchecks (off-disk
+# URLs come from /etc/default/stellaratlas-healthchecks (off-disk
 # in git). Empty URL silently skips the ping — lets the timers
 # install before the operator has provisioned the URLs.
 
@@ -20,7 +20,7 @@ fi
 
 # Env vars (HEALTHCHECKS_URL_*) come from the systemd unit's
 # EnvironmentFile= directive, which loads
-# /etc/default/ratesengine-healthchecks as root before dropping
+# /etc/default/stellaratlas-healthchecks as root before dropping
 # privileges. Do NOT re-source it here — the unprivileged service
 # user can't read the 0600 secret file.
 
@@ -62,7 +62,7 @@ fi
 # useful at a glance.
 if [ -n "$PING_URL" ]; then
   curl -fsS --max-time 5 -o /dev/null --retry 2 \
-    -d "ratesengine-${SERVICE} ok :${PORT}" \
+    -d "stellaratlas-${SERVICE} ok :${PORT}" \
     "$PING_URL" || true
 fi
 

@@ -297,7 +297,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: ADR-0018 URL-discipline check
-        run: go run ./scripts/ci/lint-openapi-urls openapi/rates-engine.v1.yaml
+        run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-atlas.v1.yaml
       - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
         run: go run ./scripts/ci/lint-pk-discriminators
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
@@ -306,7 +306,7 @@ jobs:
       - name: Generated API reference is in sync
         run: |
           ./scripts/dev/docs-api.sh
-          if ! git diff --exit-code -- docs/reference/api/index.html docs/reference/api/README.md docs/reference/api/rates-engine.v1.yaml; then
+          if ! git diff --exit-code -- docs/reference/api/index.html docs/reference/api/README.md docs/reference/api/stellar-atlas.v1.yaml; then
             echo "::error::Generated API reference is stale. Run 'make docs-api' locally and commit the result."
             exit 1
           fi
@@ -374,7 +374,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # Customer dashboard — same shape as web-explorer. Static-export
-  # Next.js app at web/dashboard/ deployed to app.ratesengine.net.
+  # Next.js app at web/dashboard/ deployed to app.stellaratlas.xyz.
   # ────────────────────────────────────────────────────────────────
   web-dashboard:
     name: web/dashboard
@@ -406,7 +406,7 @@ jobs:
       - run: pnpm audit --audit-level high
 
   # ────────────────────────────────────────────────────────────────
-  # Status page — public-facing status.ratesengine.net. Replaces
+  # Status page — public-facing status.stellaratlas.xyz. Replaces
   # the cstate Hugo build with a custom Next.js static-export.
   # ────────────────────────────────────────────────────────────────
   web-status:

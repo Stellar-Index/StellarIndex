@@ -22,7 +22,7 @@ import (
 func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	if s.sep10 == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/sep10-unavailable",
+			"https://api.stellaratlas.xyz/errors/sep10-unavailable",
 			"SEP-10 not configured", http.StatusServiceUnavailable,
 			"this deployment has no SEP-10 validator wired — typically because the server signing seed isn't configured")
 		return
@@ -31,7 +31,7 @@ func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	account := r.URL.Query().Get("account")
 	if account == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-account",
+			"https://api.stellaratlas.xyz/errors/missing-account",
 			"Missing account parameter", http.StatusBadRequest,
 			"account query parameter is required (G-strkey)")
 		return
@@ -41,14 +41,14 @@ func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthorized) {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-account",
+				"https://api.stellaratlas.xyz/errors/invalid-account",
 				"Invalid account", http.StatusBadRequest,
 				"account must be a valid Stellar G-strkey")
 			return
 		}
 		if errors.Is(err, auth.ErrNotImplemented) {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/sep10-unavailable",
+				"https://api.stellaratlas.xyz/errors/sep10-unavailable",
 				"SEP-10 not configured", http.StatusServiceUnavailable,
 				"this deployment has no SEP-10 validator wired — typically because the server signing seed isn't configured")
 			return
@@ -58,7 +58,7 @@ func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("SEP-10 challenge failed", "err", err, "account", account)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -124,7 +124,7 @@ type sep10TokenResponse struct {
 func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 	if s.sep10 == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/sep10-unavailable",
+			"https://api.stellaratlas.xyz/errors/sep10-unavailable",
 			"SEP-10 not configured", http.StatusServiceUnavailable,
 			"this deployment has no SEP-10 validator wired")
 		return
@@ -134,7 +134,7 @@ func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/body-too-large",
+			"https://api.stellaratlas.xyz/errors/body-too-large",
 			"Request body too large", http.StatusBadRequest,
 			"/v1/auth/sep10/token body must be under 64 KiB")
 		return
@@ -142,21 +142,21 @@ func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 	var req sep10TokenRequest
 	if len(body) == 0 {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-body",
+			"https://api.stellaratlas.xyz/errors/missing-body",
 			"Request body required", http.StatusBadRequest,
 			"body must be JSON: {\"transaction\":\"<base64-XDR>\"}")
 		return
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-body",
+			"https://api.stellaratlas.xyz/errors/invalid-body",
 			"Malformed JSON body", http.StatusBadRequest,
 			"could not parse request body as JSON")
 		return
 	}
 	if req.Transaction == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-transaction",
+			"https://api.stellaratlas.xyz/errors/missing-transaction",
 			"Missing transaction", http.StatusBadRequest,
 			"transaction field is required (base64-encoded signed XDR)")
 		return
@@ -183,17 +183,17 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 	switch {
 	case errors.Is(err, auth.ErrTokenExpired):
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/sep10-challenge-expired",
+			"https://api.stellaratlas.xyz/errors/sep10-challenge-expired",
 			"Challenge expired", http.StatusGone,
 			"the SEP-10 challenge's time-bound window has elapsed; request a fresh challenge")
 	case errors.Is(err, auth.ErrTokenMalformed):
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/sep10-malformed-transaction",
+			"https://api.stellaratlas.xyz/errors/sep10-malformed-transaction",
 			"Malformed challenge transaction", http.StatusBadRequest,
 			"the supplied transaction XDR could not be parsed as a SEP-10 challenge")
 	case errors.Is(err, auth.ErrUnauthorized):
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/sep10-verification-failed",
+			"https://api.stellaratlas.xyz/errors/sep10-verification-failed",
 			"Challenge verification failed", http.StatusUnauthorized,
 			"the supplied signed transaction did not pass SEP-10 verification (signature missing or wrong account)")
 	case errors.Is(err, auth.ErrNotImplemented):
@@ -206,7 +206,7 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 		// state, not a server crash. Surfacing it as 503 with a
 		// detail makes the operator-side fix obvious.
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/sep10-unavailable",
+			"https://api.stellaratlas.xyz/errors/sep10-unavailable",
 			"SEP-10 not configured", http.StatusServiceUnavailable,
 			"this deployment has no SEP-10 validator wired — typically because the server signing seed isn't configured")
 	default:
@@ -215,7 +215,7 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 		}
 		s.logger.Error("SEP-10 verify failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 	}
 }

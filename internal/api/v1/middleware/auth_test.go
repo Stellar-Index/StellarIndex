@@ -341,7 +341,7 @@ func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
 			},
 			setHeader:  func(*http.Request) {},
 			wantStatus: http.StatusUnauthorized,
-			wantType:   "https://api.ratesengine.net/errors/unauthorized",
+			wantType:   "https://api.stellaratlas.xyz/errors/unauthorized",
 		},
 		{
 			name: "no validator wired — 503 not configured",
@@ -353,7 +353,7 @@ func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
 				r.Header.Set("Authorization", "Bearer x")
 			},
 			wantStatus: http.StatusServiceUnavailable,
-			wantType:   "https://api.ratesengine.net/errors/auth-not-configured",
+			wantType:   "https://api.stellaratlas.xyz/errors/auth-not-configured",
 		},
 	}
 	for _, tc := range cases {

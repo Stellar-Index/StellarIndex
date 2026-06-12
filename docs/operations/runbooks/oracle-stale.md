@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_oracle_stale`
+# Runbook — `stellaratlas_oracle_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_oracle_stale` |
+| Alert | `stellaratlas_oracle_stale` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/divergence.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,16 +19,16 @@ severity: P2
 
 ## Symptoms
 
-- `(time() - ratesengine_oracle_last_update_unix) > 10 * ratesengine_oracle_resolution_seconds` sustained 2 min.
-- Alert label `source` names the specific variant — one of `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`, `band`. (Chainlink-HTTP is a divergence reference in `internal/divergence/`, not an oracle source — it doesn't emit `ratesengine_oracle_*` metrics and won't appear here.)
-- `ratesengine_source_events_total{source=reflector-...}` rate drops to zero at the same time (or has been zero throughout).
+- `(time() - stellaratlas_oracle_last_update_unix) > 10 * stellaratlas_oracle_resolution_seconds` sustained 2 min.
+- Alert label `source` names the specific variant — one of `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`, `band`. (Chainlink-HTTP is a divergence reference in `internal/divergence/`, not an oracle source — it doesn't emit `stellaratlas_oracle_*` metrics and won't appear here.)
+- `stellaratlas_source_events_total{source=reflector-...}` rate drops to zero at the same time (or has been zero throughout).
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # How long since last observation, per source?
 curl -s http://localhost:9464/metrics |
-  grep -E "ratesengine_oracle_last_update_unix|ratesengine_oracle_resolution_seconds"
+  grep -E "stellaratlas_oracle_last_update_unix|stellaratlas_oracle_resolution_seconds"
 
 # Is the CONTRACT itself still emitting? The oracle source
 # subscribes to (ContractIDs=[contract], topics=[REFLECTOR,update]).
@@ -37,7 +37,7 @@ curl -s http://localhost:9464/metrics |
 # (removed 2026-04-23, see docs/operations/r1-deployment-state.md);
 # point the probe at a public endpoint to confirm the network is
 # closing ledgers and the oracle contract has been invoked recently.
-ratesengine-ops rpc-probe https://mainnet.sorobanrpc.com
+stellaratlas-ops rpc-probe https://mainnet.sorobanrpc.com
 
 # Check stellar.expert for the contract's recent tx activity:
 #   https://stellar.expert/explorer/public/contract/<contract-id>
@@ -50,7 +50,7 @@ ratesengine-ops rpc-probe https://mainnet.sorobanrpc.com
 Key signals:
 - **On-chain activity continues, we see zero** → filter or subscription issue on our side. Restart the indexer; if the issue persists, the contract's event shape may have changed.
 - **On-chain activity paused** → the oracle's off-chain publisher (Reflector relayer, Redstone DataService, Band's chain-write bot) is down. Nothing we can do except switch providers or fail over.
-- **We see SOME events but they're not decoding** → `ratesengine_source_decode_errors_total` for that source is also elevated. Jump to `decode-errors.md`.
+- **We see SOME events but they're not decoding** → `stellaratlas_source_decode_errors_total` for that source is also elevated. Jump to `decode-errors.md`.
 
 ## Mitigation
 
@@ -58,7 +58,7 @@ Key signals:
 - [ ] Step 2 — if our-side: restart the indexer pod. The reflector source seeds from tip on boot and re-subscribes; this resolves stuck subscriptions.
 - [ ] Step 3 — if publisher-side: check the provider's status page (Reflector: app.reflector.world, Redstone: app.redstone.finance, Band: data.bandprotocol.com). Open an incident tracking the upstream ETA. Our API will flag affected asset prices with `stale=true` in the response envelope — communicate that SLA departure to consumers.
 - [ ] Step 4 — if a specific asset stops but others from the same source keep flowing: the contract de-listed that asset. Update the fallback aggregation config to drop the oracle for that asset.
-- [ ] Verification: `ratesengine_oracle_last_update_unix` for the affected source starts incrementing again.
+- [ ] Verification: `stellaratlas_oracle_last_update_unix` for the affected source starts incrementing again.
 
 ## Severity note
 

@@ -183,12 +183,12 @@ specific tripwires:
 
 ## WASM timeline
 
-Output from `ratesengine-ops wasm-history` over the post-Soroban
+Output from `stellaratlas-ops wasm-history` over the post-Soroban
 window — full archive on r1, walked 2026-04-29:
 
 ```sh
-ratesengine-ops wasm-history \
-  -config /etc/ratesengine.toml \
+stellaratlas-ops wasm-history \
+  -config /etc/stellaratlas.toml \
   -from 50457424 -to 62342614 -parallel 8 \
   -contracts CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2,\
 CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH,...

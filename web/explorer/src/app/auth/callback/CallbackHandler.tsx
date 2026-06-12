@@ -21,7 +21,7 @@ type State =
  * actually applies and the browser then arrives at the
  * configured landing page logged in.
  *
- * If the operator has DashboardBaseURL = ratesengine.net, the
+ * If the operator has DashboardBaseURL = stellaratlas.xyz, the
  * post-login redirect lands on /account here and the navbar's
  * useMe hook lights up.
  */

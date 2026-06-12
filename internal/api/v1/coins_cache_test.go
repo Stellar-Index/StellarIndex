@@ -77,7 +77,7 @@ func (f *fakeCoinsUpstream) GetCoinTradeCount24h(ctx context.Context, assetID st
 
 // TestCachedCoinsReader_ListCoinsExtHitMissCounter pins both the
 // upstream-call dedup behaviour AND the
-// ratesengine_api_cache_ops_total{cache="coins",op="list_coins"}
+// stellaratlas_api_cache_ops_total{cache="coins",op="list_coins"}
 // counter deltas in one test. First call is a miss (+1 miss), the
 // repeat call is a hit (+1 hit) and must NOT call upstream a
 // second time.

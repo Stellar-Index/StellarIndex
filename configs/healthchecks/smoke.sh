@@ -10,13 +10,13 @@
 # the `data` field, an OpenAPI-spec change that breaks downstream
 # clients.
 #
-# URL comes from /etc/default/ratesengine-healthchecks
+# URL comes from /etc/default/stellaratlas-healthchecks
 # (HEALTHCHECKS_URL_SMOKE). Empty URL silently runs the smoke
 # script for journal-only coverage.
 
 set -uo pipefail
 
-SMOKE_SCRIPT="${SMOKE_SCRIPT:-/opt/ratesengine/healthchecks/r1-smoke.sh}"
+SMOKE_SCRIPT="${SMOKE_SCRIPT:-/opt/stellaratlas/healthchecks/r1-smoke.sh}"
 URL="${HEALTHCHECKS_URL_SMOKE:-}"
 
 # F-1302 (codex audit-2026-05-13): a missing or non-executable

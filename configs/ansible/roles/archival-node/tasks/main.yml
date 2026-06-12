@@ -69,21 +69,21 @@
   ansible.builtin.import_tasks: 13-healthcheck.yml
   tags: [healthcheck, monitoring]
 
-- name: "Rates Engine services (build, deploy, migrate, indexer)"
-  ansible.builtin.import_tasks: 14-ratesengine-services.yml
-  when: run_ratesengine | bool
-  tags: [ratesengine, indexer]
+- name: "Stellar Atlas services (build, deploy, migrate, indexer)"
+  ansible.builtin.import_tasks: 14-stellaratlas-services.yml
+  when: run_stellaratlas | bool
+  tags: [stellaratlas, indexer]
 
-- name: "Rates Engine Healthchecks.io stack (heartbeat + smoke + sla-probe)"
+- name: "Stellar Atlas Healthchecks.io stack (heartbeat + smoke + sla-probe)"
   # F-0137 (audit-2026-05-26): replaces the manual
   # configs/healthchecks/install.sh re-run. Ordered AFTER
-  # 14-ratesengine-services.yml because the sla-probe wrapper
-  # invokes /usr/local/bin/ratesengine-sla-probe (built + installed
+  # 14-stellaratlas-services.yml because the sla-probe wrapper
+  # invokes /usr/local/bin/stellaratlas-sla-probe (built + installed
   # by 14) and the smoke wrapper hits the API surface that 14 brings
   # up; the wrappers degrade gracefully if either is missing
   # (ping /fail + journalctl) so the dependency is soft rather than
   # blocking.
-  ansible.builtin.import_tasks: 17-ratesengine-healthchecks.yml
+  ansible.builtin.import_tasks: 17-stellaratlas-healthchecks.yml
   tags: [healthchecks, monitoring]
 
 - name: "Log discipline (rsyslog cap + journald cap)"

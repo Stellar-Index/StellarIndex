@@ -31,13 +31,13 @@ This doc covers the **deploy** half. The **release** half is in
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=v0.2.0 \
-  -f binaries=ratesengine-indexer,ratesengine-aggregator,ratesengine-api
+  -f binaries=stellaratlas-indexer,stellaratlas-aggregator,stellaratlas-api
 ```
 
 Or use the GitHub Actions UI: Actions → deploy → Run workflow,
 fill in the dropdowns.
 
-Defaults if `binaries` is omitted: `ratesengine-indexer,ratesengine-aggregator,ratesengine-api`
+Defaults if `binaries` is omitted: `stellaratlas-indexer,stellaratlas-aggregator,stellaratlas-api`
 (the three long-running services).
 
 The workflow refuses to run unless `version` matches
@@ -71,7 +71,7 @@ loops over each requested binary and includes
 Per-binary sequence:
 
 1. **Resolve previous version** from the sidecar
-   `/var/lib/ratesengine/deployed-versions/<binary>`. First-deploy
+   `/var/lib/stellaratlas/deployed-versions/<binary>`. First-deploy
    fallback is a UTC timestamp.
 2. **Stage** the new binary as `<install_dir>/<binary>.new`
    (controller → host copy via SSH).
@@ -81,7 +81,7 @@ Per-binary sequence:
 6. **`systemctl restart <binary>.service`**.
 7. **Grace period** (default 15s) before health probe.
 8. **Health probe**:
-   - `ratesengine-api`: `curl http://127.0.0.1:3000/v1/healthz` expects 200 (5 retries × 3s)
+   - `stellaratlas-api`: `curl http://127.0.0.1:3000/v1/healthz` expects 200 (5 retries × 3s)
    - other binaries: `systemctl is-active` expects `active` (5 retries × 3s)
 9. **Rollback on probe failure**:
    - Stop the failing service.
@@ -99,10 +99,10 @@ the SemVer of the previous deploy (resolved from the sidecar).
 Examples after a few deploys:
 
 ```
-/usr/local/bin/ratesengine-api
-/usr/local/bin/ratesengine-api.prev-v0.2.0
-/usr/local/bin/ratesengine-api.prev-v0.1.3
-/usr/local/bin/ratesengine-api.prev-v0.1.2
+/usr/local/bin/stellaratlas-api
+/usr/local/bin/stellaratlas-api.prev-v0.2.0
+/usr/local/bin/stellaratlas-api.prev-v0.1.3
+/usr/local/bin/stellaratlas-api.prev-v0.1.2
 ```
 
 To roll back manually (workflow path is preferred — see
@@ -110,11 +110,11 @@ release-process.md §Rollback):
 
 ```sh
 ssh root@<host> "
-  systemctl stop ratesengine-api
-  mv /usr/local/bin/ratesengine-api /tmp/bad-ratesengine-api
-  cp /usr/local/bin/ratesengine-api.prev-v0.1.3 /usr/local/bin/ratesengine-api
-  echo v0.1.3 > /var/lib/ratesengine/deployed-versions/ratesengine-api
-  systemctl start ratesengine-api
+  systemctl stop stellaratlas-api
+  mv /usr/local/bin/stellaratlas-api /tmp/bad-stellaratlas-api
+  cp /usr/local/bin/stellaratlas-api.prev-v0.1.3 /usr/local/bin/stellaratlas-api
+  echo v0.1.3 > /var/lib/stellaratlas/deployed-versions/stellaratlas-api
+  systemctl start stellaratlas-api
 "
 ```
 

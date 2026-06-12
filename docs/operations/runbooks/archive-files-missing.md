@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_archive_files_missing`
+# Runbook — `stellaratlas_archive_files_missing`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_archive_files_missing` |
+| Alert | `stellaratlas_archive_files_missing` |
 | Severity | P2 |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/archive-completeness.yml` |
 | Typical MTTR | 5–15 min (auto-repair); 1–4 h (manual after auto-repair fails) |
@@ -65,7 +65,7 @@ If neither AWS nor SDF is reachable from R1: external network/source outage — 
   file). Re-run scoped to the full range and write the report:
 
   ```sh
-  ssh r1 'ratesengine-ops archive-completeness verify \
+  ssh r1 'stellaratlas-ops archive-completeness verify \
     -from 2 -to 0 -workers 16 \
     -output-file /var/lib/galexie/last-completeness-report.json'
   ```

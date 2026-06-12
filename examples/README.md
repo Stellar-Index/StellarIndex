@@ -1,8 +1,8 @@
-# Rates Engine API examples
+# Stellar Atlas API examples
 
 Hands-on examples for hitting the public API at
-`https://api.ratesengine.net`. The OpenAPI spec at
-[`openapi/rates-engine.v1.yaml`](../openapi/rates-engine.v1.yaml)
+`https://api.stellaratlas.xyz`. The OpenAPI spec at
+[`openapi/stellar-atlas.v1.yaml`](../openapi/stellar-atlas.v1.yaml)
 is the source of truth — these examples show common usage patterns
 in three formats so you can pick what fits your workflow.
 

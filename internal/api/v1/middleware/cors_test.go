@@ -163,7 +163,7 @@ func TestCORS_NoOriginNoHeaders(t *testing.T) {
 // "no CORS" response, breaking client-side fetch().
 func TestCORS_VaryOriginAlwaysSetForExactMatchMode(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
-		AllowedOrigins: []string{"https://ratesengine.net"},
+		AllowedOrigins: []string{"https://stellaratlas.xyz"},
 	})(corsOK())
 
 	t.Run("no Origin header still sets Vary", func(t *testing.T) {
@@ -185,7 +185,7 @@ func TestCORS_VaryOriginAlwaysSetForExactMatchMode(t *testing.T) {
 	})
 	t.Run("allowed Origin still sets Vary", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
-		r.Header.Set("Origin", "https://ratesengine.net")
+		r.Header.Set("Origin", "https://stellaratlas.xyz")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if got := w.Header().Get("Vary"); got != "Origin" {
@@ -294,20 +294,20 @@ func TestCORS_PerRequestObservability(t *testing.T) {
 // cross-origin fetches (magic-link session on /v1/account/me).
 func TestCORS_AllowCredentialsEmittedOnAllowedOrigin(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
-		AllowedOrigins:   []string{"https://app.ratesengine.net"},
+		AllowedOrigins:   []string{"https://app.stellaratlas.xyz"},
 		AllowCredentials: true,
 	})(corsOK())
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
-	r.Header.Set("Origin", "https://app.ratesengine.net")
+	r.Header.Set("Origin", "https://app.stellaratlas.xyz")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 
 	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Errorf("Allow-Credentials = %q, want true", got)
 	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.ratesengine.net" {
-		t.Errorf("Allow-Origin = %q, want app.ratesengine.net (cookies require non-wildcard)", got)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.stellaratlas.xyz" {
+		t.Errorf("Allow-Origin = %q, want app.stellaratlas.xyz (cookies require non-wildcard)", got)
 	}
 }
 
@@ -317,12 +317,12 @@ func TestCORS_AllowCredentialsEmittedOnAllowedOrigin(t *testing.T) {
 // future refactor doesn't silently flip the default.
 func TestCORS_AllowCredentialsAbsentByDefault(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
-		AllowedOrigins: []string{"https://app.ratesengine.net"},
+		AllowedOrigins: []string{"https://app.stellaratlas.xyz"},
 		// AllowCredentials zero value (false)
 	})(corsOK())
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
-	r.Header.Set("Origin", "https://app.ratesengine.net")
+	r.Header.Set("Origin", "https://app.stellaratlas.xyz")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 

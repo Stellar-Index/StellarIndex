@@ -47,7 +47,7 @@ nvme0n1 / nvme1n1 : ZFS mirror across both NVMes
 ZFS pool `data` (mirror, ~1.92 TB usable — single-drive failure
 tolerance) with these datasets:
 
-- `data/os` → `/var/lib/ratesengine`
+- `data/os` → `/var/lib/stellaratlas`
 - `data/postgres` → `/var/lib/postgresql` (recordsize=8K, logbias=throughput)
 - `data/galexie` → `/var/lib/galexie` (galexie-live + captive-core state only)
 - `data/minio` → `/var/lib/minio` (galexie-live mirror)
@@ -66,9 +66,9 @@ an async DR replica.
 |---|---|---|
 | postgresql@15-main | {{TBD}} | Patroni-managed; **async** replica of R1's primary (160-200ms RTT forces async per multi-region-topology.md). |
 | galexie | {{TBD}} | Reads from Vultr Object Storage `s3://{{bucket}}` (configured in `r3.yml`); writes galexie-live to local MinIO. |
-| ratesengine-indexer | {{TBD}} | Reads local MinIO for galexie-live + Vultr Object Storage for galexie-archive. |
-| ratesengine-aggregator | {{TBD}} | Standby (R1 is leader at launch; failover scenarios elect R2 ahead of R3 per Patroni priority). |
-| ratesengine-api | {{TBD}} | Serves regional traffic via `api-r3.ratesengine.net`. |
+| stellaratlas-indexer | {{TBD}} | Reads local MinIO for galexie-live + Vultr Object Storage for galexie-archive. |
+| stellaratlas-aggregator | {{TBD}} | Standby (R1 is leader at launch; failover scenarios elect R2 ahead of R3 per Patroni priority). |
+| stellaratlas-api | {{TBD}} | Serves regional traffic via `api-r3.stellaratlas.xyz`. |
 | minio | {{TBD}} | galexie-live only. |
 | node_exporter | {{TBD}} | :9100 |
 | node-healthcheck.timer | {{TBD}} | 5-min push to Healthchecks.io UUID {{TBD}}. |
@@ -99,7 +99,7 @@ Vultr Object Storage (galexie-archive, region-local)
               MinIO galexie-live (local, ZFS-backed)
                           │
                           ▼
-              cmd/ratesengine-indexer
+              cmd/stellaratlas-indexer
                           │
                           ▼
               TimescaleDB (async replica from R1)
@@ -119,7 +119,7 @@ bandwidth. Procedure:
 ```sh
 # On any operator workstation with rclone configured:
 rclone copy aws-public:aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
-  vultr-sg:{{ratesengine-galexie-archive-bucket}} \
+  vultr-sg:{{stellaratlas-galexie-archive-bucket}} \
   --transfers 16 --checkers 32 --progress
 ```
 
@@ -129,9 +129,9 @@ Vultr Object Storage) — see
 
 ## DNS
 
-- `api-r3.ratesengine.net` → R3's HAProxy frontend IP
+- `api-r3.stellaratlas.xyz` → R3's HAProxy frontend IP
   (Cloudflare DNS-only, grey cloud — the public-facing record
-  `api.ratesengine.net` is the proxied one)
+  `api.stellaratlas.xyz` is the proxied one)
 
 ## Cross-references
 

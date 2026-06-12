@@ -5,13 +5,13 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `ratesengine_projector_lag_high` / `ratesengine_projector_error_rate_high`
+# Runbook — `stellaratlas_projector_lag_high` / `stellaratlas_projector_error_rate_high`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_projector_lag_high`, `ratesengine_projector_error_rate_high` |
+| Alert | `stellaratlas_projector_lag_high`, `stellaratlas_projector_error_rate_high` |
 | Severity | P3 (ticket) — Phase 3 parallel-mode means the dispatcher's per-source sink is still primary; lag is visibility-only until Phase 4. Re-promote to P2 once `[ingestion.persist_per_source]=false` (Phase 4). |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/projector.yml` + `configs/prometheus/rules.r1/projector.yml` |
 | Typical MTTR | 30 min |
@@ -19,26 +19,26 @@ severity: P3
 
 ## Symptoms
 
-- `ratesengine_projector_lag_ledgers{source="<name>"}` > 256 for 10+ min.
-- `ratesengine_projector_runs_total{outcome="error"}` rate > 0.05/s sustained.
-- `ratesengine_projector_cycle_duration_seconds_bucket{source="<name>"}` p99 > 30 s (the per-cycle timeout is 60 s).
+- `stellaratlas_projector_lag_ledgers{source="<name>"}` > 256 for 10+ min.
+- `stellaratlas_projector_runs_total{outcome="error"}` rate > 0.05/s sustained.
+- `stellaratlas_projector_cycle_duration_seconds_bucket{source="<name>"}` p99 > 30 s (the per-cycle timeout is 60 s).
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Read the per-source projector cursor — should be close to the
 # ledgerstream tip.
-ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
+ssh root@136.243.90.96 'psql -U stellaratlas -d stellaratlas -c \
   "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors \
    WHERE source = '"'"'projector'"'"' ORDER BY sub_source"'
 
 # Compare against the live ledgerstream tip.
-ssh root@136.243.90.96 'psql -U ratesengine -d ratesengine -c \
+ssh root@136.243.90.96 'psql -U stellaratlas -d stellaratlas -c \
   "SELECT last_ledger FROM ingestion_cursors \
    WHERE source = '"'"'ledgerstream'"'"' AND sub_source = '"'"''"'"'"'
 
 # Tail the projector log for the lagging source.
-ssh root@136.243.90.96 'journalctl -u ratesengine-indexer -n 200 | grep "projector cycle" | grep <source>'
+ssh root@136.243.90.96 'journalctl -u stellaratlas-indexer -n 200 | grep "projector cycle" | grep <source>'
 ```
 
 If the projector cursor isn't moving at all, jump to `Mitigation`. If
@@ -56,20 +56,20 @@ an outage — let it run unless lag exceeds a few hours.
       constraint failure on a malformed event, decoder panic.
 - [ ] Step 3 — if the projector is wedged on one source, disable
       it via `[ingestion.projector] enabled = false` in
-      `/etc/ratesengine.toml` +
-      `systemctl restart ratesengine-indexer.service`. Lag will
+      `/etc/stellaratlas.toml` +
+      `systemctl restart stellaratlas-indexer.service`. Lag will
       reset on next start.
-- [ ] Verification: `ratesengine_projector_lag_ledgers` drops below
+- [ ] Verification: `stellaratlas_projector_lag_ledgers` drops below
       256 within 30 minutes after restart (or the alert clears).
 
 ## Root cause analysis
 
-- `journalctl -u ratesengine-indexer | grep projector` for the lag
+- `journalctl -u stellaratlas-indexer | grep projector` for the lag
   episode — `projector cycle` lines log per-cycle `rows_scanned`,
   `events_emitted`, `decode_errors`, `lag_ledgers`, `elapsed`.
-- `SELECT outcome, count(*) FROM ratesengine_projector_runs_total`
+- `SELECT outcome, count(*) FROM stellaratlas_projector_runs_total`
   in Prometheus for the failure-class breakdown.
-- Capture a `pgrep -af ratesengine-indexer` + `pprof` heap if cycle
+- Capture a `pgrep -af stellaratlas-indexer` + `pprof` heap if cycle
   durations are pathological.
 
 ## Known false-positive patterns
@@ -95,5 +95,5 @@ an outage — let it run unless lag exceeds a few hours.
 
 - 2026-06-12 — F-1330: fix diagnosis SQL (`ingestion_cursors` not
   `source_cursors`; `last_updated` not `updated_at`); config file is
-  `/etc/ratesengine.toml` not `r1.toml`.
+  `/etc/stellaratlas.toml` not `r1.toml`.
 - 2026-05-29 — initial draft (ADR-0032 Phase 3 rc.95).

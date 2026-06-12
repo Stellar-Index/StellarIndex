@@ -10,7 +10,7 @@ This directory holds one audit log per on-chain Soroban source. Each
 audit log is the evidence trail for a single
 `internal/sources/external.Registry` `BackfillSafe` flag flip from
 `false` → `true`. Until the audit lands, the source's
-`ratesengine-ops backfill` runs are refused; once the audit shows
+`stellaratlas-ops backfill` runs are refused; once the audit shows
 the decoder handles every WASM version that ran for the replay
 range, the flag flips in the same PR.
 
@@ -51,11 +51,11 @@ constants in `internal/sources/<source>/events.go`.
 
 ### 2. Collect the WASM-version timeline
 
-Run `ratesengine-ops wasm-history` against a galexie data store that
+Run `stellaratlas-ops wasm-history` against a galexie data store that
 covers the replay range:
 
-    ratesengine-ops wasm-history \
-      -config /etc/ratesengine.toml \
+    stellaratlas-ops wasm-history \
+      -config /etc/stellaratlas.toml \
       -from 2 -to <r1-archive-tip> \
       -contracts <factory>,<router>,<pair-instance-A>,<pair-instance-B>... \
       > /tmp/<source>-wasm-history.json
@@ -97,8 +97,8 @@ volume are sufficient; full coverage is the v2 upgrade.
 **Crash-resilience for long walks.** Pass `-checkpoint-dir DIR`
 on every multi-hour walk:
 
-    ratesengine-ops wasm-history \
-      -config /etc/ratesengine.toml \
+    stellaratlas-ops wasm-history \
+      -config /etc/stellaratlas.toml \
       -from 50457424 -to 62249727 \
       -parallel 8 \
       -checkpoint-dir /tmp/walk-checkpoint \
@@ -111,7 +111,7 @@ reboot, missing ledger in the archive — see
 [r1-deployment-state.md §3a](../r1-deployment-state.md)), recover the
 canonical JSON from the partial transitions:
 
-    ratesengine-ops wasm-history-merge-jsonl \
+    stellaratlas-ops wasm-history-merge-jsonl \
       -checkpoint-dir /tmp/walk-checkpoint \
       -to 62249727 \
       -output /tmp/wasm-history-recovered.json
@@ -179,7 +179,7 @@ deployed yet.
 ### 4. Hubble cross-check (where applicable)
 
 For sources where Hubble has a decoded view (currently SDEX only —
-see `cmd/ratesengine-ops/hubble_check.go`), running `hubble-check`
+see `cmd/stellaratlas-ops/hubble_check.go`), running `hubble-check`
 over the audit's replay range is the regression gate that proves
 the decoder + audit together produce correct output. For Soroban
 sources Hubble has no decoded view; the WASM audit is the

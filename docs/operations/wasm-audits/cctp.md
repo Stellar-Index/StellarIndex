@@ -117,7 +117,7 @@ in `github.com/circlefin/stellar-cctp`):
 
 ## WASM timeline
 
-**Walked 2026-05-26** — `ratesengine-ops wasm-history` over
+**Walked 2026-05-26** — `stellaratlas-ops wasm-history` over
 `[60000000, 62642779]` with `-parallel 4` covering all 3 mainnet
 contracts. Walk duration: 5h02m, scanned 2,642,780 ledgers across
 4 workers. Result: **zero WASM upgrades observed for any of the 3
@@ -208,7 +208,7 @@ Because CCTP is `ClassBridge` with `DefaultWeight: 0` and
 [`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go),
 the source contributes nothing to VWAP regardless of the
 `BackfillSafe` flag. The flag gates the operator-triggered
-`ratesengine-ops backfill --source=cctp` path only.
+`stellaratlas-ops backfill --source=cctp` path only.
 
 ## References
 

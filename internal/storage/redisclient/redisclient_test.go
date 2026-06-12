@@ -25,7 +25,7 @@ func TestBuild_SinglePrefersSentinelWhenBothSet(t *testing.T) {
 	cfg := config.StorageConfig{
 		RedisAddr:          "127.0.0.1:6379",
 		RedisSentinelAddrs: []string{"sentinel-1:26379", "sentinel-2:26379"},
-		RedisMasterName:    "ratesengine-test-cache",
+		RedisMasterName:    "stellaratlas-test-cache",
 	}
 	got := redisclient.Build(cfg)
 	if got == nil {

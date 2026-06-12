@@ -55,7 +55,7 @@ length mismatch as `ErrFeedIDCountMismatch` and skips the whole
 event rather than attributing prices to the wrong assets — see
 [`docs/discovery/oracles/redstone.md`](../../../docs/discovery/oracles/redstone.md)
 for the full analysis. Logged + counted under
-`ratesengine_source_decode_errors_total{source="redstone"}`.
+`stellaratlas_source_decode_errors_total{source="redstone"}`.
 
 ### Q2 — Event body is wrapped in `ScVal::Bytes`
 
@@ -107,7 +107,7 @@ A feed may go quiet for up to 24 hours if the underlying price
 hasn't moved more than 0.2% in either direction. The decoder
 publishes
 `DefaultResolutionSeconds = 24 * 60 * 60` as the
-`ratesengine_oracle_resolution_seconds` gauge so the
+`stellaratlas_oracle_resolution_seconds` gauge so the
 `oracle-stale` alert (which fires at `> 10× resolution`) has the
 correct threshold for a quiet feed.
 
@@ -142,7 +142,7 @@ without truncation.
   backfill ledgers via `internal/dispatcher` PR 166).
 - **Decode-error budget**: `ErrFeedIDCountMismatch` should be
   rare. A sustained increase in
-  `ratesengine_source_decode_errors_total{source="redstone"}`
+  `stellaratlas_source_decode_errors_total{source="redstone"}`
   warrants checking the Adapter's freshness verifier behaviour
   — possibly a contract upgrade widening rejection criteria.
 

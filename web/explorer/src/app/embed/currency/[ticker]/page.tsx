@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -134,7 +134,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
           <span className="font-mono text-[10px] text-slate-500">{cur.name}</span>
         </div>
         <a
-          href={`https://ratesengine.net${assetHrefFor(upper)}`}
+          href={`https://stellaratlas.xyz${assetHrefFor(upper)}`}
           target="_blank"
           rel="noreferrer noopener"
           className="text-[10px] text-slate-400 hover:text-brand-600"
@@ -156,7 +156,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
         />
       )}
       <div className="mt-auto flex items-center justify-between text-[10px] text-slate-400">
-        <span>Powered by Rates Engine</span>
+        <span>Powered by Stellar Atlas</span>
         {cur.rate_usd > 0 && (
           <span className="font-mono tabular-nums">
             1 USD = {formatRate(cur.rate_usd)} {upper}

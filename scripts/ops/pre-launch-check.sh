@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # pre-launch-check.sh — verify R1 is in production-ready shape
-# before the public DNS cutover at api.ratesengine.net.
+# before the public DNS cutover at api.stellaratlas.xyz.
 #
 # Read-only — performs zero state changes. Each check reports
 # pass / warn / fail; exit code is the number of FAIL findings
@@ -11,7 +11,7 @@
 # Run on R1 itself:
 #   ssh root@r1 'bash -s' < scripts/ops/pre-launch-check.sh
 # Or interactively:
-#   ssh root@r1 'bash /opt/ratesengine/pre-launch-check.sh'
+#   ssh root@r1 'bash /opt/stellaratlas/pre-launch-check.sh'
 #
 # Companion to docs/operations/pre-launch-hardening.md — each
 # check maps to a numbered step in that runbook.
@@ -40,8 +40,8 @@ fail() {
   FAILS=$((FAILS + 1))
 }
 
-CONFIG="${RATESENGINE_TOML:-/etc/ratesengine.toml}"
-HC_ENV="${HEALTHCHECKS_ENV_FILE:-/etc/default/ratesengine-healthchecks}"
+CONFIG="${STELLARATLAS_TOML:-/etc/stellaratlas.toml}"
+HC_ENV="${HEALTHCHECKS_ENV_FILE:-/etc/default/stellaratlas-healthchecks}"
 AM_ENV="${ALERTMANAGER_ENV_FILE:-/etc/default/alertmanager-secrets}"
 
 echo "Pre-launch check — R1 $(hostname) — $(date -u +%FT%TZ)"
@@ -72,7 +72,7 @@ else
   esac
 
   # Verify the running process matches.
-  actual="$(ss -tlnp 2>/dev/null | awk '/ratesengine-api/ {print $4; exit}')"
+  actual="$(ss -tlnp 2>/dev/null | awk '/stellaratlas-api/ {print $4; exit}')"
   if [ -n "$actual" ]; then
     case "$actual" in
       127.0.0.1:*|"[::1]:"*)  pass "process bound to loopback" "$actual" ;;
@@ -102,7 +102,7 @@ echo
 
 # ── 3. Stripe (only relevant if launching paid tiers)
 echo "  Stripe"
-if [ -f /etc/default/ratesengine ] && grep -q '^RATESENGINE_STRIPE_WEBHOOK_SECRET=whsec_' /etc/default/ratesengine 2>/dev/null; then
+if [ -f /etc/default/stellaratlas ] && grep -q '^STELLARATLAS_STRIPE_WEBHOOK_SECRET=whsec_' /etc/default/stellaratlas 2>/dev/null; then
   pass "Stripe webhook secret set" "(whsec_… present)"
 else
   warn "Stripe webhook secret not set" "ok if launching free-tier-only"
@@ -141,10 +141,10 @@ echo
 
 # ── 6. Timers active
 echo "  Timers"
-for t in 'ratesengine-heartbeat@indexer.timer' \
-         'ratesengine-heartbeat@aggregator.timer' \
-         'ratesengine-heartbeat@api.timer' \
-         'ratesengine-smoke.timer'; do
+for t in 'stellaratlas-heartbeat@indexer.timer' \
+         'stellaratlas-heartbeat@aggregator.timer' \
+         'stellaratlas-heartbeat@api.timer' \
+         'stellaratlas-smoke.timer'; do
   if systemctl is-active --quiet "$t" 2>/dev/null; then
     pass "$t" "active"
   else
@@ -155,9 +155,9 @@ echo
 
 # ── 7. Core services
 echo "  Services"
-for s in ratesengine-indexer.service \
-         ratesengine-aggregator.service \
-         ratesengine-api.service \
+for s in stellaratlas-indexer.service \
+         stellaratlas-aggregator.service \
+         stellaratlas-api.service \
          caddy.service \
          prometheus.service \
          prometheus-alertmanager.service; do
@@ -194,11 +194,11 @@ echo
 
 # ── 10. Boot warnings
 echo "  Recent SECURITY warnings"
-sec_warns="$(journalctl -u ratesengine-api -b -p warning --no-pager 2>/dev/null | grep -c SECURITY: || true)"
+sec_warns="$(journalctl -u stellaratlas-api -b -p warning --no-pager 2>/dev/null | grep -c SECURITY: || true)"
 if [ "$sec_warns" -eq 0 ]; then
   pass "no SECURITY warnings since boot" ""
 else
-  fail "SECURITY warnings present" "$sec_warns lines — journalctl -u ratesengine-api -b -p warning | grep SECURITY"
+  fail "SECURITY warnings present" "$sec_warns lines — journalctl -u stellaratlas-api -b -p warning | grep SECURITY"
 fi
 echo
 

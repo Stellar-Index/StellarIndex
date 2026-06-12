@@ -241,7 +241,7 @@ type missingConfigError struct {
 }
 
 func (e *missingConfigError) Error() string {
-	return "projector: source " + e.Source + " enabled but its oracle config is empty (check oracle.* in /etc/ratesengine.toml)"
+	return "projector: source " + e.Source + " enabled but its oracle config is empty (check oracle.* in /etc/stellaratlas.toml)"
 }
 
 // Ensure dispatcher.Decoder is the type the projector expects.

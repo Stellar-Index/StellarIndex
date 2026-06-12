@@ -23,7 +23,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	rawBase := r.URL.Query().Get("base")
 	if rawBase == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-base",
+			"https://api.stellaratlas.xyz/errors/missing-base",
 			"Missing base parameter", http.StatusBadRequest,
 			"base query parameter is required")
 		return
@@ -31,7 +31,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	base, err := canonical.ParseAsset(rawBase)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-asset-id",
+			"https://api.stellaratlas.xyz/errors/invalid-asset-id",
 			"Invalid base identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -40,7 +40,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	rawQuote := r.URL.Query().Get("quote")
 	if rawQuote == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-quote",
+			"https://api.stellaratlas.xyz/errors/missing-quote",
 			"Missing quote parameter", http.StatusBadRequest,
 			"quote query parameter is required")
 		return
@@ -48,7 +48,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	quote, err := canonical.ParseAsset(rawQuote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-quote",
+			"https://api.stellaratlas.xyz/errors/invalid-quote",
 			"Invalid quote identifier", http.StatusBadRequest,
 			err.Error())
 		return
@@ -56,7 +56,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 
 	if base.Equal(quote) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/identity-pair",
+			"https://api.stellaratlas.xyz/errors/identity-pair",
 			"Base and quote are the same", http.StatusBadRequest,
 			"a pair must have distinct base and quote assets")
 		return
@@ -81,7 +81,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 			"base", base.String(),
 			"quote", quote.String())
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

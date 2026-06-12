@@ -1,6 +1,6 @@
 ---
 # Top-level playbook — brings a fresh Ubuntu 24.04 (or 22.04) box up
-# as a Rates Engine archival node. Idempotent; safe to re-run.
+# as a Stellar Atlas archival node. Idempotent; safe to re-run.
 #
 # All apt-repo tasks use {{ ansible_distribution_release }} so the
 # role itself is codename-agnostic; the assertion below just pins

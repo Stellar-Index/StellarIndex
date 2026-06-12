@@ -63,7 +63,7 @@ export function ExchangesView() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Exchanges</h1>
         <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
-          Connected centralised exchanges feeding the Rates Engine
+          Connected centralised exchanges feeding the Stellar Atlas
           aggregator. Per-venue 24h USD volume, trade count, and
           coverage. Click a venue for its full pair list. On-chain
           DEXes and AMM pools live at{' '}

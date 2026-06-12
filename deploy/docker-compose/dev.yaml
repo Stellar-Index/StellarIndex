@@ -1,6 +1,6 @@
 # Local development stack.
 #
-# Brings up everything a Rates Engine binary needs to run locally:
+# Brings up everything a Stellar Atlas binary needs to run locally:
 #   - TimescaleDB (PostgreSQL 15 + TimescaleDB extension)
 #   - Redis 7
 #   - MinIO (single-node, S3-compatible)
@@ -16,19 +16,19 @@
 # Environment variables are read from `.env` in the same directory.
 # Copy `.env.example` → `.env` and adjust as needed.
 
-name: ratesengine-dev
+name: stellaratlas-dev
 
 services:
 
   # ─── PostgreSQL + TimescaleDB ────────────────────────────────────
   timescale:
     image: timescale/timescaledb:${TIMESCALE_IMAGE_TAG:-2.17.2-pg15}
-    container_name: ratesengine-timescale
+    container_name: stellaratlas-timescale
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       ${POSTGRES_DB:-ratesengine}
-      POSTGRES_USER:     ${POSTGRES_USER:-ratesengine}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ratesengine-dev}
+      POSTGRES_DB:       ${POSTGRES_DB:-stellaratlas}
+      POSTGRES_USER:     ${POSTGRES_USER:-stellaratlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stellaratlas-dev}
       # Make startup deterministic: initialise with a UTF-8 locale
       # regardless of host. Matches migrations/0001.
       POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
@@ -41,7 +41,7 @@ services:
       # but this matches production posture).
       - ./init/00-timescale-extension.sql:/docker-entrypoint-initdb.d/00-timescale-extension.sql:ro
     healthcheck:
-      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ratesengine} -d ${POSTGRES_DB:-ratesengine}"]
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stellaratlas} -d ${POSTGRES_DB:-stellaratlas}"]
       interval: 5s
       timeout:  3s
       retries:  20
@@ -57,7 +57,7 @@ services:
   # ─── Redis ────────────────────────────────────────────────────────
   redis:
     image: redis:${REDIS_IMAGE_TAG:-7.4-alpine}
-    container_name: ratesengine-redis
+    container_name: stellaratlas-redis
     restart: unless-stopped
     command:
       - "redis-server"
@@ -86,11 +86,11 @@ services:
   # ─── MinIO ────────────────────────────────────────────────────────
   minio:
     image: minio/minio:${MINIO_IMAGE_TAG:-RELEASE.2024-11-07T00-52-20Z}
-    container_name: ratesengine-minio
+    container_name: stellaratlas-minio
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-ratesengine}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-ratesengine-dev-minio}
+      MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-stellaratlas}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-stellaratlas-dev-minio}
     command:
       - "server"
       - "/data"
@@ -123,8 +123,8 @@ services:
         echo 'buckets ready'
       "
     environment:
-      MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-ratesengine}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-ratesengine-dev-minio}
+      MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-stellaratlas}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-stellaratlas-dev-minio}
     restart: "no"
 
 volumes:

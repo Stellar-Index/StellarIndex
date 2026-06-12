@@ -5,7 +5,7 @@ extracted from the wide-net walker's full output on r1.
 
 ## Source
 
-The walker run was: `ratesengine-ops wasm-history` against r1's
+The walker run was: `stellaratlas-ops wasm-history` against r1's
 `galexie-archive` MinIO datastore, ledger range
 `[50,457,424, 62,249,727]`, 8 parallel workers, 539 watched
 contracts (the wide-net set), `-checkpoint-dir /tmp/walk-checkpoint`.

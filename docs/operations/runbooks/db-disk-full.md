@@ -5,7 +5,7 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_timescale_disk_full` / `_disk_warning`
+# Runbook — `stellaratlas_timescale_disk_full` / `_disk_warning`
 
 ## At a glance
 

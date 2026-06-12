@@ -94,7 +94,7 @@ provider's storage economics.
                 └─────────────────────┬────────────────────────────┘
                                       │
             ┌─────────────────────────┴─────────────────────────┐
-            │           ratesengine-api pool (N=3)              │   stateless
+            │           stellaratlas-api pool (N=3)              │   stateless
             └─────────────────────────┬─────────────────────────┘
                                       │
        ┌──────────────────────────────┼────────────────────────────┐
@@ -109,12 +109,12 @@ provider's storage economics.
        └──────────────────────────────┼────────────────────────────┘
                                       │
                       ┌───────────────┴──────────────┐
-                      │   ratesengine-aggregator     │   one active, one
+                      │   stellaratlas-aggregator     │   one active, one
                       │   (leader-elected via Redis) │   standby
                       └───────────────┬──────────────┘
                                       │
                       ┌───────────────┴──────────────┐
-                      │   ratesengine-indexer pool   │   one shard per source
+                      │   stellaratlas-indexer pool   │   one shard per source
                       │   (per-source orchestration) │
                       └───┬──────────┬──────────┬────┘
                           │          │          │
@@ -131,7 +131,7 @@ archives post-launch.
 
 ### 2.2 DR (cloud — AWS primary)
 
-- Stateless services (`ratesengine-api`, `ratesengine-aggregator`)
+- Stateless services (`stellaratlas-api`, `stellaratlas-aggregator`)
   warm-standby in AWS. Scale-to-zero when not failing over; scale-out
   on DNS flip.
 - TimescaleDB **async logical replica** (not streaming — crosses a WAN,
@@ -184,7 +184,7 @@ provisioned; cloud is pay-as-you-use for DR.
 - **Why 2 not 3:** stellar-rpc's SQLite is not a cluster; each
   instance is independent. Two is enough for serving live-event
   subscriptions.
-- **Failure mode:** 1 rpc down → `ratesengine-indexer` switches its
+- **Failure mode:** 1 rpc down → `stellaratlas-indexer` switches its
   `getEvents` stream to the survivor via configured
   `[stellar_rpc].endpoints` array.
 - **Historic event retention:** we **do not** rely on stellar-rpc
@@ -274,12 +274,12 @@ provisioned; cloud is pay-as-you-use for DR.
   - **SSE subscriber registry** — key `sub:<channel>`, no TTL
     (heartbeat).
 - **Failure mode:** master down → Sentinel failover, 15–30 s
-  window. During the window `ratesengine-api` returns `stale_flag=true`
+  window. During the window `stellaratlas-api` returns `stale_flag=true`
   on affected keys (pulls from Timescale as fallback).
 - **Persistence:** AOF every-second. RDB nightly. We **do not**
   rely on Redis persistence for correctness — a wiped Redis
   re-hydrates from Timescale within 2 min (the
-  `ratesengine-aggregator` re-warms).
+  `stellaratlas-aggregator` re-warms).
 - **Caveat:** token-bucket rate-limit resets on a wipe (users get
   a grace minute). Acceptable.
 
@@ -301,7 +301,7 @@ provisioned; cloud is pay-as-you-use for DR.
 - **Upgrade strategy:** rolling, one node at a time; Galexie
   retries transient writes with exponential backoff.
 
-### 3.6 ratesengine-api pool
+### 3.6 stellaratlas-api pool
 
 - **Instances:** 3 pods on 3 hosts, stateless, behind HAProxy.
 - **Health checks:** HTTP `/healthz` (shallow: process up) and
@@ -318,7 +318,7 @@ provisioned; cloud is pay-as-you-use for DR.
 - **Graceful shutdown:** 30 s for in-flight requests + SSE
   connections (SSE peers re-connect to the new pod automatically).
 
-### 3.7 ratesengine-aggregator
+### 3.7 stellaratlas-aggregator
 
 - **Instances:** 2, leader-elected via Redis `SET key NX EX 30`
   with periodic renewal.
@@ -331,15 +331,15 @@ provisioned; cloud is pay-as-you-use for DR.
   Redis hot keys stale-flag for ≤ 30 s until the new leader writes
   fresh values.
 
-### 3.8 ratesengine-indexer fleet
+### 3.8 stellaratlas-indexer fleet
 
-- **Topology:** one `ratesengine-indexer` process per source (SDEX,
+- **Topology:** one `stellaratlas-indexer` process per source (SDEX,
   Soroswap, Aquarius, Phoenix, Comet, Blend, Reflector, Redstone,
   Band, CEX, FX — roughly 11 processes).
 - **Cursors:** persisted in Timescale per-source
   (`cursor(<source_id>)`). On restart the indexer resumes from the
   saved cursor.
-- **Backfill:** triggered via `ratesengine-ops backfill` subcommand;
+- **Backfill:** triggered via `stellaratlas-ops backfill` subcommand;
   writes into the same hypertable with idempotent upserts keyed on
   `(source, ledger, tx_hash, op_index, ts)`.
 - **Failure mode:** one source dies → others continue. The dead
@@ -347,25 +347,25 @@ provisioned; cloud is pay-as-you-use for DR.
   `/v1/price` for pairs that rely on that source sets
   `reduced_redundancy=true` in the envelope.
 
-### 3.9 ratesengine-migrate
+### 3.9 stellaratlas-migrate
 
 Not a long-running process. Runs before each deploy in a
 pre-start job. Uses PostgreSQL advisory lock `pg_try_advisory_lock(...)`
 to prevent two migrators from racing.
 
-### 3.10 ratesengine-ops
+### 3.10 stellaratlas-ops
 
 Admin CLI. Runs from an operator's SSH session on `ops-01`. Top-level
 subcommands cover backfill, gap-detection, archive-completeness
 verify/check/fix, source decoder verification, RPC probe, archive
 hash-walking, and supply-snapshot generation. The authoritative
-list is the binary's own help output (`ratesengine-ops --help`)
+list is the binary's own help output (`stellaratlas-ops --help`)
 and the source at
-[`cmd/ratesengine-ops/main.go`](../../cmd/ratesengine-ops/main.go);
+[`cmd/stellaratlas-ops/main.go`](../../cmd/stellaratlas-ops/main.go);
 operator runbooks under
 [`docs/operations/runbooks/`](../operations/runbooks/) cite the
 specific subcommand each playbook needs (e.g. `runbooks/all-ingestion-down.md`
-references `ratesengine-ops backfill`).
+references `stellaratlas-ops backfill`).
 
 ---
 
@@ -390,7 +390,7 @@ Capacity target: **500 rps sustained, 2 000 rps burst**. That is
 
 | Component | Sustained need | Headroom target |
 | --------- | -------------- | --------------- |
-| `ratesengine-api` pods (Go, `net/http`) | 500 rps | 2 000 rps (4×) |
+| `stellaratlas-api` pods (Go, `net/http`) | 500 rps | 2 000 rps (4×) |
 | PgBouncer | 500 qps most cached, ~100 qps actual Timescale | 1 000 qps (2×) |
 | Timescale primary | 100 write-tps (trades) + ~50 read-qps | 500 write-tps (5×) |
 | Redis | 5 000 ops/s (pre-+post-cache) | 50 000 ops/s (10×) |
@@ -419,8 +419,8 @@ year-over-year at this order of magnitude. Re-measure post-launch.
 
 | Component dies | Blast radius | Behaviour | Time-to-recover |
 | -------------- | ------------ | --------- | --------------- |
-| 1 `ratesengine-api` pod | 33% reduced serving capacity | HAProxy routes to other 2; auto-restart | < 30 s |
-| 2 `ratesengine-api` pods | 66% reduced | degraded SLA warning alert | 1–5 min manual intervention |
+| 1 `stellaratlas-api` pod | 33% reduced serving capacity | HAProxy routes to other 2; auto-restart | < 30 s |
+| 2 `stellaratlas-api` pods | 66% reduced | degraded SLA warning alert | 1–5 min manual intervention |
 | Redis master | One hash slot unavailable for ~30 s | stale_flag on affected keys; `/v1/readyz` returns 200 with `status="degraded"` during the window (wave-110 critical/non-critical split — Redis is non-critical, cache misses fall through to Timescale); HAProxy keeps the backend in service | Sentinel failover 15–30 s |
 | Timescale primary | Writes fail | Patroni elects replica; api switches read pool via PgBouncer | 30–60 s |
 | PgBouncer pair | All DB access fails | Depends on keepalived VIP failover timing | 5–15 s |
@@ -457,7 +457,7 @@ Week 9), but the HA-relevant items:
   `stellar-rpc.publicnode.com` fallback.
 - **HSM for validator keys** (ADR-0004) — YubiHSM-2 on two physical
   hosts.
-- **Audit log:** every `ratesengine-ops` command recorded to an
+- **Audit log:** every `stellaratlas-ops` command recorded to an
   append-only bucket. Admin surface requires 2FA via the jump host.
 
 ---

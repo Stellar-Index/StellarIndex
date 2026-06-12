@@ -1,4 +1,4 @@
-// Package cachekeys is the single source of truth for Rates Engine's
+// Package cachekeys is the single source of truth for Stellar Atlas's
 // Redis key grammar, per ADR-0007.
 //
 // Rationale: every caller that writes to or reads from Redis must use

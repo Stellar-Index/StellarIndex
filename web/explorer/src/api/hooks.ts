@@ -1,4 +1,4 @@
-// Typed hooks for the Rates Engine v1 API.
+// Typed hooks for the Stellar Atlas v1 API.
 //
 // Each hook wraps `useQuery` with a stable key + the fetcher built
 // from `apiGet`. Components stay free of fetch logic — they just
@@ -157,10 +157,10 @@ export type MeResponse = {
 
 // useMe — null on the public explorer; MeResponse only when the
 // page is loaded with the dashboard cookie already in scope (e.g.
-// dashboard.ratesengine.net which is same-origin with its own
+// dashboard.stellaratlas.xyz which is same-origin with its own
 // /v1/account/me).
 //
-// On the public explorer at ratesengine.net we deliberately DO
+// On the public explorer at stellaratlas.xyz we deliberately DO
 // NOT send `credentials: include`: the API's CORS middleware
 // (internal/api/v1/middleware/cors.go) explicitly does not emit
 // `Access-Control-Allow-Credentials: true`, and pre-2026-05-13
@@ -175,7 +175,7 @@ export type MeResponse = {
 // cross-origin cookie architecture for now. Reinstating cross-
 // origin session detection is a separate workstream that has
 // to land:
-//   1. Cookie set by /v1/auth/callback with `Domain=.ratesengine.net`
+//   1. Cookie set by /v1/auth/callback with `Domain=.stellaratlas.xyz`
 //      so it's visible to the explorer's apex.
 //   2. CORS middleware updated to emit
 //      `Access-Control-Allow-Credentials: true` for the explorer
@@ -212,7 +212,7 @@ const API_BASE_URL_FOR_ME =
   // Mirrors src/api/client.ts's resolution.
   typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_BASE_URL
     ? process.env.NEXT_PUBLIC_API_BASE_URL
-    : 'https://api.ratesengine.net';
+    : 'https://api.stellaratlas.xyz';
 
 export type NetworkStats = {
   volume_24h_usd: string;

@@ -107,9 +107,9 @@ key stays distinct without colliding across batches.
   `IncludeInVWAP=false` by default. Surfaced via `/v1/sources`
   for transparency, excluded from VWAP.
 - **No event-based metrics.** Because Band emits no events,
-  `ratesengine_source_events_total{source="band"}` will read
+  `stellaratlas_source_events_total{source="band"}` will read
   zero. Use op-args ingestion counters
-  (`ratesengine_source_orphan_events_total{source="band"}`
+  (`stellaratlas_source_orphan_events_total{source="band"}`
   reflects unmatched calls) and the standard cursor advance
   metric to confirm the ContractCallDecoder is firing.
 - **Backfill**: supported. ContractCall observation works the

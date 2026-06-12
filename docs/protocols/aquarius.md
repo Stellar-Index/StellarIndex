@@ -1,6 +1,6 @@
 # Aquarius — contract & event verification
 
-> **For the Aquarius team:** this is how Rates Engine attributes Aquarius
+> **For the Aquarius team:** this is how Stellar Atlas attributes Aquarius
 > pools and the router. Please confirm the router address and help us with
 > the **open question below** about enumerating the complete pool set.
 >

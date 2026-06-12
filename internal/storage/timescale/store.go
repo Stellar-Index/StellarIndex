@@ -134,7 +134,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 
 // PingContext exercises the underlying *sql.DB pool. Used by the
 // indexer's periodic resilience probe (see watchPostgresPing in
-// cmd/ratesengine-indexer/main.go) to surface dead-pool conditions
+// cmd/stellaratlas-indexer/main.go) to surface dead-pool conditions
 // as a metric / alert signal. The actual reconnect path is handled
 // automatically by database/sql + ConnMaxLifetime — this method is
 // the OBSERVABILITY hook, not the reconnect mechanism.

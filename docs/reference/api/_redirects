@@ -1,6 +1,6 @@
 # Cloudflare Pages rewrites for the docs site.
 #
-# The OpenAPI spec is committed as `rates-engine.v1.yaml` (the
+# The OpenAPI spec is committed as `stellar-atlas.v1.yaml` (the
 # versioned filename ties output to the `v1` namespace). External
 # tooling — Postman, OpenAPI Generator, IDE plugins — auto-discovers
 # at the conventional `/openapi.yaml` and `/openapi.json` paths.
@@ -11,11 +11,11 @@
 # Content-Type. The 200-status rewrite (vs 301) keeps the URL
 # stable so the discovered path is the path the tool keeps using.
 
-/openapi.yaml         /rates-engine.v1.yaml  200
-/openapi.yml          /rates-engine.v1.yaml  200
-/spec.yaml            /rates-engine.v1.yaml  200
-/spec.yml             /rates-engine.v1.yaml  200
+/openapi.yaml         /stellar-atlas.v1.yaml  200
+/openapi.yml          /stellar-atlas.v1.yaml  200
+/spec.yaml            /stellar-atlas.v1.yaml  200
+/spec.yml             /stellar-atlas.v1.yaml  200
 
 # Versioned alias — pin a major version explicitly so future v2/v3
 # can ship alongside without breaking existing v1 consumers.
-/v1/openapi.yaml      /rates-engine.v1.yaml  200
+/v1/openapi.yaml      /stellar-atlas.v1.yaml  200

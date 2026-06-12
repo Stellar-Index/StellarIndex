@@ -5,13 +5,13 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `ratesengine_aggregator_supply_refresh_error_dominant`
+# Runbook — `stellaratlas_aggregator_supply_refresh_error_dominant`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_aggregator_supply_refresh_error_dominant` |
+| Alert | `stellaratlas_aggregator_supply_refresh_error_dominant` |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/supply-refresh.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `> 50%` of `ratesengine_aggregator_supply_refresh_total` ticks
+- `> 50%` of `stellaratlas_aggregator_supply_refresh_total` ticks
   have `outcome != "ok"` for ≥ 30 min.
 - Aggregator logs show repeated `supply refresh: <outcome>` lines
   with the same outcome label.
@@ -29,18 +29,18 @@ severity: P3
 ```sh
 # 1. Which outcome dominates?
 curl -s http://aggregator:9464/metrics | \
-  grep ratesengine_aggregator_supply_refresh_total | \
+  grep stellaratlas_aggregator_supply_refresh_total | \
   sort -t' ' -k2 -rn | head
 
 # 2. Per-asset breakdown — does the failure track one asset or all of them?
 #    The metric carries an `asset_key` label (added in #314); split by it
 #    in PromQL or directly off /metrics:
 curl -s http://aggregator:9464/metrics | \
-  awk '/^ratesengine_aggregator_supply_refresh_total\{/' | \
+  awk '/^stellaratlas_aggregator_supply_refresh_total\{/' | \
   sort
 # Equivalent PromQL for dashboards:
 #   sum by (asset_key, outcome) (
-#     rate(ratesengine_aggregator_supply_refresh_total[15m])
+#     rate(stellaratlas_aggregator_supply_refresh_total[15m])
 #   )
 # If one asset_key dominates the non-ok rate while others are healthy, the
 # fault is per-asset (config drift on watched_classic_assets, missing
@@ -53,11 +53,11 @@ curl -s http://aggregator:9464/metrics | \
 # per-outcome section below).
 
 # 3. Logs corroborate per-asset failures with the wrapped error text.
-sudo journalctl -u ratesengine-aggregator --since "30 min ago" -n 200 | \
+sudo journalctl -u stellaratlas-aggregator --since "30 min ago" -n 200 | \
   grep "supply refresh: " | sort | uniq -c | sort -rn | head
 
 # 4. Sanity-check the aggregator config.
-grep -A 10 "^\[supply" /etc/ratesengine.toml
+grep -A 10 "^\[supply" /etc/stellaratlas.toml
 ```
 
 ## Typical root causes (split by dominant outcome)
@@ -200,7 +200,7 @@ USDC through):
 ```
 
 Identify *which* asset to override from the per-asset metric — the
-`asset_key` label on `ratesengine_aggregator_supply_refresh_total`
+`asset_key` label on `stellaratlas_aggregator_supply_refresh_total`
 tells you exactly which watched asset is producing the
 `stale_component` (or cold-start) outcome (Quick diagnosis #2). The
 code option behind the TOML key is

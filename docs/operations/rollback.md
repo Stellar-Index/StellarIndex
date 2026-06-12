@@ -53,7 +53,7 @@ or-truncated later.
 Symptoms: API binary won't start, indexer panics on boot,
 aggregator won't connect to Redis.
 
-Diagnosis is fast — `systemctl status ratesengine-{api,indexer,
+Diagnosis is fast — `systemctl status stellaratlas-{api,indexer,
 aggregator}` on r1. If the new release crashes at startup, it never
 served real traffic; rollback is just re-deploying the previous tag.
 
@@ -69,7 +69,7 @@ failure:
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=vX.Y.Z \
-  -f binaries=ratesengine-api
+  -f binaries=stellaratlas-api
 ```
 
 Find the previous tag from `git tag` history or the "Running
@@ -77,7 +77,7 @@ version" line in [`r1-deployment-state.md`](r1-deployment-state.md).
 Confirm the `.prev-<tag>` is still on disk first:
 
 ```sh
-ssh root@<host> 'ls -lh /usr/local/bin/ratesengine-*.prev-* 2>/dev/null'
+ssh root@<host> 'ls -lh /usr/local/bin/stellaratlas-*.prev-* 2>/dev/null'
 ```
 
 Manual fallback (only if the deploy workflow itself is broken — see
@@ -85,11 +85,11 @@ Manual fallback (only if the deploy workflow itself is broken — see
 
 ```sh
 PREVIOUS=vX.Y.Z                               # the known-good tag
-BINARY=ratesengine-api
+BINARY=stellaratlas-api
 ssh root@<host> "
   systemctl stop ${BINARY} && \
   cp /usr/local/bin/${BINARY}.prev-${PREVIOUS} /usr/local/bin/${BINARY} && \
-  echo ${PREVIOUS} > /var/lib/ratesengine/deployed-versions/${BINARY} && \
+  echo ${PREVIOUS} > /var/lib/stellaratlas/deployed-versions/${BINARY} && \
   systemctl start ${BINARY} && \
   systemctl status ${BINARY} --no-pager | head -20
 "
@@ -112,7 +112,7 @@ R1 is the only production host today (single-host per
 ```sh
 # 1. Stop the aggregator on r1 — preserves the cache in its
 #    last-good state while we swap binaries.
-ssh root@<host> "systemctl stop ratesengine-aggregator"
+ssh root@<host> "systemctl stop stellaratlas-aggregator"
 
 # 2. Re-deploy all three binaries at the previous-known-good tag.
 #    The deploy workflow does the per-host backup→swap→restart→
@@ -120,15 +120,15 @@ ssh root@<host> "systemctl stop ratesengine-aggregator"
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=vX.Y.Z \
-  -f binaries=ratesengine-indexer,ratesengine-aggregator,ratesengine-api
+  -f binaries=stellaratlas-indexer,stellaratlas-aggregator,stellaratlas-api
 
 # 3. (The aggregator was restarted by the workflow in step 2; if it
 #    was left stopped because the workflow only re-deployed a subset,
 #    start it explicitly.)
-ssh root@<host> "systemctl start ratesengine-aggregator"
+ssh root@<host> "systemctl start stellaratlas-aggregator"
 
 # 4. Smoke-check.
-ratesengine-sla-probe -base-url https://api.ratesengine.net/v1 \
+stellaratlas-sla-probe -base-url https://api.stellaratlas.xyz/v1 \
   -duration 30s -concurrency 1
 ```
 
@@ -142,17 +142,17 @@ re-ingest.
 
 ### C. The release runs but a single source is broken
 
-Symptoms: `ratesengine_source_decode_errors_total{source="X"}`
-spiking; `ratesengine_source_events_total{source="X"}` dropping
+Symptoms: `stellaratlas_source_decode_errors_total{source="X"}`
+spiking; `stellaratlas_source_events_total{source="X"}` dropping
 to zero; the `decode-errors` runbook fires.
 
 DON'T roll back the whole release. Instead disable just the
 broken source by removing it from the `[ingestion]` allow-list in
-`/etc/ratesengine.toml` — the indexer only runs the connectors
+`/etc/stellaratlas.toml` — the indexer only runs the connectors
 named in `enabled_sources`:
 
 ```toml
-# /etc/ratesengine.toml
+# /etc/stellaratlas.toml
 [ingestion]
 # Drop the broken source from this list (it's an allow-list, not a
 # per-source enabled=false flag). Valid names: see config.KnownSources.
@@ -161,8 +161,8 @@ enabled_sources = ["soroswap", "aquarius", "phoenix", "..."]
 
 ```sh
 # Apply on r1, then restart the indexer to pick up the new config.
-scp ratesengine.toml root@<host>:/etc/ratesengine.toml
-ssh root@<host> "systemctl restart ratesengine-indexer"
+scp stellaratlas.toml root@<host>:/etc/stellaratlas.toml
+ssh root@<host> "systemctl restart stellaratlas-indexer"
 ```
 
 Then file a SEV-2 against the broken source's package. The
@@ -182,7 +182,7 @@ truth).
 
 ```sh
 # OPTION A — repo is empty enough that nobody cloned it:
-gh repo delete RatesEngine/rates-engine --yes
+gh repo delete StellarAtlas/stellar-atlas --yes
 # Then re-do the cut-over per public-flip.md from step 5.
 
 # OPTION B — repo has been observed (someone might have cloned):
@@ -197,7 +197,7 @@ genuinely safe — the private repo is untouched.
 
 ### E. Status page misbehaving
 
-Symptoms: the public page at `status.ratesengine.net` shows
+Symptoms: the public page at `status.stellaratlas.xyz` shows
 components down when production is fine, or vice versa.
 
 Lowest-stakes rollback. The status page is a derived view; it
@@ -215,7 +215,7 @@ Two paths:
    reads it at build time, and `/v1/incidents` serves the same
    corpus from the Go binary), commit, push. Cloudflare Pages
    redeploys the status page in ~2 minutes. Note a corpus edit also
-   requires re-deploying `ratesengine-api` for `/v1/incidents` to
+   requires re-deploying `stellaratlas-api` for `/v1/incidents` to
    reflect it (the corpus is embedded in the binary).
 2. **Revert** if the page itself broke. `git revert <bad-sha>` on
    `main` and push — the previous-known-good build redeploys.
@@ -226,7 +226,7 @@ the SEV-2 detection window:
 ```sh
 # DNS revert — point status. at a previous Cloudflare Pages
 # deployment by re-promoting an earlier successful build via the
-# Pages dashboard, or aim status.ratesengine.net at a temporary
+# Pages dashboard, or aim status.stellaratlas.xyz at a temporary
 # maintenance page hosted elsewhere.
 ```
 

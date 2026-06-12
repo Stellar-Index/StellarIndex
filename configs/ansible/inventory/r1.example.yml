@@ -17,7 +17,7 @@
 #     galexie_archive_endpoint:         "https://s3.us-east-1.amazonaws.com"
 #     galexie_archive_bucket:           "aws-public-blockchain"
 #     galexie_archive_prefix:           "v1.1/stellar/ledgers/pubnet/"
-#     ratesengine_live_seam_ledger:     <r2-specific seam>
+#     stellaratlas_live_seam_ledger:     <r2-specific seam>
 #     zfs_data_devices:                 []   (EBS gp3, no ZFS)
 #     run_stellar_core:                 false
 #
@@ -27,8 +27,8 @@
 #     run_minio:                        true   (galexie-live only)
 #     minio_buckets:                    ["galexie-live", "backups"]
 #     galexie_archive_endpoint:         "https://sgp1.vultrobjects.com"
-#     galexie_archive_bucket:           "ratesengine-galexie-archive"
-#     ratesengine_live_seam_ledger:     <r3-specific seam>
+#     galexie_archive_bucket:           "stellaratlas-galexie-archive"
+#     stellaratlas_live_seam_ledger:     <r3-specific seam>
 #     zfs_data_pool_type:               "mirror"   (only 2 NVMes on Vultr SG SKU)
 #     zfs_data_devices:                 [/dev/nvme0n1, /dev/nvme1n1]
 #     run_stellar_core:                 false
@@ -43,8 +43,8 @@ all:
   vars:
     # ───── Region identity ─────────────────────────────────────────
     region_id:           "r1"
-    region_name:         "Hetzner-r1"         # = `name` in ratesengine.toml [region]; matches live r1
-    home_domain:         "ratesengine.net"
+    region_name:         "Hetzner-r1"         # = `name` in stellaratlas.toml [region]; matches live r1
+    home_domain:         "stellaratlas.xyz"
 
     # ───── Stellar network ─────────────────────────────────────────
     stellar_network:     "pubnet"            # pubnet | testnet | futurenet
@@ -52,14 +52,14 @@ all:
     is_validator:        false                # true = SCP voter (Phase B+)
     node_is_validator:   "{{ is_validator }}"
 
-    # ───── Rates Engine ingest ─────────────────────────────────────
+    # ───── Stellar Atlas ingest ─────────────────────────────────────
     # backfill_from_ledger is PER-REGION (each region has its own
     # galexie seam — ADR-0016). Role default is 0; r1's live value
     # is below. Re-check at rebuild time — it's a point-in-time
     # floor for the historical backfill, not a fixed constant.
     # enabled_sources / aggregator / oracle config are region-
     # invariant and live in the role defaults.
-    ratesengine_backfill_from_ledger: 62403000
+    stellaratlas_backfill_from_ledger: 62403000
 
     # ───── Storage layout ──────────────────────────────────────────
     # Typical post-installimage layout:
@@ -112,7 +112,7 @@ all:
       - "10.0.0.0/8"
       - "172.16.0.0/12"
       - "127.0.0.1/32"
-    loki_push_url:       "https://loki.ratesengine.net/loki/api/v1/push"
+    loki_push_url:       "https://loki.stellaratlas.xyz/loki/api/v1/push"
 
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
@@ -132,7 +132,7 @@ all:
   children:
     archival_nodes:
       hosts:
-        r1-01.ratesengine.net:
+        r1-01.stellaratlas.xyz:
           ansible_host:         "X.X.X.X"      # Hetzner-assigned IP
           ansible_user:         "root"
           ansible_port:         22

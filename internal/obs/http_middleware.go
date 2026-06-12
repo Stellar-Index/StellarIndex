@@ -82,7 +82,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		// Skip metrics emission for synthetic monitoring traffic.
 		// The smoke timer (configs/healthchecks/r1-smoke.sh) and
 		// other operator-side probes set
-		// `User-Agent: ratesengine-smoke/<n>` so we can identify
+		// `User-Agent: stellaratlas-smoke/<n>` so we can identify
 		// them. Letting their requests into the histogram pollutes
 		// the SLO recording rule — at every smoke fire we cold-hit
 		// /v1/oracle/latest etc., adding 13 slow-request samples
@@ -142,9 +142,9 @@ func isStreamingRoute(route string) bool {
 
 // isSyntheticUA reports whether the User-Agent identifies internal
 // synthetic / maintenance traffic that must not pollute the
-// customer-facing SLO. Matches `ratesengine-smoke/...` (the
-// r1-smoke.sh wrapper), `ratesengine-probe/...` (operator probes),
-// and `ratesengine-prewarm/...` (the API's own self-prewarm
+// customer-facing SLO. Matches `stellaratlas-smoke/...` (the
+// r1-smoke.sh wrapper), `stellaratlas-probe/...` (operator probes),
+// and `stellaratlas-prewarm/...` (the API's own self-prewarm
 // goroutine, which HTTP-GETs its endpoints to warm caches — its
 // requests are deliberately cold and would otherwise dominate the
 // latency histogram). The match is prefix-only so version suffixes
@@ -162,9 +162,9 @@ func isSyntheticUA(ua string) bool {
 }
 
 var syntheticUAPrefixes = []string{
-	"ratesengine-smoke/",
-	"ratesengine-probe/",
-	"ratesengine-prewarm/",
+	"stellaratlas-smoke/",
+	"stellaratlas-probe/",
+	"stellaratlas-prewarm/",
 }
 
 // CaptureRoute writes the mux-matched route pattern into the

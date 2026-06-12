@@ -7,7 +7,7 @@ repo cold, **this file is your entry point**. Read this first.
 
 ## What this repo is
 
-**Rates Engine** is a Stellar-network pricing API. It ingests on-chain
+**Stellar Atlas** is a Stellar-network pricing API. It ingests on-chain
 and off-chain price data, aggregates into VWAP / TWAP / OHLC, and
 serves the result through a public REST + SSE API.
 
@@ -42,7 +42,7 @@ API_BASE_URL=http://r1:3000 bash scripts/dev/r1-smoke.sh
 13 GETs across health / catalogue / pricing / diagnostics with jq
 shape assertions; exit code = number of failures so cron and
 Healthchecks.io can consume it. R1 runs the same script every 5
-min via `ratesengine-smoke.timer` (see `configs/healthchecks/`).
+min via `stellaratlas-smoke.timer` (see `configs/healthchecks/`).
 
 No command should ever require manual network access during
 development. If one does, it's a bug.
@@ -68,12 +68,12 @@ development. If one does, it's a bug.
 ├── .github/                   workflows + issue/PR templates
 │
 ├── cmd/                       binary entry points (six in total)
-│   ├── ratesengine-indexer/              ingestion pipeline: Galexie → ClickHouse raw lake + Timescale served tier (dual-sink, ADR-0034)
-│   ├── ratesengine-aggregator/           VWAP/TWAP + continuous aggregates
-│   ├── ratesengine-api/                  REST + SSE API server
-│   ├── ratesengine-ops/          admin CLI: backfill, detect-gaps, verify-archive, wasm-history, …
-│   ├── ratesengine-migrate/      db migration runner
-│   └── ratesengine-sla-probe/    SLA-evidence harness: p50/p95/p99 latency + freshness pass/fail vs RFP targets
+│   ├── stellaratlas-indexer/              ingestion pipeline: Galexie → ClickHouse raw lake + Timescale served tier (dual-sink, ADR-0034)
+│   ├── stellaratlas-aggregator/           VWAP/TWAP + continuous aggregates
+│   ├── stellaratlas-api/                  REST + SSE API server
+│   ├── stellaratlas-ops/          admin CLI: backfill, detect-gaps, verify-archive, wasm-history, …
+│   ├── stellaratlas-migrate/      db migration runner
+│   └── stellaratlas-sla-probe/    SLA-evidence harness: p50/p95/p99 latency + freshness pass/fail vs RFP targets
 │
 ├── internal/                  private packages (Go-enforced, not importable externally)
 │   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
@@ -81,7 +81,7 @@ development. If one does, it's a bug.
 │   ├── consumer/                 transport-neutral ingest contracts — the load-bearing `consumer.Event` / `consumer.Source` types used across indexer/ops/dispatcher/pipeline. (`consumer.Orchestrator` is a legacy seam with no callers; prod ingest is dispatcher-based.)
 │   ├── ledgerstream/             archive/live LedgerCloseMeta streaming
 │   ├── dispatcher/               production ledger walker + decoder router
-│   ├── pipeline/                 shared ingest-pipeline glue used by both indexer + `ratesengine-ops backfill`
+│   ├── pipeline/                 shared ingest-pipeline glue used by both indexer + `stellaratlas-ops backfill`
 │   ├── projector/                ONLY writer for Soroban-derived events — projects per-source tables from soroban_events (ADR-0031/0032)
 │   ├── completeness/             ADR-0033 coverage verification: substrate + recognition + projection reconcile → completeness_snapshots
 │   ├── events/                   transport-neutral Soroban contract-event types (RPC or LCM-extracted)
@@ -124,12 +124,12 @@ development. If one does, it's a bug.
 │   ├── alertmanager/             R1 single-host: alertmanager.r1.yml + apply.sh (severity-routing for page/ticket/informational + deadmansswitch heartbeat)
 │   ├── caddy/                    R1 reverse proxy — TLS termination via Let's Encrypt
 │   ├── loki/                     R1 single-host log aggregation
-│   ├── audit/                    curated auditor inputs (wasm-walk contract lists) feeding `ratesengine-ops wasm-history`
+│   ├── audit/                    curated auditor inputs (wasm-walk contract lists) feeding `stellaratlas-ops wasm-history`
 │   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
-├── openapi/                   rates-engine.v1.yaml — source of truth for API
+├── openapi/                   stellar-atlas.v1.yaml — source of truth for API
 ├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
 ├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), clickhouse/ (tier-1 lake DDL, ADR-0034), comms/ (customer-facing incident/launch templates). The shipped status-page lives at `web/status/` (Cloudflare Pages static export); earlier scaffolds were retired (F-1211 / wave 57).
-├── web/explorer/              Next.js 15 static-export explorer rendered at ratesengine.net (Cloudflare Pages)
+├── web/explorer/              Next.js 15 static-export explorer rendered at stellaratlas.xyz (Cloudflare Pages)
 ├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
 │
@@ -183,7 +183,7 @@ works via `endpoint_url` override.
 
 ### 4. One Go module, monorepo (ADR-0005)
 
-`github.com/RatesEngine/rates-engine` is the root module. `internal/` is
+`github.com/StellarAtlas/stellar-atlas` is the root module. `internal/` is
 private (Go-enforced). `pkg/` is the public surface with SemVer
 compatibility promise.
 
@@ -216,7 +216,7 @@ the `soroban_events` raw landing zone (ADR-0029). Adding a new
 Soroban source means adding a case in
 `internal/projector/registry.go::buildSource` AND an arm in
 `internal/pipeline/sink.go::IsProjectedEvent`. Catch-up after a
-missing window is `ratesengine-ops projector-replay -source <name>
+missing window is `stellaratlas-ops projector-replay -source <name>
 -from <ledger>` — never a bespoke `<source>-backfill` subcommand
 (those were deleted in rc.97 / ADR-0032 Phase 5).
 
@@ -449,8 +449,8 @@ Copy the `binance` / `kraken` package as the template.
 5. Register the venue's `Metadata` (class / subclass / weight /
    `IncludeInVWAP` / `BackfillSafe`) in the `Registry` map in
    `internal/sources/external/registry.go`, then wire it into
-   `buildExternal` in `cmd/ratesengine-indexer/main.go` (and the
-   parallel block in `ratesengine-ops`) behind a `cfg.<Venue>.Enabled`
+   `buildExternal` in `cmd/stellaratlas-indexer/main.go` (and the
+   parallel block in `stellaratlas-ops`) behind a `cfg.<Venue>.Enabled`
    gate.
 6. Fixtures are inline golden frames in the package's `*_test.go`
    (e.g. `binance/streamer_test.go`) — there is no
@@ -488,7 +488,7 @@ The reader/storage seam is the same across all three: each
 observer writes to a per-class hypertable
 (`migrations/0011-0014_*.sql` etc.), and `StorageClassicSupplyReader`
 / `StorageSEP41SupplyReader` aggregate the rows at refresh time.
-Wire the new observer into `cmd/ratesengine-indexer/main.go`
+Wire the new observer into `cmd/stellaratlas-indexer/main.go`
 alongside the existing supply observers and add an integration
 test under `test/integration/` if it touches NUMERIC arithmetic
 (see PR #316 / #317 for the testcontainers-go pattern).
@@ -499,7 +499,7 @@ Procedure: [docs/operations/wasm-audits/README.md](docs/operations/wasm-audits/R
 One audit log per source under that directory; each is the
 evidence trail for flipping `internal/sources/external/registry.go`'s
 `BackfillSafe` flag from `false` → `true`. The flag gates
-`ratesengine-ops backfill` from running an unaudited Soroban
+`stellaratlas-ops backfill` from running an unaudited Soroban
 source against historical ranges (CLAUDE.md "Soroban DeFi
 contracts upgrade in place").
 
@@ -550,7 +550,7 @@ If it doesn't, that's a CI failure.
 
 ### "Change the OpenAPI spec"
 
-1. Edit `openapi/rates-engine.v1.yaml`.
+1. Edit `openapi/stellar-atlas.v1.yaml`.
 2. `make docs-api` regenerates reference docs.
 3. Handlers in `internal/api/v1/` get updated; contract tests
    verify they match.
@@ -605,7 +605,7 @@ Deploys are operator-triggered, never automatic on tag.
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=vX.Y.Z \
-  -f binaries=ratesengine-indexer,ratesengine-aggregator,ratesengine-api
+  -f binaries=stellaratlas-indexer,stellaratlas-aggregator,stellaratlas-api
 ```
 
 The workflow downloads the binaries from the GitHub Release,
@@ -651,7 +651,7 @@ R2 / R3 are deferred — adding them is mechanical (4 secrets +
   [CODEOWNERS](CODEOWNERS)).
 - **Architectural decision:** propose an ADR in `docs/adr/` with
   status `Proposed`. Discuss in PR.
-- **Security issue:** `security@ratesengine.net` — do not open
+- **Security issue:** `security@stellaratlas.xyz` — do not open
   a public issue. See [SECURITY.md](SECURITY.md).
 - **General contribution questions:** [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -672,7 +672,7 @@ If you are an AI agent running a multi-hour task (e.g. `/loop keep
 going`), the default cadence is **one PR → one merge → next PR**.
 Do NOT accumulate multiple narrative PRs of uncommitted work in the
 tree and try to split them later — shared files
-(`cmd/ratesengine-indexer/main.go`, `internal/config/*`,
+(`cmd/stellaratlas-indexer/main.go`, `internal/config/*`,
 `CHANGELOG.md`, `CLAUDE.md`) will be touched by several narrative
 PRs and cannot be cleanly split into per-PR commits without hunk
 surgery.

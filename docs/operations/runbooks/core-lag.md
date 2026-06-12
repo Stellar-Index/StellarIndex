@@ -5,12 +5,12 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_stellar_core_ledger_age`
+# Runbook — `stellaratlas_stellar_core_ledger_age`
 
 > **Deployment posture (2026-04-30).** stellar-core is **not running
 > on r1** — the daemon was removed 2026-04-23
 > ([r1-deployment-state.md §Services](../r1-deployment-state.md)).
-> The metric `ratesengine_stellar_core_last_ledger_time_unix` has no
+> The metric `stellaratlas_stellar_core_last_ledger_time_unix` has no
 > producer, so this alert is *inert* on r1: there are no series to
 > evaluate against. Galexie's embedded captive-core is intentionally
 > not exposed to the prometheus exporter (the exporter scraped the
@@ -27,7 +27,7 @@ severity: P1
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_stellar_core_ledger_age` |
+| Alert | `stellaratlas_stellar_core_ledger_age` |
 | Severity | P1 (page — SEV-1) |
 | Detected by | `deploy/monitoring/rules/stellar.yml` |
 | Typical MTTR | 10 min – 2 h |
@@ -35,7 +35,7 @@ severity: P1
 
 ## Symptoms
 
-- `time() - ratesengine_stellar_core_last_ledger_time_unix > 60`
+- `time() - stellaratlas_stellar_core_last_ledger_time_unix > 60`
   for ≥ 2 min.
 - `stellar-core-dbinfo` / `info` endpoint shows an old `current_ledger`
   timestamp.

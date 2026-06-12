@@ -6,7 +6,7 @@ status: living procedure
 
 # Hubble event-count cross-check for Soroban sources
 
-The `ratesengine-ops hubble-soroban-events` subcommand emits per-
+The `stellaratlas-ops hubble-soroban-events` subcommand emits per-
 ledger counts of events from
 `hubble-public.crypto_stellar.history_contract_events`. It's a
 primitive — operators combine it with the per-source knowledge of
@@ -41,7 +41,7 @@ then compare with the documented multiplier.
 > for one event per trade.
 
 ```sh
-ratesengine-ops hubble-soroban-events \
+stellaratlas-ops hubble-soroban-events \
   -from 51000000 -to 62250000 \
   -bigquery-project <BQ_PROJECT> \
   -contracts <pair-contract-A>,<pair-contract-B>,<pair-contract-C>... \
@@ -72,7 +72,7 @@ or walk factory `new_pair` events.
 > 1 event per trade. Filter to topic[0]='trade'.
 
 ```sh
-ratesengine-ops hubble-soroban-events \
+stellaratlas-ops hubble-soroban-events \
   -from 51000000 -to 62250000 \
   -bigquery-project <BQ_PROJECT> \
   -contracts <pool-A>,<pool-B>... \
@@ -91,7 +91,7 @@ Compare to `COUNT(*) WHERE source = 'aquarius'`. **Expected: N == M.**
 > conventional pick because it's strictly numeric.
 
 ```sh
-ratesengine-ops hubble-soroban-events \
+stellaratlas-ops hubble-soroban-events \
   -from 51000000 -to 62250000 \
   -bigquery-project <BQ_PROJECT> \
   -contracts <pool-A>,<pool-B>... \
@@ -113,7 +113,7 @@ swaps and the correlation is dropping incomplete RawSwaps.
 > 1 event per trade. Filter topic[0]='POOL', topic[1]='swap'.
 
 ```sh
-ratesengine-ops hubble-soroban-events \
+stellaratlas-ops hubble-soroban-events \
   -from 51000000 -to 62250000 \
   -bigquery-project <BQ_PROJECT> \
   -contracts <pool-A>,<pool-B>... \
@@ -132,7 +132,7 @@ Compare to `COUNT(*) WHERE source = 'comet'`. **Expected: N == M.**
 
 ```sh
 # Per variant: substitute the contract from cfg.Oracle.Reflector.{DEX,CEX,FX}Contract.
-ratesengine-ops hubble-soroban-events \
+stellaratlas-ops hubble-soroban-events \
   -from 51000000 -to 62250000 \
   -bigquery-project <BQ_PROJECT> \
   -contracts <reflector-DEX-or-CEX-or-FX> \
@@ -160,7 +160,7 @@ the event's prices vector. As a rough check: `M / N ~ N_assets`.
 > (one per feed in the call's feed_ids op-arg).
 
 ```sh
-ratesengine-ops hubble-soroban-events \
+stellaratlas-ops hubble-soroban-events \
   -from 51000000 -to 62250000 \
   -bigquery-project <BQ_PROJECT> \
   -contracts <redstone-adapter> \
@@ -196,14 +196,14 @@ Possible explanations, in rough order of likelihood:
    catch — decoder dropping events. Action: per-ledger drill-down
    with `-output json` or `-output csv` to find the affected
    range, then inspect the decoder against that range's WASM
-   hash via `ratesengine-ops wasm-history`.
+   hash via `stellaratlas-ops wasm-history`.
 
 ## Cost preview
 
 Always dry-run before a full-range query:
 
 ```sh
-ratesengine-ops hubble-soroban-events ... -dry-run-bytes
+stellaratlas-ops hubble-soroban-events ... -dry-run-bytes
 ```
 
 Typical: 20–40 GB scan per 1M-ledger range → ~$0.20 at $5/TB on-

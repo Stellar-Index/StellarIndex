@@ -138,7 +138,7 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 		t.Fatalf("external.Run: %v", err)
 	}
 
-	// Persist goroutine — the same shape as cmd/ratesengine-indexer's
+	// Persist goroutine — the same shape as cmd/stellaratlas-indexer's
 	// persistEvents but without panic recovery / obs metrics.
 	persistDone := make(chan struct{})
 	var insertedTrades, insertedUpdates int

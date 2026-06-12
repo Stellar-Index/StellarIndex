@@ -19,7 +19,7 @@ type BackfillCoverageReader interface {
 
 // CoverageCache wraps a [BackfillCoverageReader] with a read-mostly
 // snapshot. Production wiring spawns a background refresher
-// (cmd/ratesengine-api/main.go) that calls Refresh every
+// (cmd/stellaratlas-api/main.go) that calls Refresh every
 // CoverageRefreshInterval; handlers read with Snapshot which is
 // O(1) under an RLock.
 //

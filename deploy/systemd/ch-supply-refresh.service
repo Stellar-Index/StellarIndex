@@ -1,5 +1,5 @@
 [Unit]
-Description=Rates Engine — ClickHouse per-token supply refresh (stellar.token_supply, ADR-0034)
+Description=Stellar Atlas — ClickHouse per-token supply refresh (stellar.token_supply, ADR-0034)
 After=clickhouse-server.service network-online.target
 Wants=clickhouse-server.service
 

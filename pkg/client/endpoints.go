@@ -382,7 +382,7 @@ type SourcesOptions struct {
 // catalogue-shaped (no pagination needed; ~25 entries today).
 //
 // Operators use the registry to drive admin tooling
-// (`ratesengine-ops verify-decoders`, the source-class lint in
+// (`stellaratlas-ops verify-decoders`, the source-class lint in
 // CI). Customers use it to render "where do these prices come
 // from?" UIs.
 func (c *Client) Sources(ctx context.Context, opts SourcesOptions) (*Envelope[[]Source], error) {

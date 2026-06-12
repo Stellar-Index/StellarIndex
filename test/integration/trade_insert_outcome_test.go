@@ -16,7 +16,7 @@ import (
 )
 
 // TestTradeInsertOutcome_NewVsDuplicate pins the diagnostic metric
-// `ratesengine_trade_insert_outcome_total{source, outcome}`: a
+// `stellaratlas_trade_insert_outcome_total{source, outcome}`: a
 // fresh trade increments outcome=new, a re-insertion (same PK)
 // increments outcome=duplicate. Live r1 evidence on 2026-05-28
 // surfaced a stuck-cursor pattern where the older counter

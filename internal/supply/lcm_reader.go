@@ -23,7 +23,7 @@ type AccountObservationLookup interface {
 // AccountObservationRow is the storage-side shape mirrored into
 // the supply package so we don't import timescale here (avoids a
 // cyclic import: timescale already imports supply for InsertSupply).
-// Caller (cmd/ratesengine-ops/supply.go) adapts the timescale row
+// Caller (cmd/stellaratlas-ops/supply.go) adapts the timescale row
 // into this shape.
 type AccountObservationRow struct {
 	Balance   *big.Int

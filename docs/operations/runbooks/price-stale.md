@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_api_price_stale`
+# Runbook — `stellaratlas_api_price_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_api_price_stale` |
+| Alert | `stellaratlas_api_price_stale` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/api.yml` |
 | Typical MTTR | 15–60 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `ratesengine_price_staleness_seconds{asset=...} > 120` sustained 5 min.
+- `stellaratlas_price_staleness_seconds{asset=...} > 120` sustained 5 min.
 - The affected asset's chart on the *Price → freshness* dashboard
   shows a flat line where observations should be ticking.
 - `/v1/price?asset=<X>` returns 200 with a price but the
@@ -30,7 +30,7 @@ severity: P2
 ```sh
 # Which asset is stale?
 curl -s http://localhost:9465/metrics |
-  awk '/^ratesengine_price_staleness_seconds/ && $2 > 120 {print}'
+  awk '/^stellaratlas_price_staleness_seconds/ && $2 > 120 {print}'
 
 # Is it one asset or many?
 #   One asset → that asset's source is stopped / paused.
@@ -45,8 +45,8 @@ psql -c "SELECT source, max(ts) AS most_recent
          GROUP BY source ORDER BY most_recent DESC;"
 
 # Is the aggregator binary running and writing CAGGs?
-ssh root@<host> "systemctl status ratesengine-aggregator --no-pager | head -10"
-ssh root@<host> "curl -s http://localhost:9465/metrics | grep ratesengine_aggregator_vwap_writes_total"
+ssh root@<host> "systemctl status stellaratlas-aggregator --no-pager | head -10"
+ssh root@<host> "curl -s http://localhost:9465/metrics | grep stellaratlas_aggregator_vwap_writes_total"
 ```
 
 ## Typical root causes
@@ -54,15 +54,15 @@ ssh root@<host> "curl -s http://localhost:9465/metrics | grep ratesengine_aggreg
 1. **Source quoting this asset is stopped.** Events stop → no new
    trade → aggregator has nothing fresh to roll up → API serves
    the last trade with an aging `observed_at`.
-   - Signal: `ratesengine_source_last_event_unix{source=<X>}` is
-     frozen; `ratesengine_ingestion_source_stopped` alert may also
+   - Signal: `stellaratlas_source_last_event_unix{source=<X>}` is
+     frozen; `stellaratlas_ingestion_source_stopped` alert may also
      have fired on that source.
    - Mitigation: `source-stopped.md`.
 
 2. **Aggregator is running but not writing CAGGs / hot-cache**.
    Happens when CAGG refresh jobs fail (schedule misfire, SQL
    error in the window function).
-   - Signal: `ratesengine_timescale_cagg_stale` alert.
+   - Signal: `stellaratlas_timescale_cagg_stale` alert.
    - Mitigation: `cagg-stale.md`.
 
 3. **Redis TTL'd the hot-cache entry for a low-QPS asset.** The
@@ -92,7 +92,7 @@ ssh root@<host> "curl -s http://localhost:9465/metrics | grep ratesengine_aggreg
 - [ ] Step 4 — if there's genuinely no on-chain activity: decide
       with product whether to de-list or keep the stale number
       with `stale=true`.
-- [ ] Verification: `ratesengine_price_staleness_seconds{asset=<X>}`
+- [ ] Verification: `stellaratlas_price_staleness_seconds{asset=<X>}`
       drops back under 120 s and the alert clears (`for: 5m` gives
       you time to verify it's not a flap).
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Rates Engine contributors.
+// Copyright (c) 2026 Stellar Atlas contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package middleware
@@ -90,7 +90,7 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger) Middleware {
 // of the JSON string).
 func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used int64) {
 	payload := map[string]any{
-		"type":          "https://api.ratesengine.net/errors/monthly-quota-exceeded",
+		"type":          "https://api.stellaratlas.xyz/errors/monthly-quota-exceeded",
 		"title":         "Monthly quota exceeded",
 		"status":        429,
 		"detail":        "The API key's monthly request quota has been reached. Reset on the 1st UTC.",
@@ -106,8 +106,8 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 		body = []byte(`{"title":"Monthly quota exceeded","status":429}`)
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("X-RatesEngine-Monthly-Quota", itoa(quota))
-	w.Header().Set("X-RatesEngine-Monthly-Used", itoa(used))
+	w.Header().Set("X-StellarAtlas-Monthly-Quota", itoa(quota))
+	w.Header().Set("X-StellarAtlas-Monthly-Used", itoa(used))
 	w.WriteHeader(http.StatusTooManyRequests)
 	_, _ = w.Write(body)
 }

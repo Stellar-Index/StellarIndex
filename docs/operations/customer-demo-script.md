@@ -14,18 +14,18 @@ first real request without further intervention.
 
 ## Pre-flight (T-30 min)
 
-- [ ] **Demo URL pinned.** `https://api.ratesengine.net/v1`
-      (post-cutover) or `https://staging.ratesengine.net/v1`
+- [ ] **Demo URL pinned.** `https://api.stellaratlas.xyz/v1`
+      (post-cutover) or `https://staging.stellaratlas.xyz/v1`
       (pre-cutover dry-run).
 - [ ] **Demo API key minted.** Use a tier-`apikey` key with
       reasonable rpm; record it in the demo notes for cleanup
       after.
 - [ ] **Browser tabs open** — interactive explorer
-      (`https://ratesengine.net`), API reference, getting-started,
+      (`https://stellaratlas.xyz`), API reference, getting-started,
       status page.
 - [ ] **Terminal pre-loaded** with `BASE`, `KEY` env vars:
       ```sh
-      export BASE='https://api.ratesengine.net/v1'
+      export BASE='https://api.stellaratlas.xyz/v1'
       export KEY='ak_demo_...'
       ```
 - [ ] **Wireshark / network inspector NOT open** — keeps the
@@ -47,7 +47,7 @@ Talking points:
   suitable for monitoring.
 - `version` exposes the CalVer tag — operators can tell at a
   glance which build is responding.
-- **Hand the customer `https://ratesengine.net`** — the
+- **Hand the customer `https://stellaratlas.xyz`** — the
   interactive explorer. Every panel reveals the API call that
   produced it via the `<>` button, so the rest of the walk-through
   has a "click the panel, see the curl" parallel they can follow

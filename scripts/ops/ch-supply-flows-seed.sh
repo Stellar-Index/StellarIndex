@@ -13,9 +13,9 @@
 # and dup-partition reads with -final=false are safe) and resumable via a
 # done-windows file.
 set -uo pipefail
-set -a; . /etc/default/ratesengine-ops; set +a
-OPS=${OPS:-/usr/local/bin/ratesengine-ops-ch}
-CFG=${CFG:-/etc/ratesengine.toml}
+set -a; . /etc/default/stellaratlas-ops; set +a
+OPS=${OPS:-/usr/local/bin/stellaratlas-ops-ch}
+CFG=${CFG:-/etc/stellaratlas.toml}
 CH_PORT=${CH_PORT:-9300}
 FROM=${FROM:-2}
 TO=${TO:-$(clickhouse-client --port "$CH_PORT" -q "SELECT max(ledger_seq) FROM stellar.ledgers")}

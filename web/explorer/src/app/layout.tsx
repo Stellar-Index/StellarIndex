@@ -5,8 +5,8 @@ import { DegradedBanner } from '@/components/nav/DegradedBanner';
 import { Footer } from '@/components/nav/Footer';
 import { QueryProvider } from '@/components/QueryProvider';
 
-const SITE_URL = 'https://ratesengine.net';
-const SITE_NAME = 'Rates Engine';
+const SITE_URL = 'https://stellaratlas.xyz';
+const SITE_NAME = 'Stellar Atlas';
 const SITE_DESCRIPTION =
   'Comprehensive Stellar-network pricing API. Browse every asset, every pair, every protocol — backed by an independent VWAP across on-chain DEXes, classic SDEX, and major exchanges.';
 
@@ -71,14 +71,14 @@ export const metadata: Metadata = {
     // Default canonical for the home page. Detail pages override
     // this in their own generateMetadata; without it the root URL
     // would be served without a <link rel="canonical">, leaving
-    // search engines free to treat https://ratesengine.net/ vs
-    // https://ratesengine.net (no trailing slash) vs
-    // https://ratesengine.net/index.html as separate pages.
+    // search engines free to treat https://stellaratlas.xyz/ vs
+    // https://stellaratlas.xyz (no trailing slash) vs
+    // https://stellaratlas.xyz/index.html as separate pages.
     canonical: '/',
     types: {
       'application/atom+xml': [
-        { url: '/blog.atom', title: 'Rates Engine — engineering notes' },
-        { url: '/changelog.atom', title: 'Rates Engine — changelog' },
+        { url: '/blog.atom', title: 'Stellar Atlas — engineering notes' },
+        { url: '/changelog.atom', title: 'Stellar Atlas — changelog' },
       ],
     },
   },
@@ -107,7 +107,7 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {/* Build identifier — same SHA + time as the footer badge,
-            in machine-readable form. `curl -s ratesengine.net | grep
+            in machine-readable form. `curl -s stellaratlas.xyz | grep
             re-build` reveals the live build without rendering JS. */}
         <meta
           name="re-build-sha"
@@ -121,7 +121,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         {/* Schema.org JSON-LD — Organization + WebSite. Lets Google
             render the brand panel and a sitelinks search box at
-            ratesengine.net pointing at /assets?q=…. */}
+            stellaratlas.xyz pointing at /assets?q=…. */}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -136,18 +136,18 @@ export default function RootLayout({
                   logo: `${SITE_URL}/icon.svg`,
                   description: SITE_DESCRIPTION,
                   sameAs: [
-                    'https://github.com/RatesEngine/rates-engine',
+                    'https://github.com/StellarAtlas/stellar-atlas',
                   ],
                   contactPoint: [
                     {
                       '@type': 'ContactPoint',
                       contactType: 'security',
-                      email: 'security@ratesengine.net',
+                      email: 'security@stellaratlas.xyz',
                     },
                     {
                       '@type': 'ContactPoint',
                       contactType: 'sales',
-                      email: 'sales@ratesengine.net',
+                      email: 'sales@stellaratlas.xyz',
                     },
                   ],
                 },

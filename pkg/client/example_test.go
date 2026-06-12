@@ -17,13 +17,13 @@ import (
 func ExampleNew() {
 	// Construct against the public production endpoint:
 	c := client.New(client.Options{
-		BaseURL: "https://api.ratesengine.net",
+		BaseURL: "https://api.stellaratlas.xyz",
 		APIKey:  "rek_…", // optional; anonymous works at low rate limit
 	})
 	_ = c // silence "declared and not used" in this snippet
 
 	// For self-hosted or staging, point BaseURL at the deployment:
-	staging := client.New(client.Options{BaseURL: "https://api.staging.ratesengine.net"})
+	staging := client.New(client.Options{BaseURL: "https://api.staging.stellaratlas.xyz"})
 	_ = staging
 }
 
@@ -248,7 +248,7 @@ func ExampleAPIError() {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{
-			"type": "https://api.ratesengine.net/errors/asset-not-found",
+			"type": "https://api.stellaratlas.xyz/errors/asset-not-found",
 			"title": "Asset not found",
 			"status": 404,
 			"detail": "No trades observed for asset_id=XYZ-G..."
@@ -330,7 +330,7 @@ func ExampleClient_Status() {
 // Note: `total_sources` here counts entries in the static binary
 // registry. /v1/status's `freshness.total_sources` counts sources
 // the operator has ENABLED at runtime — typically a strict subset.
-// See [docs/reference/api](https://docs.ratesengine.net) for the
+// See [docs/reference/api](https://docs.stellaratlas.xyz) for the
 // full semantic table.
 func ExampleClient_NetworkStats() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -372,7 +372,7 @@ func ExampleClient_NetworkStats() {
 }
 
 // ExampleClient_Incidents demonstrates fetching the
-// incident-postmortem corpus surfaced on status.ratesengine.net.
+// incident-postmortem corpus surfaced on status.stellaratlas.xyz.
 // Each entry has a SEV-N severity tier, a lifecycle status, and
 // the full markdown body. ResolvedAt is `*time.Time` (nil for
 // still-active incidents) so callers can distinguish "ongoing"
@@ -483,7 +483,7 @@ func ExampleClient_LendingPools() {
 //
 // Returned as a plain Go map; iterate keys for contracts or look
 // up a specific contract directly. The map is operator-config
-// (loaded from /etc/ratesengine.toml at boot), so it's small —
+// (loaded from /etc/stellaratlas.toml at boot), so it's small —
 // typically ~20 entries — and stable across regions running the
 // same config.
 func ExampleClient_SACWrappers() {

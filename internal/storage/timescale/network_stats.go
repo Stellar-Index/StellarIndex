@@ -7,7 +7,7 @@ import (
 )
 
 // NetworkStats is the aggregate counts powering the home network
-// strip on ratesengine.net. Single SQL query computes them all so
+// strip on stellaratlas.xyz. Single SQL query computes them all so
 // the explorer doesn't need 4 separate fetches.
 type NetworkStats struct {
 	// Volume24hUSD: SUM of prices_1m.volume_usd across every pair

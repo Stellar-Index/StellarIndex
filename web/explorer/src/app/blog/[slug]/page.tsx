@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const { slug } = await params;
   const post = loadBlogPost(slug);
   if (!post) return { title: 'Post not found — Blog' };
-  const canonical = `https://ratesengine.net/blog/${slug}`;
+  const canonical = `https://stellaratlas.xyz/blog/${slug}`;
   const title = `${post.title} — Blog`;
   return {
     title,
@@ -66,7 +66,7 @@ export default async function BlogPostPage({ params }: { params: Params }) {
 
       <footer className="border-t border-slate-200 pt-4 text-xs dark:border-slate-800">
         <a
-          href={`https://github.com/RatesEngine/rates-engine/blob/main/${post.source_path}`}
+          href={`https://github.com/StellarAtlas/stellar-atlas/blob/main/${post.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600"

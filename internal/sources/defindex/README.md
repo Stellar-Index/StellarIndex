@@ -10,7 +10,7 @@ on Stellar mainnet.
 > `1.0.0`. **Mainnet never deployed that.** The contract addresses
 > we watch run Blend *strategy* code (deployed WASM `11329c24…988`)
 > and emit a much simpler schema, verified from real on-chain LCM
-> via `ratesengine-ops scan-soroban-events`. See
+> via `stellaratlas-ops scan-soroban-events`. See
 > `docs/operations/wasm-audits/defindex.md` "Audit result" for the
 > full evidence trail (#28).
 
@@ -86,7 +86,7 @@ layers.
 ## Sources
 
 - Event shapes: **real mainnet LCM**, captured via
-  `ratesengine-ops scan-soroban-events` (2026-05-19).
+  `stellaratlas-ops scan-soroban-events` (2026-05-19).
 - Deployed WASM: `11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988`
   (Blend strategy code; walk-confirmed single hash, zero upgrades).
 - WASM audit: `docs/operations/wasm-audits/defindex.md`.

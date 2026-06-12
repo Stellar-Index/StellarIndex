@@ -35,7 +35,7 @@ Copied verbatim from the scenario script:
 Times are simulated (drill leader read each Beat aloud and
 narrated the response). T+0 = trigger injection at 14:32 UTC.
 
-- **T+00:30** — `ratesengine_api_error_rate_high` page acknowledged
+- **T+00:30** — `stellaratlas_api_error_rate_high` page acknowledged
   via PagerDuty UI walkthrough. Opened #incident-2026-04-30-tsdb
   Slack channel; posted initial impact statement: "API 5xx
   elevated; investigating; updates every 15 min."
@@ -56,7 +56,7 @@ narrated the response). T+0 = trigger injection at 14:32 UTC.
 - **T+08:00** — Customer DM (Freighter) simulated. Replied
   with the playbook §5.3 internal-channel template.
   ("Acknowledged; we have an active incident; tracking at
-  status.ratesengine.net.")
+  status.stellaratlas.xyz.")
 - **T+12:00** — Verified `pgBackRest` archive intact via
   `pgbackrest info`. (No backup corruption — drill condition.)
 - **T+18:00** — Dropped 30 days of `prices_1m` chunks via

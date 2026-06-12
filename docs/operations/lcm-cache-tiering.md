@@ -15,16 +15,16 @@ on r1 (the design + code primitives are already live in `main`).
 - **TieredDataStore** = the `internal/ledgerstream` primitive that
   reads hot first, falls through to cold on `IsNotFound`, never
   on transient errors. Writes target hot exclusively.
-- **Trim operator** = `ratesengine-ops trim-galexie-archive` —
+- **Trim operator** = `stellaratlas-ops trim-galexie-archive` —
   deletes cold-eligible hot files (5-layer safety stack).
-- **Rehydrate operator** = `ratesengine-ops
+- **Rehydrate operator** = `stellaratlas-ops
   rehydrate-galexie-archive` — copies cold → hot for a range. The
   rollback primitive.
 
 ## Before you start
 
 - [ ] You have SSH root access to r1 (`ssh root@136.243.90.96`).
-- [ ] You can read /var/log/ratesengine + the systemd journals.
+- [ ] You can read /var/log/stellaratlas + the systemd journals.
 - [ ] You have at least 30 minutes of attention available — none
   of the steps are abandonable mid-stream.
 - [ ] `mc` is configured with `local` + `aws-public` aliases (see
@@ -34,10 +34,10 @@ on r1 (the design + code primitives are already live in `main`).
 ## Step 3 — enable the dual-source flag in r1's TOML
 
 The feature flag is the presence of `storage.s3_cold_*` fields in
-`/etc/ratesengine.toml`. Until populated, every read goes
+`/etc/stellaratlas.toml`. Until populated, every read goes
 through the legacy single-source path.
 
-1. Edit `/etc/ratesengine.toml` and add (or uncomment) under
+1. Edit `/etc/stellaratlas.toml` and add (or uncomment) under
    `[storage]`:
 
    ```toml
@@ -54,14 +54,14 @@ through the legacy single-source path.
 2. Restart the consumer services:
 
    ```sh
-   systemctl restart ratesengine-indexer ratesengine-aggregator ratesengine-api
+   systemctl restart stellaratlas-indexer stellaratlas-aggregator stellaratlas-api
    ```
 
 3. Verify the tiered read path is active by checking the new
    metrics in Prometheus:
 
    ```
-   ratesengine_ledgerstream_tier_read_total{outcome="hot"}
+   stellaratlas_ledgerstream_tier_read_total{outcome="hot"}
    ```
 
    Should be incrementing on every ledger read. At this stage
@@ -85,7 +85,7 @@ in real-time.
    window. At ~17280 ledgers per day (5 s ledger close):
 
    ```sh
-   TIP=$(sudo -u postgres psql ratesengine -tAc \
+   TIP=$(sudo -u postgres psql stellaratlas -tAc \
      "SELECT MAX(last_ledger) FROM ingestion_cursors WHERE source='ledgerstream';")
    CUTOFF=$(( TIP - 90 * 17280 ))
    echo "tip=$TIP cutoff=$CUTOFF"
@@ -94,8 +94,8 @@ in real-time.
 2. **Dry-run first.** Always.
 
    ```sh
-   /usr/local/bin/ratesengine-ops trim-galexie-archive \
-     -config /etc/ratesengine.toml \
+   /usr/local/bin/stellaratlas-ops trim-galexie-archive \
+     -config /etc/stellaratlas.toml \
      -older-than-ledger "$CUTOFF" \
      -dry-run
    ```
@@ -115,8 +115,8 @@ in real-time.
      CHUNK_END=$(( CHUNK + 999999 ))
      if (( CHUNK_END > CUTOFF )); then CHUNK_END=$CUTOFF; fi
      echo "=== chunk: $CHUNK → $CHUNK_END ==="
-     /usr/local/bin/ratesengine-ops trim-galexie-archive \
-       -config /etc/ratesengine.toml \
+     /usr/local/bin/stellaratlas-ops trim-galexie-archive \
+       -config /etc/stellaratlas.toml \
        -older-than-ledger "$CHUNK_END" \
        -max-files 100000 \
        -commit
@@ -132,7 +132,7 @@ in real-time.
    show the bucket dropped by the same amount.
 
 5. **Sanity test a cold-tier read.** Pick a trimmed ledger range
-   and confirm `ratesengine-ops backfill` (with `-dry-run` or a
+   and confirm `stellaratlas-ops backfill` (with `-dry-run` or a
    small range) successfully reads from cold:
 
    ```sh
@@ -143,7 +143,7 @@ in real-time.
    `outcome="cold"` should now be > 0 and growing as backfill
    pulls trimmed-range LCMs from AWS.
 
-**Rollback**: `ratesengine-ops rehydrate-galexie-archive -from
+**Rollback**: `stellaratlas-ops rehydrate-galexie-archive -from
 <start> -to <end>` re-fetches the trimmed range from cold back
 into hot. Idempotent (`PutFileIfNotExists`).
 
@@ -184,16 +184,16 @@ errors rather than masking them — this is intentional. If
 extended, rehydrate the affected range to restore hot service:
 
 ```sh
-ratesengine-ops rehydrate-galexie-archive -from <N> -to <M>
+stellaratlas-ops rehydrate-galexie-archive -from <N> -to <M>
 ```
 
 ## Metrics
 
-- `ratesengine_ledgerstream_tier_read_total{outcome=hot|cold|both_missing}`
+- `stellaratlas_ledgerstream_tier_read_total{outcome=hot|cold|both_missing}`
   — read tier breakdown. Production steady-state should be
   ~100% hot for live ingest; cold non-zero during backfill of
   trimmed ranges.
-- `ratesengine_ledgerstream_cold_read_duration_seconds`
+- `stellaratlas_ledgerstream_cold_read_duration_seconds`
   — p50/p95/p99 of cold tier reads. Sub-200 ms p50 is healthy;
   multi-second sustained suggests cross-Atlantic network issue.
 
@@ -202,5 +202,5 @@ ratesengine-ops rehydrate-galexie-archive -from <N> -to <M>
 - [ADR-0027 — LCM cache tiering](../adr/0027-lcm-cache-tiering.md)
 - [ADR-0016 — Per-region storage strategy](../adr/0016-per-region-storage-strategy.md)
 - [internal/ledgerstream/tiered.go](../../internal/ledgerstream/tiered.go)
-- [cmd/ratesengine-ops/trim_galexie_archive.go](../../cmd/ratesengine-ops/trim_galexie_archive.go)
-- [cmd/ratesengine-ops/rehydrate_galexie_archive.go](../../cmd/ratesengine-ops/rehydrate_galexie_archive.go)
+- [cmd/stellaratlas-ops/trim_galexie_archive.go](../../cmd/stellaratlas-ops/trim_galexie_archive.go)
+- [cmd/stellaratlas-ops/rehydrate_galexie_archive.go](../../cmd/stellaratlas-ops/rehydrate_galexie_archive.go)

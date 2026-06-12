@@ -211,7 +211,7 @@ mixed-realistic run." Cadence: monthly, plus pre-launch.
 
 ### Where the auth comes from
 
-API key: minted once, stored in vault (`RATESENGINE_LOAD_API_KEY`).
+API key: minted once, stored in vault (`STELLARATLAS_LOAD_API_KEY`).
 Operator exports it before running k6. Never committed.
 
 ### How we model wallet-shaped clients
@@ -270,7 +270,7 @@ self-hosted territory).
    is fixed, not unbounded.
 
 6. **Spike scenario can wedge alerting.** A 10× spike will
-   trip `ratesengine_api_latency_p95_high` legitimately. The
+   trip `stellaratlas_api_latency_p95_high` legitimately. The
    load test must announce itself to alerting (silence + label)
    so on-call doesn't get paged for the planned spike. Pre-run
    step: post a `silence` to AlertManager via API for the run

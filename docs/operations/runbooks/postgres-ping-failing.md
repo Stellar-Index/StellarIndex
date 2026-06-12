@@ -5,13 +5,13 @@ status: ratified
 severity: P1
 ---
 
-# Runbook — `ratesengine_postgres_ping_failing`
+# Runbook — `stellaratlas_postgres_ping_failing`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_postgres_ping_failing` |
+| Alert | `stellaratlas_postgres_ping_failing` |
 | Severity | P1 (page) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/storage.yml` (and `configs/prometheus/rules.r1/storage.yml` R1 overlay) |
 | Typical MTTR | 5 min |
@@ -24,7 +24,7 @@ outage during the disk-full SEV cascade brought
 `postgresql@15-main.service` down for ~10 h. Postgres recovered
 when disk was freed, but the indexer's `*sql.DB` connection pool
 held stale conns and silently failed writes for an additional ~3 h
-until a manual `systemctl restart ratesengine-indexer`. Total
+until a manual `systemctl restart stellaratlas-indexer`. Total
 ledger gap: ~14 h.
 
 The code fix shipped alongside this runbook:
@@ -33,10 +33,10 @@ The code fix shipped alongside this runbook:
    `SetConnMaxLifetime(30 min)` + `SetConnMaxIdleTime(5 min)` —
    automatic pool refresh, bounds the cascade-gap to the lifetime
    interval.
-2. `cmd/ratesengine-indexer/main.go::watchPostgresPing` probes the
+2. `cmd/stellaratlas-indexer/main.go::watchPostgresPing` probes the
    pool every 60 s and emits
-   `ratesengine_postgres_ping_total{outcome="ok"|"error"}` plus the
-   live streak gauge `ratesengine_postgres_ping_failure_streak`.
+   `stellaratlas_postgres_ping_total{outcome="ok"|"error"}` plus the
+   live streak gauge `stellaratlas_postgres_ping_failure_streak`.
 
 This alert fires when the error rate stays above 0.5/s for 2 min
 — the live signal that the safety-net hasn't refreshed yet AND
@@ -44,10 +44,10 @@ something past the conn layer is broken.
 
 ## Symptoms
 
-- `rate(ratesengine_postgres_ping_total{outcome="error"}[5m]) > 0.5` for 2+ min.
-- `ratesengine_postgres_ping_failure_streak` climbing past 3.
+- `rate(stellaratlas_postgres_ping_total{outcome="error"}[5m]) > 0.5` for 2+ min.
+- `stellaratlas_postgres_ping_failure_streak` climbing past 3.
 - Indexer journal: `pool may be wedged` log line.
-- Downstream: `ratesengine_trade_inserts_total{outcome="error"}` climbing.
+- Downstream: `stellaratlas_trade_inserts_total{outcome="error"}` climbing.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -59,10 +59,10 @@ ssh root@r1 'systemctl status postgresql@15-main.service'
 ssh root@r1 'sudo -u postgres pg_isready -t 5'
 
 # 3. What does the indexer journal say about the ping streak?
-ssh root@r1 'journalctl -u ratesengine-indexer.service --since "10 min ago" | grep -E "postgres.ping|pool may be wedged"'
+ssh root@r1 'journalctl -u stellaratlas-indexer.service --since "10 min ago" | grep -E "postgres.ping|pool may be wedged"'
 
 # 4. Live metric on r1's prometheus:
-curl -s http://r1:9090/api/v1/query?query=ratesengine_postgres_ping_failure_streak | jq .
+curl -s http://r1:9090/api/v1/query?query=stellaratlas_postgres_ping_failure_streak | jq .
 ```
 
 ## Mitigation (≤ 15 min)
@@ -73,13 +73,13 @@ If postgres@15-main is DOWN:
 - [ ] The pool will refresh automatically within
       `PoolConnMaxLifetime` (30 min) once postgres is reachable,
       but you can force it now with a restart:
-      `ssh root@r1 'systemctl restart ratesengine-indexer.service'`
+      `ssh root@r1 'systemctl restart stellaratlas-indexer.service'`
 - [ ] Verification: ping streak resets to 0 + `outcome="ok"` rate climbs back.
 
 If postgres is UP but ping still fails:
 
 - [ ] Likely a network blip, firewall reset, or auth misconfig.
-- [ ] `ssh root@r1 'cat /etc/default/ratesengine-indexer | grep DSN'` — verify DSN env.
+- [ ] `ssh root@r1 'cat /etc/default/stellaratlas-indexer | grep DSN'` — verify DSN env.
 - [ ] If pool wedged but DB healthy, restart the indexer to drain.
 
 ## Root cause analysis
@@ -104,7 +104,7 @@ If postgres is UP but ping still fails:
 
 - `internal/storage/timescale/store.go` — `configurePool` +
   `PingContext` (the implementation).
-- `cmd/ratesengine-indexer/main.go::watchPostgresPing` —
+- `cmd/stellaratlas-indexer/main.go::watchPostgresPing` —
   the probe goroutine.
 - `db-disk-full.md` — the most common upstream cause.
 - `timescale-primary-down.md` — adjacent alert; this one fires

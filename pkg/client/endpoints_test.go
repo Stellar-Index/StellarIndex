@@ -1017,7 +1017,7 @@ func TestRevokeKey_404(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"type":"https://api.ratesengine.net/errors/key-not-found","title":"Key not found","status":404}`))
+		_, _ = w.Write([]byte(`{"type":"https://api.stellaratlas.xyz/errors/key-not-found","title":"Key not found","status":404}`))
 	})
 	err := c.RevokeKey(context.Background(), "k_missing")
 	if err == nil {

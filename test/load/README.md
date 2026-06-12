@@ -2,7 +2,7 @@
 
 Per [Task #74 design note](../../docs/architecture/k6-load-tests-design-note.md).
 
-Synthetic traffic against the Rates Engine API, asserting:
+Synthetic traffic against the Stellar Atlas API, asserting:
 
 - **p95 ≤ 200 ms** across the realistic mix of `/v1/price`,
   `/v1/vwap`, `/v1/twap`, `/v1/history`, batch + stream
@@ -30,8 +30,8 @@ thresholds) live under `scenarios/lib/`.
 
 ```sh
 # Set the target + auth (the Makefile target refuses production):
-export K6_TARGET=https://api.staging.ratesengine.net/v1
-export RATESENGINE_LOAD_API_KEY="<paste from vault>"
+export K6_TARGET=https://api.staging.stellaratlas.xyz/v1
+export STELLARATLAS_LOAD_API_KEY="<paste from vault>"
 
 # Run a single scenario:
 k6 run --out experimental-prometheus-rw test/load/scenarios/01-price-hot-path.js

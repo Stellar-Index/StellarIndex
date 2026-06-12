@@ -6,7 +6,7 @@
 
 Report them privately via one of:
 
-1. **Email:** `security@ratesengine.net` (mailbox provisioning
+1. **Email:** `security@stellaratlas.xyz` (mailbox provisioning
    in Week 1 per
    [docs/discovery/delivery-plan.md](docs/discovery/delivery-plan.md)
    — until then use GitHub Security Advisory below).
@@ -26,8 +26,8 @@ We commit to:
 
 In scope:
 
-- The Rates Engine server binaries (`ratesengine-indexer`, `ratesengine-aggregator`,
-  `ratesengine-api`, `ratesengine-ops`, `ratesengine-migrate`).
+- The Stellar Atlas server binaries (`stellaratlas-indexer`, `stellaratlas-aggregator`,
+  `stellaratlas-api`, `stellaratlas-ops`, `stellaratlas-migrate`).
 - The Go SDK in `pkg/client/` (planned; will be in scope once it ships —
   tracked in CLAUDE.md repo map).
 - The deployment kits in `deploy/`.
@@ -48,7 +48,7 @@ Out of scope (report to the relevant upstream instead):
 Some endpoints under `/v1/diagnostics/*` return operational
 state that, in isolation, could be considered an information
 leak. These are public **by design** so that operators (and the
-public explorer at <https://ratesengine.net/diagnostics>) can
+public explorer at <https://stellaratlas.xyz/diagnostics>) can
 see the same ingest health a paying customer would — credibility
 through transparency. Specifically:
 

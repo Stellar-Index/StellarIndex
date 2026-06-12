@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Rates Engine contributors.
+// Copyright (c) 2026 Stellar Atlas contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package middleware

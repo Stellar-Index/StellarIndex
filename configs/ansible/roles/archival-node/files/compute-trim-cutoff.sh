@@ -13,7 +13,7 @@
 #
 # Mirrors the compute-archive-to.sh pattern (F-1205): use the same
 # DSN as the application binaries (sourced from /etc/default/
-# ratesengine) rather than peer-auth, which fails under systemd's
+# stellaratlas) rather than peer-auth, which fails under systemd's
 # restricted user-switch context.
 #
 # Safety:
@@ -23,12 +23,12 @@
 #     first real ledger; ledger 1 is empty by Stellar design).
 set -euo pipefail
 
-. /etc/default/ratesengine
+. /etc/default/stellaratlas
 
 # 90 days @ 5s ledger close = 17280 ledgers/day × 90 = 1,555,200.
 HOT_WINDOW_LEDGERS=1555200
 
-TIP=$(psql "$RATESENGINE_POSTGRES_DSN" -tA -c \
+TIP=$(psql "$STELLARATLAS_POSTGRES_DSN" -tA -c \
   'SELECT GREATEST(MAX(last_ledger), 0) FROM ingestion_cursors WHERE last_ledger > 0' \
   2>/dev/null | tr -d '[:space:]')
 

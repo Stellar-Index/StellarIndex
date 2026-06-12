@@ -1,7 +1,7 @@
-# Rates Engine — public status page
+# Stellar Atlas — public status page
 
-Public status page for the Rates Engine API. Lives at
-`status.ratesengine.net` post-launch.
+Public status page for the Stellar Atlas API. Lives at
+`status.stellaratlas.xyz` post-launch.
 
 This is the shipped implementation of the status-page surface
 chosen in
@@ -66,7 +66,7 @@ Quick version:
 3. Commit + push to `main`. Cloudflare Pages picks up the change
    in 30-90 s; the API binary's next deploy embeds it.
 4. To fan out via customer-webhooks, run
-   `ratesengine-ops emit-incident --slug <slug>` (fires the
+   `stellaratlas-ops emit-incident --slug <slug>` (fires the
    `incident.sev1` / `incident.resolved` event family from
    F-1249).
 

@@ -50,7 +50,7 @@ const DefaultDecimals uint8 = 8
 
 // DefaultResolutionSeconds reflects the on-chain update cadence:
 // `0.2% deviation OR 24h heartbeat`. Emitted as the
-// `ratesengine_oracle_resolution_seconds` gauge by
+// `stellaratlas_oracle_resolution_seconds` gauge by
 // [pipeline.BuildDispatcher] at registration time, so the
 // oracle-stale alert has a per-source threshold. Set to 24h (the
 // lower bound on assumed freshness — per

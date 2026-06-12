@@ -79,12 +79,12 @@ deleted in rc.97 / ADR-0032 Phase 5).
 ### 1. No stellar-rpc in production ingest
 
 `internal/stellarrpc/` exists only for:
-- `ratesengine-ops rpc-probe` — operator diagnostic against a
+- `stellaratlas-ops rpc-probe` — operator diagnostic against a
   public endpoint.
 - Development-time fixture capture via scripts in
   `scripts/dev/capture-*-fixtures.sh`.
 
-`ratesengine-indexer` MUST NOT import `internal/stellarrpc`. Any
+`stellaratlas-indexer` MUST NOT import `internal/stellarrpc`. Any
 source's ingest path that calls `rpc.GetEvents` or
 `rpc.LatestLedgerSequence` is wrong and blocks merge. This was
 established 2026-04-23 when stellar-rpc was removed from r1 (see
@@ -178,7 +178,7 @@ Preventive controls put in place:
   linked from every PR description that touches the ingest path.
 - **CI check (live):** `scripts/ci/lint-imports.sh` blocks
   `internal/stellarrpc` imports outside the allowlist
-  (`cmd/ratesengine-ops/`, `scripts/dev/`, `internal/stellarrpc/`
+  (`cmd/stellaratlas-ops/`, `scripts/dev/`, `internal/stellarrpc/`
   itself, `*_test.go`). Soroban contract-event types now live in the
   transport-neutral `internal/events/` package (no longer in each
   source's `decode.go`). Also enforces rule B
@@ -214,7 +214,7 @@ in a per-source poll loop.
   served tier.
 - [r1-deployment-state.md](../operations/r1-deployment-state.md) —
   what's actually running on r1.
-- [architecture_cdp.md memory](../../../../.claude/projects/-Users-ash-code-ratesengine/memory/architecture_cdp.md) —
+- [architecture_cdp.md memory](../../../../.claude/projects/-Users-ash-code-stellaratlas/memory/architecture_cdp.md) —
   the CDP pattern.
 - [contract-schema-evolution.md](contract-schema-evolution.md) —
   per-contract WASM versioning (unrelated to transport; still

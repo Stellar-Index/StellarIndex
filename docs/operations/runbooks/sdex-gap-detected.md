@@ -3,12 +3,12 @@
 ## At a glance
 
 - **Severity:** P1 — pages on-call
-- **Trigger:** `max by (source) (ratesengine_ingest_gap_max_size_ledgers{source="sdex"}) > 1000` for 15 min
+- **Trigger:** `max by (source) (stellaratlas_ingest_gap_max_size_ledgers{source="sdex"}) > 1000` for 15 min
 - **Time to act:** within 30 min
-- **Owner:** ratesengine on-call
-- **TL;DR fix:** confirm writer health → `ratesengine-ops backfill --source sdex --from $GAP --to $TIP --parallel 8`
+- **Owner:** stellaratlas on-call
+- **TL;DR fix:** confirm writer health → `stellaratlas-ops backfill --source sdex --from $GAP --to $TIP --parallel 8`
 
-**Trigger:** `ratesengine_ingest_gap_max_size_ledgers{source="sdex"} > 1000` sustained 15 min.
+**Trigger:** `stellaratlas_ingest_gap_max_size_ledgers{source="sdex"} > 1000` sustained 15 min.
 
 This is the SDEX-specific surface of [ingest-gap-detected](ingest-gap-detected.md). SDEX is classic-DEX and does NOT flow through `soroban_events`; its rows land in the unified `trades` hypertable filtered by `source = 'sdex'`. Symmetric to the Soroban path, an SDEX-side cascade (Postgres back-pressure halting the SDEX writer goroutine while the rest of ingest stays healthy) used to be invisible at the data layer. This alert closes that gap.
 
@@ -17,22 +17,22 @@ This is the SDEX-specific surface of [ingest-gap-detected](ingest-gap-detected.m
 1. **Confirm the signal.** Two quick checks:
    ```
    ssh r1
-   curl -s localhost:9465/metrics | grep 'ratesengine_ingest_gap.*sdex'
-   ratesengine-ops find-data-gaps --config /etc/ratesengine.toml --source sdex
+   curl -s localhost:9465/metrics | grep 'stellaratlas_ingest_gap.*sdex'
+   stellaratlas-ops find-data-gaps --config /etc/stellaratlas.toml --source sdex
    ```
    Both should agree on the gap inventory.
 
 2. **Is the SDEX writer alive?**
    ```
-   ssh r1 'journalctl -u ratesengine-indexer --since "30 min ago" | grep -E "sdex|source=sdex" | tail -50'
+   ssh r1 'journalctl -u stellaratlas-indexer --since "30 min ago" | grep -E "sdex|source=sdex" | tail -50'
    ```
    Healthy = one batch-write log line every ~5s. Silent = goroutine wedged.
 
 3. **Is the gap forming or static?**
    ```
-   curl -s localhost:9465/metrics | grep 'ratesengine_ingest_gap_max_size_ledgers{source="sdex"}'
+   curl -s localhost:9465/metrics | grep 'stellaratlas_ingest_gap_max_size_ledgers{source="sdex"}'
    sleep 60
-   curl -s localhost:9465/metrics | grep 'ratesengine_ingest_gap_max_size_ledgers{source="sdex"}'
+   curl -s localhost:9465/metrics | grep 'stellaratlas_ingest_gap_max_size_ledgers{source="sdex"}'
    ```
    Same value = static (incident already over; backfill needed). Growing = active outage (the writer goroutine is still down).
 
@@ -47,8 +47,8 @@ This is the SDEX-specific surface of [ingest-gap-detected](ingest-gap-detected.m
 Targeted SDEX backfill (re-walks MinIO via the dispatcher):
 
 ```
-ratesengine-ops backfill \
-  --config /etc/ratesengine.toml \
+stellaratlas-ops backfill \
+  --config /etc/stellaratlas.toml \
   --from $GAP_START --to $GAP_END \
   --source sdex \
   --parallel 8
@@ -59,7 +59,7 @@ Idempotent via the `trades` PK (`(source, ledger, tx_hash, op_index, ts)`). Re-r
 Verify the gauge decays on the next 30-min detector cycle:
 
 ```
-curl -s localhost:9465/metrics | grep 'ratesengine_ingest_gap_max_size_ledgers{source="sdex"}'
+curl -s localhost:9465/metrics | grep 'stellaratlas_ingest_gap_max_size_ledgers{source="sdex"}'
 # expect: 0 (or below your threshold if the historic legitimate-quiet caveat applies)
 ```
 

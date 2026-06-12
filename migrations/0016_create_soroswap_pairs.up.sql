@@ -18,7 +18,7 @@
 --        backfill the factory's history — which we don't, by design,
 --        because seeding via stellar-rpc simulateTransaction is faster
 --        and uses a single round-trip per pair (factory_seed.go).
---     2. Parallel backfill. `ratesengine-ops backfill -parallel N`
+--     2. Parallel backfill. `stellaratlas-ops backfill -parallel N`
 --        runs N independent dispatchers (one per chunk). Each chunk
 --        sees only the new_pair events INSIDE its window — so chunk 7
 --        sees a swap on a pair created during chunk 2's window and
@@ -28,7 +28,7 @@
 --
 -- Population paths (all idempotent on pair_strkey):
 --
---   - `ratesengine-ops seed-soroswap-pairs` — initial bootstrap;
+--   - `stellaratlas-ops seed-soroswap-pairs` — initial bootstrap;
 --     RPC-walks the factory's all_pairs() / token_0() / token_1()
 --     view functions and upserts every row.
 --   - Live indexer — every factory `new_pair` event upserts its row
@@ -68,7 +68,7 @@ CREATE TABLE soroswap_pairs (
 
 COMMENT ON TABLE soroswap_pairs IS
     'pair_contract → (token0, token1) registry for the Soroswap '
-    'decoder. Seeded by ratesengine-ops seed-soroswap-pairs and '
+    'decoder. Seeded by stellaratlas-ops seed-soroswap-pairs and '
     'kept current by live new_pair events. Without this mapping '
     'the decoder cannot label swap event amounts as base vs quote.';
 

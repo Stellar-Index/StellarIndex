@@ -5,14 +5,14 @@ status: ratified
 severity: P1 at >5% / P2 at >1% / P1 at SLO burn-rate fast
 ---
 
-# Runbook — `ratesengine_api_error_rate_{high,critical}` (+ SLO availability burn-rate variants)
+# Runbook — `stellaratlas_api_error_rate_{high,critical}` (+ SLO availability burn-rate variants)
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Direct-threshold alerts | `ratesengine_api_error_rate_high` (>1 % for 2 min) → P2<br>`ratesengine_api_error_rate_critical` (>5 % for 2 min) → P1 |
-| SLO burn-rate alerts | `ratesengine_slo_availability_burn_{fast,medium,slow}` (per ADR-0009 multi-window pattern) — `deploy/monitoring/rules/slo.yml` |
+| Direct-threshold alerts | `stellaratlas_api_error_rate_high` (>1 % for 2 min) → P2<br>`stellaratlas_api_error_rate_critical` (>5 % for 2 min) → P1 |
+| SLO burn-rate alerts | `stellaratlas_slo_availability_burn_{fast,medium,slow}` (per ADR-0009 multi-window pattern) — `deploy/monitoring/rules/slo.yml` |
 | Severity | **P1 at critical**, **P2 at high**; **P1** for fast/medium burn, P3 for slow burn |
 | Detected by | Prometheus rule on `http_requests_total{status=~"5.."}` rate |
 | Typical MTTR | 5–15 min for a bad-deploy revert; 30–60 min for a latent-bug forward fix |
@@ -42,16 +42,16 @@ budget-exhaustion, not transient.
 
 ## Symptoms
 
-- Pager fires on `ratesengine_api_error_rate_{high|critical}`.
+- Pager fires on `stellaratlas_api_error_rate_{high|critical}`.
 - Grafana "Golden Signals" dashboard shows an error-rate cliff-edge
   or sawtooth pattern.
-- Concurrent alerts likely: `ratesengine_api_latency_p95_high`
-  (timeouts inflate latency), possibly `ratesengine_api_price_stale`
+- Concurrent alerts likely: `stellaratlas_api_latency_p95_high`
+  (timeouts inflate latency), possibly `stellaratlas_api_price_stale`
   if Timescale is the root cause.
 
 ## Quick diagnosis (≤ 5 min)
 
-The API tier runs as `ratesengine-api.service` on three hosts
+The API tier runs as `stellaratlas-api.service` on three hosts
 (`api-01..03`) behind two HAProxy hosts sharing a keepalived VIP
 (per [ADR-0008](../../adr/0008-ha-topology.md) §1, no Kubernetes).
 Three signals in order. The first that flags non-zero wins; skip
@@ -61,7 +61,7 @@ the rest.
 
 ```sh
 # Top status/route combinations by count in the last 5 min
-promql 'topk(5, sum by (route, status) (rate(http_requests_total{job=~"ratesengine[_-]api",status=~"5.."}[5m])))'
+promql 'topk(5, sum by (route, status) (rate(http_requests_total{job=~"stellaratlas[_-]api",status=~"5.."}[5m])))'
 # (or click the Grafana link in the alert annotation)
 ```
 
@@ -81,7 +81,7 @@ done
 # When did each unit last (re)start?
 for h in api-01 api-02 api-03; do
   echo -n "$h: "
-  ssh root@$h "systemctl show ratesengine-api -p ActiveEnterTimestamp --value"
+  ssh root@$h "systemctl show stellaratlas-api -p ActiveEnterTimestamp --value"
 done
 
 # Or: `r1-deployment-state.md` records the running tag.
@@ -97,7 +97,7 @@ revert per §A (Mitigation).
 Deps exposed via /v1/readyz. Does it report degraded?
 
 ```sh
-curl -sSf https://api.ratesengine.net/v1/readyz | jq '.data'
+curl -sSf https://api.stellaratlas.xyz/v1/readyz | jq '.data'
 # Expected:
 # { "status": "ok" | "degraded",
 #   "checks": [ { "name": "postgres", "ok": true }, ... ] }
@@ -111,7 +111,7 @@ curl -sSf https://api.ratesengine.net/v1/readyz | jq '.data'
 
 ```sh
 # Pull the last N error log lines and group by the panic line (if any)
-ssh root@api-01 "journalctl -u ratesengine-api --since '15 min ago' \
+ssh root@api-01 "journalctl -u stellaratlas-api --since '15 min ago' \
   | jq -r 'select(.level==\"ERROR\") | \"\(.method) \(.path) \(.status) \(.err)\"' \
   | sort | uniq -c | sort -rn | head"
 ```
@@ -138,17 +138,17 @@ Follow the rolling rollback procedure in
 one host out of HAProxy via the admin socket
 (`disable server api_pool/api-01`), swap that host's binary back
 to the previous tag from
-`/usr/local/bin/ratesengine-api.prev-<previous-tag>` (the
-deploy task keeps the last 5; `/var/lib/ratesengine/deployed-versions/ratesengine-api`
+`/usr/local/bin/stellaratlas-api.prev-<previous-tag>` (the
+deploy task keeps the last 5; `/var/lib/stellaratlas/deployed-versions/stellaratlas-api`
 tracks the running version). F-1222 (codex audit-2026-05-12):
-the pre-fix prose pointed at `/opt/ratesengine/release-<tag>/`
+the pre-fix prose pointed at `/opt/stellaratlas/release-<tag>/`
 which the deploy task does not produce. After the binary
 swap, restart the unit, re-enable in HAProxy, repeat for
 `api-02` and `api-03`. The two undrained hosts carry traffic
 during each swap.
 
 Verification:
-- [ ] `ratesengine_api_error_rate_critical` clears within 3 min.
+- [ ] `stellaratlas_api_error_rate_critical` clears within 3 min.
 - [ ] /v1/healthz returns 200.
 - [ ] /v1/readyz returns `status=ok` on at least 3 consecutive polls.
 - [ ] `/v1/version` reports the previous tag on every backend.
@@ -178,8 +178,8 @@ If the bug is **isolated to one endpoint**, two options:
    manually under time pressure).
 
 2. **Feature-flag deny in the binary** (if a flag exists for the
-   endpoint): edit `/etc/ratesengine.toml`, ansible-push, then
-   `systemctl restart ratesengine-api` host-by-host.
+   endpoint): edit `/etc/stellaratlas.toml`, ansible-push, then
+   `systemctl restart stellaratlas-api` host-by-host.
 
 Then fix, test, deploy. Remove the block after deploy.
 
@@ -202,7 +202,7 @@ This alert will auto-resolve once the dep recovers.
 Rare but possible (e.g. viral traffic, DDoS), characterised by:
 - Error rate climbs WITHOUT a deploy, a dep failure, or a log
   pattern.
-- `ratesengine_api_latency_p99_high` fires in tandem.
+- `stellaratlas_api_latency_p99_high` fires in tandem.
 - `http_requests_total` rate is sharply higher than baseline.
 
 Bare metal does not auto-scale. The three API hosts are fixed
@@ -233,11 +233,11 @@ the answer is **shed load**, not "add hosts":
 
 For the postmortem (§6 of sev-playbook.md):
 
-- `ssh root@api-XX "journalctl -u ratesengine-api --since '1h ago'"`
+- `ssh root@api-XX "journalctl -u stellaratlas-api --since '1h ago'"`
   on each of the three hosts → full log dump.
 - Grafana screenshot of the 1 h window around the alert.
 - `git log -n 20 main` — was there a deploy-time trigger?
-- `systemctl status ratesengine-api --no-pager` on each host —
+- `systemctl status stellaratlas-api --no-pager` on each host —
   recent restarts, OOM-killer activity (also `dmesg | grep -i
   oom`).
 - HAProxy access log (`/var/log/haproxy.log`) for the same window

@@ -27,7 +27,7 @@ own caution. Detecting + clearing this is on-call's job.
 
 Read aloud at drill setup.
 
-- All Rates Engine services up. SLA probe metrics within target.
+- All Stellar Atlas services up. SLA probe metrics within target.
   Aggregator is producing closed-bucket VWAPs every minute for
   the configured pair set. `flags.frozen` rate across `/v1/price`
   responses is < 0.1% baseline.
@@ -74,7 +74,7 @@ participants to narrate.
 | 3:00 | `redis-cli GET freeze:native:fiat:USD` returns `engaged_at=...,reason=class_diversity_drop`. The reason is one the operator should recognise. |
 | 5:00 | `prometheus` query for source-class diversity over the last 10 min shows: dropped to 2 at 22:17, recovered to 4 at 22:18:30. The source-side recovery happened 7 minutes ago. |
 | 8:00 | A second customer DMs: "we've stopped trading XLM/USD for 12 minutes because your `flags.frozen` is firing. Is this real?" |
-| 12:00 | The freeze marker is still in Redis with ~7 minutes TTL remaining. Operator considers: wait for TTL? Manually clear? `freeze.Writer.Clear` is exposed via `ratesengine-ops`? |
+| 12:00 | The freeze marker is still in Redis with ~7 minutes TTL remaining. Operator considers: wait for TTL? Manually clear? `freeze.Writer.Clear` is exposed via `stellaratlas-ops`? |
 
 ## Expected response per the playbook
 
@@ -108,7 +108,7 @@ Per [`anomaly-freeze-engaged.md`](../../runbooks/anomaly-freeze-engaged.md):
 **Operator-driven clear** (the right call here):
 
 ```
-ratesengine-ops freeze clear --asset native --quote fiat:USD
+stellaratlas-ops freeze clear --asset native --quote fiat:USD
 ```
 
 (or the equivalent `redis-cli DEL freeze:native:fiat:USD` if
@@ -117,7 +117,7 @@ the ops command isn't yet shipped — runbook has both forms).
 Verify on the next aggregator tick:
 
 ```
-curl -sS https://api.ratesengine.net/v1/price?asset=native | jq '.flags'
+curl -sS https://api.stellaratlas.xyz/v1/price?asset=native | jq '.flags'
 # → flags.frozen should be false on the response
 ```
 
@@ -151,7 +151,7 @@ Postmortem covers:
 | 2 | Did the team consult `freeze:native:fiat:USD` directly via `redis-cli` (not just the metric)? |
 | 3 | Did the team correctly distinguish "freeze is stuck" vs "freeze is legitimate" by checking the source-class-diversity timeline? |
 | 4 | Did anyone correctly identify that ADR-0019 Phase 1 freeze is **operator-cleared by design**, not a bug? |
-| 5 | Did the team use `ratesengine-ops freeze clear` (or `redis-cli DEL`) rather than waiting for TTL? |
+| 5 | Did the team use `stellaratlas-ops freeze clear` (or `redis-cli DEL`) rather than waiting for TTL? |
 | 6 | After clearing, did anyone verify on the next tick that `flags.frozen` was indeed false? |
 | 7 | Did the postmortem capture the Phase 1 clear-policy rationale rather than recommending "just auto-clear"? |
 | 8 | Status-page wording stayed factual (no speculation about cause until §"Identified")? |
@@ -172,10 +172,10 @@ Postmortem covers:
   Action item template: "Reorder the runbook so 'verify
   upstream recovery' precedes 'clear'."
 
-- **`ratesengine-ops freeze clear` may not be shipped yet.**
+- **`stellaratlas-ops freeze clear` may not be shipped yet.**
   In the absence of the ops command, the redis-cli form works
   but feels unsafe ("am I deleting the right key?"). Action
-  item template: "Ship `ratesengine-ops freeze clear` if not
+  item template: "Ship `stellaratlas-ops freeze clear` if not
   already, and add a dry-run flag."
 
 ## Variant scenarios

@@ -11,7 +11,7 @@
 //
 // # Metric naming
 //
-// All metrics start with `ratesengine_` except for the
+// All metrics start with `stellaratlas_` except for the
 // language-native `go_*` and `process_*` that prometheus client
 // emits automatically, plus the HTTP ones which follow
 // Prometheus best-practice naming (`http_request_duration_seconds`

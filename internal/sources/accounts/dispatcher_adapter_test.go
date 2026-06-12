@@ -126,7 +126,7 @@ func TestObserver_DecodeBuildsObservation(t *testing.T) {
 		t.Fatalf("NewObserver: %v", err)
 	}
 	now := time.Unix(1_770_000_000, 0).UTC()
-	change := makeAccountChange(t, gWatched, 999_888_777, "ratesengine.net")
+	change := makeAccountChange(t, gWatched, 999_888_777, "stellaratlas.xyz")
 	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{
 		Ledger:   123_456,
 		ClosedAt: now,
@@ -150,8 +150,8 @@ func TestObserver_DecodeBuildsObservation(t *testing.T) {
 	if obs.Balance.Int64() != 999_888_777 {
 		t.Errorf("Balance=%s, want 999888777", obs.Balance)
 	}
-	if obs.HomeDomain != "ratesengine.net" {
-		t.Errorf("HomeDomain=%q, want ratesengine.net", obs.HomeDomain)
+	if obs.HomeDomain != "stellaratlas.xyz" {
+		t.Errorf("HomeDomain=%q, want stellaratlas.xyz", obs.HomeDomain)
 	}
 	if obs.Ledger != 123_456 {
 		t.Errorf("Ledger=%d, want 123456", obs.Ledger)

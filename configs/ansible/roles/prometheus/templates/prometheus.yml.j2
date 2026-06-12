@@ -41,43 +41,43 @@ scrape_configs:
         labels:
           service: alertmanager
 
-{% if 'ratesengine_api' in groups and groups['ratesengine_api'] %}
-  # ── ratesengine-api ──────────────────────────────────────────
-  - job_name: "ratesengine_api"
+{% if 'stellaratlas_api' in groups and groups['stellaratlas_api'] %}
+  # ── stellaratlas-api ──────────────────────────────────────────
+  - job_name: "stellaratlas_api"
     scrape_interval: {{ prometheus_default_scrape_interval }}
     static_configs:
       - targets:
-{% for h in groups['ratesengine_api'] %}
+{% for h in groups['stellaratlas_api'] %}
           - "{{ hostvars[h].ansible_host }}:9464"
 {% endfor %}
         labels:
-          service: ratesengine-api
+          service: stellaratlas-api
 {% endif %}
 
-{% if 'ratesengine_aggregator' in groups and groups['ratesengine_aggregator'] %}
-  # ── ratesengine-aggregator ───────────────────────────────────
-  - job_name: "ratesengine_aggregator"
+{% if 'stellaratlas_aggregator' in groups and groups['stellaratlas_aggregator'] %}
+  # ── stellaratlas-aggregator ───────────────────────────────────
+  - job_name: "stellaratlas_aggregator"
     scrape_interval: {{ prometheus_aggregator_scrape_interval }}
     static_configs:
       - targets:
-{% for h in groups['ratesengine_aggregator'] %}
+{% for h in groups['stellaratlas_aggregator'] %}
           - "{{ hostvars[h].ansible_host }}:9464"
 {% endfor %}
         labels:
-          service: ratesengine-aggregator
+          service: stellaratlas-aggregator
 {% endif %}
 
-{% if 'ratesengine_indexer' in groups and groups['ratesengine_indexer'] %}
-  # ── ratesengine-indexer ──────────────────────────────────────
-  - job_name: "ratesengine_indexer"
+{% if 'stellaratlas_indexer' in groups and groups['stellaratlas_indexer'] %}
+  # ── stellaratlas-indexer ──────────────────────────────────────
+  - job_name: "stellaratlas_indexer"
     scrape_interval: {{ prometheus_indexer_scrape_interval }}
     static_configs:
       - targets:
-{% for h in groups['ratesengine_indexer'] %}
+{% for h in groups['stellaratlas_indexer'] %}
           - "{{ hostvars[h].ansible_host }}:9464"
 {% endfor %}
         labels:
-          service: ratesengine-indexer
+          service: stellaratlas-indexer
 {% endif %}
 
 {% if 'haproxy_lb' in groups and groups['haproxy_lb'] %}
@@ -109,16 +109,16 @@ scrape_configs:
 
   # ── node_exporter on every host in inventory ─────────────────
   # Picked up via the textfile collector — Patroni's textfile
-  # scraper deposits ratesengine_patroni_role / _running there;
+  # scraper deposits stellaratlas_patroni_role / _running there;
   # redis-sentinel role's scraper deposits
-  # ratesengine_redis_sentinel_primary; haproxy role's deposits
-  # ratesengine_haproxy_vip_owner / _keepalived_active.
+  # stellaratlas_redis_sentinel_primary; haproxy role's deposits
+  # stellaratlas_haproxy_vip_owner / _keepalived_active.
   - job_name: "node_exporter"
     scrape_interval: {{ prometheus_node_scrape_interval }}
     static_configs:
       - targets:
 {% set ns = namespace(hosts=[]) %}
-{% for group in ['prometheus_pair', 'ratesengine_api', 'ratesengine_aggregator', 'ratesengine_indexer', 'haproxy_lb', 'redis_cluster', 'postgres_cluster'] %}
+{% for group in ['prometheus_pair', 'stellaratlas_api', 'stellaratlas_aggregator', 'stellaratlas_indexer', 'haproxy_lb', 'redis_cluster', 'postgres_cluster'] %}
 {%   if group in groups %}
 {%     for h in groups[group] %}
 {%       if hostvars[h].ansible_host not in ns.hosts %}

@@ -312,7 +312,7 @@ type rlProblem struct {
 // headers added after the status line is committed.
 func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	p := rlProblem{
-		Type:     "https://api.ratesengine.net/errors/throttle-unavailable",
+		Type:     "https://api.stellaratlas.xyz/errors/throttle-unavailable",
 		Title:    "Throttle layer unavailable",
 		Status:   http.StatusServiceUnavailable,
 		Detail:   "the abuse-prevention layer has been unreachable for an extended period; retry in a moment",
@@ -330,7 +330,7 @@ func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 
 func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter int) {
 	p := rlProblem{
-		Type:     "https://api.ratesengine.net/errors/rate-limited",
+		Type:     "https://api.stellaratlas.xyz/errors/rate-limited",
 		Title:    "Rate limit exceeded",
 		Status:   http.StatusTooManyRequests,
 		Detail:   "Retry after " + strconv.Itoa(retryAfter) + "s",

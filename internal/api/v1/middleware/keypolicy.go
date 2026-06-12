@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Rates Engine contributors.
+// Copyright (c) 2026 Stellar Atlas contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package middleware
@@ -156,7 +156,7 @@ func writeKeyPolicyDenied(w http.ResponseWriter, r *http.Request, slug, detail s
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusForbidden)
 	body, _ := json.Marshal(map[string]any{
-		"type":     "https://api.ratesengine.net/errors/" + slug,
+		"type":     "https://api.stellaratlas.xyz/errors/" + slug,
 		"title":    "Forbidden",
 		"status":   http.StatusForbidden,
 		"detail":   detail,

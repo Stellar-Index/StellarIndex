@@ -159,7 +159,7 @@ var (
 	// (POOL, <kind>) tuple. Skip: another Comet variant added in a
 	// future contract upgrade, or an unrelated contract entirely.
 	// Operators see the rate via the dispatcher's
-	// `ratesengine_source_orphan_events_total{source="comet"}`
+	// `stellaratlas_source_orphan_events_total{source="comet"}`
 	// counter; a sustained spike means a new event variant is in
 	// the wild and decoder coverage is incomplete.
 	ErrNotCometEvent = errors.New("comet: not a recognised Comet POOL event")

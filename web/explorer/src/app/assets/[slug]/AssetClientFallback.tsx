@@ -8,7 +8,7 @@ import { API_BASE_URL } from '@/api/client';
 
 // AssetClientFallback — re-fetches /v1/assets/{slug} from the
 // browser when the build-time fetch failed. Cloudflare Pages
-// builds occasionally can't reach api.ratesengine.net (cold
+// builds occasionally can't reach api.stellaratlas.xyz (cold
 // connection pool, transient API restart, build host blip),
 // which previously baked "Asset not found" into the static HTML
 // for every slug rendered during that bad window. The user's

@@ -5,13 +5,13 @@ status: ratified
 severity: P3
 ---
 
-# Runbook — `ratesengine_supply_snapshot_stale` / `_critical_stale`
+# Runbook — `stellaratlas_supply_snapshot_stale` / `_critical_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `ratesengine_supply_snapshot_stale` (P3, > 36 h), `ratesengine_supply_snapshot_critical_stale` (P2, > 72 h) |
+| Alerts | `stellaratlas_supply_snapshot_stale` (P3, > 36 h), `stellaratlas_supply_snapshot_critical_stale` (P2, > 72 h) |
 | Detected by | `deploy/monitoring/rules/supply-snapshot.yml` |
 | Typical MTTR | 15 min |
 | Impact | `/v1/assets/{id}` F2 fields visibly old. After ≥ 36 h the displayed `observed_at` is more than a day behind chain state. |
@@ -22,13 +22,13 @@ Per [supply-pipeline.md](../../architecture/supply-pipeline.md),
 `asset_supply_history` snapshots can be produced by **either** of:
 
 1. **systemd timer** (`supply-snapshot.timer` →
-   `ratesengine-ops supply snapshot`, writes `last_success_timestamp`
+   `stellaratlas-ops supply snapshot`, writes `last_success_timestamp`
    into `/var/lib/node_exporter/textfile_collector/supply_snapshot.prom`).
    This alert tracks **only** that gauge.
 2. **Aggregator-resident goroutine** (`runSupplyRefresh` in
-   `cmd/ratesengine-aggregator`, gated by
+   `cmd/stellaratlas-aggregator`, gated by
    `[supply] aggregator_refresh_enabled = true`, emits
-   `ratesengine_aggregator_supply_refresh_total{outcome=…}` —
+   `stellaratlas_aggregator_supply_refresh_total{outcome=…}` —
    tracked by `supply-refresh-stalled.md` /
    `-error-dominant.md`).
 
@@ -45,7 +45,7 @@ this alert and follow the diagnosis below.
 
 ## Symptoms
 
-- `(time() - ratesengine_supply_snapshot_last_success_timestamp{asset_key=…}) > 36*3600`
+- `(time() - stellaratlas_supply_snapshot_last_success_timestamp{asset_key=…}) > 36*3600`
   for ≥ 5 min.
 - Two-tier: 36 h is the standard heartbeat budget (24 h cron + 12 h
   cushion); 72 h is the page-the-on-call line.

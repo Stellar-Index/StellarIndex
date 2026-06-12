@@ -46,7 +46,7 @@ const tipStreamProducerQueueDepth = 4
 func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	if s.prices == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/price-unavailable",
+			"https://api.stellaratlas.xyz/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no PriceReader wired — check binary configuration")
 		return
@@ -55,7 +55,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// URL-discipline rule: tip URL never accepts closed-bucket params.
 	if r.URL.Query().Get("granularity") != "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-tip-param",
+			"https://api.stellaratlas.xyz/errors/invalid-tip-param",
 			"granularity is not valid on /v1/price/tip/stream", http.StatusBadRequest,
 			"granularity is a closed-bucket concept (ADR-0018); /v1/price/tip and /v1/price/tip/stream do not have granularities")
 		return
@@ -76,7 +76,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	first, firstSources, err := s.computeTip(r.Context(), asset, quote, window)
 	if errors.Is(err, ErrPriceNotFound) {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/price-not-found",
+			"https://api.stellaratlas.xyz/errors/price-not-found",
 			"No price data for pair", http.StatusNotFound,
 			"no trades or oracle observations for "+asset.String()+" / "+quote.String())
 		return
@@ -94,7 +94,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("computeTip failed (stream prelude)",
 			"err", err, "asset", asset.String(), "quote", quote.String())
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

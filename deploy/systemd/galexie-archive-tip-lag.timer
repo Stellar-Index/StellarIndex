@@ -1,7 +1,7 @@
 # systemd timer: every 5min recompute the galexie-archive tip-lag.
 #
 # Cadence matches the alert urgency curve — Prometheus alert
-# `ratesengine_galexie_archive_tip_lag_high` fires at warn 5,000
+# `stellaratlas_galexie_archive_tip_lag_high` fires at warn 5,000
 # ledgers (~7h drift, well within the hourly catch-up timer's
 # expected steady-state) and pages at 50,000 ledgers (~3.5d). A 5min
 # update cadence gives Prometheus enough sampling resolution to
@@ -13,7 +13,7 @@
 
 [Unit]
 Description=Update galexie-archive tip-lag metric every 5 minutes (#31)
-Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
 
 [Timer]
 OnCalendar=*-*-* *:03,08,13,18,23,28,33,38,43,48,53,58:00 UTC

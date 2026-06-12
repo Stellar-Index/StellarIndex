@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_ingestion_duplicate_flood`
+# Runbook — `stellaratlas_ingestion_duplicate_flood`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_ingestion_duplicate_flood` |
+| Alert | `stellaratlas_ingestion_duplicate_flood` |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` + `configs/prometheus/rules.r1/ingestion.yml` |
 | Typical MTTR | 30–90 min |
@@ -19,10 +19,10 @@ severity: P2
 
 ## Symptoms
 
-- `ratesengine_trade_insert_outcome_total{source=...,outcome="duplicate"}` > 0.5/sec for ≥10 min
-- `ratesengine_trade_insert_outcome_total{source=...,outcome="new"}` == 0 over the same window
-- `ratesengine_source_events_total{source=...}` still climbing — events ARE being decoded
-- `ratesengine_cursor_last_ledger{source="ledgerstream"}` still advancing
+- `stellaratlas_trade_insert_outcome_total{source=...,outcome="duplicate"}` > 0.5/sec for ≥10 min
+- `stellaratlas_trade_insert_outcome_total{source=...,outcome="new"}` == 0 over the same window
+- `stellaratlas_source_events_total{source=...}` still climbing — events ARE being decoded
+- `stellaratlas_cursor_last_ledger{source="ledgerstream"}` still advancing
 - `psql trades` shows `max(ts) WHERE source = <X>` frozen for hours
 - `/v1/markets?source=<X>` returns `last_trade_at` matching the frozen `max(ts)`
 
@@ -34,10 +34,10 @@ The combination is the diagnostic signature: cursor + decoder healthy, persisten
 ssh root@<host>
 
 # 1. Confirm the duplicate vs new split.
-curl -sS localhost:9464/metrics | grep ratesengine_trade_insert_outcome_total
+curl -sS localhost:9464/metrics | grep stellaratlas_trade_insert_outcome_total
 
 # 2. Confirm the trades hypertable is actually stale.
-sudo -u postgres psql ratesengine -c "
+sudo -u postgres psql stellaratlas -c "
   SELECT source, max(ts) AT TIME ZONE 'UTC' AS max_ts,
          count(*) FILTER (WHERE ts > NOW() - INTERVAL '1 hour') AS rows_last_hour
     FROM trades
@@ -49,7 +49,7 @@ sudo -u postgres psql ratesengine -c "
 curl -sS localhost:9464/metrics | grep cursor_last_ledger
 
 # 4. Look at the ingestion_cursors table for stuck backfills shadowing live ingest.
-sudo -u postgres psql ratesengine -c "
+sudo -u postgres psql stellaratlas -c "
   SELECT source, sub_source, last_ledger, last_updated
     FROM ingestion_cursors
    ORDER BY last_updated DESC
@@ -72,7 +72,7 @@ sudo -u postgres psql ratesengine -c "
 3. **A backfill process replaying the same range repeatedly.**
    Inspect `ingestion_cursors` for a `backfill` row whose
    `last_ledger` is below its sub_source's upper bound and check
-   if a `ratesengine-ops backfill` process is running.
+   if a `stellaratlas-ops backfill` process is running.
 
 ## Remediation
 
@@ -84,21 +84,21 @@ that already has data is harmless.
 ```sh
 # Determine the gap: lowest ledger to backfill is one past max_ts;
 # upper ledger is the current cursor.
-sudo -u postgres psql ratesengine -t -c "SELECT max(ledger) FROM trades WHERE source = 'sdex';"
+sudo -u postgres psql stellaratlas -t -c "SELECT max(ledger) FROM trades WHERE source = 'sdex';"
 # vs cursor_last_ledger metric.
 
 # Run the targeted backfill.
-ratesengine-ops backfill \
+stellaratlas-ops backfill \
   -from <max_ledger+1> -to <current_cursor> \
   -sources sdex,aquarius,soroswap,phoenix,comet \
   -parallel 4 \
-  -config /etc/ratesengine.toml
+  -config /etc/stellaratlas.toml
 ```
 
 For cause 2: restart the indexer to clear any goroutine leak.
 
 ```sh
-systemctl restart ratesengine-indexer
+systemctl restart stellaratlas-indexer
 ```
 
 For cause 3: identify the looping backfill via `ps`, decide whether
@@ -110,11 +110,11 @@ After remediation, the metric should flip back:
 
 ```sh
 # Wait at least 2× scrape interval (60s default) then check:
-curl -sS localhost:9464/metrics | grep ratesengine_trade_insert_outcome_total
+curl -sS localhost:9464/metrics | grep stellaratlas_trade_insert_outcome_total
 # outcome=new should be climbing again.
 
 # And the trades table should accept fresh rows:
-sudo -u postgres psql ratesengine -c "
+sudo -u postgres psql stellaratlas -c "
   SELECT max(ts) AT TIME ZONE 'UTC' FROM trades WHERE source = 'sdex';"
 # Should be within the last few minutes.
 ```
@@ -126,7 +126,7 @@ The alert will clear after `for: 10m` elapses with healthy
 
 - `internal/storage/timescale/trades.go:Store.InsertTrade` — where
   the outcome metric is emitted.
-- `docs/reference/metrics/README.md#ratesengine_trade_insert_outcome_total` — metric reference.
+- `docs/reference/metrics/README.md#stellaratlas_trade_insert_outcome_total` — metric reference.
 - F-0028 audit finding (audit-2026-05-26) for the original
   observation of soroban_events ingest tip lag, similar shape.
 - F-0020 audit finding for the postgres back-pressure cause.

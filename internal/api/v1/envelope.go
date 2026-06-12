@@ -119,7 +119,7 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // this instead of http.Error to keep the wire contract consistent.
 //
 // typeURL is the stable error-type URL (document the taxonomy at
-// https://api.ratesengine.net/errors/<name>); title is a short
+// https://api.stellaratlas.xyz/errors/<name>); title is a short
 // human headline; status is the HTTP code; detail is the freeform
 // per-request message (optional).
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
@@ -148,7 +148,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 	// token); the magic-link cookie path is parallel and doesn't
 	// have a standard challenge token, so we advertise Bearer only.
 	if status == http.StatusUnauthorized {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="ratesengine.net"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="stellaratlas.xyz"`)
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(p)

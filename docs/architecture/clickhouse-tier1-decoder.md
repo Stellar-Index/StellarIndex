@@ -64,7 +64,7 @@ silent drop.
 
 ## 5. Backfill + live
 
-- **Backfill (build history):** `ratesengine-ops ch-backfill -from -to
+- **Backfill (build history):** `stellaratlas-ops ch-backfill -from -to
   -bucket galexie-archive [-parallel N]` — bounded ledgerstream walk →
   structural extract → CH batch. Parallel by ledger range (CH ingests
   concurrent writers well; this is the step Postgres couldn't do).
@@ -91,7 +91,7 @@ both gates over all history.
 
 ### 6.1 Gate results (2026-06-05)
 
-Both gates run by `ratesengine-ops ch-gate` (galexie census-walk + ClickHouse
+Both gates run by `stellaratlas-ops ch-gate` (galexie census-walk + ClickHouse
 read-back). Sample range 62,700,000–62,800,000 (recent, event-dense — worst
 case for footprint).
 

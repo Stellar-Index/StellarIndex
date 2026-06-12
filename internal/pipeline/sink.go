@@ -343,7 +343,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 			// RE-DERIVABLE — but only if it's visible. Drain the remainder
 			// non-blocking (the producer has already stopped on ctx cancel, so
 			// `in` is a fixed set) to surface the exact ledger span at ERROR.
-			// The completeness timer + `ratesengine-ops ch-rebuild -sdex-gaps`
+			// The completeness timer + `stellaratlas-ops ch-rebuild -sdex-gaps`
 			// recover that range from the lake instead of it becoming a silent
 			// served-tier gap.
 			// Count EVERY undrained event, not just trade-shaped ones
@@ -398,7 +398,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 // (e.g. postgres genuinely down), drainBufferedEvents logs the exact
 // undrained ledger range at ERROR rather than dropping silently — the
 // raw ops are in the CH lake (ADR-0034), so the range is recoverable
-// via `ratesengine-ops ch-rebuild -sdex-gaps` and the completeness timer.
+// via `stellaratlas-ops ch-rebuild -sdex-gaps` and the completeness timer.
 const drainTimeout = 90 * time.Second
 
 // HandleEvent dispatches one event to its hypertable insert.
@@ -837,7 +837,7 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 // of sources (blend lending, soroswap-router + defindex log-only
 // sinks). Errors are logged at Warn — a failed bump doesn't fail
 // the underlying decode/persist; the operator's periodic
-// `ratesengine-ops seed-entry-counts` reconciles drift.
+// `stellaratlas-ops seed-entry-counts` reconciles drift.
 func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.Store, source string) {
 	if err := store.BumpSourceEntryCount(ctx, source, 1); err != nil {
 		logger.Warn("bump source entry count failed",

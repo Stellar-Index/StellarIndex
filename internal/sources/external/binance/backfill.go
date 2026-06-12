@@ -49,7 +49,7 @@ const klineMaxLimit = 1000
 // anything realistic backfill would attempt.
 //
 // The returned trades are NOT deduplicated against existing storage
-// — caller (ratesengine-ops) is responsible for the idempotent
+// — caller (stellaratlas-ops) is responsible for the idempotent
 // insert path. canonical.Trade.TxHash is deterministic from (symbol,
 // close_time_ms) so repeated backfill runs land on the same primary
 // key.

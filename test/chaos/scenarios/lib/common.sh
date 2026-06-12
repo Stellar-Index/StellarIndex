@@ -32,7 +32,7 @@ CHAOS_REPORT_FILE="${CHAOS_REPORT_FILE:-${CHAOS_REPORT_DIR}/chaos-run-$(date -u 
 
 # CHAOS_DOCKER_PROJECT is the docker-compose project name used by
 # `make dev`. Matches `name:` in deploy/docker-compose/dev.yaml.
-CHAOS_DOCKER_PROJECT="${CHAOS_DOCKER_PROJECT:-ratesengine-dev}"
+CHAOS_DOCKER_PROJECT="${CHAOS_DOCKER_PROJECT:-stellaratlas-dev}"
 
 # Scenario name; each script sets this before sourcing common.sh
 SCENARIO="${SCENARIO:-unknown}"
@@ -41,7 +41,7 @@ SCENARIO="${SCENARIO:-unknown}"
 
 chaos_target_check() {
     case "$CHAOS_TARGET" in
-        *production*|*api.ratesengine.net*|*prod.*)
+        *production*|*api.stellaratlas.xyz*|*prod.*)
             die "CHAOS_TARGET=$CHAOS_TARGET looks like production. Refusing to run."
             ;;
     esac

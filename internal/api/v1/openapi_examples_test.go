@@ -174,7 +174,7 @@ func (p openAPIParameter) example() string {
 
 func loadOpenAPISpec(t *testing.T) openAPISpec {
 	t.Helper()
-	// Walk up to repo root looking for openapi/rates-engine.v1.yaml —
+	// Walk up to repo root looking for openapi/stellar-atlas.v1.yaml —
 	// this test runs from internal/api/v1/ when invoked through `go
 	// test ./...` from any directory.
 	dir, err := os.Getwd()
@@ -183,7 +183,7 @@ func loadOpenAPISpec(t *testing.T) openAPISpec {
 	}
 	var specPath string
 	for i := 0; i < 8; i++ {
-		try := filepath.Join(dir, "openapi", "rates-engine.v1.yaml")
+		try := filepath.Join(dir, "openapi", "stellar-atlas.v1.yaml")
 		if _, err := os.Stat(try); err == nil {
 			specPath = try
 			break
@@ -191,8 +191,8 @@ func loadOpenAPISpec(t *testing.T) openAPISpec {
 		dir = filepath.Dir(dir)
 	}
 	if specPath == "" {
-		t.Fatal("could not locate openapi/rates-engine.v1.yaml from cwd; " +
-			"this test must run inside the rates-engine repo tree")
+		t.Fatal("could not locate openapi/stellar-atlas.v1.yaml from cwd; " +
+			"this test must run inside the stellar-atlas repo tree")
 	}
 	body, err := os.ReadFile(specPath)
 	if err != nil {

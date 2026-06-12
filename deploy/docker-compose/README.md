@@ -1,4 +1,4 @@
-# Rates Engine — local dev stack
+# Stellar Atlas — local dev stack
 
 Docker Compose bundle that brings up Postgres+TimescaleDB, Redis,
 and MinIO on your workstation. Everything a developer needs to
@@ -27,7 +27,7 @@ $EDITOR deploy/docker-compose/.env       # optional
 make dev
 
 # Wait ~15s for TimescaleDB to come ready, then apply migrations:
-export RATESENGINE_POSTGRES_DSN="postgres://ratesengine:ratesengine-dev@localhost:5432/ratesengine?sslmode=disable"
+export STELLARATLAS_POSTGRES_DSN="postgres://stellaratlas:stellaratlas-dev@localhost:5432/stellaratlas?sslmode=disable"
 make db-migrate-up
 
 # Verify state:
@@ -90,7 +90,7 @@ make db-migrate-down
 Connect with `psql`:
 
 ```sh
-PGPASSWORD=ratesengine-dev psql -h localhost -U ratesengine ratesengine
+PGPASSWORD=stellaratlas-dev psql -h localhost -U stellaratlas stellaratlas
 ```
 
 Connect to Redis:
@@ -118,7 +118,7 @@ docker compose -f deploy/docker-compose/dev.yaml logs -f minio
 
 - **`Error: port 5432 already in use`** — Postgres running on your
   host. Either stop it, or override `POSTGRES_PORT=5433` in `.env`
-  and update `RATESENGINE_POSTGRES_DSN` accordingly.
+  and update `STELLARATLAS_POSTGRES_DSN` accordingly.
 - **`FATAL: could not access file "timescaledb"`** — you used a
   vanilla `postgres:15` image instead of `timescale/timescaledb`.
   Check `TIMESCALE_IMAGE_TAG` in `.env`.
@@ -128,7 +128,7 @@ docker compose -f deploy/docker-compose/dev.yaml logs -f minio
   store. Run `make dev-teardown` then `make dev`.
 - **`dirty=true` after a migration** — a migration started but
   didn't finish. Inspect the log, manually fix, and use
-  `ratesengine-migrate -dsn ... force $VERSION`, or clean slate
+  `stellaratlas-migrate -dsn ... force $VERSION`, or clean slate
   with teardown if this is only a local dev stack.
 
 ## References

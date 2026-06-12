@@ -97,7 +97,7 @@ Re-projection correctness reuses the census/reconciliation oracle:
 
 ## 4a. Validation result (2026-06-05, `ch-reproject` on 62,700,000–62,710,000)
 
-`ratesengine-ops ch-reproject` re-derives a range from the CH lake with the
+`stellaratlas-ops ch-reproject` re-derives a range from the CH lake with the
 existing decoders and diffs against the served Postgres tables. Run on the
 dense partition-62 sample:
 
@@ -176,7 +176,7 @@ update → no collision), so their clean-slate is a harmless no-op.
 
 **Procedure (`scripts/ops/ch-rebuild-projected.sh`).** Per 1 M-ledger window over
 `[50 M, 62.894 M]` (the CH backfill tip): DELETE the window's rows (trades
-source-filtered; protocol tables by ledger), then `ratesengine-ops ch-rebuild
+source-filtered; protocol tables by ledger), then `stellaratlas-ops ch-rebuild
 -write -sources <projected>`. Scoped ≤ 62.894 M so the **live tail (> 62.894 M)
 the indexer is still writing stays untouched**; the delete/rebuild range never
 overlaps the indexer's current writes, so ingestion keeps running. Resumable

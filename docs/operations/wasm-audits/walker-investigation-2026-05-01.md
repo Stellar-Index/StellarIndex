@@ -6,7 +6,7 @@ related:
   - docs/operations/wasm-audits/r1-walk-2026-05-01.md
   - docs/operations/wasm-audits/protocol-epochs.md
   - configs/audit/wasm-walk-contracts.yaml
-  - cmd/ratesengine-ops/main.go (wasm-history implementation)
+  - cmd/stellaratlas-ops/main.go (wasm-history implementation)
 ---
 
 # Walker investigation + wide-net walk plan
@@ -61,7 +61,7 @@ related:
 ## Walker filter chain (mapped end-to-end)
 
 The wasm-history walker's positive-match path through one
-`LedgerCloseMeta` (`cmd/ratesengine-ops/main.go:2865-2987`):
+`LedgerCloseMeta` (`cmd/stellaratlas-ops/main.go:2865-2987`):
 
 ```
 LedgerCloseMeta → V == 1 ? else skip

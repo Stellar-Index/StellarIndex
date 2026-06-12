@@ -30,7 +30,7 @@ const GapDetectorInterval = 30 * time.Minute
 
 // GapDetectorMinGapSize is the threshold below which a contiguous
 // gap is treated as expected no-activity noise rather than an
-// ingest gap. Matches `ratesengine-ops find-data-gaps`'s default
+// ingest gap. Matches `stellaratlas-ops find-data-gaps`'s default
 // of 1000 ledgers (~1.5 h of network time) — see the godoc on
 // that subcommand for the rationale.
 const GapDetectorMinGapSize = int64(1000)
@@ -62,7 +62,7 @@ const gapDetectorPerTargetTimeout = 15 * time.Minute
 // scan does NOT clear its gauges and does NOT halt the remaining
 // targets in the cycle — the last-known value stays put and the
 // loop continues. Operators rely on the paired
-// `ratesengine_ingest_gap_detector_runs_total{outcome=error}`
+// `stellaratlas_ingest_gap_detector_runs_total{outcome=error}`
 // counter to detect a sustained per-target detector outage.
 //
 // First scan runs immediately on goroutine start so the gauges

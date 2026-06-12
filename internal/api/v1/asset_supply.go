@@ -44,14 +44,14 @@ type AssetSupply struct {
 func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	if s.tokenSupply == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/supply-unavailable",
+			"https://api.stellaratlas.xyz/errors/supply-unavailable",
 			"Supply unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the ClickHouse supply reader yet.")
 		return
 	}
 	assetID := r.PathValue("asset_id")
 	if assetID == "" {
-		writeProblem(w, r, "https://api.ratesengine.net/errors/invalid-asset",
+		writeProblem(w, r, "https://api.stellaratlas.xyz/errors/invalid-asset",
 			"Invalid asset", http.StatusBadRequest, "asset_id path segment is required.")
 		return
 	}
@@ -62,7 +62,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		coins, _, err := s.tokenSupply.NativeTotalCoins(r.Context())
 		if err != nil {
 			s.logger.Warn("supply: native total_coins", "err", err)
-			writeProblem(w, r, "https://api.ratesengine.net/errors/supply-error",
+			writeProblem(w, r, "https://api.stellaratlas.xyz/errors/supply-error",
 				"Supply read failed", http.StatusBadGateway, "Could not read native supply.")
 			return
 		}
@@ -76,7 +76,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 
 	contractID, ok := s.resolveSupplyContractID(assetID)
 	if !ok {
-		writeProblem(w, r, "https://api.ratesengine.net/errors/supply-not-mapped",
+		writeProblem(w, r, "https://api.stellaratlas.xyz/errors/supply-not-mapped",
 			"Supply not available", http.StatusNotFound,
 			"No Stellar-Asset-Contract is mapped for this classic asset; supply is keyed by contract. Soroban tokens (C…) resolve directly.")
 		return
@@ -85,7 +85,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	sup, err := s.tokenSupply.TokenSupply(r.Context(), contractID)
 	if err != nil {
 		s.logger.Warn("supply: token supply", "contract_id", contractID, "err", err)
-		writeProblem(w, r, "https://api.ratesengine.net/errors/supply-error",
+		writeProblem(w, r, "https://api.stellaratlas.xyz/errors/supply-error",
 			"Supply read failed", http.StatusBadGateway, "Could not read token supply.")
 		return
 	}

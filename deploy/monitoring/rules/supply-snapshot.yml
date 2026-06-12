@@ -1,5 +1,5 @@
 ---
-# Supply-snapshot writer alerts. Pair with cmd/ratesengine-ops
+# Supply-snapshot writer alerts. Pair with cmd/stellaratlas-ops
 # `supply snapshot` + the daily systemd timer in
 # deploy/systemd/supply-snapshot.timer.
 #
@@ -10,18 +10,18 @@
 #
 # Alert family:
 #
-#   - `ratesengine_supply_snapshot_unit_failed_alert` — the writer's
+#   - `stellaratlas_supply_snapshot_unit_failed_alert` — the writer's
 #     most recent run set the unit_failed gauge to 1. Page after 30
 #     min so an early-morning timer firing doesn't ping immediately;
 #     a daily cadence with one failure is recoverable, but two days
 #     in a row is operator-action-required.
 #
-#   - `ratesengine_supply_snapshot_stale` — last_success_timestamp
+#   - `stellaratlas_supply_snapshot_stale` — last_success_timestamp
 #     older than 36 h (24 h cadence + 12 h cushion). Either the
 #     timer isn't running, or every recent run has failed. Ticket at
 #     36 h, page at 72 h.
 #
-#   - `ratesengine_supply_snapshot_circulating_zero` — circulating
+#   - `stellaratlas_supply_snapshot_circulating_zero` — circulating
 #     supply gauge dropped to 0 (or near-zero). For native XLM this
 #     would mean every reserve account holds the entire frozen
 #     total — a data-corruption or operator-config-error signal.
@@ -29,18 +29,18 @@
 #     a healthy system.
 
 groups:
-  - name: ratesengine.supply_snapshot
+  - name: stellaratlas.supply_snapshot
     interval: 60s
     rules:
 
-      - alert: ratesengine_supply_snapshot_unit_failed_alert
-        expr: ratesengine_supply_snapshot_unit_failed > 0
+      - alert: stellaratlas_supply_snapshot_unit_failed_alert
+        expr: stellaratlas_supply_snapshot_unit_failed > 0
         for: 30m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: supply
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/supply-snapshot-unit-failed.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-snapshot-unit-failed.md
         annotations:
           summary: "supply snapshot writer for {{ $labels.asset_key }} most recent run failed"
           description: |
@@ -53,15 +53,15 @@ groups:
             /etc/default/supply-snapshot config first; fall through to
             general-purpose Postgres + reserve-balances diagnostics.
 
-      - alert: ratesengine_supply_snapshot_stale
+      - alert: stellaratlas_supply_snapshot_stale
         expr: |
-          (time() - ratesengine_supply_snapshot_last_success_timestamp) > (36 * 3600)
+          (time() - stellaratlas_supply_snapshot_last_success_timestamp) > (36 * 3600)
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: supply
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/supply-snapshot-stale.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-snapshot-stale.md
         annotations:
           summary: "supply snapshot for {{ $labels.asset_key }} has been stale {{ $value | humanizeDuration }} (cadence 24h, threshold 36h)"
           description: |
@@ -72,15 +72,15 @@ groups:
             check timer status first; route to unit_failed runbook if
             every recent run is genuinely failing.
 
-      - alert: ratesengine_supply_snapshot_critical_stale
+      - alert: stellaratlas_supply_snapshot_critical_stale
         expr: |
-          (time() - ratesengine_supply_snapshot_last_success_timestamp) > (72 * 3600)
+          (time() - stellaratlas_supply_snapshot_last_success_timestamp) > (72 * 3600)
         for: 5m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: supply
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/supply-snapshot-stale.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-snapshot-stale.md
         annotations:
           summary: "supply snapshot for {{ $labels.asset_key }} stale > 72h — escalate"
           description: |
@@ -99,19 +99,19 @@ groups:
       # had time for one daily timer fire don't false-positive, but
       # a deployment that's been running long enough to have written
       # something does.
-      - alert: ratesengine_supply_snapshot_never_initialized
+      - alert: stellaratlas_supply_snapshot_never_initialized
         expr: |
-          absent_over_time(ratesengine_supply_snapshot_last_success_timestamp[36h]) == 1
+          absent_over_time(stellaratlas_supply_snapshot_last_success_timestamp[36h]) == 1
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: supply
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
         annotations:
           summary: "supply snapshot has never published — pipeline uninitialized"
           description: |
-            ratesengine_supply_snapshot_last_success_timestamp has been
+            stellaratlas_supply_snapshot_last_success_timestamp has been
             absent from the scrape target for ≥ 36 h. Either the
             systemd timer (supply-snapshot.timer) was never installed,
             or node_exporter's textfile_collector isn't pointing at
@@ -128,15 +128,15 @@ groups:
       # config is broken (claiming every reserve holds the total
       # supply), or the algorithm is producing nonsense. Either way,
       # immediate operator review.
-      - alert: ratesengine_supply_snapshot_circulating_zero
+      - alert: stellaratlas_supply_snapshot_circulating_zero
         expr: |
-          ratesengine_supply_snapshot_circulating_xlm{asset_key="XLM"} <= 0
+          stellaratlas_supply_snapshot_circulating_xlm{asset_key="XLM"} <= 0
         for: 5m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: supply
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/supply-snapshot-circulating-zero.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/supply-snapshot-circulating-zero.md
         annotations:
           summary: "XLM circulating supply gauge is {{ $value }} — operator config or computer bug"
           description: |

@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `ratesengine_prometheus_scrape_failing`
+# Runbook — `stellaratlas_prometheus_scrape_failing`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_prometheus_scrape_failing` |
+| Alert | `stellaratlas_prometheus_scrape_failing` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/meta.yml` |
 | Typical MTTR | 5–30 min |

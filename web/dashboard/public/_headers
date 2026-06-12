@@ -3,7 +3,7 @@
 # (web/status/public/_headers) and the explorer
 # (web/explorer/public/_headers); kept in sync intentionally.
 #
-# F-1332: the dashboard (app.ratesengine.net) shipped WITHOUT this
+# F-1332: the dashboard (app.stellaratlas.xyz) shipped WITHOUT this
 # file while the status + explorer surfaces had one. The dashboard is
 # the MOST sensitive surface — session-cookie auth + one-time
 # plaintext API-key display — so it gets the same defence-in-depth
@@ -12,7 +12,7 @@
 #
 # Security model: a static Next.js export with no third-party loads
 # at runtime. Every request the app makes goes to
-# api.ratesengine.net (set via NEXT_PUBLIC_API_BASE_URL at build
+# api.stellaratlas.xyz (set via NEXT_PUBLIC_API_BASE_URL at build
 # time, see next.config.mjs); everything else is local
 # self-references.
 
@@ -22,7 +22,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
   # HSTS — pin HTTPS for one year, subdomains included. Safe because
-  # every *.ratesengine.net surface (api / app / status / docs / the
+  # every *.stellaratlas.xyz surface (api / app / status / docs / the
   # explorer apex) is HTTPS-only at the edge. `preload` is
   # intentionally OMITTED until the operator submits the apex to
   # https://hstspreload.org/ (preload is irrevocable once browsers
@@ -38,7 +38,7 @@
   # surface so a hostile page can't iframe the dashboard and
   # clickjack the API-key reveal / account actions. form-action
   # 'self' keeps any form POST on-origin.
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.ratesengine.net; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellaratlas.xyz; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'
   # no-store on the default rule: dashboard pages are
   # authenticated and may render one-time plaintext API keys. Keeping
   # them out of shared/browser caches stops a secret from surviving

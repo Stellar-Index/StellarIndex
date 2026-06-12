@@ -46,7 +46,7 @@ it via `WASM_HASH=…` env var. To pin:
 2. `stellar contract info interface --id <C>` via stellar-cli also
    surfaces it when the cli is configured.
 
-`ratesengine-ops resolve-wasm <contract>` is planned (not yet wired)
+`stellaratlas-ops resolve-wasm <contract>` is planned (not yet wired)
 to do this in one step.
 
 ## Fixture file shape
@@ -87,4 +87,4 @@ TODO tracking:
 - [ ] First real captures (blocked on operator running the capture
       script against r1 — network access required).
 - [ ] Replay test harness.
-- [ ] `ratesengine-ops resolve-wasm` subcommand.
+- [ ] `stellaratlas-ops resolve-wasm` subcommand.

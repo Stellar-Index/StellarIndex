@@ -32,7 +32,7 @@ route:
     # hosted channel, catching outages of Prometheus or
     # Alertmanager themselves.
     # See docs/operations/runbooks/deadmansswitch.md.
-    - matchers: [alertname = "ratesengine_deadmansswitch"]
+    - matchers: [alertname = "stellaratlas_deadmansswitch"]
       receiver: deadmansswitch
       group_interval: 60s
       repeat_interval: 60s

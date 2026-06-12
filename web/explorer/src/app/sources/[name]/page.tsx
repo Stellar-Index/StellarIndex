@@ -6,7 +6,7 @@ import { formatCompact } from '@/lib/format';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -69,8 +69,8 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { name } = await params;
-  const canonical = `https://ratesengine.net/sources/${encodeURIComponent(name)}`;
-  const title = `${name} — source detail · Rates Engine`;
+  const canonical = `https://stellaratlas.xyz/sources/${encodeURIComponent(name)}`;
+  const title = `${name} — source detail · Stellar Atlas`;
   const description = `Per-venue source metadata, ingest cursor, and contribution profile for ${name}.`;
   return {
     title,
@@ -180,9 +180,9 @@ export default async function SourceDetailPage({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://ratesengine.net' },
-      { '@type': 'ListItem', position: 2, name: 'Sources', item: 'https://ratesengine.net/sources' },
-      { '@type': 'ListItem', position: 3, name, item: `https://ratesengine.net/sources/${name}` },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://stellaratlas.xyz' },
+      { '@type': 'ListItem', position: 2, name: 'Sources', item: 'https://stellaratlas.xyz/sources' },
+      { '@type': 'ListItem', position: 3, name, item: `https://stellaratlas.xyz/sources/${name}` },
     ],
   };
 

@@ -15,7 +15,7 @@ API in the `ctx-rates` namespace (our predecessor system). No changes were made 
 **Cofounder note:** the existing stellar-core "has been struggling to
 stay synced — maybe ZFS, maybe something else." This doc diagnoses
 the root cause and lays out options for leveraging the cluster for
-Rates Engine bring-up.
+Stellar Atlas bring-up.
 
 ---
 
@@ -258,9 +258,9 @@ in `crypto-stellar` as part of the remediation.
 
 ---
 
-## 4. Capacity assessment for Rates Engine on this cluster
+## 4. Capacity assessment for Stellar Atlas on this cluster
 
-Can we slot the Rates Engine workloads into this cluster without
+Can we slot the Stellar Atlas workloads into this cluster without
 touching existing workloads?
 
 ### 4.1 What we'd need
@@ -325,7 +325,7 @@ With 5 workers × 8c/40GB and current usage ~10 % CPU average:
 
 ### 4.5 Spec adequacy — explicit workload-to-capacity mapping
 
-Phase A Rates Engine, R1-only, spread across pods on the 5-worker
+Phase A Stellar Atlas, R1-only, spread across pods on the 5-worker
 cluster. Each worker: 8 CPU / 40 GB / 48 GB ephemeral.
 
 | Workload | CPU req | RAM req | Storage req | Fits a pod? |
@@ -336,9 +336,9 @@ cluster. Each worker: 8 CPU / 40 GB / 48 GB ephemeral.
 | Postgres 15 + Timescale extension | 4 | 16 GB | 2 TB NVMe | yes |
 | Redis cluster (3 masters + 3 replicas) | 6 × 1 | 6 × 2 GB | ephemeral | yes (spread) |
 | MinIO (single-node; optional if using external S3) | 2 | 4 GB | ~10 TB | maybe (storage question) |
-| `ratesengine-indexer` | 2 | 2 GB | — | yes |
-| `ratesengine-aggregator` | 2 | 4 GB | — | yes |
-| `ratesengine-api` (3 replicas) | 3 × 1 | 3 × 2 GB | — | yes |
+| `stellaratlas-indexer` | 2 | 2 GB | — | yes |
+| `stellaratlas-aggregator` | 2 | 4 GB | — | yes |
+| `stellaratlas-api` (3 replicas) | 3 × 1 | 3 × 2 GB | — | yes |
 | **Totals** | **~31 c** | **~84 GB** | **~14 TB NVMe** | |
 
 **Cluster capacity:** 40 CPU / 200 GB / NVMe PV class (host-side
@@ -414,7 +414,7 @@ the recipe for when they choose to apply it.
 
 ## 5. Options
 
-Ranked by "get Rates Engine running in Weeks 2–3":
+Ranked by "get Stellar Atlas running in Weeks 2–3":
 
 ### Option A — Fix & reuse the existing stellar-core + stellar-rpc
 
@@ -422,8 +422,8 @@ Ranked by "get Rates Engine running in Weeks 2–3":
   Phase A we don't need to validate.)
 - **Fix the CATCHUP config.** Flip to `CATCHUP_RECENT` only.
   Restart. Within 30 min we're synced.
-- **Deploy our ratesengine-indexer + aggregator + api as new K8s
-  manifests in a new `ratesengine` namespace** using the existing
+- **Deploy our stellaratlas-indexer + aggregator + api as new K8s
+  manifests in a new `stellaratlas` namespace** using the existing
   stellar-rpc at `crypto-stellar/stellar-rpc:8000` as our read
   endpoint. Galexie can live alongside or we defer Galexie until
   a dedicated box.
@@ -434,8 +434,8 @@ Ranked by "get Rates Engine running in Weeks 2–3":
 
 ### Option B — Clean deploy into this cluster, leave existing alone
 
-- **Deploy brand-new** `ratesengine-stellar-core`, `ratesengine-
-  galexie`, etc. in a fresh `ratesengine-infra` namespace with our
+- **Deploy brand-new** `stellaratlas-stellar-core`, `stellaratlas-
+  galexie`, etc. in a fresh `stellaratlas-infra` namespace with our
   own PVCs and configs (sourced from our Ansible-equivalent Helm
   chart, to land in follow-up PR).
 - **Ignore the existing crypto-stellar setup.** It stays as-is.
@@ -448,8 +448,8 @@ Ranked by "get Rates Engine running in Weeks 2–3":
 - **Stateful plane on Hetzner** (once approved) — stellar-core,
   Galexie, Timescale, MinIO. Matches our existing archival-node-
   spec.
-- **Stateless plane in this cluster** — `ratesengine-api`,
-  `ratesengine-aggregator`, observability, ingress. Use istio for
+- **Stateless plane in this cluster** — `stellaratlas-api`,
+  `stellaratlas-aggregator`, observability, ingress. Use istio for
   TLS termination + CDN edge, scale-out via K8s.
 - **Benefit:** best of both — correct hardware for the heavy
   stateful work, elastic serving on existing K8s infra.
@@ -470,7 +470,7 @@ Ranked by "get Rates Engine running in Weeks 2–3":
 **Short-term (this week):** **Option C hybrid**, but with a twist —
 use the existing cluster's **stellar-rpc** as our read-only ingest
 surface right now. It's already synced and serving. Our
-`ratesengine-indexer` can connect to
+`stellaratlas-indexer` can connect to
 `crypto-stellar/stellar-rpc:8000` as a read endpoint and begin
 pulling events into our trades hypertable. No changes to the
 existing workloads required. **We get to start ingesting this
@@ -478,8 +478,8 @@ week while the Hetzner approval and fresh deploy work in parallel.**
 
 This needs:
 - No code changes to the existing cluster.
-- Read-only network access from a new `ratesengine-indexer` pod in
-  a new `ratesengine` namespace, pointed at the cluster-internal
+- Read-only network access from a new `stellaratlas-indexer` pod in
+  a new `stellaratlas` namespace, pointed at the cluster-internal
   `crypto-stellar/stellar-rpc:8000`.
 - Acceptance that during this bridge window, we don't have Galexie
   (historical backfill) — only the live stream from stellar-rpc.

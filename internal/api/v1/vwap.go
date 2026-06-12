@@ -49,7 +49,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	reader := s.history
 	if reader == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/vwap-unavailable",
+			"https://api.stellaratlas.xyz/errors/vwap-unavailable",
 			"VWAP serving not configured", http.StatusServiceUnavailable,
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
@@ -62,7 +62,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	pair, err := canonical.NewPair(base, quote)
 	if err != nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-pair",
+			"https://api.stellaratlas.xyz/errors/invalid-pair",
 			"Invalid pair", http.StatusBadRequest, err.Error())
 		return
 	}
@@ -81,7 +81,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		// ParseFloat("NaN"). Also reject ±Inf explicitly.
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-sigma",
+				"https://api.stellaratlas.xyz/errors/invalid-sigma",
 				"Invalid outlier_sigma", http.StatusBadRequest,
 				"outlier_sigma must be a non-negative finite number; omit or 0 disables filtering")
 			return
@@ -114,14 +114,14 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		// with different sigma), so misleading it is a bug.
 		if pre > 0 {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/all-filtered",
+				"https://api.stellaratlas.xyz/errors/all-filtered",
 				"All trades filtered as outliers", http.StatusUnprocessableEntity,
 				fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or omit outlier_sigma",
 					sigma, pre))
 			return
 		}
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/no-trades",
+			"https://api.stellaratlas.xyz/errors/no-trades",
 			"No trades in window", http.StatusNotFound,
 			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
 				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
@@ -130,7 +130,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("VWAP failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -174,7 +174,7 @@ func (s *Server) fetchVWAPTrades(
 		"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(),
 		"from", from, "to", to)
 	writeProblem(w, r,
-		"https://api.ratesengine.net/errors/internal",
+		"https://api.stellaratlas.xyz/errors/internal",
 		"Internal error", http.StatusInternalServerError, "")
 	return nil, false, false
 }

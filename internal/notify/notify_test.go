@@ -15,7 +15,7 @@ import (
 func TestValidate_HappyPath(t *testing.T) {
 	n := &notify.NoopSender{}
 	err := n.Send(context.Background(), notify.Message{
-		From:    "Rates Engine <hello@ratesengine.net>",
+		From:    "Stellar Atlas <hello@stellaratlas.xyz>",
 		To:      []string{"alice@example.com"},
 		Subject: "Test",
 		Text:    "hello",
@@ -51,10 +51,10 @@ func TestValidate_RejectsEmptyMessage(t *testing.T) {
 
 func TestMagicLinkMessage_Renders(t *testing.T) {
 	msg, err := notify.MagicLinkMessage(
-		"Rates Engine <hello@ratesengine.net>",
+		"Stellar Atlas <hello@stellaratlas.xyz>",
 		"alice@example.com",
 		notify.MagicLinkInput{
-			LinkURL:          "https://app.ratesengine.net/auth/callback?token=abc",
+			LinkURL:          "https://app.stellaratlas.xyz/auth/callback?token=abc",
 			Code:             "123456",
 			ExpiresInMinutes: 15,
 			IPAddress:        "203.0.113.1",
@@ -70,7 +70,7 @@ func TestMagicLinkMessage_Renders(t *testing.T) {
 	// Spot-check that the dynamic fields landed in the rendered
 	// bodies — guards against a refactor that drops a field
 	// from the template.
-	for _, want := range []string{"https://app.ratesengine.net/auth/callback?token=abc", "123456", "15 minutes", "203.0.113.1"} {
+	for _, want := range []string{"https://app.stellaratlas.xyz/auth/callback?token=abc", "123456", "15 minutes", "203.0.113.1"} {
 		if !strings.Contains(msg.HTML, want) {
 			t.Errorf("HTML missing %q", want)
 		}
@@ -102,7 +102,7 @@ func TestResendSender_HappyPath(t *testing.T) {
 	s.BaseURL = srv.URL
 
 	err = s.Send(context.Background(), notify.Message{
-		From:    "Rates Engine <hello@ratesengine.net>",
+		From:    "Stellar Atlas <hello@stellaratlas.xyz>",
 		To:      []string{"alice@example.com"},
 		Subject: "Test",
 		Text:    "hello",

@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `ratesengine_ingestion_discovery_drops`
+# Runbook — `stellaratlas_ingestion_discovery_drops`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_ingestion_discovery_drops` |
+| Alert | `stellaratlas_ingestion_discovery_drops` |
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | minutes-to-hours |
@@ -19,7 +19,7 @@ severity: P3
 
 ## Symptoms
 
-- `increase(ratesengine_discovery_dropped_hits_total[10m]) > 0` sustained 10 min.
+- `increase(stellaratlas_discovery_dropped_hits_total[10m]) > 0` sustained 10 min.
 - Indexer logs include `discovery: hits dropped` warnings.
 - Persisted `discovered_assets` rows may lag the underlying event stream during the same window.
 
@@ -35,14 +35,14 @@ pressure.
 
 ```sh
 # Confirm drops are ongoing, not a one-off blip.
-curl -s http://indexer:9464/metrics | grep ratesengine_discovery_dropped_hits_total
+curl -s http://indexer:9464/metrics | grep stellaratlas_discovery_dropped_hits_total
 
 # Check whether Postgres/discovery writes are struggling.
-ssh root@indexer-01 "journalctl -u ratesengine-indexer -n 200 --no-pager" \
+ssh root@indexer-01 "journalctl -u stellaratlas-indexer -n 200 --no-pager" \
   | grep "discovery:"
 
 # Cross-check for broader storage pressure.
-curl -s http://indexer:9464/metrics | grep ratesengine_source_insert_errors_total
+curl -s http://indexer:9464/metrics | grep stellaratlas_source_insert_errors_total
 ```
 
 ## Typical root causes
@@ -56,7 +56,7 @@ curl -s http://indexer:9464/metrics | grep ratesengine_source_insert_errors_tota
 - [ ] Check Timescale health first. If storage is degraded, restore it before tuning discovery.
 - [ ] If storage is healthy, inspect whether recent discovery volume increased sharply.
 - [ ] Increase the discovery buffer only after confirming this is sustained workload, not a transient outage.
-- [ ] Verification: `increase(ratesengine_discovery_dropped_hits_total[10m])` returns to `0`.
+- [ ] Verification: `increase(stellaratlas_discovery_dropped_hits_total[10m])` returns to `0`.
 
 ## Related
 

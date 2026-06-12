@@ -28,7 +28,7 @@
 //
 // Usage:
 //
-//	go run ./scripts/ci/lint-openapi-urls openapi/rates-engine.v1.yaml
+//	go run ./scripts/ci/lint-openapi-urls openapi/stellar-atlas.v1.yaml
 //
 // Exits 0 on clean, 1 on any rule failure (with a list of offending
 // path/parameter pairs to stderr).

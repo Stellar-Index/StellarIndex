@@ -60,7 +60,7 @@ For SEV-1 / SEV-2: a one-paragraph summary of the actual fix
 that landed. Replaces speculation with facts. Customer-facing
 detail level.
 
-> Example: We rolled back `ratesengine-aggregator` to v0.3.1
+> Example: We rolled back `stellaratlas-aggregator` to v0.3.1
 > (the version preceding v0.3.2's stablecoin-proxy change).
 > Pricing for SHIB / DOGE recovered within 60 seconds of the
 > restart. Postmortem with full root cause + remediation will

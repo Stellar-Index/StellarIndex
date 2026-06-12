@@ -5,18 +5,18 @@
 # rules CI dual-validation pattern.
 
 groups:
-  - name: ratesengine.projector
+  - name: stellaratlas.projector
     interval: 30s
     rules:
 
-      - alert: ratesengine_projector_lag_high
+      - alert: stellaratlas_projector_lag_high
         expr: |
-          max by (source) (ratesengine_projector_lag_ledgers) > 256
+          max by (source) (stellaratlas_projector_lag_ledgers) > 256
         for: 10m
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
           summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
           description: |
@@ -28,14 +28,14 @@ groups:
 
             Runbook: docs/operations/runbooks/projector-lag.md
 
-      - alert: ratesengine_projector_error_rate_high
+      - alert: stellaratlas_projector_error_rate_high
         expr: |
-          sum by (source) (rate(ratesengine_projector_runs_total{outcome="error"}[15m])) > 0.05
+          sum by (source) (rate(stellaratlas_projector_runs_total{outcome="error"}[15m])) > 0.05
         for: 15m
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
           summary: "Projector source {{ $labels.source }} cycle errors sustained"
           description: |

@@ -28,19 +28,19 @@
     name: clickhouse-server
     state: restarted
 
-- name: Restart ratesengine-indexer
+- name: Restart stellaratlas-indexer
   ansible.builtin.systemd:
-    name: ratesengine-indexer
+    name: stellaratlas-indexer
     state: restarted
 
-- name: Restart ratesengine-aggregator
+- name: Restart stellaratlas-aggregator
   ansible.builtin.systemd:
-    name: ratesengine-aggregator
+    name: stellaratlas-aggregator
     state: restarted
 
-- name: Restart ratesengine-api
+- name: Restart stellaratlas-api
   ansible.builtin.systemd:
-    name: ratesengine-api
+    name: stellaratlas-api
     state: restarted
 
 # Timer-driven oneshot units (verify-archive-tier-a /
@@ -105,24 +105,24 @@
     name: rsyslog
     state: reloaded
 
-# 17-ratesengine-healthchecks — wrapper-script and unit edits
+# 17-stellaratlas-healthchecks — wrapper-script and unit edits
 # notify only the matching timer group, so a touch on smoke.sh
 # doesn't churn the heartbeat or sla-probe timers.
-- name: Restart ratesengine-heartbeat timers
+- name: Restart stellaratlas-heartbeat timers
   ansible.builtin.systemd:
-    name: "ratesengine-heartbeat@{{ item }}.timer"
+    name: "stellaratlas-heartbeat@{{ item }}.timer"
     state: restarted
   loop:
     - indexer
     - aggregator
     - api
 
-- name: Restart ratesengine-smoke timer
+- name: Restart stellaratlas-smoke timer
   ansible.builtin.systemd:
-    name: ratesengine-smoke.timer
+    name: stellaratlas-smoke.timer
     state: restarted
 
-- name: Restart ratesengine-sla-probe timer
+- name: Restart stellaratlas-sla-probe timer
   ansible.builtin.systemd:
-    name: ratesengine-sla-probe.timer
+    name: stellaratlas-sla-probe.timer
     state: restarted

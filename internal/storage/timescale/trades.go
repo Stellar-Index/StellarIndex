@@ -39,7 +39,7 @@ const externalUSDVolumeDecimals = 8
 // [VWAPUSDFXResolver] queries `prices_1m` for `<asset>/<peg>`
 // per configured peg, caches per-(asset, 1-minute bucket), and
 // expires entries past a freshness ceiling. Wired in
-// `cmd/ratesengine-indexer/main.go` whenever the operator's
+// `cmd/stellaratlas-indexer/main.go` whenever the operator's
 // `[trades].usd_pegged_classic_assets` list is non-empty.
 //
 // Concurrency: the resolver is invoked from the trade-insert
@@ -310,7 +310,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 
 	// Emit per-source outcome metric (new vs duplicate) so operators
 	// can detect a cursor-replay / stuck-tip pattern via
-	// `rate(ratesengine_trade_insert_outcome_total{outcome="new"}[5m]) == 0`
+	// `rate(stellaratlas_trade_insert_outcome_total{outcome="new"}[5m]) == 0`
 	// while attempts (TradeInsertsTotal) keep climbing. See
 	// obs.TradeInsertOutcomeTotal.
 	outcome := "new"
@@ -334,7 +334,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// duplicate-flood pattern: when last_event_unix keeps climbing
 	// but last_insert_unix flat-lines, the cursor is processing
 	// events that produce only duplicate inserts. See the metric
-	// godoc + ratesengine_ingestion_duplicate_flood alert.
+	// godoc + stellaratlas_ingestion_duplicate_flood alert.
 	obs.SourceLastInsertUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
 
 	// Phase 4 (per migration 0023's docblock): auto-register the

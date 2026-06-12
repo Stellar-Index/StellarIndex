@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Rates Engine contributors.
+// Copyright (c) 2026 Stellar Atlas contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1
@@ -91,7 +91,7 @@ type SignupVerifyResult struct {
 func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 	if s.signupVerifier == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/signup-verify-unavailable",
+			"https://api.stellaratlas.xyz/errors/signup-verify-unavailable",
 			"Signup verification not configured", http.StatusServiceUnavailable,
 			"this deployment doesn't run the email-ownership-proof flow; the original signup response is the only proof of issuance")
 		return
@@ -99,7 +99,7 @@ func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if token == "" {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/missing-token",
+			"https://api.stellaratlas.xyz/errors/missing-token",
 			"Missing token", http.StatusBadRequest,
 			"the verify endpoint requires a `token` query parameter (the value emailed to you on signup)")
 		return
@@ -108,14 +108,14 @@ func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, auth.ErrSignupVerifyNotFound) {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/signup-verify-not-found",
+				"https://api.stellaratlas.xyz/errors/signup-verify-not-found",
 				"Verification token not found", http.StatusNotFound,
 				"the token is unknown, has already been consumed, or has expired; sign up again to receive a fresh link")
 			return
 		}
 		s.logger.Error("signup verify: store error", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError,
 			"verification failed; try again in a moment")
 		return

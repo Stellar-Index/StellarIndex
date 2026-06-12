@@ -13,7 +13,7 @@ related:
 
 > Bootstraps the third launch-critical sub-role of Task #72 after
 > Patroni (#344) and Redis Sentinel (#350). HAProxy is the
-> api-tier load balancer fronting the `ratesengine-api` pool;
+> api-tier load balancer fronting the `stellaratlas-api` pool;
 > keepalived provides the HA between two HAProxy hosts.
 
 ## Scope (decided)
@@ -54,14 +54,14 @@ Per ha-plan §3.1:
                   └─────────────────────────┬───────────────────────────┘
                                             │
                             ┌───────────────┴───────────────┐
-                            │  ratesengine-api × 3 pods     │
+                            │  stellaratlas-api × 3 pods     │
                             │  (stateless; /readyz health)  │
                             └───────────────────────────────┘
 ```
 
 - Two `lb-01` / `lb-02` hosts each running HAProxy + keepalived.
 - Public DNS points at the keepalived VIP.
-- HAProxy backends are the 3 `ratesengine-api` pods.
+- HAProxy backends are the 3 `stellaratlas-api` pods.
 - Health-check path: `GET /v1/readyz` (deep check — Timescale +
   Redis reachability per `internal/api/v1/server.go`).
 
@@ -108,8 +108,8 @@ backend api_pool
     option httpchk GET /v1/readyz
     http-check expect status 200
     default-server inter 5s fall 3 rise 2 slowstart 10s
-{% for h in groups['ratesengine_api'] %}
-    server {{ h }} {{ hostvars[h].ansible_host }}:{{ ratesengine_api_port }} check
+{% for h in groups['stellaratlas_api'] %}
+    server {{ h }} {{ hostvars[h].ansible_host }}:{{ stellaratlas_api_port }} check
 {% endfor %}
 
 frontend stats
@@ -163,13 +163,13 @@ all:
         keepalived_vip_prefix_length: 24
         keepalived_vrid: 51
         # vault: keepalived_vrrp_password
-    ratesengine_api:
+    stellaratlas_api:
       hosts:
         api-01: { ansible_host: 10.0.0.41 }
         api-02: { ansible_host: 10.0.0.42 }
         api-03: { ansible_host: 10.0.0.43 }
       vars:
-        ratesengine_api_port: 3000
+        stellaratlas_api_port: 3000
 ```
 
 ## Health-check semantics

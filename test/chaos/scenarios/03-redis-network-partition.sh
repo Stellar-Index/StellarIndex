@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test/chaos/scenarios/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
-REDIS_CONTAINER="${REDIS_CONTAINER:-ratesengine-redis}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-stellaratlas-redis}"
 HEALTH_URL="$CHAOS_TARGET/v1/healthz"
 PARTITION_DURATION_SEC="${PARTITION_DURATION_SEC:-30}"
 

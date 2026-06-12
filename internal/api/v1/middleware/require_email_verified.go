@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Rates Engine contributors.
+// Copyright (c) 2026 Stellar Atlas contributors.
 // SPDX-License-Identifier: Apache-2.0
 
 package middleware
@@ -76,7 +76,7 @@ func RequireEmailVerified() Middleware {
 // resend-link CTA.
 func writeEmailUnverified(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
-		"type":     "https://api.ratesengine.net/errors/signup-verify-required",
+		"type":     "https://api.stellaratlas.xyz/errors/signup-verify-required",
 		"title":    "Email verification required",
 		"status":   http.StatusForbidden,
 		"detail":   "this API key was minted via /v1/signup but the post-signup verification email hasn't been confirmed yet. Click the link in the email we sent, or contact support if you didn't receive it.",
@@ -87,7 +87,7 @@ func writeEmailUnverified(w http.ResponseWriter, r *http.Request) {
 		body = []byte(`{"title":"Email verification required","status":403}`)
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("X-RatesEngine-Signup-Verify-Required", "true")
+	w.Header().Set("X-StellarAtlas-Signup-Verify-Required", "true")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write(body)
 }

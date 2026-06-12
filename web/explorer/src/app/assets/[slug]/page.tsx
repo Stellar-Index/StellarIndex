@@ -493,7 +493,7 @@ export async function generateMetadata({
   // treat /assets/XLM and /assets/native as separate pages with
   // duplicate content.
   const canonicalSlug = globalView?.slug ?? coin?.slug ?? slug;
-  const canonical = `https://ratesengine.net/assets/${canonicalSlug}`;
+  const canonical = `https://stellaratlas.xyz/assets/${canonicalSlug}`;
 
   return {
     title,
@@ -577,19 +577,19 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         '@type': 'ListItem',
         position: 1,
         name: 'Home',
-        item: 'https://ratesengine.net',
+        item: 'https://stellaratlas.xyz',
       },
       {
         '@type': 'ListItem',
         position: 2,
         name: 'Assets',
-        item: 'https://ratesengine.net/assets',
+        item: 'https://stellaratlas.xyz/assets',
       },
       {
         '@type': 'ListItem',
         position: 3,
         name: coin.code,
-        item: `https://ratesengine.net/assets/${coin.slug}`,
+        item: `https://stellaratlas.xyz/assets/${coin.slug}`,
       },
     ],
   };
@@ -1087,7 +1087,7 @@ function assetFaqFor(symbol: string, hasIssuer: boolean): { q: string; a: string
   return [
     {
       q: `What is ${symbol}?`,
-      a: `${symbol} is one of the assets we index on the Stellar network. Rates Engine pulls live trades for it from the Soroban DEX corpus (Soroswap, Phoenix, Aquarius, Comet) plus the classic SDEX order book, plus CEX feeds (Binance, Coinbase, Kraken, Bitstamp) where the symbol exists. The price you see is a 24h-trailing VWAP across every active venue.`,
+      a: `${symbol} is one of the assets we index on the Stellar network. Stellar Atlas pulls live trades for it from the Soroban DEX corpus (Soroswap, Phoenix, Aquarius, Comet) plus the classic SDEX order book, plus CEX feeds (Binance, Coinbase, Kraken, Bitstamp) where the symbol exists. The price you see is a 24h-trailing VWAP across every active venue.`,
     },
     {
       q: `Where does the price come from?`,

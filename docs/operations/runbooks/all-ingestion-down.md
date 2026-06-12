@@ -5,26 +5,26 @@ status: ratified
 severity: P1
 ---
 
-# Runbook — `ratesengine_ingestion_all_sources_stopped`
+# Runbook — `stellaratlas_ingestion_all_sources_stopped`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_ingestion_all_sources_stopped` |
+| Alert | `stellaratlas_ingestion_all_sources_stopped` |
 | Severity | **P1** (SEV-1) |
-| Detected by | `sum(rate(ratesengine_source_events_total[5m]))` = 0 for > 3 min |
+| Detected by | `sum(rate(stellaratlas_source_events_total[5m]))` = 0 for > 3 min |
 | Typical MTTR | 5–20 min depending on root cause |
 | Impact | Price staleness begins at the 60 s cache TTL; API sets `stale_flag=true` globally. If the outage lasts > 30 min we breach the Freighter 30 s freshness SLA. |
 
 ## Symptoms
 
-- Alert `ratesengine_ingestion_all_sources_stopped` fires.
-- `ratesengine_api_price_stale` follows ~60 s later across every asset.
+- Alert `stellaratlas_ingestion_all_sources_stopped` fires.
+- `stellaratlas_api_price_stale` follows ~60 s later across every asset.
 - Indexer logs show no activity, repeated MinIO read errors, or
   Galexie producing no fresh objects in `galexie-live`.
 
-> The legacy `ratesengine_ingestion_lag_high` companion alert was
+> The legacy `stellaratlas_ingestion_lag_high` companion alert was
 > retired with the move off the orchestrator topology
 > ([alerts-catalog.md](../alerts-catalog.md) §Ingestion historical
 > note); don't expect to see it fire today.
@@ -45,12 +45,12 @@ The "all sources down" shape usually means one of three common roots: Galexie's 
 
 ```sh
 # 1. Is the indexer running?
-systemctl status ratesengine-indexer      # baremetal
+systemctl status stellaratlas-indexer      # baremetal
 # or
-kubectl -n ratesengine get pod -l app=ratesengine-indexer
+kubectl -n stellaratlas get pod -l app=stellaratlas-indexer
 
 # 2. What do its logs say?
-journalctl -u ratesengine-indexer -n 200 --no-pager | tail -40
+journalctl -u stellaratlas-indexer -n 200 --no-pager | tail -40
 # Look for: "source stream ended with error", "insert trade failed",
 # "minio: object not found", "ledger metadata read".
 
@@ -59,12 +59,12 @@ sudo journalctl -u galexie -n 50 --no-pager
 mc ls minio/galexie-live | tail -5      # newest objects within ~1 min
 # OR if you suspect a network-state issue, query upstream directly
 # (r1 has no local stellar-rpc; point at a public endpoint):
-ratesengine-ops rpc-probe https://mainnet.sorobanrpc.com
+stellaratlas-ops rpc-probe https://mainnet.sorobanrpc.com
 # Expect: version info + latest ledger close time within 60s.
 
 # 4. Is Timescale reachable + writable?
-PGCONNECT_TIMEOUT=3 psql -h db-primary.internal -U ratesengine \
-  -d ratesengine -c "INSERT INTO ingestion_cursors (source, sub_source, last_ledger) VALUES ('probe', 'healthcheck', 0) ON CONFLICT DO NOTHING;"
+PGCONNECT_TIMEOUT=3 psql -h db-primary.internal -U stellaratlas \
+  -d stellaratlas -c "INSERT INTO ingestion_cursors (source, sub_source, last_ledger) VALUES ('probe', 'healthcheck', 0) ON CONFLICT DO NOTHING;"
 ```
 
 Route by the result:
@@ -87,7 +87,7 @@ Route by the result:
   be within ~1 minute. If MinIO itself is unhealthy, follow
   whichever `redis-master-down`-style runbook applies (no
   dedicated MinIO runbook today).
-- Wider network problem? `ratesengine-ops rpc-probe https://mainnet.sorobanrpc.com`
+- Wider network problem? `stellaratlas-ops rpc-probe https://mainnet.sorobanrpc.com`
   confirms ledgers are still closing on the network — if the
   network is fine but galexie has stalled, capture logs and
   restart galexie.
@@ -103,17 +103,17 @@ Route by the result:
 
 - Capture a goroutine dump before restarting:
   ```sh
-  kill -QUIT $(pgrep ratesengine-indexer)   # SIGQUIT dumps goroutines to stderr
-  journalctl -u ratesengine-indexer -n 200 --no-pager > /tmp/indexer-dump-$(date +%s).log
+  kill -QUIT $(pgrep stellaratlas-indexer)   # SIGQUIT dumps goroutines to stderr
+  journalctl -u stellaratlas-indexer -n 200 --no-pager > /tmp/indexer-dump-$(date +%s).log
   ```
 - Restart the indexer:
   ```sh
-  systemctl restart ratesengine-indexer
+  systemctl restart stellaratlas-indexer
   # or
-  kubectl -n ratesengine rollout restart deployment/ratesengine-indexer
+  kubectl -n stellaratlas rollout restart deployment/stellaratlas-indexer
   ```
 - Confirm recovery:
-  - `ratesengine_source_events_total` rate > 0 within 60 s.
+  - `stellaratlas_source_events_total` rate > 0 within 60 s.
   - Alert clears within 3 min.
 
 ### D. Recent deploy broke the indexer
@@ -133,8 +133,8 @@ Route by the result:
   the last 5 previous binaries as
   `/usr/local/bin/<binary>.prev-<previous-tag>` and records
   the running version under
-  `/var/lib/ratesengine/deployed-versions/<binary>` (NOT under
-  `/opt/ratesengine/release-<tag>/` — the `goreleaser`-style
+  `/var/lib/stellaratlas/deployed-versions/<binary>` (NOT under
+  `/opt/stellaratlas/release-<tag>/` — the `goreleaser`-style
   release archive doesn't exist on this host).
 
   The preferred path is to trigger the deploy workflow with
@@ -145,13 +145,13 @@ Route by the result:
   PREVIOUS=v0.5.0-rc.40                    # whichever tag was healthy
   ssh root@indexer-01 <<EOF
     set -euxo pipefail
-    test -f /usr/local/bin/ratesengine-indexer.prev-${PREVIOUS}
-    systemctl stop ratesengine-indexer
-    install -m 0755 /usr/local/bin/ratesengine-indexer.prev-${PREVIOUS} /usr/local/bin/ratesengine-indexer
-    systemctl start ratesengine-indexer
-    systemctl status ratesengine-indexer --no-pager
+    test -f /usr/local/bin/stellaratlas-indexer.prev-${PREVIOUS}
+    systemctl stop stellaratlas-indexer
+    install -m 0755 /usr/local/bin/stellaratlas-indexer.prev-${PREVIOUS} /usr/local/bin/stellaratlas-indexer
+    systemctl start stellaratlas-indexer
+    systemctl status stellaratlas-indexer --no-pager
   EOF
-  # Repeat for every host in the inventory's ratesengine_indexer
+  # Repeat for every host in the inventory's stellaratlas_indexer
   # group. If the wanted .prev-<tag> is older than 5 releases
   # back the operator rebuilds it from the tag on a build host
   # (`git checkout <tag> && make build`) — see
@@ -166,9 +166,9 @@ Route by the result:
 Gather:
 
 - Goroutine dump from step C.
-- Indexer logs `journalctl -u ratesengine-indexer --since "30 min ago"`.
-- Grafana screenshots of `ratesengine_source_events_total` broken down by source — does it cliff-edge at a specific timestamp, or decay?
-- Recent deploys — git log of `cmd/ratesengine-indexer/` in the last 72 h.
+- Indexer logs `journalctl -u stellaratlas-indexer --since "30 min ago"`.
+- Grafana screenshots of `stellaratlas_source_events_total` broken down by source — does it cliff-edge at a specific timestamp, or decay?
+- Recent deploys — git log of `cmd/stellaratlas-indexer/` in the last 72 h.
 - Postgres `pg_stat_activity` during the window — were inserts blocked on locks?
 - stellar-rpc's `getHealth` returned values during the window.
 
@@ -181,7 +181,7 @@ Patterns observed:
 
 ## Known false-positive patterns
 
-- **Network event retention window rolled over** — stellar-rpc stopped serving the ledger range our cursor is in. The indexer correctly stops producing trade events while it seeks forward. Alert fires spuriously. Mitigation: tune the alert to look at `time() - ratesengine_source_last_event_unix` (staleness age) instead of raw rate.
+- **Network event retention window rolled over** — stellar-rpc stopped serving the ledger range our cursor is in. The indexer correctly stops producing trade events while it seeks forward. Alert fires spuriously. Mitigation: tune the alert to look at `time() - stellaratlas_source_last_event_unix` (staleness age) instead of raw rate.
 - **Midnight UTC continuous-aggregate refresh** — the aggregator's heavy CAGG refresh briefly blocks trade inserts. Indexer queues up, then drains. Alert might fire at the window if duration is short. Tune `for: 3m → for: 5m` if this recurs.
 
 ## Related
@@ -192,7 +192,7 @@ Patterns observed:
 - [cursor-stuck](cursor-stuck.md) — cursor-specific diagnosis.
 - Internal docs:
   - `internal/consumer/orchestrator.go` — per-source restart logic.
-  - `cmd/ratesengine-indexer/main.go` — wiring + shutdown.
+  - `cmd/stellaratlas-indexer/main.go` — wiring + shutdown.
 
 ## Changelog
 
@@ -201,4 +201,4 @@ Patterns observed:
   Galexie + MinIO (the actual r1 upstream); rpc-probe URL points
   at a public stellar-rpc since r1 doesn't run its own
   (removed 2026-04-23). Symptoms drop the retired
-  `ratesengine_ingestion_lag_high` reference.
+  `stellaratlas_ingestion_lag_high` reference.

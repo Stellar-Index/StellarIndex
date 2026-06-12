@@ -94,17 +94,17 @@ type atomEntry struct {
 // derived from the slug so feed readers dedupe correctly across
 // crawls.
 func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
-	const baseURL = "https://status.ratesengine.net"
+	const baseURL = "https://status.stellaratlas.xyz"
 	feed := atomFeed{
 		Xmlns:   "http://www.w3.org/2005/Atom",
 		ID:      baseURL + "/feed",
-		Title:   "Rates Engine — incident history",
+		Title:   "Stellar Atlas — incident history",
 		Updated: time.Now().UTC().Format(time.RFC3339),
 		Link: []atomLink{
-			{Rel: "self", Href: "https://api.ratesengine.net/v1/incidents.atom", Type: "application/atom+xml"},
+			{Rel: "self", Href: "https://api.stellaratlas.xyz/v1/incidents.atom", Type: "application/atom+xml"},
 			{Rel: "alternate", Href: baseURL + "/", Type: "text/html"},
 		},
-		Author: &atomAuthor{Name: "Rates Engine", URI: "https://ratesengine.net"},
+		Author: &atomAuthor{Name: "Stellar Atlas", URI: "https://stellaratlas.xyz"},
 	}
 
 	for _, inc := range s.incidents {
@@ -113,14 +113,14 @@ func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 			updated = *inc.ResolvedAt
 		}
 		entry := atomEntry{
-			ID:      fmt.Sprintf("urn:ratesengine:incident:%s", inc.Slug),
+			ID:      fmt.Sprintf("urn:stellaratlas:incident:%s", inc.Slug),
 			Title:   inc.Title,
 			Updated: updated.UTC().Format(time.RFC3339),
 			Link: []atomLink{
 				// Per-incident detail page. Was previously the
 				// homepage with an `#<slug>` anchor, but the home
 				// page doesn't render an `id` per incident, so feed
-				// readers landed on `https://status.ratesengine.net/`
+				// readers landed on `https://status.stellaratlas.xyz/`
 				// with no scroll target. Use the canonical
 				// /incident/{slug} route so subscribers land on the
 				// postmortem they clicked.

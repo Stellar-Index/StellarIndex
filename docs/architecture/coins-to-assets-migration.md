@@ -15,7 +15,7 @@ status: complete
 >
 > If you're looking for the current asset-API contract, see
 > the OpenAPI spec at
-> [`openapi/rates-engine.v1.yaml`](../../openapi/rates-engine.v1.yaml)
+> [`openapi/stellar-atlas.v1.yaml`](../../openapi/stellar-atlas.v1.yaml)
 > (`/v1/assets`, `/v1/assets/{id}`, plus the
 > `GlobalAssetView` vs `AssetDetail` discriminator pattern
 > documented in CLAUDE.md "Things that will surprise you").

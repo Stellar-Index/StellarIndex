@@ -74,7 +74,7 @@ const statusActiveMaxAge = 10 * time.Minute
 func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 	if s.cursors == nil {
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/cursors-unavailable",
+			"https://api.stellaratlas.xyz/errors/cursors-unavailable",
 			"Cursors unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the cursors reader yet.")
 		return
@@ -85,7 +85,7 @@ func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 		d, err := time.ParseDuration(raw)
 		if err != nil || d <= 0 {
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/invalid-max-age",
+				"https://api.stellaratlas.xyz/errors/invalid-max-age",
 				"Invalid max_age", http.StatusBadRequest,
 				"max_age must be a positive Go-duration string (e.g. \"1h\", \"30m\", \"5m\")")
 			return
@@ -111,7 +111,7 @@ func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 		statusStale = true
 	default:
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/invalid-status",
+			"https://api.stellaratlas.xyz/errors/invalid-status",
 			"Invalid status", http.StatusBadRequest,
 			`status must be one of: "active", "stale", or omitted`)
 		return
@@ -171,7 +171,7 @@ func (s *Server) writeCursorsListError(w http.ResponseWriter, r *http.Request, l
 	if handlerTimedOut(listCtx, err) {
 		s.logger.Warn("cursors list: deadline exceeded", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/cursors-timeout",
+			"https://api.stellaratlas.xyz/errors/cursors-timeout",
 			"Cursors listing timed out", http.StatusServiceUnavailable,
 			"the ingestion_cursors scan didn't return in 5s; retry shortly.")
 		return
@@ -179,14 +179,14 @@ func (s *Server) writeCursorsListError(w http.ResponseWriter, r *http.Request, l
 	if transientStorageErr(err) {
 		s.logger.Warn("cursors list: transient storage error", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/cursors-transient",
+			"https://api.stellaratlas.xyz/errors/cursors-transient",
 			"Cursors temporarily unavailable", http.StatusServiceUnavailable,
 			"the storage layer hit a transient error; retry shortly.")
 		return
 	}
 	s.logger.Warn("cursors list", "err", err)
 	writeProblem(w, r,
-		"https://api.ratesengine.net/errors/cursors-error",
+		"https://api.stellaratlas.xyz/errors/cursors-error",
 		"Cursors listing failed", http.StatusInternalServerError,
 		"Storage layer returned an error.")
 }

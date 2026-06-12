@@ -1,7 +1,7 @@
 # Stellar Atlas migration — plan + runbook
 
-**Decision (2026-06-12):** the product rebrands from **Rates Engine**
-(ratesengine.net) to **Stellar Atlas** (stellaratlas.xyz). Positioning
+**Decision (2026-06-12):** the product rebrands from **Stellar Atlas**
+(stellaratlas.xyz) to **Stellar Atlas** (stellaratlas.xyz). Positioning
 changes with it: Stellar Atlas is a **protocol explorer for the Stellar
 network** — deep, verified, per-protocol on-chain data (contracts,
 events, prices) — with the pricing API as one of its products, evolving
@@ -22,19 +22,19 @@ deliberate decision (not blind sed):
 
 | Surface | Current | Action |
 |---|---|---|
-| Go module path | `github.com/RatesEngine/rates-engine` | rename in go.mod + every import |
-| Binaries / cmd dirs | `ratesengine-*` | rename dirs + Makefile + workflows + systemd |
-| Prometheus metrics | `ratesengine_*` namespace | rename to `stellaratlas_*` + ALL rule files + runbooks (history discontinuity accepted — pre-launch, no consumers) |
-| Env vars | `RATESENGINE_*` | rename to `STELLARATLAS_*` + r1 /etc/default files |
-| Postgres role + db (r1) | `ratesengine`/`ratesengine` | rename during cutover (services stopped) |
+| Go module path | `github.com/StellarAtlas/stellar-atlas` | rename in go.mod + every import |
+| Binaries / cmd dirs | `stellaratlas-*` | rename dirs + Makefile + workflows + systemd |
+| Prometheus metrics | `stellaratlas_*` namespace | rename to `stellaratlas_*` + ALL rule files + runbooks (history discontinuity accepted — pre-launch, no consumers) |
+| Env vars | `STELLARATLAS_*` | rename to `STELLARATLAS_*` + r1 /etc/default files |
+| Postgres role + db (r1) | `stellaratlas`/`stellaratlas` | rename during cutover (services stopped) |
 | Redis keys | no brand prefix | no action |
 | DB cursor/source names | no brand | no action |
 | MinIO buckets | brand-free (galexie) | no action |
 | ClickHouse db | `stellar` | no action |
-| User-Agents | `ratesengine/1.0`, `rates-engine/...` | rename |
-| Emails | security@ratesengine.net | security@stellaratlas.xyz (mailbox: operator) |
-| Domains | ratesengine.net (Cloudflare) | stellaratlas.xyz; Caddy serves BOTH until DNS + Pages flip |
-| GitHub | RatesEngine/rates-engine | repo rename now; org `StellarAtlas` creation + transfer = operator step (redirects persist) |
+| User-Agents | `stellaratlas/1.0`, `stellar-atlas/...` | rename |
+| Emails | security@stellaratlas.xyz | security@stellaratlas.xyz (mailbox: operator) |
+| Domains | stellaratlas.xyz (Cloudflare) | stellaratlas.xyz; Caddy serves BOTH until DNS + Pages flip |
+| GitHub | StellarAtlas/stellar-atlas | repo rename now; org `StellarAtlas` creation + transfer = operator step (redirects persist) |
 
 **Immutable archives are NOT rewritten**: `docs/adr/0001-0035`,
 `docs/discovery/`, `docs/audit-*/`, `CHANGELOG.md` history, and dated
@@ -69,13 +69,13 @@ Everything *living* is renamed.
 Pre-built `linux/amd64` binaries scp'd to r1 (no GH release needed for
 the cutover; next tag ships under the new names).
 
-1. Stop + disable `ratesengine-*` units (indexer, aggregator, api,
+1. Stop + disable `stellaratlas-*` units (indexer, aggregator, api,
    sla-probe, smoke timer). Galexie/MinIO/Postgres/CH/Redis untouched.
-2. Postgres: `ALTER ROLE ratesengine RENAME TO stellaratlas` (+password
-   re-set), `ALTER DATABASE ratesengine RENAME TO stellaratlas`.
+2. Postgres: `ALTER ROLE stellaratlas RENAME TO stellaratlas` (+password
+   re-set), `ALTER DATABASE stellaratlas RENAME TO stellaratlas`.
 3. Apply migrations 0057–0061 (the audit-fix PK migrations + protocol_contracts).
-4. `/etc/default/ratesengine-*` → `/etc/default/stellaratlas-*` with
-   `RATESENGINE_*` → `STELLARATLAS_*` var renames; TOML DSN updates.
+4. `/etc/default/stellaratlas-*` → `/etc/default/stellaratlas-*` with
+   `STELLARATLAS_*` → `STELLARATLAS_*` var renames; TOML DSN updates.
 5. Install `stellaratlas-*.service` units + binaries to /usr/local/bin;
    `daemon-reload`; enable + start; remove old unit files.
 6. Drop the sla-probe interim `-freshness-target 150s` flag (memory:
@@ -108,5 +108,5 @@ the cutover; next tag ships under the new names).
 - **Mailbox**: security@stellaratlas.xyz (SECURITY.md already updated).
 - **Healthchecks.io**: rename check display names (slugs/ping UUIDs
   unchanged, so monitoring continuity is unaffected).
-- **Local checkout**: `mv ~/code/ratesengine ~/code/stellaratlas` at your
+- **Local checkout**: `mv ~/code/stellaratlas ~/code/stellaratlas` at your
   convenience (note: Claude's per-project memory is keyed by path).

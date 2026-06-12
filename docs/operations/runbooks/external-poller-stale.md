@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `ratesengine_external_poller_stale`
+# Runbook — `stellaratlas_external_poller_stale`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_external_poller_stale` |
+| Alert | `stellaratlas_external_poller_stale` |
 | Severity | P3 (ticket) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/external-pollers.yml` (and `configs/prometheus/rules.r1/external-pollers.yml` R1 overlay) |
 | Typical MTTR | 5–30 min for a config/key issue; vendor outages can run hours |
@@ -25,7 +25,7 @@ Bitstamp) has not produced a single successful `PollOnce` in the
 last 30 minutes. Either the venue is rejecting our calls (auth /
 rate-limit), the venue is down, or the network path is broken.
 
-Companion alert `ratesengine_external_poller_error_rate_high` fires
+Companion alert `stellaratlas_external_poller_error_rate_high` fires
 at the *informational* tier when error rate > 50% sustained 15 min
 — a softer "something's degrading" signal that doesn't yet block
 data flow. See
@@ -43,7 +43,7 @@ keys.
 
    ```sh
    ssh root@136.243.90.96 \
-     'journalctl -u ratesengine-indexer --since "1 hour ago" \
+     'journalctl -u stellaratlas-indexer --since "1 hour ago" \
        --no-pager | grep -E "poller error|poller stopping" | grep <source>'
    ```
 
@@ -67,13 +67,13 @@ Symptom: error contains `http 429` repeated every minute.
 Fix: register a free demo API key at
 [coingecko.com/en/developers/dashboard](https://www.coingecko.com/en/developers/dashboard),
 add `COINGECKO_DEMO_API_KEY=<key>` to the indexer's environment file
-(usually `/etc/systemd/system/ratesengine-indexer.service.d/env.conf`
-or `/etc/ratesengine.toml.env` depending on the systemd unit's
+(usually `/etc/systemd/system/stellaratlas-indexer.service.d/env.conf`
+or `/etc/stellaratlas.toml.env` depending on the systemd unit's
 `EnvironmentFile=`), then:
 
 ```sh
 systemctl daemon-reload
-systemctl restart ratesengine-indexer
+systemctl restart stellaratlas-indexer
 ```
 
 Verify on next startup the indexer log shows
@@ -99,12 +99,12 @@ incident in `docs/operations/incidents/` if outage > 1h.
 
 ```sh
 curl -s http://r1:9100/metrics \
-  | grep -E 'ratesengine_external_poller_(polls|last_success).*<source>'
+  | grep -E 'stellaratlas_external_poller_(polls|last_success).*<source>'
 ```
 
 You should see:
-- `ratesengine_external_poller_polls_total{source="<source>",outcome="success"}` incrementing
-- `ratesengine_external_poller_last_success_unix{source="<source>"}` reflecting the recent poll
+- `stellaratlas_external_poller_polls_total{source="<source>",outcome="success"}` incrementing
+- `stellaratlas_external_poller_last_success_unix{source="<source>"}` reflecting the recent poll
 
 ## Related
 

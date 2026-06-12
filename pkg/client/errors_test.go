@@ -143,7 +143,7 @@ func TestParseAPIError(t *testing.T) {
 
 	t.Run("problem+json populates all fields", func(t *testing.T) {
 		body := []byte(`{
-			"type": "https://api.ratesengine.net/errors/missing-asset",
+			"type": "https://api.stellaratlas.xyz/errors/missing-asset",
 			"title": "Missing asset",
 			"status": 400,
 			"detail": "asset is required",
@@ -154,7 +154,7 @@ func TestParseAPIError(t *testing.T) {
 		if e.Status != 400 {
 			t.Errorf("Status=%d, want 400", e.Status)
 		}
-		if e.Type != "https://api.ratesengine.net/errors/missing-asset" {
+		if e.Type != "https://api.stellaratlas.xyz/errors/missing-asset" {
 			t.Errorf("Type=%q", e.Type)
 		}
 		if e.Title != "Missing asset" {

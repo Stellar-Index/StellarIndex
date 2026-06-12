@@ -6,7 +6,7 @@ status: operator runbook
 
 # Backfill procedure
 
-Operator runbook for `ratesengine-ops backfill`. Use when:
+Operator runbook for `stellaratlas-ops backfill`. Use when:
 
 - A new source is enabled; need to populate historical trades.
 - A gap was discovered in the trades hypertable.
@@ -15,7 +15,7 @@ Operator runbook for `ratesengine-ops backfill`. Use when:
   was flipped in `internal/sources/external/registry.go`); historical
   rows can now be ingested.
 
-The CLI lives at `cmd/ratesengine-ops/backfill.go`. It replays a
+The CLI lives at `cmd/stellaratlas-ops/backfill.go`. It replays a
 bounded ledger range through the same dispatcher → decoder →
 sink path the live indexer uses, so output matches what the
 indexer would have produced.
@@ -80,7 +80,7 @@ cycle. Aggregates persist.
 ## Prerequisites
 
 - [ ] **Operator config validates.**
-      `ratesengine-ops -config /etc/ratesengine.toml dry-run`
+      `stellaratlas-ops -config /etc/stellaratlas.toml dry-run`
       (or whatever your config-validate path is).
 - [ ] **All sources you'll replay have `BackfillSafe=true`** in
       `internal/sources/external/registry.go`. Soroban sources
@@ -108,7 +108,7 @@ cycle. Aggregates persist.
 ```sh
 # Find the gap. Easiest: query the trades hypertable for
 # distinct ledgers in the range you suspect missing.
-psql ratesengine -c "
+psql stellaratlas -c "
   SELECT min(ledger), max(ledger), count(*)
   FROM trades
   WHERE source = 'soroswap'
@@ -127,8 +127,8 @@ backfill aligns to `floor(from / 64) * 64` internally.
 ### 2. Dry-run first
 
 ```sh
-ratesengine-ops backfill \
-  -config /etc/ratesengine.toml \
+stellaratlas-ops backfill \
+  -config /etc/stellaratlas.toml \
   -from 50000000 \
   -to   50100000 \
   -dry-run
@@ -151,8 +151,8 @@ range straddles.
 ### 3. Run
 
 ```sh
-ratesengine-ops backfill \
-  -config /etc/ratesengine.toml \
+stellaratlas-ops backfill \
+  -config /etc/stellaratlas.toml \
   -from 50000000 \
   -to   50100000
 ```
@@ -160,7 +160,7 @@ ratesengine-ops backfill \
 Stream the output to a log so a stuck run is diagnosable:
 
 ```sh
-ratesengine-ops backfill ... 2>&1 | tee backfill-50000000-50100000.log
+stellaratlas-ops backfill ... 2>&1 | tee backfill-50000000-50100000.log
 ```
 
 Throughput in steady state: ~50-150 ledgers/second per source,
@@ -170,8 +170,8 @@ replays in ~10-30 minutes.
 ### 4. Resume after a crash
 
 ```sh
-ratesengine-ops backfill \
-  -config /etc/ratesengine.toml \
+stellaratlas-ops backfill \
+  -config /etc/stellaratlas.toml \
   -from 50000000 \
   -to   50100000 \
   -resume
@@ -187,8 +187,8 @@ to the trades-hypertable primary-key dedupe).
 ### 5. Narrow the source set (optional)
 
 ```sh
-ratesengine-ops backfill \
-  -config /etc/ratesengine.toml \
+stellaratlas-ops backfill \
+  -config /etc/stellaratlas.toml \
   -from 50000000 -to 50100000 \
   -source soroswap,phoenix
 ```
@@ -201,7 +201,7 @@ is missing data.
 
 ```sh
 # Trade count for the range:
-psql ratesengine -c "
+psql stellaratlas -c "
   SELECT source, count(*)
   FROM trades
   WHERE ledger BETWEEN 50000000 AND 50100000
@@ -210,7 +210,7 @@ psql ratesengine -c "
 "
 
 # Spot-check the most-recent rows:
-psql ratesengine -c "
+psql stellaratlas -c "
   SELECT source, ledger, base_asset, quote_asset, ts
   FROM trades
   WHERE ledger BETWEEN 50000000 AND 50100000
@@ -219,7 +219,7 @@ psql ratesengine -c "
 "
 
 # CAGG materialisation should auto-trigger; verify by querying:
-psql ratesengine -c "
+psql stellaratlas -c "
   SELECT bucket_to_ts, base_asset, quote_asset,
          vwap_quote_per_base, trade_count
   FROM prices_1m
@@ -323,7 +323,7 @@ wall-clock on a single R1 box at `-parallel 4`.
    in scope. Confirm no gaps:
 
    ```sh
-   ratesengine-ops verify-archive \
+   stellaratlas-ops verify-archive \
      -from <year-ago> -to <today> \
      -bucket galexie-archive
    ```
@@ -343,8 +343,8 @@ wall-clock on a single R1 box at `-parallel 4`.
    # Adapt to your range; each chunk is ~120k ledgers.
    for week_from in $(seq -w 50000000 120000 56000000); do
      week_to=$((week_from + 120000))
-     ratesengine-ops backfill \
-       -config /etc/ratesengine.toml \
+     stellaratlas-ops backfill \
+       -config /etc/stellaratlas.toml \
        -from "$week_from" -to "$week_to" \
        -resume \
        -parallel 4 2>&1 | tee "backfill-${week_from}.log"
@@ -358,11 +358,11 @@ wall-clock on a single R1 box at `-parallel 4`.
    `-refresh-caggs`, append this after the trade-insert loop:
 
    ```sh
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1h',  NULL, NULL);"
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_4h',  NULL, NULL);"
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1d',  NULL, NULL);"
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1w',  NULL, NULL);"
-   psql ratesengine -c "CALL refresh_continuous_aggregate('prices_1mo', NULL, NULL);"
+   psql stellaratlas -c "CALL refresh_continuous_aggregate('prices_1h',  NULL, NULL);"
+   psql stellaratlas -c "CALL refresh_continuous_aggregate('prices_4h',  NULL, NULL);"
+   psql stellaratlas -c "CALL refresh_continuous_aggregate('prices_1d',  NULL, NULL);"
+   psql stellaratlas -c "CALL refresh_continuous_aggregate('prices_1w',  NULL, NULL);"
+   psql stellaratlas -c "CALL refresh_continuous_aggregate('prices_1mo', NULL, NULL);"
    ```
 
    `prices_1m` / `prices_15m` previously had 30-day retention by
@@ -380,7 +380,7 @@ wall-clock on a single R1 box at `-parallel 4`.
 
 Each chunk runs with `-resume` so a crash mid-chunk re-anchors at
 the last persisted cursor. Don't manually edit the cursor table —
-that path is `ratesengine-ops backfill -resume` only.
+that path is `stellaratlas-ops backfill -resume` only.
 
 ## When NOT to use this
 
@@ -396,7 +396,7 @@ that path is `ratesengine-ops backfill -resume` only.
 
 ## Cross-references
 
-- [`cmd/ratesengine-ops/backfill.go`](../../cmd/ratesengine-ops/backfill.go) — implementation.
+- [`cmd/stellaratlas-ops/backfill.go`](../../cmd/stellaratlas-ops/backfill.go) — implementation.
 - [`docs/operations/wasm-audits/README.md`](wasm-audits/README.md) — flip `BackfillSafe` once a Soroban source's WASM history is audited.
 - [`internal/sources/external/registry.go`](../../internal/sources/external/registry.go) — `BackfillSafe` flag per source.
 - [`migrations/0002_create_price_aggregates.up.sql`](../../migrations/0002_create_price_aggregates.up.sql) — CAGG definitions that materialise on inserted trades.

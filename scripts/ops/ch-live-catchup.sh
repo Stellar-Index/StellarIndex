@@ -17,10 +17,10 @@
 # contiguous-completeness watermark, so a hole stalls the projector until THIS
 # script heals it — never silent loss.
 set -uo pipefail
-set -a; . /etc/default/ratesengine-ops; set +a
-OPS=${OPS:-/usr/local/bin/ratesengine-ops-ch}
-CFG=${CFG:-/etc/ratesengine.toml}
-DSN="$RATESENGINE_POSTGRES_DSN"
+set -a; . /etc/default/stellaratlas-ops; set +a
+OPS=${OPS:-/usr/local/bin/stellaratlas-ops-ch}
+CFG=${CFG:-/etc/stellaratlas.toml}
+DSN="$STELLARATLAS_POSTGRES_DSN"
 PAR=${PAR:-4}
 CH() { clickhouse-client --port "${CH_PORT:-9300}" "$@"; }
 # Backfill is certified complete through 62894000; holes only form in the live

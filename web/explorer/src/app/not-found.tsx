@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Not found',
-  description: 'The page you tried to visit doesn’t exist on Rates Engine.',
+  description: 'The page you tried to visit doesn’t exist on Stellar Atlas.',
 };
 
 /**
@@ -22,7 +22,7 @@ export default function NotFound() {
           Couldn&apos;t find that page.
         </h1>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          The URL doesn&apos;t map to anything on Rates Engine. If you
+          The URL doesn&apos;t map to anything on Stellar Atlas. If you
           followed a link, the destination may have been renamed or
           removed.
         </p>
@@ -55,7 +55,7 @@ export default function NotFound() {
           </Link>
         </li>
         <li>
-          <a href="https://docs.ratesengine.net" className="hover:text-brand-600">
+          <a href="https://docs.stellaratlas.xyz" className="hover:text-brand-600">
             API docs
           </a>
         </li>

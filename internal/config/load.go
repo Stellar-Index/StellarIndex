@@ -66,16 +66,16 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 // the same invariants as file-driven values should use [LoadWithEnv]
 // or call [Config.Validate] after this.
 func (c *Config) ApplyEnvOverrides() {
-	if v := os.Getenv("RATESENGINE_POSTGRES_DSN"); v != "" {
+	if v := os.Getenv("STELLARATLAS_POSTGRES_DSN"); v != "" {
 		c.Storage.PostgresDSN = v
 	}
-	if v := os.Getenv("RATESENGINE_REDIS_PASSWORD"); v != "" {
+	if v := os.Getenv("STELLARATLAS_REDIS_PASSWORD"); v != "" {
 		c.Storage.RedisPassword = v
 	}
-	if v := os.Getenv("RATESENGINE_S3_ACCESS_KEY"); v != "" {
+	if v := os.Getenv("STELLARATLAS_S3_ACCESS_KEY"); v != "" {
 		c.Storage.S3AccessKeyEnv = v
 	}
-	if v := os.Getenv("RATESENGINE_S3_SECRET_KEY"); v != "" {
+	if v := os.Getenv("STELLARATLAS_S3_SECRET_KEY"); v != "" {
 		c.Storage.S3SecretKeyEnv = v
 	}
 	if v := os.Getenv("EXCHANGERATESAPI_KEY"); v != "" {
@@ -93,14 +93,14 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
 		c.External.Chainlink.RPCUrl = v
 	}
-	if v := os.Getenv("RATESENGINE_STRIPE_WEBHOOK_SECRET"); v != "" {
+	if v := os.Getenv("STELLARATLAS_STRIPE_WEBHOOK_SECRET"); v != "" {
 		c.API.Stripe.SigningSecret = v
 	}
 }
 
 // LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate].
 // Use this in binaries so a bad env-var value (e.g., malformed
-// RATESENGINE_POSTGRES_DSN overriding a known-good DSN from the file)
+// STELLARATLAS_POSTGRES_DSN overriding a known-good DSN from the file)
 // fails fast with the same ErrInvalidConfig error as a bad file,
 // instead of opening the pool and getting a confusing DB error
 // at connect time.

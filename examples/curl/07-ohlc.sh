@@ -9,7 +9,7 @@ set -euo pipefail
 # Defaults to USDC/XLM, the highest-volume on-chain pair.
 # /v1/ohlc requires actual on-chain trade data — fiat quotes
 # (`fiat:USD`) only work on /v1/price (synthesised from external CEX).
-BASE="${API_BASE_URL:-https://api.ratesengine.net}"
+BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
 BASE_ASSET="${1:-USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN}"
 QUOTE="${2:-native}"
 

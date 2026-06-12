@@ -11,7 +11,7 @@ a blank page.
 
 | File | When to send | Where |
 |---|---|---|
-| [`launch-announcement.md`](launch-announcement.md) | T-0 (immediately after the cut completes) | Public — email to RFP contacts, Slack `#rates-engine-public`, project handle |
+| [`launch-announcement.md`](launch-announcement.md) | T-0 (immediately after the cut completes) | Public — email to RFP contacts, Slack `#stellar-atlas-public`, project handle |
 | [`onboarding-email.md`](onboarding-email.md) | First customer signup post-launch | Direct reply to the request, or in-app onboarding |
 | [`incident-update.md`](incident-update.md) | Mid-incident customer-facing update | Status-page issue body + email to affected customers |
 | [`maintenance-window.md`](maintenance-window.md) | Pre-cut maintenance heads-up | Status page + customer email a day ahead of any planned change |
@@ -27,12 +27,12 @@ a blank page.
   status-page corpus; F-1211, 2026-05-13 — earlier prose pointed
   at retired external-issue IDs). Author the Markdown file per
   [`runbooks/sev-status-page-update.md`](../../docs/operations/runbooks/sev-status-page-update.md);
-  `ratesengine-ops emit-incident --slug <slug>` fires the
+  `stellaratlas-ops emit-incident --slug <slug>` fires the
   customer-webhook fan-out from the same source.
 - **`{{tag}}`** — the CalVer release tag (e.g. `2026.07.15.1`).
 - **`{{utc_time}}`** — RFC-3339 UTC timestamp; e.g.
   `2026-05-03T14:23:00Z`.
-- **`{{api_url}}`** — `https://api.ratesengine.net/v1` for
+- **`{{api_url}}`** — `https://api.stellaratlas.xyz/v1` for
   prod; staging URL for non-prod sends.
 
 ## Edit-then-commit cycle

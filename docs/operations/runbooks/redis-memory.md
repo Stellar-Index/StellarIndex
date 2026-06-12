@@ -5,13 +5,13 @@ status: draft
 severity: P2
 ---
 
-# Runbook — `ratesengine_redis_memory_saturated` / `_evictions_high`
+# Runbook — `stellaratlas_redis_memory_saturated` / `_evictions_high`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `ratesengine_redis_memory_saturated` (> 90 % memory), `ratesengine_redis_evictions_high` (> 100/s) |
+| Alerts | `stellaratlas_redis_memory_saturated` (> 90 % memory), `stellaratlas_redis_evictions_high` (> 100/s) |
 | Severity | P2 (ticket) |
 | Detected by | `deploy/monitoring/rules/cache.yml` |
 | Typical MTTR | 30 min (scale-up) – hours (cleanup / policy change) |
@@ -21,7 +21,7 @@ severity: P2
 
 - `redis_memory_used_bytes / redis_memory_max_bytes > 0.90` for ≥ 5 min, **or**
 - `rate(redis_evicted_keys_total[5m]) > 100` for ≥ 5 min.
-- API panel: `ratesengine_sep1_cache_ops_total{result="miss"}`
+- API panel: `stellaratlas_sep1_cache_ops_total{result="miss"}`
   rate climbs; hit-rate drops.
 - Latency alert may follow if the miss storm hits a popular asset.
 

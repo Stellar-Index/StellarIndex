@@ -6,7 +6,7 @@ import { loadIncidents } from '@/lib/incidents';
 // time and emitted as a static file.
 export const dynamic = 'force-static';
 
-const SITE_URL = 'https://status.ratesengine.net';
+const SITE_URL = 'https://status.stellaratlas.xyz';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date().toISOString();

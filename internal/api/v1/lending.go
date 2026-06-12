@@ -58,7 +58,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 		if handlerTimedOut(lpCtx, err) {
 			s.logger.Warn("ListBlendPools deadline exceeded")
 			writeProblem(w, r,
-				"https://api.ratesengine.net/errors/lending-timeout",
+				"https://api.stellaratlas.xyz/errors/lending-timeout",
 				"Lending pools query timed out", http.StatusServiceUnavailable,
 				"the per-pool auction + user aggregates didn't return in 8s; retry shortly.")
 			return
@@ -70,7 +70,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("ListBlendPools failed", "err", err)
 		writeProblem(w, r,
-			"https://api.ratesengine.net/errors/internal",
+			"https://api.stellaratlas.xyz/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

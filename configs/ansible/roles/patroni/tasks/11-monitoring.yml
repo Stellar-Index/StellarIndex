@@ -31,13 +31,13 @@
       STATE=$(echo "$JSON" | jq -r '.members[]? | select(.host == "{{ ansible_host }}") | .state // "unknown"')
 
       cat > "$TMP" <<EOF
-      # HELP ratesengine_patroni_role 1 if this node has the named role, 0 otherwise.
-      # TYPE ratesengine_patroni_role gauge
-      ratesengine_patroni_role{role="leader"} $([[ "$ROLE" == "leader" ]] && echo 1 || echo 0)
-      ratesengine_patroni_role{role="replica"} $([[ "$ROLE" == "replica" ]] && echo 1 || echo 0)
-      # HELP ratesengine_patroni_running 1 if Patroni reports state=running for this node.
-      # TYPE ratesengine_patroni_running gauge
-      ratesengine_patroni_running $([[ "$STATE" == "running" ]] && echo 1 || echo 0)
+      # HELP stellaratlas_patroni_role 1 if this node has the named role, 0 otherwise.
+      # TYPE stellaratlas_patroni_role gauge
+      stellaratlas_patroni_role{role="leader"} $([[ "$ROLE" == "leader" ]] && echo 1 || echo 0)
+      stellaratlas_patroni_role{role="replica"} $([[ "$ROLE" == "replica" ]] && echo 1 || echo 0)
+      # HELP stellaratlas_patroni_running 1 if Patroni reports state=running for this node.
+      # TYPE stellaratlas_patroni_running gauge
+      stellaratlas_patroni_running $([[ "$STATE" == "running" ]] && echo 1 || echo 0)
       EOF
       mv -f "$TMP" "$OUT"
 

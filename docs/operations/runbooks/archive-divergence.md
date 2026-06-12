@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_stellar_archive_divergence`
+# Runbook — `stellaratlas_stellar_archive_divergence`
 
 > **Deployment posture (2026-04-30).** r1's `/srv/history-archive/`
 > is a static mirror filled by a one-shot `stellar-archivist mirror`
 > (completed) — there is no running publisher today
 > ([r1-deployment-state.md](../r1-deployment-state.md)). The alert
-> consumes `ratesengine_archive_divergence_total` written by
+> consumes `stellaratlas_archive_divergence_total` written by
 > `scripts/ops/archive-cross-check.sh`, which compares our mirror to
 > reference archives on a schedule; the alert is **live** and can
 > fire on r1 today. But because we are *not* publishing, root causes
@@ -27,7 +27,7 @@ severity: P1
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_stellar_archive_divergence` |
+| Alert | `stellaratlas_stellar_archive_divergence` |
 | Severity | P1 (page — SEV-1) |
 | Detected by | `deploy/monitoring/rules/stellar.yml` |
 | Typical MTTR | hours |
@@ -35,7 +35,7 @@ severity: P1
 
 ## Symptoms
 
-- `ratesengine_archive_divergence_total > 0`. Fires immediately
+- `stellaratlas_archive_divergence_total > 0`. Fires immediately
   (`for: 0s`) — there's no such thing as a "transient" divergence.
 - Our history-scanner job (runs per checkpoint) reports a hash
   mismatch against the set of reference archives it cross-checks.

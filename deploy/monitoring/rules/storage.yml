@@ -2,7 +2,7 @@
 # Storage alerts — Postgres + TimescaleDB + pgBackRest.
 
 groups:
-  - name: ratesengine.storage
+  - name: stellaratlas.storage
     interval: 30s
     rules:
 
@@ -12,14 +12,14 @@ groups:
       # and this PAGE was dead. postgres_exporter exposes `pg_up` (1 =
       # the exporter reached the server, 0 = it could not) — the direct
       # liveness signal for the single-node r1 primary.
-      - alert: ratesengine_timescale_primary_down
+      - alert: stellaratlas_timescale_primary_down
         expr: pg_up == 0
         for: 30s
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/timescale-primary-down.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/timescale-primary-down.md
         annotations:
           summary: "TimescaleDB primary is down (SEV-1)"
           description: |
@@ -36,16 +36,16 @@ groups:
       # the next cascade surfaces in minutes instead of hours.
       # The indexer's `watchPostgresPing` goroutine probes the
       # pool every 60 s and increments
-      # `ratesengine_postgres_ping_total{outcome="error"}` per
+      # `stellaratlas_postgres_ping_total{outcome="error"}` per
       # failure.
-      - alert: ratesengine_postgres_ping_failing
-        expr: rate(ratesengine_postgres_ping_total{outcome="error"}[5m]) > 0.5
+      - alert: stellaratlas_postgres_ping_failing
+        expr: rate(stellaratlas_postgres_ping_total{outcome="error"}[5m]) > 0.5
         for: 2m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/postgres-ping-failing.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/postgres-ping-failing.md
         annotations:
           summary: "Indexer postgres pool ping failing (F-0151)"
           description: |
@@ -57,14 +57,14 @@ groups:
             primary postgres unit and the indexer journal for the
             `pool may be wedged` log line.
 
-      - alert: ratesengine_timescale_replica_lag
+      - alert: stellaratlas_timescale_replica_lag
         expr: pg_replication_lag_seconds > 5
         for: 2m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/replica-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/replica-lag.md
         annotations:
           summary: "Postgres sync replica lagging {{ $value }}s"
           description: |
@@ -86,7 +86,7 @@ groups:
       # currently scraped on R1 — see configs/prometheus/rules.r1/
       # README.md "remaining files NOT shipped"; the alert lights
       # up when the exporter lands.)
-      - alert: ratesengine_timescale_lock_table_pressure
+      - alert: stellaratlas_timescale_lock_table_pressure
         expr: |
           pg_locks_count
             / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)
@@ -94,9 +94,9 @@ groups:
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/pg-conns-saturated.md
         annotations:
           summary: "Postgres lock-table > 70% saturated (P3)"
           description: |
@@ -107,32 +107,32 @@ groups:
             `postgres_max_locks_per_transaction` in the archival-node
             role and reapply.
 
-      - alert: ratesengine_timescale_disk_full
+      - alert: stellaratlas_timescale_disk_full
         expr: |
           (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql"} /
            node_filesystem_size_bytes{mountpoint="/var/lib/postgresql"}) * 100 < 10
         for: 1m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/db-disk-full.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/db-disk-full.md
         annotations:
           summary: "Postgres disk {{ $value | humanize }}% free (SEV-1)"
           description: |
             Postgres data volume on {{ $labels.instance }} has < 10 % free.
             WAL will refuse to write once full, halting all writes. Act now.
 
-      - alert: ratesengine_timescale_disk_warning
+      - alert: stellaratlas_timescale_disk_warning
         expr: |
           (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql"} /
            node_filesystem_size_bytes{mountpoint="/var/lib/postgresql"}) * 100 < 20
         for: 10m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/db-disk-full.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/db-disk-full.md
         annotations:
           summary: "Postgres disk {{ $value | humanize }}% free"
           description: |
@@ -147,16 +147,16 @@ groups:
       # fired. Without this rule the operator sees the symptom
       # downstream (Redis MISCONF → /v1/price 404s) rather than
       # the cause.
-      - alert: ratesengine_node_root_disk_full
+      - alert: stellaratlas_node_root_disk_full
         expr: |
           (node_filesystem_avail_bytes{mountpoint="/"} /
            node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
         for: 1m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
           description: |
@@ -167,16 +167,16 @@ groups:
             `/v1/price` 404s on rewritten / triangulated /
             stablecoin-proxy pairs (incident 2026-05-10).
 
-      - alert: ratesengine_node_root_disk_warning
+      - alert: stellaratlas_node_root_disk_warning
         expr: |
           (node_filesystem_avail_bytes{mountpoint="/"} /
            node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
         for: 10m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
           description: |
@@ -193,14 +193,14 @@ groups:
       # the disk could be on a separate mount, or the failure
       # could be caused by something other than disk space
       # (permissions, fork failure on memory pressure).
-      - alert: ratesengine_redis_writes_blocked
+      - alert: stellaratlas_redis_writes_blocked
         expr: redis_rdb_last_bgsave_status == 0
         for: 1m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: cache
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
           summary: "Redis BGSAVE failing on {{ $labels.instance }} (SEV-1) — writes blocked"
           description: |
@@ -213,16 +213,16 @@ groups:
             (typically `/`), then `redis-cli BGSAVE` to clear the
             stop-writes block.
 
-      - alert: ratesengine_timescale_connections_saturated
+      - alert: stellaratlas_timescale_connections_saturated
         expr: |
           (pg_stat_activity_count / on (instance)
            pg_settings_max_connections) * 100 > 80
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/pg-conns-saturated.md
         annotations:
           summary: "Postgres connection pool {{ $value | humanize }}% used"
           description: |
@@ -232,9 +232,9 @@ groups:
       # ── INERT (F-1329) — NO PRODUCER ──────────────────────────────
       # The two TimescaleDB-internal alerts below reference metrics that
       # NOTHING emits today:
-      #   - ratesengine_cagg_last_refresh_unix /
-      #     ratesengine_cagg_refresh_interval_seconds (cagg-stale)
-      #   - ratesengine_uncompressed_chunks_older_than_7d (compression-lag)
+      #   - stellaratlas_cagg_last_refresh_unix /
+      #     stellaratlas_cagg_refresh_interval_seconds (cagg-stale)
+      #   - stellaratlas_uncompressed_chunks_older_than_7d (compression-lag)
       # These describe TimescaleDB job-scheduler state
       # (timescaledb_information.job_stats / .chunks). No periodic worker in
       # this repo queries those views and re-exports them as Prometheus
@@ -245,17 +245,17 @@ groups:
       # cannot fire; they are kept (signal matters) but INERT and TRACKED
       # in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list. To un-inert:
       # add the producer, then drop the entries from KNOWN_INERT.
-      - alert: ratesengine_timescale_cagg_stale
-        # INERT: ratesengine_cagg_last_refresh_unix /
-        # ratesengine_cagg_refresh_interval_seconds have no producer.
+      - alert: stellaratlas_timescale_cagg_stale
+        # INERT: stellaratlas_cagg_last_refresh_unix /
+        # stellaratlas_cagg_refresh_interval_seconds have no producer.
         expr: |
-          (time() - ratesengine_cagg_last_refresh_unix) > 5 * ratesengine_cagg_refresh_interval_seconds
+          (time() - stellaratlas_cagg_last_refresh_unix) > 5 * stellaratlas_cagg_refresh_interval_seconds
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/cagg-stale.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/cagg-stale.md
         annotations:
           summary: "Continuous aggregate {{ $labels.cagg }} hasn't refreshed"
           description: |
@@ -263,15 +263,15 @@ groups:
             overdue. API reads from this CAGG will return stale data until it
             refreshes; check timescaledb job-scheduler health.
 
-      - alert: ratesengine_timescale_compression_lag
-        # INERT: ratesengine_uncompressed_chunks_older_than_7d has no producer.
-        expr: ratesengine_uncompressed_chunks_older_than_7d > 0
+      - alert: stellaratlas_timescale_compression_lag
+        # INERT: stellaratlas_uncompressed_chunks_older_than_7d has no producer.
+        expr: stellaratlas_uncompressed_chunks_older_than_7d > 0
         for: 24h
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/compression-lag.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/compression-lag.md
         annotations:
           summary: "{{ $value }} chunks older than 7d are still uncompressed"
           description: |
@@ -279,9 +279,9 @@ groups:
             aren't compressed, the timescaledb job scheduler may be misfiring.
 
       # F-1329: repointed off the never-emitted
-      # `ratesengine_pgbackrest_last_success_unix` /
-      # `ratesengine_pgbackrest_expected_interval_seconds` pair (note the
-      # bogus `ratesengine_` prefix — the SCRAPED exporter is woblerr's
+      # `stellaratlas_pgbackrest_last_success_unix` /
+      # `stellaratlas_pgbackrest_expected_interval_seconds` pair (note the
+      # bogus `stellaratlas_` prefix — the SCRAPED exporter is woblerr's
       # pgbackrest_exporter, job `pgbackrest_exporter`, which emits
       # `pgbackrest_*`). The exporter computes
       # `pgbackrest_backup_since_last_completion_seconds` server-side as
@@ -291,7 +291,7 @@ groups:
       # backup of ANY type satisfies the alert, and exclude the exporter's
       # aggregate pseudo-stanzas so a per-stanza failure can't be masked.
       # Backups can now page if they silently stop (the F-1329 gap).
-      - alert: ratesengine_timescale_backup_failed
+      - alert: stellaratlas_timescale_backup_failed
         expr: |
           min by (stanza) (
             pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}
@@ -299,16 +299,16 @@ groups:
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/backup-failed.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/backup-failed.md
         annotations:
           summary: "pgBackRest stanza {{ $labels.stanza }} last backup {{ $value | humanizeDuration }} ago"
           description: |
             Backup has missed at least one expected daily cycle (no completed
             full/diff/incr in > 25 h). Check pgBackRest logs + MinIO connectivity.
 
-      - alert: ratesengine_timescale_backup_none_24h
+      - alert: stellaratlas_timescale_backup_none_24h
         expr: |
           min by (stanza) (
             pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}
@@ -316,9 +316,9 @@ groups:
         for: 5m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: storage
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/backup-failed.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/backup-failed.md
         annotations:
           summary: "No successful Postgres backup in > 24 h (SEV-1)"
           description: |

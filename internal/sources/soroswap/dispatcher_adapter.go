@@ -142,7 +142,7 @@ func (*Decoder) Name() string { return SourceName }
 //   - pair-contract events (swap/sync/deposit/withdraw/skim) match ONLY
 //     when the emitter is a REGISTERED Soroswap pair. The registry is
 //     seeded from factory new_pair events (live), a startup DB warm, and
-//     the genesis factory walk (`ratesengine-ops seed-soroswap-pairs`),
+//     the genesis factory walk (`stellaratlas-ops seed-soroswap-pairs`),
 //     so a real pair is always present before its events arrive
 //     (chronological: a pair's new_pair precedes its first swap), while
 //     a topic-collision from a non-Soroswap contract is rejected.

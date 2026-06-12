@@ -131,8 +131,8 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 		gotBody      []byte
 	)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotSignature = r.Header.Get("X-RatesEngine-Signature")
-		gotEventHdr = r.Header.Get("X-RatesEngine-Event")
+		gotSignature = r.Header.Get("X-StellarAtlas-Signature")
+		gotEventHdr = r.Header.Get("X-StellarAtlas-Event")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -322,7 +322,7 @@ var _ = errors.Is
 // TestWorker_DeliveryDurationMetricRecorded pins the wave-88
 // (2026-05-13) latency-histogram wiring: a successful delivery
 // produces a sample on
-// `ratesengine_customer_webhook_delivery_duration_seconds`
+// `stellaratlas_customer_webhook_delivery_duration_seconds`
 // labelled `outcome="delivered"`. Without this test, a future
 // refactor could silently delete the timing call without any
 // signal — the existing TestWorker_DeliversOn2xx asserts the

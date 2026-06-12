@@ -1,7 +1,7 @@
 # Phoenix — contract & event verification
 
 > **For the Phoenix team:** this is the complete set of Phoenix contracts
-> and events Rates Engine ingests. Please confirm the factory, multihop,
+> and events Stellar Atlas ingests. Please confirm the factory, multihop,
 > and pool list are correct and complete — **especially any pool not
 > listed here**, since we can't enumerate them from on-chain events (see
 > below) and rely on this list being complete.

@@ -5,7 +5,7 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_timescale_backup_failed` / `_backup_none_24h`
+# Runbook — `stellaratlas_timescale_backup_failed` / `_backup_none_24h`
 
 ## At a glance
 

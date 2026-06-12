@@ -1,11 +1,11 @@
-// Thin fetch wrapper for the Rates Engine API.
+// Thin fetch wrapper for the Stellar Atlas API.
 //
 // Resolves the base URL from `NEXT_PUBLIC_API_BASE_URL` (set in
 // `next.config.mjs`). Use this everywhere instead of constructing
 // URLs by hand so the `<>` reveal can introspect every request.
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz';
 
 export type RequestExample = {
   method: 'GET' | 'POST';

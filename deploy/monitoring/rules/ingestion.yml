@@ -4,7 +4,7 @@
 # under docs/operations/runbooks/.
 
 groups:
-  - name: ratesengine.ingestion
+  - name: stellaratlas.ingestion
     interval: 30s
     rules:
 
@@ -17,10 +17,10 @@ groups:
       # F-1208 (codex audit-2026-05-12): per-source-class windows.
       # See configs/prometheus/rules.r1/ingestion.yml for the
       # rationale + the matching R1 overlay.
-      - alert: ratesengine_ingestion_source_stopped
+      - alert: stellaratlas_ingestion_source_stopped
         expr: |
-          sum by (source) (rate(ratesengine_source_events_total[30m])) == 0
-          and on (source) ratesengine_source_enabled == 1
+          sum by (source) (rate(stellaratlas_source_events_total[30m])) == 0
+          and on (source) stellaratlas_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "binance",       "", "") or
             label_replace(vector(1), "source", "bitstamp",      "", "") or
@@ -37,21 +37,21 @@ groups:
         for: 15m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Source {{ $labels.source }} has stopped ingesting"
           description: |
             No events from source {{ $labels.source }} in the last 30 minutes,
             sustained for ≥ 15 min. The source is configured
             as enabled in ingestion.enabled_sources.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
 
-      - alert: ratesengine_ingestion_source_stopped_low_volume_dex
+      - alert: stellaratlas_ingestion_source_stopped_low_volume_dex
         expr: |
-          sum by (source) (rate(ratesengine_source_events_total[6h])) == 0
-          and on (source) ratesengine_source_enabled == 1
+          sum by (source) (rate(stellaratlas_source_events_total[6h])) == 0
+          and on (source) stellaratlas_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "comet",    "", "") or
             label_replace(vector(1), "source", "phoenix",  "", "") or
@@ -61,21 +61,21 @@ groups:
         for: 30m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Low-volume Soroban DEX {{ $labels.source }} silent 6+ hours"
           description: |
             For low-volume Soroban DEXes this is unusual but not
             necessarily an outage — check the contract on
             stellar.expert before paging the indexer team.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
 
-      - alert: ratesengine_ingestion_source_stopped_daily_publisher
+      - alert: stellaratlas_ingestion_source_stopped_daily_publisher
         expr: |
-          sum by (source) (rate(ratesengine_source_events_total[30h])) == 0
-          and on (source) ratesengine_source_enabled == 1
+          sum by (source) (rate(stellaratlas_source_events_total[30h])) == 0
+          and on (source) stellaratlas_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "ecb",  "", "") or
             label_replace(vector(1), "source", "band", "", "")
@@ -83,43 +83,43 @@ groups:
         for: 1h
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Daily publisher {{ $labels.source }} silent 30+ hours"
           description: |
             ECB publishes daily; Band publishes on relayer push
             (also roughly daily). 30h gives a one-day buffer plus
             ample slack for upstream cadence variation.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/source-stopped.md
 
-      - alert: ratesengine_ingestion_all_sources_stopped
-        expr: sum(rate(ratesengine_source_events_total[5m])) == 0
+      - alert: stellaratlas_ingestion_all_sources_stopped
+        expr: sum(rate(stellaratlas_source_events_total[5m])) == 0
         for: 3m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/all-ingestion-down.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/all-ingestion-down.md
         annotations:
           summary: "All ingestion sources have stopped (SEV-1)"
           description: |
             No events from any source in the last 3 minutes. API data will go
             stale within 60 s. This is a P1 — check shared upstream (stellar-rpc)
             or shared storage (Timescale) before restarting the indexer.
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/all-ingestion-down.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
-      - alert: ratesengine_ingestion_cursor_stuck
+      - alert: stellaratlas_ingestion_cursor_stuck
         expr: |
-          increase(ratesengine_cursor_last_ledger[5m]) == 0
-          and on (source) ratesengine_source_enabled == 1
+          increase(stellaratlas_cursor_last_ledger[5m]) == 0
+          and on (source) stellaratlas_source_enabled == 1
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/cursor-stuck.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/cursor-stuck.md
         annotations:
           summary: "Cursor for {{ $labels.source }} not advancing"
           description: |
@@ -128,14 +128,14 @@ groups:
             failed silently, or the orchestrator's cursor-persister goroutine
             is wedged.
 
-      - alert: ratesengine_ingestion_orphan_events
-        expr: sum by (source) (rate(ratesengine_source_orphan_events_total[10m])) > 10/60
+      - alert: stellaratlas_ingestion_orphan_events
+        expr: sum by (source) (rate(stellaratlas_source_orphan_events_total[10m])) > 10/60
         for: 15m
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/orphan-events.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/orphan-events.md
         annotations:
           summary: "Source {{ $labels.source }} orphan events {{ $value | humanize }}/sec"
           description: |
@@ -145,14 +145,14 @@ groups:
             15 min. Likely a page-boundary issue in the RPC subscription
             or a contract-schema shift we haven't accounted for.
 
-      - alert: ratesengine_ingestion_decode_error
-        expr: rate(ratesengine_source_decode_errors_total[5m]) > 1
+      - alert: stellaratlas_ingestion_decode_error
+        expr: rate(stellaratlas_source_decode_errors_total[5m]) > 1
         for: 5m
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/decode-errors.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/decode-errors.md
         annotations:
           summary: "Decode errors on {{ $labels.source }} at {{ $value }}/sec"
           description: |
@@ -160,14 +160,14 @@ groups:
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
 
-      - alert: ratesengine_ingestion_discovery_drops
-        expr: increase(ratesengine_discovery_dropped_hits_total[10m]) > 0
+      - alert: stellaratlas_ingestion_discovery_drops
+        expr: increase(stellaratlas_discovery_dropped_hits_total[10m]) > 0
         for: 10m
         labels:
           severity: informational
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/discovery-drops.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/discovery-drops.md
         annotations:
           summary: "Discovery sink is dropping hits"
           description: |
@@ -176,14 +176,14 @@ groups:
             stall the main ingest path, but discovery coverage is degrading
             under recorder pressure or buffer saturation.
 
-      - alert: ratesengine_ingestion_insert_errors
-        expr: sum by (source, kind) (rate(ratesengine_source_insert_errors_total[5m])) > 0.1
+      - alert: stellaratlas_ingestion_insert_errors
+        expr: sum by (source, kind) (rate(stellaratlas_source_insert_errors_total[5m])) > 0.1
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/insert-errors.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/insert-errors.md
         annotations:
           summary: "Insert errors on {{ $labels.source }}/{{ $labels.kind }} at {{ $value }}/sec"
           description: |
@@ -209,17 +209,17 @@ groups:
       # nonzero duplicate rate AND zero new rate for 10 min. Ticket
       # severity (not page) because the symptom is degraded
       # freshness, not outage.
-      - alert: ratesengine_ingestion_duplicate_flood
+      - alert: stellaratlas_ingestion_duplicate_flood
         expr: |
-          sum by (source) (rate(ratesengine_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
+          sum by (source) (rate(stellaratlas_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
           and on (source)
-          sum by (source) (rate(ratesengine_trade_insert_outcome_total{outcome="new"}[10m])) == 0
+          sum by (source) (rate(stellaratlas_trade_insert_outcome_total{outcome="new"}[10m])) == 0
         for: 10m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
         annotations:
           summary: "Source {{ $labels.source }} producing duplicates only (cursor replay or stuck-tip)"
           description: |
@@ -234,7 +234,7 @@ groups:
             channel feeding the sink from an old replay loop, or a
             back-pressure event that lost in-flight events.
 
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
       # Timestamp-shape sibling to the rate-shape duplicate_flood
       # above. Fires when a source's last successful INSERT is over
@@ -243,31 +243,31 @@ groups:
       # sources (phoenix, comet) where the rate-shape alert never
       # crosses its 0.5/s threshold. The 1 h budget tolerates
       # legitimately-bursty sources without false-firing.
-      - alert: ratesengine_ingestion_source_insert_stale
+      - alert: stellaratlas_ingestion_source_insert_stale
         expr: |
-          time() - ratesengine_source_last_insert_unix > 3600
-          and on (source) ratesengine_source_enabled == 1
+          time() - stellaratlas_source_last_insert_unix > 3600
+          and on (source) stellaratlas_source_enabled == 1
         for: 10m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
         annotations:
           summary: "Source {{ $labels.source }} hasn't landed a new row in >1h"
           description: |
-            ratesengine_source_last_insert_unix{source="{{ $labels.source }}"}
+            stellaratlas_source_last_insert_unix{source="{{ $labels.source }}"}
             hasn't advanced in over an hour while the source is
             still enabled. Same root-cause cluster as the
             duplicate-flood alert; the timestamp-shape signal
             catches low-volume sources whose insert rate sits
             under the rate-shape alert's 0.5/s threshold.
 
-            Cross-check ratesengine_source_last_event_unix — if the
+            Cross-check stellaratlas_source_last_event_unix — if the
             dispatcher is still matching events, the gap is the
             stuck-tip diagnostic (cursor advances, data doesn't).
 
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
       # Data-derived gap detector. The cursor-derived density
       # projection in /v1/diagnostics/ingestion measures process
@@ -284,54 +284,54 @@ groups:
       # by the brief window between cascade-clear + targeted-backfill
       # completion. 1000 ledgers (~1.5 h network time) filters out
       # legitimate no-Soroban-activity stretches.
-      - alert: ratesengine_ingest_gap_detected
+      - alert: stellaratlas_ingest_gap_detected
         expr: |
-          max by (source) (ratesengine_ingest_gap_max_size_ledgers) > 1000
+          max by (source) (stellaratlas_ingest_gap_max_size_ledgers) > 1000
         for: 15m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detected.md
         annotations:
           summary: "Data-coverage gap of {{ $value }} ledgers in source={{ $labels.source }}"
           description: |
-            max by (source) (ratesengine_ingest_gap_max_size_ledgers{source="{{ $labels.source }}"})
+            max by (source) (stellaratlas_ingest_gap_max_size_ledgers{source="{{ $labels.source }}"})
             = {{ $value }} ledgers — a contiguous block of {{ $labels.source }}
             ingest is missing in one of its per-source hypertables.
             Cursor inventory may read fine; this alert reads the data
             tables directly.
 
             Resolve via:
-              ratesengine-ops find-data-gaps --config /etc/ratesengine.toml --source {{ $labels.source }} --output text
+              stellaratlas-ops find-data-gaps --config /etc/stellaratlas.toml --source {{ $labels.source }} --output text
             for per-source diagnosis, then for Soroban-derived sources:
-              ratesengine-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
+              stellaratlas-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
             For non-projected sources (sdex / soroban-events):
-              ratesengine-ops backfill --source <name> --from F --to T
+              stellaratlas-ops backfill --source <name> --from F --to T
 
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
       # Meta-alert: gap detector itself is wedged. Fires when
       # runs_total{outcome="ok"} stops incrementing AND the gauges
       # aren't being refreshed — distinguishes "no gaps" (healthy)
       # from "detector silent" (broken).
-      - alert: ratesengine_ingest_gap_detector_silent
+      - alert: stellaratlas_ingest_gap_detector_silent
         expr: |
-          rate(ratesengine_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0
+          rate(stellaratlas_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0
           OR
-          absent_over_time(ratesengine_ingest_gap_detector_runs_total[15m]) == 1
+          absent_over_time(stellaratlas_ingest_gap_detector_runs_total[15m]) == 1
         for: 10m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: ingestion
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
         annotations:
           summary: "Data-gap detector hasn't run in >15 min"
           description: |
             The aggregator's data-gap detector goroutine appears
             stuck or absent. Without it the operator-facing
-            `ratesengine_ingest_gap_max_size_ledgers` gauge stops
+            `stellaratlas_ingest_gap_max_size_ledgers` gauge stops
             updating — gauges read stale value until restart.
 
             Likely causes: aggregator binary crash-looping; Postgres
@@ -342,4 +342,4 @@ groups:
             Cross-check: aggregator service `active`?
             postgres_exporter targets `up`?
 
-            Runbook: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+            Runbook: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md

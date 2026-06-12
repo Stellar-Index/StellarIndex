@@ -14,10 +14,10 @@ Group=loki
 # F-1286 (codex audit-2026-05-13): MinIO credentials must come
 # from `/etc/default/loki` DIRECTLY as `AWS_ACCESS_KEY_ID=` and
 # `AWS_SECRET_ACCESS_KEY=`. Earlier templates used
-# `Environment=AWS_ACCESS_KEY_ID=${RATESENGINE_S3_ACCESS_KEY}`
+# `Environment=AWS_ACCESS_KEY_ID=${STELLARATLAS_S3_ACCESS_KEY}`
 # attempting to reuse the galexie convention's env-var names,
 # but systemd `Environment=` does NOT perform `$` expansion —
-# the literal `${RATESENGINE_S3_ACCESS_KEY}` string would be
+# the literal `${STELLARATLAS_S3_ACCESS_KEY}` string would be
 # passed to Loki as the access key, failing S3 chunk writes
 # while the process otherwise looked healthy.
 #
@@ -27,7 +27,7 @@ Group=loki
 #   AWS_SECRET_ACCESS_KEY=<value>
 #
 # (Galexie's separate /etc/default/galexie can still use the
-# RATESENGINE_S3_* convention — these are two different
+# STELLARATLAS_S3_* convention — these are two different
 # EnvironmentFile sources.)
 EnvironmentFile=-/etc/default/loki
 

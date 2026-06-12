@@ -80,7 +80,7 @@ role lands so the source-of-truth stops contradicting itself.
 | Failover RTO | ha-plan §3.4 | 15-30 s |
 | Cross-region replication | ha-plan §3.4 | Explicitly NO — cache-only, re-hydrates from Timescale |
 | Front | **shipped** | Client-side Sentinel-aware discovery via go-redis `FailoverClient` in `internal/storage/redisclient/`. Application binaries pass `redis_sentinel_addrs` + `redis_master_name` + `redis_username` + `redis_password` and the client resolves the current primary automatically. No HAProxy or VIP required. |
-| Auth | This role decides | **shipped**. `requirepass` + `masterauth` on the Redis instance, `requirepass` on the Sentinel listener (F-1271, wave 106), optional ACL lockdown via `redis_acl_lockdown` flag with named `ratesengine` + `redis_exporter` users (F-1272, waves 106-107). Vault-supplied; no public listener. |
+| Auth | This role decides | **shipped**. `requirepass` + `masterauth` on the Redis instance, `requirepass` on the Sentinel listener (F-1271, wave 106), optional ACL lockdown via `redis_acl_lockdown` flag with named `stellaratlas` + `redis_exporter` users (F-1272, waves 106-107). Vault-supplied; no public listener. |
 
 ## Layout
 
@@ -121,7 +121,7 @@ all:
         cache-02: { ansible_host: 10.0.0.22, redis_role: replica }
         cache-03: { ansible_host: 10.0.0.23, redis_role: replica }
       vars:
-        redis_sentinel_master_name: ratesengine-r1-cache
+        redis_sentinel_master_name: stellaratlas-r1-cache
         redis_sentinel_quorum: 2
         redis_persistence_dir: /var/lib/redis
         redis_aof_appendfsync: everysec
@@ -223,7 +223,7 @@ In Go, `go-redis/redis/v9` supports this via:
 
 ```go
 client := redis.NewFailoverClient(&redis.FailoverOptions{
-    MasterName:    "ratesengine-r1-cache",
+    MasterName:    "stellaratlas-r1-cache",
     SentinelAddrs: []string{
         "cache-01.internal:26379",
         "cache-02.internal:26379",
@@ -376,12 +376,12 @@ Patroni test setup.
 3. **`redis_exporter` vs Redis's own `INFO` exposure?** Both
    work. Recommend `redis_exporter` for parity with the rest
    of the Prometheus stack and the existing
-   `ratesengine_redis_*` metric naming.
+   `stellaratlas_redis_*` metric naming.
 
 4. **Sentinel notifications**: Sentinel can call out to a
    script on `+failover-state-end-of-loop` events. Worth wiring
    to a webhook that posts to the incident channel? Recommend
-   yes, to a small dedicated channel (`#rates-engine-redis`)
+   yes, to a small dedicated channel (`#stellar-atlas-redis`)
    so on-call is paged via PagerDuty *and* sees the failover
    narrative in chat.
 

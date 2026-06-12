@@ -3,7 +3,7 @@
 # byte-identical across R1 / R2 / R3 (per ADR-0015).
 #
 # This is the load-bearing cross-region consistency claim: a
-# request to api.ratesengine.net resolves to whichever region is
+# request to api.stellaratlas.xyz resolves to whichever region is
 # closest, but the response should be identical regardless. If a
 # customer in EU sees a different price than a customer in APAC
 # for the same closed bucket + same pair, ADR-0015 is broken and
@@ -22,9 +22,9 @@
 #       # default pair set, default per-region URLs (only R1)
 #   PAIRS='native,fiat:USD;USDC-G...,fiat:USD' \
 #     ./scripts/dev/verify-cross-region.sh
-#   R1=https://api-r1.ratesengine.net \
-#     R2=https://api-r2.ratesengine.net \
-#     R3=https://api-r3.ratesengine.net \
+#   R1=https://api-r1.stellaratlas.xyz \
+#     R2=https://api-r2.stellaratlas.xyz \
+#     R3=https://api-r3.stellaratlas.xyz \
 #     ./scripts/dev/verify-cross-region.sh
 #   R2= R3= ./scripts/dev/verify-cross-region.sh
 #     # explicit "R1 only — R2/R3 not deployed yet"
@@ -41,7 +41,7 @@ set -euo pipefail
 # ─── Per-region URLs (override via env) ──────────────────────
 # Default R1 to the public hostname; default R2/R3 to empty so
 # pre-multi-region deployments skip them rather than fail.
-R1="${R1:-https://api.ratesengine.net}"
+R1="${R1:-https://api.stellaratlas.xyz}"
 R2="${R2:-}"
 R3="${R3:-}"
 

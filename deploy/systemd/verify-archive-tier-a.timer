@@ -20,7 +20,7 @@
 
 [Unit]
 Description=Nightly verify-archive Tier A (chain-link integrity)
-Documentation=https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/archival-node-bringup.md
+Documentation=https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/archival-node-bringup.md
 
 [Timer]
 OnCalendar=*-*-* 03:23:00 UTC

@@ -3,19 +3,19 @@
 # from docs/operations/cdn-setup.md against a live API host.
 #
 # Use after configuring a CDN (Cloudflare per the runbook) in
-# front of api.ratesengine.net to confirm the per-surface cache
+# front of api.stellaratlas.xyz to confirm the per-surface cache
 # policies are surviving the edge.
 #
 # Usage:
-#   ./scripts/dev/verify-cdn.sh                         # default: api.ratesengine.net
-#   ./scripts/dev/verify-cdn.sh https://staging.ratesengine.net   # override host
+#   ./scripts/dev/verify-cdn.sh                         # default: api.stellaratlas.xyz
+#   ./scripts/dev/verify-cdn.sh https://staging.stellaratlas.xyz   # override host
 #   API_KEY=ak_demo123 ./scripts/dev/verify-cdn.sh      # exercise auth bypass
 #
 # Exit code: 0 = all checks passed; 1 = one or more failures.
 
 set -euo pipefail
 
-HOST="${1:-https://api.ratesengine.net}"
+HOST="${1:-https://api.stellaratlas.xyz}"
 HOST="${HOST%/}"   # strip trailing slash
 
 PASS=0

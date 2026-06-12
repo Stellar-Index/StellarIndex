@@ -4,7 +4,7 @@ const nextConfig = {
 
   // Static-export the dashboard. Deployed to Cloudflare Pages
   // alongside the showcase. Auth is cookie-based: the API at
-  // api.ratesengine.net sets a Domain=.ratesengine.net cookie
+  // api.stellaratlas.xyz sets a Domain=.stellaratlas.xyz cookie
   // on /v1/auth/callback (see internal/api/v1/dashboardauth) so
   // every page loaded here can call /v1/account/* with
   // credentials: include and the cookie rides along
@@ -22,7 +22,7 @@ const nextConfig = {
     // The API origin the dashboard talks to. Override in CI / preview
     // builds for staging deployments.
     NEXT_PUBLIC_API_BASE_URL:
-      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.ratesengine.net',
+      process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellaratlas.xyz',
   },
 };
 

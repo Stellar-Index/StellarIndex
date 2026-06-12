@@ -24,7 +24,7 @@ recover."
 
 Read aloud at drill setup.
 
-- All sources healthy. `ratesengine_source_events_total` rate
+- All sources healthy. `stellaratlas_source_events_total` rate
   for every enabled source is within ±20% of baseline.
 - Stellar mainnet upgraded to **protocol 25 (hypothetical
   "Brillouin" upgrade) yesterday at 23:00 UTC**. The Rates
@@ -40,7 +40,7 @@ Read aloud at drill T+0.
 > At 09:17 UTC, the dashboard's *Ingestion → Decode errors*
 > panel begins to climb for the **soroswap** source. The rate
 > goes from 0/s baseline to 3/s sustained over 5 minutes.
-> `ratesengine_source_events_total{source="soroswap"}` rate is
+> `stellaratlas_source_events_total{source="soroswap"}` rate is
 > still positive (events ARE arriving) but every event is being
 > rejected.
 >
@@ -53,10 +53,10 @@ participants to narrate their response.
 
 | T+ | Beat |
 | --- | --- |
-| 0:00 | `ratesengine_ingestion_decode_error{source="soroswap"}` fires (>1/s for 5m). PagerDuty pages oncall (P3 → ticket; SEV-2 if it later escalates). |
+| 0:00 | `stellaratlas_ingestion_decode_error{source="soroswap"}` fires (>1/s for 5m). PagerDuty pages oncall (P3 → ticket; SEV-2 if it later escalates). |
 | 0:05 | Oncall reading the alert + linked runbook. |
 | 5:00 | Indexer logs grow: `decode: SCVal: unknown discriminant 99 at field 'amount'`. Repeats per event. |
-| 8:00 | `ratesengine_aggregator_class_drop_spike` fires — VWAP for the affected pairs has lost soroswap as a contributor. |
+| 8:00 | `stellaratlas_aggregator_class_drop_spike` fires — VWAP for the affected pairs has lost soroswap as a contributor. |
 | 12:00 | Customer DM: "Why is the XLM/USDC price tracking only the SDEX side now?" |
 | 18:00 | Aquarius/Phoenix/Comet keep working perfectly. Soroswap-only failure. |
 | 25:00 | Searching changelog: stellar-core 25.0.0 release notes mention an SCVal type-tag enum extension. Likely the cause. |
@@ -89,7 +89,7 @@ Per SEV-2 timelines in [§2](../../sev-playbook.md#2-timelines-the-contractual-p
 - Cross-reference the soroswap pair contract: same WASM hash,
   but the SCVal type-tag space changed in the protocol bump.
 - Confirm the issue is decoder-side, not source-side:
-  `ratesengine_source_events_total{source="soroswap"}` is still
+  `stellaratlas_source_events_total{source="soroswap"}` is still
   rising, so events arrive — they just don't decode.
 
 ### Within 4 hours — mitigate
@@ -115,7 +115,7 @@ Per [`decode-errors.md`'s mitigation section](../../runbooks/decode-errors.md):
 Once the decoder is updated and deployed:
 
 - Re-run the indexer over the gap range:
-  `ratesengine-ops backfill -from <protocol-25-activation-ledger> -to <now> -source soroswap`.
+  `stellaratlas-ops backfill -from <protocol-25-activation-ledger> -to <now> -source soroswap`.
 - The soroswap rows for the gap window are now correct;
   triangulation rates auto-recompute on the next aggregator tick.
 
@@ -131,7 +131,7 @@ Score `pass` / `partial` / `fail` per criterion.
 | 4 | Did the team confirm the issue is decoder-side (not source-stopped) by checking `source_events_total` is still rising? |
 | 5 | Did the team avoid panic? (SEV-2, not SEV-1; restart isn't the move.) |
 | 6 | Did the team correctly identify the fix-forward path (`internal/scval` update + golden fixture + ordinary deploy)? |
-| 7 | Did anyone propose using `ratesengine-ops backfill` to recover the gap window after the fix? |
+| 7 | Did anyone propose using `stellaratlas-ops backfill` to recover the gap window after the fix? |
 | 8 | Did anyone surface `flags.divergence_warning` as the customer-facing degradation signal? |
 
 ## Common gaps surfaced (from prior simulations)
@@ -147,9 +147,9 @@ Score `pass` / `partial` / `fail` per criterion.
   "Add an RSS-or-similar watcher on `developers.stellar.org`
   release notes to flag protocol upgrades pre-activation."
 - **Backfill subcommand is documented but might not exist.**
-  The `decode-errors.md` runbook references `ratesengine-ops
+  The `decode-errors.md` runbook references `stellaratlas-ops
   backfill` but the actual subcommand wiring is partial. Action
-  item template: "Audit `ratesengine-ops backfill` for
+  item template: "Audit `stellaratlas-ops backfill` for
   per-source / per-range support."
 
 ## Variant scenarios

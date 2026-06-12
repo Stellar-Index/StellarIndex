@@ -47,8 +47,8 @@ func newTestRig(t *testing.T) *testRig {
 		Sender:           sender,
 		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:              now,
-		DashboardBaseURL: "https://app.ratesengine.net",
-		EmailFrom:        "Rates Engine <hello@ratesengine.net>",
+		DashboardBaseURL: "https://app.stellaratlas.xyz",
+		EmailFrom:        "Stellar Atlas <hello@stellaratlas.xyz>",
 		MagicLinkTTL:     15 * time.Minute,
 		SessionTTL:       30 * 24 * time.Hour,
 	}
@@ -171,7 +171,7 @@ func TestHandleCallback_HappyPath_FirstTimeSignupCreatesAccount(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", w.Code)
 	}
-	if loc := w.Header().Get("Location"); !strings.HasPrefix(loc, "https://app.ratesengine.net/") {
+	if loc := w.Header().Get("Location"); !strings.HasPrefix(loc, "https://app.stellaratlas.xyz/") {
 		t.Errorf("Location = %q", loc)
 	}
 	cookies := w.Result().Cookies()
@@ -319,7 +319,7 @@ func TestHandleCallback_NextParamPathOnly_RejectsOpenRedirect(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	loc := w.Header().Get("Location")
-	if !strings.HasPrefix(loc, "https://app.ratesengine.net/") {
+	if !strings.HasPrefix(loc, "https://app.stellaratlas.xyz/") {
 		t.Errorf("open-redirect through //evil.com bypassed; Location = %q", loc)
 	}
 	if strings.Contains(loc, "evil.com") {

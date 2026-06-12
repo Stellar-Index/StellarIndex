@@ -20,7 +20,7 @@
 # `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
 # under "Operational follow-ups" — items 1 and 4). The Prometheus
 # alerts on root-FS fill (deploy/monitoring/rules/storage.yml,
-# `ratesengine_node_root_disk_warning` + `_full`) catch the
+# `stellaratlas_node_root_disk_warning` + `_full`) catch the
 # downstream symptom; this task addresses the upstream cause so
 # the alert never has to fire in steady state.
 
@@ -145,7 +145,7 @@
       #    recovery.
       #
       # 2) Rate-limit bump (F-0031 — 2026-05-26 audit observed a 3 h
-      #    log gap on `journalctl -u ratesengine-indexer` despite the
+      #    log gap on `journalctl -u stellaratlas-indexer` despite the
       #    indexer running continuously; startup logs were missing).
       #    journald's default RateLimitBurst (10000 over 30 s) is hit
       #    during the indexer's startup burst — dispatcher registration,
@@ -171,15 +171,15 @@
     - Restart systemd-journald
   tags: [log-discipline, journald]
 
-- name: Install /etc/logrotate.d/ratesengine
+- name: Install /etc/logrotate.d/stellaratlas
   # Wave-2 fix for F-0009/F-0015 from 2026-05-26 audit. Rotates
-  # /var/log/ratesengine/*.log weekly + on 500M size. Uses
-  # copytruncate so long-running ratesengine-ops processes
+  # /var/log/stellaratlas/*.log weekly + on 500M size. Uses
+  # copytruncate so long-running stellaratlas-ops processes
   # (backfill/replay) holding open FDs don't end up writing to the
   # renamed file forever.
   ansible.builtin.copy:
-    src: ratesengine.logrotate
-    dest: /etc/logrotate.d/ratesengine
+    src: stellaratlas.logrotate
+    dest: /etc/logrotate.d/stellaratlas
     owner: root
     group: root
     mode: "0644"

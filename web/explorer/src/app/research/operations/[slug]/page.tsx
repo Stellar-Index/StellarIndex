@@ -28,8 +28,8 @@ export async function generateMetadata({
   const { slug } = await params;
   const doc = loadOperationsDoc(slug);
   if (!doc) return { title: 'Operations doc not found' };
-  const canonical = `https://ratesengine.net/research/operations/${slug}`;
-  const title = `${doc.title} — Rates Engine operations`;
+  const canonical = `https://stellaratlas.xyz/research/operations/${slug}`;
+  const title = `${doc.title} — Stellar Atlas operations`;
   return {
     title,
     description: doc.description,
@@ -74,7 +74,7 @@ export default async function OperationsDocPage({
           {doc.description}
         </p>
         <a
-          href={`https://github.com/RatesEngine/rates-engine/blob/main/${doc.source_path}`}
+          href={`https://github.com/StellarAtlas/stellar-atlas/blob/main/${doc.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"

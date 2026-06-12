@@ -5,6 +5,6 @@
 # and reachable. Doesn't validate dependencies (use /readyz for
 # that). Useful for load-balancer health checks.
 set -euo pipefail
-BASE="${API_BASE_URL:-https://api.ratesengine.net}"
+BASE="${API_BASE_URL:-https://api.stellaratlas.xyz}"
 curl -sS --fail "$BASE/v1/healthz"
 echo

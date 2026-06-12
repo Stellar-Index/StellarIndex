@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_slo_availability_burn_fast`
+# Runbook — `stellaratlas_slo_availability_burn_fast`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_slo_availability_burn_fast` |
+| Alert | `stellaratlas_slo_availability_burn_fast` |
 | Severity | **P1** (page) |
 | Detected by | `deploy/monitoring/rules/slo.yml` |
 | Typical MTTR | 15–30 min |
@@ -20,22 +20,22 @@ severity: P1
 ## Symptoms
 
 - Multi-window detection: 5-min 5xx burn AND 1-hour 5xx burn both ≥ 14.4× the budget.
-- `ratesengine_api_error_rate_high` (P3) and likely `ratesengine_api_error_rate_critical` (P1) firing alongside.
+- `stellaratlas_api_error_rate_high` (P3) and likely `stellaratlas_api_error_rate_critical` (P1) firing alongside.
 - Customer reports of intermittent 5xx.
 
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
 # Which routes are 5xx-ing
-journalctl -u ratesengine-api --since '5 min ago' --no-pager \
+journalctl -u stellaratlas-api --since '5 min ago' --no-pager \
   | jq -r 'select(.status >= 500) | .path' | sort | uniq -c | sort -rn | head -10
 
 # Sample one error to get the actual problem
-journalctl -u ratesengine-api --since '5 min ago' --no-pager \
+journalctl -u stellaratlas-api --since '5 min ago' --no-pager \
   | jq -r 'select(.status >= 500) | [.path, .request_id, .err] | @tsv' | head -10
 
 # Is upstream the issue?
-systemctl status ratesengine-aggregator ratesengine-indexer postgres redis caddy --no-pager | head -30
+systemctl status stellaratlas-aggregator stellaratlas-indexer postgres redis caddy --no-pager | head -30
 ```
 
 Key signals:
@@ -47,7 +47,7 @@ Key signals:
 
 - [ ] Step 1 — if recent deploy correlates with the burn onset: roll back. Per `deploy-workflow.md`'s "automatic rollback on health-probe failure" semantics this should already have happened; if it didn't, investigate the deploy's health-probe path.
 - [ ] Step 2 — if upstream resource saturated: jump to the appropriate runbook.
-- [ ] Step 3 — if the API process needs a kick: `systemctl restart ratesengine-api` (the systemd unit has `Restart=on-failure`; manual restart is the same effect).
+- [ ] Step 3 — if the API process needs a kick: `systemctl restart stellaratlas-api` (the systemd unit has `Restart=on-failure`; manual restart is the same effect).
 - [ ] Verification: 5xx rate < 0.5 % sustained for 5 min.
 
 ## Root cause analysis
@@ -65,7 +65,7 @@ For postmortem:
 ## Related
 
 - `slo-availability-burn-medium.md` / `slo-availability-burn-slow.md` — same family, slower burn.
-- `api-down.md` — when scrape `up{job="ratesengine-api"} == 0`.
+- `api-down.md` — when scrape `up{job="stellaratlas-api"} == 0`.
 - `api-5xx.md` / `api-latency.md` — adjacent route-level alerts.
 - ADR-0008 — HA topology + availability target.
 - ADR-0009 — latency budget (separate from availability budget).

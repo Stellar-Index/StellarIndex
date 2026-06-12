@@ -25,7 +25,7 @@ const (
 //
 // IsStaff is orthogonal to Role — a user can be RoleMember on
 // their account AND have IsStaff = true (gates the
-// admin.ratesengine.net surface).
+// admin.stellaratlas.xyz surface).
 type User struct {
 	ID                     uuid.UUID
 	AccountID              uuid.UUID

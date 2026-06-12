@@ -83,12 +83,12 @@ all:
         prom-02: { ansible_host: 10.0.0.62 }
       vars:
         prometheus_retention_days: 30
-        alertmanager_slack_channel: "#ratesengine-alerts"
+        alertmanager_slack_channel: "#stellaratlas-alerts"
 
     # Scrape-target groups (any one is required for preflight to pass)
-    ratesengine_api:        { hosts: { ... } }
-    ratesengine_aggregator: { hosts: { ... } }
-    ratesengine_indexer:    { hosts: { ... } }
+    stellaratlas_api:        { hosts: { ... } }
+    stellaratlas_aggregator: { hosts: { ... } }
+    stellaratlas_indexer:    { hosts: { ... } }
     haproxy_lb:             { hosts: { ... } }
     redis_cluster:          { hosts: { ... } }
     postgres_cluster:       { hosts: { ... } }
@@ -119,9 +119,9 @@ one job per service group present:
 
 | Job | Source group | Port | Interval |
 |---|---|---|---|
-| `ratesengine_api` | `ratesengine_api` | 9464 | 15s |
-| `ratesengine_aggregator` | `ratesengine_aggregator` | 9464 | 30s |
-| `ratesengine_indexer` | `ratesengine_indexer` | 9464 | 30s |
+| `stellaratlas_api` | `stellaratlas_api` | 9464 | 15s |
+| `stellaratlas_aggregator` | `stellaratlas_aggregator` | 9464 | 30s |
+| `stellaratlas_indexer` | `stellaratlas_indexer` | 9464 | 30s |
 | `haproxy` | `haproxy_lb` | 8404 | 15s |
 | `redis_exporter` | `redis_cluster` | 9121 | 15s |
 | `node_exporter` | every host in any group | 9100 | 30s |

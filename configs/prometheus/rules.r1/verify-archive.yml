@@ -9,12 +9,12 @@
 #
 # Alert family:
 #
-#   - `ratesengine_verify_archive_unit_failed` — the most-recent
+#   - `stellaratlas_verify_archive_unit_failed` — the most-recent
 #     run of the verify-archive-tier-a.service unit ended in the
 #     `failed` state. Severity: ticket (the API still serves
 #     correct data; this is an integrity-confidence signal).
 #
-#   - `ratesengine_verify_archive_run_stale` — the unit hasn't
+#   - `stellaratlas_verify_archive_run_stale` — the unit hasn't
 #     completed cleanly in over 36h (the timer's 24h cadence plus a
 #     12h cushion). Either the timer is disabled or every recent
 #     run failed. Severity: page at 36h (R1's nightly check is
@@ -25,11 +25,11 @@
 # ships its alerts will be parameterised by `region` label.
 
 groups:
-  - name: ratesengine.verify_archive
+  - name: stellaratlas.verify_archive
     interval: 60s
     rules:
 
-      - alert: ratesengine_verify_archive_unit_failed
+      - alert: stellaratlas_verify_archive_unit_failed
         expr: |
           node_systemd_unit_state{
             name="verify-archive-tier-a.service",
@@ -38,9 +38,9 @@ groups:
         for: 5m
         labels:
           severity: ticket
-          team: ratesengine
+          team: stellaratlas
           component: archive
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
         annotations:
           summary: "verify-archive Tier A nightly run failed on {{ $labels.instance }}"
           description: |
@@ -54,12 +54,12 @@ groups:
                 progress in journald (`journalctl -u verify-archive-tier-a`).
             Customer impact: zero immediate; the API serves from existing
             data. Cross-region trust model degrades after 48h without a
-            clean run (see ratesengine_verify_archive_run_stale).
+            clean run (see stellaratlas_verify_archive_run_stale).
 
       # Staleness: when did the timer last finish cleanly? Computed
       # from the unit's `ActiveEnterTimestamp` on the timer (last
       # successful Activate event). 36h = 24h cadence + 12h cushion.
-      - alert: ratesengine_verify_archive_run_stale
+      - alert: stellaratlas_verify_archive_run_stale
         expr: |
           (
             time()
@@ -71,9 +71,9 @@ groups:
         for: 10m
         labels:
           severity: page
-          team: ratesengine
+          team: stellaratlas
           component: archive
-          runbook_url: https://github.com/RatesEngine/rates-engine/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+          runbook_url: https://github.com/StellarAtlas/stellar-atlas/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
         annotations:
           summary: "(R1 integrity-leader) verify-archive Tier A hasn't run cleanly in {{ $value | humanizeDuration }}"
           description: |

@@ -13,7 +13,7 @@
   <circle cx="100" cy="100" r="28" fill="none" stroke="#10b981" stroke-width="2" opacity="0.3"/>
 
   <text x="140" y="110" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="32" font-weight="600" fill="#ecfdf5">
-    Rates Engine
+    Stellar Atlas
   </text>
 
   <text x="80" y="280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="76" font-weight="700" fill="#ecfdf5">
@@ -28,6 +28,6 @@
   </text>
 
   <text x="80" y="560" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="20" font-weight="500" fill="#34d399">
-    status.ratesengine.net
+    status.stellaratlas.xyz
   </text>
 </svg>

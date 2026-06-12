@@ -1,19 +1,19 @@
 import type { Metadata } from 'next';
 import './globals.css';
 
-const SITE_URL = 'https://status.ratesengine.net';
+const SITE_URL = 'https://status.stellaratlas.xyz';
 const SITE_DESCRIPTION =
-  'Real-time status of the Rates Engine API: per-service health, request latency, ingest freshness, active incidents.';
+  'Real-time status of the Stellar Atlas API: per-service health, request latency, ingest freshness, active incidents.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: 'Rates Engine — system status',
+  title: 'Stellar Atlas — system status',
   description: SITE_DESCRIPTION,
   robots: { index: true, follow: true },
   openGraph: {
     type: 'website',
-    siteName: 'Rates Engine — status',
-    title: 'Rates Engine — system status',
+    siteName: 'Stellar Atlas — status',
+    title: 'Stellar Atlas — system status',
     description: SITE_DESCRIPTION,
     url: SITE_URL,
     locale: 'en_US',
@@ -22,14 +22,14 @@ export const metadata: Metadata = {
         url: '/og.svg',
         width: 1200,
         height: 630,
-        alt: 'Rates Engine — system status',
+        alt: 'Stellar Atlas — system status',
         type: 'image/svg+xml',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Rates Engine — system status',
+    title: 'Stellar Atlas — system status',
     description: SITE_DESCRIPTION,
     images: ['/og.svg'],
   },

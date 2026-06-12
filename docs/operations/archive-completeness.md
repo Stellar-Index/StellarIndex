@@ -15,9 +15,9 @@ Operational companion to [ADR-0017](../adr/0017-archive-completeness-invariants.
 - Daily completeness cron (the current steady-state guardrail)
 - Multi-source fallback chain
 - Prometheus metrics + status-page integration
-- The `ratesengine-ops archive-completeness` tool
+- The `stellaratlas-ops archive-completeness` tool
 
-The implementation lives in `cmd/ratesengine-ops/` (the
+The implementation lives in `cmd/stellaratlas-ops/` (the
 `archive-completeness` subcommand) plus the existing
 `galexie-archive-fill` and `refetch-history-archive` shell scripts
 in `/usr/local/bin/`.
@@ -66,7 +66,7 @@ Traditional Stellar history archive in canonical layout:
 
 Each `ledger-<hex>.xdr.gz` carries 64 `LedgerHeaderHistoryEntry`
 records (one per ledger in the checkpoint window). This is the
-**verification anchor** — `ratesengine-ops verify-archive -tier
+**verification anchor** — `stellaratlas-ops verify-archive -tier
 checkpoint` reads each checkpoint's signed hash here and compares
 against our LCM-derived hash to prove our primary archive matches
 SDF's canonical view.
@@ -89,7 +89,7 @@ the cross-anchor portion of the daily control and serves as the fleet's
 trust anchor for that narrower check set.
 
 ```
-ratesengine-ops archive-completeness verify -from 2 -to 0 -workers 8
+stellaratlas-ops archive-completeness verify -from 2 -to 0 -workers 8
   ↓
   ├─ implemented today: stat each expected /srv/history-archive/ledger-*.xdr.gz
   └─ implemented today: fetch/repair missing cross-anchor checkpoint files
@@ -98,7 +98,7 @@ ratesengine-ops archive-completeness verify -from 2 -to 0 -workers 8
 (`-to 0` resolves the tip from the live ledgerstream cursor. The real
 flag set is `-archive-root`, `-from`, `-to`, `-workers`,
 `-owner-user`, `-owner-group`, `-output-file`, `-textfile-output` —
-see `cmd/ratesengine-ops/main.go::archiveCompletenessVerify` and
+see `cmd/stellaratlas-ops/main.go::archiveCompletenessVerify` and
 `deploy/systemd/archive-completeness.service` for the exact
 invocation. There is no `-range`/`-checks`/`-trust-leader` flag; the
 range-keyword and per-check selectors below describe the *target*
@@ -119,7 +119,7 @@ narrower:
 # TARGET DESIGN (not shipped) — the -checks/-trust-leader flags do not
 # exist on the current binary. R2/R3 are deferred; today R1 is the only
 # host and runs the cross-anchor `verify` above.
-ratesengine-ops archive-completeness verify -checks chain-link,multi-peer \
+stellaratlas-ops archive-completeness verify -checks chain-link,multi-peer \
   -trust-leader r1
 ```
 
@@ -147,7 +147,7 @@ cross-anchor archive. Same shape as R2 with one addition:
 
 ```
 # TARGET DESIGN (not shipped) — same caveat as R2 above.
-ratesengine-ops archive-completeness verify \
+stellaratlas-ops archive-completeness verify \
   -checks structural,chain-link,multi-peer \
   -trust-leader r1
 ```
@@ -182,7 +182,7 @@ on R1. Existing R1 gaps as of 2026-04-27:
 1. **Diagnose primary gaps**
 
    ```sh
-   AWS_ACCESS_KEY_ID=ratesengine-admin \
+   AWS_ACCESS_KEY_ID=stellaratlas-admin \
    AWS_SECRET_ACCESS_KEY=<...> \
    AWS_ENDPOINT_URL=http://127.0.0.1:9000 \
      galexie detect-gaps \
@@ -225,7 +225,7 @@ on R1. Existing R1 gaps as of 2026-04-27:
    the JSON report:
 
    ```sh
-   ratesengine-ops archive-completeness verify \
+   stellaratlas-ops archive-completeness verify \
      -from 2 -to 0 -workers 16 \
      -output-file /var/lib/galexie/cross-anchor-gaps.json
    ```
@@ -239,7 +239,7 @@ on R1. Existing R1 gaps as of 2026-04-27:
 5. **Run end-to-end verify with hardened defaults**
 
    ```sh
-   ratesengine-ops verify-archive -config /etc/ratesengine.toml \
+   stellaratlas-ops verify-archive -config /etc/stellaratlas.toml \
      -tier all -from 2 -to <network_head> \
      -fail-on-missed
    ```
@@ -277,7 +277,7 @@ The timer fires
 `deploy/systemd/archive-completeness.service` for the canonical unit):
 
 ```sh
-ratesengine-ops archive-completeness verify \
+stellaratlas-ops archive-completeness verify \
   -from 2 -to 0 -workers 8 \
   -textfile-output /var/lib/node_exporter/textfile_collector/archive_completeness.prom \
   -output-file /var/lib/galexie/last-completeness-report.json
@@ -360,13 +360,13 @@ Defined in `deploy/monitoring/rules/archive-completeness.yml` per
 
 | Alert | Threshold | Severity | Runbook |
 |---|---|---|---|
-| `ratesengine_archive_files_missing` | gauge > 0 for 4h on either archive | P2 | [archive-files-missing](runbooks/archive-files-missing.md) |
-| `ratesengine_archive_completeness_stale` | last_success_timestamp older than 26h | P2 | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
-| `ratesengine_archive_repair_source_degraded` | repair_failures / repair_attempts > 0.10 over 1h per source | P3 | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
+| `stellaratlas_archive_files_missing` | gauge > 0 for 4h on either archive | P2 | [archive-files-missing](runbooks/archive-files-missing.md) |
+| `stellaratlas_archive_completeness_stale` | last_success_timestamp older than 26h | P2 | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
+| `stellaratlas_archive_repair_source_degraded` | repair_failures / repair_attempts > 0.10 over 1h per source | P3 | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
 
 ## Status-page integration
 
-Public status page at `https://status.ratesengine.net` (planned per
+Public status page at `https://status.stellaratlas.xyz` (planned per
 [sev-playbook.md §5.3](sev-playbook.md#53-public-status-page)).
 
 Two status-page indicators tied to archive completeness:
@@ -407,7 +407,7 @@ are NOT implemented today.
 
 ```
 USAGE
-  ratesengine-ops archive-completeness verify [flags]
+  stellaratlas-ops archive-completeness verify [flags]
 
 FLAGS (shipped)
   -archive-root PATH    cross-anchor archive root (default
@@ -429,7 +429,7 @@ EXIT CODES
 ```
 
 The reference implementation is
-`cmd/ratesengine-ops/main.go::archiveCompletenessVerify` +
+`cmd/stellaratlas-ops/main.go::archiveCompletenessVerify` +
 `internal/archivecompleteness/`.
 
 ## Cross-references
@@ -445,6 +445,6 @@ The reference implementation is
   backfill procedure; the bootstrap reuses its `galexie-archive-fill`
   script for primary repair.
 - [alerts-catalog.md](alerts-catalog.md) — the
-  `ratesengine_archive_*` alert family.
+  `stellaratlas_archive_*` alert family.
 - [sev-playbook.md](sev-playbook.md) — incident-response process;
   this doc's status-page section follows §5.3's conventions.

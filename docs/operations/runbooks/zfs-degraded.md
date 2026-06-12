@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `ratesengine_zfs_pool_degraded`
+# Runbook — `stellaratlas_zfs_pool_degraded`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `ratesengine_zfs_pool_degraded` |
+| Alert | `stellaratlas_zfs_pool_degraded` |
 | Severity | P1 (page — SEV-1) |
 | Detected by | `deploy/monitoring/rules/infra.yml` |
 | Typical MTTR | 30 min – hours (resilver time depends on data size) |

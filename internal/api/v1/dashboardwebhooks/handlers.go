@@ -167,7 +167,7 @@ type createResponse struct {
 	Webhook webhookDTO `json:"webhook"`
 	// Secret is the HMAC-SHA-256 signing key plaintext, returned
 	// once at create + never again. The customer stores it
-	// server-side + uses it to verify the X-RatesEngine-Signature
+	// server-side + uses it to verify the X-StellarAtlas-Signature
 	// header on inbound webhook POSTs.
 	Secret string `json:"secret"`
 }
@@ -588,7 +588,7 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID) (int, string
 
 // generateSecret mints a 32-byte URL-safe secret returned once to
 // the customer. They store it server-side and use it to verify
-// the X-RatesEngine-Signature header on inbound POSTs.
+// the X-StellarAtlas-Signature header on inbound POSTs.
 func generateSecret() (string, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -613,7 +613,7 @@ func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type":     "https://api.ratesengine.net/errors/dashboard",
+		"type":     "https://api.stellaratlas.xyz/errors/dashboard",
 		"title":    http.StatusText(status),
 		"status":   status,
 		"detail":   detail,

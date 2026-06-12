@@ -19,7 +19,7 @@ import (
 // seeded live (every `deploy` we decode calls reg.Seed), DB-warmed at
 // boot (the `protocol_contracts` table → childgate.WithSeed), and
 // genesis-seeded by walking the factory's `deploy` events from the lake
-// (`ratesengine-ops seed-protocol-contracts -source blend`, and the
+// (`stellaratlas-ops seed-protocol-contracts -source blend`, and the
 // ADR-0033 reconcile pre-seed). See docs/discovery/dexes-amms/blend.md
 // (Pool Factory V2 = CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU).
 type Decoder struct {

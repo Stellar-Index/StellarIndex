@@ -229,9 +229,9 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-RatesEngine-Event", d.EventType)
-	req.Header.Set("X-RatesEngine-Signature", "sha256="+signature)
-	req.Header.Set("X-RatesEngine-Delivery-Id", d.ID.String())
+	req.Header.Set("X-StellarAtlas-Event", d.EventType)
+	req.Header.Set("X-StellarAtlas-Signature", "sha256="+signature)
+	req.Header.Set("X-StellarAtlas-Delivery-Id", d.ID.String())
 
 	// Time the HTTP roundtrip + body drain. Recorded against the
 	// outcome label so operators can chart p95/p99 latency
@@ -326,7 +326,7 @@ func (w *Worker) scheduleRetry(nextAttempt int) time.Time {
 // signHMACSHA256 produces the hex-encoded HMAC-SHA-256 signature
 // over `payload` using `secret`. Consumers verify by recomputing
 // HMAC-SHA-256(secret, body) and comparing against the
-// `X-RatesEngine-Signature: sha256=…` header.
+// `X-StellarAtlas-Signature: sha256=…` header.
 func signHMACSHA256(secret, payload []byte) string {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write(payload)
