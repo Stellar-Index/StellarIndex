@@ -332,7 +332,6 @@ const listCoinsBaseSelect = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
@@ -347,7 +346,6 @@ const listCoinsBaseSelect = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
@@ -364,7 +362,6 @@ const listCoinsBaseSelect = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
@@ -380,7 +377,6 @@ const listCoinsBaseSelect = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
@@ -701,7 +697,6 @@ func (s *Store) GetCoinPriceHistory24h(ctx context.Context, assetID string) ([]C
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
@@ -789,7 +784,6 @@ func (s *Store) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]Co
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
@@ -850,6 +844,14 @@ func (s *Store) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]Co
 // highs across hour buckets that are themselves smoothed; we
 // don't have that smoothing layer pre-launch, so day-VWAP is
 // the closest dust-resistant approximation.
+//
+// USD-quote allowlist note (R-008 follow-up, 2026-06-12): the
+// `USDT-GCQTGZQQ…` issuer was REMOVED from every USD allowlist —
+// there is no Tether on Stellar (the verified catalogue lists no
+// stellar network for USDT); that asset trades unpegged (~\-e.09),
+// which fabricated an XLM "ATH" of \.78 on thin Jan-2025 days
+// (volume_usd=0 dust). USD proxies are the verified USDC issuer +
+// fiat:USD only; new proxies require a verified-catalogue entry.
 type CoinATH struct {
 	USD string // numeric, fixed-point string (preserves precision)
 	At  string // RFC-3339 day-bucket the high was set
@@ -858,7 +860,7 @@ type CoinATH struct {
 // GetCoinATH returns the asset's all-time-high USD price.
 //
 // Sources `prices_1d` filtered to USD-denominated quotes — i.e.
-// the canonical USDC/USDT issuers, plus the synthetic `fiat:USD`
+// the canonical USDC issuer, plus the synthetic `fiat:USD`
 // quote used by off-chain CEX feeds. Returns the (vwap, bucket_day)
 // tuple where vwap is maximal.
 //
@@ -875,7 +877,6 @@ func (s *Store) GetCoinATH(ctx context.Context, assetID string) (*CoinATH, error
 		 WHERE base_asset = $1
 		   AND quote_asset IN (
 		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		     'fiat:USD'
 		   )
 		   AND vwap IS NOT NULL
@@ -917,7 +918,6 @@ func (s *Store) GetCoinsATHBatch(ctx context.Context, assetIDs []string) (map[st
 		 WHERE base_asset = ANY($1)
 		   AND quote_asset IN (
 		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		     'fiat:USD'
 		   )
 		   AND vwap IS NOT NULL
@@ -1187,12 +1187,11 @@ const getCoinBySlugSQL = `
 		xlm_usd AS (
 		  -- Same stablecoin-proxy policy as the listing query:
 		  -- prices_1m doesn't carry (native, fiat:USD) rows; use
-		  -- on-chain XLM/USDC (or USDT) as the USD-equivalent.
+		  -- on-chain XLM/USDC as the USD-equivalent.
 		  SELECT vwap FROM prices_1m
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
@@ -1205,7 +1204,6 @@ const getCoinBySlugSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
@@ -1219,7 +1217,6 @@ const getCoinBySlugSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
@@ -1233,7 +1230,6 @@ const getCoinBySlugSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
@@ -1421,7 +1417,6 @@ const getNativeCoinSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
@@ -1433,7 +1428,6 @@ const getNativeCoinSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
@@ -1446,7 +1440,6 @@ const getNativeCoinSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '26 hours'
@@ -1459,7 +1452,6 @@ const getNativeCoinSQL = `
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
@@ -1702,7 +1694,6 @@ func (s *Store) GetCoinsPriceHistory24hBatch(ctx context.Context, assetIDs []str
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
@@ -1796,7 +1787,6 @@ func (s *Store) GetCoinsPriceHistory7dBatch(ctx context.Context, assetIDs []stri
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')

@@ -47,7 +47,6 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
@@ -125,7 +124,6 @@ func (s *Store) GetSourceVolumeHistory24h(ctx context.Context) ([]SourceVolumeBu
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V',
 		       'fiat:USD'
 		     )
 		     AND vwap IS NOT NULL
