@@ -57,6 +57,20 @@ type VWAPUSDFXResolver struct {
 	cache map[fxCacheKey]fxCacheEntry
 }
 
+// fxCacheSweepThreshold bounds the resolver's in-memory cache. The
+// key space is (asset, 1-minute bucket) including negative results,
+// and nothing evicted entries before audit-2026-06-11 G11-05, so a
+// long-running backfill (every historical minute × every traded
+// asset) grew the map without bound on the trade-insert hot path.
+// When the map exceeds this many entries, storeCache opportunistically
+// sweeps everything past its TTL before inserting. The TTL (default
+// 5 min) already makes stale entries dead weight, so the sweep only
+// drops rows lookupCache would have ignored anyway — correctness is
+// unchanged, only resident size is bounded. The threshold is high
+// enough that steady-state live ingest (a handful of assets × a few
+// minutes) never triggers a sweep.
+const fxCacheSweepThreshold = 8192
+
 // fxCacheKey is (asset.String(), 1-minute floor of `at`). Two
 // trades within the same minute against the same asset share a
 // resolved rate — same as the CAGG's natural granularity.
@@ -222,6 +236,19 @@ func (r *VWAPUSDFXResolver) lookupCache(key fxCacheKey) (string, bool) {
 func (r *VWAPUSDFXResolver) storeCache(key fxCacheKey, entry fxCacheEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Bounded eviction (audit-2026-06-11 G11-05): before the map can
+	// grow unbounded, opportunistically drop every entry past its TTL.
+	// These are entries lookupCache already treats as misses, so the
+	// sweep is correctness-neutral. Only runs when the map is large,
+	// so the O(n) scan is amortised away under steady-state ingest.
+	if len(r.cache) >= fxCacheSweepThreshold {
+		now := r.clock()
+		for k, e := range r.cache {
+			if now.Sub(e.cachedAt) > r.cacheTTL {
+				delete(r.cache, k)
+			}
+		}
+	}
 	r.cache[key] = entry
 }
 
@@ -251,21 +278,38 @@ func trimNumericText(s string) string {
 // Implementation: single round-trip with `quote_asset = ANY(...)`
 // so the DB picks the highest-bucket row across all pegs in one
 // pass.
+//
+// Lower bucket bound (audit-2026-06-11 G11-06): when freshness is
+// enforced (>0), USDPriceAt rejects any row whose bucket is older
+// than `at - freshness`, so a miss within the window is the only
+// useful result. Without a lower bound the index scan walks
+// prices_1m chunks back to genesis on a miss before returning a row
+// the caller would discard. The `bucket >= at - freshness` floor is
+// behaviour-preserving — anything below it is rejected anyway — and
+// lets TimescaleDB prune to the freshness window's chunks. When
+// freshness is disabled (0) we keep the unbounded scan.
 func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
-	const q = `
+	q := `
 		SELECT bucket, vwap::text
 		  FROM prices_1m
 		 WHERE base_asset  = $1
 		   AND quote_asset = ANY($2)
-		   AND bucket     <= $3
-		 ORDER BY bucket DESC
-		 LIMIT 1
-	`
-	row := r.store.db.QueryRowContext(ctx, q,
+		   AND bucket     <= $3`
+	args := []any{
 		asset.String(),
 		pq.Array(r.usdPegs),
 		at.UTC(),
-	)
+	}
+	if r.freshness > 0 {
+		q += `
+		   AND bucket     >= $4`
+		args = append(args, at.UTC().Add(-r.freshness))
+	}
+	q += `
+		 ORDER BY bucket DESC
+		 LIMIT 1
+	`
+	row := r.store.db.QueryRowContext(ctx, q, args...)
 	var (
 		bucket time.Time
 		vwap   string

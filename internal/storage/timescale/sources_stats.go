@@ -62,9 +62,9 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 		           WHEN usd_volume IS NOT NULL
 		             THEN usd_volume::numeric
 		           WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		             THEN (base_amount / 1e7) * (SELECT vwap FROM xlm_usd)
+		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		           WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		             THEN (quote_amount / 1e7) * (SELECT vwap FROM xlm_usd)
+		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		           ELSE NULL
 		         END
 		       )::text AS volume_usd_24h,
@@ -140,9 +140,9 @@ func (s *Store) GetSourceVolumeHistory24h(ctx context.Context) ([]SourceVolumeBu
 		           WHEN usd_volume IS NOT NULL
 		             THEN usd_volume::numeric
 		           WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		             THEN (base_amount / 1e7) * (SELECT vwap FROM xlm_usd)
+		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		           WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		             THEN (quote_amount / 1e7) * (SELECT vwap FROM xlm_usd)
+		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		           ELSE NULL
 		         END
 		       ), 0)::text AS volume_usd,

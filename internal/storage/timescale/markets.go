@@ -337,11 +337,11 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
               CASE
                 WHEN p.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
                   THEN COALESCE(SUM(p.sum_base_unpriced)
-                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7
+                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
                        * COALESCE((SELECT vwap FROM xlm_usd), 0)
                 WHEN p.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
                   THEN COALESCE(SUM(p.sum_quote_unpriced)
-                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7
+                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
                        * COALESCE((SELECT vwap FROM xlm_usd), 0)
                 ELSE 0
               END

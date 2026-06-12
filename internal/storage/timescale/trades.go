@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
 	"time"
@@ -344,11 +345,19 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// every asset/issuer after the first touch in the process.
 	for _, side := range [2]canonical.Asset{t.Pair.Base, t.Pair.Quote} {
 		if regErr := s.registerClassicAssetSeen(ctx, side, t.Ledger, t.Timestamp); regErr != nil {
-			// Stay quiet at info level — this fires per unique asset
-			// once per process. A real DB problem would surface in
-			// metrics + the trade flow continuing to succeed is the
-			// right behaviour.
-			_ = regErr
+			// Soft-fail: the trade row is committed; a registry-side
+			// problem must not sink the hot path. Stay quiet at info
+			// level, but DON'T swallow silently (audit-2026-06-11
+			// G11-08). registerClassicAssetSeen is dedupe-cached, so
+			// this naturally fires at most once per (asset,issuer) per
+			// process — already rate-limited. Debug level keeps the
+			// steady state silent while leaving a breadcrumb when an
+			// operator turns up logging to chase registry drift.
+			slog.Default().Debug("timescale: classic-asset registry upsert failed (soft-skip)",
+				"asset", side.String(),
+				"ledger", t.Ledger,
+				"err", regErr,
+			)
 		}
 	}
 	return nil
