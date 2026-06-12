@@ -9,6 +9,15 @@ superseded_by: null
 
 # ADR-0033: Completeness verification — substrate continuity, recognition, projection reconciliation
 
+> **Reality note (2026-06-12, F-1354 / D2-04).** Where this ADR
+> describes `hashdb` as a **feeder** of `ledger_ingest_log`, note that
+> `internal/hashdb` is currently an **unwired library** — it has zero
+> production callers and feeds nothing today. The substrate-continuity
+> verdict is presently sourced from `archivecompleteness` +
+> `verify-archive` + the ClickHouse substrate; the `hashdb` integration
+> is aspirational. The decision below is preserved as the original
+> record.
+
 ## Context
 
 We want **100% confidence that we have 100% coverage** of every

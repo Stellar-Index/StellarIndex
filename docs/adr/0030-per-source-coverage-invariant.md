@@ -9,6 +9,14 @@ superseded_by: null
 
 # ADR-0030 — Per-source coverage invariant
 
+> **Reality note (2026-06-12, F-1353 / D2-11).** The
+> `docs/operations/runbooks/cascade-window-drain.md` runbook referenced
+> in the consequences/links below **was deleted** — the cascade-drain
+> orchestrator was retired and per-source catch-up is now
+> `ratesengine-ops projector-replay` (see
+> `docs/operations/runbooks/projector-replay.md`). The coverage
+> invariant itself stands.
+
 **Status:** Accepted (2026-05-28)
 **Context wave:** rc.87
 **Supersedes:** —

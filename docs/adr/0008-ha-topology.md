@@ -9,6 +9,19 @@ superseded_by: null
 
 # ADR-0008: Per-region HA topology
 
+> **Amendment (2026-06-12, F-1353 / D2-07 + D2-08).** Two enumerations
+> below have since been superseded:
+> - The Redis "**cluster** (3 masters + 3 replicas + Sentinel)" hot
+>   tier was decided as **Sentinel, not Cluster** — see ADR-0024.
+> - The `stellar-core` / `stellar-rpc` watcher services listed in the
+>   storage/replication tiers were **removed from production on
+>   2026-04-23** (invariant 6); production ingest is Galexie → dispatcher
+>   → decoders, and `stellar-core` survives only as Galexie's captive-core
+>   subprocess. See
+>   [docs/architecture/ingest-pipeline.md](../architecture/ingest-pipeline.md).
+>
+> The decision below is preserved as the original record.
+
 ## Context
 
 The Stellar RFP §Availability requires ≥ 99.99 % uptime

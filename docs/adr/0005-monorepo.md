@@ -9,6 +9,21 @@ superseded_by: null
 
 # ADR-0005: Monorepo with a single Go module
 
+> **Reality note (2026-06-12, F-1353 / D2-09).** Several release/deploy
+> details below have since changed:
+> - Binary releases use **SemVer**, not CalVer (see
+>   `docs/architecture/semver-policy.md`); the "one SemVer + one CalVer"
+>   split no longer holds.
+> - **No per-binary Docker images** are published — the GHCR job was
+>   dropped (no consumer); `release.yml` ships cross-compiled binaries
+>   only.
+> - **`deploy/k8s/` does not exist** — deployment is bare-metal systemd
+>   + Ansible (`deploy/systemd/`, `configs/ansible/`).
+> - Public wire-shape types live in **`pkg/client`** (`pkg/client/types.go`),
+>   not a separate `pkg/types` directory.
+>
+> The monorepo / single-`go.mod` decision itself stands unchanged.
+
 ## Context
 
 The Rates Engine codebase has natural component boundaries:

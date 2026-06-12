@@ -1,7 +1,7 @@
 ---
 adr: 0029
 title: soroban_events raw-event landing zone
-status: Accepted
+status: Superseded
 date: 2026-05-25
 supersedes: []
 superseded_by: [0034]

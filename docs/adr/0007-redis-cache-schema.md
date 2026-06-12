@@ -9,6 +9,13 @@ superseded_by: null
 
 # ADR-0007: Redis as hot-path cache + rate-limit + ephemeral state
 
+> **Amendment (2026-06-12, F-1353 / D2-07).** Where this ADR describes
+> Redis HA as **Cluster** mode, the topology was later decided as
+> **Sentinel, not Cluster** — see ADR-0024 (Redis HA via Sentinel).
+> The cache-schema decision below stands as written; only the HA
+> mechanism differs. The decision below is preserved as the original
+> record.
+
 ## Context
 
 The API p95 ≤ 200 ms SLA (Freighter RFP §Performance) is only

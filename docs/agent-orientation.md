@@ -23,13 +23,13 @@ The repo is Go (primary), Apache-2.0, pre-v1 at time of writing.
 
 ```sh
 make help              # list all targets
-make dev               # docker-compose up the full stack locally
+make dev               # docker-compose up the local dependency stack (TimescaleDB + Redis + MinIO); the app binaries run on the host, and there is no API/ClickHouse service in the compose file
 make test              # unit tests (fast; ~2 min)
 make test-integration  # integration tests — spins its own containers via testcontainers-go (requires Docker)
 make lint              # golangci-lint (gofumpt runs as a golangci formatter; architectural import boundaries enforced by scripts/ci/lint-imports.sh)
 make build             # all binaries into bin/
 make docs-all          # regenerate docs/reference/ from OpenAPI + struct tags + obs/*.go metric Name: fields
-make verify            # canonical pre-push gate (fmt, vet, lint, docs, test) — run this before every push
+make verify            # canonical pre-push gate (fmt, vet, lint, docs, vuln, test) — run this before every push
 ```
 
 For verifying a live deployment (R1 or local), use:
@@ -78,7 +78,7 @@ development. If one does, it's a bug.
 ├── internal/                  private packages (Go-enforced, not importable externally)
 │   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
 │   ├── config/                   config loading + schema
-│   ├── consumer/                 legacy orchestration seam; current prod ingest is dispatcher-based
+│   ├── consumer/                 transport-neutral ingest contracts — the load-bearing `consumer.Event` / `consumer.Source` types used across indexer/ops/dispatcher/pipeline. (`consumer.Orchestrator` is a legacy seam with no callers; prod ingest is dispatcher-based.)
 │   ├── ledgerstream/             archive/live LedgerCloseMeta streaming
 │   ├── dispatcher/               production ledger walker + decoder router
 │   ├── pipeline/                 shared ingest-pipeline glue used by both indexer + `ratesengine-ops backfill`
@@ -91,7 +91,7 @@ development. If one does, it's a bug.
 │   ├── aggregate/                VWAP/TWAP/outlier/triangulation
 │   ├── storage/                  TimescaleDB (served tier) + ClickHouse (raw lake, ADR-0034) + Redis + MinIO adapters
 │   ├── archivecompleteness/      dual-archive completeness daemon (ADR-0017)
-│   ├── hashdb/                   on-disk (ledger_seq → sha256(LCM)) record; drift detector vs upstream rewrites
+│   ├── hashdb/                   on-disk (ledger_seq → sha256(LCM)) record for drift-detection-vs-upstream-rewrites. LIBRARY ONLY — currently has zero production callers; not yet wired into any binary (the ADR-0033 "feeder" role is aspirational).
 │   ├── api/                      REST/SSE handlers (v1)
 │   ├── ratelimit/                Redis-backed token bucket
 │   ├── metadata/                 SEP-1 / stellar.toml resolution
@@ -101,7 +101,13 @@ development. If one does, it's a bug.
 │   ├── supply/                   circulating/total/max supply derivation
 │   ├── auth/                     API-key + SEP-10 auth primitives
 │   ├── currency/                 verified-currency catalogue (hand-curated seed; R-018)
-│   └── divergence/               cross-check against CoinGecko/CMC/Chainlink-HTTP
+│   ├── divergence/               cross-check against CoinGecko + Chainlink-HTTP (CMC is deferred — no implementation yet)
+│   ├── customerwebhook/          drains the webhook delivery queue — HMAC-signs + POSTs pending rows, backoff/retry on failure
+│   ├── incidents/                loads + parses embedded customer-facing incident post-mortems for the API + status page
+│   ├── notify/                   transactional-email abstraction (Sender iface; Resend impl + Noop for dev/tests)
+│   ├── obstest/                  test helpers for asserting against Prometheus metrics (HistogramVec child counts)
+│   ├── platform/                 customer + staff dashboard primitives (accounts, API keys, webhooks, usage) per platform-spec.md
+│   └── usage/                    per-subject daily request counters backed by Redis (feeds /v1/account/usage)
 │
 ├── pkg/                      public surface (SemVer-stable)
 │   └── client/                   Go client SDK + wire-shape types
@@ -118,10 +124,11 @@ development. If one does, it's a bug.
 │   ├── alertmanager/             R1 single-host: alertmanager.r1.yml + apply.sh (severity-routing for page/ticket/informational + deadmansswitch heartbeat)
 │   ├── caddy/                    R1 reverse proxy — TLS termination via Let's Encrypt
 │   ├── loki/                     R1 single-host log aggregation
+│   ├── audit/                    curated auditor inputs (wasm-walk contract lists) feeding `ratesengine-ops wasm-history`
 │   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
 ├── openapi/                   rates-engine.v1.yaml — source of truth for API
 ├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
-├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host). The shipped status-page lives at `web/status/` (Cloudflare Pages static export); earlier scaffolds were retired (F-1211 / wave 57).
+├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), clickhouse/ (tier-1 lake DDL, ADR-0034), comms/ (customer-facing incident/launch templates). The shipped status-page lives at `web/status/` (Cloudflare Pages static export); earlier scaffolds were retired (F-1211 / wave 57).
 ├── web/explorer/              Next.js 15 static-export explorer rendered at ratesengine.net (Cloudflare Pages)
 ├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
@@ -132,8 +139,14 @@ development. If one does, it's a bug.
     ├── reference/                auto-generated from OpenAPI + struct tags
     ├── operations/               runbooks (1 per alert), SEV playbook, release-process
     ├── discovery/                Phase-1 audit archive (read-only, closed 2026-04-22)
+    ├── methodology/              public methodology docs (how prices are computed/aggregated)
+    ├── blog/                     dated blog posts published to the explorer/site
     ├── audit-2026-04-29/         post-Phase-1 cross-cutting findings register
-    └── audit-2026-05-02/         second-pass audit working dir (May 2; codex review)
+    ├── audit-2026-05-02/         second-pass audit working dir (May 2; codex review)
+    ├── audit-2026-05-12/         May-12 audit working dir
+    ├── audit-2026-05-12-codex/   May-12 codex-review pass
+    ├── audit-2026-05-26/         May-26 audit working dir
+    └── audit-2026-06-11/         June-11 full-product cold audit (findings register + per-slice evidence)
 ```
 
 ---
@@ -197,8 +210,8 @@ Full picture + binding rules: [docs/architecture/ingest-pipeline.md](docs/archit
 
 **Soroban-derived events** (`trades`, `blend_*`, `phoenix_*`,
 `comet_*`, `soroswap_skim`, `cctp_events`, `rozo_events`,
-`sep41_*`, `reflector`/`redstone` `oracle_updates`) are written
-by **`internal/projector`** — and ONLY by the projector — from
+`defindex_*`, `sep41_*`, `reflector`/`redstone` `oracle_updates`)
+are written by **`internal/projector`** — and ONLY by the projector — from
 the `soroban_events` raw landing zone (ADR-0029). Adding a new
 Soroban source means adding a case in
 `internal/projector/registry.go::buildSource` AND an arm in
@@ -207,10 +220,11 @@ missing window is `ratesengine-ops projector-replay -source <name>
 -from <ledger>` — never a bespoke `<source>-backfill` subcommand
 (those were deleted in rc.97 / ADR-0032 Phase 5).
 
-**Non-projected events** (`sdex`, external CEX/FX, `band`, supply
-observers) continue writing through the dispatcher's events
-goroutine — they don't flow through `soroban_events` and have
-their own catch-up paths.
+**Non-projected events** (`sdex`, external CEX/FX, `band`,
+`soroswap_router` (ContractCall-derived, log-only — excluded from
+`IsProjectedEvent`), supply observers) continue writing through the
+dispatcher's events goroutine — they don't flow through
+`soroban_events` and have their own catch-up paths.
 
 **Coverage signal** is data-derived, not cursor-derived (ADR-0031):
 cursor-derived helpers under `internal/api/v1` were deleted in
@@ -291,17 +305,21 @@ linked doc first.
   `ClassExchange` contributes by default; aggregators and oracles
   are reported alongside but excluded (mixing them double-counts
   upstream markets or imposes their methodology on our output).
-- **External-source amount scaling: uniform 10^8.** On-chain
+- **External-source amount scaling is NOT uniform.** On-chain
   sources stamp `canonical.Trade.BaseAmount` / `QuoteAmount` at
-  per-asset decimals (XLM=7, Soroban tokens vary). Off-chain
-  sources normalise to a fixed 10^8 integer scale
-  (`binance.externalAmountDecimals`). Aggregator looks up
+  per-asset decimals (XLM=7, Soroban tokens vary). Off-chain CEX +
+  reference-aggregator sources normalise to a fixed **10^8** integer
+  scale (`binance.externalAmountDecimals`), but the **FX pollers**
+  (`ecb` / `exchangeratesapi` / `polygonforex`) use **10^6**
+  (`DefaultDecimals = 6`). Always read the per-source `Decimals`
+  field; don't assume 10^8. Aggregator looks up
   `external.Lookup(trade.Source).Class` to know which side of
   the boundary a trade came from.
 - **Stablecoin fiat-proxy is aggregator policy, not decoder
   policy.** Ingest stores the real pair (`XLM/USDT`, `XLM/USDC`).
-  The aggregator maps `USDT→USD`, `USDC→USD`, `PYUSD→USD`,
-  `EUROC→EUR`, `EUROB→EUR`, `MXNe→MXN` at VWAP compute time.
+  The aggregator maps `USDT→USD`, `USDC→USD`, `DAI→USD`,
+  `PYUSD→USD`, `USDP→USD`, `EURC→EUR`, `EUROC→EUR`, `EUROB→EUR`,
+  `MXNe→MXN` at VWAP compute time (full map: `internal/aggregate/stablecoin.go`).
   Eager normalisation at ingest would hide a depeg event; late
   binding keeps data honest.
 - **Redstone Adapter DOES emit events** (topic `"REDSTONE"`) — one
@@ -319,8 +337,12 @@ linked doc first.
   needs tx args follows the same `events.Event.OpArgs` pattern.
 - **Post-P23 (Whisk, mainnet 2025-09-03) every classic asset
   movement emits a unified transfer/mint/burn event with a 4th
-  `sep0011_asset` topic.** Pre-P23 you parse operations+effects.
-  Our decoder handles both. →
+  `sep0011_asset` topic.** Our decoder handles both event SHAPES —
+  the 3-topic SEP-41 form and the 4-topic CAP-67 form (the 4th topic
+  is `sep0011_asset`). It does NOT, however, parse pre-P23 classic
+  movements: there is no operations+effects fallback for the era
+  before unified events existed, so historical classic-asset movement
+  before P23 is not reconstructed from this path. →
   [docs/discovery/notes/cap-67-unified-events.md](docs/discovery/notes/cap-67-unified-events.md)
 - **SEP-41 `transfer` data can be EITHER a simple `i128` OR a map**
   containing `amount` + `to_muxed_id`. Type-test before
@@ -400,22 +422,43 @@ closed-bucket-only API contract.
 
 ### "Add a new CEX connector"
 
+CEX/FX venues are NOT under the Galexie → dispatcher path and do NOT
+use `internal/sources/<venue>/` or the on-chain five-file convention.
+They live directly at `internal/sources/external/<venue>/` and
+implement the `external.Connector` framework
+(`internal/sources/external/framework.go`), not `consumer.Source`.
+Copy the `binance` / `kraken` package as the template.
+
 1. Read [docs/discovery/external-refs/cex-feeds.md](docs/discovery/external-refs/cex-feeds.md).
 2. Pick the right reference in the existing Dash Retail Rates code
    (`~/code/rates/rate_source_<venue>.go`) — those connectors have
    the vendor's real endpoints + pair conventions documented.
-3. Create `internal/sources/external/cex/<venue>/` following the
-   five-file convention: `README.md`, `events.go`, `decode.go`,
-   `consumer.go`, `source_test.go`.
-4. Implement the `consumer.Source` interface.
-5. Register in `internal/sources/registry.go`.
-6. Add golden-file fixtures in `test/fixtures/external/<venue>/`.
+3. Create `internal/sources/external/<venue>/` following the
+   actual per-package layout: `events.go` (wire types), `parse.go`
+   (vendor JSON → `canonical.Trade`), `streamer.go` (live WS/REST;
+   implements `external.Streamer`) and/or a poller, `backfill.go`
+   (historical OHLC; implements `external.Backfiller`), and
+   `pairs.go` (symbol map). Tests sit alongside as `*_test.go`.
+4. Implement the relevant `external.Connector` sub-interface(s) —
+   `Streamer` (live push, e.g. binance/kraken), `Poller` (REST quote
+   board, used by the FX pollers), and/or `Backfiller` (historical
+   candles). NOT `consumer.Source` — that's the legacy on-chain seam.
+5. Register the venue's `Metadata` (class / subclass / weight /
+   `IncludeInVWAP` / `BackfillSafe`) in the `Registry` map in
+   `internal/sources/external/registry.go`, then wire it into
+   `buildExternal` in `cmd/ratesengine-indexer/main.go` (and the
+   parallel block in `ratesengine-ops`) behind a `cfg.<Venue>.Enabled`
+   gate.
+6. Fixtures are inline golden frames in the package's `*_test.go`
+   (e.g. `binance/streamer_test.go`) — there is no
+   `test/fixtures/external/` directory.
 7. Add an ADR if the venue has unusual constraints (e.g. requires
    paid tier, or has licensing restrictions on redistribution).
 
 ### "Add a new on-chain Soroban DEX"
 
-Same five-file convention. Template PR: look at how Soroswap was
+Use the five-file convention (`README.md`, `events.go`, `decode.go`,
+`consumer.go`, `source_test.go`). Template PR: look at how Soroswap was
 added (`internal/sources/soroswap/`). Differences per DEX usually
 boil down to event topic shape + amount-decoding quirks.
 

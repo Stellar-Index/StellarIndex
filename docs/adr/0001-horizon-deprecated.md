@@ -9,6 +9,17 @@ superseded_by: null
 
 # ADR-0001: Horizon is not in the Rates Engine architecture
 
+> **Amendment (2026-06-12, F-1353 / D2-08).** Where this ADR (and
+> ADR-0008 / ADR-0013) enumerate `stellar-rpc` and the `stellar-core`
+> watcher as data sources in our ingest topology, note that those
+> standalone services were **removed from production on 2026-04-23**.
+> Production ingest is Galexie MinIO → dispatcher → decoders only
+> (invariant 6); `stellar-core` survives solely as a captive-core
+> subprocess of Galexie, and `stellar-rpc` only as the `rpc-probe`
+> operator diagnostic. See
+> [docs/architecture/ingest-pipeline.md](../architecture/ingest-pipeline.md).
+> The decision below is preserved as the original record.
+
 ## Context
 
 Horizon was the canonical client-facing API for the Stellar network

@@ -5,8 +5,9 @@ storage + REST API + aggregator: VWAP/TWAP, triangulation,
 anomaly response, multi-factor confidence, freeze policy, supply
 pipeline). r1 (Hetzner) live with all three application services
 running against the historical galexie archive (2026-05-03
-first-bringup). Remaining launch blockers are operational
-(R2/R3 multi-region provisioning, status page, external
+first-bringup). The public status page has shipped (`web/status/`).
+Remaining launch blockers are operational
+(R2/R3 multi-region provisioning, external
 security review, customer demo, production cutover).
 **License:** Apache-2.0.
 **Tested against:** Stellar pubnet protocol 23 (post-P23 / CAP-67 unified events).
@@ -142,9 +143,10 @@ long-form rationale; each becomes a numbered ADR.
 - ✅ Archive-completeness daemon (check / fix / verify modes) +
   multi-tier archive verification (Tier A chain-link / Tier B
   checkpoint / Tier D peer cross-compare / Tier E archivist).
-- ⏳ Production hardening: public status page (L4.11), SEV-1/2
-  dry-run record (L5.7), operational p95 ≤ 200ms proof
-  (L5.* + Wk 9–10 launch tasks).
+- ✅ Public status page (L4.11) — shipped at `web/status/`
+  (Cloudflare Pages static export).
+- ⏳ Production hardening: SEV-1/2 dry-run record (L5.7),
+  operational p95 ≤ 200ms proof (L5.* + Wk 9–10 launch tasks).
 
 **Production deadline:** 2026-06-30 per
 [docs/discovery/delivery-plan.md](docs/discovery/delivery-plan.md).
@@ -153,8 +155,9 @@ long-form rationale; each becomes a numbered ADR.
 
 ## Contact
 
-- Security: <security@ratesengine.net> (GPG key in
-  [SECURITY.md](SECURITY.md))
+- Security: <security@ratesengine.net> — see [SECURITY.md](SECURITY.md)
+  for the disclosure process (the GPG key for encrypted reports is not
+  yet published; SECURITY.md tracks where it will land)
 - Code: [CONTRIBUTING.md](CONTRIBUTING.md)
 - General: <hello@ratesengine.net>
 
