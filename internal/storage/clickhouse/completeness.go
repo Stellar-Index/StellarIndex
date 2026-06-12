@@ -105,6 +105,13 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 	defer func() { _ = conn.Close() }()
 
 	// First contiguity gap (first missing ledger), 0 if none.
+	//
+	// SETTINGS on both substrate queries: the GROUP BY/sort over the full
+	// ledger range (63M+ rows and growing) exceeded the 12 GiB query memory
+	// limit at tip 63.0M (2026-06-12). Spill to disk instead of failing —
+	// CH tmp_path lives on the big ZFS pool, and the substrate check is a
+	// batch audit where minutes are fine and a false-FAIL verdict is not.
+	const spill = ` SETTINGS max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 	const gapQ = `
 		SELECT toUInt64(ifNull((SELECT min(gap_start) FROM (
 			SELECT ledger_seq + 1 AS gap_start
@@ -115,7 +122,7 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 				FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?)
 			)
 			WHERE nxt > ledger_seq + 1
-		)), 0))`
+		)), 0))` + spill
 	var firstGap uint64
 	if qerr := conn.QueryRow(ctx, gapQ, from, to).Scan(&firstGap); qerr != nil {
 		return 0, false, "", fmt.Errorf("clickhouse: substrate contiguity [%d,%d]: %w", from, to, qerr)
@@ -131,7 +138,7 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 				FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
 				GROUP BY ledger_seq
 			)
-		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
+		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))` + spill
 	var firstBreak uint64
 	if qerr := conn.QueryRow(ctx, chainQ, from, to, from).Scan(&firstBreak); qerr != nil {
 		return 0, false, "", fmt.Errorf("clickhouse: substrate hash-chain [%d,%d]: %w", from, to, qerr)
