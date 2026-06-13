@@ -27,10 +27,21 @@
 //
 // Issuers below are mainnet, deterministic on r1:
 //   USDC  — Circle:    GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-//   AQUA  — Aqua:      GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AB6V
+//   AQUA  — Aqua:      GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA
+//            (vanity issuer — ends in `AQUA`; a pre-2026-06-13 fixture
+//            had `…M67AB6V`, an invalid CRC, which 400'd every request
+//            on the AQUA pair and inflated the acceptance error rate.)
+//
+// EVERY pair below is verified to return 200 on ALL FOUR endpoints the
+// acceptance scenario drives (/price, /price/tip, /ohlc, /assets/{base})
+// against r1. Pairs that 404 on the served tier are NOT measuring server
+// latency — they measure a no-data path and poison the error-rate
+// threshold. The dropped `crypto:USDT/fiat:USD` and `crypto:USDC/fiat:USD`
+// pairs are exactly this trap: USDT/USDC are CEX *quote* currencies, so
+// there is no spot USDT/USD or USDC/USD trade stream to price (404).
 
 const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
-const AQUA = 'AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AB6V';
+const AQUA = 'AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 
 export const PAIRS = [
   // XLM majors — both canonical forms so the alias-loop read path
@@ -38,17 +49,17 @@ export const PAIRS = [
   { asset: 'native',     quote: 'fiat:USD',   weight: 30 },
   { asset: 'crypto:XLM', quote: 'fiat:USD',   weight: 12 },
   { asset: 'native',     quote: 'fiat:EUR',   weight: 8  },
-  // Stablecoin majors quoted in fiat.
+  // Stablecoin major quoted in fiat (USDC/USD has a real trade stream).
   { asset: USDC,         quote: 'fiat:USD',   weight: 14 },
-  { asset: 'crypto:USDT', quote: 'fiat:USD',  weight: 7  },
-  { asset: 'crypto:USDC', quote: 'fiat:USD',  weight: 5  },
-  // Crypto majors quoted in fiat / against XLM.
-  { asset: 'crypto:BTC', quote: 'fiat:USD',   weight: 7  },
-  { asset: 'crypto:ETH', quote: 'fiat:USD',   weight: 5  },
-  // Long-tail classic asset against XLM and USD.
-  { asset: AQUA,         quote: 'native',     weight: 4  },
-  { asset: USDC,         quote: 'native',     weight: 5  },
-  { asset: 'native',     quote: 'crypto:USDT', weight: 3 },
+  // Crypto majors quoted in fiat.
+  { asset: 'crypto:BTC', quote: 'fiat:USD',   weight: 8  },
+  { asset: 'crypto:ETH', quote: 'fiat:USD',   weight: 6  },
+  // Stellar-native long-tail + stablecoin against XLM (deep SDEX/AMM
+  // liquidity — exercises the on-chain pricing path).
+  { asset: AQUA,         quote: 'native',     weight: 8  },
+  { asset: USDC,         quote: 'native',     weight: 8  },
+  // XLM priced in a stablecoin (USDT-as-USD-proxy aggregator path).
+  { asset: 'native',     quote: 'crypto:USDT', weight: 6 },
 ];
 
 const totalWeight = PAIRS.reduce((s, p) => s + p.weight, 0);
