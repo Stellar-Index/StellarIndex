@@ -269,6 +269,53 @@ func (r *ExplorerReader) OperationResultsByTx(ctx context.Context, seq uint32, h
 	return out, rows.Err()
 }
 
+// ContractActivityRow is a contract event for the contract-activity view
+// (GET /v1/contracts/{c}). Ordered most-recent-first.
+type ContractActivityRow struct {
+	Seq        uint32
+	CloseTime  time.Time
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	EventType  string
+	Topic0Sym  string
+}
+
+// ContractEventsRecent returns a contract's most-recent events, descending.
+// Relies on the contract_id bloom skip-index (contract_events is
+// ORDER BY (ledger_seq, tx_hash, ...), so a contract_id predicate would
+// otherwise full-scan). NOT FINAL — FINAL would defeat the skip-index.
+// beforeLedger>0 keyset-pages to older events.
+func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID string, limit int, beforeLedger uint32) ([]ContractActivityRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym
+		FROM stellar.contract_events WHERE contract_id = ?`
+	args := []any{contractID}
+	if beforeLedger > 0 {
+		q += ` AND ledger_seq < ?`
+		args = append(args, beforeLedger)
+	}
+	q += ` ORDER BY ledger_seq DESC, op_index DESC, event_index DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := r.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: contract %s events: %w", contractID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ContractActivityRow
+	for rows.Next() {
+		var e ContractActivityRow
+		if err := rows.Scan(&e.Seq, &e.CloseTime, &e.TxHash, &e.OpIndex, &e.EventIndex, &e.EventType, &e.Topic0Sym); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan contract event: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // EventSummary is a lightweight contract-event row for the tx-detail view.
 type EventSummary struct {
 	OpIndex    uint32
