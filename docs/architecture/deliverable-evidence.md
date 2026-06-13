@@ -101,13 +101,16 @@ the served tier — a typo'd AQUA issuer and two CEX-quote-currency
   no Stellar wallet needed), then the SEP-10 account-bound path as the
   advanced option. Example key prefix corrected (`rate_` → `rek_`) and
   the unquoted-`&` curl bug fixed.
-- **E2E walkthrough (2026-06-13):** signup → key → authenticated request
-  loop verified end-to-end on r1. Pre-launch, the deployment runs
+- **E2E walkthrough (verified 2026-06-13 on r1):** `POST /v1/signup`
+  (`{email,label}`) → `200` with `data.plaintext = rek_d2d35576…`
+  (`tier: apikey`, `rate_limit_per_min: 1000`, `email_verification_sent:
+  false`); the fresh key immediately authenticated `GET /v1/account/me`
+  → `200` (account detail), on both `X-API-Key` and `Authorization:
+  Bearer`. No verification dead-end. Pre-launch the deployment runs
   `signup_require_email_verification = false` (the documented operator
-  opt-in for unverified signup) so a fresh key authenticates
-  immediately; email-ownership verification re-enables once a
-  transactional-email sender (Resend) is configured.
-  <!-- FILL: paste the verified rek_ key-id + 200 response after the r1 flip -->
+  opt-in) — email-ownership verification re-enables once a
+  transactional-email sender (Resend) is configured (the flow is wired;
+  only the sender credential is deferred).
 - **Examples**: `examples/` curl scripts + auto-generated Postman
   collection, brand-clean.
 
