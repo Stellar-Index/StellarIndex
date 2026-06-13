@@ -68,15 +68,22 @@ Verified live 2026-06-13:
   (migration 0031 removed trades retention; caggs indefinite). Raw
   `trades` is the ~3-month served working set (ADR-0034); full history
   lives in the ClickHouse lake + the indefinite caggs.
-- **Known limitation (documented, not AC-blocking)**:
-  `/v1/ohlc?quote=fiat:USD` — the *synthetic* USD quote — currently
-  serves only ~5 weeks (the aggregator began materialising the fiat:USD
-  daily cagg recently; it is not backfilled). The deep XLM/USD history
-  is served by `/v1/history/since-inception` (above). Backfilling the
-  synthetic-quote `prices_1d`/`prices_1h` caggs from the lake so the
-  standard OHLC endpoint matches is a **post-deliverable consistency
-  enhancement** — pre-agree with the customer that since-inception is
-  the canonical deep-history surface for synthetic quotes.
+- **OHLC candlesticks (Stellar RFP §3 "OHLC aggregates"), now deep**:
+  `/v1/ohlc?quote=fiat:USD&interval=…` previously served only ~5 weeks
+  (the caggs key bars by the real stored quote_asset, so the synthetic
+  `fiat:USD` matched only the recent direct CEX feed). Fixed
+  2026-06-13 (commit d083941b): the series handler now COMBINES the
+  USD-pegged constituent pairs per bucket — the same source set the live
+  aggregator's VWAP uses (`aggregate.ExpandTargetPairWithClassicPegs`:
+  direct pair + crypto stablecoin backers + vetted `usd_pegged_classic_assets`)
+  across both XLM dual-form base aliases. Verified live: XLM/USD candles
+  to **2021-02-01** (weekly full 5.4 yr; daily/1000-bar CG-parity cap;
+  hourly recent), and it **generalises to every asset** (AQUA/USD from
+  2021-08, its USD inception). `triangulated: true` flags the proxy
+  combine. Depth = the vetted USD-peg floor (Circle USDC, 2021 — the
+  point reliable on-chain USD pricing began); deeper needs vetting older
+  anchors (operator curation). Non-USD pairs (XLM/anchors) still serve to
+  2015 per the cagg.
 
 ## AC4 — ≥ 1000 requests/min per client
 
