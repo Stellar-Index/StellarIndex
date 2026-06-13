@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
 
 // LedgerView is the wire shape for a ledger header (ADR-0038). total_coins and
@@ -73,7 +74,7 @@ func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
 		OperationCount: t.OperationCount,
 		Successful:     t.Successful,
 		ResultCode:     t.ResultCode,
-		MemoType:       t.MemoType,
+		MemoType:       xdrjson.MemoTypeName(t.MemoType),
 		Memo:           t.Memo,
 	}
 }

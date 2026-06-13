@@ -22,6 +22,9 @@ type OpView struct {
 	SourceAccount string         `json:"source_account,omitempty"`
 	Fields        map[string]any `json:"fields,omitempty"`
 	RawXDR        string         `json:"raw_xdr,omitempty"`
+	// ResultCode is the operation's XDR result code, populated only in the
+	// per-transaction view (GET /v1/tx/{hash}); nil in the ledger op list.
+	ResultCode *int32 `json:"result_code,omitempty"`
 }
 
 // opView decodes an operation row's XDR body into the wire shape. On decode

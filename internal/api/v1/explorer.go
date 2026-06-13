@@ -18,6 +18,10 @@ type ExplorerReader interface {
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
 	LedgerTransactions(ctx context.Context, seq uint32, limit int) ([]clickhouse.TxSummary, error)
 	OperationsByLedger(ctx context.Context, seq uint32, limit int) ([]clickhouse.OpRow, error)
+	TransactionByHash(ctx context.Context, hash string) (clickhouse.TxSummary, bool, error)
+	OperationsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.OpRow, error)
+	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error)
+	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
 }
 
 // explorerUnavailable writes the standard 503 when no explorer reader is wired

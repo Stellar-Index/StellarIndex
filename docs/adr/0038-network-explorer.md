@@ -131,5 +131,19 @@ fetch the API client-side at runtime** (the explorer already fetches
 
 ## Status of build
 
-- Phase A: in progress (this ADR's companion commits).
-- Phases B–D: planned per the roadmap above.
+- **Phase A unit 1 (shipped + deployed):** `clickhouse.ExplorerReader` +
+  `GET /v1/ledgers`, `/v1/ledgers/{seq}`, `/v1/ledgers/{seq}/transactions`.
+  Live on r1, verified (prev_hash chains, total_coins as string).
+- **Phase A unit 2a (shipped + deployed):** `internal/xdrjson` decoder
+  (~16 classic op types + invoke_host_function, raw fallback) +
+  `GET /v1/operations?ledger=`. Decode verified live against real ledger
+  ops (payments / offers / path-payments / change_trust).
+- **Phase A unit 2b (next):** `GET /v1/tx/{hash}` — needs a `tx_hash`
+  bloom skip-index on `stellar.transactions` (the table is
+  ORDER BY (ledger_seq, tx_index), so hash lookup would full-scan
+  otherwise). Index ADD is instant (covers new txs); a one-time
+  MATERIALIZE over the 10 B-row history is the backfill for old txs.
+  Once the tx's ledger_seq is known, ops/events/results are
+  ledger-scoped (partition-pruned, no index needed).
+- **Phase A unit 3 (planned):** `/v1/contracts/{c}` + `/v1/search`.
+- **Phases B–D:** planned per the roadmap above.

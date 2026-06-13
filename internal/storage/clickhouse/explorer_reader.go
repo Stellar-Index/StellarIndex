@@ -207,6 +207,99 @@ func (r *ExplorerReader) OperationsByLedger(ctx context.Context, seq uint32, lim
 	return scanOps(rows)
 }
 
+const txCols = `ledger_seq, close_time, tx_hash, tx_index, source_account,
+	fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo`
+
+// TransactionByHash looks up a single transaction by its hex hash. Relies on
+// the tx_hash bloom skip-index (the table is ORDER BY (ledger_seq, tx_index),
+// so without the index this would full-scan). NOT FINAL — FINAL would defeat
+// the skip-index; instead it takes the latest-ingested row. found=false when
+// the hash is unknown.
+func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
+	q := `SELECT ` + txCols + ` FROM stellar.transactions
+		WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
+	rows, err := r.conn.Query(ctx, q, hash)
+	if err != nil {
+		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s: %w", hash, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out, err := scanTxSummaries(rows)
+	if err != nil {
+		return TxSummary{}, false, err
+	}
+	if len(out) == 0 {
+		return TxSummary{}, false, nil
+	}
+	return out[0], true, nil
+}
+
+// OperationsByTx returns a transaction's operations, ledger-scoped (so
+// partition-pruned + fast — the caller passes the ledger from TransactionByHash).
+func (r *ExplorerReader) OperationsByTx(ctx context.Context, seq uint32, hash string) ([]OpRow, error) {
+	q := `SELECT ` + opCols + ` FROM stellar.operations
+		WHERE ledger_seq = ? AND tx_hash = ? ORDER BY op_index`
+	rows, err := r.conn.Query(ctx, q, seq, hash)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: tx %s ops: %w", hash, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanOps(rows)
+}
+
+// OperationResultsByTx returns op_index → result_code for a transaction
+// (ledger-scoped; operation_results is ORDER BY (ledger_seq, tx_hash, op_index)
+// so this is a primary-key point lookup).
+func (r *ExplorerReader) OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error) {
+	const q = `SELECT op_index, result_code FROM stellar.operation_results
+		WHERE ledger_seq = ? AND tx_hash = ?`
+	rows, err := r.conn.Query(ctx, q, seq, hash)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: tx %s op results: %w", hash, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[uint32]int32{}
+	for rows.Next() {
+		var idx uint32
+		var code int32
+		if err := rows.Scan(&idx, &code); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan op result: %w", err)
+		}
+		out[idx] = code
+	}
+	return out, rows.Err()
+}
+
+// EventSummary is a lightweight contract-event row for the tx-detail view.
+type EventSummary struct {
+	OpIndex    uint32
+	EventIndex uint32
+	ContractID string
+	EventType  string
+	Topic0Sym  string
+}
+
+// EventsByTx returns a transaction's contract events (ledger-scoped — fast;
+// contract_events is ORDER BY (ledger_seq, tx_hash, op_index, event_index)).
+func (r *ExplorerReader) EventsByTx(ctx context.Context, seq uint32, hash string) ([]EventSummary, error) {
+	const q = `SELECT op_index, event_index, contract_id, event_type, topic_0_sym
+		FROM stellar.contract_events
+		WHERE ledger_seq = ? AND tx_hash = ? ORDER BY op_index, event_index`
+	rows, err := r.conn.Query(ctx, q, seq, hash)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: tx %s events: %w", hash, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []EventSummary
+	for rows.Next() {
+		var e EventSummary
+		if err := rows.Scan(&e.OpIndex, &e.EventIndex, &e.ContractID, &e.EventType, &e.Topic0Sym); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan event: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func scanTxSummaries(rows driver.Rows) ([]TxSummary, error) {
 	var out []TxSummary
 	for rows.Next() {
