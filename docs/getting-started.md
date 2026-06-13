@@ -21,7 +21,7 @@ minutes.
 
 ```sh
 # Current XLM/USD price — no auth required for the free tier.
-curl -fsSL https://api.stellarindex.io/v1/price?asset=native&quote=fiat:USD
+curl -fsSL "https://api.stellarindex.io/v1/price?asset=native&quote=fiat:USD"
 
 # 24-hour OHLC for XLM:
 curl -fsSL "https://api.stellarindex.io/v1/ohlc?base=native&quote=fiat:USD&from=$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)"
@@ -59,26 +59,65 @@ The `flags` block is the operational quality signal:
 
 ## Authentication
 
-The free tier supports anonymous requests at a low rate limit
-(60 req/min). Authenticated tiers unlock higher limits + access
-to private surfaces (`/v1/observations`, `/v1/account/*`).
+The free tier supports anonymous requests at a low rate limit.
+Authenticated tiers unlock higher limits + access to private
+surfaces (`/v1/observations`, `/v1/account/*`). The key is accepted
+on either the `X-API-Key` header or `Authorization: Bearer <key>`
+(SDKs / curl users tend to prefer `X-API-Key`).
+
+### Self-service signup — the ≤1-minute path
+
+No Stellar wallet required. `POST /v1/signup` takes an email and
+returns a usable key immediately:
 
 ```sh
-# Issue an API key (returns the raw key once — store it):
+curl -fsSL -X POST https://api.stellarindex.io/v1/signup \
+     -H "Content-Type: application/json" \
+     -d '{"email":"you@example.com","label":"my first key"}'
+```
+
+```json
+{
+  "data": {
+    "plaintext": "rek_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "key_id": "kid_…",
+    "key_prefix": "rek_xxxxxxxx",
+    "tier": "apikey",
+    "rate_limit_per_min": 1000,
+    "email_verification_sent": false
+  },
+  "as_of": "…", "flags": { "...": "..." }
+}
+```
+
+Store `data.plaintext` — it is shown exactly once. Use it on any
+request via `X-API-Key` (or `Authorization: Bearer <key>`):
+
+```sh
+curl -fsSL https://api.stellarindex.io/v1/account/me \
+     -H "X-API-Key: rek_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+> If the deployment runs with email-ownership verification enabled
+> (`signup_require_email_verification`), the key is issued pending and
+> must complete the link emailed at signup before it authenticates;
+> the `email_verification_sent` field tells you which mode you're in.
+
+### Account-bound keys (SEP-10)
+
+For a key cryptographically scoped to a single Stellar account
+(G-strkey), authenticate via SEP-10 Web Auth and mint through
+`/v1/account/keys`. The account's signature authorises the key:
+
+```sh
 curl -fsSL -X POST https://api.stellarindex.io/v1/account/keys \
      -H "Authorization: Bearer $YOUR_SEP10_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"label":"my laptop"}'
-
-# Use the key on subsequent requests:
-curl -fsSL https://api.stellarindex.io/v1/account/me \
-     -H "Authorization: Bearer rate_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
-API keys are scoped to a single Stellar account (G-strkey), proven
-via SEP-10 Web Auth at issuance time. The account's signature
-authorises the key. Rotation is available via `POST /v1/account/keys`;
-revocation is not shipped yet in this snapshot.
+Rotation is available via `POST /v1/account/keys`; revocation is not
+shipped yet in this snapshot.
 
 ## Rate limits
 
