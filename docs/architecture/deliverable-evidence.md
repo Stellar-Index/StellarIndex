@@ -134,7 +134,17 @@ Verified live 2026-06-13:
 
 - **`/v1/coverage`** (live): per-source ADR-0033 verdicts — substrate
   continuity to genesis (proven at tip 63.0M, windowed audit),
-  recognition, projection reconciliation. <!-- fill: N/15 complete at sign-off -->
+  recognition, projection reconciliation. **15/15 sources
+  `complete=true`** (run-4, 2026-06-13): aquarius re-verified to tip
+  after the cutover-window gap-fill (served = lake-expected, Δ=0);
+  soroswap resolved to complete after removing one wrong-`event_index`
+  duplicate skim row (a pre-`event_index`-fix 2026-06-08 decode left an
+  orphan at `event_index=0` that the 06-12 re-derive superseded at
+  `event_index=2`; trades were always 100%). Operational note: the
+  soroswap completeness *seed* makes a live Soroban-RPC call
+  (`seed_rpc_endpoint`) that can transiently time out and produce a
+  false-negative verdict — re-run when RPC is healthy; making the seed
+  PG-only-resilient is a small post-deliverable hardening.
 - **`/v1/protocols` + `/v1/protocols/{name}`** (live): 15-protocol
   directory with verified factory trust-roots (ADR-0035), registered
   contracts, 24h activity.
