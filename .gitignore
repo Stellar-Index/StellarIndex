@@ -80,6 +80,12 @@ service-account*.json
 # Test artefacts
 /test/load/reports/*
 !/test/load/reports/README.md
+# Acceptance-criteria evidence runs are committed (deliverable evidence
+# pack; docs/architecture/deliverable-evidence.md cites them by path).
+!/test/load/reports/2026-*/
+!/test/load/reports/2027-*/
+!/test/load/reports/2028-*/
+!/test/load/reports/2029-*/
 /test/chaos/reports/*
 !/test/chaos/reports/.gitkeep
 # Launch-cut + monthly chaos runs are committed per
