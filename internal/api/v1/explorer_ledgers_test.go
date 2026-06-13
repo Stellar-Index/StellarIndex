@@ -11,10 +11,12 @@ import (
 )
 
 type stubExplorerReader struct {
-	ledgers []clickhouse.LedgerHeader
-	txs     []clickhouse.TxSummary
-	ops     []clickhouse.OpRow
-	err     error
+	ledgers   []clickhouse.LedgerHeader
+	txs       []clickhouse.TxSummary
+	ops       []clickhouse.OpRow
+	opResults map[uint32]int32
+	events    []clickhouse.EventSummary
+	err       error
 }
 
 func (s *stubExplorerReader) RecentLedgers(_ context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {
@@ -39,6 +41,30 @@ func (s *stubExplorerReader) LedgerTransactions(_ context.Context, _ uint32, _ i
 
 func (s *stubExplorerReader) OperationsByLedger(_ context.Context, _ uint32, _ int) ([]clickhouse.OpRow, error) {
 	return s.ops, s.err
+}
+
+func (s *stubExplorerReader) TransactionByHash(_ context.Context, hash string) (clickhouse.TxSummary, bool, error) {
+	if s.err != nil {
+		return clickhouse.TxSummary{}, false, s.err
+	}
+	for _, t := range s.txs {
+		if t.TxHash == hash {
+			return t, true, nil
+		}
+	}
+	return clickhouse.TxSummary{}, false, nil
+}
+
+func (s *stubExplorerReader) OperationsByTx(_ context.Context, _ uint32, _ string) ([]clickhouse.OpRow, error) {
+	return s.ops, s.err
+}
+
+func (s *stubExplorerReader) OperationResultsByTx(_ context.Context, _ uint32, _ string) (map[uint32]int32, error) {
+	return s.opResults, s.err
+}
+
+func (s *stubExplorerReader) EventsByTx(_ context.Context, _ uint32, _ string) ([]clickhouse.EventSummary, error) {
+	return s.events, s.err
 }
 
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {
@@ -127,9 +153,55 @@ func TestExplorer_LedgerTransactions(t *testing.T) {
 	}
 }
 
+const testTxHash = "88526317d98b1eb5a8040123456789abcdef0123456789abcdef0123456789ab"
+
+func TestExplorer_TxDetail(t *testing.T) {
+	reader := &stubExplorerReader{
+		txs:       []clickhouse.TxSummary{{Seq: 42, TxHash: testTxHash, SourceAccount: "GABC", FeeCharged: 300, OperationCount: 1, Successful: true, MemoType: "MemoTypeMemoText", Memo: "hello"}},
+		ops:       []clickhouse.OpRow{{Seq: 42, TxHash: testTxHash, OpIndex: 0, OpType: "OperationTypePayment", BodyXDR: "not-valid-xdr"}},
+		opResults: map[uint32]int32{0: 0},
+		events:    []clickhouse.EventSummary{{OpIndex: 0, EventIndex: 1, ContractID: "CABC", EventType: "contract", Topic0Sym: "transfer"}},
+	}
+	base := explorerTestServer(t, reader)
+	resp := mustGet(t, base+"/v1/tx/"+testTxHash)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.TxDetailView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if body.Data.Hash != testTxHash {
+		t.Errorf("hash = %q", body.Data.Hash)
+	}
+	if body.Data.MemoType != "text" { // normalized from MemoTypeMemoText
+		t.Errorf("memo_type = %q, want text", body.Data.MemoType)
+	}
+	if len(body.Data.Operations) != 1 {
+		t.Fatalf("ops = %d, want 1", len(body.Data.Operations))
+	}
+	// op had invalid XDR -> raw_xdr fallback, result_code populated from map.
+	if body.Data.Operations[0].ResultCode == nil || *body.Data.Operations[0].ResultCode != 0 {
+		t.Errorf("result_code = %v, want 0", body.Data.Operations[0].ResultCode)
+	}
+	if len(body.Data.Events) != 1 || body.Data.Events[0].Topic0 != "transfer" {
+		t.Errorf("events = %+v", body.Data.Events)
+	}
+}
+
+func TestExplorer_TxDetail_InvalidHashAndNotFound(t *testing.T) {
+	base := explorerTestServer(t, &stubExplorerReader{})
+	if resp := mustGet(t, base+"/v1/tx/xyz"); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("short hash: status = %d, want 400", resp.StatusCode)
+	}
+	if resp := mustGet(t, base+"/v1/tx/"+testTxHash); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown tx: status = %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestExplorer_Unavailable503(t *testing.T) {
 	base := explorerTestServer(t, nil)
-	for _, path := range []string{"/v1/ledgers", "/v1/ledgers/1", "/v1/ledgers/1/transactions"} {
+	for _, path := range []string{"/v1/ledgers", "/v1/ledgers/1", "/v1/ledgers/1/transactions", "/v1/operations", "/v1/tx/" + testTxHash} {
 		resp := mustGet(t, base+path)
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Errorf("%s: status = %d, want 503", path, resp.StatusCode)

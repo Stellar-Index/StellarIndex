@@ -47,7 +47,12 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     result_code     Int32,
     memo_type       LowCardinality(String),
     memo            String,
-    ingested_at     DateTime DEFAULT now()
+    ingested_at     DateTime DEFAULT now(),
+    -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the
+    -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise
+    -- full-scan. New parts are indexed on insert; existing history needs a
+    -- one-time `ALTER TABLE stellar.transactions MATERIALIZE INDEX idx_tx_hash`.
+    INDEX idx_tx_hash tx_hash TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)

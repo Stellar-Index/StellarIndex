@@ -1026,6 +1026,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.handleLedgerDetail)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.handleLedgerTransactions)
 	s.mux.HandleFunc("GET /v1/operations", s.handleOperations)
+	s.mux.HandleFunc("GET /v1/tx/{hash}", s.handleTxDetail)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)
