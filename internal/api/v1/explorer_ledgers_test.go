@@ -11,12 +11,13 @@ import (
 )
 
 type stubExplorerReader struct {
-	ledgers   []clickhouse.LedgerHeader
-	txs       []clickhouse.TxSummary
-	ops       []clickhouse.OpRow
-	opResults map[uint32]int32
-	events    []clickhouse.EventSummary
-	err       error
+	ledgers        []clickhouse.LedgerHeader
+	txs            []clickhouse.TxSummary
+	ops            []clickhouse.OpRow
+	opResults      map[uint32]int32
+	events         []clickhouse.EventSummary
+	contractEvents []clickhouse.ContractActivityRow
+	err            error
 }
 
 func (s *stubExplorerReader) RecentLedgers(_ context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {
@@ -65,6 +66,10 @@ func (s *stubExplorerReader) OperationResultsByTx(_ context.Context, _ uint32, _
 
 func (s *stubExplorerReader) EventsByTx(_ context.Context, _ uint32, _ string) ([]clickhouse.EventSummary, error) {
 	return s.events, s.err
+}
+
+func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _ int, _ uint32) ([]clickhouse.ContractActivityRow, error) {
+	return s.contractEvents, s.err
 }
 
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {
@@ -196,6 +201,36 @@ func TestExplorer_TxDetail_InvalidHashAndNotFound(t *testing.T) {
 	}
 	if resp := mustGet(t, base+"/v1/tx/"+testTxHash); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown tx: status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestExplorer_ContractDetail(t *testing.T) {
+	const cid = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"
+	reader := &stubExplorerReader{contractEvents: []clickhouse.ContractActivityRow{
+		{Seq: 63000000, TxHash: "abc", OpIndex: 0, EventIndex: 1, EventType: "contract", Topic0Sym: "transfer"},
+		{Seq: 62999000, TxHash: "def", OpIndex: 0, EventIndex: 0, EventType: "contract", Topic0Sym: "mint"},
+	}}
+	base := explorerTestServer(t, reader)
+	resp := mustGet(t, base+"/v1/contracts/"+cid)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ContractDetailView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if body.Data.ContractID != cid || len(body.Data.Events) != 2 {
+		t.Fatalf("detail = %+v", body.Data)
+	}
+	if body.Data.Events[0].Topic0 != "transfer" || body.Data.NextBefore != 62999000 {
+		t.Errorf("events/cursor = %+v next=%d", body.Data.Events, body.Data.NextBefore)
+	}
+}
+
+func TestExplorer_ContractDetail_InvalidID(t *testing.T) {
+	base := explorerTestServer(t, &stubExplorerReader{})
+	if resp := mustGet(t, base+"/v1/contracts/notacontract"); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
 

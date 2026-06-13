@@ -106,7 +106,13 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     data_xdr           String,
     op_args_xdr        Array(String),
     in_successful_call UInt8,
-    ingested_at        DateTime DEFAULT now()
+    ingested_at        DateTime DEFAULT now(),
+    -- Bloom skip-index for per-contract activity (GET /v1/contracts/{c},
+    -- ADR-0038): the sort key is (ledger_seq, tx_hash, ...), so WHERE
+    -- contract_id=? would otherwise full-scan. New parts indexed on insert;
+    -- existing history needs `ALTER TABLE stellar.contract_events
+    -- MATERIALIZE INDEX idx_contract_id`.
+    INDEX idx_contract_id contract_id TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
