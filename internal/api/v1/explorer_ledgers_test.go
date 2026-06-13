@@ -13,6 +13,7 @@ import (
 type stubExplorerReader struct {
 	ledgers []clickhouse.LedgerHeader
 	txs     []clickhouse.TxSummary
+	ops     []clickhouse.OpRow
 	err     error
 }
 
@@ -34,6 +35,10 @@ func (s *stubExplorerReader) LedgerBySeq(_ context.Context, seq uint32) (clickho
 
 func (s *stubExplorerReader) LedgerTransactions(_ context.Context, _ uint32, _ int) ([]clickhouse.TxSummary, error) {
 	return s.txs, s.err
+}
+
+func (s *stubExplorerReader) OperationsByLedger(_ context.Context, _ uint32, _ int) ([]clickhouse.OpRow, error) {
+	return s.ops, s.err
 }
 
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {

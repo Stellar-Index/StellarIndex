@@ -160,6 +160,53 @@ func (r *ExplorerReader) LedgerTransactions(ctx context.Context, seq uint32, lim
 	return scanTxSummaries(rows)
 }
 
+// OpRow is one operation from stellar.operations. OpType is the lake's XDR
+// enum string ("OperationTypePayment"); BodyXDR is the base64 body for
+// read-time decode (internal/xdrjson). SourceAccount may be empty (the op
+// inherits the transaction source).
+type OpRow struct {
+	Seq           uint32
+	CloseTime     time.Time
+	TxHash        string
+	TxIndex       uint32
+	OpIndex       uint32
+	OpType        string
+	SourceAccount string
+	BodyXDR       string
+}
+
+const opCols = `ledger_seq, close_time, tx_hash, tx_index, op_index, op_type, source_account, body_xdr`
+
+func scanOps(rows driver.Rows) ([]OpRow, error) {
+	var out []OpRow
+	for rows.Next() {
+		var o OpRow
+		if err := rows.Scan(&o.Seq, &o.CloseTime, &o.TxHash, &o.TxIndex, &o.OpIndex,
+			&o.OpType, &o.SourceAccount, &o.BodyXDR); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan op: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OperationsByLedger returns the operations in a ledger, ordered by
+// (tx_index, op_index). Ledger-scoped → partition-pruned + fast (no tx_hash
+// index needed).
+func (r *ExplorerReader) OperationsByLedger(ctx context.Context, seq uint32, limit int) ([]OpRow, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
+		WHERE ledger_seq = ? ORDER BY tx_index, op_index LIMIT ?`
+	rows, err := r.conn.Query(ctx, q, seq, limit)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: ledger %d ops: %w", seq, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanOps(rows)
+}
+
 func scanTxSummaries(rows driver.Rows) ([]TxSummary, error) {
 	var out []TxSummary
 	for rows.Next() {
