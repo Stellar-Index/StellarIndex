@@ -53,6 +53,24 @@ type EmailLocker interface {
 	Release(ctx context.Context, emailHash string) error
 }
 
+// LoginThrottle, when set, bounds magic-link sends to prevent inbox
+// email-bombing + sender-reputation / email-quota burn. The global
+// anonymous rate-limit only caps per-IP REQUEST volume (60/min); a single
+// IP under that ceiling can still bomb one victim inbox or spray many
+// addresses, and each accepted request fires an outbound email. nil
+// disables the check (legacy behaviour). audit-2026-06-14 A12.
+type LoginThrottle interface {
+	// Allow reports whether a magic-link send for (ip, email) is within
+	// quota. On false the handler MUST skip the email yet still return the
+	// generic 200 {status:"sent"} — neither the attacker nor the victim may
+	// learn a throttle fired (the same anti-enumeration contract the
+	// endpoint already keeps). A non-nil error means the backing store is
+	// unavailable; the handler falls OPEN (sends) — availability over a
+	// brief abuse window, mirroring the signup throttle's fail-open. email is
+	// the lowercased address; implementations hash it before keying on it.
+	Allow(ctx context.Context, ip, email string) (bool, error)
+}
+
 // Config wires the auth handlers' dependencies. Constructed
 // once at server boot; mounted into the v1 mux.
 type Config struct {
@@ -67,6 +85,10 @@ type Config struct {
 	// per email. nil = no locking; the handler falls through to
 	// the legacy Suspend-on-conflict recovery path. F-1255.
 	EmailLocker EmailLocker
+	// LoginThrottle (optional) caps magic-link sends per IP + per
+	// target email. nil = no throttle (only the global anon
+	// rate-limit applies). audit-2026-06-14 A12.
+	LoginThrottle LoginThrottle
 	// DashboardBaseURL is the absolute URL of the customer
 	// dashboard SPA (typically https://app.stellarindex.io).
 	// The magic-link callback URL embedded in emails is
@@ -181,6 +203,22 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if !looksLikeEmail(email) {
 		writeProblem(w, http.StatusBadRequest, "invalid email", "/v1/auth/login")
 		return
+	}
+
+	// Magic-link abuse throttle (audit-2026-06-14 A12). Over quota → skip the
+	// send but return the SAME generic 200 below, so neither an attacker nor
+	// the victim's inbox learns a throttle fired. Redis blip → fall open
+	// (the global anon rate-limit still bounds per-IP volume).
+	if h.cfg.LoginThrottle != nil {
+		ok, terr := h.cfg.LoginThrottle.Allow(r.Context(), clientIP(r).String(), email)
+		switch {
+		case terr != nil:
+			h.cfg.Logger.Warn("login throttle unavailable; falling open", "err", terr)
+		case !ok:
+			h.cfg.Logger.Warn("magic-link login throttled", "ip", clientIP(r).String())
+			_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
+			return
+		}
 	}
 
 	plaintext, hash, code, err := h.cfg.Generator.NewToken()

@@ -1278,6 +1278,12 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	// recovery path (still safe; the orphan row gets reaped).
 	if rdb != nil {
 		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
+		// Magic-link send throttle (audit-2026-06-14 A12): per-IP +
+		// per-target-email caps so /v1/auth/login can't be used to
+		// email-bomb an inbox or burn the email-send quota. Redis-less
+		// deployments leave it nil (only the global anon rate-limit
+		// applies). Defaults: 10/h per IP, 5/h per email.
+		authCfg.LoginThrottle = auth.NewRedisLoginThrottle(rdb, auth.LoginThrottleOptions{})
 	}
 	authH, err := dashboardauth.NewHandlers(authCfg)
 	if err != nil {

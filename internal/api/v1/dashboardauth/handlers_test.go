@@ -539,3 +539,61 @@ func TestTouchTracker_Debounces(t *testing.T) {
 		t.Error("post-interval call must touch")
 	}
 }
+
+// stubLoginThrottle lets a test force the magic-link throttle decision
+// (audit-2026-06-14 A12).
+type stubLoginThrottle struct {
+	allow bool
+	err   error
+	calls int
+}
+
+func (s *stubLoginThrottle) Allow(_ context.Context, _, _ string) (bool, error) {
+	s.calls++
+	return s.allow, s.err
+}
+
+// TestHandleLogin_ThrottleDenies_SkipsEmailButReturnsGeneric200 — when the
+// throttle denies, the handler MUST NOT send the email yet MUST still return
+// the same generic 200 {status:"sent"} as the happy path (no inbox bomb, no
+// signal that a throttle fired).
+func TestHandleLogin_ThrottleDenies_SkipsEmailButReturnsGeneric200(t *testing.T) {
+	r := newTestRig(t)
+	thr := &stubLoginThrottle{allow: false}
+	r.cfg.LoginThrottle = thr
+
+	// Baseline: an un-throttled login returns this exact body.
+	wantBody := strings.TrimSpace(func() string {
+		clean := newTestRig(t)
+		return clean.postLogin(t, "x@example.com").Body.String()
+	}())
+
+	w := r.postLogin(t, "victim@example.com")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (must not leak the throttle)", w.Code)
+	}
+	if r.sender.SentCount() != 0 {
+		t.Errorf("sent emails = %d, want 0 (throttled send must be skipped)", r.sender.SentCount())
+	}
+	if thr.calls != 1 {
+		t.Errorf("throttle calls = %d, want 1", thr.calls)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != wantBody {
+		t.Errorf("throttled body = %q, want generic %q (enumeration/throttle signal)", got, wantBody)
+	}
+}
+
+// TestHandleLogin_ThrottleErrors_FailsOpen — a throttle backing-store error
+// must fall OPEN (send the email): login availability beats a brief abuse
+// window, and the global rate-limit still bounds per-IP volume.
+func TestHandleLogin_ThrottleErrors_FailsOpen(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.LoginThrottle = &stubLoginThrottle{allow: false, err: errors.New("redis down")}
+	w := r.postLogin(t, "alice@example.com")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if r.sender.SentCount() != 1 {
+		t.Errorf("sent emails = %d, want 1 (must fall open on throttle error)", r.sender.SentCount())
+	}
+}
