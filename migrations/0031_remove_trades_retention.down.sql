@@ -1,11 +1,16 @@
--- 0031 down — restore the original 90-day / 30-day retention
--- policies. Reverses the 2026-05-14 "store all raw trades forever"
--- change. Use only if disk pressure forces a rollback.
-
-BEGIN;
-
-SELECT add_retention_policy('trades',     INTERVAL '90 days', if_not_exists => true);
-SELECT add_retention_policy('prices_1m',  INTERVAL '30 days', if_not_exists => true);
-SELECT add_retention_policy('prices_15m', INTERVAL '30 days', if_not_exists => true);
-
-COMMIT;
+-- 0031 down — intentionally a NO-OP. DO NOT re-add retention.
+--
+-- This migration's `up` removed the 90d/30d retention policies so raw trades
+-- (and prices_1m/15m) are kept FOREVER per ADR-0034 (ClickHouse is the raw
+-- lake; Postgres is the served tier; storage is not a constraint; daily OHLC
+-- spans back to 2015). The original `down` re-armed
+-- `add_retention_policy('trades', INTERVAL '90 days')` — i.e. the EXACT
+-- mechanism of the recurring "rogue retention on trades" data-loss drift
+-- (SDEX-discrepancy investigation, 2026-06-10). A single
+-- `stellarindex-migrate down` crossing version 31 would silently schedule the
+-- retention worker to delete >90d raw trades — the precise loss ADR-0034
+-- forbids. golang-migrate `down` is one keystroke, so the safe `down` is to do
+-- nothing. If a deliberate rollback to retained storage is ever truly wanted,
+-- an operator must add a NEW, reviewed forward migration — never this `down`.
+-- (audit-2026-06-14 A15)
+SELECT 1;

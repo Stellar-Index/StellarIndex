@@ -1,13 +1,11 @@
--- 0040 down — reinstate the 90-day retention policy on
--- `oracle_updates` (mirrors the 0003 original).
+-- 0040 down — intentionally a NO-OP. DO NOT re-add retention.
 --
--- Reinstating retention does NOT delete already-preserved rows that
--- accumulated while 0040 was applied — the policy only schedules
--- future drops. An operator wanting to recover storage immediately
--- has to run drop_chunks() by hand.
-
-BEGIN;
-
-SELECT add_retention_policy('oracle_updates', INTERVAL '90 days');
-
-COMMIT;
+-- This migration's `up` removed the 90d retention on `oracle_updates` so the
+-- raw oracle history is kept indefinitely per ADR-0034 (Postgres served tier;
+-- storage is not a constraint). The original `down` re-armed
+-- `add_retention_policy('oracle_updates', INTERVAL '90 days')`, which a single
+-- `stellarindex-migrate down` crossing version 40 would silently schedule —
+-- the same data-loss class as the trades-retention drift (see 0031 down).
+-- Forward-only: a deliberate return to retained storage must be a NEW reviewed
+-- migration, never this `down`. (audit-2026-06-14 A15)
+SELECT 1;

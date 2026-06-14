@@ -17,8 +17,18 @@ import http from 'k6/http';
 
 const ENV = (typeof __ENV !== 'undefined') ? __ENV : {};
 const url = (ENV.ALERTMANAGER_URL || '').replace(/\/$/, '');
+// Default matchers MUST be the real deployed alert names (the `alert:`
+// values in configs/prometheus/rules.r1/api.yml +
+// deploy/monitoring/rules/api.yml). The old defaults
+// (APIHighLatencyP95 / APIHighErrorRate) matched NO alert, so the
+// 99-spike silence was a silent no-op and on-call paged during the
+// planned burst (audit-2026-06-14 A20). Cover the latency + error-rate
+// alerts the 10× spike legitimately trips.
 const matchers = (ENV.ALERTMANAGER_SILENCE_MATCHERS ||
-  'alertname=APIHighLatencyP95,alertname=APIHighErrorRate').split(',');
+  'alertname=stellarindex_api_latency_p95_high,' +
+  'alertname=stellarindex_api_latency_p99_high,' +
+  'alertname=stellarindex_api_error_rate_high,' +
+  'alertname=stellarindex_api_error_rate_critical').split(',');
 const author = ENV.ALERTMANAGER_SILENCE_AUTHOR || 'k6-load-test';
 
 // silenceForRun creates a silence covering durationMinutes from

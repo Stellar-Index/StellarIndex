@@ -45,6 +45,30 @@ against.
   only ~100 issuers) — added a `/accounts?id=` query-param page; and
   `total_coins` (~1e18 stroops) lost precision through `Number()` — now
   BigInt-divided (ADR-0003). (audit-2026-06-14, A17)
+- **Magic-link login could email-bomb an inbox.** `POST /v1/auth/login` sent
+  an email per accepted request, bounded only by the global anon per-IP
+  rate-limit (60/min) — enough to flood a victim inbox / burn the email-send
+  quota. Added an optional `LoginThrottle` (per-IP + per-target-email Redis
+  sliding window, default 10/h IP + 5/h email); over quota the send is skipped
+  but the generic 200 is still returned (no enumeration/throttle signal), and a
+  Redis blip falls open. (audit-2026-06-14, A12)
+- **Migration `down` of 0031/0040 re-armed retention (data-loss footgun).** The
+  down migrations re-added `add_retention_policy('trades'/'oracle_updates', 90
+  days)` — the exact mechanism of the "rogue retention" drift ADR-0034 forbids;
+  one `migrate down` crossing 31/40 would schedule deletion of >90d raw rows.
+  Both downs are now documented no-ops (forward-only). (audit-2026-06-14, A15)
+- **Hot hypertables encoded a 1-day chunk interval.** `trades` (and
+  soroban_events / blend_auctions / phoenix_*) were created with
+  `chunk_time_interval => 1 day`; trades reached 3445 chunks → per-INSERT
+  ON CONFLICT walked all chunks → ~6 inserts/s + lock-table pressure. The r1
+  fix was operational (merge_chunks), so a fresh bring-up re-accrued it. New
+  migration 0062 widens them to 7 days (affects future chunks only).
+  (audit-2026-06-14, A15)
+- **k6 99-spike alert silence was a no-op.** `test/load/scenarios/lib/
+  alertmanager.js` defaulted to matcher names (`APIHighLatencyP95`/
+  `APIHighErrorRate`) that match NO deployed alert, so the planned-burst
+  silence never applied and on-call would page. Fixed to the real
+  `stellarindex_api_*` alert names. (audit-2026-06-14, A20)
 - **projector-replay silently no-oped** — the rewind called UpsertCursor,
   whose monotonic-forward guard (F-0020) matched zero rows on a backward
   write; the command printed success while the cursor stayed at tip. New
