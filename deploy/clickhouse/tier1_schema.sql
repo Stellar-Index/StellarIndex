@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise
     -- full-scan. New parts are indexed on insert; existing history needs a
     -- one-time `ALTER TABLE stellar.transactions MATERIALIZE INDEX idx_tx_hash`.
-    INDEX idx_tx_hash tx_hash TYPE bloom_filter(0.01) GRANULARITY 1
+    INDEX idx_tx_hash tx_hash TYPE bloom_filter(0.01) GRANULARITY 1,
+    -- Per-account submitted-tx lookups (GET /v1/accounts/{g}/transactions).
+    INDEX idx_tx_source source_account TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
@@ -70,7 +72,11 @@ CREATE TABLE IF NOT EXISTS stellar.operations
     op_type        LowCardinality(String),
     source_account String,
     body_xdr       String,
-    ingested_at    DateTime DEFAULT now()
+    ingested_at    DateTime DEFAULT now(),
+    -- Per-account sourced-operation lookups (GET /v1/accounts/{g}/operations);
+    -- sort key is (ledger_seq, tx_index, op_index) so a source_account
+    -- predicate would otherwise full-scan. MATERIALIZE INDEX for history.
+    INDEX idx_op_source source_account TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)

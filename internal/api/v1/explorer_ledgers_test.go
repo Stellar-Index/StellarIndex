@@ -72,6 +72,14 @@ func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _
 	return s.contractEvents, s.err
 }
 
+func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ uint32) ([]clickhouse.TxSummary, error) {
+	return s.txs, s.err
+}
+
+func (s *stubExplorerReader) AccountOperations(_ context.Context, _ string, _ int, _ uint32) ([]clickhouse.OpRow, error) {
+	return s.ops, s.err
+}
+
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {
 	t.Helper()
 	srv := v1.New(v1.Options{Explorer: r})
@@ -231,6 +239,44 @@ func TestExplorer_ContractDetail_InvalidID(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	if resp := mustGet(t, base+"/v1/contracts/notacontract"); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestExplorer_AccountActivity(t *testing.T) {
+	const g = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	reader := &stubExplorerReader{
+		txs: []clickhouse.TxSummary{{Seq: 100, TxHash: "h1", SourceAccount: g, Successful: true}},
+		ops: []clickhouse.OpRow{{Seq: 100, TxHash: "h1", OpIndex: 0, OpType: "OperationTypePayment", BodyXDR: "x"}},
+	}
+	base := explorerTestServer(t, reader)
+
+	resp := mustGet(t, base+"/v1/accounts/"+g+"/transactions")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("txs status = %d", resp.StatusCode)
+	}
+	var tb struct {
+		Data v1.AccountTransactionsView `json:"data"`
+	}
+	mustDecode(t, resp, &tb)
+	if tb.Data.Account != g || len(tb.Data.Transactions) != 1 || tb.Data.Scope != "sourced" {
+		t.Errorf("account txs = %+v", tb.Data)
+	}
+
+	resp = mustGet(t, base+"/v1/accounts/"+g+"/operations")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ops status = %d", resp.StatusCode)
+	}
+	var ob struct {
+		Data v1.AccountOperationsView `json:"data"`
+	}
+	mustDecode(t, resp, &ob)
+	if len(ob.Data.Operations) != 1 {
+		t.Errorf("account ops = %+v", ob.Data)
+	}
+
+	// invalid strkey -> 400
+	if r := mustGet(t, base+"/v1/accounts/notanaccount/transactions"); r.StatusCode != http.StatusBadRequest {
+		t.Errorf("invalid account: status = %d, want 400", r.StatusCode)
 	}
 }
 
