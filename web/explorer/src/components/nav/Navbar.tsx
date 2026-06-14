@@ -33,7 +33,11 @@ export function Navbar() {
         <div className="hidden items-center gap-1 text-sm md:flex">
           <NavLink href="/assets" label="Assets" />
           <Dropdown label="Blockchain" items={BLOCKCHAIN_ITEMS} />
-          <NavLink href="https://docs.stellarindex.io" label="API Docs" external />
+          <NavLink
+            href="https://docs.stellarindex.io"
+            label="API Docs"
+            external
+          />
           <Dropdown label="About" items={ABOUT_ITEMS} />
           <SearchModal />
           <ThemeToggle />
@@ -53,7 +57,11 @@ export function Navbar() {
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
             className="ml-1 inline-flex items-center justify-center rounded-md p-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
           >
-            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {mobileOpen ? (
+              <X className="h-5 w-5" />
+            ) : (
+              <Menu className="h-5 w-5" />
+            )}
           </button>
         </div>
       </div>
@@ -74,7 +82,11 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
       >
         Assets
       </Link>
-      <MobileSection label="Blockchain" items={BLOCKCHAIN_ITEMS} onClose={onClose} />
+      <MobileSection
+        label="Blockchain"
+        items={BLOCKCHAIN_ITEMS}
+        onClose={onClose}
+      />
       <a
         href="https://docs.stellarindex.io"
         onClick={onClose}
@@ -181,7 +193,7 @@ function SignedOutCTAs() {
       </Link>
       <Link
         href="/signup"
-        className="ml-1 rounded-md bg-brand-600 px-3 py-1.5 font-medium text-white hover:bg-brand-700"
+        className="hover:bg-brand-700 ml-1 rounded-md bg-brand-600 px-3 py-1.5 font-medium text-white"
       >
         Create account
       </Link>
@@ -195,7 +207,8 @@ function SignedInWidget({ email }: { email?: string }) {
   useEffect(() => {
     if (!open) return;
     function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     }
     function onEsc(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false);
@@ -278,28 +291,89 @@ function SignedInWidget({ email }: { email?: string }) {
   );
 }
 
-type Item = { label: string; href: string; external?: boolean; description?: string };
+type Item = {
+  label: string;
+  href: string;
+  external?: boolean;
+  description?: string;
+};
 
 const BLOCKCHAIN_ITEMS: Item[] = [
-  { label: 'Assets', href: '/assets', description: 'Every asset across every connected network.' },
-  { label: 'Exchanges', href: '/exchanges', description: 'Connected CEXes — order-book depth, 24h volume, pair coverage.' },
-  { label: 'Dexes', href: '/dexes', description: 'On-chain DEXes + every (venue, base, quote) pool we observe.' },
-  { label: 'Lending', href: '/lending', description: 'Lending pools across every connected protocol.' },
-  { label: 'Aggregators', href: '/aggregators', description: 'Liquidity aggregators routing through the venues above.' },
-  { label: 'Oracles', href: '/oracles', description: 'On-chain price oracles + the streams they publish.' },
-  { label: 'Networks', href: '/networks', description: 'Per-network macro pulse — ingest tip, totals, contributors.' },
+  {
+    label: 'Ledgers',
+    href: '/ledgers',
+    description:
+      'Recent ledger closes — drill into transactions, operations, and events.',
+  },
+  {
+    label: 'Assets',
+    href: '/assets',
+    description: 'Every asset across every connected network.',
+  },
+  {
+    label: 'Exchanges',
+    href: '/exchanges',
+    description:
+      'Connected CEXes — order-book depth, 24h volume, pair coverage.',
+  },
+  {
+    label: 'Dexes',
+    href: '/dexes',
+    description: 'On-chain DEXes + every (venue, base, quote) pool we observe.',
+  },
+  {
+    label: 'Lending',
+    href: '/lending',
+    description: 'Lending pools across every connected protocol.',
+  },
+  {
+    label: 'Aggregators',
+    href: '/aggregators',
+    description: 'Liquidity aggregators routing through the venues above.',
+  },
+  {
+    label: 'Oracles',
+    href: '/oracles',
+    description: 'On-chain price oracles + the streams they publish.',
+  },
+  {
+    label: 'Networks',
+    href: '/networks',
+    description: 'Per-network macro pulse — ingest tip, totals, contributors.',
+  },
 ];
 
 const ABOUT_ITEMS: Item[] = [
   { label: 'Pricing', href: '/pricing', description: 'Plans, quotas, SLAs.' },
-  { label: 'Blog', href: '/blog', description: 'Engineering notes + product updates.' },
-  { label: 'API status', href: 'https://status.stellarindex.io', external: true, description: 'Live service status.' },
+  {
+    label: 'Blog',
+    href: '/blog',
+    description: 'Engineering notes + product updates.',
+  },
+  {
+    label: 'API status',
+    href: 'https://status.stellarindex.io',
+    external: true,
+    description: 'Live service status.',
+  },
   { label: 'Company', href: '/company', description: 'Who we are.' },
-  { label: 'Careers', href: '/careers', description: 'Roles open at Stellar Index.' },
+  {
+    label: 'Careers',
+    href: '/careers',
+    description: 'Roles open at Stellar Index.',
+  },
   { label: 'Contact', href: '/contact', description: 'How to reach us.' },
 ];
 
-function NavLink({ href, label, external }: { href: string; label: string; external?: boolean }) {
+function NavLink({
+  href,
+  label,
+  external,
+}: {
+  href: string;
+  label: string;
+  external?: boolean;
+}) {
   const cls =
     'rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600 dark:text-slate-300 dark:hover:bg-slate-800';
   if (external) {
@@ -322,7 +396,8 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
   useEffect(() => {
     if (!open) return;
     function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     }
     function onEsc(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false);
@@ -363,9 +438,13 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
                 onClick={() => setOpen(false)}
                 className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
               >
-                <div className="font-medium text-slate-900 dark:text-slate-100">{it.label}</div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">
+                  {it.label}
+                </div>
                 {it.description && (
-                  <div className="text-xs text-slate-500 dark:text-slate-400">{it.description}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    {it.description}
+                  </div>
                 )}
               </a>
             ) : (
@@ -376,9 +455,13 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
                 onClick={() => setOpen(false)}
                 className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
               >
-                <div className="font-medium text-slate-900 dark:text-slate-100">{it.label}</div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">
+                  {it.label}
+                </div>
                 {it.description && (
-                  <div className="text-xs text-slate-500 dark:text-slate-400">{it.description}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    {it.description}
+                  </div>
                 )}
               </Link>
             ),

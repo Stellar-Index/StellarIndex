@@ -10,7 +10,21 @@ import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 
 type Result = {
-  type: 'coin' | 'pair' | 'protocol' | 'oracle' | 'page' | 'currency';
+  type:
+    | 'coin'
+    | 'pair'
+    | 'protocol'
+    | 'oracle'
+    | 'page'
+    | 'currency'
+    // Explorer entity classifications (ADR-0038 Phase D) — surfaced
+    // additively alongside the existing asset/protocol/page results
+    // via the /v1/search classification endpoint.
+    | 'transaction'
+    | 'ledger'
+    | 'account'
+    | 'contract'
+    | 'asset';
   label: string;
   hint?: string;
   href: string;
@@ -19,13 +33,94 @@ type Result = {
   verified?: boolean;
 };
 
+// Explorer-entity classification from GET /v1/search?q=. Distinct
+// from the existing client-side asset/protocol/page index — this is
+// the backend's authoritative "what kind of thing is this string"
+// answer for unbounded entities (tx hashes, ledger seqs, accounts,
+// contracts) that the client index can't enumerate.
+type SearchClassification = {
+  query: string;
+  kind: 'transaction' | 'ledger' | 'account' | 'contract' | 'asset' | 'unknown';
+  canonical?: string;
+  href?: string;
+  supported?: boolean;
+  note?: string;
+};
+
+// looksLikeExplorerEntity gates the /v1/search call so it only fires
+// when the input has the SHAPE of an explorer entity — a tx hash,
+// ledger sequence, G-strkey account, or C-contract. Asset/protocol
+// searches (handled fully client-side) don't trigger a backend
+// round-trip.
+function looksLikeExplorerEntity(q: string): boolean {
+  const s = q.trim();
+  if (!s) return false;
+  return (
+    /^[0-9a-fA-F]{64}$/.test(s) || // tx hash
+    /^\d{1,12}$/.test(s) || // ledger sequence
+    /^G[A-Z2-7]{55}$/.test(s) || // account (G-strkey)
+    /^C[A-Z2-7]{55}$/.test(s) // contract (C-strkey)
+  );
+}
+
+// explorerHref maps a /v1/search classification to the explorer
+// route per ADR-0038 Phase D. Prefers the backend-provided href when
+// present; otherwise routes by kind + canonical. Returns null for
+// unknown / unsupported / canonical-less classifications.
+function explorerHref(c: SearchClassification): string | null {
+  const canonical = c.canonical?.trim();
+  switch (c.kind) {
+    case 'transaction':
+      return canonical ? `/tx?hash=${encodeURIComponent(canonical)}` : null;
+    case 'ledger':
+      return canonical ? `/ledger?seq=${encodeURIComponent(canonical)}` : null;
+    case 'contract':
+      return canonical ? `/contract?id=${encodeURIComponent(canonical)}` : null;
+    case 'account':
+      return canonical ? `/issuers/${encodeURIComponent(canonical)}` : null;
+    case 'asset':
+      // The classification may hand back a ready-made explorer href
+      // (e.g. /assets/<slug>); prefer it, else build from canonical.
+      if (c.href && c.href.startsWith('/')) return c.href;
+      return canonical ? `/assets/${encodeURIComponent(canonical)}` : null;
+    default:
+      return null;
+  }
+}
+
+const EXPLORER_KIND_LABEL: Record<
+  Exclude<SearchClassification['kind'], 'unknown'>,
+  string
+> = {
+  transaction: 'Transaction',
+  ledger: 'Ledger',
+  account: 'Account',
+  contract: 'Contract',
+  asset: 'Asset',
+};
+
 type CurrencyEntry = { ticker: string; name: string };
 
 const STATIC_PAGES: Result[] = [
   { type: 'page', label: 'Home', href: '/' },
-  { type: 'page', label: 'Assets', hint: 'every asset — crypto, fiat, stablecoins', href: '/assets' },
-  { type: 'page', label: 'Exchanges', hint: 'CEXes + per-pair tables', href: '/exchanges' },
-  { type: 'page', label: 'Markets', hint: 'cross-source pair listing', href: '/markets' },
+  {
+    type: 'page',
+    label: 'Assets',
+    hint: 'every asset — crypto, fiat, stablecoins',
+    href: '/assets',
+  },
+  {
+    type: 'page',
+    label: 'Exchanges',
+    hint: 'CEXes + per-pair tables',
+    href: '/exchanges',
+  },
+  {
+    type: 'page',
+    label: 'Markets',
+    hint: 'cross-source pair listing',
+    href: '/markets',
+  },
   { type: 'page', label: 'Issuers', href: '/issuers' },
   { type: 'page', label: 'DEXes', href: '/dexes' },
   { type: 'page', label: 'Lending', href: '/lending' },
@@ -33,34 +128,84 @@ const STATIC_PAGES: Result[] = [
   { type: 'page', label: 'Oracles', href: '/oracles' },
   { type: 'page', label: 'Sources', href: '/sources' },
   { type: 'page', label: 'Networks', href: '/networks' },
-  { type: 'page', label: 'Methodology', hint: 'how rates are computed', href: '/methodology' },
-  { type: 'page', label: 'Research', hint: 'ADRs + architecture docs', href: '/research' },
+  {
+    type: 'page',
+    label: 'Methodology',
+    hint: 'how rates are computed',
+    href: '/methodology',
+  },
+  {
+    type: 'page',
+    label: 'Research',
+    hint: 'ADRs + architecture docs',
+    href: '/research',
+  },
   { type: 'page', label: 'Changelog', href: '/changelog' },
   { type: 'page', label: 'Diagnostics', href: '/diagnostics' },
   { type: 'page', label: 'Anomalies', href: '/anomalies' },
   { type: 'page', label: 'Divergences', href: '/divergences' },
   { type: 'page', label: 'MEV', href: '/mev' },
-  { type: 'page', label: 'Status', hint: 'live system status', href: 'https://status.stellarindex.io' },
+  {
+    type: 'page',
+    label: 'Status',
+    hint: 'live system status',
+    href: 'https://status.stellarindex.io',
+  },
   { type: 'page', label: 'API docs', href: 'https://docs.stellarindex.io' },
   { type: 'page', label: 'Sign in', hint: 'magic-link auth', href: '/signin' },
-  { type: 'page', label: 'Sign up', hint: 'create your account', href: '/signup' },
+  {
+    type: 'page',
+    label: 'Sign up',
+    hint: 'create your account',
+    href: '/signup',
+  },
   { type: 'page', label: 'Account', hint: 'manage API keys', href: '/account' },
-  { type: 'page', label: 'Pricing', hint: 'plans, quotas, SLAs', href: '/pricing' },
+  {
+    type: 'page',
+    label: 'Pricing',
+    hint: 'plans, quotas, SLAs',
+    href: '/pricing',
+  },
   { type: 'page', label: 'Blog', hint: 'engineering notes', href: '/blog' },
   { type: 'page', label: 'Company', href: '/company' },
   { type: 'page', label: 'Careers', href: '/careers' },
-  { type: 'page', label: 'Widgets', hint: 'embeddable price cards', href: '/widgets' },
-  { type: 'page', label: 'Contact', hint: 'sales / security / GitHub', href: '/contact' },
+  {
+    type: 'page',
+    label: 'Widgets',
+    hint: 'embeddable price cards',
+    href: '/widgets',
+  },
+  {
+    type: 'page',
+    label: 'Contact',
+    hint: 'sales / security / GitHub',
+    href: '/contact',
+  },
   { type: 'page', label: 'Go SDK', hint: 'pkg/client examples', href: '/sdk' },
 ];
 
 const PROTOCOLS: Result[] = [
   { type: 'protocol', label: 'Soroswap', hint: 'AMM + router', href: '/dexes' },
   { type: 'protocol', label: 'Phoenix', hint: 'AMM', href: '/dexes' },
-  { type: 'protocol', label: 'Aquarius', hint: 'AMM with gauges', href: '/dexes' },
-  { type: 'protocol', label: 'SDEX', hint: 'native order book', href: '/dexes' },
+  {
+    type: 'protocol',
+    label: 'Aquarius',
+    hint: 'AMM with gauges',
+    href: '/dexes',
+  },
+  {
+    type: 'protocol',
+    label: 'SDEX',
+    hint: 'native order book',
+    href: '/dexes',
+  },
   { type: 'protocol', label: 'Blend', hint: 'lending', href: '/lending' },
-  { type: 'protocol', label: 'DeFindex', hint: 'yield aggregator', href: '/aggregators' },
+  {
+    type: 'protocol',
+    label: 'DeFindex',
+    hint: 'yield aggregator',
+    href: '/aggregators',
+  },
   { type: 'oracle', label: 'Reflector DEX', href: '/oracles' },
   { type: 'oracle', label: 'Reflector CEX', href: '/oracles' },
   { type: 'oracle', label: 'Reflector FX', href: '/oracles' },
@@ -153,19 +298,71 @@ export function SearchModal() {
 
   const { data: verifiedSlugs } = useVerifiedSlugs();
 
+  // Explorer classification — hits GET /v1/search?q= only when the
+  // debounced input has the shape of an explorer entity (tx hash /
+  // ledger seq / account / contract). Purely additive: the result
+  // is prepended as a top "direct-jump" row; existing asset /
+  // protocol / page search is untouched.
+  const explorer = useQuery<SearchClassification | null>({
+    queryKey: ['/v1/search', debouncedQ],
+    enabled: open && looksLikeExplorerEntity(debouncedQ),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const env = await apiGet<{ data: SearchClassification }>('/v1/search', {
+        q: debouncedQ,
+      });
+      return env.data ?? null;
+    },
+  });
+
+  const explorerResult = useMemo<Result | null>(() => {
+    const c = explorer.data;
+    if (!c || c.kind === 'unknown') return null;
+    const href = explorerHref(c);
+    if (!href) return null;
+    const canonical = c.canonical ?? debouncedQ;
+    const short =
+      canonical.length > 16
+        ? `${canonical.slice(0, 8)}…${canonical.slice(-6)}`
+        : canonical;
+    return {
+      type: c.kind,
+      label: `${EXPLORER_KIND_LABEL[c.kind]} ${short}`,
+      hint: c.note ?? 'open in explorer',
+      href,
+    };
+  }, [explorer.data, debouncedQ]);
+
   const results = useMemo(() => {
     const isServerSearched = debouncedQ.length >= 2;
     const sourceCoins = isServerSearched
       ? (searchedCoins.data?.coins ?? [])
       : (topCoins.data?.coins ?? []);
-    return search(
+    const base = search(
       q,
       sourceCoins,
       currencies.data ?? [],
       isServerSearched,
       verifiedSlugs,
     );
-  }, [q, debouncedQ, searchedCoins.data, topCoins.data, currencies.data, verifiedSlugs]);
+    // Prepend the explorer classification (if any), de-duping on href
+    // so we don't show the same /assets/ link twice when /v1/search
+    // classified the input as an asset the client index also matched.
+    if (explorerResult) {
+      const filtered = base.filter((r) => r.href !== explorerResult.href);
+      return [explorerResult, ...filtered].slice(0, 12);
+    }
+    return base;
+  }, [
+    q,
+    debouncedQ,
+    searchedCoins.data,
+    topCoins.data,
+    currencies.data,
+    verifiedSlugs,
+    explorerResult,
+  ]);
 
   return (
     <>
@@ -213,8 +410,7 @@ export function SearchModal() {
             <ul className="max-h-96 overflow-y-auto p-2 text-sm">
               {results.length === 0 && (
                 <li className="px-3 py-2 text-xs text-slate-500">
-                  No matches across the asset directory, protocols,
-                  or pages.
+                  No matches across the asset directory, protocols, or pages.
                 </li>
               )}
               {results.map((r) => (
@@ -251,10 +447,12 @@ export function SearchModal() {
                         </span>
                       )}
                       {r.hint && (
-                        <span className="text-xs text-slate-500">— {r.hint}</span>
+                        <span className="text-xs text-slate-500">
+                          — {r.hint}
+                        </span>
                       )}
                     </span>
-                    <span className="text-xs font-mono text-slate-400">
+                    <span className="font-mono text-xs text-slate-400">
                       {r.href}
                     </span>
                   </Link>
@@ -360,7 +558,12 @@ function search(
   const matchedOther = [...PROTOCOLS, ...STATIC_PAGES].filter((r) =>
     match(norm, r),
   );
-  return [...direct, ...matchedCoins, ...matchedCurrencies, ...matchedOther].slice(0, 12);
+  return [
+    ...direct,
+    ...matchedCoins,
+    ...matchedCurrencies,
+    ...matchedOther,
+  ].slice(0, 12);
 }
 
 function currencyResult(c: CurrencyEntry): Result {
