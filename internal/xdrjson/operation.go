@@ -10,6 +10,7 @@ package xdrjson
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -91,16 +92,16 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 	switch b.Type {
 	case xdr.OperationTypeCreateAccount:
 		op := b.MustCreateAccountOp()
-		f["destination"] = op.Destination.Address()
+		f["destination"] = op.Destination.Address() // AccountId (never muxed)
 		f["starting_balance"] = amount(int64(op.StartingBalance))
 	case xdr.OperationTypePayment:
 		op := b.MustPaymentOp()
-		f["destination"] = op.Destination.Address()
+		f["destination"] = muxedAddr(op.Destination)
 		f["asset"] = assetID(op.Asset)
 		f["amount"] = amount(int64(op.Amount))
 	case xdr.OperationTypePathPaymentStrictReceive:
 		op := b.MustPathPaymentStrictReceiveOp()
-		f["destination"] = op.Destination.Address()
+		f["destination"] = muxedAddr(op.Destination)
 		f["send_asset"] = assetID(op.SendAsset)
 		f["send_max"] = amount(int64(op.SendMax))
 		f["dest_asset"] = assetID(op.DestAsset)
@@ -108,7 +109,7 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		f["path"] = assetPath(op.Path)
 	case xdr.OperationTypePathPaymentStrictSend:
 		op := b.MustPathPaymentStrictSendOp()
-		f["destination"] = op.Destination.Address()
+		f["destination"] = muxedAddr(op.Destination)
 		f["send_asset"] = assetID(op.SendAsset)
 		f["send_amount"] = amount(int64(op.SendAmount))
 		f["dest_asset"] = assetID(op.DestAsset)
@@ -120,14 +121,14 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		f["buying"] = assetID(op.Buying)
 		f["amount"] = amount(int64(op.Amount))
 		f["price"] = price(op.Price)
-		f["offer_id"] = int64(op.OfferId)
+		f["offer_id"] = strconv.FormatInt(int64(op.OfferId), 10)
 	case xdr.OperationTypeManageBuyOffer:
 		op := b.MustManageBuyOfferOp()
 		f["selling"] = assetID(op.Selling)
 		f["buying"] = assetID(op.Buying)
 		f["buy_amount"] = amount(int64(op.BuyAmount))
 		f["price"] = price(op.Price)
-		f["offer_id"] = int64(op.OfferId)
+		f["offer_id"] = strconv.FormatInt(int64(op.OfferId), 10)
 	case xdr.OperationTypeCreatePassiveSellOffer:
 		op := b.MustCreatePassiveSellOfferOp()
 		f["selling"] = assetID(op.Selling)
@@ -149,8 +150,7 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		f["set_flags"] = uint32(op.SetFlags)
 		f["clear_flags"] = uint32(op.ClearFlags)
 	case xdr.OperationTypeAccountMerge:
-		dest := b.MustDestination()
-		f["destination"] = dest.Address()
+		f["destination"] = muxedAddr(b.MustDestination())
 	case xdr.OperationTypeManageData:
 		op := b.MustManageDataOp()
 		f["name"] = string(op.DataName)
@@ -159,7 +159,7 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		}
 	case xdr.OperationTypeBumpSequence:
 		op := b.MustBumpSequenceOp()
-		f["bump_to"] = int64(op.BumpTo)
+		f["bump_to"] = strconv.FormatInt(int64(op.BumpTo), 10)
 	case xdr.OperationTypeClawback:
 		op := b.MustClawbackOp()
 		f["from"] = op.From.Address()

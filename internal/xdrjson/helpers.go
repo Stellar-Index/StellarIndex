@@ -12,6 +12,15 @@ import (
 // amount renders a classic Int64 stroop amount as a decimal string (ADR-0003).
 func amount(stroops int64) string { return strconv.FormatInt(stroops, 10) }
 
+// muxedAddr renders an xdr.MuxedAccount as its strkey WITHOUT panicking.
+// MuxedAccount.Address() panics on an unknown key-type discriminant; GetAddress
+// returns ("", false) instead, so a single malformed destination degrades to an
+// empty string rather than 500-ing the whole transaction response.
+func muxedAddr(m xdr.MuxedAccount) string {
+	s, _ := m.GetAddress()
+	return s
+}
+
 // assetID renders an xdr.Asset as the canonical explorer id: "native" or
 // "CODE-ISSUER" (dash form, matching the rest of the API).
 func assetID(a xdr.Asset) string {

@@ -3,6 +3,8 @@ package xdrjson
 import (
 	"sort"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
+
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
@@ -25,20 +27,44 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	}
 	var out []string
 	seen := map[string]struct{}{}
+	add := func(g string) {
+		if _, dup := seen[g]; dup {
+			return
+		}
+		seen[g] = struct{}{}
+		out = append(out, g)
+	}
 	for _, v := range d.Fields {
 		s, ok := v.(string)
 		if !ok {
 			continue
 		}
-		if !canonical.IsAccountID(s) {
-			continue
+		switch {
+		case canonical.IsAccountID(s):
+			add(s)
+		case canonical.IsMuxedAccount(s):
+			// A muxed (M-) destination resolves to its underlying ed25519
+			// account — that's the account whose RECEIVED activity we index.
+			if g, ok := muxedToAccountID(s); ok {
+				add(g)
+			}
 		}
-		if _, dup := seen[s]; dup {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// muxedToAccountID converts an M-strkey to its underlying G-strkey (the first
+// 32 bytes of the 40-byte muxed payload are the ed25519 key). ok=false on a
+// malformed M-strkey.
+func muxedToAccountID(m string) (string, bool) {
+	raw, err := strkey.Decode(strkey.VersionByteMuxedAccount, m)
+	if err != nil || len(raw) < 32 {
+		return "", false
+	}
+	g, err := strkey.Encode(strkey.VersionByteAccountID, raw[:32])
+	if err != nil {
+		return "", false
+	}
+	return g, true
 }
