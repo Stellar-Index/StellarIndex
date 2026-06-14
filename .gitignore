@@ -111,7 +111,10 @@ gcp-key*.json
 
 # local credentials + stray build artifacts — never commit
 *-data-validation-*.json
-/ratesengine-ops
-/ratesengine-aggregator
+# Stray root-level binaries: both the current stellarindex-* names and
+# the pre-rebrand ratesengine-* names (a `go build ./cmd/...` without
+# -o bin/ drops the binary at the repo root). Glob both families; the
+# cmd/ source dirs are re-allowed below.
+/ratesengine-*
 /stellarindex-*
 !/cmd/stellarindex-*
