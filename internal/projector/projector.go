@@ -250,8 +250,14 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 		return
 	}
-	if tip <= fromLedger {
-		// Caught up — no rows to process this cycle.
+	if tip < fromLedger {
+		// Caught up — nothing at or beyond fromLedger. Must be `<`, not `<=`:
+		// fromLedger = cursor.LastLedger+1 is the next UNPROCESSED ledger and
+		// the [fromLedger, tip] scan is inclusive, so when tip == fromLedger
+		// there is exactly one ledger (the tip) still to project. `<=` skipped
+		// it — leaving the served tier permanently one ledger behind the
+		// durable tip, and a permanent hole if ingest halted exactly there.
+		// Found by audit A04-H1.
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "idle").Inc()
 		obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(0)
 		return
