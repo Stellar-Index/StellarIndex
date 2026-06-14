@@ -173,7 +173,7 @@ export function TxView() {
           <FieldWide label="Source account">
             <span className="inline-flex items-center gap-2">
               <Link
-                href={`/issuers/${tx.source_account}`}
+                href={`/accounts?id=${encodeURIComponent(tx.source_account)}`}
                 className="font-mono text-xs text-brand-600 hover:underline"
                 title={tx.source_account}
               >
@@ -261,15 +261,19 @@ function OperationCard({ op }: { op: TxOperation }) {
         <span className="text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 rounded bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
           {op.type}
         </span>
-        {op.result_code && (
+        {op.result_code != null && (
           <span
+            // result_code is a numeric XDR code: 0 = opSUCCESS. Gate on
+            // `!= null` (0 is falsy) and derive success from `=== 0`,
+            // never from truthiness or a regex on the number.
             className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-              /success/i.test(op.result_code)
+              op.result_code === 0
                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
                 : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
             }`}
+            title={op.result_code === 0 ? 'success' : `code ${op.result_code}`}
           >
-            {op.result_code}
+            {op.result_code === 0 ? 'success' : `code ${op.result_code}`}
           </span>
         )}
         {op.source_account && (
@@ -395,7 +399,11 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
   );
 }
 
-function SuccessBadge({ ok, code }: { ok: boolean; code?: string }) {
+// SuccessBadge renders the transaction-level result. Success is driven
+// by the `successful` bool (the authoritative tx-level signal); the
+// numeric XDR `code` is shown as detail on failure / hover.
+function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
+  const codeLabel = code != null ? `code ${code}` : undefined;
   return (
     <span
       className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
@@ -403,9 +411,9 @@ function SuccessBadge({ ok, code }: { ok: boolean; code?: string }) {
           ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
           : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
       }`}
-      title={code ?? (ok ? 'success' : 'failed')}
+      title={codeLabel ?? (ok ? 'success' : 'failed')}
     >
-      {ok ? 'success' : (code ?? 'failed')}
+      {ok ? 'success' : (codeLabel ?? 'failed')}
     </span>
   );
 }

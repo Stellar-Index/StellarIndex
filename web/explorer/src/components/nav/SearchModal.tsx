@@ -77,7 +77,10 @@ function explorerHref(c: SearchClassification): string | null {
     case 'contract':
       return canonical ? `/contract?id=${encodeURIComponent(canonical)}` : null;
     case 'account':
-      return canonical ? `/issuers/${encodeURIComponent(canonical)}` : null;
+      // Accounts are unbounded → the query-param explorer page
+      // (/accounts?id=), NOT /issuers/{g} (which only static-exports
+      // the top ~100 issuers and 404s every ordinary account).
+      return canonical ? `/accounts?id=${encodeURIComponent(canonical)}` : null;
     case 'asset':
       // The classification may hand back a ready-made explorer href
       // (e.g. /assets/<slug>); prefer it, else build from canonical.
@@ -492,13 +495,16 @@ function search(
   const direct: Result[] = [];
 
   // Stellar G-strkey — 56 chars, uppercase base32 starting with 'G'.
+  // Route to the query-param account explorer (/accounts?id=), not
+  // /issuers/{g} (static-exports only the top ~100 issuers → 404 for
+  // every ordinary account).
   const gMatch = q.trim().match(/^G[A-Z2-7]{55}$/);
   if (gMatch) {
     direct.push({
-      type: 'page',
-      label: `Issuer ${gMatch[0].slice(0, 8)}…${gMatch[0].slice(-4)}`,
-      hint: 'open issuer detail',
-      href: `/issuers/${gMatch[0]}`,
+      type: 'account',
+      label: `Account ${gMatch[0].slice(0, 8)}…${gMatch[0].slice(-4)}`,
+      hint: 'open account detail',
+      href: `/accounts?id=${encodeURIComponent(gMatch[0])}`,
     });
   }
 
