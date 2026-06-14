@@ -312,7 +312,7 @@ function TransactionsPanel({
                 </Td>
                 <Td>
                   <Link
-                    href={`/issuers/${t.source_account}`}
+                    href={`/accounts?id=${encodeURIComponent(t.source_account)}`}
                     className="font-mono text-xs text-slate-600 hover:text-brand-600 dark:text-slate-400"
                     title={t.source_account}
                   >
@@ -356,7 +356,11 @@ function TransactionsPanel({
   );
 }
 
-function SuccessBadge({ ok, code }: { ok: boolean; code?: string }) {
+// SuccessBadge renders a transaction's result. Success comes from the
+// `successful` bool (the authoritative tx-level signal); the numeric
+// XDR `code` (int32, 0 = txSUCCESS) is shown as detail on failure.
+function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
+  const codeLabel = code != null ? `code ${code}` : undefined;
   return (
     <span
       className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
@@ -364,9 +368,9 @@ function SuccessBadge({ ok, code }: { ok: boolean; code?: string }) {
           ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
           : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
       }`}
-      title={code ?? (ok ? 'success' : 'failed')}
+      title={codeLabel ?? (ok ? 'success' : 'failed')}
     >
-      {ok ? 'success' : (code ?? 'failed')}
+      {ok ? 'success' : (codeLabel ?? 'failed')}
     </span>
   );
 }

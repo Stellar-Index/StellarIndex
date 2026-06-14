@@ -53,7 +53,10 @@ export interface LedgerTransaction {
   max_fee?: number;
   operation_count: number;
   successful: boolean;
-  result_code?: string;
+  // XDR transaction-result code as a numeric int32 (0 = txSUCCESS,
+  // non-zero = the failure code). Render success from the `successful`
+  // bool, NOT from this code's truthiness (0 is falsy in JS).
+  result_code?: number;
   memo_type?: string;
   memo?: string;
 }
@@ -73,7 +76,11 @@ export interface TxOperation {
   source_account?: string;
   fields?: Record<string, unknown>;
   raw_xdr?: string;
-  result_code?: string;
+  // XDR operation-result code as a numeric int32 (0 = opSUCCESS,
+  // non-zero = the failure code). Present only in the per-tx view;
+  // absent (undefined) in the ledger op list. Derive success from
+  // `=== 0`, never from truthiness.
+  result_code?: number;
 }
 
 export interface TxEvent {
@@ -92,7 +99,10 @@ export interface TxSummary {
   fee_charged?: number;
   max_fee?: number;
   successful: boolean;
-  result_code?: string;
+  // XDR transaction-result code as a numeric int32 (0 = txSUCCESS).
+  // The tx-level success indicator is the `successful` bool above;
+  // this code is the raw numeric detail.
+  result_code?: number;
   memo_type?: string;
   memo?: string;
   operations?: TxOperation[];
@@ -113,6 +123,30 @@ export interface ContractResp {
   contract_id: string;
   events: ContractEvent[];
   next_before?: number;
+}
+
+// Account activity endpoints (ADR-0038 Phase B). `scope` documents
+// that this is source/submitter activity only — the transactions the
+// account itself sourced, NOT incoming transfers / participant
+// activity (which needs the participant index, coming in Phase C).
+//
+// GET /v1/accounts/{id}/transactions → AccountTransactionsResp
+// (transactions[] are the same TxSummaryView shape as the ledger /
+// tx-summary wire, i.e. LedgerTransaction).
+export interface AccountTransactionsResp {
+  account: string;
+  transactions: LedgerTransaction[];
+  next_before?: number;
+  scope: string;
+}
+
+// GET /v1/accounts/{id}/operations → AccountOperationsResp
+// (operations[] are the same decoded OpView shape as the tx page).
+export interface AccountOperationsResp {
+  account: string;
+  operations: TxOperation[];
+  next_before?: number;
+  scope: string;
 }
 
 export type SearchKind =
@@ -140,8 +174,25 @@ export interface SearchResult {
 // XLM-denominated amounts come from the API as stroop integers
 // (string). 1 XLM = 1e7 stroops. Render with up to 7 dp, trimming
 // trailing zeros, with thousands separators on the whole part.
+//
+// total_coins (~1.05e18 stroops) is ~117× past 2^53, so parsing a
+// string amount through Number() loses precision (ADR-0003). We
+// BigInt-divide the integer stroop string instead; the Number()
+// fast-path is reserved for values that arrive as JS numbers (fees,
+// base_reserve — all provably < 2^53).
+const STROOPS_PER_XLM = 10_000_000n;
+
 export function stroopsToXlm(raw: string | number | null | undefined): string {
   if (raw == null || raw === '') return '—';
+
+  // Integer stroop strings (total_coins / fee_pool) — divide with
+  // BigInt so we never round a >15-digit amount through Number().
+  if (typeof raw === 'string' && /^-?\d+$/.test(raw.trim())) {
+    return bigStroopsToXlm(BigInt(raw.trim()));
+  }
+
+  // JS-number amounts are capped well below 2^53 by the API (fees,
+  // base_reserve) — the float path is exact for them.
   let n: number;
   try {
     n = typeof raw === 'number' ? raw : Number(raw);
@@ -156,6 +207,26 @@ export function stroopsToXlm(raw: string | number | null | undefined): string {
     maximumFractionDigits: 7,
   });
   return s;
+}
+
+// bigStroopsToXlm formats an exact stroop BigInt as XLM: integer part
+// with thousands separators + up to 7 fractional digits (trailing
+// zeros trimmed). No float involved, so arbitrarily large supplies
+// stay faithful to the wire string.
+function bigStroopsToXlm(stroops: bigint): string {
+  const neg = stroops < 0n;
+  const abs = neg ? -stroops : stroops;
+  const whole = abs / STROOPS_PER_XLM;
+  const frac = abs % STROOPS_PER_XLM;
+
+  const wholeStr = whole.toLocaleString('en-US');
+  let out = wholeStr;
+  if (frac > 0n) {
+    // Pad to 7 digits, then trim trailing zeros.
+    const fracStr = frac.toString().padStart(7, '0').replace(/0+$/, '');
+    out = `${wholeStr}.${fracStr}`;
+  }
+  return neg ? `-${out}` : out;
 }
 
 export function shortHash(
