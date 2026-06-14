@@ -210,6 +210,54 @@ func (r *ExplorerReader) OperationsByLedger(ctx context.Context, seq uint32, lim
 const txCols = `ledger_seq, close_time, tx_hash, tx_index, source_account,
 	fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo`
 
+// AccountTransactions returns transactions SUBMITTED by an account (its
+// source/fee-payer), newest first, keyset-paged by ledger via beforeLedger.
+// Uses the source_account bloom skip-index. (Incoming/participant txs — where
+// the account is a destination etc. — require the participant index, Phase B
+// completion.)
+func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, beforeLedger uint32) ([]TxSummary, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT ` + txCols + ` FROM stellar.transactions WHERE source_account = ?`
+	args := []any{account}
+	if beforeLedger > 0 {
+		q += ` AND ledger_seq < ?`
+		args = append(args, beforeLedger)
+	}
+	q += ` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := r.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanTxSummaries(rows)
+}
+
+// AccountOperations returns operations SOURCED by an account (effective op
+// source), newest first, keyset-paged by ledger. Uses the source_account bloom
+// skip-index on stellar.operations.
+func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, beforeLedger uint32) ([]OpRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT ` + opCols + ` FROM stellar.operations WHERE source_account = ?`
+	args := []any{account}
+	if beforeLedger > 0 {
+		q += ` AND ledger_seq < ?`
+		args = append(args, beforeLedger)
+	}
+	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := r.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanOps(rows)
+}
+
 // TransactionByHash looks up a single transaction by its hex hash. Relies on
 // the tx_hash bloom skip-index (the table is ORDER BY (ledger_seq, tx_index),
 // so without the index this would full-scan). NOT FINAL — FINAL would defeat

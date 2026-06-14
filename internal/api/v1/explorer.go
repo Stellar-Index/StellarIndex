@@ -23,6 +23,8 @@ type ExplorerReader interface {
 	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error)
 	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
 	ContractEventsRecent(ctx context.Context, contractID string, limit int, beforeLedger uint32) ([]clickhouse.ContractActivityRow, error)
+	AccountTransactions(ctx context.Context, account string, limit int, beforeLedger uint32) ([]clickhouse.TxSummary, error)
+	AccountOperations(ctx context.Context, account string, limit int, beforeLedger uint32) ([]clickhouse.OpRow, error)
 }
 
 // explorerUnavailable writes the standard 503 when no explorer reader is wired
