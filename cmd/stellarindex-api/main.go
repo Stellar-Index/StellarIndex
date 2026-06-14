@@ -350,13 +350,32 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// before the assignment below.
 	var authMW middleware.Middleware
 
-	// Account store backs POST /v1/account/keys. Only wired when
-	// Redis is reachable — without Redis there's nowhere to persist
-	// the issued record. The handler then returns 503 for that
-	// path; /me + /usage still serve from the request-context
-	// Subject without the store.
+	// Account store backs the self-service POST/GET/DELETE
+	// /v1/account/keys surface. Only wired when Redis is reachable —
+	// without Redis there's nowhere to persist the issued record. The
+	// handler then returns 503 for that path; /me + /usage still serve
+	// from the request-context Subject without the store.
+	//
+	// X6 (audit-2026-06-14): this store is Redis-backed, but under
+	// auth_backend=postgres the runtime API-key VALIDATOR authenticates
+	// from the platform.api_keys (Postgres) table. The two stores are
+	// disjoint, so serving /v1/account/keys from Redis under the Postgres
+	// backend is a split-brain: a key minted here would never authenticate,
+	// and — the security-relevant half — a DELETE here would hard-remove the
+	// Redis record while the live Postgres row keeps authenticating, i.e. a
+	// revocation that silently no-ops. So we leave the store nil (the route
+	// 503s) under the Postgres cutover; the dashboard keys surface
+	// (/v1/dashboard/keys, Postgres-backed, invalidates the validator cache
+	// on revoke) is the single source of truth there. r1 runs the default
+	// redis backend, where writer and validator agree.
 	var accountStore v1.AccountStore
-	if rdb != nil {
+	switch {
+	case rdb == nil:
+		// no store
+	case cfg.API.AuthBackend == "postgres":
+		logger.Warn("auth_backend=postgres: /v1/account/keys self-service surface DISABLED to avoid a split-brain with the Postgres validator (revocation would silently no-op); use the Postgres-backed /v1/dashboard/keys instead",
+			"reason", "AccountStore writer (redis) != APIKeyValidator reader (postgres)")
+	default:
 		accountStore = auth.NewRedisAPIKeyStore(rdb)
 	}
 

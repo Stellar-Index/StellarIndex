@@ -45,6 +45,23 @@ against.
   only ~100 issuers) — added a `/accounts?id=` query-param page; and
   `total_coins` (~1e18 stroops) lost precision through `Number()` — now
   BigInt-divided (ADR-0003). (audit-2026-06-14, A17)
+- **Projector decode panic could crash-loop the live indexer (X9).** The
+  projector's per-source goroutine ran decoders on raw lake rows (incl.
+  historical/upgraded-WASM shapes) with no `recover` — the dispatcher path has
+  one via `pipeline.ProcessLedger`, but the projector didn't inherit it. A
+  panic on one poison row crashed the whole `stellarindex-indexer`, and since
+  the cursor doesn't advance past the bad row, restart re-read it into a
+  crash-loop. Per-row recover now demotes a panic to a counted soft-fail
+  (extracted to a unit-tested `processEventSafely`). (audit-2026-06-14, X9)
+- **API-key revocation could silently no-op under the Postgres backend (X6).**
+  `/v1/account/keys` (mint/list/revoke) was wired unconditionally to the Redis
+  store, but under `auth_backend=postgres` the runtime validator authenticates
+  from Postgres — disjoint stores, so a DELETE here removed the Redis record
+  while the live Postgres row kept authenticating (a "revoked" key stays live).
+  Latent on r1 (default redis backend, where writer+validator agree). The Redis
+  account-keys surface is now disabled under the Postgres backend with a loud
+  log; the Postgres-backed `/v1/dashboard/keys` (invalidates the cache on
+  revoke) is the source of truth there. (audit-2026-06-14, X6)
 - **Magic-link login could email-bomb an inbox.** `POST /v1/auth/login` sent
   an email per accepted request, bounded only by the global anon per-IP
   rate-limit (60/min) — enough to flood a victim inbox / burn the email-send

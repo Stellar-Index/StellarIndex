@@ -2,12 +2,93 @@ package projector
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"testing"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/events"
 )
+
+// fakeDecoder is a configurable dispatcher.Decoder for the X9
+// panic-isolation tests.
+type fakeDecoder struct {
+	matches  bool
+	panics   bool
+	err      error
+	outs     []consumer.Event
+	decodeHi int // count of Decode calls
+}
+
+func (f *fakeDecoder) Name() string              { return "fake" }
+func (f *fakeDecoder) Matches(events.Event) bool { return f.matches }
+func (f *fakeDecoder) Decode(events.Event) ([]consumer.Event, error) {
+	f.decodeHi++
+	if f.panics {
+		panic("boom: poison / upgraded-WASM row")
+	}
+	return f.outs, f.err
+}
+
+// fakeEvent is a minimal consumer.Event for sink-counting in tests.
+type fakeEvent struct{}
+
+func (fakeEvent) EventKind() string { return "fake.event" }
+func (fakeEvent) Source() string    { return "fake" }
+
+func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// TestProcessEventSafely_RecoversDecoderPanic pins X9 (audit-2026-06-14):
+// a decoder panic on one poison lake row must be recovered + counted as a
+// soft-fail, NOT crash the live indexer.
+func TestProcessEventSafely_RecoversDecoderPanic(t *testing.T) {
+	src := Source{Name: "x", Decoder: &fakeDecoder{matches: true, panics: true}}
+	sinked := 0
+	emitted, softFail := processEventSafely(src, events.Event{Ledger: 42},
+		func(consumer.Event) { sinked++ }, discardLog())
+	if !softFail {
+		t.Error("a decoder panic must be a soft-fail (counted), not propagate")
+	}
+	if emitted != 0 || sinked != 0 {
+		t.Errorf("emitted=%d sinked=%d, want 0/0 on panic", emitted, sinked)
+	}
+}
+
+// TestProcessEventSafely_DecodeErrorIsSoftFail — a returned decode error is
+// the existing soft-fail path; it must not sink and must flag softFail.
+func TestProcessEventSafely_DecodeErrorIsSoftFail(t *testing.T) {
+	src := Source{Name: "x", Decoder: &fakeDecoder{matches: true, err: errors.New("bad row")}}
+	sinked := 0
+	emitted, softFail := processEventSafely(src, events.Event{}, func(consumer.Event) { sinked++ }, discardLog())
+	if !softFail || emitted != 0 || sinked != 0 {
+		t.Errorf("decode error: softFail=%v emitted=%d sinked=%d, want true/0/0", softFail, emitted, sinked)
+	}
+}
+
+// TestProcessEventSafely_HappyPathSinks — a clean decode sinks each output and
+// reports no soft-fail.
+func TestProcessEventSafely_HappyPathSinks(t *testing.T) {
+	src := Source{Name: "x", Decoder: &fakeDecoder{matches: true, outs: []consumer.Event{fakeEvent{}, fakeEvent{}}}}
+	sinked := 0
+	emitted, softFail := processEventSafely(src, events.Event{}, func(consumer.Event) { sinked++ }, discardLog())
+	if softFail || emitted != 2 || sinked != 2 {
+		t.Errorf("happy: softFail=%v emitted=%d sinked=%d, want false/2/2", softFail, emitted, sinked)
+	}
+}
+
+// TestProcessEventSafely_NonMatchSkips — a non-matching row is neither sinked
+// nor a soft-fail (and Decode is never called).
+func TestProcessEventSafely_NonMatchSkips(t *testing.T) {
+	d := &fakeDecoder{matches: false}
+	sinked := 0
+	emitted, softFail := processEventSafely(Source{Name: "x", Decoder: d}, events.Event{},
+		func(consumer.Event) { sinked++ }, discardLog())
+	if softFail || emitted != 0 || sinked != 0 || d.decodeHi != 0 {
+		t.Errorf("non-match: softFail=%v emitted=%d sinked=%d decodeCalls=%d, want false/0/0/0", softFail, emitted, sinked, d.decodeHi)
+	}
+}
 
 func oracleConfigEmpty() config.OracleConfig { return config.OracleConfig{} }
 

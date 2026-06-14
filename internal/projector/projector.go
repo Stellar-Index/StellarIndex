@@ -192,6 +192,42 @@ func (p *Projector) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// processEventSafely runs one raw lake row through a source's decoder + sink
+// under a per-row recover (X9, audit-2026-06-14). The dispatcher path recovers
+// decoder panics in pipeline.ProcessLedger; the projector runs the SAME
+// decoders on raw lake rows (including historical / upgraded-WASM shapes —
+// "backfill sees every prior version") in a bare goroutine inside the LIVE
+// indexer. Without this, a panic on one poison row crashes the whole indexer,
+// and because the cursor doesn't advance past the bad row, restart re-reads it
+// into a crash-loop.
+//
+// Returns the number of events sinked and softFail=true when the row should be
+// counted as a decode failure — either a returned decode error OR a recovered
+// panic. A deterministically broken row would only re-fail on retry, so the
+// caller advances the cursor regardless (the failure is counted for visibility).
+func processEventSafely(src Source, ev events.Event, sink func(consumer.Event), log *slog.Logger) (emitted int, softFail bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			emitted, softFail = 0, true
+			log.Error("projector decode panicked; skipping row",
+				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
+				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "panic", rec)
+		}
+	}()
+	if !src.Decoder.Matches(ev) {
+		return 0, false
+	}
+	outs, derr := src.Decoder.Decode(ev)
+	if derr != nil {
+		return 0, true
+	}
+	for _, out := range outs {
+		sink(out)
+		emitted++
+	}
+	return emitted, false
+}
+
 // runOneSource is the per-source catch-up loop. Reads from the
 // projector cursor's last_ledger forward, batches up to
 // BatchLimit rows per cycle, advances the cursor on success.
@@ -279,18 +315,12 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 	// soft-fail (cursor still advances; the row is deterministically broken so
 	// a retry would re-fail) and are counted for visibility.
 	process := func(ev events.Event) {
-		if !src.Decoder.Matches(ev) {
-			return
-		}
-		outs, derr := src.Decoder.Decode(ev)
-		if derr != nil {
+		emitted, softFail := processEventSafely(src, ev, func(out consumer.Event) { p.sink(cycleCtx, out) }, p.logger)
+		if softFail {
 			decodeErrors++
 			return
 		}
-		for _, out := range outs {
-			p.sink(cycleCtx, out)
-			eventsEmitted++
-		}
+		eventsEmitted += emitted
 	}
 
 	if p.chAddr != "" {
