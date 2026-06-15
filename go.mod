@@ -2,6 +2,8 @@ module github.com/StellarIndex/stellar-index
 
 go 1.25.10
 
+toolchain go1.25.11
+
 // Direct production dependencies.
 //
 // Every entry below has either an ADR justifying it or a one-line
@@ -22,7 +24,7 @@ require (
 	github.com/redis/go-redis/v9 v9.19.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
 	github.com/testcontainers/testcontainers-go v0.42.0 // Integration-test Postgres container
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0 // Timescale-flavoured container helper
-	golang.org/x/sync v0.20.0 // singleflight for metadata/cache.go
+	golang.org/x/sync v0.21.0 // singleflight for metadata/cache.go
 )
 
 require github.com/stellar/go-stellar-sdk v0.5.0 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
@@ -38,7 +40,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_model v0.6.2
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.53.0
 	google.golang.org/api v0.278.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -164,14 +166,14 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
-	golang.org/x/mod v0.35.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260508192327-42602be52be6 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
