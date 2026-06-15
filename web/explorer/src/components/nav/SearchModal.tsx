@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { apiGet } from '@/api/client';
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
@@ -231,6 +231,11 @@ const PROTOCOLS: Result[] = [
 export function SearchModal() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  // a11y (audit-2026-06-14 Q3): dialog focus management. dialogRef scopes the
+  // Tab-trap; restoreFocusRef returns focus to whatever was focused when the
+  // dialog opened (the ⌘K trigger or wherever the keyboard user was).
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   // Debounced query for the server-side /v1/coins?q=… call so a
   // burst of keystrokes doesn't fan out a request per character.
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -291,6 +296,37 @@ export function SearchModal() {
       setDebouncedQ('');
     }
   }, [open]);
+
+  // a11y (Q3): on open, remember the element to return focus to; on close,
+  // restore it so keyboard/SR users aren't dumped on <body>.
+  useEffect(() => {
+    if (open) {
+      restoreFocusRef.current = document.activeElement as HTMLElement | null;
+    } else if (restoreFocusRef.current) {
+      restoreFocusRef.current.focus?.();
+      restoreFocusRef.current = null;
+    }
+  }, [open]);
+
+  // a11y (Q3): trap Tab within the dialog so focus can't walk out into the
+  // (still-visible) page behind the overlay.
+  function trapTab(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input, [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && active === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 
   // Debounce the live input into debouncedQ — 200ms balances
   // "feels live" with "doesn't fan out a request per keystroke".
@@ -387,15 +423,19 @@ export function SearchModal() {
           onClick={() => setOpen(false)}
         >
           <div
+            ref={dialogRef}
             className="w-full max-w-xl overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-slate-900"
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={trapTab}
             role="dialog"
-            aria-modal
+            aria-modal="true"
+            aria-label="Site search"
           >
             <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-3 dark:border-slate-800">
-              <Search className="h-4 w-4 text-slate-400" />
+              <Search className="h-4 w-4 text-slate-400" aria-hidden="true" />
               <input
                 autoFocus
+                aria-label="Search coins, pairs, protocols, accounts, and transactions"
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
                 placeholder="Coins, pairs, protocols, accounts, transactions…"
                 value={q}
@@ -462,8 +502,8 @@ export function SearchModal() {
                 </li>
               ))}
             </ul>
-            <div className="border-t border-slate-100 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">
-              <kbd>↑↓</kbd> navigate · <kbd>↵</kbd> open · <kbd>esc</kbd> close
+            <div className="border-t border-slate-100 px-3 py-1.5 text-[10px] text-slate-500 dark:border-slate-800">
+              <kbd>tab</kbd> navigate · <kbd>↵</kbd> open · <kbd>esc</kbd> close
             </div>
           </div>
         </div>

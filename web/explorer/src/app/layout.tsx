@@ -173,10 +173,21 @@ export default function RootLayout({
         />
       </head>
       <body className="flex min-h-screen flex-col">
+        {/* a11y (audit-2026-06-14 Q3): bypass-blocks skip link — keyboard
+            users jump past the nav + dropdowns to the page content. Visually
+            hidden until focused. */}
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-brand-700 focus:shadow-lg dark:focus:bg-slate-900 dark:focus:text-brand-300"
+        >
+          Skip to main content
+        </a>
         <QueryProvider>
           <Navbar />
           <DegradedBanner />
-          <main className="flex-1">{children}</main>
+          <main id="main" className="flex-1">
+            {children}
+          </main>
           <Footer />
         </QueryProvider>
       </body>
