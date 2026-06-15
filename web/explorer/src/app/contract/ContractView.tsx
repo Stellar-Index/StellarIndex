@@ -167,6 +167,8 @@ export function ContractView() {
         </ul>
       </Panel>
 
+      <WasmPanel id={data.contract_id || id} />
+
       <EventsPanel
         id={id}
         events={data.events}
@@ -180,6 +182,170 @@ export function ContractView() {
         source={source}
       />
     </Shell>
+  );
+}
+
+// ── On-chain WASM ("see the code") ──────────────────────────────────────
+// Mirrors api/v1.ContractWasmView (GET /v1/contracts/{id}/wasm): the
+// contract's resolved wasm hash + size, its exported function table (always
+// present — parsed natively), and best-effort WAT + wasm-decompile pseudocode
+// (present once the wabt toolchain is installed server-side).
+interface WasmExport {
+  name: string;
+  params: string[];
+  results: string[];
+}
+interface ContractWasmResp {
+  contract_id: string;
+  wasm_hash: string;
+  size_bytes: number;
+  exports: WasmExport[];
+  wat?: string;
+  decompiled?: string;
+  source_note: string;
+}
+
+function exportSignature(e: WasmExport): string {
+  const p = e.params.length ? e.params.join(', ') : '';
+  const r = e.results.length ? e.results.join(', ') : '()';
+  return `(${p}) → ${r}`;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
+}
+
+/**
+ * WasmPanel — the contract's on-chain code, read on demand from the certified
+ * lake. Exports always render; WAT + decompiled pseudocode are collapsible and
+ * only shown when the server produced them (wabt present). A clean 404 (the
+ * contract's instance/code entry isn't in the captured ledger window) degrades
+ * to a short, non-alarming note rather than an error card.
+ */
+function WasmPanel({ id }: { id: string }) {
+  const { data, isLoading, isError, error } = useQuery<ContractWasmResp>({
+    queryKey: ['/v1/contracts/{id}/wasm', id],
+    enabled: CONTRACT_RE.test(id),
+    retry: false,
+    staleTime: 3_600_000, // content-addressed wasm is immutable
+    queryFn: async () => {
+      const env = await apiGet<Envelope<ContractWasmResp>>(
+        `/v1/contracts/${encodeURIComponent(id)}/wasm`,
+      );
+      return env.data;
+    },
+  });
+
+  const source = asExample(`/v1/contracts/${id}/wasm`);
+
+  if (isLoading) {
+    return (
+      <Panel title="Code (WASM)" source={source} bodyClassName="text-sm text-slate-500">
+        Loading code…
+      </Panel>
+    );
+  }
+
+  if (isError || !data) {
+    const notCaptured = error instanceof Error && error.message.includes('404');
+    return (
+      <Panel
+        title="Code (WASM)"
+        source={source}
+        bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+      >
+        <p>
+          {notCaptured
+            ? 'This contract’s on-chain WASM isn’t in the captured ledger window yet — its deploy-time code/instance entry predates live capture. It resolves automatically once a Phase-C backfill lands.'
+            : `Couldn’t load this contract’s WASM: ${error instanceof Error ? error.message : 'unknown error'}.`}
+        </p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel
+      title="Code (WASM)"
+      hint={`${data.exports.length} exports · ${formatBytes(data.size_bytes)}`}
+      source={source}
+      bodyClassName="space-y-4"
+    >
+      <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-slate-500">
+            WASM hash
+          </div>
+          <div className="mt-0.5">
+            <CopyHash value={data.wasm_hash} head={12} tail={10} />
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-slate-500">
+            Size
+          </div>
+          <div className="mt-0.5 font-mono tabular-nums text-slate-700 dark:text-slate-300">
+            {formatBytes(data.size_bytes)}
+          </div>
+        </div>
+      </div>
+
+      {/* Exported entry points — the contract's real API surface. */}
+      {data.exports.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                <th scope="col" className="py-2 pr-4">
+                  Export
+                </th>
+                <th scope="col" className="py-2">
+                  Signature (wasm ABI)
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {data.exports.map((e) => (
+                <tr key={e.name}>
+                  <td className="py-1.5 pr-4 font-mono text-brand-700 dark:text-brand-300">
+                    {e.name}
+                  </td>
+                  <td className="py-1.5 font-mono text-xs text-slate-500">
+                    {exportSignature(e)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data.wat && <CodeDisclosure label="WAT disassembly" code={data.wat} />}
+      {data.decompiled && (
+        <CodeDisclosure label="Decompiled pseudocode" code={data.decompiled} />
+      )}
+
+      <p className="text-[11px] leading-snug text-slate-400">{data.source_note}</p>
+    </Panel>
+  );
+}
+
+// CodeDisclosure — a collapsed <details> block of monospace source, scrollable
+// and height-capped so a large module doesn't dominate the page.
+function CodeDisclosure({ label, code }: { label: string; code: string }) {
+  return (
+    <details className="group rounded-lg border border-slate-200 dark:border-slate-800">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-slate-600 marker:text-slate-400 hover:text-brand-600 dark:text-slate-300">
+        {label}{' '}
+        <span className="text-slate-400">
+          ({code.split('\n').length.toLocaleString()} lines)
+        </span>
+      </summary>
+      <pre className="max-h-96 overflow-auto border-t border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300">
+        {code}
+      </pre>
+    </details>
   );
 }
 
