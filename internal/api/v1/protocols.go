@@ -252,31 +252,10 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	if s.protocolActivity == nil {
 		return
 	}
-	// The analytics scope is every contract the protocol owns: the registered
-	// instances + the verified factories themselves (factories emit events too,
-	// e.g. new_pair / deploy).
-	ids := make([]string, 0, len(view.Contracts)+len(meta.Factories))
-	seen := map[string]struct{}{}
-	add := func(id string) {
-		if id == "" {
-			return
-		}
-		if _, dup := seen[id]; dup {
-			return
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	for _, c := range view.Contracts {
-		add(c.ContractID)
-	}
-	for _, f := range meta.Factories {
-		add(f)
-	}
+	ids := protocolContractIDs(view.Contracts, meta.Factories)
 	if len(ids) == 0 {
 		return
 	}
-
 	// All three analytics are bounded to the recent window: bounding by
 	// ledger_seq prunes partitions, keeping each query well under the lake
 	// reader's 30s budget even for the busiest protocols (an all-time scan ran
@@ -287,40 +266,83 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 		return
 	}
 	view.ActivityWindowDays = protocolActivityWindowDays
+	s.fillProtocolBreakdown(ctx, meta.Name, ids, since, view)
+	s.fillProtocolSeries(ctx, meta.Name, ids, since, view)
+	s.fillProtocolContractActivity(ctx, meta.Name, ids, since, view)
+}
 
-	if breakdown, err := s.protocolActivity.ProtocolEventBreakdown(ctx, ids, since); err != nil {
-		s.logger.Warn("protocol event breakdown failed", "source", meta.Name, "err", err)
-	} else {
-		view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown))
-		for _, b := range breakdown {
-			view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: b.EventType, Count: int64(b.Count)})
-			view.EventsTotal += int64(b.Count)
+// protocolContractIDs is the dedup'd analytics scope: every registered instance
+// + the verified factories themselves (factories emit events too, e.g.
+// new_pair / deploy).
+func protocolContractIDs(contracts []ProtocolContractView, factories []string) []string {
+	ids := make([]string, 0, len(contracts)+len(factories))
+	seen := make(map[string]struct{}, cap(ids))
+	add := func(id string) {
+		if id == "" {
+			return
 		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
 	}
-
-	if series, err := s.protocolActivity.ProtocolDailyActivity(ctx, ids, since); err != nil {
-		s.logger.Warn("protocol daily activity failed", "source", meta.Name, "err", err)
-	} else {
-		view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
-		for _, p := range series {
-			view.ActivitySeries = append(view.ActivitySeries, ProtocolActivityPointView{Date: p.Date, Events: int64(p.Events)})
-		}
+	for _, c := range contracts {
+		add(c.ContractID)
 	}
+	for _, f := range factories {
+		add(f)
+	}
+	return ids
+}
 
-	if act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, since); err != nil {
-		s.logger.Warn("protocol contract activity failed", "source", meta.Name, "err", err)
-	} else {
-		byID := make(map[string]clickhouse.ProtocolContractActivity, len(act))
-		for _, a := range act {
-			byID[a.ContractID] = a
+// fillProtocolBreakdown populates EventBreakdown + EventsTotal (degrades on error).
+func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
+	breakdown, err := s.protocolActivity.ProtocolEventBreakdown(ctx, ids, since)
+	if err != nil {
+		s.logger.Warn("protocol event breakdown failed", "source", name, "err", err)
+		return
+	}
+	view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown))
+	for _, b := range breakdown {
+		view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: b.EventType, Count: int64(b.Count)})
+		view.EventsTotal += int64(b.Count)
+	}
+}
+
+// fillProtocolSeries populates the daily ActivitySeries (degrades on error).
+func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
+	series, err := s.protocolActivity.ProtocolDailyActivity(ctx, ids, since)
+	if err != nil {
+		s.logger.Warn("protocol daily activity failed", "source", name, "err", err)
+		return
+	}
+	view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
+	for _, p := range series {
+		view.ActivitySeries = append(view.ActivitySeries, ProtocolActivityPointView{Date: p.Date, Events: int64(p.Events)})
+	}
+}
+
+// fillProtocolContractActivity merges per-contract event counts + last-seen onto
+// the roster (degrades on error).
+func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
+	act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, since)
+	if err != nil {
+		s.logger.Warn("protocol contract activity failed", "source", name, "err", err)
+		return
+	}
+	byID := make(map[string]clickhouse.ProtocolContractActivity, len(act))
+	for _, a := range act {
+		byID[a.ContractID] = a
+	}
+	for i := range view.Contracts {
+		a, ok := byID[view.Contracts[i].ContractID]
+		if !ok {
+			continue
 		}
-		for i := range view.Contracts {
-			if a, ok := byID[view.Contracts[i].ContractID]; ok {
-				view.Contracts[i].Events = int64(a.Events)
-				if !a.LastSeen.IsZero() {
-					view.Contracts[i].LastSeen = a.LastSeen.UTC().Format(time.RFC3339)
-				}
-			}
+		view.Contracts[i].Events = int64(a.Events)
+		if !a.LastSeen.IsZero() {
+			view.Contracts[i].LastSeen = a.LastSeen.UTC().Format(time.RFC3339)
 		}
 	}
 }
