@@ -36,7 +36,14 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	defer cancel()
 
 	pg, err := tcpostgres.Run(ctx,
-		"timescale/timescaledb:2.17.2-pg15",
+		// Pin matches the version r1 actually runs (2.26.x). The old 2.17.2
+		// pin was 9 minor versions behind prod and BLOCKED the PK-swap-after-
+		// decompress that migrations 0053–0060 do on compressed hypertables
+		// (error 0A000) — so this round-trip test was red AND validated the
+		// migrations against a TimescaleDB we don't deploy. 2.26.x allows the
+		// operation (which is why the same migrations applied cleanly on r1).
+		// (audit-2026-06-15, migration dry-run / test-vs-prod version drift.)
+		"timescale/timescaledb:2.26.4-pg15",
 		tcpostgres.WithDatabase("stellarindex"),
 		tcpostgres.WithUsername("stellarindex"),
 		tcpostgres.WithPassword("stellarindex-test"),
@@ -319,7 +326,10 @@ func assertContinuousAggregateExists(t *testing.T, db *sql.DB, ctx context.Conte
 	err = db.QueryRowContext(ctx, `
         SELECT count(*) FROM timescaledb_information.jobs j
         JOIN timescaledb_information.continuous_aggregates c
-          ON j.hypertable_name = c.materialization_hypertable_name
+          -- TimescaleDB 2.26 (r1's version) sets jobs.hypertable_name to the
+          -- cagg VIEW name for refresh jobs; older 2.x used the materialization
+          -- hypertable name. Match either so the assertion is version-robust.
+          ON j.hypertable_name IN (c.view_name, c.materialization_hypertable_name)
         WHERE c.view_name = $1
           AND j.proc_name = 'policy_refresh_continuous_aggregate'`,
 		name,

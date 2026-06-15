@@ -22,7 +22,7 @@ services:
 
   # ─── PostgreSQL + TimescaleDB ────────────────────────────────────
   timescale:
-    image: timescale/timescaledb:${TIMESCALE_IMAGE_TAG:-2.17.2-pg15}
+    image: timescale/timescaledb:${TIMESCALE_IMAGE_TAG:-2.26.4-pg15}
     container_name: stellarindex-timescale
     restart: unless-stopped
     environment:

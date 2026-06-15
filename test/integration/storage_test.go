@@ -484,7 +484,9 @@ func TestInsertTrade_MultiOpSameTxBothLand(t *testing.T) {
 func startTimescale(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	pg, err := tcpostgres.Run(ctx,
-		"timescale/timescaledb:2.17.2-pg15",
+		// Matches r1's deployed TimescaleDB (2.26.x); see the note in
+		// migrations_test.go on the prior 2.17.2 prod-drift.
+		"timescale/timescaledb:2.26.4-pg15",
 		tcpostgres.WithDatabase("stellarindex"),
 		tcpostgres.WithUsername("stellarindex"),
 		tcpostgres.WithPassword("stellarindex-test"),
