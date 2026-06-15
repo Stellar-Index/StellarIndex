@@ -3,9 +3,33 @@ package v1
 import (
 	"context"
 	"net/http"
+	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
+
+// protocolActivityWindowDays is the lookback for the windowed per-protocol
+// analytics (the activity time-series). ~90 days ≈ 1.55M ledgers — bounded so
+// the lake query prunes partitions and stays fast on the 12B-row table.
+const protocolActivityWindowDays = 90
+
+// protocolActivityWindowLedgers is protocolActivityWindowDays expressed in
+// ledgers (~5s close time → 17,280/day).
+const protocolActivityWindowLedgers = protocolActivityWindowDays * 17280
+
+// ProtocolActivityReader serves per-protocol on-chain analytics from the
+// certified lake (contract_events): event-type breakdown, daily activity
+// series, and per-contract rollups, all scoped to a protocol's contract-id set.
+// Production wiring is *clickhouse.ExplorerReader (the same lake reader the
+// network explorer uses). Nil reader → the analytics fields serve empty; the
+// directory + registry still work.
+type ProtocolActivityReader interface {
+	LakeTipLedger(ctx context.Context) (uint32, error)
+	ProtocolEventBreakdown(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]clickhouse.ProtocolEventTypeCount, error)
+	ProtocolDailyActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]clickhouse.ProtocolDailyPoint, error)
+	ProtocolContractActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]clickhouse.ProtocolContractActivity, error)
+}
 
 // ProtocolContractsReader is the read seam for the protocol_contracts
 // registry (ADR-0035 factory-anchored gating). Production wiring is
@@ -93,6 +117,29 @@ type ProtocolContractView struct {
 	// Token0 / Token1 are the pair's token C-strkeys (soroswap only).
 	Token0 string `json:"token0,omitempty"`
 	Token1 string `json:"token1,omitempty"`
+	// Kind classifies the instance within the protocol: "factory" (a verified
+	// trust-root in meta.Factories) or "instance" (a pool/vault/market the
+	// factory deployed). Lets the page group the roster by role.
+	Kind string `json:"kind,omitempty"`
+	// Events is the all-time decoded contract-event count emitted by this
+	// instance (from the lake). 0/absent when the activity reader is nil.
+	Events int64 `json:"events,omitempty"`
+	// LastSeen is the close time of this instance's most recent event
+	// (RFC3339); absent when unknown / no activity reader.
+	LastSeen string `json:"last_seen,omitempty"`
+}
+
+// ProtocolEventTypeView is one slice of a protocol's event-type distribution:
+// a topic[0] symbol and how many times it fired (all-time, from the lake).
+type ProtocolEventTypeView struct {
+	EventType string `json:"event_type"`
+	Count     int64  `json:"count"`
+}
+
+// ProtocolActivityPointView is one day of a protocol's event-activity series.
+type ProtocolActivityPointView struct {
+	Date   string `json:"date"`
+	Events int64  `json:"events"`
 }
 
 // ProtocolDetailView is the envelope data field of
@@ -109,6 +156,23 @@ type ProtocolDetailView struct {
 	// VerificationPage is the repo-relative path of the protocol's
 	// verification write-up, absent when none exists yet.
 	VerificationPage string `json:"verification_page,omitempty"`
+
+	// ─── Lake analytics (populated when the activity reader is wired) ──
+
+	// EventBreakdown is the event-type distribution (topic[0] symbol →
+	// count) across the protocol's contracts over the trailing
+	// ActivityWindowDays — "which event types fired, and how often." All
+	// analytics share this window so the lake queries stay partition-pruned
+	// and fast. Descending by count.
+	EventBreakdown []ProtocolEventTypeView `json:"event_breakdown,omitempty"`
+	// ActivitySeries is the daily decoded-event count over the trailing
+	// ActivityWindowDays — the protocol's on-chain activity chart.
+	ActivitySeries []ProtocolActivityPointView `json:"activity_series,omitempty"`
+	// ActivityWindowDays is the lookback all the analytics fields cover.
+	ActivityWindowDays int `json:"activity_window_days,omitempty"`
+	// EventsTotal is the decoded contract-event count across every contract
+	// in the protocol over ActivityWindowDays (sum of EventBreakdown counts).
+	EventsTotal int64 `json:"events_total,omitempty"`
 }
 
 // handleProtocolsList serves GET /v1/protocols — the protocol
@@ -149,15 +213,130 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	contracts := s.protocolContracts(ctx, meta.Name)
+	classifyContractKinds(contracts, meta.Factories)
 	view := ProtocolDetailView{
 		ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(ctx), s.protocolVerdicts(ctx)),
 		Contracts:        contracts,
 		EventKinds:       append([]string{}, meta.EventKinds...),
 		VerificationPage: meta.VerificationPage,
 	}
+	s.enrichProtocolAnalytics(ctx, meta, &view)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{})
+}
+
+// classifyContractKinds tags each roster contract as "factory" (it is one of
+// the protocol's verified trust-roots) or "instance" (a factory-deployed
+// pool/vault/market).
+func classifyContractKinds(contracts []ProtocolContractView, factories []string) {
+	fset := make(map[string]struct{}, len(factories))
+	for _, f := range factories {
+		fset[f] = struct{}{}
+	}
+	for i := range contracts {
+		if _, ok := fset[contracts[i].ContractID]; ok {
+			contracts[i].Kind = "factory"
+		} else {
+			contracts[i].Kind = "instance"
+		}
+	}
+}
+
+// enrichProtocolAnalytics populates the lake-derived analytics on the detail
+// view: the event-type breakdown, the daily activity series, and per-contract
+// event counts merged onto the roster. Degrades to leaving the fields empty
+// when the activity reader is nil or any query errors (same contract as the
+// other optional joins — the directory + registry still serve).
+func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView) {
+	if s.protocolActivity == nil {
+		return
+	}
+	// The analytics scope is every contract the protocol owns: the registered
+	// instances + the verified factories themselves (factories emit events too,
+	// e.g. new_pair / deploy).
+	ids := make([]string, 0, len(view.Contracts)+len(meta.Factories))
+	seen := map[string]struct{}{}
+	add := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, c := range view.Contracts {
+		add(c.ContractID)
+	}
+	for _, f := range meta.Factories {
+		add(f)
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	// All three analytics are bounded to the recent window: bounding by
+	// ledger_seq prunes partitions, keeping each query well under the lake
+	// reader's 30s budget even for the busiest protocols (an all-time scan ran
+	// ~33s for blend / would be far worse for soroswap). 0 ⇒ tip unreadable ⇒
+	// skip the analytics entirely (degrade, don't serve partial/timed-out).
+	since := s.protocolActivitySince(ctx)
+	if since == 0 {
+		return
+	}
+	view.ActivityWindowDays = protocolActivityWindowDays
+
+	if breakdown, err := s.protocolActivity.ProtocolEventBreakdown(ctx, ids, since); err != nil {
+		s.logger.Warn("protocol event breakdown failed", "source", meta.Name, "err", err)
+	} else {
+		view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown))
+		for _, b := range breakdown {
+			view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: b.EventType, Count: int64(b.Count)})
+			view.EventsTotal += int64(b.Count)
+		}
+	}
+
+	if series, err := s.protocolActivity.ProtocolDailyActivity(ctx, ids, since); err != nil {
+		s.logger.Warn("protocol daily activity failed", "source", meta.Name, "err", err)
+	} else {
+		view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
+		for _, p := range series {
+			view.ActivitySeries = append(view.ActivitySeries, ProtocolActivityPointView{Date: p.Date, Events: int64(p.Events)})
+		}
+	}
+
+	if act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, since); err != nil {
+		s.logger.Warn("protocol contract activity failed", "source", meta.Name, "err", err)
+	} else {
+		byID := make(map[string]clickhouse.ProtocolContractActivity, len(act))
+		for _, a := range act {
+			byID[a.ContractID] = a
+		}
+		for i := range view.Contracts {
+			if a, ok := byID[view.Contracts[i].ContractID]; ok {
+				view.Contracts[i].Events = int64(a.Events)
+				if !a.LastSeen.IsZero() {
+					view.Contracts[i].LastSeen = a.LastSeen.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+	}
+}
+
+// protocolActivitySince returns the ledger cutoff for the windowed activity
+// series (tip − window). 0 when the tip can't be read (caller skips the series).
+func (s *Server) protocolActivitySince(ctx context.Context) uint32 {
+	tip, err := s.protocolActivity.LakeTipLedger(ctx)
+	if err != nil {
+		s.logger.Warn("protocol activity tip read failed", "err", err)
+		return 0
+	}
+	if tip <= protocolActivityWindowLedgers {
+		return 1 // whole chain is inside the window
+	}
+	return tip - protocolActivityWindowLedgers
 }
 
 // buildProtocolView projects one registry entry + the dynamic joins

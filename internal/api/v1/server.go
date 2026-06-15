@@ -93,6 +93,7 @@ type Server struct {
 	completenessReader      CompletenessReader
 	protocolContractsReader ProtocolContractsReader
 	protocolStats           ProtocolStatsReader
+	protocolActivity        ProtocolActivityReader
 	soroswapPairs           SoroswapPairsReader
 	networkStats            NetworkStatsReader
 	sourcesStats            SourcesStatsReader
@@ -430,6 +431,13 @@ type Options struct {
 	// directly (CountRecentEventsBySource). Nil serves zeros.
 	ProtocolStats ProtocolStatsReader
 
+	// ProtocolActivity, when non-nil, backs the per-protocol lake
+	// analytics on /v1/protocols/{name} (event-type breakdown, daily
+	// activity series, per-contract event counts). Production wiring is
+	// the *clickhouse.ExplorerReader (same lake reader as Explorer). Nil
+	// serves the detail view without the analytics fields.
+	ProtocolActivity ProtocolActivityReader
+
 	// SoroswapPairs, when non-nil, supplies soroswap's contract list
 	// on /v1/protocols* from the soroswap_pairs registry (its pair
 	// set carries token identities and predates protocol_contracts).
@@ -749,6 +757,7 @@ func New(opts Options) *Server {
 		completenessReader:      opts.CompletenessReader,
 		protocolContractsReader: opts.ProtocolContracts,
 		protocolStats:           opts.ProtocolStats,
+		protocolActivity:        opts.ProtocolActivity,
 		soroswapPairs:           opts.SoroswapPairs,
 		networkStats:            opts.NetworkStats,
 		sourcesStats:            opts.SourcesStats,

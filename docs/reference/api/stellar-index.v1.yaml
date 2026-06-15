@@ -2184,12 +2184,39 @@ paths:
                                     first_ledger: { type: integer, format: int64, description: First-observed ledger (absent when unknown). }
                                     token0: { type: string, description: Pair token0 C-strkey (soroswap only). }
                                     token1: { type: string, description: Pair token1 C-strkey (soroswap only). }
+                                    kind: { type: string, enum: [factory, instance], description: Role within the protocol — a verified trust-root or a factory-deployed instance. }
+                                    events: { type: integer, format: int64, description: "Decoded contract-event count for this instance over activity_window_days (from the lake)." }
+                                    last_seen: { type: string, format: date-time, description: Close time of this instance's most recent event in the window. }
                               event_kinds:
                                 type: array
                                 items: { type: string, example: blend.position }
                               verification_page:
                                 type: string
                                 example: docs/protocols/blend.md
+                              activity_window_days:
+                                type: integer
+                                description: Lookback (days) the lake-analytics fields below cover.
+                                example: 90
+                              events_total:
+                                type: integer
+                                format: int64
+                                description: Total decoded contract events across the protocol over activity_window_days (sum of event_breakdown counts).
+                              event_breakdown:
+                                type: array
+                                description: Event-type distribution (topic[0] symbol → count) over the window, descending — "which event types fired, and how often."
+                                items:
+                                  type: object
+                                  properties:
+                                    event_type: { type: string, example: supply_collateral }
+                                    count: { type: integer, format: int64 }
+                              activity_series:
+                                type: array
+                                description: Daily decoded-event count over the window (the activity chart).
+                                items:
+                                  type: object
+                                  properties:
+                                    date: { type: string, example: "2026-06-14" }
+                                    events: { type: integer, format: int64 }
         "404":
           description: Unknown protocol name.
           content:

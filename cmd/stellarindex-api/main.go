@@ -840,6 +840,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// /v1/operations, /v1/contracts, /v1/search from the certified lake.
 	// Optional + non-fatal, same posture as the supply reader.
 	var explorerReader v1.ExplorerReader
+	// protocolActivityReader is the SAME concrete lake reader, surfaced through
+	// the narrower ProtocolActivityReader seam for /v1/protocols/{name}
+	// analytics. Same nil-degrade posture.
+	var protocolActivityReader v1.ProtocolActivityReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		er, err := clickhouse.NewExplorerReader(rootCtx, addr)
 		if err != nil {
@@ -847,6 +851,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		} else {
 			defer func() { _ = er.Close() }()
 			explorerReader = er
+			protocolActivityReader = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
 		}
 	}
@@ -902,6 +907,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// the directory degrades to zeros/empties when absent.
 		ProtocolContracts: store,
 		ProtocolStats:     store,
+		ProtocolActivity:  protocolActivityReader,
 		SoroswapPairs:     store,
 		NetworkStats:      store,
 		// Wrap with a 60s TTL cache. The underlying SQL aggregations

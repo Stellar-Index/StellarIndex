@@ -5,10 +5,37 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
+
+// stubProtocolActivityReader is a fake lake-analytics reader for the
+// per-protocol page enrichment test.
+type stubProtocolActivityReader struct {
+	tip       uint32
+	breakdown []clickhouse.ProtocolEventTypeCount
+	daily     []clickhouse.ProtocolDailyPoint
+	contracts []clickhouse.ProtocolContractActivity
+}
+
+func (s *stubProtocolActivityReader) LakeTipLedger(context.Context) (uint32, error) {
+	return s.tip, nil
+}
+
+func (s *stubProtocolActivityReader) ProtocolEventBreakdown(context.Context, []string, uint32) ([]clickhouse.ProtocolEventTypeCount, error) {
+	return s.breakdown, nil
+}
+
+func (s *stubProtocolActivityReader) ProtocolDailyActivity(context.Context, []string, uint32) ([]clickhouse.ProtocolDailyPoint, error) {
+	return s.daily, nil
+}
+
+func (s *stubProtocolActivityReader) ProtocolContractActivity(context.Context, []string, uint32) ([]clickhouse.ProtocolContractActivity, error) {
+	return s.contracts, nil
+}
 
 type stubProtocolContractsReader struct {
 	bySource map[string][]timescale.ProtocolContract
@@ -250,5 +277,77 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 	}
 	if len(denv.Data.EventKinds) == 0 {
 		t.Errorf("event_kinds should still serve from the static registry")
+	}
+}
+
+// TestHandleProtocolDetail_LakeAnalytics verifies the per-protocol page
+// enrichment: event-type breakdown, daily activity series, and per-contract
+// event counts merged onto the roster (audit follow-up: Dune-surpassing
+// protocol pages).
+func TestHandleProtocolDetail_LakeAnalytics(t *testing.T) {
+	srv := v1.New(v1.Options{
+		ProtocolContracts: &stubProtocolContractsReader{bySource: map[string][]timescale.ProtocolContract{
+			"blend": {
+				{Source: "blend", ContractID: "CPOOL1", FactoryID: "CFAC", FirstLedger: 51_500_000},
+				{Source: "blend", ContractID: "CPOOL2", FactoryID: "CFAC", FirstLedger: 60_000_123},
+			},
+		}},
+		ProtocolActivity: &stubProtocolActivityReader{
+			tip: 63_000_000,
+			breakdown: []clickhouse.ProtocolEventTypeCount{
+				{EventType: "supply", Count: 900},
+				{EventType: "borrow", Count: 100},
+			},
+			daily: []clickhouse.ProtocolDailyPoint{
+				{Date: "2026-06-13", Events: 40},
+				{Date: "2026-06-14", Events: 60},
+			},
+			contracts: []clickhouse.ProtocolContractActivity{
+				{ContractID: "CPOOL1", Events: 700, LastSeen: time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)},
+				{ContractID: "CPOOL2", Events: 300, LastSeen: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)},
+			},
+		},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/protocols/blend")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d := body.Data
+
+	if len(d.EventBreakdown) != 2 || d.EventBreakdown[0].EventType != "supply" || d.EventBreakdown[0].Count != 900 {
+		t.Errorf("event_breakdown = %+v", d.EventBreakdown)
+	}
+	if d.EventsTotal != 1000 {
+		t.Errorf("events_total = %d, want 1000", d.EventsTotal)
+	}
+	if len(d.ActivitySeries) != 2 || d.ActivitySeries[1].Events != 60 {
+		t.Errorf("activity_series = %+v", d.ActivitySeries)
+	}
+	if d.ActivityWindowDays != 90 {
+		t.Errorf("activity_window_days = %d, want 90", d.ActivityWindowDays)
+	}
+	// Per-contract activity merged onto the roster.
+	var p1 v1.ProtocolContractView
+	for _, c := range d.Contracts {
+		if c.ContractID == "CPOOL1" {
+			p1 = c
+		}
+	}
+	if p1.Events != 700 {
+		t.Errorf("CPOOL1 events = %d, want 700", p1.Events)
+	}
+	if p1.Kind != "instance" {
+		t.Errorf("CPOOL1 kind = %q, want instance", p1.Kind)
+	}
+	if p1.LastSeen == "" {
+		t.Errorf("CPOOL1 last_seen should be set")
 	}
 }
