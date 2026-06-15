@@ -45,6 +45,26 @@ against.
   only ~100 issuers) — added a `/accounts?id=` query-param page; and
   `total_coins` (~1e18 stroops) lost precision through `Number()` — now
   BigInt-divided (ADR-0003). (audit-2026-06-14, A17)
+- **SDK `Envelope.Pagination` round-trip drift (A14-01).** The Go client typed
+  `Pagination` as a value with `omitempty` — a no-op on a struct — while the
+  server uses `*Pagination`, so re-encoding a non-list response emitted
+  `"pagination":{}` where the server omits it. Changed to `*Pagination` (matches
+  the wire; nil ⇒ absent). Pre-v1 SDK; consumers nil-check before `.Next`.
+- **S3 credential env field corrupted by its own override (A16-01).** `[storage]
+  s3_access_key_env`/`s3_secret_key_env` hold the NAME of the env var carrying
+  the credential (buildS3Client does `os.Getenv(name)`), but `ApplyEnvOverrides`
+  + an `env:` tag overwrote the name with the env var's VALUE, so
+  `os.Getenv("AKIA…")→""` silently dropped S3 static creds for the
+  trim/rehydrate-galexie-archive ops commands. Removed the override + tag (the
+  fields are names with defaults; export `STELLARINDEX_S3_ACCESS_KEY=<key>` and
+  it resolves through the name). Latent (the indexer hot path uses the AWS
+  default chain).
+- **Generated API reference could silently drift on `main` (A19-02).** The
+  spec→rendered-reference sync check was PR-only (path-filtered CI), so a
+  direct-to-main push that edited `openapi/` without `make docs-api` slipped a
+  stale reference onto main (66 vs 73 paths). Added the diff as a `lint-docs.sh`
+  section so `verify.sh` catches it pre-push on every commit, and regenerated
+  the reference.
 - **Projector decode panic could crash-loop the live indexer (X9).** The
   projector's per-source goroutine ran decoders on raw lake rows (incl.
   historical/upgraded-WASM shapes) with no `recover` — the dispatcher path has

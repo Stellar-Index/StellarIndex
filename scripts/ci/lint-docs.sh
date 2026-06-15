@@ -99,6 +99,23 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   done
 fi
 
+# ─── 2b. Generated API reference must be in sync with the source spec ────────
+#
+# `make docs-api` copies openapi/stellar-index.v1.yaml verbatim next to the
+# rendered index.html. CI's `openapi` job enforces this too — but that job is
+# PR-only + path-filtered, so a direct-to-main push (the live-in-development
+# cadence) that edits the spec without re-running `make docs-api` slips the
+# desync onto main (audit-2026-06-14 A19-02: the reference was 66 paths while
+# the spec shipped 73). This lint runs inside verify.sh on every push, so the
+# gap is closed locally regardless of the CI trigger.
+
+echo "Checking generated API reference sync..."
+if [ -f openapi/stellar-index.v1.yaml ] && [ -f docs/reference/api/stellar-index.v1.yaml ]; then
+  if ! diff -q openapi/stellar-index.v1.yaml docs/reference/api/stellar-index.v1.yaml >/dev/null 2>&1; then
+    err "docs/reference/api/stellar-index.v1.yaml is out of sync with openapi/stellar-index.v1.yaml — run 'make docs-api' and commit the result"
+  fi
+fi
+
 # ─── 3. Every Prometheus metric must be documented in metrics reference ─────
 
 echo "Checking metrics registry..."

@@ -1604,3 +1604,35 @@ func TestPools_NoFilters(t *testing.T) {
 		t.Fatalf("Pools: %v", err)
 	}
 }
+
+// TestEnvelope_PaginationPointerRoundTrip pins A14-01 (audit-2026-06-14): the
+// Envelope.Pagination field is a pointer matching the server's *Pagination, so
+// a response WITHOUT pagination decodes to nil and re-encodes WITHOUT a
+// "pagination" key (the old value type made omitempty a no-op → emitted
+// "pagination":{}).
+func TestEnvelope_PaginationPointerRoundTrip(t *testing.T) {
+	// Absent pagination → nil → re-marshal omits the key.
+	var noPage client.Envelope[[]string]
+	if err := json.Unmarshal([]byte(`{"data":["a"],"as_of":"2026-06-15T00:00:00Z","flags":{}}`), &noPage); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if noPage.Pagination != nil {
+		t.Errorf("absent pagination should decode to nil, got %+v", noPage.Pagination)
+	}
+	out, err := json.Marshal(noPage)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "pagination") {
+		t.Errorf("re-encode must omit pagination when absent, got %s", out)
+	}
+
+	// Present pagination → non-nil → round-trips with the cursor.
+	var withPage client.Envelope[[]string]
+	if err := json.Unmarshal([]byte(`{"data":["a"],"as_of":"2026-06-15T00:00:00Z","flags":{},"pagination":{"next":"c1"}}`), &withPage); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if withPage.Pagination == nil || withPage.Pagination.Next != "c1" {
+		t.Fatalf("present pagination should decode to {Next:c1}, got %+v", withPage.Pagination)
+	}
+}

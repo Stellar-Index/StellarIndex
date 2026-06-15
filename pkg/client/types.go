@@ -9,11 +9,18 @@ import (
 // Mirrors `internal/api/v1.Envelope` but parameterised on the data
 // type for type safety in client code.
 type Envelope[T any] struct {
-	Data       T          `json:"data"`
-	AsOf       time.Time  `json:"as_of"`
-	Sources    []string   `json:"sources,omitempty"`
-	Flags      Flags      `json:"flags"`
-	Pagination Pagination `json:"pagination,omitempty"`
+	Data    T         `json:"data"`
+	AsOf    time.Time `json:"as_of"`
+	Sources []string  `json:"sources,omitempty"`
+	Flags   Flags     `json:"flags"`
+	// Pagination is a POINTER so it matches the server's wire shape
+	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
+	// is absent. A value type here made `omitempty` a no-op (omitempty
+	// never elides a non-pointer struct), so re-encoding a non-list
+	// response emitted `"pagination":{}` where the server omits it
+	// entirely — round-trip drift (audit-2026-06-14 A14-01). Consumers
+	// must nil-check before reading `.Next`.
+	Pagination *Pagination `json:"pagination,omitempty"`
 }
 
 // Flags are the advisory quality markers per the server's
