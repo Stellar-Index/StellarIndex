@@ -62,8 +62,16 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 	switch category {
 	case "bridge":
 		return s.bespokeBridge(ctx, source, windowDays)
+	case "dex", "amm":
+		return s.bespokeDEX(ctx, source, windowDays)
+	case "lending":
+		return s.bespokeLending(ctx, source, windowDays)
+	case "yield":
+		return s.bespokeYield(ctx, source, windowDays)
+	case "oracle":
+		return s.bespokeOracle(ctx, source, windowDays)
 	}
-	// dex / amm / lending / vault / oracle land here as they ship.
+	// Categories with no bespoke block yet land here.
 	return nil, nil
 }
 
@@ -72,9 +80,9 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 // Reference implementation for the per-category pattern.
 func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	// Only cctp_events carries the domain + amount shape today; rozo_events is
-	// empty. Keep this scoped to cctp; other bridges return an empty block.
+	// empty. Keep this scoped to cctp; other bridges omit the block.
 	if source != "cctp" {
-		return &BespokeBlock{Category: "bridge"}, nil
+		return nil, nil
 	}
 	since := fmt.Sprintf("%d days", windowDays)
 	blk := &BespokeBlock{
@@ -164,4 +172,364 @@ func (s *Store) scanTable(ctx context.Context, base BespokeTable, query string, 
 		base.Rows = append(base.Rows, cells)
 	}
 	return base, rows.Err()
+}
+
+// bespokeDEX builds the DEX/AMM bespoke block (soroswap / phoenix / aquarius
+// / comet / sdex) from the dex_volume_by_pair_1d continuous aggregate
+// (migration 0064): windowed USD volume + trade count + unique pairs KPIs, a
+// daily USD-volume series, and a top-pairs-by-volume table. Queries the CAGG,
+// never raw `trades` (a direct 90d GROUP BY over the 313M-row hypertable
+// measured ~15.7s).
+func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
+	since := fmt.Sprintf("%d days", windowDays)
+	blk := &BespokeBlock{
+		Category: "dex",
+		Notes: []string{
+			"Volume is summed USD volume (vol) from the dex_volume_by_pair_1d daily continuous aggregate over the window; trades whose quote never resolved to a USD price contribute 0 to volume but still count toward trade and pair totals.",
+			"Base turnover is in base-asset base units (per-asset decimals), not USD.",
+		},
+	}
+
+	// KPIs: window USD volume, trade count, unique pairs.
+	var vol, txCount, pairs string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(sum(vol),0)::text,
+		       COALESCE(sum(trades),0)::text,
+		       count(DISTINCT (base_asset, quote_asset))::text
+		FROM dex_volume_by_pair_1d
+		WHERE source = $1 AND bucket > now() - $2::interval`, source, since).
+		Scan(&vol, &txCount, &pairs)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: bespokeDEX KPIs: %w", err)
+	}
+	if txCount == "0" {
+		// No trades in the window — e.g. soroswap-router, whose swaps are
+		// ContractCall-derived and never land in `trades`, or a dormant DEX.
+		// Omit the block rather than render an all-zero DEX panel.
+		return nil, nil
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("USD volume (%dd)", windowDays), Value: vol, Unit: "USD", Hint: "summed usd_volume of priced trades over the window"},
+		BespokeKPI{Label: fmt.Sprintf("Trades (%dd)", windowDays), Value: txCount},
+		BespokeKPI{Label: fmt.Sprintf("Active pairs (%dd)", windowDays), Value: pairs, Hint: "distinct base/quote pairs traded in the window"},
+	)
+
+	// Daily USD-volume series.
+	series, err := s.scanDailySeries(ctx, `
+		SELECT to_char(bucket, 'YYYY-MM-DD'), COALESCE(sum(vol),0)::text
+		FROM dex_volume_by_pair_1d
+		WHERE source = $1 AND bucket > now() - $2::interval
+		GROUP BY 1 ORDER BY 1 ASC`, source, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily USD volume", Unit: "USD", Points: series})
+	}
+
+	// Top pairs by USD volume.
+	tbl, err := s.scanTable(ctx,
+		BespokeTable{Title: "Top pairs by USD volume", Columns: []string{"Base", "Quote", "Trades", "USD volume", "Base turnover"}},
+		`SELECT base_asset, quote_asset,
+		        COALESCE(sum(trades),0)::text,
+		        COALESCE(sum(vol),0)::text,
+		        COALESCE(sum(base_vol),0)::text
+		   FROM dex_volume_by_pair_1d
+		  WHERE source = $1 AND bucket > now() - $2::interval
+		  GROUP BY base_asset, quote_asset
+		  ORDER BY sum(vol) DESC NULLS LAST, sum(trades) DESC LIMIT 25`, source, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+	return blk, nil
+}
+
+// bespokeLending builds the Blend lending bespoke block: per-asset net
+// supplied (supply + supply_collateral − withdraw − withdraw_collateral) and
+// net borrowed (borrow − repay) from blend_positions, plus auction and
+// backstop activity. blend_positions amounts are unsigned magnitudes — the
+// sign is the event_kind, not the value — so net positions are signed sums of
+// the gross magnitudes. Confirmed on r1: event_kind ∈ {supply, withdraw,
+// supply_collateral, withdraw_collateral, borrow, repay, flash_loan};
+// token_amount + b_or_d_amount are both ≥ 0.
+func (s *Store) bespokeLending(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
+	if source != "blend" {
+		return nil, nil
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+	blk := &BespokeBlock{
+		Category: "lending",
+		Notes: []string{
+			"Net supplied / net borrowed are signed running sums of unsigned blend_positions.token_amount over the window — supply/supply_collateral add, withdraw/withdraw_collateral subtract for supplied; borrow adds, repay subtracts for borrowed. They are WINDOW deltas, not all-time TVL (the served tier is retention-scoped); flash_loan is excluded.",
+			"Asset is a Soroban token contract id, shown shortened; amounts are in the token's base units (per-asset decimals).",
+		},
+	}
+
+	if err := s.lendingPositionBlocks(ctx, blk, since, windowDays); err != nil {
+		return nil, err
+	}
+	if err := s.lendingAuctionBlocks(ctx, blk, since, windowDays); err != nil {
+		return nil, err
+	}
+	if err := s.lendingBackstopKPIs(ctx, blk, since, windowDays); err != nil {
+		return nil, err
+	}
+	return blk, nil
+}
+
+// lendingPositionBlocks fills the net-supplied / net-borrowed KPIs, the
+// per-asset net-position table, and the daily position-event series.
+func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
+	var netSupplied, netBorrowed, users, flashLoans string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+		  COALESCE(sum(CASE
+		    WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
+		    WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
+		    ELSE 0 END),0)::text,
+		  COALESCE(sum(CASE
+		    WHEN event_kind = 'borrow' THEN token_amount
+		    WHEN event_kind = 'repay'  THEN -token_amount
+		    ELSE 0 END),0)::text,
+		  count(DISTINCT user_address)::text,
+		  count(*) FILTER (WHERE event_kind = 'flash_loan')::text
+		FROM blend_positions
+		WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&netSupplied, &netBorrowed, &users, &flashLoans)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeLending position KPIs: %w", err)
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Net supplied (%dd)", windowDays), Value: netSupplied, Unit: "token-units", Hint: "supply+collateral minus withdrawals, summed across assets (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Net borrowed (%dd)", windowDays), Value: netBorrowed, Unit: "token-units", Hint: "borrow minus repay, summed across assets (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Active users (%dd)", windowDays), Value: users},
+		BespokeKPI{Label: fmt.Sprintf("Flash loans (%dd)", windowDays), Value: flashLoans},
+	)
+
+	tbl, err := s.scanTable(ctx,
+		BespokeTable{Title: "Net position by asset", Columns: []string{"Asset", "Net supplied", "Net borrowed", "Events"}},
+		`SELECT asset,
+		   COALESCE(sum(CASE
+		     WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
+		     WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
+		     ELSE 0 END),0)::text,
+		   COALESCE(sum(CASE
+		     WHEN event_kind = 'borrow' THEN token_amount
+		     WHEN event_kind = 'repay'  THEN -token_amount
+		     ELSE 0 END),0)::text,
+		   count(*)::text
+		 FROM blend_positions
+		 WHERE ledger_close_time > now() - $1::interval
+		 GROUP BY asset
+		 ORDER BY count(*) DESC LIMIT 25`, since)
+	if err != nil {
+		return err
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+
+	series, err := s.scanDailySeries(ctx, `
+		SELECT to_char(date_trunc('day', ledger_close_time), 'YYYY-MM-DD'), count(*)::text
+		FROM blend_positions WHERE ledger_close_time > now() - $1::interval
+		GROUP BY 1 ORDER BY 1 ASC`, since)
+	if err != nil {
+		return err
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily position events", Unit: "events", Points: series})
+	}
+	return nil
+}
+
+// lendingAuctionBlocks fills the auction-count KPIs and the recent-auctions
+// table from blend_auctions.
+func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
+	var newAuctions, fills string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE event_kind = 'new')::text,
+		       count(*) FILTER (WHERE event_kind = 'fill')::text
+		FROM blend_auctions WHERE ts > now() - $1::interval`, since).
+		Scan(&newAuctions, &fills); err != nil {
+		return fmt.Errorf("timescale: bespokeLending auction KPIs: %w", err)
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Auctions started (%dd)", windowDays), Value: newAuctions, Hint: "blend_auctions new events (type 0 user-liquidation, 1 bad-debt, 2 interest)"},
+		BespokeKPI{Label: fmt.Sprintf("Auctions filled (%dd)", windowDays), Value: fills},
+	)
+
+	atbl, err := s.scanTable(ctx,
+		BespokeTable{Title: "Recent auctions", Columns: []string{"When", "Type", "Kind", "User", "Fill %"}},
+		`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI'),
+		        CASE auction_type WHEN 0 THEN 'user-liquidation' WHEN 1 THEN 'bad-debt' WHEN 2 THEN 'interest' ELSE auction_type::text END,
+		        event_kind,
+		        user_address,
+		        COALESCE(fill_percent::text,'—')
+		   FROM blend_auctions WHERE ts > now() - $1::interval
+		  ORDER BY ts DESC LIMIT 25`, since)
+	if err != nil {
+		return err
+	}
+	if len(atbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, atbl)
+	}
+	return nil
+}
+
+// lendingBackstopKPIs fills the backstop deposit/withdraw volume KPIs (the
+// table is sparse — degrades to 0).
+func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
+	var backstopVol, backstopCount string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(sum(amount),0)::text, count(*)::text
+		FROM blend_backstop_events WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&backstopVol, &backstopCount); err != nil {
+		return fmt.Errorf("timescale: bespokeLending backstop KPIs: %w", err)
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: backstopVol, Unit: "token-units", Hint: "summed blend_backstop_events amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
+	)
+	return nil
+}
+
+// bespokeYield builds the DeFindex vault bespoke block from defindex_flows:
+// windowed gross deposit / withdraw flow volume (by direction), per-vault net
+// flow (deposit − withdraw, an AUM proxy), and unique actors. Confirmed on r1:
+// direction ∈ {deposit, withdraw}; layer ∈ {strategy, vault}. The series and
+// per-vault net scope to the vault layer to avoid double-counting a deposit
+// that fans out into strategies.
+func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
+	if source != "defindex" {
+		return nil, nil
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+	blk := &BespokeBlock{
+		Category: "yield",
+		Notes: []string{
+			"Flow volume is gross summed defindex_flows.amount by direction over the window; net flow (deposit − withdraw) is a window AUM proxy, not all-time TVL (the served tier is retention-scoped).",
+			"Vault is a Soroban vault contract id, shown shortened; amounts are in the underlying token's base units. The daily series and per-vault net are scoped to the vault layer to avoid double-counting strategy fan-out.",
+		},
+	}
+
+	var depositVol, withdrawVol, actors string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+		  COALESCE(sum(amount) FILTER (WHERE direction = 'deposit'  AND layer = 'vault'),0)::text,
+		  COALESCE(sum(amount) FILTER (WHERE direction = 'withdraw' AND layer = 'vault'),0)::text,
+		  count(DISTINCT actor)::text
+		FROM defindex_flows WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&depositVol, &withdrawVol, &actors)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: bespokeYield KPIs: %w", err)
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Deposit volume (%dd)", windowDays), Value: depositVol, Unit: "token-units", Hint: "gross vault-layer deposit amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Withdraw volume (%dd)", windowDays), Value: withdrawVol, Unit: "token-units", Hint: "gross vault-layer withdraw amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Unique actors (%dd)", windowDays), Value: actors},
+	)
+
+	series, err := s.scanDailySeries(ctx, `
+		SELECT to_char(date_trunc('day', ledger_close_time), 'YYYY-MM-DD'), COALESCE(sum(amount),0)::text
+		FROM defindex_flows
+		WHERE ledger_close_time > now() - $1::interval AND layer = 'vault'
+		GROUP BY 1 ORDER BY 1 ASC`, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily vault flow volume", Unit: "token-units", Points: series})
+	}
+
+	tbl, err := s.scanTable(ctx,
+		BespokeTable{Title: "Net flow by vault", Columns: []string{"Vault", "Deposits", "Withdrawals", "Net flow", "Flows"}},
+		`SELECT contract_id,
+		   COALESCE(sum(amount) FILTER (WHERE direction = 'deposit'  AND layer = 'vault'),0)::text,
+		   COALESCE(sum(amount) FILTER (WHERE direction = 'withdraw' AND layer = 'vault'),0)::text,
+		   COALESCE(sum(CASE WHEN layer = 'vault' AND direction = 'deposit'  THEN amount
+		                     WHEN layer = 'vault' AND direction = 'withdraw' THEN -amount
+		                     ELSE 0 END),0)::text,
+		   count(*)::text
+		 FROM defindex_flows
+		 WHERE ledger_close_time > now() - $1::interval
+		 GROUP BY contract_id
+		 ORDER BY count(*) DESC LIMIT 25`, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+	return blk, nil
+}
+
+// bespokeOracle builds the oracle bespoke block (reflector-dex/cex/fx, band,
+// redstone) from oracle_updates scoped by source: feed count (distinct
+// asset/quote), update cadence (updates/day), and a latest-prices table.
+// price is a NUMERIC at the row's `decimals` scale — shown raw with the scale
+// column, not rescaled (decimals can vary per feed).
+func (s *Store) bespokeOracle(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
+	since := fmt.Sprintf("%d days", windowDays)
+	blk := &BespokeBlock{
+		Category: "oracle",
+		Notes: []string{
+			"Scoped to oracle_updates.source = the protocol's feed contract. price is the raw on-chain integer at the row's `decimals` scale (not rescaled — decimals can differ per feed). asset/quote are the feed pair; asset is a token contract id shown shortened, quote is often `native`.",
+		},
+	}
+
+	var updates, feeds, perDay string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT count(*)::text,
+		       count(DISTINCT (asset, quote))::text,
+		       CASE WHEN $2 > 0 THEN round(count(*)::numeric / $2, 1)::text ELSE '0' END
+		FROM oracle_updates
+		WHERE source = $1 AND ts > now() - $3::interval`, source, windowDays, since).
+		Scan(&updates, &feeds, &perDay)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: bespokeOracle KPIs: %w", err)
+	}
+	if updates == "0" {
+		return nil, nil // no updates for this feed in the window — omit, don't show zeros
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Updates (%dd)", windowDays), Value: updates},
+		BespokeKPI{Label: "Distinct feeds", Value: feeds, Hint: "distinct asset/quote pairs seen in the window"},
+		BespokeKPI{Label: "Updates / day", Value: perDay, Hint: "mean update cadence over the window"},
+	)
+
+	series, err := s.scanDailySeries(ctx, `
+		SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD'), count(*)::text
+		FROM oracle_updates WHERE source = $1 AND ts > now() - $2::interval
+		GROUP BY 1 ORDER BY 1 ASC`, source, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily updates", Unit: "updates", Points: series})
+	}
+
+	tbl, err := s.scanTable(ctx,
+		BespokeTable{Title: "Latest feed prices", Columns: []string{"Asset", "Quote", "Price (raw)", "Decimals", "Updated"}},
+		`SELECT asset,
+		        quote,
+		        COALESCE(price::text,'—'),
+		        COALESCE(decimals::text,'—'),
+		        to_char(ts, 'YYYY-MM-DD HH24:MI')
+		   FROM (
+		     SELECT DISTINCT ON (asset, quote) asset, quote, price, decimals, ts
+		       FROM oracle_updates
+		      WHERE source = $1 AND ts > now() - $2::interval
+		      ORDER BY asset, quote, ts DESC
+		   ) latest
+		  ORDER BY ts DESC LIMIT 50`, source, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+	return blk, nil
 }
