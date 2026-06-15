@@ -37,6 +37,15 @@ type ProtocolActivityReader interface {
 // and counts serve empty; never an error.
 type ProtocolContractsReader interface {
 	ListProtocolContracts(ctx context.Context, source string) ([]timescale.ProtocolContract, error)
+	// ListSourceContractsFromProjection is the fallback roster for protocols
+	// the protocol_contracts registry doesn't carry yet (only blend is seeded
+	// today): the distinct contract ids from the source's projected table
+	// (defindex_flows / phoenix_liquidity / comet_liquidity / cctp_events /
+	// rozo_events). Returns nil for sources without one — the page then keeps
+	// its registry/pairs path. Lets defindex/phoenix/comet/cctp/rozo show a
+	// full roster + the lake analytics scoped to it, without waiting on the
+	// factory-enumeration team answer.
+	ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error)
 }
 
 // ProtocolStatsReader supplies the trailing-24h event count per source
@@ -432,6 +441,13 @@ func (s *Server) protocolContracts(ctx context.Context, name string) []ProtocolC
 		s.logger.Warn("protocols contract registry read failed", "source", name, "err", err)
 		return []ProtocolContractView{}
 	}
+	if len(rows) == 0 {
+		// The protocol_contracts registry is empty for this source (only blend
+		// is seeded today). Fall back to the contracts the decoder has actually
+		// captured into the projected table, so defindex/phoenix/comet/cctp/rozo
+		// get a real roster + the lake analytics scoped to it.
+		return s.protocolContractsFromProjection(ctx, name)
+	}
 	out := make([]ProtocolContractView, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, ProtocolContractView{
@@ -439,6 +455,23 @@ func (s *Server) protocolContracts(ctx context.Context, name string) []ProtocolC
 			FactoryID:   row.FactoryID,
 			FirstLedger: row.FirstLedger,
 		})
+	}
+	return out
+}
+
+// protocolContractsFromProjection is the registry-empty fallback: the distinct
+// contracts from name's projected table (nil/empty when the source has no
+// per-contract table — aquarius/sdex/oracles, which legitimately have no
+// contract roster).
+func (s *Server) protocolContractsFromProjection(ctx context.Context, name string) []ProtocolContractView {
+	ids, err := s.protocolContractsReader.ListSourceContractsFromProjection(ctx, name)
+	if err != nil {
+		s.logger.Warn("protocols projection roster read failed", "source", name, "err", err)
+		return []ProtocolContractView{}
+	}
+	out := make([]ProtocolContractView, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, ProtocolContractView{ContractID: id})
 	}
 	return out
 }
