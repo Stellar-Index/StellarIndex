@@ -38,12 +38,17 @@ func (s *stubProtocolActivityReader) ProtocolContractActivity(context.Context, [
 }
 
 type stubProtocolContractsReader struct {
-	bySource map[string][]timescale.ProtocolContract
-	err      error
+	bySource     map[string][]timescale.ProtocolContract
+	projBySource map[string][]string
+	err          error
 }
 
 func (s *stubProtocolContractsReader) ListProtocolContracts(_ context.Context, source string) ([]timescale.ProtocolContract, error) {
 	return s.bySource[source], s.err
+}
+
+func (s *stubProtocolContractsReader) ListSourceContractsFromProjection(_ context.Context, source string) ([]string, error) {
+	return s.projBySource[source], nil
 }
 
 type stubProtocolStatsReader struct {
@@ -349,5 +354,36 @@ func TestHandleProtocolDetail_LakeAnalytics(t *testing.T) {
 	}
 	if p1.LastSeen == "" {
 		t.Errorf("CPOOL1 last_seen should be set")
+	}
+}
+
+// TestHandleProtocolDetail_ProjectionFallback verifies that when the
+// protocol_contracts registry is empty for a source, the roster falls back to
+// the projected-table contracts — so defindex/phoenix/comet/cctp/rozo aren't
+// starved of their contract set just because the factory-enumeration registry
+// isn't seeded.
+func TestHandleProtocolDetail_ProjectionFallback(t *testing.T) {
+	srv := v1.New(v1.Options{
+		ProtocolContracts: &stubProtocolContractsReader{
+			bySource:     map[string][]timescale.ProtocolContract{}, // registry empty for defindex
+			projBySource: map[string][]string{"defindex": {"CVAULT1", "CVAULT2", "CVAULT3"}},
+		},
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/protocols/defindex")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Data.ContractCount != 3 || len(body.Data.Contracts) != 3 {
+		t.Fatalf("defindex fallback roster = %d contracts, want 3", len(body.Data.Contracts))
+	}
+	if body.Data.Contracts[0].ContractID != "CVAULT1" {
+		t.Errorf("contract[0] = %q, want CVAULT1", body.Data.Contracts[0].ContractID)
 	}
 }

@@ -100,6 +100,64 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 	return out, nil
 }
 
+// projectionContractColumn maps a protocol source to the (table, column) in
+// its PROJECTED table that holds the per-instance contract id. Used as the
+// fallback roster for protocols not seeded into protocol_contracts (only blend
+// is today) — defindex/phoenix/comet/cctp/rozo all have a per-contract
+// projected table. Aquarius + sdex are pair/op-keyed (no per-contract column),
+// soroswap uses soroswap_pairs, blend uses the registry — those return ok=false
+// and fall back to their own path. The table+column are HARD-CODED here (never
+// from the request), so the formatted query carries no injected SQL.
+func projectionContractColumn(source string) (table, column string, ok bool) {
+	switch source {
+	case "defindex":
+		return "defindex_flows", "contract_id", true
+	case "cctp":
+		return "cctp_events", "contract_id", true
+	case "rozo":
+		return "rozo_events", "contract_id", true
+	case "phoenix":
+		return "phoenix_liquidity", "pool", true
+	case "comet":
+		return "comet_liquidity", "contract_id", true
+	}
+	return "", "", false
+}
+
+// ListSourceContractsFromProjection returns the DISTINCT contract ids a
+// source's projected table holds — the fallback contract roster for protocols
+// the protocol_contracts registry doesn't carry yet (the factory-enumeration is
+// pending the team answer, but the decoder is already capturing the contracts'
+// events). Returns nil for sources without a per-contract projected table
+// (caller keeps its registry/pairs path). Capped so a pathological table can't
+// blow the response.
+func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error) {
+	table, column, ok := projectionContractColumn(source)
+	if !ok {
+		return nil, nil
+	}
+	// #nosec G201 -- table+column come from the hard-coded switch above, never
+	// the request; source is only used as a known-key lookup.
+	q := fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE %s IS NOT NULL LIMIT 5000`, column, table, column)
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListSourceContractsFromProjection %s: %w", source, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]string, 0, 128)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("timescale: ListSourceContractsFromProjection %s scan: %w", source, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ListSourceContractsFromProjection %s rows: %w", source, err)
+	}
+	return out, nil
+}
+
 func (s *Store) LoadProtocolContracts(ctx context.Context, source string) ([]string, error) {
 	if source == "" {
 		return nil, errors.New("timescale: LoadProtocolContracts: empty source")
