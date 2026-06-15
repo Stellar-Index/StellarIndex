@@ -3548,6 +3548,67 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /contracts/{contract_id}/wasm:
+    get:
+      tags: [explorer]
+      summary: A contract's on-chain WASM — metadata, exports, disassembly.
+      description: |
+        The contract's deployed WebAssembly surfaced for the explorer's "see
+        the code" view. Resolved on demand from the certified ClickHouse lake
+        (ADR-0034): contract instance → wasm hash → `contract_code` bytes.
+
+        `exports` is the contract's exported function table — the names are its
+        public Soroban entry points (e.g. `swap`, `deposit`), parsed natively
+        in Go (always present). `params`/`results` are the low-level wasm ABI
+        value types (`i32`/`i64`/`f32`/`f64`), not the Rust signature.
+
+        `wat` (WAT disassembly) and `decompiled` (wasm-decompile's C-like
+        pseudocode — NOT reconstructed Rust) are BEST-EFFORT: present only when
+        the wabt toolchain is installed on the server, otherwise empty with the
+        reason in `source_note`. The response never 503s on missing tooling.
+
+        The wasm for a content-addressed hash is immutable, so the response is
+        cached for a day (`Cache-Control: public, max-age=86400`).
+
+        404 when the contract's wasm can't be assembled from the captured
+        `ledger_entry_changes` window — the contract-instance or contract-code
+        entry (created at deploy time, often years ago) is outside the live
+        capture window. This is a coverage limitation of the substrate, not an
+        error.
+      parameters:
+        - { name: contract_id, in: path, required: true, description: C-strkey contract id., schema: { type: string } }
+      responses:
+        "200":
+          description: The contract's wasm view.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [contract_id, wasm_hash, size_bytes, exports, source_note]
+                    properties:
+                      contract_id: { type: string, description: C-strkey contract id (echoed). }
+                      wasm_hash: { type: string, description: Hex sha256 of the wasm module (content address). }
+                      size_bytes: { type: integer, description: Size of the wasm module in bytes. }
+                      exports:
+                        type: array
+                        description: Exported functions — the contract's public entry points.
+                        items:
+                          type: object
+                          required: [name, params, results]
+                          properties:
+                            name: { type: string, description: Exported function name. }
+                            params: { type: array, items: { type: string }, description: "Wasm ABI param value types (i32/i64/f32/f64)." }
+                            results: { type: array, items: { type: string }, description: Wasm ABI result value types. }
+                      wat: { type: string, description: WAT disassembly; absent when wabt isn't installed on the server. }
+                      decompiled: { type: string, description: "wasm-decompile pseudocode (C-like, NOT Rust); absent when wabt isn't installed." }
+                      source_note: { type: string, description: Provenance + any degraded-stage explanation. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}/transactions:
     get:
       tags: [explorer]

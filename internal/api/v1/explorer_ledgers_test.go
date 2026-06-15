@@ -17,6 +17,8 @@ type stubExplorerReader struct {
 	opResults      map[uint32]int32
 	events         []clickhouse.EventSummary
 	contractEvents []clickhouse.ContractActivityRow
+	wasm           clickhouse.ContractWasmInfo
+	wasmErr        error
 	err            error
 }
 
@@ -70,6 +72,10 @@ func (s *stubExplorerReader) EventsByTx(_ context.Context, _ uint32, _ string) (
 
 func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.ContractActivityRow, error) {
 	return s.contractEvents, s.err
+}
+
+func (s *stubExplorerReader) ContractWasm(_ context.Context, _ string) (clickhouse.ContractWasmInfo, error) {
+	return s.wasm, s.wasmErr
 }
 
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
