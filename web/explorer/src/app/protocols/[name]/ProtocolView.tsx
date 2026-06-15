@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
@@ -10,6 +10,8 @@ import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { CopyHash, relativeAge, formatTimestamp } from '../../explorer-shared';
 import { categoryTone } from '../registry';
+import { TimeSeriesChart } from './TimeSeriesChart';
+import { BespokeSection, type Bespoke } from './BespokeSection';
 
 // ─── Wire shapes (mirror internal/api/v1/protocols.go ProtocolDetailView) ───
 
@@ -56,6 +58,9 @@ interface ProtocolDetail {
   activity_series?: ActivityPoint[];
   activity_window_days?: number;
   events_total?: number;
+  // Bespoke per-category analytics block (omitempty — absent when no
+  // bespoke reader is wired or the category has none yet).
+  bespoke?: Bespoke;
 }
 
 /**
@@ -135,6 +140,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
           {data.description}
         </p>
+        <AtAGlance data={data} analyticsAvailable={analyticsAvailable} windowDays={windowDays} />
       </header>
 
       {/* ── KPI row ── */}
@@ -157,6 +163,9 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         />
       </div>
 
+      {/* ── Bespoke per-category analytics (the headline block) ── */}
+      {data.bespoke && <BespokeSection bespoke={data.bespoke} source={source} />}
+
       {/* ── Activity chart ── */}
       <Panel
         title={`On-chain activity (events/day, last ${windowDays || ''}d)`}
@@ -168,7 +177,16 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         ) : (data.activity_series?.length ?? 0) === 0 ? (
           <EmptyAnalytics text="No on-chain activity in the window." />
         ) : (
-          <ActivityChart series={data.activity_series ?? []} />
+          <TimeSeriesChart
+            points={(data.activity_series ?? []).map((p) => ({
+              date: p.date,
+              value: p.events,
+            }))}
+            label="Daily on-chain events"
+            unit="events"
+            tone="emerald"
+            gradientId="protoActivityFill"
+          />
         )}
       </Panel>
 
@@ -307,126 +325,90 @@ function Kpi({
   );
 }
 
-// ─── Activity chart (hand-rolled SVG area chart, no deps) ────────────────────
+// ─── At-a-glance summary line ────────────────────────────────────────────────
 
-// Chart geometry — module-level constants so the useMemo dep array can
-// reference them without ESLint flagging a recreated object literal.
-const CHART_W = 1000;
-const CHART_H = 240;
-const CHART_PAD = { top: 12, right: 8, bottom: 22, left: 8 };
-
-function ActivityChart({ series }: { series: ActivityPoint[] }) {
-  const geom = useMemo(() => {
-    const pad = CHART_PAD;
-    const n = series.length;
-    const max = series.reduce((m, p) => Math.max(m, p.events), 0);
-    const innerW = CHART_W - pad.left - pad.right;
-    const innerH = CHART_H - pad.top - pad.bottom;
-    // x position of point i (center of its slot).
-    const x = (i: number) =>
-      pad.left + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
-    const y = (v: number) =>
-      pad.top + innerH - (max <= 0 ? 0 : (v / max) * innerH);
-
-    const linePts = series.map((p, i) => `${x(i)},${y(p.events)}`).join(' ');
-    const areaPath =
-      n === 0
-        ? ''
-        : `M ${x(0)},${pad.top + innerH} ` +
-          series.map((p, i) => `L ${x(i)},${y(p.events)}`).join(' ') +
-          ` L ${x(n - 1)},${pad.top + innerH} Z`;
-
-    const total = series.reduce((s, p) => s + p.events, 0);
-    const avg = n > 0 ? total / n : 0;
-    return { max, x, y, linePts, areaPath, total, avg, innerH };
-  }, [series]);
-
-  // Sparse x-axis ticks: first, middle, last dates.
-  const ticks = useMemo(() => {
-    if (series.length === 0) return [] as { i: number; label: string }[];
-    const idxs = Array.from(
-      new Set([0, Math.floor((series.length - 1) / 2), series.length - 1]),
+// A compact one-liner above the KPI cards that reads like a sentence — the
+// fastest scannable read of "what is this protocol doing right now."
+function AtAGlance({
+  data,
+  analyticsAvailable,
+  windowDays,
+}: {
+  data: ProtocolDetail;
+  analyticsAvailable: boolean;
+  windowDays: number;
+}) {
+  const topEvent = useMemo(() => {
+    if (!data.event_breakdown || data.event_breakdown.length === 0) return null;
+    return data.event_breakdown.reduce((best, b) =>
+      b.count > best.count ? b : best,
     );
-    return idxs.map((i) => ({ i, label: shortDate(series[i].date) }));
-  }, [series]);
+  }, [data.event_breakdown]);
 
-  const peak = series.reduce(
-    (best, p) => (p.events > best.events ? p : best),
-    series[0],
+  const bits: React.ReactNode[] = [];
+  bits.push(
+    <Glance key="contracts" label={formatCompact(data.contract_count)} unit="contracts" />,
   );
-  const ariaLabel = `Daily on-chain event activity: ${series.length} days, ${formatCompact(
-    geom.total,
-  )} events total, peak ${formatCompact(peak.events)} on ${peak.date}.`;
+  if (data.factories.length > 0) {
+    bits.push(
+      <Glance key="factories" label={String(data.factories.length)} unit={data.factories.length === 1 ? 'factory' : 'factories'} />,
+    );
+  }
+  if (analyticsAvailable && data.events_total != null) {
+    bits.push(
+      <Glance key="events" label={formatCompact(data.events_total)} unit={`events · ${windowDays}d`} />,
+    );
+  }
+  bits.push(
+    <Glance key="e24" label={formatCompact(data.events_24h)} unit="events · 24h" />,
+  );
+  if (topEvent) {
+    bits.push(
+      <Glance key="top" label={topEvent.event_type} unit="busiest event" mono />,
+    );
+  }
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-xs text-slate-500">
-        <span>
-          Peak{' '}
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
-            {formatCompact(peak.events)}
-          </span>{' '}
-          on {peak.date}
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+      {bits.map((b, i) => (
+        <span key={i} className="flex items-center gap-x-3">
+          {i > 0 && (
+            <span aria-hidden className="text-slate-300 dark:text-slate-700">
+              ·
+            </span>
+          )}
+          {b}
         </span>
-        <span>
-          Avg/day{' '}
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
-            {formatCompact(Math.round(geom.avg))}
-          </span>
-        </span>
-      </div>
-      <svg
-        viewBox={`0 0 ${CHART_W} ${CHART_H}`}
-        preserveAspectRatio="none"
-        className="h-56 w-full"
-        role="img"
-        aria-label={ariaLabel}
-      >
-        <defs>
-          <linearGradient id="protoActivityFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="rgb(16 185 129)" stopOpacity="0.28" />
-            <stop offset="100%" stopColor="rgb(16 185 129)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {/* baseline */}
-        <line
-          x1={CHART_PAD.left}
-          y1={CHART_PAD.top + geom.innerH}
-          x2={CHART_W - CHART_PAD.right}
-          y2={CHART_PAD.top + geom.innerH}
-          stroke="rgb(148 163 184 / 0.3)"
-          strokeWidth={1}
-        />
-        {geom.areaPath && <path d={geom.areaPath} fill="url(#protoActivityFill)" />}
-        {geom.linePts && (
-          <polyline
-            points={geom.linePts}
-            fill="none"
-            stroke="rgb(5 150 105)"
-            strokeWidth={2}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-        {ticks.map((t) => (
-          <text
-            key={t.i}
-            x={geom.x(t.i)}
-            y={CHART_H - 6}
-            textAnchor={t.i === 0 ? 'start' : t.i === series.length - 1 ? 'end' : 'middle'}
-            className="fill-slate-400"
-            style={{ fontSize: 11, fontFamily: 'var(--font-sans)' }}
-          >
-            {t.label}
-          </text>
-        ))}
-      </svg>
-    </div>
+      ))}
+    </p>
   );
 }
 
-// ─── Event-type breakdown (centerpiece) ──────────────────────────────────────
+function Glance({
+  label,
+  unit,
+  mono,
+}: {
+  label: string;
+  unit: string;
+  mono?: boolean;
+}) {
+  return (
+    <span>
+      <span
+        className={`tabular-nums text-slate-700 dark:text-slate-300 ${mono ? 'font-mono' : 'font-semibold'}`}
+      >
+        {label}
+      </span>{' '}
+      {unit}
+    </span>
+  );
+}
+
+// ─── Event-type breakdown (centerpiece, top-N + expander) ────────────────────
+
+// How many bars to show before collapsing behind a "+N more" expander.
+const EVENT_BREAKDOWN_TOP_N = 8;
 
 function EventBreakdown({
   breakdown,
@@ -435,42 +417,61 @@ function EventBreakdown({
   breakdown: EventTypeCount[];
   total: number;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const max = breakdown.reduce((m, b) => Math.max(m, b.count), 0);
+  const overflow = breakdown.length - EVENT_BREAKDOWN_TOP_N;
+  const visible =
+    expanded || overflow <= 0
+      ? breakdown
+      : breakdown.slice(0, EVENT_BREAKDOWN_TOP_N);
+
   return (
-    <ul className="space-y-2.5">
-      {breakdown.map((b) => {
-        const pct = total > 0 ? (b.count / total) * 100 : 0;
-        const barPct = max > 0 ? (b.count / max) * 100 : 0;
-        return (
-          <li key={b.event_type}>
-            <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
-              <span
-                className="truncate font-mono text-slate-700 dark:text-slate-300"
-                title={b.event_type}
-              >
-                {b.event_type}
-              </span>
-              <span className="shrink-0 tabular-nums text-slate-500">
-                <span className="font-mono text-slate-700 dark:text-slate-300">
-                  {formatCompact(b.count)}
-                </span>{' '}
-                · {pct.toFixed(pct >= 10 ? 0 : 1)}%
-              </span>
-            </div>
-            <div
-              className="h-2.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
-              role="img"
-              aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
-            >
+    <div className="space-y-3">
+      <ul className="space-y-2.5">
+        {visible.map((b) => {
+          const pct = total > 0 ? (b.count / total) * 100 : 0;
+          const barPct = max > 0 ? (b.count / max) * 100 : 0;
+          return (
+            <li key={b.event_type}>
+              <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
+                <span
+                  className="truncate font-mono text-slate-700 dark:text-slate-300"
+                  title={b.event_type}
+                >
+                  {b.event_type}
+                </span>
+                <span className="shrink-0 tabular-nums text-slate-500">
+                  <span className="font-mono text-slate-700 dark:text-slate-300">
+                    {formatCompact(b.count)}
+                  </span>{' '}
+                  · {pct.toFixed(pct >= 10 ? 0 : 1)}%
+                </span>
+              </div>
               <div
-                className="h-full rounded-full bg-brand-500 dark:bg-brand-400"
-                style={{ width: `${Math.max(barPct, 1.5)}%` }}
-              />
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+                className="h-2.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
+                role="img"
+                aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
+              >
+                <div
+                  className="h-full rounded-full bg-brand-500 motion-safe:transition-[width] dark:bg-brand-400"
+                  style={{ width: `${Math.max(barPct, 1.5)}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {overflow > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="rounded text-xs font-medium text-brand-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+        >
+          {expanded ? 'Show fewer' : `+${overflow} more event ${overflow === 1 ? 'type' : 'types'}`}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -485,15 +486,30 @@ function ContractRoster({
   analyticsAvailable: boolean;
   source: ReturnType<typeof asExample>;
 }) {
+  const [sortKey, setSortKey] = useState<'events' | 'last_seen'>('events');
+  const [expanded, setExpanded] = useState(false);
+
   const { factories, instances } = useMemo(() => {
     const f = contracts.filter((c) => c.kind === 'factory');
-    const i = contracts
-      .filter((c) => c.kind !== 'factory')
-      .sort((a, b) => (b.events ?? 0) - (a.events ?? 0));
+    const cmp =
+      sortKey === 'events'
+        ? (a: ProtocolContract, b: ProtocolContract) =>
+            (b.events ?? 0) - (a.events ?? 0)
+        : (a: ProtocolContract, b: ProtocolContract) =>
+            (b.last_seen ?? '').localeCompare(a.last_seen ?? '');
+    const i = contracts.filter((c) => c.kind !== 'factory').slice().sort(cmp);
     return { factories: f, instances: i };
-  }, [contracts]);
+  }, [contracts, sortKey]);
 
   const hasTokens = contracts.some((c) => c.token0 || c.token1);
+
+  // Long instance lists collapse to the top slice behind a "+N more" expander.
+  // Factories always render (there are few and they anchor the protocol).
+  const visibleInstances =
+    expanded || instances.length <= ROSTER_TOP_N
+      ? instances
+      : instances.slice(0, ROSTER_TOP_N);
+  const overflow = instances.length - visibleInstances.length;
 
   if (contracts.length === 0) {
     return (
@@ -509,10 +525,40 @@ function ContractRoster({
     );
   }
 
+  // Header cell for a sortable column — a real <button> with aria-sort on the
+  // <th>, so screen readers announce the active sort + the toggle is operable.
+  const SortHeader = ({
+    label,
+    keyName,
+  }: {
+    label: string;
+    keyName: 'events' | 'last_seen';
+  }) => {
+    const active = sortKey === keyName;
+    return (
+      <th
+        scope="col"
+        className="px-4 py-2 text-right"
+        aria-sort={active ? 'descending' : 'none'}
+      >
+        <button
+          type="button"
+          onClick={() => setSortKey(keyName)}
+          className={`ml-auto flex items-center gap-1 rounded uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 ${active ? 'text-brand-600' : 'hover:text-slate-700 dark:hover:text-slate-300'}`}
+        >
+          {label}
+          <span aria-hidden className="text-[8px]">
+            {active ? '▼' : '↕'}
+          </span>
+        </button>
+      </th>
+    );
+  };
+
   return (
     <Panel
       title={`Contract roster (${contracts.length})`}
-      hint={`${factories.length} factories · ${instances.length} instances${analyticsAvailable ? ' · events over the analytics window' : ''}`}
+      hint={`${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} instances${analyticsAvailable ? ' · events over the analytics window' : ''}`}
       source={source}
       bodyClassName="-mx-4"
     >
@@ -531,16 +577,12 @@ function ContractRoster({
                   Pair
                 </th>
               )}
-              <th scope="col" className="px-4 py-2 text-right">
-                Events
-              </th>
-              <th scope="col" className="px-4 py-2 text-right">
-                Last seen
-              </th>
+              <SortHeader label="Events" keyName="events" />
+              <SortHeader label="Last seen" keyName="last_seen" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {[...factories, ...instances].map((c) => (
+            {[...factories, ...visibleInstances].map((c) => (
               <tr
                 key={c.contract_id}
                 className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
@@ -593,9 +635,27 @@ function ContractRoster({
           </tbody>
         </table>
       </div>
+      {(overflow > 0 || expanded) && instances.length > ROSTER_TOP_N && (
+        <div className="px-4 pt-3">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="rounded text-xs font-medium text-brand-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+          >
+            {expanded
+              ? 'Show fewer'
+              : `+${overflow} more ${overflow === 1 ? 'instance' : 'instances'}`}
+          </button>
+        </div>
+      )}
     </Panel>
   );
 }
+
+// Contract-roster instances shown before the "+N more" expander collapses
+// the long tail.
+const ROSTER_TOP_N = 25;
 
 function RoleChip({ kind }: { kind?: string }) {
   if (kind === 'factory') {
@@ -703,16 +763,4 @@ function shortId(id?: string): string {
   if (!id) return '—';
   if (id.length <= 14) return id;
   return `${id.slice(0, 6)}…${id.slice(-4)}`;
-}
-
-function shortDate(iso: string): string {
-  // YYYY-MM-DD → "MMM D" (UTC, no Date parse ambiguity).
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return iso;
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  const mon = months[Number(m[2]) - 1] ?? m[2];
-  return `${mon} ${Number(m[3])}`;
 }
