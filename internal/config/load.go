@@ -72,12 +72,13 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("STELLARINDEX_REDIS_PASSWORD"); v != "" {
 		c.Storage.RedisPassword = v
 	}
-	if v := os.Getenv("STELLARINDEX_S3_ACCESS_KEY"); v != "" {
-		c.Storage.S3AccessKeyEnv = v
-	}
-	if v := os.Getenv("STELLARINDEX_S3_SECRET_KEY"); v != "" {
-		c.Storage.S3SecretKeyEnv = v
-	}
+	// NOTE: STELLARINDEX_S3_ACCESS_KEY / STELLARINDEX_S3_SECRET_KEY are
+	// deliberately NOT overridden here. StorageConfig.S3AccessKeyEnv holds the
+	// NAME of the env var, not its value; buildS3Client resolves it via
+	// os.Getenv(name). Overwriting the name with the value here corrupted the
+	// resolution (os.Getenv("AKIA…")→"") and silently dropped S3 static creds
+	// (audit-2026-06-14 A16-01). The fields carry no `env:` tag for the same
+	// reason — see config.go StorageConfig.
 	if v := os.Getenv("EXCHANGERATESAPI_KEY"); v != "" {
 		c.External.ExchangeRatesApi.APIKey = v
 	}

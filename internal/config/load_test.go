@@ -332,6 +332,27 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 }
 
+// TestApplyEnvOverrides_DoesNotCorruptS3KeyNames pins A16-01
+// (audit-2026-06-14): S3AccessKeyEnv / S3SecretKeyEnv hold the NAME of the env
+// var carrying the credential (buildS3Client does os.Getenv on them), NOT the
+// value. ApplyEnvOverrides must NOT overwrite the name with the secret value —
+// doing so made os.Getenv("AKIA…")→"" and silently dropped S3 static creds.
+func TestApplyEnvOverrides_DoesNotCorruptS3KeyNames(t *testing.T) {
+	t.Setenv("STELLARINDEX_S3_ACCESS_KEY", "AKIAEXAMPLE")
+	t.Setenv("STELLARINDEX_S3_SECRET_KEY", "supersecret")
+	c := cfg.Default()
+	wantAccess, wantSecret := c.Storage.S3AccessKeyEnv, c.Storage.S3SecretKeyEnv
+	c.ApplyEnvOverrides()
+	if c.Storage.S3AccessKeyEnv != wantAccess {
+		t.Errorf("S3AccessKeyEnv was overwritten with the secret value: got %q, want the name %q",
+			c.Storage.S3AccessKeyEnv, wantAccess)
+	}
+	if c.Storage.S3SecretKeyEnv != wantSecret {
+		t.Errorf("S3SecretKeyEnv was overwritten with the secret value: got %q, want the name %q",
+			c.Storage.S3SecretKeyEnv, wantSecret)
+	}
+}
+
 func TestLoadWithEnv_RevalidatesAfterOverride(t *testing.T) {
 	// A file that Validate() accepts, then env override with a
 	// malformed DSN. Previously (Load + ApplyEnvOverrides) this got

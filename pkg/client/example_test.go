@@ -202,8 +202,10 @@ func ExampleClient_Assets() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("first page: %d assets, next=%t\n",
-		len(resp.Data), resp.Pagination.Next != "")
+	// Pagination is a pointer: nil when the response carries no page
+	// cursor. Always nil-check before reading .Next.
+	hasNext := resp.Pagination != nil && resp.Pagination.Next != ""
+	fmt.Printf("first page: %d assets, next=%t\n", len(resp.Data), hasNext)
 	// Output: first page: 2 assets, next=true
 }
 

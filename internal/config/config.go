@@ -416,8 +416,16 @@ type StorageConfig struct {
 	S3Region           string   `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
 	S3BucketArchive    string   `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
 	S3BucketLive       string   `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
-	S3AccessKeyEnv     string   `toml:"s3_access_key_env" doc:"Env var holding S3 access key ID." env:"STELLARINDEX_S3_ACCESS_KEY" default:"STELLARINDEX_S3_ACCESS_KEY"`
-	S3SecretKeyEnv     string   `toml:"s3_secret_key_env" doc:"Env var holding S3 secret access key." env:"STELLARINDEX_S3_SECRET_KEY" default:"STELLARINDEX_S3_SECRET_KEY"`
+	// These hold the NAME of the env var that carries the credential, NOT
+	// the credential itself — buildS3Client does os.Getenv(S3AccessKeyEnv).
+	// They deliberately have NO `env:` tag: an `env:` tag means
+	// "ApplyEnvOverrides replaces this field with the env var's VALUE", which
+	// would overwrite the name with the secret and then os.Getenv(secret)→""
+	// (audit-2026-06-14 A16-01). The default already points at the canonical
+	// env var, so an operator just exports STELLARINDEX_S3_ACCESS_KEY=<key>
+	// and buildS3Client resolves it through this name.
+	S3AccessKeyEnv string `toml:"s3_access_key_env" doc:"NAME of the env var holding the S3 access key ID (the value lives in that env var, not here)." default:"STELLARINDEX_S3_ACCESS_KEY"`
+	S3SecretKeyEnv string `toml:"s3_secret_key_env" doc:"NAME of the env var holding the S3 secret access key (the value lives in that env var, not here)." default:"STELLARINDEX_S3_SECRET_KEY"`
 
 	// Cold-tier (LCM cache tiering — ADR-0027). When
 	// S3ColdBucketArchive is non-empty, ledger reads cascade hot
