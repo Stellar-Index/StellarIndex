@@ -522,7 +522,7 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 			"This deployment hasn't loaded the verified-currency catalogue.")
 		return
 	}
-	entries := s.verifiedCurrencies.All()
+	entries := s.verifiedCurrencies.Browseable()
 	out := projectVerifiedCurrencyList(entries)
 	s.attachFiatMarketCaps(r.Context(), entries, out)
 	s.attachCryptoMarketCaps(entries, out)

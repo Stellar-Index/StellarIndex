@@ -620,7 +620,7 @@ func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Req
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
-	matched := filterCatalogueByClass(s.verifiedCurrencies.All(), currency.AssetClass(class))
+	matched := filterCatalogueByClass(s.verifiedCurrencies.Browseable(), currency.AssetClass(class))
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := projectCatalogueRows(matched, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
@@ -878,7 +878,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 		s.serveClassicUnifiedPage(w, r, limit, "")
 		return
 	}
-	entries := s.verifiedCurrencies.All()
+	entries := s.verifiedCurrencies.Browseable()
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := projectCatalogueRows(entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)

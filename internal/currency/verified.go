@@ -82,6 +82,14 @@ type VerifiedCurrency struct {
 	// yuan). Zero default works for fiat.
 	SupplyDecimals int
 	Networks       []NetworkEntry
+	// ReferenceOnly marks a non-Stellar entry that exists solely as a
+	// pricing cross-check reference (its coingecko_id / coinmarketcap_id
+	// feed the divergence/aggregator pair set), NOT as a browseable
+	// Stellar asset. These are excluded from the /v1/assets browse
+	// listings + /v1/assets/verified, but KEPT in CoinGeckoIDs() /
+	// CoinMarketCapIDs() so the protected reference-price pipeline is
+	// unaffected. Set via `reference_only: true` in seed.yaml.
+	ReferenceOnly bool
 }
 
 // NetworkEntry is one per-network identity for a verified currency.
@@ -140,6 +148,7 @@ type rawCurrency struct {
 	CirculatingSupply   string       `yaml:"circulating_supply"`
 	SupplyDecimals      int          `yaml:"supply_decimals"`
 	Networks            []rawNetwork `yaml:"networks"`
+	ReferenceOnly       bool         `yaml:"reference_only"`
 }
 
 type rawNetwork struct {
@@ -251,6 +260,7 @@ func buildVerifiedCurrency(rc rawCurrency) (*VerifiedCurrency, error) {
 		Class:               class,
 		CirculatingSupply:   rc.CirculatingSupply,
 		SupplyDecimals:      rc.SupplyDecimals,
+		ReferenceOnly:       rc.ReferenceOnly,
 		Networks:            make([]NetworkEntry, 0, len(rc.Networks)),
 	}
 	for _, rn := range rc.Networks {
@@ -300,6 +310,29 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // entries in the seed file (deterministic).
 func (c *Catalogue) All() []*VerifiedCurrency {
 	return c.entries
+}
+
+// Browseable returns the catalogue entries that are browseable Stellar
+// assets — i.e. every entry EXCEPT those marked ReferenceOnly (pure
+// pricing-reference coins like BTC / ETH that have no Stellar issuance
+// and exist only to feed the divergence/aggregator cross-check). This
+// is the set the /v1/assets browse listings + /v1/assets/verified
+// surface; it is the Stellar-focus filter. CoinGeckoIDs() /
+// CoinMarketCapIDs() deliberately do NOT use it — the reference coins
+// must still drive the protected reference-price pipeline. Order is
+// preserved; the returned slice is freshly allocated.
+func (c *Catalogue) Browseable() []*VerifiedCurrency {
+	if c == nil {
+		return nil
+	}
+	out := make([]*VerifiedCurrency, 0, len(c.entries))
+	for _, vc := range c.entries {
+		if vc.ReferenceOnly {
+			continue
+		}
+		out = append(out, vc)
+	}
+	return out
 }
 
 // LookupBySlug returns the verified currency for a URL slug

@@ -18,6 +18,18 @@
 #   description:           One-sentence summary.
 #   coingecko_id:          Optional — CG's `/coins/{id}` slug.
 #   coinmarketcap_id:      Optional — CMC's integer id.
+#   reference_only:        Optional bool. Marks a non-Stellar entry
+#                          that exists SOLELY as a pricing cross-check
+#                          reference (its coingecko_id / coinmarketcap_id
+#                          feed the divergence/aggregator pair set), NOT
+#                          as a browseable Stellar asset. reference_only
+#                          entries are excluded from the /v1/assets
+#                          browse listings + /v1/assets/verified, but
+#                          remain in CoinGeckoIDs()/CoinMarketCapIDs()
+#                          so the protected reference-price pipeline is
+#                          unaffected. Used for BTC/ETH/... — non-Stellar
+#                          coins kept only for the proposal-scoped price
+#                          cross-check. (Stellar-focus refactor.)
 #   verified_issuer_label: Optional — short attribution string
 #                          shown on the unverified-collision warning
 #                          banner. Free-form (e.g. "Circle (centre.io)").
@@ -125,7 +137,10 @@ verified_currencies:
       - network: base
         contract: "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42"
 
-  # ─── Major non-Stellar crypto (no Stellar-native verified issuer) ─
+  # ─── Pricing-reference crypto (reference_only — NOT browseable) ───
+  # No Stellar-native issuance. Kept only so their coingecko_id /
+  # coinmarketcap_id feed the proposal-scoped divergence/aggregator
+  # cross-check; excluded from the explorer's browse listings.
   - ticker: BTC
     slug: btc
     name: Bitcoin
@@ -133,6 +148,7 @@ verified_currencies:
     class: crypto
     coingecko_id: bitcoin
     coinmarketcap_id: 1
+    reference_only: true
     networks:
       - network: bitcoin
         external_link: https://mempool.space/
@@ -144,6 +160,7 @@ verified_currencies:
     class: crypto
     coingecko_id: ethereum
     coinmarketcap_id: 1027
+    reference_only: true
     networks:
       - network: ethereum
         external_link: https://etherscan.io/
@@ -155,6 +172,7 @@ verified_currencies:
     class: crypto
     coingecko_id: solana
     coinmarketcap_id: 5426
+    reference_only: true
     networks:
       - network: solana
         external_link: https://solscan.io/
@@ -166,6 +184,7 @@ verified_currencies:
     class: crypto
     coingecko_id: binancecoin
     coinmarketcap_id: 1839
+    reference_only: true
     networks:
       - network: bsc
         external_link: https://bscscan.com/
@@ -177,6 +196,7 @@ verified_currencies:
     class: crypto
     coingecko_id: ripple
     coinmarketcap_id: 52
+    reference_only: true
     networks:
       - network: xrpl
         external_link: https://xrpscan.com/
@@ -188,6 +208,7 @@ verified_currencies:
     class: crypto
     coingecko_id: cardano
     coinmarketcap_id: 2010
+    reference_only: true
     networks:
       - network: cardano
         external_link: https://cardanoscan.io/
@@ -199,6 +220,7 @@ verified_currencies:
     class: crypto
     coingecko_id: dogecoin
     coinmarketcap_id: 74
+    reference_only: true
     networks:
       - network: dogecoin
         external_link: https://dogechain.info/
@@ -210,6 +232,7 @@ verified_currencies:
     class: crypto
     coingecko_id: avalanche-2
     coinmarketcap_id: 5805
+    reference_only: true
     networks:
       - network: avalanche
         external_link: https://snowtrace.io/
@@ -221,6 +244,7 @@ verified_currencies:
     class: crypto
     coingecko_id: polygon-ecosystem-token
     coinmarketcap_id: 28321
+    reference_only: true
     networks:
       - network: polygon
         external_link: https://polygonscan.com/
@@ -232,6 +256,7 @@ verified_currencies:
     class: crypto
     coingecko_id: polkadot
     coinmarketcap_id: 6636
+    reference_only: true
     networks:
       - network: polkadot
         external_link: https://polkadot.subscan.io/
@@ -243,6 +268,7 @@ verified_currencies:
     class: crypto
     coingecko_id: chainlink
     coinmarketcap_id: 1975
+    reference_only: true
     networks:
       - network: ethereum
         contract: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
@@ -344,6 +370,7 @@ verified_currencies:
     class: crypto
     coingecko_id: uniswap
     coinmarketcap_id: 7083
+    reference_only: true
     networks:
       - network: ethereum
         contract: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
@@ -355,6 +382,7 @@ verified_currencies:
     class: crypto
     coingecko_id: aave
     coinmarketcap_id: 7278
+    reference_only: true
     networks:
       - network: ethereum
         contract: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
@@ -366,6 +394,7 @@ verified_currencies:
     class: crypto
     coingecko_id: wrapped-bitcoin
     coinmarketcap_id: 3717
+    reference_only: true
     networks:
       - network: ethereum
         contract: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"

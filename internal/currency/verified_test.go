@@ -328,6 +328,57 @@ func TestCoinMarketCapIDs(t *testing.T) {
 	}
 }
 
+// TestBrowseable_ExcludesReferenceOnly_DivergenceUnaffected pins the
+// Stellar-focus invariant: pure pricing-reference coins (BTC/ETH/...,
+// reference_only: true) are excluded from the browseable catalogue
+// (so the explorer's /v1/assets listings stay Stellar-only) but MUST
+// remain in CoinGeckoIDs()/CoinMarketCapIDs() so the protected
+// divergence/aggregator reference-price pipeline is unaffected.
+func TestBrowseable_ExcludesReferenceOnly_DivergenceUnaffected(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+
+	browseable := make(map[string]bool)
+	for _, vc := range cat.Browseable() {
+		browseable[vc.Ticker] = true
+	}
+
+	// Reference coins must NOT be browseable.
+	refOnly := []string{"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "POL", "DOT", "LINK", "UNI", "AAVE", "WBTC"}
+	for _, tk := range refOnly {
+		if browseable[tk] {
+			t.Errorf("%s is reference_only but appears in Browseable()", tk)
+		}
+	}
+
+	// Stellar assets + fiats must REMAIN browseable.
+	for _, tk := range []string{"XLM", "USDC", "EURC", "AQUA", "USD", "EUR"} {
+		if !browseable[tk] {
+			t.Errorf("%s should be browseable but is missing from Browseable()", tk)
+		}
+	}
+
+	// Divergence invariant: every reference coin keeps its CG + CMC id.
+	cg := cat.CoinGeckoIDs()
+	cmc := cat.CoinMarketCapIDs()
+	for _, tk := range refOnly {
+		if cg[tk] == "" {
+			t.Errorf("CoinGeckoIDs missing %s — divergence reference pair lost", tk)
+		}
+		if cmc[tk] == "" {
+			t.Errorf("CoinMarketCapIDs missing %s — divergence reference pair lost", tk)
+		}
+	}
+
+	// Browseable must be a strict subset of All().
+	if len(cat.Browseable()) >= len(cat.All()) {
+		t.Errorf("Browseable()=%d should be < All()=%d (reference coins removed)",
+			len(cat.Browseable()), len(cat.All()))
+	}
+}
+
 func TestTickers(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {
