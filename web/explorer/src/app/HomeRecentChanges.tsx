@@ -31,7 +31,7 @@ export function HomeRecentChanges() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Recently shipped
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             What landed in the last release. Scrolling history at{' '}
             <Link href="/changelog" className="text-brand-600 hover:underline">
               /changelog
@@ -44,7 +44,7 @@ export function HomeRecentChanges() {
             href="/changelog.atom"
             target="_blank"
             rel="noreferrer noopener"
-            className="text-slate-500 hover:text-brand-600"
+            className="text-ink-muted hover:text-brand-600"
             title="Atom feed — subscribe in Feedly, Slack RSS bot, etc."
           >
             Subscribe (Atom) ↗
@@ -58,7 +58,7 @@ export function HomeRecentChanges() {
         {items.map((it, i) => (
           <li
             key={i}
-            className="rounded-md border border-slate-200 bg-white p-3"
+            className="rounded-md border border-line bg-surface p-3"
           >
             <div className="mb-1 flex items-baseline gap-2">
               <span
@@ -68,12 +68,12 @@ export function HomeRecentChanges() {
               >
                 {it.kind}
               </span>
-              <span className="font-mono text-[10px] text-slate-400">
+              <span className="font-mono text-[10px] text-ink-faint">
                 {it.release}
                 {it.date && ` · ${it.date}`}
               </span>
             </div>
-            <p className="text-sm text-slate-700">
+            <p className="text-sm text-ink-body">
               <ChangelogPreview text={it.text} />
             </p>
           </li>
@@ -150,7 +150,7 @@ function kindTone(kind: string): string {
     return 'bg-amber-100 text-amber-800';
   if (kind === 'Removed' || kind === 'Deprecated')
     return 'bg-rose-100 text-rose-800';
-  return 'bg-slate-100 text-slate-700';
+  return 'bg-surface-subtle text-ink-body';
 }
 
 // ChangelogPreview renders just the FIRST paragraph of a CHANGELOG
@@ -200,7 +200,7 @@ function ChangelogPreview({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-slate-900">
+            <strong key={i} className="font-semibold text-ink">
               {t.value}
             </strong>
           );
@@ -208,7 +208,7 @@ function ChangelogPreview({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs"
+              className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs"
             >
               {t.value}
             </code>

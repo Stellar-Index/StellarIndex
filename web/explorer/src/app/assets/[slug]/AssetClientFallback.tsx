@@ -78,7 +78,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
     return (
       <Panel
         title="Loading asset…"
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         <p>
           Resolving <code className="font-mono">{slug}</code> from the live API.
@@ -91,7 +91,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
     return (
       <Panel
         title={`${slug}`}
-        bodyClassName="space-y-2 text-sm text-slate-600"
+        bodyClassName="space-y-2 text-sm text-ink-body"
       >
         <p>
           We&apos;ve got live data for <code className="font-mono">{slug}</code>{' '}
@@ -138,7 +138,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
     return (
       <Panel
         title="Couldn&apos;t reach the API"
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         <p>{errMsg ?? 'Unknown error'}</p>
       </Panel>
@@ -148,11 +148,11 @@ export function AssetClientFallback({ slug }: { slug: string }) {
   return (
     <Panel
       title="Asset not found"
-      bodyClassName="text-sm text-slate-600"
+      bodyClassName="text-sm text-ink-body"
     >
       <p>
         The slug{' '}
-        <code className="rounded bg-slate-100 px-1 font-mono text-xs">
+        <code className="rounded bg-surface-subtle px-1 font-mono text-xs">
           {slug}
         </code>{' '}
         doesn&apos;t match any asset the indexer has observed yet. Asset slugs

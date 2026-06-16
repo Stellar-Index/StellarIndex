@@ -78,11 +78,11 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <label className="block space-y-1">
-        <span className="text-sm font-medium text-slate-700">
+        <span className="text-sm font-medium text-ink-body">
           Email
         </span>
         <div className="relative">
-          <Mail className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Mail className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <input
             type="email"
             value={email}
@@ -90,7 +90,7 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
             required
             autoComplete="email"
             placeholder="you@example.com"
-            className="w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-full rounded-md border border-line bg-surface py-2 pl-8 pr-3 text-sm placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
       </label>
@@ -111,7 +111,7 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
         {mode === 'signup' ? 'Create account' : 'Send magic link'}
       </button>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-ink-muted">
         Magic-link sign-in — no passwords. The link in the email is
         valid for 15 minutes. New emails create an account on first
         sign-in.

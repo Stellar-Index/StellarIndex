@@ -31,7 +31,7 @@ export function HomeTopMarkets() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Top markets
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Pairs ranked by trailing-24h USD volume across all
             sources. Click a row for chart, recent trades, and
             per-source breakdown.
@@ -44,7 +44,7 @@ export function HomeTopMarkets() {
           All markets →
         </Link>
       </div>
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-md border border-line bg-surface">
         {isError && top.length === 0 ? (
           <div className="px-4 py-6 text-center text-sm">
             <span className="text-amber-700">
@@ -55,17 +55,17 @@ export function HomeTopMarkets() {
             </Link>
           </div>
         ) : isLoading && top.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-slate-500">
+          <div className="px-4 py-6 text-center text-sm text-ink-muted">
             Loading…
           </div>
         ) : top.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-slate-500">
+          <div className="px-4 py-6 text-center text-sm text-ink-muted">
             No markets returned.
           </div>
         ) : (
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+          <table className="min-w-full divide-y divide-line text-sm">
+            <thead className="bg-surface-muted">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-4 py-2 font-medium">Pair</th>
                 <th className="px-4 py-2 text-right font-medium">
@@ -79,15 +79,15 @@ export function HomeTopMarkets() {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {top.map((m, i) => {
                 const slug = `${m.base}~${m.quote}`;
                 return (
                   <tr
                     key={`${m.base}|${m.quote}`}
-                    className="hover:bg-slate-50"
+                    className="hover:bg-surface-muted"
                   >
-                    <td className="px-4 py-2.5 text-slate-400">
+                    <td className="px-4 py-2.5 text-ink-faint">
                       <Link
                         href={`/markets/${encodeURIComponent(slug)}`}
                         className="hover:text-brand-600"
@@ -103,7 +103,7 @@ export function HomeTopMarkets() {
                         <span className="font-medium">
                           {shortAsset(m.base)}
                         </span>
-                        <span className="mx-1 text-slate-400">/</span>
+                        <span className="mx-1 text-ink-faint">/</span>
                         <span className="font-medium">
                           {shortAsset(m.quote)}
                         </span>
@@ -111,11 +111,11 @@ export function HomeTopMarkets() {
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       {m.last_price ? (
-                        <span className="font-mono tabular-nums text-slate-700">
+                        <span className="font-mono tabular-nums text-ink-body">
                           {formatLastPrice(m.last_price)}
                         </span>
                       ) : (
-                        <span className="text-slate-300">
+                        <span className="text-ink-faint">
                           —
                         </span>
                       )}
@@ -126,13 +126,13 @@ export function HomeTopMarkets() {
                           ${formatCompact(Number(m.volume_24h_usd))}
                         </span>
                       ) : (
-                        <span className="text-slate-300">
+                        <span className="text-ink-faint">
                           —
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <span className="font-mono tabular-nums text-slate-600">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {formatCompact(m.trade_count_24h)}
                       </span>
                     </td>

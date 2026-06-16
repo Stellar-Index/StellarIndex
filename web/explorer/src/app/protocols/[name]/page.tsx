@@ -87,7 +87,7 @@ export default async function ProtocolDetailPage({
       />
       <Suspense
         fallback={
-          <div className="mx-auto max-w-7xl px-6 py-16 text-sm text-slate-500">
+          <div className="mx-auto max-w-7xl px-6 py-16 text-sm text-ink-muted">
             Loading {meta?.label ?? name}…
           </div>
         }

@@ -36,7 +36,7 @@ export function AccelerationArrow({
 }: AccelerationArrowProps) {
   if (direction === 'flat') {
     return (
-      <span className={twMerge('text-xs text-slate-400', className)} aria-label="flat">
+      <span className={twMerge('text-xs text-ink-faint', className)} aria-label="flat">
         →
       </span>
     );

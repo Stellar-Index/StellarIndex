@@ -347,7 +347,7 @@ export default async function PairPage({ params }: { params: Params }) {
       <header className="space-y-3">
         <Link
           href="/markets"
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
         >
           ← All markets
         </Link>
@@ -357,12 +357,12 @@ export default async function PairPage({ params }: { params: Params }) {
             <AssetBadge canonical={quote} />
           </h1>
           {price?.price_type && (
-            <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-600">
+            <span className="rounded bg-surface-subtle px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
               {price.price_type}
             </span>
           )}
         </div>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Live VWAP, hourly chart, and the last 50 trades on this pair.
           Pair source: <code className="font-mono">{base}</code> /{' '}
           <code className="font-mono">{quote}</code>.
@@ -383,7 +383,7 @@ export default async function PairPage({ params }: { params: Params }) {
               <ChangeBadge pct={change24h} window="24h" />
             )}
             {price?.observed_at && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-ink-muted">
                 as of {formatTimestamp(price.observed_at)}
               </span>
             )}
@@ -444,9 +444,9 @@ export default async function PairPage({ params }: { params: Params }) {
       {history.length > 0 ? (
         <Panel title="Recent trades" subtitle={`${history.length} most recent across all sources`}>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <table className="min-w-full divide-y divide-line text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
                   <th className="px-3 py-2 font-medium">Time</th>
                   <th className="px-3 py-2 font-medium">Source</th>
                   <th className="px-3 py-2 text-right font-medium">Price</th>
@@ -458,13 +458,13 @@ export default async function PairPage({ params }: { params: Params }) {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-xs">
+              <tbody className="divide-y divide-line-subtle font-mono text-xs">
                 {history.map((t, i) => (
                   <tr
                     key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}
-                    className="hover:bg-slate-50"
+                    className="hover:bg-surface-muted"
                   >
-                    <td className="px-3 py-2 tabular-nums text-slate-500">
+                    <td className="px-3 py-2 tabular-nums text-ink-muted">
                       {t.tx_hash ? (
                         <a
                           href={`https://stellar.expert/explorer/public/tx/${t.tx_hash}`}
@@ -490,10 +490,10 @@ export default async function PairPage({ params }: { params: Params }) {
                     <td className="px-3 py-2 text-right tabular-nums">
                       {t.price}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                    <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
                       {t.base_amount ?? '—'}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                    <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
                       {t.quote_amount ?? '—'}
                     </td>
                   </tr>
@@ -504,7 +504,7 @@ export default async function PairPage({ params }: { params: Params }) {
         </Panel>
       ) : (
         <Panel title="Recent trades">
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             No trades returned for this pair in the last sample.
           </p>
         </Panel>
@@ -547,27 +547,27 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
             <li key={r.source} className="flex items-center gap-3 text-sm">
               <Link
                 href={`/sources/${r.source}`}
-                className="w-32 font-mono text-xs uppercase tracking-wider text-slate-600 hover:text-brand-600"
+                className="w-32 font-mono text-xs uppercase tracking-wider text-ink-body hover:text-brand-600"
               >
                 {r.source}
               </Link>
               <div className="flex-1">
-                <div className="h-2 overflow-hidden rounded bg-slate-100">
+                <div className="h-2 overflow-hidden rounded bg-surface-subtle">
                   <div
                     className="h-full bg-brand-500"
                     style={{ width: `${pct ?? 0}%` }}
                   />
                 </div>
               </div>
-              <span className="w-24 text-right font-mono tabular-nums text-xs text-slate-500">
+              <span className="w-24 text-right font-mono tabular-nums text-xs text-ink-muted">
                 {lpFixed ?? '—'}
               </span>
-              <span className="w-28 text-right font-mono tabular-nums text-xs text-slate-700">
+              <span className="w-28 text-right font-mono tabular-nums text-xs text-ink-body">
                 {v != null && Number.isFinite(v) && v > 0
                   ? `$${formatCompact(v)}`
                   : '—'}
               </span>
-              <span className="w-12 text-right font-mono tabular-nums text-xs text-slate-500">
+              <span className="w-12 text-right font-mono tabular-nums text-xs text-ink-muted">
                 {pct != null ? `${pct.toFixed(0)}%` : '—'}
               </span>
             </li>
@@ -582,7 +582,7 @@ function PairNotFound() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16 text-center">
       <h1 className="text-2xl font-semibold">Pair not found</h1>
-      <p className="mt-2 text-sm text-slate-500">
+      <p className="mt-2 text-sm text-ink-muted">
         The slug must be in the form{' '}
         <code className="font-mono">{`base${PAIR_SEPARATOR}quote`}</code>.
       </p>
@@ -609,14 +609,14 @@ function Panel({
 }) {
   return (
     <section
-      className={`rounded-lg border border-slate-200 bg-white p-4 ${className ?? ''}`}
+      className={`rounded-lg border border-line bg-surface p-4 ${className ?? ''}`}
     >
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
           {title}
         </h2>
         {subtitle && (
-          <span className="text-xs text-slate-400">{subtitle}</span>
+          <span className="text-xs text-ink-faint">{subtitle}</span>
         )}
       </header>
       {children}
@@ -627,7 +627,7 @@ function Panel({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className="mt-1 font-mono text-sm tabular-nums">{value}</dd>
@@ -665,7 +665,7 @@ function ChangeBadge({ pct, window }: { pct: number; window: string }) {
       ? 'bg-emerald-50 text-emerald-700'
       : pct < 0
         ? 'bg-rose-50 text-rose-700'
-        : 'bg-slate-100 text-slate-600';
+        : 'bg-surface-subtle text-ink-body';
   const sign = pct > 0 ? '+' : '';
   return (
     <span

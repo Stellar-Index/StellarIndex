@@ -104,9 +104,9 @@ export function LendingPoolsTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <Th>Protocol</Th>
               <Th>Pool</Th>
               <Th>Deployed</Th>
@@ -116,17 +116,17 @@ export function LendingPoolsTable() {
               <Th align="right">Last activity</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {q.isLoading && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading pools…
                 </td>
               </tr>
             )}
             {!q.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No Blend pools have emitted auction events yet.
                 </td>
               </tr>
@@ -134,7 +134,7 @@ export function LendingPoolsTable() {
             {rows.map((p) => {
               const meta = BLEND_POOL_META[p.pool];
               return (
-                <tr key={p.pool} className="hover:bg-slate-50">
+                <tr key={p.pool} className="hover:bg-surface-muted">
                   <Td>
                     <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800">
                       {p.protocol}
@@ -150,7 +150,7 @@ export function LendingPoolsTable() {
                         {p.pool.slice(0, 6)}…{p.pool.slice(-6)}
                       </Link>
                       {meta?.label && (
-                        <div className="text-[9px] uppercase tracking-wide text-slate-500">
+                        <div className="text-[9px] uppercase tracking-wide text-ink-muted">
                           {meta.label}
                         </div>
                       )}
@@ -159,12 +159,12 @@ export function LendingPoolsTable() {
                   <Td>
                     {meta?.deployedAt ? (
                       <div className="space-y-0.5">
-                        <div className="font-mono text-[11px] text-slate-700">
+                        <div className="font-mono text-[11px] text-ink-body">
                           {meta.deployedAt}
                         </div>
                         {meta.initiator && (
                           <div
-                            className="font-mono text-[9px] text-slate-500"
+                            className="font-mono text-[9px] text-ink-muted"
                             title={meta.initiator}
                           >
                             by {meta.initiator.slice(0, 4)}…{meta.initiator.slice(-4)}
@@ -172,26 +172,26 @@ export function LendingPoolsTable() {
                         )}
                       </div>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {p.auctions_24h.toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {p.auctions_total.toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {p.unique_users_30d.toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono text-xs text-slate-500">
+                    <span className="font-mono text-xs text-ink-muted">
                       {formatRelative(p.last_seen)}
                     </span>
                   </Td>

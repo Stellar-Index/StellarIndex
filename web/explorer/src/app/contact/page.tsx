@@ -100,7 +100,7 @@ export default function ContactPage() {
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Contact
         </h1>
-        <p className="max-w-2xl text-base text-slate-600">
+        <p className="max-w-2xl text-base text-ink-body">
           We don&apos;t run a support inbox for the public tier — issues land on
           GitHub, sales go to email, and security goes to a separate inbox
           with a real disclosure SLA. Pick the channel that fits your
@@ -120,15 +120,15 @@ export default function ContactPage() {
           {FAQS.map((f) => (
             <details
               key={f.q}
-              className="group rounded-xl border border-slate-200 bg-white p-4 open:shadow-sm"
+              className="group rounded-xl border border-line bg-surface p-4 open:shadow-sm"
             >
               <summary className="flex cursor-pointer items-center justify-between text-sm font-medium">
                 {f.q}
-                <span className="text-slate-400 group-open:rotate-180">
+                <span className="text-ink-faint group-open:rotate-180">
                   <ArrowRight className="h-3.5 w-3.5 -rotate-90 transition" />
                 </span>
               </summary>
-              <p className="mt-3 text-sm text-slate-600">
+              <p className="mt-3 text-sm text-ink-body">
                 {f.a}
               </p>
             </details>
@@ -136,7 +136,7 @@ export default function ContactPage() {
         </div>
       </section>
 
-      <section className="mt-12 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
+      <section className="mt-12 rounded-xl border border-line bg-surface p-5 text-sm text-ink-body">
         <p>
           Want an API key? Sign in with magic-link at{' '}
           <Link href="/signin" className="text-brand-600 hover:underline">
@@ -158,21 +158,21 @@ function ChannelCard({ channel }: { channel: Channel }) {
   const Icon = channel.icon;
   const isInternal = !channel.external;
   const inner = (
-    <div className="flex items-start gap-4 rounded-xl border border-slate-200 bg-white p-5 transition hover:border-brand-300 hover:shadow-sm">
-      <div className="rounded-lg bg-slate-100 p-2 text-brand-600">
+    <div className="flex items-start gap-4 rounded-xl border border-line bg-surface p-5 transition hover:border-brand-300 hover:shadow-sm">
+      <div className="rounded-lg bg-surface-subtle p-2 text-brand-600">
         <Icon className="h-4 w-4" />
       </div>
       <div className="flex-1 space-y-1.5">
         <div className="flex items-baseline gap-2">
           <h3 className="text-sm font-semibold">{channel.title}</h3>
-          <code className="font-mono text-xs text-slate-500">
+          <code className="font-mono text-xs text-ink-muted">
             {channel.destination}
           </code>
           {channel.external && (
-            <ExternalLink className="h-3 w-3 text-slate-400" />
+            <ExternalLink className="h-3 w-3 text-ink-faint" />
           )}
         </div>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           {channel.blurb}
         </p>
       </div>

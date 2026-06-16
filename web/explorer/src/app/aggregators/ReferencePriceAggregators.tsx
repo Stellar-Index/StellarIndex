@@ -55,38 +55,38 @@ export function ReferencePriceAggregators() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <Th>Source</Th>
               <Th>Cost</Th>
               <Th align="right">Backfill</Th>
               <Th>Role</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {q.isLoading && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading sources…
                 </td>
               </tr>
             )}
             {!q.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No reference aggregators registered.
                 </td>
               </tr>
             )}
             {rows.map((s) => (
-              <tr key={s.name} className="hover:bg-slate-50">
+              <tr key={s.name} className="hover:bg-surface-muted">
                 <Td>
                   <a
                     href={HOMEPAGES[s.name] ?? '#'}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="font-medium text-slate-900 hover:text-brand-600"
+                    className="font-medium text-ink hover:text-brand-600"
                   >
                     {NAMES[s.name] ?? s.name}
                   </a>
@@ -103,12 +103,12 @@ export function ReferencePriceAggregators() {
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono text-xs text-slate-500">
+                  <span className="font-mono text-xs text-ink-muted">
                     {s.backfill_available ? 'available' : '—'}
                   </span>
                 </Td>
                 <Td>
-                  <span className="text-xs text-slate-600">
+                  <span className="text-xs text-ink-body">
                     Cross-check + divergence detection
                   </span>
                 </Td>
@@ -117,7 +117,7 @@ export function ReferencePriceAggregators() {
           </tbody>
         </table>
       </div>
-      <p className="border-t border-slate-200 px-4 py-2 text-xs text-slate-500">
+      <p className="border-t border-line px-4 py-2 text-xs text-ink-muted">
         Reference aggregators are <strong>excluded from VWAP</strong> by
         policy — they aggregate the same upstream venues we already
         index, so including them would double-count those underlying

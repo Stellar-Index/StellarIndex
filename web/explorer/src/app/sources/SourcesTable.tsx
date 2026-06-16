@@ -74,7 +74,7 @@ export function SourcesTable() {
       <Panel
         title="Sources"
         source={asExample('/v1/sources')}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -85,7 +85,7 @@ export function SourcesTable() {
       <Panel
         title="Sources"
         source={asExample('/v1/sources')}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No sources registered.
       </Panel>
@@ -101,9 +101,9 @@ export function SourcesTable() {
           placeholder="Filter by source name, class, or subclass…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-72 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className="w-72 rounded-md border border-line bg-surface px-2.5 py-1 text-xs placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
-        <span className="font-mono text-[11px] text-slate-500">
+        <span className="font-mono text-[11px] text-ink-muted">
           {filteredData.length} of {data.length} sources
           {filter && (
             <button
@@ -120,7 +120,7 @@ export function SourcesTable() {
         <Panel
           title="Sources"
           source={asExample('/v1/sources')}
-          bodyClassName="text-sm text-slate-500"
+          bodyClassName="text-sm text-ink-muted"
         >
           No sources match &quot;{filter}&quot;.
         </Panel>
@@ -134,9 +134,9 @@ export function SourcesTable() {
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <table className="min-w-full divide-y divide-line text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
                   <Th>Source</Th>
                   <Th>Subclass</Th>
                   <Th align="right">Default weight</Th>
@@ -146,13 +146,13 @@ export function SourcesTable() {
                   <Th align="right">Flags</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-line-subtle">
                 {rows.map((s) => {
                   const cursor = latestBySource.get(s.name);
                   return (
                     <tr
                       key={s.name}
-                      className="hover:bg-slate-50"
+                      className="hover:bg-surface-muted"
                     >
                       <Td>
                         <Link
@@ -163,7 +163,7 @@ export function SourcesTable() {
                         </Link>
                       </Td>
                       <Td>
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-ink-muted">
                           {s.subclass ?? '—'}
                         </span>
                       </Td>
@@ -175,11 +175,11 @@ export function SourcesTable() {
                       <Td align="right">
                         {typeof s.trade_count_24h === 'number' &&
                         s.trade_count_24h > 0 ? (
-                          <span className="font-mono tabular-nums text-slate-700">
+                          <span className="font-mono tabular-nums text-ink-body">
                             {s.trade_count_24h.toLocaleString()}
                           </span>
                         ) : (
-                          <span className="text-[11px] text-slate-300">
+                          <span className="text-[11px] text-ink-faint">
                             —
                           </span>
                         )}
@@ -225,7 +225,7 @@ function CursorAgo({
   cursor: { last_ledger: number; lag_seconds: number; last_updated: string } | undefined;
 }) {
   if (!cursor) {
-    return <span className="text-[11px] text-slate-400">—</span>;
+    return <span className="text-[11px] text-ink-faint">—</span>;
   }
   // Tone bucket: <60s green, <10min amber, else red. Matches the
   // home System health panel's threshold so the two views agree
@@ -241,7 +241,7 @@ function CursorAgo({
       <div className={`font-mono text-[11px] ${tone}`}>
         {formatLag(cursor.lag_seconds)} ago
       </div>
-      <div className="font-mono text-[10px] text-slate-400">
+      <div className="font-mono text-[10px] text-ink-faint">
         #{cursor.last_ledger.toLocaleString()}
       </div>
     </div>
@@ -267,7 +267,7 @@ function Pill({
       ? 'bg-up-soft text-up-strong'
       : tone === 'amber'
         ? 'bg-amber-100 text-amber-700'
-        : 'bg-slate-100 text-slate-600';
+        : 'bg-surface-subtle text-ink-body';
   return (
     <span
       className={`inline-block rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${cls}`}

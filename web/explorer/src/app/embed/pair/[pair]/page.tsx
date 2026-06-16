@@ -129,7 +129,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
   const decoded = decodePairSlug(pair);
   if (!decoded) {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-slate-500">
+      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-ink-muted">
         Invalid pair slug
       </div>
     );
@@ -152,19 +152,19 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
   const linkSlug = encodeURIComponent(`${base}${PAIR_SEPARATOR}${quote}`);
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900">
+    <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">
             {baseLabel} / {quoteLabel}
           </span>
-          <span className="font-mono text-[10px] text-slate-500">Stellar</span>
+          <span className="font-mono text-[10px] text-ink-muted">Stellar</span>
         </div>
         <a
           href={`https://stellarindex.io/markets/${linkSlug}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[10px] text-slate-400 hover:text-brand-600"
+          className="text-[10px] text-ink-faint hover:text-brand-600"
         >
           rates&shy;engine.net ↗
         </a>
@@ -176,7 +176,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
         <ChangeChip pct={change24h} label="24h" />
       </div>
       {points.length > 0 && <Sparkline points={points} positive={(change24h ?? 0) >= 0} />}
-      <div className="mt-auto text-[10px] text-slate-400">
+      <div className="mt-auto text-[10px] text-ink-faint">
         Powered by Stellar Index
       </div>
     </div>
@@ -190,7 +190,7 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
       ? 'bg-emerald-50 text-emerald-700'
       : pct < 0
         ? 'bg-rose-50 text-rose-700'
-        : 'bg-slate-100 text-slate-600';
+        : 'bg-surface-subtle text-ink-body';
   return (
     <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
       {pct > 0 ? '+' : ''}

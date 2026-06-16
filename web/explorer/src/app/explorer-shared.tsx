@@ -282,7 +282,7 @@ export function CopyHash({
   className?: string;
 }) {
   if (!value)
-    return <span className="text-slate-300">—</span>;
+    return <span className="text-ink-faint">—</span>;
   return (
     <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
       <span className="font-mono" title={value}>
@@ -316,7 +316,7 @@ export function CopyValue({ value }: { value: string }) {
           // clipboard unavailable (insecure context) — no-op
         }
       }}
-      className="text-slate-400 hover:text-brand-600"
+      className="text-ink-faint hover:text-brand-600"
       aria-label="Copy to clipboard"
       title="Copy to clipboard"
     >

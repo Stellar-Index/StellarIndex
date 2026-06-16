@@ -82,10 +82,10 @@ export function VerifiedCurrenciesStrip({
   return (
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-slate-500">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-ink-muted">
           Verified currencies
         </h2>
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-ink-muted">
           {verified.length} verified · catalogue
         </span>
       </div>
@@ -94,7 +94,7 @@ export function VerifiedCurrenciesStrip({
           <Link
             key={vc.slug}
             href={`/assets/${vc.slug}`}
-            className="group inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 transition hover:border-emerald-400 hover:bg-emerald-50"
+            className="group inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-surface px-3 py-1.5 text-sm font-medium text-ink transition hover:border-emerald-400 hover:bg-emerald-50"
             title={
               vc.verified_issuer
                 ? `${vc.name} — ${vc.verified_issuer}`

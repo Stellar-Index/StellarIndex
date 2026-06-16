@@ -27,7 +27,7 @@ export function PriceSparklines({
   const points = active === '24h' ? points24h : points7d;
 
   return (
-    <div className="border-t border-slate-200 pt-3">
+    <div className="border-t border-line pt-3">
       <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider">
         <button
           type="button"
@@ -36,7 +36,7 @@ export function PriceSparklines({
           className={`rounded px-1.5 py-0.5 ${
             active === '24h'
               ? 'bg-brand-600 text-white'
-              : 'text-slate-500 hover:text-brand-600 disabled:opacity-40'
+              : 'text-ink-muted hover:text-brand-600 disabled:opacity-40'
           }`}
         >
           24h
@@ -48,7 +48,7 @@ export function PriceSparklines({
           className={`rounded px-1.5 py-0.5 ${
             active === '7d'
               ? 'bg-brand-600 text-white'
-              : 'text-slate-500 hover:text-brand-600 disabled:opacity-40'
+              : 'text-ink-muted hover:text-brand-600 disabled:opacity-40'
           }`}
         >
           7d

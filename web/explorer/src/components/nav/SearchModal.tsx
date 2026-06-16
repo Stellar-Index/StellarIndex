@@ -418,7 +418,7 @@ export function SearchModal() {
       </button>
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 p-4 pt-24"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-ink/50 p-4 pt-24"
           onClick={() => setOpen(false)}
         >
           <div

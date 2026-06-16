@@ -15,13 +15,13 @@ export default function NotFound() {
   return (
     <div className="mx-auto max-w-xl space-y-6 p-12 text-center">
       <div className="space-y-2">
-        <p className="font-mono text-xs uppercase tracking-widest text-slate-500">
+        <p className="font-mono text-xs uppercase tracking-widest text-ink-muted">
           404
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">
           Couldn&apos;t find that page.
         </h1>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           The URL doesn&apos;t map to anything on Stellar Index. If you
           followed a link, the destination may have been renamed or
           removed.

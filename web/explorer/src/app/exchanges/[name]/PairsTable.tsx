@@ -84,7 +84,7 @@ export function PairsTable({
     >
       <div className="px-4 pb-3 pt-1">
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-slate-500">Sort:</span>
+          <span className="text-ink-muted">Sort:</span>
           <SortPill
             active={order === 'volume_24h_usd_desc'}
             onClick={() => changeOrder('volume_24h_usd_desc')}
@@ -94,7 +94,7 @@ export function PairsTable({
           <SortPill active={order === 'pair'} onClick={() => changeOrder('pair')}>
             Pair (A→Z)
           </SortPill>
-          <span className="ml-auto font-mono text-[11px] text-slate-500">
+          <span className="ml-auto font-mono text-[11px] text-ink-muted">
             {markets.length} on this page
             {q.isFetching && ' · refreshing…'}
           </span>
@@ -102,9 +102,9 @@ export function PairsTable({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <Th>#</Th>
               <Th>Base</Th>
               <Th>Quote</Th>
@@ -114,17 +114,17 @@ export function PairsTable({
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {q.isLoading && !q.data && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-muted">
                   Loading pairs…
                 </td>
               </tr>
             )}
             {!q.isLoading && markets.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-muted">
                   No pairs found in the last 14 days.
                 </td>
               </tr>
@@ -136,10 +136,10 @@ export function PairsTable({
               return (
                 <tr
                   key={`${m.base}|${m.quote}`}
-                  className="hover:bg-slate-50"
+                  className="hover:bg-surface-muted"
                 >
                   <Td>
-                    <span className="font-mono text-[11px] text-slate-400">{offset}</span>
+                    <span className="font-mono text-[11px] text-ink-faint">{offset}</span>
                   </Td>
                   <Td>
                     <Link href={`/markets/${encodeURIComponent(slug)}`} className="hover:text-brand-600">
@@ -158,16 +158,16 @@ export function PairsTable({
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
                       <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-600">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {m.trade_count_24h > 0 ? formatCompact(m.trade_count_24h) : '0'}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-xs text-slate-500">
+                    <span className="font-mono tabular-nums text-xs text-ink-muted">
                       {formatRelative(m.last_trade_at)}
                     </span>
                   </Td>
@@ -178,21 +178,21 @@ export function PairsTable({
         </table>
       </div>
 
-      <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs">
+      <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs">
         <button
           type="button"
           onClick={prevPage}
           disabled={!hasPrev}
-          className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-line px-3 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Previous
         </button>
-        <span className="font-mono text-[11px] text-slate-400">page {cursorStack.length + 1}</span>
+        <span className="font-mono text-[11px] text-ink-faint">page {cursorStack.length + 1}</span>
         <button
           type="button"
           onClick={nextPage}
           disabled={!hasNext}
-          className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-line px-3 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Next →
         </button>
@@ -217,7 +217,7 @@ function SortPill({
       className={`rounded-md px-2 py-0.5 ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          : 'bg-surface-subtle text-ink-body hover:bg-line'
       }`}
     >
       {children}
@@ -243,13 +243,13 @@ function Td({ children, align }: { children: React.ReactNode; align?: 'left' | '
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300">—</span>;
+  if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   const fixed =
     n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
   return (
-    <span className="font-mono tabular-nums text-slate-700">
+    <span className="font-mono tabular-nums text-ink-body">
       {fixed}
     </span>
   );

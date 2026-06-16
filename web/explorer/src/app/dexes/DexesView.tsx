@@ -48,7 +48,7 @@ const SOURCE_TONE: Record<string, string> = {
   soroswap: 'bg-emerald-100 text-emerald-800',
   phoenix: 'bg-amber-100 text-amber-800',
   aquarius: 'bg-sky-100 text-sky-800',
-  sdex: 'bg-slate-200 text-slate-800',
+  sdex: 'bg-line text-ink',
   comet: 'bg-violet-100 text-violet-800',
   binance: 'bg-yellow-100 text-yellow-800',
   coinbase: 'bg-blue-100 text-blue-800',
@@ -121,7 +121,7 @@ export function DexesView() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">DEXes</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Every Stellar DEX we ingest — Soroswap, Phoenix, Aquarius,
           Comet, and the Stellar-native order book SDEX. The first
           table summarises each protocol; the second lists every
@@ -149,7 +149,7 @@ export function DexesView() {
       >
         <div className="space-y-3 px-4 pb-3 pt-1">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-500">Venue:</span>
+            <span className="text-ink-muted">Venue:</span>
             <SourceChip
               active={sourceFilter === ''}
               onClick={() => changeSource('')}
@@ -165,7 +165,7 @@ export function DexesView() {
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-500">Sort:</span>
+            <span className="text-ink-muted">Sort:</span>
             <SortPill
               active={order === 'volume_24h_usd_desc'}
               onClick={() => changeOrder('volume_24h_usd_desc')}
@@ -182,9 +182,9 @@ export function DexesView() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <Th>#</Th>
                 <Th>Venue</Th>
                 <Th>Base</Th>
@@ -195,10 +195,10 @@ export function DexesView() {
                 <Th align="right">Last trade</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {q.isLoading && !q.data && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-ink-muted">
                     Loading pools…
                   </td>
                 </tr>
@@ -214,7 +214,7 @@ export function DexesView() {
                     <div className="text-bad-700">
                       Couldn&apos;t load pools right now.
                     </div>
-                    <div className="mt-1 text-xs text-slate-500">
+                    <div className="mt-1 text-xs text-ink-muted">
                       The pools query is timing out (likely a hot
                       trades-hypertable scan). Retry or check{' '}
                       <a
@@ -239,7 +239,7 @@ export function DexesView() {
               )}
               {!q.isLoading && !q.isError && pools.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-ink-muted">
                     No pools matched.
                   </td>
                 </tr>
@@ -248,14 +248,14 @@ export function DexesView() {
                 const slug = `${p.base}~${p.quote}`;
                 const offset = cursorStack.length * PAGE_LIMIT + i + 1;
                 const vol = p.volume_24h_usd ? Number(p.volume_24h_usd) : null;
-                const tone = SOURCE_TONE[p.source] ?? 'bg-slate-100 text-slate-700';
+                const tone = SOURCE_TONE[p.source] ?? 'bg-surface-subtle text-ink-body';
                 return (
                   <tr
                     key={`${p.source}|${p.base}|${p.quote}`}
-                    className="hover:bg-slate-50"
+                    className="hover:bg-surface-muted"
                   >
                     <Td>
-                      <span className="font-mono text-[11px] text-slate-400">
+                      <span className="font-mono text-[11px] text-ink-faint">
                         {offset}
                       </span>
                     </Td>
@@ -267,7 +267,7 @@ export function DexesView() {
                         {p.source}
                       </Link>
                       {SOURCE_NOTE[p.source] && (
-                        <div className="mt-0.5 text-[9px] uppercase tracking-wide text-slate-500">
+                        <div className="mt-0.5 text-[9px] uppercase tracking-wide text-ink-muted">
                           {SOURCE_NOTE[p.source]}
                         </div>
                       )}
@@ -297,18 +297,18 @@ export function DexesView() {
                           ${formatCompact(vol)}
                         </span>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-600">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {p.trade_count_24h > 0
                           ? formatCompact(p.trade_count_24h)
                           : '0'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-xs text-slate-500">
+                      <span className="font-mono tabular-nums text-xs text-ink-muted">
                         {formatRelative(p.last_trade_at)}
                       </span>
                     </Td>
@@ -319,30 +319,30 @@ export function DexesView() {
           </table>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs">
+        <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs">
           <button
             type="button"
             onClick={prevPage}
             disabled={!hasPrev}
-            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md border border-line px-3 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ← Previous
           </button>
-          <span className="font-mono text-[11px] text-slate-400">
+          <span className="font-mono text-[11px] text-ink-faint">
             page {cursorStack.length + 1}
           </span>
           <button
             type="button"
             onClick={nextPage}
             disabled={!hasNext}
-            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md border border-line px-3 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next →
           </button>
         </div>
       </Panel>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-ink-muted">
         Drill into a single DEX&apos;s pools at{' '}
         <Link href="/dexes/sdex" className="text-brand-600 hover:underline">
           /dexes/sdex
@@ -385,7 +385,7 @@ function SortPill({
       className={`rounded-md px-2 py-0.5 ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          : 'bg-surface-subtle text-ink-body hover:bg-line'
       }`}
     >
       {children}
@@ -409,7 +409,7 @@ function SourceChip({
       className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          : 'bg-surface-subtle text-ink-body hover:bg-line'
       }`}
     >
       {label}
@@ -451,13 +451,13 @@ function Td({
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300">—</span>;
+  if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   const fixed =
     n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
   return (
-    <span className="font-mono tabular-nums text-slate-700">
+    <span className="font-mono tabular-nums text-ink-body">
       {fixed}
     </span>
   );

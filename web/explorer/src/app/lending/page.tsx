@@ -16,7 +16,7 @@ export default function LendingPage() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Lending</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Collateralised lending protocols on Stellar. Yield comes from
           borrowers paying interest, not from external strategies — see{' '}
           <Link href="/aggregators" className="underline decoration-dotted">
@@ -26,28 +26,28 @@ export default function LendingPage() {
         </p>
       </header>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-line bg-surface p-5 shadow-sm">
         <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">Blend</h2>
           <span className="rounded bg-up-soft px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-up-strong">
             Live
           </span>
         </div>
-        <p className="mt-1 text-xs uppercase tracking-wider text-slate-500">
+        <p className="mt-1 text-xs uppercase tracking-wider text-ink-muted">
           Isolated-pool lending · Reflector-priced collateral · Comet
           backstop
         </p>
-        <p className="mt-3 text-sm text-slate-700">
+        <p className="mt-3 text-sm text-ink-body">
           Blend is the primary lending protocol on Stellar. Each pool is
           isolated (Aave-V3 style), with collateral and borrow assets
           chosen per-pool by the operator. Liquidations execute against
           a Comet-style auction backstop.
         </p>
-        <ul className="mt-3 space-y-2 text-sm text-slate-600">
+        <ul className="mt-3 space-y-2 text-sm text-ink-body">
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 Reflector-priced.
               </strong>{' '}
               Each pool reads the SEP-40 Reflector oracle for collateral
@@ -58,9 +58,9 @@ export default function LendingPage() {
             </span>
           </li>
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 Backstop is a Comet pool.
               </strong>{' '}
               The Balancer-V1-derived Comet contract auctions liquidated
@@ -75,9 +75,9 @@ export default function LendingPage() {
             </span>
           </li>
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 MEV-relevant.
               </strong>{' '}
               Liquidations can sandwich, especially when the oracle
@@ -99,13 +99,13 @@ export default function LendingPage() {
           </Link>
           <Link
             href="/research/discovery/comet"
-            className="inline-flex items-center gap-1 text-slate-500 hover:underline"
+            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
           >
             Comet backstop audit →
           </Link>
           <a
             href="https://github.com/blend-capital/blend-contracts"
-            className="inline-flex items-center gap-1 text-slate-500 hover:underline"
+            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
             target="_blank"
             rel="noreferrer"
           >
@@ -119,7 +119,7 @@ export default function LendingPage() {
 
       <Panel
         title="Coming next"
-        bodyClassName="text-sm text-slate-600 space-y-2"
+        bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
           Per-pool TVL + utilisation + supply/borrow APY plumb in once

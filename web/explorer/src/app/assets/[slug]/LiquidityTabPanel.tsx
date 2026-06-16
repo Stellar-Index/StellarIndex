@@ -73,16 +73,16 @@ export async function LiquidityTabPanel({
       bodyClassName="-mx-4"
     >
       {merged.length === 0 ? (
-        <p className="px-4 py-3 text-sm text-slate-500">
+        <p className="px-4 py-3 text-sm text-ink-muted">
           No DEX pools observed touching {code} in the trailing 14 days.
           Either the asset only trades on CEX feeds or the dispatcher
           hasn&apos;t decoded a swap involving it yet.
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <th className="px-4 py-2 font-medium">Venue</th>
                 <th className="px-4 py-2 font-medium">Pair</th>
                 <th className="px-4 py-2 font-medium">Side</th>
@@ -91,7 +91,7 @@ export async function LiquidityTabPanel({
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
                 const lp = p.last_price ? Number(p.last_price) : null;
@@ -108,12 +108,12 @@ export async function LiquidityTabPanel({
                 return (
                   <tr
                     key={`${p.source}|${p.base}|${p.quote}|${p.side}`}
-                    className="hover:bg-slate-50"
+                    className="hover:bg-surface-muted"
                   >
                     <td className="px-4 py-2">
                       <Link
                         href={`/sources/${p.source}`}
-                        className="font-mono text-xs uppercase tracking-wider text-slate-700 hover:text-brand-600"
+                        className="font-mono text-xs uppercase tracking-wider text-ink-body hover:text-brand-600"
                       >
                         {p.source}
                       </Link>
@@ -127,17 +127,17 @@ export async function LiquidityTabPanel({
                       </Link>
                     </td>
                     <td className="px-4 py-2">
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+                      <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
                         {p.side}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">
                       {lpFixed ? (
-                        <span className="font-mono tabular-nums text-slate-700">
+                        <span className="font-mono tabular-nums text-ink-body">
                           {lpFixed}
                         </span>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -146,11 +146,11 @@ export async function LiquidityTabPanel({
                           ${formatCompact(Number(p.volume_24h_usd))}
                         </span>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <span className="font-mono tabular-nums text-slate-500">
+                      <span className="font-mono tabular-nums text-ink-muted">
                         {formatCompact(p.trade_count_24h)}
                       </span>
                     </td>

@@ -98,34 +98,34 @@ export function HomeRecentTrades() {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
             </span>
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Live feed merging the latest trades across the top {TOP_PAIRS}{' '}
             pairs by 24h USD volume. Refreshes every 30s.
           </p>
         </div>
       </div>
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-md border border-line bg-surface">
         {error && (
           <div className="px-4 py-2 text-xs text-rose-700">
             Live feed unreachable: {error}
           </div>
         )}
         {trades.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-slate-500">
+          <div className="px-4 py-6 text-center text-sm text-ink-muted">
             Waiting for first trades…
           </div>
         ) : (
           <div className="max-h-96 overflow-y-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="sticky top-0 bg-slate-50">
-                <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <table className="min-w-full divide-y divide-line text-sm">
+              <thead className="sticky top-0 bg-surface-muted">
+                <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                   <th className="px-4 py-2 font-medium">Time</th>
                   <th className="px-4 py-2 font-medium">Pair</th>
                   <th className="px-4 py-2 font-medium">Source</th>
                   <th className="px-4 py-2 text-right font-medium">Price</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-xs">
+              <tbody className="divide-y divide-line-subtle font-mono text-xs">
                 {trades.map((t, i) => {
                   // Both sides need to be defined to construct a
                   // valid /markets/<base~quote> route. If either
@@ -144,9 +144,9 @@ export function HomeRecentTrades() {
                   return (
                     <tr
                       key={`${t.ts}-${t.source}-${i}`}
-                      className="hover:bg-slate-50"
+                      className="hover:bg-surface-muted"
                     >
-                      <td className="px-4 py-2 tabular-nums text-slate-500">
+                      <td className="px-4 py-2 tabular-nums text-ink-muted">
                         {t.tx_hash ? (
                           <a
                             href={`https://stellar.expert/explorer/public/tx/${t.tx_hash}`}
@@ -173,7 +173,7 @@ export function HomeRecentTrades() {
                           <span>{pairLabel}</span>
                         )}
                       </td>
-                      <td className="px-4 py-2 uppercase tracking-wider text-slate-600">
+                      <td className="px-4 py-2 uppercase tracking-wider text-ink-body">
                         <Link
                           href={`/sources/${t.source}`}
                           className="hover:text-brand-600"

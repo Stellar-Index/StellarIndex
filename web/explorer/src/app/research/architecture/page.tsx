@@ -18,7 +18,7 @@ export default function ArchitectureIndexPage() {
         <h1 className="text-3xl font-semibold tracking-tight">
           Architecture narratives
         </h1>
-        <p className="max-w-3xl text-base text-slate-600">
+        <p className="max-w-3xl text-base text-ink-body">
           The long-form designs behind every Stellar Index subsystem.{' '}
           <Link href="/research" className="underline decoration-dotted">
             Back to research
@@ -31,18 +31,18 @@ export default function ArchitectureIndexPage() {
           <Link
             key={d.slug}
             href={`/research/architecture/${d.slug}`}
-            className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
+            className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
           >
             <div className="flex items-center gap-2">
-              <BookOpen className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
+              <BookOpen className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
               <span className="text-sm font-semibold tracking-tight">
                 {d.title}
               </span>
             </div>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-ink-body">
               {d.description}
             </p>
-            <span className="text-[10px] uppercase tracking-wider text-slate-400">
+            <span className="text-[10px] uppercase tracking-wider text-ink-faint">
               Verified {d.last_verified}
             </span>
           </Link>

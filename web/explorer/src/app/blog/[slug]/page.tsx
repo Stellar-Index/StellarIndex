@@ -44,19 +44,19 @@ export default async function BlogPostPage({ params }: { params: Params }) {
     <div className="mx-auto max-w-3xl space-y-6 px-6 py-12">
       <Link
         href="/blog"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All posts
       </Link>
 
-      <header className="space-y-2 border-b border-slate-200 pb-4">
+      <header className="space-y-2 border-b border-line pb-4">
         <h1 className="text-3xl font-semibold tracking-tight">{post.title}</h1>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           {post.date} · {post.author}
         </p>
         {post.summary && (
-          <p className="text-base text-slate-600">{post.summary}</p>
+          <p className="text-base text-ink-body">{post.summary}</p>
         )}
       </header>
 
@@ -64,12 +64,12 @@ export default async function BlogPostPage({ params }: { params: Params }) {
         <Markdown source={post.body} />
       </article>
 
-      <footer className="border-t border-slate-200 pt-4 text-xs">
+      <footer className="border-t border-line pt-4 text-xs">
         <a
           href={`https://github.com/StellarIndex/stellar-index/blob/main/${post.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
         >
           <Github className="h-3.5 w-3.5" />
           Source: {post.source_path}

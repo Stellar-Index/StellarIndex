@@ -50,12 +50,12 @@ export function TxView() {
       <Shell hash={null}>
         <Panel
           title="No transaction selected"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             This page needs a <code className="font-mono">?hash=</code> query
             parameter — a 64-character transaction hash. Use the search box (
-            <kbd className="rounded border border-slate-300 px-1 text-[10px]">
+            <kbd className="rounded border border-line-strong px-1 text-[10px]">
               ⌘K
             </kbd>
             ) to look one up.
@@ -71,7 +71,7 @@ export function TxView() {
       <Shell hash={hash}>
         <Panel
           title="Invalid transaction hash"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             <span className="break-all font-mono">{hash}</span> isn&apos;t a
@@ -94,7 +94,7 @@ export function TxView() {
               : 'Transaction not found'
           }
           source={asExample(`/v1/tx/${hash}`)}
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             {status === 404
@@ -114,7 +114,7 @@ export function TxView() {
         <Panel
           title="Transaction"
           source={asExample(`/v1/tx/${hash}`)}
-          bodyClassName="text-sm text-slate-500"
+          bodyClassName="text-sm text-ink-muted"
         >
           Loading…
         </Panel>
@@ -201,12 +201,12 @@ function Shell({
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/ledgers" className="hover:text-brand-600">
             Ledgers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700">
+          <span className="font-mono text-ink-body">
             {hash ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : 'tx'}
           </span>
         </nav>
@@ -230,7 +230,7 @@ function OperationsPanel({
       <Panel
         title="Operations"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No operations on this transaction.
       </Panel>
@@ -253,9 +253,9 @@ function OperationCard({ op }: { op: TxOperation }) {
   const fields = op.fields ?? {};
   const fieldKeys = Object.keys(fields);
   return (
-    <div className="rounded-lg border border-slate-200 p-3">
+    <div className="rounded-lg border border-line p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+        <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
           #{op.op_index}
         </span>
         <span className="text-brand-700 rounded bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
@@ -278,7 +278,7 @@ function OperationCard({ op }: { op: TxOperation }) {
         )}
         {op.source_account && (
           <span
-            className="font-mono text-[11px] text-slate-500"
+            className="font-mono text-[11px] text-ink-muted"
             title={op.source_account}
           >
             src {op.source_account.slice(0, 6)}…{op.source_account.slice(-4)}
@@ -289,24 +289,24 @@ function OperationCard({ op }: { op: TxOperation }) {
         <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
           {fieldKeys.map((k) => (
             <div key={k} className="flex items-baseline gap-2">
-              <dt className="shrink-0 text-[11px] uppercase tracking-wider text-slate-500">
+              <dt className="shrink-0 text-[11px] uppercase tracking-wider text-ink-muted">
                 {k}
               </dt>
-              <dd className="break-all font-mono text-xs text-slate-700">
+              <dd className="break-all font-mono text-xs text-ink-body">
                 {renderFieldValue(fields[k])}
               </dd>
             </div>
           ))}
         </dl>
       ) : (
-        <p className="text-xs text-slate-400">No decoded fields.</p>
+        <p className="text-xs text-ink-faint">No decoded fields.</p>
       )}
       {op.raw_xdr && (
-        <details className="mt-2 rounded border border-slate-200">
-          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-brand-600">
+        <details className="mt-2 rounded border border-line">
+          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-ink-muted hover:text-brand-600">
             Raw XDR
           </summary>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-slate-200 px-2 py-2 font-mono text-[10px] leading-relaxed text-slate-600">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-line px-2 py-2 font-mono text-[10px] leading-relaxed text-ink-body">
             {op.raw_xdr}
           </pre>
         </details>
@@ -338,7 +338,7 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
       <Panel
         title="Events"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         This transaction emitted no Soroban contract events.
       </Panel>
@@ -351,23 +351,23 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th align="right">Op</Th>
               <Th>Contract</Th>
               <Th>Event type</Th>
               <Th>Topic 0</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {events.map((ev, i) => (
               <tr
                 key={`${ev.op_index}-${ev.event_index ?? i}`}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-500">
+                  <span className="font-mono tabular-nums text-ink-muted">
                     {ev.op_index}
                   </span>
                 </Td>
@@ -381,12 +381,12 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-slate-700">
+                  <span className="font-mono text-xs text-ink-body">
                     {ev.event_type || '—'}
                   </span>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-slate-500">
+                  <span className="font-mono text-xs text-ink-muted">
                     {ev.topic_0 || '—'}
                   </span>
                 </Td>
@@ -440,7 +440,7 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className={mono ? 'mt-0.5 break-all font-mono text-xs' : 'mt-0.5'}>
@@ -459,7 +459,7 @@ function FieldWide({
 }) {
   return (
     <div className="col-span-2 sm:col-span-3 lg:col-span-4">
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className="mt-0.5">{children}</dd>

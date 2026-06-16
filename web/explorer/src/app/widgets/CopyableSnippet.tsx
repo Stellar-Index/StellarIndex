@@ -12,7 +12,7 @@ export function CopyableSnippet({ snippet }: { snippet: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="relative">
-      <pre className="overflow-x-auto bg-slate-950 px-3 py-2.5 text-[11px] leading-5 text-slate-100">
+      <pre className="overflow-x-auto bg-ink px-3 py-2.5 text-[11px] leading-5 text-ink-faint">
         <code>{snippet}</code>
       </pre>
       <button
@@ -27,7 +27,7 @@ export function CopyableSnippet({ snippet }: { snippet: string }) {
             })
             .catch(() => {});
         }}
-        className="absolute right-2 top-2 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+        className="absolute right-2 top-2 rounded p-1 text-ink-faint hover:bg-ink hover:text-ink-faint"
       >
         {copied ? (
           <Check className="h-3.5 w-3.5 text-emerald-400" />

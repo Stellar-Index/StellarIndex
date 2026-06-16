@@ -534,7 +534,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     return (
       <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
         <header className="space-y-3">
-          <nav className="text-xs text-slate-500">
+          <nav className="text-xs text-ink-muted">
             <Link href="/assets" className="hover:text-brand-600">
               Assets
             </Link>{' '}
@@ -616,12 +616,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqLD) }}
       />
       <header className="space-y-3">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/assets" className="hover:text-brand-600">
             Assets
           </Link>{' '}
           /{' '}
-          <span className="text-slate-700">
+          <span className="text-ink-body">
             {coin.code}
           </span>
         </nav>
@@ -630,7 +630,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             {coin.code}
           </h1>
           {globalView?.name && globalView.name !== coin.code && (
-            <span className="text-lg text-slate-600">
+            <span className="text-lg text-ink-body">
               {globalView.name}
             </span>
           )}
@@ -661,7 +661,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           )}
           {detail?.type && (
             <span
-              className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-slate-600"
+              className="rounded-md bg-surface-subtle px-2 py-0.5 text-[11px] uppercase tracking-wider text-ink-body"
               title="Asset type"
             >
               {detail.type}
@@ -669,15 +669,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           )}
         </div>
         {globalView?.verified_issuer && (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Issued by{' '}
-            <span className="font-medium text-slate-700">
+            <span className="font-medium text-ink-body">
               {globalView.verified_issuer}
             </span>
           </p>
         )}
         {!globalView?.verified_issuer && detail?.home_domain && (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Issuer home domain:{' '}
             <code className="font-mono">{detail.home_domain}</code>
           </p>
@@ -830,7 +830,7 @@ function OverviewBody({
             points24h={coin.price_history_24h ?? []}
             points7d={coin.price_history_7d ?? []}
           />
-          <dl className="grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
+          <dl className="grid grid-cols-2 gap-3 border-t border-line pt-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
             <Stat
               label="Volume 24h"
               value={fmtUsd(detail?.volume_24h_usd ?? coin.volume_24h_usd)}
@@ -903,7 +903,7 @@ function OverviewBody({
       <Panel
         title="External views"
         hint="Cross-reference this asset on other Stellar explorers"
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         <ul className="space-y-2">
           <li>
@@ -918,9 +918,9 @@ function OverviewBody({
               className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
             >
               stellar.expert
-              <span className="text-[10px] uppercase tracking-wider text-slate-400">↗</span>
+              <span className="text-[10px] uppercase tracking-wider text-ink-faint">↗</span>
             </a>
-            <span className="ml-2 text-xs text-slate-400">
+            <span className="ml-2 text-xs text-ink-faint">
               holders, supply, on-chain history
             </span>
           </li>
@@ -932,7 +932,7 @@ function OverviewBody({
               >
                 Issuer detail
               </Link>
-              <span className="ml-2 font-mono text-xs text-slate-400">
+              <span className="ml-2 font-mono text-xs text-ink-faint">
                 {coin.issuer.slice(0, 8)}…{coin.issuer.slice(-4)}
               </span>
             </li>
@@ -950,25 +950,25 @@ function OverviewBody({
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <table className="min-w-full divide-y divide-line text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
                   <th className="px-4 py-2 font-medium">Side</th>
                   <th className="px-4 py-2 font-medium">vs</th>
                   <th className="px-4 py-2 text-right font-medium">24h volume</th>
                   <th className="px-4 py-2 text-right font-medium">24h trades</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-line-subtle">
                 {coin.top_markets.map((m) => {
                   const pairURL = topMarketHref(coin.asset_id, m);
                   return (
                     <tr
                       key={`${m.side}|${m.counterparty}`}
-                      className="hover:bg-slate-50"
+                      className="hover:bg-surface-muted"
                     >
                       <td className="px-4 py-3">
-                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+                        <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
                           {m.side}
                         </span>
                       </td>
@@ -976,7 +976,7 @@ function OverviewBody({
                         {pairURL ? (
                           <Link
                             href={pairURL}
-                            className="text-slate-700 hover:text-brand-600 hover:underline"
+                            className="text-ink-body hover:text-brand-600 hover:underline"
                           >
                             {shortCounterparty(m.counterparty)}
                           </Link>
@@ -990,10 +990,10 @@ function OverviewBody({
                             ${fmtCompact(Number(m.volume_24h_usd))}
                           </span>
                         ) : (
-                          <span className="text-slate-300">—</span>
+                          <span className="text-ink-faint">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-500">
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-muted">
                         {fmtCompact(m.trade_count_24h)}
                       </td>
                     </tr>
@@ -1040,7 +1040,7 @@ function OverviewBody({
         >
           <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+              <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
                 G-strkey
               </dt>
               <dd className="font-mono text-xs">
@@ -1120,12 +1120,12 @@ function AssetFAQ({ symbol, hasIssuer }: { symbol: string; hasIssuer: boolean })
 
 function AssetFAQItem({ q, a }: { q: string; a: string }) {
   return (
-    <details className="group rounded-lg border border-slate-200">
-      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-medium text-slate-900 hover:bg-slate-50">
+    <details className="group rounded-lg border border-line">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-medium text-ink hover:bg-surface-muted">
         <span>{q}</span>
-        <span aria-hidden className="text-xs text-slate-400 group-open:rotate-45 transition-transform">+</span>
+        <span aria-hidden className="text-xs text-ink-faint group-open:rotate-45 transition-transform">+</span>
       </summary>
-      <p className="border-t border-slate-200 px-3 py-2 text-sm leading-relaxed text-slate-700">
+      <p className="border-t border-line px-3 py-2 text-sm leading-relaxed text-ink-body">
         {a}
       </p>
     </details>
@@ -1236,7 +1236,7 @@ function ChangePctLabel({
       ? 'bg-emerald-50 text-emerald-700'
       : n < 0
         ? 'bg-rose-50 text-rose-700'
-        : 'bg-slate-100 text-slate-600';
+        : 'bg-surface-subtle text-ink-body';
   const sign = n > 0 ? '+' : '';
   return (
     <span
@@ -1313,10 +1313,10 @@ function Stat({
         ? 'text-amber-600'
         : accentTone === 'rose'
           ? 'text-rose-600'
-          : 'text-slate-500';
+          : 'text-ink-muted';
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className={mono ? 'font-mono text-xs' : 'tabular-nums'}>
@@ -1358,7 +1358,7 @@ function VerifiedCurrencyView({
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/assets" className="hover:text-brand-600">
             Assets
           </Link>{' '}
@@ -1366,21 +1366,21 @@ function VerifiedCurrencyView({
         </nav>
         <h1 className="flex flex-wrap items-baseline gap-3 text-3xl font-semibold tracking-tight">
           <span>{view.name}</span>
-          <span className="font-mono text-base text-slate-500">
+          <span className="font-mono text-base text-ink-muted">
             {view.ticker}
           </span>
-          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-slate-600">
+          <span className="rounded bg-surface-subtle px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-ink-body">
             {(view as GlobalAssetView & { class?: string }).class ?? 'verified'}
           </span>
         </h1>
         {priceNum != null && Number.isFinite(priceNum) && (
           <div className="text-2xl font-mono">
             ${priceNum < 0.001 ? priceNum.toExponential(3) : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
-            <span className="ml-2 text-xs text-slate-500">USD</span>
+            <span className="ml-2 text-xs text-ink-muted">USD</span>
           </div>
         )}
         {view.description && (
-          <p className="max-w-3xl text-sm text-slate-600">
+          <p className="max-w-3xl text-sm text-ink-body">
             {view.description}
           </p>
         )}
@@ -1401,7 +1401,7 @@ function VerifiedCurrencyView({
       <MarketsTabPanel assetID={view.slug} />
 
       {slug && (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-ink-muted">
           Slug:{' '}
           <code className="font-mono">{slug}</code>
         </p>

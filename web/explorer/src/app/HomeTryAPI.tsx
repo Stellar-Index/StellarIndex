@@ -145,7 +145,7 @@ export function HomeTryAPI() {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-line bg-surface p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap gap-1">
         {EXAMPLES.map((ex, i) => (
           <button
@@ -155,14 +155,14 @@ export function HomeTryAPI() {
             className={`rounded-md px-2.5 py-1 text-xs ${
               i === activeIx
                 ? 'bg-brand-600 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                : 'bg-surface-subtle text-ink-body hover:bg-line'
             }`}
           >
             {ex.label}
           </button>
         ))}
       </div>
-      <div className="mb-2 flex items-center gap-1 border-b border-slate-200 pb-2">
+      <div className="mb-2 flex items-center gap-1 border-b border-line pb-2">
         {LANGS.map((l) => (
           <button
             key={l.key}
@@ -170,15 +170,15 @@ export function HomeTryAPI() {
             onClick={() => setLang(l.key)}
             className={`rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
               lang === l.key
-                ? 'bg-slate-200 text-slate-900'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-line text-ink'
+                : 'text-ink-muted hover:text-ink'
             }`}
           >
             {l.label}
           </button>
         ))}
       </div>
-      <div className="relative rounded-lg bg-slate-950 px-3 py-2.5 font-mono text-[11px] text-slate-100">
+      <div className="relative rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] text-ink-faint">
         <pre className="overflow-x-auto whitespace-pre-wrap break-all pr-20">
           <code>{lang === 'curl' ? '$ ' : ''}{cmd}</code>
         </pre>
@@ -188,7 +188,7 @@ export function HomeTryAPI() {
             aria-label="Run live"
             onClick={runLive}
             disabled={running}
-            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-emerald-400 disabled:opacity-50"
+            className="rounded p-1 text-ink-faint hover:bg-ink hover:text-emerald-400 disabled:opacity-50"
           >
             <Play className="h-3.5 w-3.5" />
           </button>
@@ -204,7 +204,7 @@ export function HomeTryAPI() {
                 })
                 .catch(() => {});
             }}
-            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+            className="rounded p-1 text-ink-faint hover:bg-ink hover:text-ink-faint"
           >
             {copied ? (
               <Check className="h-3.5 w-3.5 text-up-DEFAULT" />
@@ -215,7 +215,7 @@ export function HomeTryAPI() {
         </div>
       </div>
       {response != null && (
-        <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+        <div className="mt-2 overflow-hidden rounded-lg border border-line bg-surface-muted">
           <div
             className={`flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-wider ${
               responseTone === 'ok'
@@ -229,12 +229,12 @@ export function HomeTryAPI() {
               {response.length === 4000 && ' (truncated)'}
             </span>
           </div>
-          <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[11px] text-slate-700">
+          <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[11px] text-ink-body">
             {response}
           </pre>
         </div>
       )}
-      <p className="mt-2 text-[11px] text-slate-500">
+      <p className="mt-2 text-[11px] text-ink-muted">
         No auth needed for the public tier — every endpoint here
         responds in milliseconds. Hit ▶ to run live; click any
         example tab above to see the curl.

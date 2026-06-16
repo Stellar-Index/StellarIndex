@@ -203,7 +203,7 @@ export function ChartPanel({
           />
         </div>
         {loading && (
-          <div className="flex h-[420px] items-center justify-center text-sm text-slate-500">
+          <div className="flex h-[420px] items-center justify-center text-sm text-ink-muted">
             Loading…
           </div>
         )}
@@ -215,7 +215,7 @@ export function ChartPanel({
           </div>
         )}
         {!loading && !error && data.length === 0 && (
-          <div className="flex h-[420px] items-center justify-center text-sm text-slate-500">
+          <div className="flex h-[420px] items-center justify-center text-sm text-ink-muted">
             No chart data for this asset + window yet
           </div>
         )}
@@ -258,10 +258,10 @@ function Picker<T extends string>({
 }) {
   return (
     <div className="flex items-center gap-1">
-      <span className="text-[11px] uppercase tracking-wider text-slate-500">
+      <span className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </span>
-      <div className="inline-flex overflow-hidden rounded-md border border-slate-200">
+      <div className="inline-flex overflow-hidden rounded-md border border-line">
         {options.map((opt) => (
           <button
             key={opt.key}
@@ -270,7 +270,7 @@ function Picker<T extends string>({
             className={`px-2 py-1 text-xs ${
               opt.key === value
                 ? 'bg-brand-500 text-white'
-                : 'bg-white text-slate-600 hover:bg-slate-50'
+                : 'bg-surface text-ink-body hover:bg-surface-muted'
             }`}
           >
             {opt.label}

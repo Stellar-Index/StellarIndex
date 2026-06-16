@@ -110,7 +110,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
 
   if (!cur) {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-slate-500">
+      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-ink-muted">
         <span>No data for {upper}</span>
       </div>
     );
@@ -127,17 +127,17 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   const change24h: number | null = null;
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900">
+    <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">{upper}</span>
-          <span className="font-mono text-[10px] text-slate-500">{cur.name}</span>
+          <span className="font-mono text-[10px] text-ink-muted">{cur.name}</span>
         </div>
         <a
           href={`https://stellarindex.io${assetHrefFor(upper)}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[10px] text-slate-400 hover:text-brand-600"
+          className="text-[10px] text-ink-faint hover:text-brand-600"
         >
           rates&shy;engine.net ↗
         </a>
@@ -155,7 +155,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
           positive={(change7d ?? 0) >= 0}
         />
       )}
-      <div className="mt-auto flex items-center justify-between text-[10px] text-slate-400">
+      <div className="mt-auto flex items-center justify-between text-[10px] text-ink-faint">
         <span>Powered by Stellar Index</span>
         {cur.rate_usd > 0 && (
           <span className="font-mono tabular-nums">
@@ -174,7 +174,7 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
       ? 'bg-emerald-50 text-emerald-700'
       : pct < 0
         ? 'bg-rose-50 text-rose-700'
-        : 'bg-slate-100 text-slate-600';
+        : 'bg-surface-subtle text-ink-body';
   return (
     <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
       {pct > 0 ? '+' : ''}

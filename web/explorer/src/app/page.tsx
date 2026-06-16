@@ -22,7 +22,7 @@ export default function HomePage() {
         <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
           The protocol explorer for the Stellar network.
         </h1>
-        <p className="max-w-2xl text-base text-slate-600 md:text-lg">
+        <p className="max-w-2xl text-base text-ink-body md:text-lg">
           Stellar Index captures every contract, every event, and every
           trade across Stellar protocols — CEXes, on-chain DEXes, and
           lending protocols — and serves verified per-protocol data plus a
@@ -40,31 +40,31 @@ export default function HomePage() {
           </Link>
           <Link
             href="/assets"
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-3.5 py-2 text-sm font-medium text-ink-body hover:border-brand-500 hover:text-brand-600"
           >
             World currencies
           </Link>
           <Link
             href="/exchanges"
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-3.5 py-2 text-sm font-medium text-ink-body hover:border-brand-500 hover:text-brand-600"
           >
             Connected exchanges
           </Link>
           <a
             href="https://docs.stellarindex.io"
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-3.5 py-2 text-sm font-medium text-ink-body hover:border-brand-500 hover:text-brand-600"
           >
             API docs
           </a>
           <Link
             href="/methodology"
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-3.5 py-2 text-sm font-medium text-ink-body hover:border-brand-500 hover:text-brand-600"
           >
             Read methodology
           </Link>
           <Link
             href="/signup"
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-3.5 py-2 text-sm font-medium text-ink-body hover:border-brand-500 hover:text-brand-600"
           >
             Create account
           </Link>
@@ -78,16 +78,16 @@ export default function HomePage() {
         <SystemHealthLivePanel />
         <Link
           href="/diagnostics"
-          className="flex h-full flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm hover:border-brand-500"
+          className="flex h-full flex-col justify-between rounded-xl border border-line bg-surface p-4 text-sm shadow-sm hover:border-brand-500"
         >
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
               Diagnostics
             </p>
             <p className="mt-2 text-xl font-semibold tracking-tight">
               Watch the indexer tick.
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-ink-muted">
               Per-source ingest cursors, refreshed every 15 seconds. See
               every backfill chunk advance in real time.
             </p>
@@ -117,7 +117,7 @@ export default function HomePage() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Try the API
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Public, no auth, no API key. Pick an example and paste it
             straight into a terminal.
           </p>

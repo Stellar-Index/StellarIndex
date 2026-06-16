@@ -35,14 +35,14 @@ export function NetworkLivePanel() {
           <div className="text-2xl font-bold tabular-nums">
             {assetsCount !== null ? formatCompact(assetsCount) : '—'}
           </div>
-          <div className="text-xs text-slate-500">classic assets indexed</div>
+          <div className="text-xs text-ink-muted">classic assets indexed</div>
         </div>
 
         <div>
           <div className="font-mono text-sm tabular-nums">
             {tipLedger !== null ? `#${tipLedger.toLocaleString()}` : '—'}
           </div>
-          <div className="text-[11px] text-slate-500">current ingest tip</div>
+          <div className="text-[11px] text-ink-muted">current ingest tip</div>
         </div>
 
         <Link
@@ -72,7 +72,7 @@ export function SystemHealthLivePanel() {
       <Panel
         title="System health"
         source={asExample('/v1/diagnostics/cursors')}
-        bodyClassName="text-xs text-slate-500"
+        bodyClassName="text-xs text-ink-muted"
       >
         Loading…
       </Panel>
@@ -105,7 +105,7 @@ export function SystemHealthLivePanel() {
           status="ok"
           subtext="dual-archive verifier — Tier A daily"
         />
-        <div className="pt-1 text-[11px] text-slate-500">
+        <div className="pt-1 text-[11px] text-ink-muted">
           {liveRows.length} live cursor{liveRows.length === 1 ? '' : 's'}, {data.length - liveRows.length} backfill task{data.length - liveRows.length === 1 ? '' : 's'}
         </div>
         <Link
@@ -146,7 +146,7 @@ function Health({
         />
       </div>
       {subtext && (
-        <div className="text-[10px] text-slate-500">{subtext}</div>
+        <div className="text-[10px] text-ink-muted">{subtext}</div>
       )}
     </div>
   );

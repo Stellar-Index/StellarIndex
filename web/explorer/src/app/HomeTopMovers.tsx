@@ -28,7 +28,7 @@ export function HomeTopMovers() {
     <section className="space-y-3">
       <div className="space-y-1">
         <h2 className="text-2xl font-semibold tracking-tight">Top movers</h2>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           24-hour price change across the most active classic
           assets. Updates every refresh; no synthesised data.
         </p>
@@ -67,25 +67,25 @@ function MoverColumn({
   verifiedSlugs?: Set<string>;
 }) {
   return (
-    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
-      <header className="flex items-baseline justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500">
+    <div className="overflow-hidden rounded-md border border-line bg-surface">
+      <header className="flex items-baseline justify-between border-b border-line bg-surface-muted px-4 py-2 text-[11px] uppercase tracking-wider text-ink-muted">
         <span className={tone === 'up' ? 'text-emerald-700' : 'text-rose-700'}>
           {title}
         </span>
         <span>24h</span>
       </header>
       {isLoading ? (
-        <div className="px-4 py-6 text-sm text-slate-500">Loading…</div>
+        <div className="px-4 py-6 text-sm text-ink-muted">Loading…</div>
       ) : coins.length === 0 ? (
-        <div className="px-4 py-6 text-sm text-slate-500">
+        <div className="px-4 py-6 text-sm text-ink-muted">
           Not enough movement to rank.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-line-subtle">
           {coins.map((c) => (
             <li
               key={c.asset_id}
-              className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50"
+              className="flex items-center justify-between px-4 py-2.5 hover:bg-surface-muted"
             >
               <Link
                 href={`/assets/${c.slug}`}
@@ -116,7 +116,7 @@ function MoverColumn({
                   </span>
                 )}
                 {c.price_usd && (
-                  <span className="font-mono tabular-nums text-xs text-slate-500">
+                  <span className="font-mono tabular-nums text-xs text-ink-muted">
                     ${formatPrice(Number(c.price_usd))}
                   </span>
                 )}
