@@ -146,17 +146,25 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// hours without a supply mutation.
 	{Source: "sep41-supply", Table: "sep41_supply_events", LedgerColumn: "ledger", Genesis: 50_457_424, MinGapSizeOverride: 100000},
 	// CCTP / Rozo are cross-chain bridges with sparse traffic
-	// (hours-to-days between events). 100K-ledger gap threshold
-	// silences quiet-period false positives without losing
-	// "writer wedged for >1.5 days" pages. CCTP/Rozo are new
-	// (2026-05-20 deploy) so the genesis is recent.
-	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", Genesis: 62_403_000, MinGapSizeOverride: 100000},
+	// (hours-to-days between events). 2026-06-16 re-measurement: a
+	// natural quiet window of 138,629 ledgers (~8 days) tripped the
+	// 100K threshold while ADR-0033 completeness verified cctp
+	// complete=t / coverage 1.0 — i.e. pure sparsity, not loss. Bumped
+	// to 200K (~14 days) to sit above the observed natural envelope.
+	// CCTP/Rozo are new (2026-05-20 deploy) so the genesis is recent.
+	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", Genesis: 62_403_000, MinGapSizeOverride: 200000},
 	{Source: "rozo", Table: "rozo_events", LedgerColumn: "ledger", Genesis: 62_403_000, MinGapSizeOverride: 100000},
 	// comet_liquidity: pool-events are sparse; 2026-05-29 find-data-
 	// gaps showed 17 natural gaps across cascade-era data with max
 	// 7826 ledgers (~11h of natural pool silence). 50K threshold.
 	{Source: "comet-liquidity", Table: "comet_liquidity", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
-	{Source: "soroswap-skim", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266},
+	// soroswap-skim: a pair skim() is a manually-triggered, uncommon
+	// operation (excess-balance sweep) — 21 lifetime events on r1, last
+	// at L61,962,034. ADR-0033 has soroswap complete=t / coverage 1.0
+	// (every skim in the lake is captured), so the ~564K-ledger quiet
+	// stretches are genuine rarity, not a decoder gap. 700K override
+	// sits above the observed natural envelope.
+	{Source: "soroswap-skim", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
 	// soroswap-router: router invocations dispatched via
 	// dispatcher.ContractCallDecoder (router itself emits no
 	// Soroban events, hence no soroban_events landing). Per-source
@@ -179,10 +187,12 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// phoenix-liquidity / phoenix-stake: events are user-action-triggered
 	// (provide/withdraw liquidity, bond/unbond stake) — multi-hour
 	// quiet windows are normal protocol behaviour, not data loss.
-	// 50000 ledgers ≈ 69 hours matches the observed sparsity ceiling
-	// on r1 2026-06-01.
-	{Source: "phoenix-liquidity", Table: "phoenix_liquidity", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 50000},
-	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 50000},
+	// 2026-06-16 re-measurement: observed natural max gap grew to
+	// ~144,433 (liquidity) / ~144,425 (stake) ledgers as quiet windows
+	// accumulated, while ADR-0033 has phoenix complete=t / coverage 1.0
+	// (no loss). Bumped 50K → 200K to sit above the observed envelope.
+	{Source: "phoenix-liquidity", Table: "phoenix_liquidity", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
+	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	// blend_auctions: live r1 (2026-05-28) showed 8049 distinct
 	// ledgers across a 5.9M-ledger span = one event per ~735
 	// ledgers. 2026-05-29 measurement bumped the 50K override to
@@ -194,9 +204,13 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// natural sparsity. 50K threshold.
 	{Source: "blend-positions", Table: "blend_positions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
 	// blend_emissions: emissions update on operator action (rare).
-	// blend_admin: admin actions are rare by design.
+	// blend_admin: admin actions are rare by design — only 261 lifetime
+	// events on r1, with a historical max quiet stretch of ~1,042,850
+	// ledgers (~90 days). ADR-0033 has blend complete=t / coverage 1.0,
+	// so that's genuine rarity. 1.3M override sits above it; real loss
+	// is caught by completeness_snapshots, not this threshold.
 	{Source: "blend-emissions", Table: "blend_emissions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
-	{Source: "blend-admin", Table: "blend_admin", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
+	{Source: "blend-admin", Table: "blend_admin", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 1300000},
 	// blend-backstop: the Backstop insurance module's event surface.
 	// Sparse (deposit/withdraw/draw/distribute are episodic, not
 	// per-ledger), so a wide override avoids paging on natural quiet.

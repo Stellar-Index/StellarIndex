@@ -317,7 +317,7 @@ groups:
       # from "detector silent" (broken).
       - alert: stellarindex_ingest_gap_detector_silent
         expr: |
-          rate(stellarindex_ingest_gap_detector_runs_total{outcome="ok"}[15m]) == 0
+          rate(stellarindex_ingest_gap_detector_runs_total{outcome="ok"}[7h]) == 0
           OR
           absent_over_time(stellarindex_ingest_gap_detector_runs_total[15m]) == 1
         for: 10m
@@ -327,7 +327,7 @@ groups:
           component: ingestion
           runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
         annotations:
-          summary: "Data-gap detector hasn't run in >15 min"
+          summary: "Data-gap detector hasn't run successfully in >7h (above the 6h sdex/soroban scan cadence)"
           description: |
             The aggregator's data-gap detector goroutine appears
             stuck or absent. Without it the operator-facing
