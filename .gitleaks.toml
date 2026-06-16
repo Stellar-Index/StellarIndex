@@ -90,6 +90,13 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Historical pre-rebrand spec names — gitleaks scans full repo history. openapi/stellar-index.v1.yaml + docs/reference/api/stellar-index.v1.yaml were renamed from rates-engine.v1.yaml during the Rates Engine -> Stellar Index rebrand (commit 142a4d6a). Past commits still carry the old paths with the SAME synthetic signup/dashboard OpenAPI example keys (k_... key_id + re_live_... plaintext) already allowlisted on the current names above. Allowlist the historical paths so full-history scans pass. Same rationale as the web/showcase historical allowlist."
+paths = [
+  '''openapi/rates-engine\.v1\.yaml''',
+  '''docs/reference/api/rates-engine\.v1\.yaml''',
+]
+
+[[rules.allowlists]]
 description = "Historical web/showcase tree — gitleaks scans full repo history. The web/showcase directory was renamed to web/explorer (task #19); past commits contain the old path with the same OpenAPI-derived TS bindings that web/explorer/src/api/types.ts has today (already allowlisted). Allowlist by path so historical scans pass."
 paths = [
   '''web/showcase/src/api/types\.ts''',
