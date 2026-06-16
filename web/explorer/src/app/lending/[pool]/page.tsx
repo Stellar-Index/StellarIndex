@@ -178,7 +178,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       />
       <Link
         href="/lending"
-        className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-brand-600"
+        className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All lending pools
@@ -195,7 +195,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             </span>
           )}
           {label?.deployedAt && (
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-mono text-slate-700">
+            <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[11px] font-mono text-ink-body">
               deployed {label.deployedAt}
             </span>
           )}
@@ -203,9 +203,9 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         <h1 className="break-all font-mono text-2xl tracking-tight">
           {pool.slice(0, 8)}…{pool.slice(-8)}
         </h1>
-        <p className="break-all font-mono text-xs text-slate-500">{pool}</p>
+        <p className="break-all font-mono text-xs text-ink-muted">{pool}</p>
         {label?.initiator && (
-          <p className="font-mono text-[11px] text-slate-500">
+          <p className="font-mono text-[11px] text-ink-muted">
             Deployed by{' '}
             <a
               href={`https://stellar.expert/explorer/public/account/${label.initiator}`}
@@ -232,7 +232,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             href="https://blend.capital"
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-slate-500 hover:underline"
+            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
           >
             blend.capital
             <ExternalLink className="h-3 w-3" />
@@ -242,7 +242,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
       {label?.note && (
         <Panel title="About this contract">
-          <p className="text-sm leading-relaxed text-slate-700">
+          <p className="text-sm leading-relaxed text-ink-body">
             {label.note}
           </p>
         </Panel>
@@ -257,9 +257,9 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       {data && (
         <Panel title="Last activity">
           <div className="space-y-1 text-sm">
-            <div className="text-slate-600">
+            <div className="text-ink-body">
               Most recent auction event:{' '}
-              <span className="font-mono text-slate-800">
+              <span className="font-mono text-ink">
                 {new Date(data.last_seen).toUTCString()}
               </span>
             </div>
@@ -271,7 +271,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         title="Reserve composition"
         hint="Per-asset supply / borrow APY — pending Soroban storage reader (#84)"
       >
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           Today this view tracks pools by their <em>auction</em> stream — every
           time a borrower position liquidates and the pool emits an auction
           event, we count it here. The per-reserve breakdown (which assets
@@ -288,11 +288,11 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+    <div className="rounded-xl border border-line bg-surface p-4 shadow-sm">
+      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>
-      <div className="mt-1 font-mono text-2xl tabular-nums text-slate-900">
+      <div className="mt-1 font-mono text-2xl tabular-nums text-ink">
         {value.toLocaleString()}
       </div>
     </div>

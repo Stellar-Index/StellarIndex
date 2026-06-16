@@ -31,7 +31,7 @@ export function RankBadge({ delta, isNew, className }: RankBadgeProps) {
     return (
       <span
         className={twMerge(
-          'inline-flex items-center gap-0.5 text-xs text-slate-400',
+          'inline-flex items-center gap-0.5 text-xs text-ink-faint',
           className,
         )}
         aria-label="no rank change"

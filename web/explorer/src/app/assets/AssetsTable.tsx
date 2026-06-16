@@ -140,10 +140,10 @@ export function AssetsTable({
         }
       />
 
-      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-md border border-line bg-surface">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="border-b border-line bg-surface-muted text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>#</Th>
               <Th>Asset</Th>
               <Th>Class</Th>
@@ -157,12 +157,12 @@ export function AssetsTable({
               <Th align="right">7d chart</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {isLoading && (
               <tr>
                 <td
                   colSpan={11}
-                  className="py-12 text-center text-sm text-slate-500"
+                  className="py-12 text-center text-sm text-ink-muted"
                 >
                   Loading…
                 </td>
@@ -172,7 +172,7 @@ export function AssetsTable({
               <tr>
                 <td
                   colSpan={11}
-                  className="py-12 text-center text-sm text-slate-500"
+                  className="py-12 text-center text-sm text-ink-muted"
                 >
                   No assets match this filter.
                 </td>
@@ -200,15 +200,15 @@ export function AssetsTable({
         }
       />
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-ink-muted">
         Live data from{' '}
-        <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
+        <code className="rounded bg-surface-subtle px-1 font-mono text-[11px]">
           /v1/assets?asset_class={assetClass}
         </code>
         . Catalogue rows surface first (market-cap desc — fiats top
         the chart), then long-tail Stellar-classic rows by 24h
         volume. Per-asset issuer + on-chain pool detail lives on{' '}
-        <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
+        <code className="rounded bg-surface-subtle px-1 font-mono text-[11px]">
           /assets/&#123;slug&#125;
         </code>
         .
@@ -235,7 +235,7 @@ function FilterBar({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-slate-500">Asset type:</span>
+        <span className="text-ink-muted">Asset type:</span>
         {ASSET_CLASS_OPTIONS.map((opt) => (
           <button
             key={opt.value}
@@ -244,7 +244,7 @@ function FilterBar({
             className={`rounded-full px-3 py-1 text-xs font-medium tracking-wide ${
               assetClass === opt.value
                 ? 'bg-brand-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                : 'bg-surface-subtle text-ink-body hover:bg-line'
             }`}
           >
             {opt.label}
@@ -254,22 +254,22 @@ function FilterBar({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <input
             type="search"
             aria-label="Search assets by code, slug, or name"
             value={q}
             onChange={(e) => onQChange(e.target.value)}
             placeholder="Search by code, slug, or name…"
-            className="w-72 rounded-md border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-72 rounded-md border border-line bg-surface py-1.5 pl-8 pr-3 text-sm placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
-        <label className="flex items-center gap-2 text-xs text-slate-500">
+        <label className="flex items-center gap-2 text-xs text-ink-muted">
           <span>Per page</span>
           <select
             value={limit}
             onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="rounded-md border border-line bg-surface px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           >
             <option value={50}>50</option>
             <option value={100}>100</option>
@@ -310,9 +310,9 @@ function AssetRow({
         ? marketCapRaw
         : null;
   return (
-    <tr className="hover:bg-slate-50">
+    <tr className="hover:bg-surface-muted">
       <Td>
-        <span className="text-slate-400">{rank}</span>
+        <span className="text-ink-faint">{rank}</span>
       </Td>
       <Td>
         <Link
@@ -343,7 +343,7 @@ function AssetRow({
               </svg>
             </span>
           )}
-          <span className="text-[11px] text-slate-500">
+          <span className="text-[11px] text-ink-muted">
             {coin.name ?? coin.slug}
           </span>
         </Link>
@@ -371,7 +371,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {marketCap != null ? (
-          <span className="font-mono tabular-nums text-slate-700">
+          <span className="font-mono tabular-nums text-ink-body">
             ${formatCompact(marketCap)}
           </span>
         ) : (
@@ -380,7 +380,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {volume != null ? (
-          <span className="font-mono tabular-nums text-slate-700">
+          <span className="font-mono tabular-nums text-ink-body">
             ${formatCompact(volume)}
           </span>
         ) : (
@@ -389,7 +389,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {supply != null ? (
-          <span className="font-mono tabular-nums text-slate-600">
+          <span className="font-mono tabular-nums text-ink-body">
             {formatCompact(supply)}
           </span>
         ) : (
@@ -405,7 +405,7 @@ function AssetRow({
 
 function ClassBadge({ cls }: { cls?: string }) {
   if (!cls) {
-    return <span className="text-xs text-slate-400">—</span>;
+    return <span className="text-xs text-ink-faint">—</span>;
   }
   const tone =
     cls === 'fiat'
@@ -429,7 +429,7 @@ function RowSparkline({ points }: { points?: { t: string; p?: string | null }[] 
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-slate-300">—</span>;
+    return <span className="font-mono text-[10px] text-ink-faint">—</span>;
   }
   const W = 80;
   const H = 24;
@@ -472,19 +472,19 @@ function Pagination({
         type="button"
         disabled={!hasPrev}
         onClick={onPrev}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600"
+        className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-3 py-1.5 text-xs text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink-body"
       >
         <ChevronLeft className="h-3.5 w-3.5" />
         Previous
       </button>
-      <span className="text-xs text-slate-400">
+      <span className="text-xs text-ink-faint">
         {hasPrev || hasNext ? 'Cursor-paginated' : ' '}
       </span>
       <button
         type="button"
         disabled={!hasNext}
         onClick={onNext}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600"
+        className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-3 py-1.5 text-xs text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink-body"
       >
         Next
         <ChevronRight className="h-3.5 w-3.5" />
@@ -532,7 +532,7 @@ function Td({
 function Dash({ title }: { title?: string }) {
   return (
     <span
-      className="text-slate-300"
+      className="text-ink-faint"
       title={title ?? 'No data yet'}
     >
       —
@@ -550,7 +550,7 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
       ? 'text-emerald-600'
       : n < 0
         ? 'text-rose-600'
-        : 'text-slate-500';
+        : 'text-ink-muted';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>

@@ -58,13 +58,13 @@ export function ContractView() {
       <Shell id={null}>
         <Panel
           title="No contract selected"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             This page needs an <code className="font-mono">?id=</code> query
             parameter — a 56-character Soroban contract ID (starts with{' '}
             <code className="font-mono">C</code>). Use the search box (
-            <kbd className="rounded border border-slate-300 px-1 text-[10px]">
+            <kbd className="rounded border border-line-strong px-1 text-[10px]">
               ⌘K
             </kbd>
             ) to look one up.
@@ -79,7 +79,7 @@ export function ContractView() {
       <Shell id={id}>
         <Panel
           title="Invalid contract ID"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             <span className="break-all font-mono">{id}</span> isn&apos;t a valid
@@ -102,7 +102,7 @@ export function ContractView() {
         <Panel
           title="Contract not found"
           source={source}
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             No events for that contract in the served tier, or the lookup
@@ -119,7 +119,7 @@ export function ContractView() {
         <Panel
           title="Contract"
           source={source}
-          bodyClassName="text-sm text-slate-500"
+          bodyClassName="text-sm text-ink-muted"
         >
           Loading…
         </Panel>
@@ -135,14 +135,14 @@ export function ContractView() {
         bodyClassName="space-y-3"
       >
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-slate-500">
+          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
             Contract ID
           </div>
           <div className="mt-0.5">
             <CopyHash value={data.contract_id || id} head={16} tail={16} />
           </div>
         </div>
-        <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
+        <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-body">
           <li>
             <a
               href={`https://stellar.expert/explorer/public/contract/${data.contract_id || id}`}
@@ -242,7 +242,7 @@ function WasmPanel({ id }: { id: string }) {
 
   if (isLoading) {
     return (
-      <Panel title="Code (WASM)" source={source} bodyClassName="text-sm text-slate-500">
+      <Panel title="Code (WASM)" source={source} bodyClassName="text-sm text-ink-muted">
         Loading code…
       </Panel>
     );
@@ -254,7 +254,7 @@ function WasmPanel({ id }: { id: string }) {
       <Panel
         title="Code (WASM)"
         source={source}
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         <p>
           {notCaptured
@@ -274,7 +274,7 @@ function WasmPanel({ id }: { id: string }) {
     >
       <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-slate-500">
+          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
             WASM hash
           </div>
           <div className="mt-0.5">
@@ -282,10 +282,10 @@ function WasmPanel({ id }: { id: string }) {
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-slate-500">
+          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
             Size
           </div>
-          <div className="mt-0.5 font-mono tabular-nums text-slate-700">
+          <div className="mt-0.5 font-mono tabular-nums text-ink-body">
             {formatBytes(data.size_bytes)}
           </div>
         </div>
@@ -294,9 +294,9 @@ function WasmPanel({ id }: { id: string }) {
       {/* Exported entry points — the contract's real API surface. */}
       {data.exports.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <th scope="col" className="py-2 pr-4">
                   Export
                 </th>
@@ -305,13 +305,13 @@ function WasmPanel({ id }: { id: string }) {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {data.exports.map((e) => (
                 <tr key={e.name}>
                   <td className="py-1.5 pr-4 font-mono text-brand-700">
                     {e.name}
                   </td>
-                  <td className="py-1.5 font-mono text-xs text-slate-500">
+                  <td className="py-1.5 font-mono text-xs text-ink-muted">
                     {exportSignature(e)}
                   </td>
                 </tr>
@@ -326,7 +326,7 @@ function WasmPanel({ id }: { id: string }) {
         <CodeDisclosure label="Decompiled pseudocode" code={data.decompiled} />
       )}
 
-      <p className="text-[11px] leading-snug text-slate-400">{data.source_note}</p>
+      <p className="text-[11px] leading-snug text-ink-faint">{data.source_note}</p>
     </Panel>
   );
 }
@@ -335,14 +335,14 @@ function WasmPanel({ id }: { id: string }) {
 // and height-capped so a large module doesn't dominate the page.
 function CodeDisclosure({ label, code }: { label: string; code: string }) {
   return (
-    <details className="group rounded-lg border border-slate-200">
-      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-slate-600 marker:text-slate-400 hover:text-brand-600">
+    <details className="group rounded-lg border border-line">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-ink-body marker:text-ink-faint hover:text-brand-600">
         {label}{' '}
-        <span className="text-slate-400">
+        <span className="text-ink-faint">
           ({code.split('\n').length.toLocaleString()} lines)
         </span>
       </summary>
-      <pre className="max-h-96 overflow-auto border-t border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700">
+      <pre className="max-h-96 overflow-auto border-t border-line bg-surface-muted p-3 text-[11px] leading-relaxed text-ink-body">
         {code}
       </pre>
     </details>
@@ -359,12 +359,12 @@ function Shell({
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/dexes" className="hover:text-brand-600">
             Contracts
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700">
+          <span className="font-mono text-ink-body">
             {id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'contract'}
           </span>
         </nav>
@@ -398,7 +398,7 @@ function EventsPanel({
       <Panel
         title="Recent events"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No events observed for this contract.
       </Panel>
@@ -411,9 +411,9 @@ function EventsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Ledger</Th>
               <Th>Close time</Th>
               <Th>Tx</Th>
@@ -421,11 +421,11 @@ function EventsPanel({
               <Th>Topic 0</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {events.map((ev, i) => (
               <tr
                 key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
                   <Link
@@ -437,7 +437,7 @@ function EventsPanel({
                 </Td>
                 <Td>
                   <span
-                    className="font-mono text-xs text-slate-500"
+                    className="font-mono text-xs text-ink-muted"
                     title={formatTimestamp(ev.close_time)}
                   >
                     {relativeAge(ev.close_time)}
@@ -453,12 +453,12 @@ function EventsPanel({
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-slate-700">
+                  <span className="font-mono text-xs text-ink-body">
                     {ev.event_type || '—'}
                   </span>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-slate-500">
+                  <span className="font-mono text-xs text-ink-muted">
                     {ev.topic_0 || '—'}
                   </span>
                 </Td>
@@ -473,18 +473,18 @@ function EventsPanel({
           type="button"
           onClick={onNewest}
           disabled={cursor === undefined || isFetching}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Newest
         </button>
-        <span className="font-mono text-[11px] text-slate-400">
+        <span className="font-mono text-[11px] text-ink-faint">
           {isFetching ? 'Loading…' : ''}
         </span>
         <button
           type="button"
           onClick={onOlder}
           disabled={nextCursor == null || isFetching}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Load older →
         </button>

@@ -72,8 +72,8 @@ export function CurrencyCombobox({
 
   const triggerCls =
     mode === 'select'
-      ? 'rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs uppercase tracking-wider text-slate-700 hover:border-brand-500'
-      : 'rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700 hover:bg-slate-200';
+      ? 'rounded-md border border-line bg-surface px-2 py-1 font-mono text-xs uppercase tracking-wider text-ink-body hover:border-brand-500'
+      : 'rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body hover:bg-line';
 
   return (
     <div ref={wrapRef} className="relative">
@@ -81,7 +81,7 @@ export function CurrencyCombobox({
         {value} ▾
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
+        <div className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-line bg-surface shadow-lg">
           <input
             ref={inputRef}
             value={query}
@@ -103,11 +103,11 @@ export function CurrencyCombobox({
               }
             }}
             placeholder={placeholder}
-            className="w-full border-b border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none"
+            className="w-full border-b border-line bg-surface px-3 py-2 text-sm focus:outline-none"
           />
           <ul className="max-h-64 overflow-y-auto py-1 text-sm">
             {filtered.length === 0 && (
-              <li className="px-3 py-2 text-xs text-slate-500">No matches</li>
+              <li className="px-3 py-2 text-xs text-ink-muted">No matches</li>
             )}
             {filtered.map((t, i) => (
               <li key={t}>
@@ -118,12 +118,12 @@ export function CurrencyCombobox({
                   className={`flex w-full items-center justify-between px-3 py-1.5 font-mono text-xs uppercase tracking-wider ${
                     i === highlight
                       ? 'bg-brand-50 text-brand-900'
-                      : 'text-slate-700'
+                      : 'text-ink-body'
                   }`}
                 >
                   <span>{t}</span>
                   {t === value && (
-                    <span className="text-[10px] text-slate-400">current</span>
+                    <span className="text-[10px] text-ink-faint">current</span>
                   )}
                 </button>
               </li>

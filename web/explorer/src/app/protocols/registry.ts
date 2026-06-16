@@ -108,7 +108,7 @@ export function protocolMeta(name: string): ProtocolRegistryEntry | undefined {
 // categories fall through to a neutral chip (keeps rendering if the Go
 // registry adds a category before this map is updated).
 export const CATEGORY_TONE: Record<string, string> = {
-  dex: 'bg-slate-200 text-slate-800',
+  dex: 'bg-line text-ink',
   amm: 'bg-emerald-100 text-emerald-800',
   lending: 'bg-sky-100 text-sky-800',
   yield: 'bg-violet-100 text-violet-800',
@@ -120,6 +120,6 @@ export const CATEGORY_TONE: Record<string, string> = {
 export function categoryTone(category: string): string {
   return (
     CATEGORY_TONE[category] ??
-    'bg-slate-100 text-slate-700'
+    'bg-surface-subtle text-ink-body'
   );
 }

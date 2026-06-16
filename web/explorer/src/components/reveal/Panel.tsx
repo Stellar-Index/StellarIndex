@@ -44,7 +44,7 @@ export function Panel({
     <section
       id={panelId}
       className={twMerge(
-        'relative rounded-lg border border-slate-200 bg-white p-4',
+        'relative rounded-lg border border-line bg-surface p-4',
         className,
       )}
     >
@@ -54,7 +54,7 @@ export function Panel({
             <div>
               <h3 className="text-sm font-medium">{title}</h3>
               {hint && (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-ink-muted">
                   {hint}
                 </p>
               )}

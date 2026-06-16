@@ -230,35 +230,35 @@ export default async function ConvertPage({ params }: { params: Params }) {
       />
       <Link
         href={assetHrefFor(f)}
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         {f} overview
       </Link>
 
-      <header className="space-y-3 border-b border-slate-200 pb-5">
+      <header className="space-y-3 border-b border-line pb-5">
         <h1 className="text-3xl font-semibold tracking-tight">
           {f} to {t}
           {detail?.name && (
-            <span className="ml-3 text-base font-normal text-slate-500">
+            <span className="ml-3 text-base font-normal text-ink-muted">
               {detail.name} → {t}
             </span>
           )}
         </h1>
         {rate != null ? (
-          <p className="text-2xl font-mono tabular-nums text-slate-900">
+          <p className="text-2xl font-mono tabular-nums text-ink">
             1 {f} = {formatRate(rate)} {t}
           </p>
         ) : (
-          <p className="text-sm text-slate-500">Rate currently unavailable.</p>
+          <p className="text-sm text-ink-muted">Rate currently unavailable.</p>
         )}
         {inverse != null && (
-          <p className="text-sm font-mono tabular-nums text-slate-600">
+          <p className="text-sm font-mono tabular-nums text-ink-body">
             1 {t} = {formatRate(inverse)} {f}
           </p>
         )}
         {detail?.source && (
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-ink-muted">
             Source: {detail.source}
             {detail.published_at && ` · published ${formatDate(detail.published_at)}`}
           </p>
@@ -268,7 +268,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
       <ConvertPair from={f} to={t} initialRate={rate} initialInverse={inverse} />
 
       {rate != null && (
-        <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-line bg-surface p-5">
           <h2 className="mb-4 text-lg font-semibold tracking-tight">
             {f} to {t} at common amounts
           </h2>
@@ -276,18 +276,18 @@ export default async function ConvertPage({ params }: { params: Params }) {
             {SNIPPET_AMOUNTS.map((amt) => (
               <div
                 key={amt}
-                className="flex items-baseline justify-between rounded-md bg-slate-50 px-3 py-2"
+                className="flex items-baseline justify-between rounded-md bg-surface-muted px-3 py-2"
               >
-                <span className="font-mono tabular-nums text-slate-700">
+                <span className="font-mono tabular-nums text-ink-body">
                   {amt.toLocaleString()} {f}
                 </span>
-                <span className="font-mono tabular-nums font-medium text-slate-900">
+                <span className="font-mono tabular-nums font-medium text-ink">
                   {formatRate(amt * rate)} {t}
                 </span>
               </div>
             ))}
           </div>
-          <p className="mt-4 text-xs text-slate-500">
+          <p className="mt-4 text-xs text-ink-muted">
             All values calculated at the current mid-market rate of 1 {f} = {formatRate(rate)} {t}.
             Rates update on each {detail?.source ?? 'forex source'} refresh tick.
           </p>
@@ -297,20 +297,20 @@ export default async function ConvertPage({ params }: { params: Params }) {
       <section className="flex flex-wrap gap-2 text-sm">
         <Link
           href={`/convert/${t}/${f}`}
-          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-2 text-ink-body hover:border-brand-500 hover:text-brand-600"
         >
           <ArrowLeftRight className="h-3.5 w-3.5" />
           Convert {t} to {f} instead
         </Link>
         <Link
           href={assetHrefFor(f)}
-          className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600"
+          className="inline-flex items-center rounded-md border border-line bg-surface px-3 py-2 text-ink-body hover:border-brand-500 hover:text-brand-600"
         >
           {f} cross-rates
         </Link>
         <Link
           href={assetHrefFor(t)}
-          className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600"
+          className="inline-flex items-center rounded-md border border-line bg-surface px-3 py-2 text-ink-body hover:border-brand-500 hover:text-brand-600"
         >
           {t} cross-rates
         </Link>

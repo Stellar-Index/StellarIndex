@@ -93,7 +93,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         <Panel
           title="Couldn't load this protocol"
           source={source}
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             The protocol directory is unreachable right now:{' '}
@@ -117,7 +117,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   if (isLoading || !data) {
     return (
       <Shell name={name} label={label}>
-        <Panel title={label} source={source} bodyClassName="text-sm text-slate-500">
+        <Panel title={label} source={source} bodyClassName="text-sm text-ink-muted">
           Loading on-chain analytics…
         </Panel>
       </Shell>
@@ -131,13 +131,13 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   return (
     <Shell name={name} label={label}>
       {/* ── Header ── */}
-      <header className="space-y-3 border-b border-slate-200 pb-5">
+      <header className="space-y-3 border-b border-line pb-5">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{label}</h1>
           <CategoryChip category={data.category} />
           <CompletenessBadge completeness={data.completeness} />
         </div>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           {data.description}
         </p>
         <AtAGlance data={data} analyticsAvailable={analyticsAvailable} windowDays={windowDays} />
@@ -238,7 +238,7 @@ function Shell({
 }) {
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
-      <nav className="text-xs text-slate-500">
+      <nav className="text-xs text-ink-muted">
         <Link
           href="/protocols"
           className="inline-flex items-center gap-1 hover:text-brand-600"
@@ -246,7 +246,7 @@ function Shell({
           <ArrowLeft className="h-3 w-3" aria-hidden />
           All protocols
         </Link>{' '}
-        / <span className="text-slate-700">{label || name}</span>
+        / <span className="text-ink-body">{label || name}</span>
       </nav>
       {children}
     </div>
@@ -273,7 +273,7 @@ function CompletenessBadge({
   if (!completeness) {
     return (
       <span
-        className="rounded bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-slate-500"
+        className="rounded bg-surface-subtle px-2 py-0.5 text-[11px] uppercase tracking-wider text-ink-muted"
         title="No completeness verdict recorded for this source yet."
       >
         Coverage unknown
@@ -312,8 +312,8 @@ function Kpi({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+    <div className="rounded-lg border border-line bg-surface p-3">
+      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>
       <div
@@ -369,11 +369,11 @@ function AtAGlance({
   }
 
   return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
       {bits.map((b, i) => (
         <span key={i} className="flex items-center gap-x-3">
           {i > 0 && (
-            <span aria-hidden className="text-slate-300">
+            <span aria-hidden className="text-ink-faint">
               ·
             </span>
           )}
@@ -396,7 +396,7 @@ function Glance({
   return (
     <span>
       <span
-        className={`tabular-nums text-slate-700 ${mono ? 'font-mono' : 'font-semibold'}`}
+        className={`tabular-nums text-ink-body ${mono ? 'font-mono' : 'font-semibold'}`}
       >
         {label}
       </span>{' '}
@@ -435,20 +435,20 @@ function EventBreakdown({
             <li key={b.event_type}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
                 <span
-                  className="truncate font-mono text-slate-700"
+                  className="truncate font-mono text-ink-body"
                   title={b.event_type}
                 >
                   {b.event_type}
                 </span>
-                <span className="shrink-0 tabular-nums text-slate-500">
-                  <span className="font-mono text-slate-700">
+                <span className="shrink-0 tabular-nums text-ink-muted">
+                  <span className="font-mono text-ink-body">
                     {formatCompact(b.count)}
                   </span>{' '}
                   · {pct.toFixed(pct >= 10 ? 0 : 1)}%
                 </span>
               </div>
               <div
-                className="h-2.5 overflow-hidden rounded-full bg-slate-100"
+                className="h-2.5 overflow-hidden rounded-full bg-surface-subtle"
                 role="img"
                 aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
               >
@@ -516,7 +516,7 @@ function ContractRoster({
       <Panel
         title="Contract roster"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         This source has no contract registry — it&apos;s either a classic-protocol
         venue (SDEX), an event-less oracle, or a bridge tracked without a
@@ -544,7 +544,7 @@ function ContractRoster({
         <button
           type="button"
           onClick={() => setSortKey(keyName)}
-          className={`ml-auto flex items-center gap-1 rounded uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 ${active ? 'text-brand-600' : 'hover:text-slate-700'}`}
+          className={`ml-auto flex items-center gap-1 rounded uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 ${active ? 'text-brand-600' : 'hover:text-ink-body'}`}
         >
           {label}
           <span aria-hidden className="text-[8px]">
@@ -563,9 +563,9 @@ function ContractRoster({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <th scope="col" className="px-4 py-2">
                 Role
               </th>
@@ -581,11 +581,11 @@ function ContractRoster({
               <SortHeader label="Last seen" keyName="last_seen" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {[...factories, ...visibleInstances].map((c) => (
               <tr
                 key={c.contract_id}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <td className="px-4 py-2">
                   <RoleChip kind={c.kind} />
@@ -601,19 +601,19 @@ function ContractRoster({
                 {hasTokens && (
                   <td className="px-4 py-2">
                     {c.token0 || c.token1 ? (
-                      <span className="font-mono text-[11px] text-slate-500">
+                      <span className="font-mono text-[11px] text-ink-muted">
                         {shortId(c.token0)} / {shortId(c.token1)}
                       </span>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </td>
                 )}
-                <td className="px-4 py-2 text-right font-mono tabular-nums text-slate-600">
+                <td className="px-4 py-2 text-right font-mono tabular-nums text-ink-body">
                   {c.events != null && c.events > 0 ? (
                     formatCompact(c.events)
                   ) : (
-                    <span className="text-slate-300">
+                    <span className="text-ink-faint">
                       {analyticsAvailable ? '0' : '—'}
                     </span>
                   )}
@@ -621,13 +621,13 @@ function ContractRoster({
                 <td className="px-4 py-2 text-right">
                   {c.last_seen ? (
                     <span
-                      className="font-mono text-xs text-slate-500"
+                      className="font-mono text-xs text-ink-muted"
                       title={formatTimestamp(c.last_seen)}
                     >
                       {relativeAge(c.last_seen)}
                     </span>
                   ) : (
-                    <span className="text-slate-300">—</span>
+                    <span className="text-ink-faint">—</span>
                   )}
                 </td>
               </tr>
@@ -666,7 +666,7 @@ function RoleChip({ kind }: { kind?: string }) {
     );
   }
   return (
-    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-slate-600">
+    <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-ink-body">
       instance
     </span>
   );
@@ -679,7 +679,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
     <Panel title="Protocol identity" bodyClassName="space-y-4">
       {data.factories.length > 0 && (
         <div>
-          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-muted">
             Verified factories ({data.factories.length})
           </div>
           <ul className="flex flex-wrap gap-2">
@@ -687,7 +687,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
               <li key={f}>
                 <Link
                   href={`/contract?id=${encodeURIComponent(f)}`}
-                  className="inline-flex items-center rounded border border-slate-200 px-2 py-1 font-mono text-[11px] text-brand-600 hover:border-brand-500 hover:underline"
+                  className="inline-flex items-center rounded border border-line px-2 py-1 font-mono text-[11px] text-brand-600 hover:border-brand-500 hover:underline"
                 >
                   {shortId(f)}
                 </Link>
@@ -699,14 +699,14 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
 
       {data.event_kinds.length > 0 && (
         <div>
-          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-muted">
             Decoder event vocabulary
           </div>
           <ul className="flex flex-wrap gap-1.5">
             {data.event_kinds.map((k) => (
               <li
                 key={k}
-                className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600"
+                className="rounded-full bg-surface-subtle px-2 py-0.5 font-mono text-[10px] text-ink-body"
               >
                 {k}
               </li>
@@ -715,7 +715,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-200 pt-3 text-xs">
+      <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-line pt-3 text-xs">
         {data.verification_page && (
           <a
             href={`https://github.com/StellarIndex/stellar-index/blob/main/${data.verification_page}`}
@@ -731,7 +731,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
           href={`${API_BASE_URL}/v1/protocols/${encodeURIComponent(name)}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
         >
           Raw API (/v1/protocols/{name})
           <ExternalLink className="h-3 w-3" aria-hidden />
@@ -745,7 +745,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
 
 function AnalyticsUnavailable() {
   return (
-    <p className="py-6 text-center text-sm text-slate-500">
+    <p className="py-6 text-center text-sm text-ink-muted">
       Lake analytics unavailable — the certified-lake reader is currently
       unreachable. The contract registry below is served independently and is
       unaffected.
@@ -754,7 +754,7 @@ function AnalyticsUnavailable() {
 }
 
 function EmptyAnalytics({ text }: { text: string }) {
-  return <p className="py-6 text-center text-sm text-slate-500">{text}</p>;
+  return <p className="py-6 text-center text-sm text-ink-muted">{text}</p>;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

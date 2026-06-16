@@ -13,7 +13,7 @@ export default function MethodologyPage() {
     <div className="mx-auto max-w-4xl space-y-10 px-6 py-10">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Methodology</h1>
-        <p className="text-base text-slate-600">
+        <p className="text-base text-ink-body">
           How every price Stellar Index serves is computed, from raw
           on-chain event to the final aggregate. Each section links
           to the underlying ADR for the full rationale, alternatives
@@ -56,15 +56,15 @@ export default function MethodologyPage() {
         />
         <Aside>
           The full per-venue registry — including{' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             include_in_vwap
           </code>
           ,{' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             paid
           </code>
           ,{' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             backfill_safe
           </code>
           , and 24h trade counts — is at{' '}
@@ -88,7 +88,7 @@ export default function MethodologyPage() {
         </Formula>
         <p>
           where each trade i is from a source with class ={' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             exchange
           </code>
           . No per-venue weighting tier or boost — the
@@ -148,7 +148,7 @@ export default function MethodologyPage() {
           number the aggregate can no longer stand behind. For those,
           the API keeps serving the{' '}
           <strong>last known-good value</strong> but stamps it with{' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             flags.frozen=true
           </code>{' '}
           so consumers know not to act on it — rather than silently
@@ -185,7 +185,7 @@ export default function MethodologyPage() {
             status.stellarindex.io
           </a>
           , and historically as Atom syndication via{' '}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             /v1/incidents.atom
           </code>
           .
@@ -218,7 +218,7 @@ export default function MethodologyPage() {
         <p>
           Tip-price callers who can&apos;t tolerate that latency use
           the separate
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
             /v1/price/tip
           </code>{' '}
           endpoint, which serves the rolling-window in-progress
@@ -238,19 +238,19 @@ export default function MethodologyPage() {
           <ADRRef id="0009" />
           ):
         </p>
-        <table className="w-full divide-y divide-slate-200 text-sm">
+        <table className="w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-xs uppercase tracking-wider text-ink-muted">
               <th className="py-2">Percentile</th>
               <th className="py-2">Target</th>
               <th className="py-2">Measured live</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             <tr>
               <td className="py-2 font-mono">p50</td>
               <td className="py-2">&lt; 50 ms</td>
-              <td className="py-2 text-slate-500">
+              <td className="py-2 text-ink-muted">
                 <a
                   href="https://status.stellarindex.io"
                   className="text-brand-600 hover:underline"
@@ -262,12 +262,12 @@ export default function MethodologyPage() {
             <tr>
               <td className="py-2 font-mono">p95</td>
               <td className="py-2">&lt; 200 ms</td>
-              <td className="py-2 text-slate-500">live</td>
+              <td className="py-2 text-ink-muted">live</td>
             </tr>
             <tr>
               <td className="py-2 font-mono">p99</td>
               <td className="py-2">&lt; 500 ms</td>
-              <td className="py-2 text-slate-500">live</td>
+              <td className="py-2 text-ink-muted">live</td>
             </tr>
           </tbody>
         </table>
@@ -296,13 +296,13 @@ export default function MethodologyPage() {
         </p>
         <ul className="ml-5 list-disc space-y-1">
           <li>
-            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
               *big.Int
             </code>{' '}
             in Go.
           </li>
           <li>
-            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
               NUMERIC
             </code>{' '}
             column in TimescaleDB.
@@ -364,8 +364,8 @@ const TOC = [
 
 function TableOfContents() {
   return (
-    <nav className="rounded-xl border border-slate-200 bg-white p-4">
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+    <nav className="rounded-xl border border-line bg-surface p-4">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-muted">
         Contents
       </h2>
       <ol className="space-y-1 text-sm">
@@ -373,7 +373,7 @@ function TableOfContents() {
           <li key={t.id}>
             <a
               href={`#${t.id}`}
-              className="text-slate-700 hover:text-brand-600"
+              className="text-ink-body hover:text-brand-600"
             >
               {i + 1}. {t.label}
             </a>
@@ -408,12 +408,12 @@ function Section({
           </a>
         </h2>
         {subtitle && (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             {subtitle}
           </p>
         )}
       </header>
-      <div className="space-y-3 text-sm leading-6 text-slate-700">
+      <div className="space-y-3 text-sm leading-6 text-ink-body">
         {children}
       </div>
     </section>
@@ -437,7 +437,7 @@ function DefList({ rows }: { rows: { term: string; def: string }[] }) {
 
 function Formula({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-center font-mono text-sm">
+    <div className="rounded-md border border-line bg-surface-muted px-4 py-3 text-center font-mono text-sm">
       {children}
     </div>
   );
@@ -445,7 +445,7 @@ function Formula({ children }: { children: React.ReactNode }) {
 
 function Aside({ children }: { children: React.ReactNode }) {
   return (
-    <p className="rounded-md border-l-2 border-brand-500 bg-brand-50 px-3 py-2 text-xs text-slate-700">
+    <p className="rounded-md border-l-2 border-brand-500 bg-brand-50 px-3 py-2 text-xs text-ink-body">
       {children}
     </p>
   );

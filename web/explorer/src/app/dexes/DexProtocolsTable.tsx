@@ -27,7 +27,7 @@ const TONE: Record<string, string> = {
   soroswap: 'bg-emerald-100 text-emerald-800',
   phoenix: 'bg-amber-100 text-amber-800',
   aquarius: 'bg-sky-100 text-sky-800',
-  sdex: 'bg-slate-200 text-slate-800',
+  sdex: 'bg-line text-ink',
   comet: 'bg-violet-100 text-violet-800',
 };
 
@@ -63,9 +63,9 @@ export function DexProtocolsTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <Th>Protocol</Th>
               <Th align="right">24h volume</Th>
               <Th>24h chart</Th>
@@ -74,26 +74,26 @@ export function DexProtocolsTable() {
               <Th align="right">VWAP weight</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {q.isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading protocols…
                 </td>
               </tr>
             )}
             {!q.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No DEX protocols reporting 24h activity.
                 </td>
               </tr>
             )}
             {rows.map((r) => {
               const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
-              const tone = TONE[r.name] ?? 'bg-slate-100 text-slate-700';
+              const tone = TONE[r.name] ?? 'bg-surface-subtle text-ink-body';
               return (
-                <tr key={r.name} className="hover:bg-slate-50">
+                <tr key={r.name} className="hover:bg-surface-muted">
                   <Td>
                     <Link
                       href={`/dexes/${r.name}`}
@@ -106,21 +106,21 @@ export function DexProtocolsTable() {
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
                       <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </Td>
                   <Td>
                     <SourceSparkline buckets={r.volume_history_24h} />
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {r.trade_count_24h && r.trade_count_24h > 0
                         ? formatCompact(r.trade_count_24h)
                         : '0'}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {r.markets_count_24h && r.markets_count_24h > 0
                         ? formatCompact(r.markets_count_24h)
                         : '0'}

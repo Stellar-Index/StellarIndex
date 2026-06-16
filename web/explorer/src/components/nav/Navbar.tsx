@@ -482,7 +482,7 @@ function StatusPill() {
         ? 'bg-amber-500'
         : overall === 'down'
           ? 'bg-rose-500'
-          : 'bg-slate-400';
+          : 'bg-ink-faint';
   const title =
     overall === 'ok'
       ? 'All systems operational'

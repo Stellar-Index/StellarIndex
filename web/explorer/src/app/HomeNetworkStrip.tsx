@@ -136,10 +136,10 @@ function Cell({
       ? 'text-emerald-600'
       : tone === 'down'
         ? 'text-rose-600'
-        : 'text-slate-500';
+        : 'text-ink-muted';
   const inner = (
     <>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>
       <div
@@ -154,7 +154,7 @@ function Cell({
     </>
   );
   const baseClass =
-    'block rounded-md border border-slate-200 bg-white p-3';
+    'block rounded-md border border-line bg-surface p-3';
   if (href) {
     return (
       <Link

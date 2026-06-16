@@ -72,14 +72,14 @@ export function ConvertPair({
   const toLabel = direction === 'forward' ? to : from;
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-xl border border-line bg-surface p-5 shadow-sm">
       <h2 className="mb-4 text-lg font-semibold tracking-tight">
         Convert {fromLabel} → {toLabel}
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-slate-500">From</span>
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
+          <span className="text-xs uppercase tracking-wider text-ink-muted">From</span>
+          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
             <input
               type="number"
               value={amount}
@@ -90,7 +90,7 @@ export function ConvertPair({
               className="w-full bg-transparent text-2xl font-mono tabular-nums focus:outline-none"
               aria-label={`Amount in ${fromLabel}`}
             />
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700">
+            <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
               {fromLabel}
             </span>
           </div>
@@ -99,7 +99,7 @@ export function ConvertPair({
         <button
           type="button"
           onClick={() => setDirection((d) => (d === 'forward' ? 'reverse' : 'forward'))}
-          className="self-end rounded-md border border-slate-200 bg-white p-2 text-slate-500 hover:border-brand-500 hover:text-brand-600"
+          className="self-end rounded-md border border-line bg-surface p-2 text-ink-muted hover:border-brand-500 hover:text-brand-600"
           aria-label="Swap direction"
           title="Swap direction"
         >
@@ -107,18 +107,18 @@ export function ConvertPair({
         </button>
 
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-slate-500">To</span>
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
-            <span className="w-full text-2xl font-mono tabular-nums text-slate-900">
+          <span className="text-xs uppercase tracking-wider text-ink-muted">To</span>
+          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
+            <span className="w-full text-2xl font-mono tabular-nums text-ink">
               {result != null ? formatRate(result) : '—'}
             </span>
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700">
+            <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
               {toLabel}
             </span>
           </div>
         </label>
       </div>
-      <p className="mt-3 text-xs text-slate-500">
+      <p className="mt-3 text-xs text-ink-muted">
         {rate != null && inverse != null ? (
           <>
             1 {fromLabel} ={' '}

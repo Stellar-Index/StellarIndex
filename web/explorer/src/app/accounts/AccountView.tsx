@@ -70,13 +70,13 @@ export function AccountView() {
       <Shell id={null}>
         <Panel
           title="No account selected"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             This page needs an <code className="font-mono">?id=</code> query
             parameter — a 56-character Stellar account ID (starts with{' '}
             <code className="font-mono">G</code>). Use the search box (
-            <kbd className="rounded border border-slate-300 px-1 text-[10px]">
+            <kbd className="rounded border border-line-strong px-1 text-[10px]">
               ⌘K
             </kbd>
             ) to look one up.
@@ -91,7 +91,7 @@ export function AccountView() {
       <Shell id={id}>
         <Panel
           title="Invalid account ID"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             <span className="break-all font-mono">{id}</span> isn&apos;t a valid
@@ -113,14 +113,14 @@ export function AccountView() {
         bodyClassName="space-y-3"
       >
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-slate-500">
+          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
             Account ID
           </div>
           <div className="mt-0.5">
             <CopyHash value={id} head={16} tail={16} />
           </div>
         </div>
-        <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
+        <ul className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-body">
           <li>
             <a
               href={`https://stellar.expert/explorer/public/account/${encodeURIComponent(id)}`}
@@ -168,12 +168,12 @@ function Shell({
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/ledgers" className="hover:text-brand-600">
             Ledgers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700">
+          <span className="font-mono text-ink-body">
             {id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'account'}
           </span>
         </nav>
@@ -205,7 +205,7 @@ function TransactionsPanel({
       <Panel
         title="Transactions"
         source={source}
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         No transactions for that account in the served tier, or the lookup
         failed: {error instanceof Error ? error.message : 'unknown error'}.
@@ -217,7 +217,7 @@ function TransactionsPanel({
       <Panel
         title="Transactions"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -228,7 +228,7 @@ function TransactionsPanel({
       <Panel
         title="Transactions"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No sourced transactions observed for this account.
       </Panel>
@@ -241,9 +241,9 @@ function TransactionsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Hash</Th>
               <Th>Ledger</Th>
               <Th align="right">Ops</Th>
@@ -252,11 +252,11 @@ function TransactionsPanel({
               <Th>Memo</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {data.transactions.map((t: LedgerTransaction) => (
               <tr
                 key={t.hash}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
                   <Link
@@ -276,7 +276,7 @@ function TransactionsPanel({
                   </Link>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600">
+                  <span className="font-mono tabular-nums text-ink-body">
                     {t.operation_count}
                   </span>
                 </Td>
@@ -284,21 +284,21 @@ function TransactionsPanel({
                   <SuccessBadge ok={t.successful} code={t.result_code} />
                 </Td>
                 <Td align="right">
-                  <span className="font-mono text-xs tabular-nums text-slate-500">
+                  <span className="font-mono text-xs tabular-nums text-ink-muted">
                     {t.fee_charged != null ? stroopsToXlm(t.fee_charged) : '—'}
                   </span>
                 </Td>
                 <Td>
                   {t.memo_type && t.memo_type !== 'none' ? (
                     <span
-                      className="font-mono text-[11px] text-slate-500"
+                      className="font-mono text-[11px] text-ink-muted"
                       title={t.memo ?? ''}
                     >
                       {t.memo_type}
                       {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
                     </span>
                   ) : (
-                    <span className="text-slate-300">—</span>
+                    <span className="text-ink-faint">—</span>
                   )}
                 </Td>
               </tr>
@@ -331,7 +331,7 @@ function OperationsPanel({
       <Panel
         title="Operations"
         source={source}
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         No operations for that account in the served tier, or the lookup
         failed: {error instanceof Error ? error.message : 'unknown error'}.
@@ -343,7 +343,7 @@ function OperationsPanel({
       <Panel
         title="Operations"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -354,7 +354,7 @@ function OperationsPanel({
       <Panel
         title="Operations"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No sourced operations observed for this account.
       </Panel>
@@ -377,9 +377,9 @@ function OperationCard({ op }: { op: TxOperation }) {
   const fields = op.fields ?? {};
   const fieldKeys = Object.keys(fields);
   return (
-    <div className="rounded-lg border border-slate-200 p-3">
+    <div className="rounded-lg border border-line p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+        <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
           #{op.op_index}
         </span>
         <span className="text-brand-700 rounded bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
@@ -397,14 +397,14 @@ function OperationCard({ op }: { op: TxOperation }) {
         {op.ledger != null && (
           <Link
             href={`/ledger?seq=${op.ledger}`}
-            className="font-mono text-[11px] text-slate-500 hover:text-brand-600"
+            className="font-mono text-[11px] text-ink-muted hover:text-brand-600"
           >
             #{op.ledger.toLocaleString()}
           </Link>
         )}
         {op.close_time && (
           <span
-            className="font-mono text-[11px] text-slate-400"
+            className="font-mono text-[11px] text-ink-faint"
             title={formatTimestamp(op.close_time)}
           >
             {relativeAge(op.close_time)}
@@ -415,24 +415,24 @@ function OperationCard({ op }: { op: TxOperation }) {
         <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
           {fieldKeys.map((k) => (
             <div key={k} className="flex items-baseline gap-2">
-              <dt className="shrink-0 text-[11px] uppercase tracking-wider text-slate-500">
+              <dt className="shrink-0 text-[11px] uppercase tracking-wider text-ink-muted">
                 {k}
               </dt>
-              <dd className="break-all font-mono text-xs text-slate-700">
+              <dd className="break-all font-mono text-xs text-ink-body">
                 {renderFieldValue(fields[k])}
               </dd>
             </div>
           ))}
         </dl>
       ) : (
-        <p className="text-xs text-slate-400">No decoded fields.</p>
+        <p className="text-xs text-ink-faint">No decoded fields.</p>
       )}
       {op.raw_xdr && (
-        <details className="mt-2 rounded border border-slate-200">
-          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-brand-600">
+        <details className="mt-2 rounded border border-line">
+          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-ink-muted hover:text-brand-600">
             Raw XDR
           </summary>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-slate-200 px-2 py-2 font-mono text-[10px] leading-relaxed text-slate-600">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-line px-2 py-2 font-mono text-[10px] leading-relaxed text-ink-body">
             {op.raw_xdr}
           </pre>
         </details>

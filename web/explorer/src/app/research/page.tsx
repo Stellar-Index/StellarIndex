@@ -43,7 +43,7 @@ export default function ResearchPage() {
     <div className="mx-auto max-w-7xl space-y-10 px-6 py-8">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Research</h1>
-        <p className="max-w-3xl text-base text-slate-600">
+        <p className="max-w-3xl text-base text-ink-body">
           The thinking behind every Stellar Index choice. Architecture
           decision records (ADRs) below capture every load-bearing
           design call with its alternatives + consequences. The
@@ -57,7 +57,7 @@ export default function ResearchPage() {
           <h2 className="text-xl font-semibold tracking-tight">
             Architecture narratives
           </h2>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-ink-muted">
             {archDocs.length} docs ·{' '}
             <a
               href="https://github.com/StellarIndex/stellar-index/tree/main/docs/architecture"
@@ -74,23 +74,23 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/architecture/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
+              className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
             >
               <div className="flex items-center gap-2">
-                <BookOpen className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
-                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                <BookOpen className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
                   Architecture
                 </span>
                 {d.last_verified && (
-                  <span className="ml-auto text-[10px] text-slate-400">
+                  <span className="ml-auto text-[10px] text-ink-faint">
                     Verified {d.last_verified}
                   </span>
                 )}
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
+              <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                 {d.title}
               </h4>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-ink-body">
                 {d.description}
               </p>
             </Link>
@@ -103,7 +103,7 @@ export default function ResearchPage() {
           <h2 className="text-xl font-semibold tracking-tight">
             Integration audits
           </h2>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-ink-muted">
             {discoveryDocs.length} audits ·{' '}
             <a
               href="https://github.com/StellarIndex/stellar-index/tree/main/docs/discovery"
@@ -115,7 +115,7 @@ export default function ResearchPage() {
             </a>
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           For every on-chain venue we ingest, we verified the event
           schema and decoder against the upstream Rust source. Each
           audit names the contract repo and commit checked, the
@@ -126,18 +126,18 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/discovery/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
+              className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
             >
               <div className="flex items-center gap-2">
-                <ShieldCheck className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
-                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                <ShieldCheck className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
                   {d.category}
                 </span>
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
+              <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                 {d.title}
               </h4>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-ink-body">
                 {d.description}
               </p>
             </Link>
@@ -150,7 +150,7 @@ export default function ResearchPage() {
           <h2 className="text-xl font-semibold tracking-tight">
             Operations runbooks
           </h2>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-ink-muted">
             {opsDocs.length} guides ·{' '}
             <a
               href="https://github.com/StellarIndex/stellar-index/tree/main/docs/operations"
@@ -162,7 +162,7 @@ export default function ResearchPage() {
             </a>
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           The recipes any new operator (or auditor) would want to
           read before standing up their own copy. Per-alert on-call
           runbooks stay private; these four are the cross-cutting
@@ -173,23 +173,23 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/operations/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
+              className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
             >
               <div className="flex items-center gap-2">
-                <Wrench className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
-                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                <Wrench className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
                   Operations
                 </span>
                 {d.last_verified && (
-                  <span className="ml-auto text-[10px] text-slate-400">
+                  <span className="ml-auto text-[10px] text-ink-faint">
                     Verified {d.last_verified}
                   </span>
                 )}
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
+              <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                 {d.title}
               </h4>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-ink-body">
                 {d.description}
               </p>
             </Link>
@@ -202,7 +202,7 @@ export default function ResearchPage() {
           <h2 className="text-xl font-semibold tracking-tight">
             Architecture decision records
           </h2>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-ink-muted">
             {adrs.length} records ·{' '}
             <a
               href="https://github.com/StellarIndex/stellar-index/tree/main/docs/adr"
@@ -220,7 +220,7 @@ export default function ResearchPage() {
             grouped[status].length === 0 ? null : (
               <div key={status} className="space-y-2">
                 {status !== 'Accepted' && (
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
                     {status}
                   </h3>
                 )}
@@ -229,19 +229,19 @@ export default function ResearchPage() {
                     <Link
                       key={adr.id}
                       href={`/research/adr/${adr.id}`}
-                      className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
+                      className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
                     >
                       <div className="flex items-center gap-2">
-                        <FileText className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                        <FileText className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
                           ADR-{adr.id}
                         </span>
                         <StatusBadge status={adr.status} />
-                        <span className="ml-auto text-[10px] text-slate-400">
+                        <span className="ml-auto text-[10px] text-ink-faint">
                           {adr.date}
                         </span>
                       </div>
-                      <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
+                      <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                         {adr.title}
                       </h4>
                     </Link>
@@ -263,20 +263,20 @@ export default function ResearchPage() {
                   href={t.href}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300"
+                  className="flex flex-col gap-1 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300"
                 >
                   <h3 className="text-sm font-semibold">{t.name}</h3>
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-ink-body">
                     {t.description}
                   </p>
                 </a>
               ) : (
                 <div
                   key={t.name}
-                  className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4"
+                  className="flex flex-col gap-1 rounded-xl border border-line bg-surface p-4"
                 >
                   <h3 className="text-sm font-semibold">{t.name}</h3>
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-ink-body">
                     {t.description}
                   </p>
                 </div>
@@ -286,9 +286,9 @@ export default function ResearchPage() {
         </section>
       )}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm">
+      <section className="rounded-xl border border-line bg-surface p-5 text-sm">
         <h2 className="text-base font-semibold">Why we publish all of this</h2>
-        <p className="mt-2 text-slate-600">
+        <p className="mt-2 text-ink-body">
           Stellar already has Horizon. The reason a second pricing
           stack adds value is methodology — what gets included in the
           VWAP, how we handle cross-pair triangulation, what triggers a

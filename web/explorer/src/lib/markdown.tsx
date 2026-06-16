@@ -145,7 +145,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <h2
           key={i}
-          className="mt-8 text-xl font-semibold tracking-tight border-b border-slate-200 pb-1"
+          className="mt-8 text-xl font-semibold tracking-tight border-b border-line pb-1"
         >
           <Inline text={b.text} />
         </h2>
@@ -158,19 +158,19 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       );
     case 'h4':
       return (
-        <h4 key={i} className="mt-4 text-sm font-semibold uppercase tracking-wider text-slate-500">
+        <h4 key={i} className="mt-4 text-sm font-semibold uppercase tracking-wider text-ink-muted">
           <Inline text={b.text} />
         </h4>
       );
     case 'p':
       return (
-        <p key={i} className="text-sm leading-6 text-slate-700">
+        <p key={i} className="text-sm leading-6 text-ink-body">
           <Inline text={b.text} />
         </p>
       );
     case 'ul':
       return (
-        <ul key={i} className="ml-5 list-disc space-y-1 text-sm leading-6 text-slate-700">
+        <ul key={i} className="ml-5 list-disc space-y-1 text-sm leading-6 text-ink-body">
           {b.items.map((it, j) => (
             <li key={j}>
               <Inline text={it} />
@@ -180,7 +180,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       );
     case 'ol':
       return (
-        <ol key={i} className="ml-5 list-decimal space-y-1 text-sm leading-6 text-slate-700">
+        <ol key={i} className="ml-5 list-decimal space-y-1 text-sm leading-6 text-ink-body">
           {b.items.map((it, j) => (
             <li key={j}>
               <Inline text={it} />
@@ -192,7 +192,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <pre
           key={i}
-          className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5"
+          className="overflow-x-auto rounded-lg border border-line bg-surface-muted p-3 text-xs leading-5"
         >
           <code>{b.code}</code>
         </pre>
@@ -201,13 +201,13 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <blockquote
           key={i}
-          className="border-l-2 border-slate-300 pl-4 text-sm italic text-slate-600"
+          className="border-l-2 border-line-strong pl-4 text-sm italic text-ink-body"
         >
           <Inline text={b.text} />
         </blockquote>
       );
     case 'hr':
-      return <hr key={i} className="border-slate-200" />;
+      return <hr key={i} className="border-line" />;
   }
 }
 
@@ -283,7 +283,7 @@ function Inline({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-slate-900">
+            <strong key={i} className="font-semibold text-ink">
               {t.value}
             </strong>
           );
@@ -291,7 +291,7 @@ function Inline({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em]"
+              className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-[0.85em]"
             >
               {t.value}
             </code>

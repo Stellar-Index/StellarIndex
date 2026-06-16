@@ -30,7 +30,7 @@ export function AssetLabel({
   const { data: sacMap } = useSACWrappers();
   const { data: issuerMap } = useIssuerLookup();
 
-  if (!canonical) return <span className="text-xs text-slate-400">—</span>;
+  if (!canonical) return <span className="text-xs text-ink-faint">—</span>;
   if (canonical === 'native')
     return <span className="font-medium">XLM</span>;
   if (canonical.startsWith('fiat:')) {
@@ -58,7 +58,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">XLM</div>
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">
+          <div className="text-[10px] uppercase tracking-wide text-ink-muted">
             SAC
           </div>
         </div>
@@ -69,7 +69,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">XLM</div>
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">
+          <div className="text-[10px] uppercase tracking-wide text-ink-muted">
             SAC
           </div>
         </div>
@@ -81,7 +81,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">{code}</div>
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">
+          <div className="text-[10px] uppercase tracking-wide text-ink-muted">
             SAC
           </div>
         </div>
@@ -121,7 +121,7 @@ export function AssetLabel({
       <div>
         <div className="font-medium">{code}</div>
         <div
-          className="text-[10px] text-slate-500"
+          className="text-[10px] text-ink-muted"
           title={issuer}
         >
           by {known.org_name}
@@ -133,7 +133,7 @@ export function AssetLabel({
     <div>
       <div className="font-medium">{code}</div>
       <div
-        className="font-mono text-[10px] text-slate-500"
+        className="font-mono text-[10px] text-ink-muted"
         title={issuer}
       >
         {issuer.length > 12 ? `${issuer.slice(0, 6)}…${issuer.slice(-4)}` : issuer}

@@ -39,7 +39,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       <Panel
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -52,7 +52,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       <Panel
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No asset detail available.
       </Panel>
@@ -75,7 +75,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
     >
       {onchain.data && <OnChainSupply data={onchain.data} decimals={decimals} />}
       {noSupply ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           {onchain.data
             ? 'No ADR-0011 circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
             : 'No supply snapshot available for this asset. The supply observer may not have backfilled it yet.'}
@@ -119,7 +119,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 
 
           {a.supply_basis && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-ink-muted">
               <span className="font-mono">supply_basis</span>: {a.supply_basis}
               {' — '}
               policy under ADR-0011 that produced these numbers.
@@ -127,11 +127,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           )}
 
           {(a.fixed_number || a.max_number || a.is_unlimited != null) && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
-              <h4 className="mb-1 font-semibold uppercase tracking-wider text-slate-500">
+            <div className="rounded-lg border border-line bg-surface-muted p-3 text-xs">
+              <h4 className="mb-1 font-semibold uppercase tracking-wider text-ink-muted">
                 SEP-1 issuance declarations
               </h4>
-              <p className="text-slate-600">
+              <p className="text-ink-body">
                 What the issuer pledged in their <span className="font-mono">stellar.toml</span>
                 — distinct from the live-ledger numbers above.
               </p>
@@ -162,8 +162,8 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 // an empty SVG. Once both sides land the chart replaces this body.
 function MarketCapChartEmpty() {
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-      <h4 className="mb-1 font-semibold uppercase tracking-wider text-xs text-slate-500">
+    <div className="rounded-lg border border-dashed border-line-strong bg-surface-muted p-4 text-sm text-ink-body">
+      <h4 className="mb-1 font-semibold uppercase tracking-wider text-xs text-ink-muted">
         Market-cap timeline
       </h4>
       <p>
@@ -228,13 +228,13 @@ function Metric({
   sublabel?: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="text-xs uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="mt-1 font-mono text-xl font-semibold text-slate-900">
+    <div className="rounded-lg border border-line bg-surface p-3">
+      <div className="text-xs uppercase tracking-wider text-ink-muted">{label}</div>
+      <div className="mt-1 font-mono text-xl font-semibold text-ink">
         {value}
       </div>
       {sublabel && (
-        <div className="mt-1 truncate font-mono text-[11px] text-slate-500">
+        <div className="mt-1 truncate font-mono text-[11px] text-ink-muted">
           {sublabel}
         </div>
       )}

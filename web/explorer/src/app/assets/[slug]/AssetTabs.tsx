@@ -33,7 +33,7 @@ export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolea
   ];
 
   return (
-    <nav className="flex gap-1 overflow-x-auto border-b border-slate-200 text-sm">
+    <nav className="flex gap-1 overflow-x-auto border-b border-line text-sm">
       {tabs.map((t) => (
         <Link
           key={t.key}
@@ -43,7 +43,7 @@ export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolea
           className={`border-b-2 px-3 py-2 ${
             t.key === active
               ? 'border-brand-500 font-medium text-brand-600'
-              : 'border-transparent text-slate-600 hover:text-brand-600'
+              : 'border-transparent text-ink-body hover:text-brand-600'
           }`}
         >
           {t.label}

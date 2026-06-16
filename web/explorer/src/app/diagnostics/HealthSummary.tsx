@@ -23,7 +23,7 @@ export function HealthSummary() {
 
   if (isLoading || !data) {
     return (
-      <section className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-500">
+      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
         Loading health summary…
       </section>
     );
@@ -133,8 +133,8 @@ function Cell({
           ? 'text-rose-700'
           : '';
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-3">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+    <div className="rounded-md border border-line bg-surface p-3">
+      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>
       <div
@@ -143,7 +143,7 @@ function Cell({
       >
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-[11px] text-slate-500">{sub}</div>}
+      {sub && <div className="mt-0.5 text-[11px] text-ink-muted">{sub}</div>}
     </div>
   );
 }

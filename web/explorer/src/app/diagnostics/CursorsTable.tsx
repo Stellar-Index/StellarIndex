@@ -63,7 +63,7 @@ export function CursorsTable() {
       <Panel
         title="Ingest cursors"
         source={asExample('/v1/diagnostics/cursors')}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -74,7 +74,7 @@ export function CursorsTable() {
       <Panel
         title="Ingest cursors"
         source={asExample('/v1/diagnostics/cursors')}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No cursors recorded yet.
       </Panel>
@@ -96,18 +96,18 @@ export function CursorsTable() {
             placeholder="Filter sources or sub-sources…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-64 rounded-md border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px] placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-64 rounded-md border border-line bg-surface px-2.5 py-1 font-mono text-[11px] placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <label className="inline-flex select-none items-center gap-1.5 font-mono text-[11px] text-slate-600">
+          <label className="inline-flex select-none items-center gap-1.5 font-mono text-[11px] text-ink-body">
             <input
               type="checkbox"
               checked={hideStale}
               onChange={(e) => setHideStale(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+              className="h-3.5 w-3.5 rounded border-line-strong text-brand-600 focus:ring-brand-500"
             />
             Hide stale (&gt;1h)
           </label>
-          <span className="font-mono text-[11px] text-slate-500">
+          <span className="font-mono text-[11px] text-ink-muted">
             {filtered.length} of {(data ?? []).length} rows
             {filter && (
               <button
@@ -122,9 +122,9 @@ export function CursorsTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Source</Th>
               <Th>Sub-source</Th>
               <Th align="right">Last ledger</Th>
@@ -132,22 +132,22 @@ export function CursorsTable() {
               <Th align="right">Lag</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {grouped.map(({ source, rows }) =>
               rows.map((c, i) => (
                 <tr
                   key={`${c.source}|${c.sub_source ?? ''}`}
-                  className="hover:bg-slate-50"
+                  className="hover:bg-surface-muted"
                 >
                   <Td>
                     {i === 0 ? (
                       <span className="font-medium">{source}</span>
                     ) : (
-                      <span className="text-slate-400">↳</span>
+                      <span className="text-ink-faint">↳</span>
                     )}
                   </Td>
                   <Td>
-                    <span className="font-mono text-xs text-slate-500">
+                    <span className="font-mono text-xs text-ink-muted">
                       {c.sub_source || '—'}
                     </span>
                   </Td>
@@ -157,7 +157,7 @@ export function CursorsTable() {
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-xs text-slate-500">
+                    <span className="font-mono tabular-nums text-xs text-ink-muted">
                       {formatRelative(c.last_updated)}
                     </span>
                   </Td>

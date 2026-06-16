@@ -18,7 +18,7 @@ export function HomeBlogStrip() {
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Latest from the blog</h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Engineering notes + product updates. Sourced from{' '}
             <code className="font-mono text-xs">docs/blog/*.md</code>{' '}
             in the public repo.
@@ -36,20 +36,20 @@ export function HomeBlogStrip() {
           <Link
             key={p.slug}
             href={`/blog/${p.slug}`}
-            className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-500"
+            className="group flex flex-col rounded-xl border border-line bg-surface p-4 transition-colors hover:border-brand-500"
           >
-            <span className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-ink-muted">
               {p.date}
             </span>
             <h3 className="mt-1 text-base font-semibold leading-snug tracking-tight group-hover:text-brand-600">
               {p.title}
             </h3>
             {p.summary && (
-              <p className="mt-2 line-clamp-3 text-sm text-slate-600">
+              <p className="mt-2 line-clamp-3 text-sm text-ink-body">
                 {p.summary}
               </p>
             )}
-            <span className="mt-auto pt-3 text-[11px] text-slate-500">{p.author}</span>
+            <span className="mt-auto pt-3 text-[11px] text-ink-muted">{p.author}</span>
           </Link>
         ))}
       </div>

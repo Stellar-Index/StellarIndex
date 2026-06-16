@@ -53,26 +53,26 @@ export default async function ADRPage({
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <Link
         href="/research"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to research
       </Link>
 
-      <header className="space-y-3 border-b border-slate-200 pb-6">
+      <header className="space-y-3 border-b border-line pb-6">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+          <span className="text-xs font-medium uppercase tracking-wider text-ink-muted">
             ADR-{adr.id}
           </span>
           <StatusBadge status={adr.status} />
-          <span className="text-xs text-slate-500">{adr.date}</span>
+          <span className="text-xs text-ink-muted">{adr.date}</span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{adr.title}</h1>
         <a
           href={`https://github.com/StellarIndex/stellar-index/blob/main/${adr.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
         >
           View source on GitHub
           <ExternalLink className="h-3 w-3" />
@@ -116,8 +116,8 @@ function RelatedADRs({ adr }: { adr: ReturnType<typeof loadADR> }) {
   );
   if (related.length === 0) return null;
   return (
-    <section className="border-t border-slate-200 pt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
+    <section className="border-t border-line pt-6">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-ink-muted">
         Related
       </h2>
       <ul className="space-y-2 text-sm">

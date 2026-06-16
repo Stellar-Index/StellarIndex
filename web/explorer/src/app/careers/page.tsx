@@ -61,7 +61,7 @@ export default function CareersPage() {
         <h1 className="text-4xl font-semibold tracking-tight">
           Work on real pricing infrastructure.
         </h1>
-        <p className="text-base text-slate-600">
+        <p className="text-base text-ink-body">
           We&apos;re a small team shipping the v1 platform. The
           codebase is Apache-2.0, the architecture is public, and
           every PR ships against the same verify-gate the operator
@@ -69,15 +69,15 @@ export default function CareersPage() {
         </p>
       </header>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Open roles</h2>
-        <p className="mt-3 text-sm text-slate-600">
+        <p className="mt-3 text-sm text-ink-body">
           No open roles listed today. We&apos;re focused on shipping
           v1 and the post-launch backlog with the existing team. When
           we open a role it&apos;ll appear here with a job description
           and an application path.
         </p>
-        <p className="mt-3 text-sm text-slate-600">
+        <p className="mt-3 text-sm text-ink-body">
           Want to be considered when we do open one? Drop a note via{' '}
           <Link href="/contact" className="text-brand-600 hover:underline">
             /contact
@@ -93,12 +93,12 @@ export default function CareersPage() {
           {VALUES.map((v) => (
             <div
               key={v.title}
-              className="rounded-xl border border-slate-200 bg-white p-5"
+              className="rounded-xl border border-line bg-surface p-5"
             >
-              <h3 className="text-sm font-semibold text-slate-900">
+              <h3 className="text-sm font-semibold text-ink">
                 {v.title}
               </h3>
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-ink-body">
                 {v.body}
               </p>
             </div>
@@ -111,7 +111,7 @@ export default function CareersPage() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Contribute via PRs
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             The fastest path to working on this codebase is to land a
             PR. Apache-2.0 means you don&apos;t need our permission to
             fork, build, or run your own copy. Four common starting
@@ -125,15 +125,15 @@ export default function CareersPage() {
               href={p.href}
               target="_blank"
               rel="noreferrer noopener"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-brand-500"
+              className="block rounded-lg border border-line bg-surface p-4 transition-colors hover:border-brand-500"
             >
               <div className="flex items-start justify-between gap-2">
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-ink">
                   {p.label}
                 </h3>
-                <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+                <ArrowRight className="h-4 w-4 shrink-0 text-ink-faint" />
               </div>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="mt-1 text-sm text-ink-body">
                 {p.description}
               </p>
             </a>
@@ -141,12 +141,12 @@ export default function CareersPage() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Link
             href="/contact"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
           >
             <Mail className="h-4 w-4" />
             Contact
@@ -155,7 +155,7 @@ export default function CareersPage() {
             href="https://github.com/StellarIndex/stellar-index"
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
           >
             <Github className="h-4 w-4" />
             GitHub

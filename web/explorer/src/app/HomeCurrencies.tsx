@@ -74,7 +74,7 @@ export function HomeCurrencies() {
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">World currencies</h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Live USD-base rates for the major fiat currencies — full
             ~200-ticker coverage at{' '}
             <Link href="/assets" className="text-brand-600 hover:underline">
@@ -115,20 +115,20 @@ export function HomeCurrencies() {
             <Link
               key={t}
               href={assetHrefFor(t)}
-              className="rounded-xl border border-slate-200 bg-white p-3 transition-colors hover:border-brand-500"
+              className="rounded-xl border border-line bg-surface p-3 transition-colors hover:border-brand-500"
             >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-sm font-medium">{t}</span>
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                <span className="text-[10px] uppercase tracking-wider text-ink-muted">
                   vs USD
                 </span>
               </div>
-              <div className="mt-2 font-mono text-lg tabular-nums text-slate-900">
+              <div className="mt-2 font-mono text-lg tabular-nums text-ink">
                 {row && row.rate_usd > 0 ? formatRate(row.rate_usd) : '—'}
               </div>
               {row && (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[11px] text-slate-500 line-clamp-1" title={row.name}>
+                  <span className="text-[11px] text-ink-muted line-clamp-1" title={row.name}>
                     {row.name}
                   </span>
                   {row.change_24h_pct != null && Number.isFinite(row.change_24h_pct) && (
@@ -138,7 +138,7 @@ export function HomeCurrencies() {
                           ? 'text-emerald-600'
                           : row.change_24h_pct < 0
                             ? 'text-rose-600'
-                            : 'text-slate-500'
+                            : 'text-ink-muted'
                       }`}
                       title="24h % change in USD value (daily-grain feed)"
                     >

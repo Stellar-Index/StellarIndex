@@ -112,22 +112,22 @@ export default async function SourceDetailPage({
       />
       <Link
         href="/dexes"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All DEXes
       </Link>
 
-      <header className="space-y-2 border-b border-slate-200 pb-4">
+      <header className="space-y-2 border-b border-line pb-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">
             {info.name}
           </h1>
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+          <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
             {info.type}
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           {info.blurb}
         </p>
       </header>
@@ -145,7 +145,7 @@ export default async function SourceDetailPage({
         </Link>
         <Link
           href={`/sources/${source}`}
-          className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
         >
           Source registry detail →
         </Link>
@@ -154,7 +154,7 @@ export default async function SourceDetailPage({
             href={info.contractsUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-slate-500 hover:underline"
+            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
           >
             Contracts source
             <ExternalLink className="h-3 w-3" />

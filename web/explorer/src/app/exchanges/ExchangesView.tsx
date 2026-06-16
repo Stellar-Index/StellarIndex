@@ -62,7 +62,7 @@ export function ExchangesView() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Exchanges</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Connected centralised exchanges feeding the Stellar Index
           aggregator. Per-venue 24h USD volume, trade count, and
           coverage. Click a venue for its full pair list. On-chain
@@ -85,9 +85,9 @@ export function ExchangesView() {
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <Th>#</Th>
                 <Th>Exchange</Th>
                 <Th align="right">24h volume</Th>
@@ -97,30 +97,30 @@ export function ExchangesView() {
                 <Th align="right">Share of CEX vol</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {q.isLoading && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                     Loading exchanges…
                   </td>
                 </tr>
               )}
               {!q.isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No CEX sources reporting.
                   </td>
                 </tr>
               )}
               {rows.map((r, i) => {
                 const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : 0;
-                const tone = TONE[r.name] ?? 'bg-slate-100 text-slate-700';
+                const tone = TONE[r.name] ?? 'bg-surface-subtle text-ink-body';
                 const label = LABEL[r.name] ?? r.name;
                 const share = totalVol > 0 ? (vol / totalVol) * 100 : 0;
                 return (
-                  <tr key={r.name} className="hover:bg-slate-50">
+                  <tr key={r.name} className="hover:bg-surface-muted">
                     <Td>
-                      <span className="font-mono text-[11px] text-slate-400">{i + 1}</span>
+                      <span className="font-mono text-[11px] text-ink-faint">{i + 1}</span>
                     </Td>
                     <Td>
                       <Link
@@ -134,31 +134,31 @@ export function ExchangesView() {
                       {vol > 0 ? (
                         <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </Td>
                     <Td>
                       <SourceSparkline buckets={r.volume_history_24h} />
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {r.trade_count_24h && r.trade_count_24h > 0 ? formatCompact(r.trade_count_24h) : '0'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {r.markets_count_24h ?? 0}
                       </span>
                     </Td>
                     <Td align="right">
                       <div className="inline-flex items-center gap-2">
-                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200">
+                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-line">
                           <div
                             className="h-full bg-brand-500"
                             style={{ width: `${Math.min(100, share)}%` }}
                           />
                         </div>
-                        <span className="font-mono tabular-nums text-xs text-slate-500">
+                        <span className="font-mono tabular-nums text-xs text-ink-muted">
                           {share.toFixed(1)}%
                         </span>
                       </div>
@@ -173,7 +173,7 @@ export function ExchangesView() {
 
       <AllCEXMarkets />
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-ink-muted">
         Sources are pulled from the static venue registry; per-venue
         24h activity is aggregated from <code className="font-mono text-[11px]">trades</code>{' '}
         in TimescaleDB. We deliberately subscribe to a curated set of
@@ -234,9 +234,9 @@ function AllCEXMarkets() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <Th>#</Th>
               <Th>Venue</Th>
               <Th>Pair</Th>
@@ -245,17 +245,17 @@ function AllCEXMarkets() {
               <Th align="right">24h trades</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {queries.isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading pairs…
                 </td>
               </tr>
             )}
             {!queries.isLoading && markets.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No CEX pairs reporting.
                 </td>
               </tr>
@@ -263,14 +263,14 @@ function AllCEXMarkets() {
             {markets.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
-              const tone = TONE[m.source ?? ''] ?? 'bg-slate-100 text-slate-700';
+              const tone = TONE[m.source ?? ''] ?? 'bg-surface-subtle text-ink-body';
               return (
                 <tr
                   key={`${m.source}|${m.base}|${m.quote}`}
-                  className="hover:bg-slate-50"
+                  className="hover:bg-surface-muted"
                 >
                   <Td>
-                    <span className="font-mono text-[11px] text-slate-400">{i + 1}</span>
+                    <span className="font-mono text-[11px] text-ink-faint">{i + 1}</span>
                   </Td>
                   <Td>
                     <Link
@@ -290,22 +290,22 @@ function AllCEXMarkets() {
                   </Td>
                   <Td align="right">
                     {m.last_price ? (
-                      <span className="font-mono tabular-nums text-slate-700">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {Number(m.last_price).toFixed(4)}
                       </span>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </Td>
                   <Td align="right">
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
                       <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-600">
+                    <span className="font-mono tabular-nums text-ink-body">
                       {m.trade_count_24h > 0 ? formatCompact(m.trade_count_24h) : '0'}
                     </span>
                   </Td>

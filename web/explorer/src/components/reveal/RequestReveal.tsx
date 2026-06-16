@@ -45,7 +45,7 @@ export function RequestReveal({
       type="button"
       onClick={() => setOpen(true)}
       className={twMerge(
-        'inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 hover:border-brand-500 hover:text-brand-600',
+        'inline-flex items-center gap-1 rounded-md border border-line bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-muted hover:border-brand-500 hover:text-brand-600',
         position === 'top-right' && 'absolute right-2 top-2',
         className,
       )}
@@ -61,13 +61,13 @@ export function RequestReveal({
       {trigger}
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-4 sm:items-center"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-ink/60 p-4 sm:items-center"
           onClick={() => setOpen(false)}
           role="dialog"
           aria-modal
         >
           <div
-            className="w-full max-w-2xl rounded-lg bg-white p-6 shadow-2xl"
+            className="w-full max-w-2xl rounded-lg bg-surface p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <header className="mb-4 flex items-center justify-between">
@@ -75,7 +75,7 @@ export function RequestReveal({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="text-slate-400 hover:text-slate-700"
+                className="text-ink-faint hover:text-ink-body"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" />
@@ -84,7 +84,7 @@ export function RequestReveal({
 
             <div className="space-y-4">
               <Block label="cURL">
-                <pre className="overflow-x-auto whitespace-pre rounded-md bg-slate-100 p-3 font-mono text-xs leading-relaxed">
+                <pre className="overflow-x-auto whitespace-pre rounded-md bg-surface-subtle p-3 font-mono text-xs leading-relaxed">
                   {curl}
                 </pre>
                 <CopyButton
@@ -95,7 +95,7 @@ export function RequestReveal({
               </Block>
 
               <Block label="URL">
-                <code className="break-all text-xs text-slate-700">
+                <code className="break-all text-xs text-ink-body">
                   {example.url}
                 </code>
                 <div className="mt-2 flex gap-2">
@@ -108,7 +108,7 @@ export function RequestReveal({
                     href={example.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600"
+                    className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-ink-body hover:border-brand-500 hover:text-brand-600"
                   >
                     <ExternalLink className="h-3 w-3" />
                     Open
@@ -116,7 +116,7 @@ export function RequestReveal({
                 </div>
               </Block>
 
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-ink-muted">
                 Anonymous tier — no auth required for this endpoint.
               </p>
             </div>
@@ -136,7 +136,7 @@ function Block({
 }) {
   return (
     <div>
-      <div className="mb-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
         {label}
       </div>
       {children}
@@ -160,7 +160,7 @@ function CopyButton({
         await navigator.clipboard.writeText(text);
         onCopy();
       }}
-      className="mt-2 inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600"
+      className="mt-2 inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-ink-body hover:border-brand-500 hover:text-brand-600"
     >
       {copied ? (
         <>

@@ -54,7 +54,7 @@ export function LedgerView() {
       <Shell seq={null}>
         <Panel
           title="No ledger selected"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             This page needs a <code className="font-mono">?seq=</code> query
@@ -75,7 +75,7 @@ export function LedgerView() {
         <Panel
           title="Ledger not found"
           source={asExample(`/v1/ledgers/${seq}`)}
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             No ledger <span className="font-mono">#{seq.toLocaleString()}</span>{' '}
@@ -96,7 +96,7 @@ export function LedgerView() {
         <Panel
           title={`Ledger #${seq.toLocaleString()}`}
           source={asExample(`/v1/ledgers/${seq}`)}
-          bodyClassName="text-sm text-slate-500"
+          bodyClassName="text-sm text-ink-muted"
         >
           Loading…
         </Panel>
@@ -171,7 +171,7 @@ export function LedgerView() {
                 <CopyHash value={l.prev_hash} head={12} tail={12} />
               </span>
             ) : (
-              <span className="text-slate-300">—</span>
+              <span className="text-ink-faint">—</span>
             )}
           </FieldWide>
         </dl>
@@ -198,12 +198,12 @@ function Shell({
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-3">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/ledgers" className="hover:text-brand-600">
             Ledgers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700">
+          <span className="font-mono text-ink-body">
             {seq != null ? `#${seq.toLocaleString()}` : '—'}
           </span>
         </nav>
@@ -211,13 +211,13 @@ function Shell({
           <div className="flex items-center gap-3 text-xs">
             <Link
               href={`/ledger?seq=${seq - 1}`}
-              className="rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600"
+              className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
             >
               ← Prev ledger
             </Link>
             <Link
               href={`/ledger?seq=${seq + 1}`}
-              className="rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600"
+              className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
             >
               Next ledger →
             </Link>
@@ -260,7 +260,7 @@ function TransactionsPanel({
       <Panel
         title="Transactions"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -271,7 +271,7 @@ function TransactionsPanel({
       <Panel
         title="Transactions"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         This ledger closed no transactions.
       </Panel>
@@ -284,9 +284,9 @@ function TransactionsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Hash</Th>
               <Th>Source</Th>
               <Th align="right">Ops</Th>
@@ -295,11 +295,11 @@ function TransactionsPanel({
               <Th>Memo</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {data.transactions.map((t) => (
               <tr
                 key={t.hash}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
                   <Link
@@ -313,14 +313,14 @@ function TransactionsPanel({
                 <Td>
                   <Link
                     href={`/accounts?id=${encodeURIComponent(t.source_account)}`}
-                    className="font-mono text-xs text-slate-600 hover:text-brand-600"
+                    className="font-mono text-xs text-ink-body hover:text-brand-600"
                     title={t.source_account}
                   >
                     {t.source_account.slice(0, 6)}…{t.source_account.slice(-4)}
                   </Link>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600">
+                  <span className="font-mono tabular-nums text-ink-body">
                     {t.operation_count}
                   </span>
                 </Td>
@@ -328,21 +328,21 @@ function TransactionsPanel({
                   <SuccessBadge ok={t.successful} code={t.result_code} />
                 </Td>
                 <Td align="right">
-                  <span className="font-mono text-xs tabular-nums text-slate-500">
+                  <span className="font-mono text-xs tabular-nums text-ink-muted">
                     {t.fee_charged != null ? stroopsToXlm(t.fee_charged) : '—'}
                   </span>
                 </Td>
                 <Td>
                   {t.memo_type && t.memo_type !== 'none' ? (
                     <span
-                      className="font-mono text-[11px] text-slate-500"
+                      className="font-mono text-[11px] text-ink-muted"
                       title={t.memo ?? ''}
                     >
                       {t.memo_type}
                       {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
                     </span>
                   ) : (
-                    <span className="text-slate-300">
+                    <span className="text-ink-faint">
                       —
                     </span>
                   )}
@@ -390,7 +390,7 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className={mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 tabular-nums'}>
@@ -409,7 +409,7 @@ function FieldWide({
 }) {
   return (
     <div className="col-span-2 sm:col-span-3 lg:col-span-4">
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className="mt-0.5">{children}</dd>

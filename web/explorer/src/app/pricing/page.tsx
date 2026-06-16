@@ -112,7 +112,7 @@ export default function PricingPage() {
     <div className="mx-auto max-w-7xl space-y-10 px-6 py-12">
       <header className="space-y-3 text-center">
         <h1 className="text-4xl font-semibold tracking-tight">Pricing</h1>
-        <p className="mx-auto max-w-2xl text-base text-slate-600">
+        <p className="mx-auto max-w-2xl text-base text-ink-body">
           Same data on every tier. Free reads work without an account; paid
           plans unlock higher per-key rate limits, usage analytics, and
           dedicated SLAs.
@@ -125,11 +125,11 @@ export default function PricingPage() {
         ))}
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Honest notes</h2>
-        <ul className="mt-3 space-y-2 text-sm text-slate-600">
+        <ul className="mt-3 space-y-2 text-sm text-ink-body">
           <li>
-            <strong className="text-slate-700">
+            <strong className="text-ink-body">
               Free is not a trial.
             </strong>{' '}
             Anonymous reads are a permanent commitment — public-tier
@@ -137,7 +137,7 @@ export default function PricingPage() {
             we shipped against.
           </li>
           <li>
-            <strong className="text-slate-700">
+            <strong className="text-ink-body">
               Same data, every tier.
             </strong>{' '}
             We do not gate endpoints, freshness, or precision behind
@@ -145,7 +145,7 @@ export default function PricingPage() {
             and SLA — never the data itself.
           </li>
           <li>
-            <strong className="text-slate-700">
+            <strong className="text-ink-body">
               No card to sign up Starter.
             </strong>{' '}
             Magic-link account, mint a key, ship. Rate-limit upgrades
@@ -156,7 +156,7 @@ export default function PricingPage() {
             .
           </li>
           <li>
-            <strong className="text-slate-700">
+            <strong className="text-ink-body">
               Pricing is pre-v1.
             </strong>{' '}
             We&apos;re shipping the paid surface alongside v1. Concrete
@@ -174,8 +174,8 @@ function TierCard({ tier }: { tier: Tier }) {
     <div
       className={`flex flex-col rounded-xl border p-5 shadow-sm transition-colors ${
         tier.highlight
-          ? 'border-brand-500 bg-white ring-1 ring-brand-500/30'
-          : 'border-slate-200 bg-white'
+          ? 'border-brand-500 bg-surface ring-1 ring-brand-500/30'
+          : 'border-line bg-surface'
       }`}
     >
       <div className="mb-3 flex items-center justify-between">
@@ -189,23 +189,23 @@ function TierCard({ tier }: { tier: Tier }) {
       <div>
         <div className="font-mono text-3xl font-semibold tabular-nums">{tier.price}</div>
         {tier.priceSubtitle && (
-          <div className="text-xs text-slate-500">{tier.priceSubtitle}</div>
+          <div className="text-xs text-ink-muted">{tier.priceSubtitle}</div>
         )}
       </div>
-      <div className="mt-3 rounded-md bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
+      <div className="mt-3 rounded-md bg-surface-muted px-3 py-2 font-mono text-xs text-ink-body">
         {tier.rateLimit}
       </div>
-      <p className="mt-3 text-sm text-slate-600">{tier.description}</p>
+      <p className="mt-3 text-sm text-ink-body">{tier.description}</p>
 
       <ul className="mt-4 space-y-1.5 text-sm">
         {tier.features.map((f) => (
-          <li key={f} className="flex items-start gap-2 text-slate-700">
+          <li key={f} className="flex items-start gap-2 text-ink-body">
             <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
             <span>{f}</span>
           </li>
         ))}
         {tier.notFeatures?.map((f) => (
-          <li key={f} className="flex items-start gap-2 text-slate-400">
+          <li key={f} className="flex items-start gap-2 text-ink-faint">
             <Minus className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{f}</span>
           </li>
@@ -221,7 +221,7 @@ function TierCard({ tier }: { tier: Tier }) {
             className={`inline-flex w-full items-center justify-center rounded-md px-3 py-2 text-sm font-medium ${
               tier.highlight
                 ? 'bg-brand-600 text-white hover:bg-brand-700'
-                : 'border border-slate-200 text-slate-700 hover:border-brand-500 hover:text-brand-600'
+                : 'border border-line text-ink-body hover:border-brand-500 hover:text-brand-600'
             }`}
           >
             {tier.cta.label}
@@ -232,7 +232,7 @@ function TierCard({ tier }: { tier: Tier }) {
             className={`inline-flex w-full items-center justify-center rounded-md px-3 py-2 text-sm font-medium ${
               tier.highlight
                 ? 'bg-brand-600 text-white hover:bg-brand-700'
-                : 'border border-slate-200 text-slate-700 hover:border-brand-500 hover:text-brand-600'
+                : 'border border-line text-ink-body hover:border-brand-500 hover:text-brand-600'
             }`}
           >
             {tier.cta.label}

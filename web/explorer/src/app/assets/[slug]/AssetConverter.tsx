@@ -133,8 +133,8 @@ export function AssetConverter({
     >
       <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-slate-500">From</span>
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
+          <span className="text-xs uppercase tracking-wider text-ink-muted">From</span>
+          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
             <input
               type="number"
               value={amount}
@@ -154,7 +154,7 @@ export function AssetConverter({
                 tickers={allTickers}
               />
             ) : (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700">
+              <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
                 {fromUnit}
               </span>
             )}
@@ -167,15 +167,15 @@ export function AssetConverter({
           onClick={() =>
             setDirection((d) => (d === 'fiat-to-asset' ? 'asset-to-fiat' : 'fiat-to-asset'))
           }
-          className="self-center rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:border-brand-500 hover:text-brand-600 sm:mb-1"
+          className="self-center rounded-md border border-line px-2 py-1 text-xs text-ink-muted hover:border-brand-500 hover:text-brand-600 sm:mb-1"
         >
           ⇄
         </button>
 
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-slate-500">To</span>
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
-            <span className="w-full text-2xl font-mono tabular-nums text-slate-900">
+          <span className="text-xs uppercase tracking-wider text-ink-muted">To</span>
+          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
+            <span className="w-full text-2xl font-mono tabular-nums text-ink">
               {result != null ? formatResult(result) : '—'}
             </span>
             {direction === 'asset-to-fiat' ? (
@@ -188,7 +188,7 @@ export function AssetConverter({
                 tickers={allTickers}
               />
             ) : (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700">
+              <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
                 {toUnit}
               </span>
             )}
@@ -196,12 +196,12 @@ export function AssetConverter({
         </label>
       </div>
       {priceUSD != null && priceUSD > 0 && targetRate != null && targetRate > 0 && (
-        <p className="mt-3 text-xs text-slate-500">
+        <p className="mt-3 text-xs text-ink-muted">
           1 {symbol} = {formatResult(priceUSD * targetRate)} {target} · 1 {target} ={' '}
           {formatResult(1 / (priceUSD * targetRate))} {symbol}
           {target !== 'USD' && (
             <>
-              <span className="mx-2 text-slate-400">·</span>
+              <span className="mx-2 text-ink-faint">·</span>
               <span>FX leg: 1 USD = {formatResult(targetRate)} {target}</span>
             </>
           )}

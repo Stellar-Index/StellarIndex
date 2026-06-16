@@ -36,7 +36,7 @@ export default function PrimitivesPage() {
         <h1 className="text-2xl font-semibold tracking-tight">
           Design-system primitives
         </h1>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           Static demo of the components in{' '}
           <code className="font-mono text-xs">
             src/components/primitives/
@@ -64,7 +64,7 @@ export default function PrimitivesPage() {
           <DirectionPill deltaPct={-42.0} />
           <DirectionPill deltaPct={null} />
         </Row>
-        <p className="text-xs text-slate-500">Compact variant:</p>
+        <p className="text-xs text-ink-muted">Compact variant:</p>
         <Row>
           <DirectionPill deltaPct={3.2} compact />
           <DirectionPill deltaPct={-7.4} compact />
@@ -139,7 +139,7 @@ export default function PrimitivesPage() {
       </Section>
 
       <Section title="Composite — list-row sample">
-        <div className="rounded-lg border border-slate-200 p-4">
+        <div className="rounded-lg border border-line p-4">
           <div className="flex items-center gap-4">
             <span className="font-medium">XLM</span>
             <span className="font-mono tabular-nums">$0.1234</span>
@@ -172,7 +172,7 @@ function Section({
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-medium uppercase tracking-wider text-slate-500">
+      <h2 className="text-sm font-medium uppercase tracking-wider text-ink-muted">
         {title}
       </h2>
       <div className="space-y-3">{children}</div>

@@ -18,7 +18,7 @@ export default function DiscoveryIndexPage() {
         <h1 className="text-3xl font-semibold tracking-tight">
           Discovery audits
         </h1>
-        <p className="max-w-3xl text-base text-slate-600">
+        <p className="max-w-3xl text-base text-ink-body">
           Per-DEX / per-oracle integration audits.{' '}
           <Link href="/research" className="underline decoration-dotted">
             Back to research
@@ -31,18 +31,18 @@ export default function DiscoveryIndexPage() {
           <Link
             key={d.slug}
             href={`/research/discovery/${d.slug}`}
-            className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
+            className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
           >
             <div className="flex items-center gap-2">
-              <ShieldCheck className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
+              <ShieldCheck className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
               <span className="text-sm font-semibold tracking-tight">
                 {d.title}
               </span>
-              <span className="ml-auto rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+              <span className="ml-auto rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
                 {d.category}
               </span>
             </div>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-ink-body">
               {d.description}
             </p>
           </Link>

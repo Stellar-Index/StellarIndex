@@ -77,28 +77,28 @@ export function ProtocolsIndex() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Protocols</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Every major Stellar protocol we index — DEXes, AMMs, lending, yield
           vaults, bridges and oracles. Each protocol page carries its full
           contract roster, the distribution of every event type it emits, and a
           verified-completeness verdict against the certified ledger lake. Click
           a card to drill in.
         </p>
-        <div className="flex flex-wrap gap-x-6 gap-y-1 pt-1 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-x-6 gap-y-1 pt-1 text-xs text-ink-muted">
           <span>
-            <span className="font-mono tabular-nums text-slate-700">
+            <span className="font-mono tabular-nums text-ink-body">
               {cards.length}
             </span>{' '}
             protocols
           </span>
           <span>
-            <span className="font-mono tabular-nums text-slate-700">
+            <span className="font-mono tabular-nums text-ink-body">
               {verifiedCount}
             </span>{' '}
             verified complete
           </span>
           <span>
-            <span className="font-mono tabular-nums text-slate-700">
+            <span className="font-mono tabular-nums text-ink-body">
               {formatCompact(totalEvents24h)}
             </span>{' '}
             events · last 24h
@@ -109,7 +109,7 @@ export function ProtocolsIndex() {
       {isError && (
         <Panel
           title="Live stats unavailable"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           The protocol directory endpoint is unreachable, so the cards below show
           the static registry without live counts. The per-protocol pages still
@@ -119,7 +119,7 @@ export function ProtocolsIndex() {
 
       {categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-slate-500">Category:</span>
+          <span className="text-ink-muted">Category:</span>
           <FilterChip active={filter === ''} onClick={() => setFilter('')} label="All" />
           {categories.map((cat) => (
             <FilterChip
@@ -149,7 +149,7 @@ function ProtocolCardView({ card }: { card: ProtocolCard }) {
   return (
     <Link
       href={`/protocols/${encodeURIComponent(card.name)}`}
-      className="group flex flex-col rounded-lg border border-slate-200 bg-white p-4 transition hover:border-brand-500 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      className="group flex flex-col rounded-lg border border-line bg-surface p-4 transition hover:border-brand-500 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
     >
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-base font-semibold tracking-tight group-hover:text-brand-600">
@@ -163,24 +163,24 @@ function ProtocolCardView({ card }: { card: ProtocolCard }) {
           </span>
         )}
       </div>
-      <p className="mt-1.5 line-clamp-2 grow text-xs text-slate-500">
+      <p className="mt-1.5 line-clamp-2 grow text-xs text-ink-muted">
         {card.description}
       </p>
       <div className="mt-3 flex items-end justify-between">
         <dl className="flex gap-5 text-xs">
           <div>
-            <dt className="text-[9px] uppercase tracking-wider text-slate-400">
+            <dt className="text-[9px] uppercase tracking-wider text-ink-faint">
               Contracts
             </dt>
-            <dd className="font-mono tabular-nums text-slate-700">
+            <dd className="font-mono tabular-nums text-ink-body">
               {formatCompact(card.contract_count)}
             </dd>
           </div>
           <div>
-            <dt className="text-[9px] uppercase tracking-wider text-slate-400">
+            <dt className="text-[9px] uppercase tracking-wider text-ink-faint">
               Events · 24h
             </dt>
-            <dd className="font-mono tabular-nums text-slate-700">
+            <dd className="font-mono tabular-nums text-ink-body">
               {formatCompact(card.events_24h)}
             </dd>
           </div>
@@ -198,7 +198,7 @@ function CardBadge({
 }) {
   if (!completeness) {
     return (
-      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-slate-400">
+      <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-ink-faint">
         unknown
       </span>
     );
@@ -230,7 +230,7 @@ function FilterChip({
       className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          : 'bg-surface-subtle text-ink-body hover:bg-line'
       }`}
     >
       {label}

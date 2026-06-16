@@ -35,7 +35,7 @@ export function HomeTopAssets() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Top assets by activity
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Ranked by total observation count across every venue we
             ingest from. 24h volume sums every (base, quote) pair the
             asset participates in.
@@ -48,10 +48,10 @@ export function HomeTopAssets() {
           See all →
         </Link>
       </div>
-      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-md border border-line bg-surface">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="border-b border-line bg-surface-muted text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <th className="px-4 py-2.5 font-medium">#</th>
               <th className="px-4 py-2.5 font-medium">Asset</th>
               <th className="px-4 py-2.5 text-right font-medium">Price</th>
@@ -67,7 +67,7 @@ export function HomeTopAssets() {
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {isError && (
               <tr>
                 <td
@@ -82,7 +82,7 @@ export function HomeTopAssets() {
               <tr>
                 <td
                   colSpan={7}
-                  className="py-8 text-center text-sm text-slate-500"
+                  className="py-8 text-center text-sm text-ink-muted"
                 >
                   Loading…
                 </td>
@@ -115,14 +115,14 @@ function Row({
   const price = parseDec(coin.price_usd);
   const volume = parseDec(coin.volume_24h_usd);
   return (
-    <tr className="hover:bg-slate-50">
-      <td className="px-4 py-3 text-slate-400">{rank}</td>
+    <tr className="hover:bg-surface-muted">
+      <td className="px-4 py-3 text-ink-faint">{rank}</td>
       <td className="px-4 py-3">
         <Link
           href={`/assets/${coin.slug}`}
           className="group flex items-center gap-2"
         >
-          <span aria-hidden className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 font-mono text-xs">
+          <span aria-hidden className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-subtle font-mono text-xs">
             {iconForCode(coin.code)}
           </span>
           <span className="font-medium text-ink group-hover:text-brand-600">
@@ -149,7 +149,7 @@ function Row({
               </svg>
             </span>
           )}
-          <span className="text-[11px] text-slate-500">{coin.slug}</span>
+          <span className="text-[11px] text-ink-muted">{coin.slug}</span>
         </Link>
       </td>
       <td className="px-4 py-3 text-right">
@@ -166,7 +166,7 @@ function Row({
       </td>
       <td className="px-4 py-3 text-right">
         {volume != null ? (
-          <span className="font-mono tabular-nums text-slate-700">
+          <span className="font-mono tabular-nums text-ink-body">
             ${formatCompact(volume)}
           </span>
         ) : (
@@ -177,7 +177,7 @@ function Row({
         <RowSparkline points={coin.price_history_24h} />
       </td>
       <td className="px-4 py-3 text-right">
-        <span className="font-mono tabular-nums text-slate-600">
+        <span className="font-mono tabular-nums text-ink-body">
           {formatCompact(coin.observation_count)}
         </span>
       </td>
@@ -199,7 +199,7 @@ function formatPrice(n: number): string {
 }
 
 function Dash() {
-  return <span className="text-slate-300">—</span>;
+  return <span className="text-ink-faint">—</span>;
 }
 
 function RowSparkline({
@@ -211,7 +211,7 @@ function RowSparkline({
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-slate-300">—</span>;
+    return <span className="font-mono text-[10px] text-ink-faint">—</span>;
   }
   const W = 80;
   const H = 22;
@@ -244,7 +244,7 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
       ? 'text-emerald-600'
       : n < 0
         ? 'text-rose-600'
-        : 'text-slate-500';
+        : 'text-ink-muted';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>

@@ -61,7 +61,7 @@ export default function DivergencesPage() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Divergences</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Continuously cross-checks the canonical Stellar Index VWAP
           against external references. A persistent gap flips{' '}
           <code className="font-mono text-xs">flags.divergence_warning</code>{' '}
@@ -77,7 +77,7 @@ export default function DivergencesPage() {
 
       <Panel
         title="Why we monitor divergence"
-        bodyClassName="text-sm text-slate-600 space-y-2"
+        bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
           We never include external references in the canonical VWAP —
@@ -106,18 +106,18 @@ export default function DivergencesPage() {
         {REFERENCES.map((r) => (
           <div
             key={r.name}
-            className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+            className="rounded-xl border border-line bg-surface p-5 shadow-sm"
           >
             <h2 className="text-lg font-semibold tracking-tight">{r.name}</h2>
-            <p className="mt-1 text-xs uppercase tracking-wider text-slate-500">
+            <p className="mt-1 text-xs uppercase tracking-wider text-ink-muted">
               {r.type}
             </p>
-            <p className="mt-3 text-sm text-slate-700">
+            <p className="mt-3 text-sm text-ink-body">
               {r.blurb}
             </p>
             {r.feeds && r.feeds.length > 0 && (
-              <div className="mt-4 border-t border-slate-200 pt-3">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+              <div className="mt-4 border-t border-line pt-3">
+                <div className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
                   Wired feeds
                 </div>
                 <ul className="mt-1.5 space-y-1 text-xs">
@@ -126,7 +126,7 @@ export default function DivergencesPage() {
                       key={f.address}
                       className="flex items-baseline justify-between gap-3"
                     >
-                      <span className="font-mono text-slate-600">
+                      <span className="font-mono text-ink-body">
                         {f.pair}
                       </span>
                       <a
@@ -149,7 +149,7 @@ export default function DivergencesPage() {
 
       <Panel
         title="Coming next"
-        bodyClassName="text-sm text-slate-600 space-y-2"
+        bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
           Live per-(asset, reference) state, time-series of delta %,

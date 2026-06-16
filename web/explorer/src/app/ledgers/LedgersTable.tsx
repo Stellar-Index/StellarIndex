@@ -65,7 +65,7 @@ export function LedgersTable() {
       <Panel
         title="Ledgers"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -76,7 +76,7 @@ export function LedgersTable() {
       <Panel
         title="Ledgers"
         source={source}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No ledgers returned.
       </Panel>
@@ -98,9 +98,9 @@ export function LedgersTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Sequence</Th>
               <Th>Close time</Th>
               <Th align="right">Txs</Th>
@@ -108,23 +108,23 @@ export function LedgersTable() {
               <Th align="right">Soroban events</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {data.ledgers.map((l) => (
               <tr
                 key={l.sequence}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
                   <Link
                     href={`/ledger?seq=${l.sequence}`}
-                    className="font-mono font-medium text-slate-700 hover:text-brand-600"
+                    className="font-mono font-medium text-ink-body hover:text-brand-600"
                   >
                     #{l.sequence.toLocaleString()}
                   </Link>
                 </Td>
                 <Td>
                   <span
-                    className="font-mono text-xs text-slate-500"
+                    className="font-mono text-xs text-ink-muted"
                     title={formatTimestamp(l.close_time)}
                   >
                     {relativeAge(l.close_time)}
@@ -136,12 +136,12 @@ export function LedgersTable() {
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600">
+                  <span className="font-mono tabular-nums text-ink-body">
                     {formatCompact(l.op_count)}
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600">
+                  <span className="font-mono tabular-nums text-ink-body">
                     {l.soroban_event_count > 0
                       ? formatCompact(l.soroban_event_count)
                       : '—'}
@@ -158,11 +158,11 @@ export function LedgersTable() {
           type="button"
           onClick={() => setBefore(undefined)}
           disabled={before === undefined || isFetching}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Newest
         </button>
-        <span className="font-mono text-[11px] text-slate-400">
+        <span className="font-mono text-[11px] text-ink-faint">
           {isFetching ? 'Loading…' : ''}
         </span>
         <button
@@ -171,7 +171,7 @@ export function LedgersTable() {
             if (data.next_before != null) setBefore(data.next_before);
           }}
           disabled={data.next_before == null || isFetching}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-line px-3 py-1.5 text-ink-body hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Load older →
         </button>

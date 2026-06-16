@@ -26,7 +26,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
       <Panel
         title="Issuer"
         source={asExample(`/v1/issuers/${gStrkey}`)}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         {is404(error)
           ? 'No issuer record yet — this G-strkey hasn’t been observed as an issuer.'
@@ -39,7 +39,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
       <Panel
         title="Issuer"
         source={asExample(`/v1/issuers/${gStrkey}`)}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -104,7 +104,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
       <Panel
         title="Issued assets"
         source={asExample(`/v1/issuers/${issuer.g_strkey}`)}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No issued assets recorded.
       </Panel>
@@ -119,9 +119,9 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Code</Th>
               <Th>Slug</Th>
               <Th align="right">Observations</Th>
@@ -129,11 +129,11 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
               <Th align="right">Last seen</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {assets.map((a) => (
               <tr
                 key={a.asset_id}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
                   <Link
@@ -144,7 +144,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-slate-500">
+                  <span className="font-mono text-xs text-ink-muted">
                     {a.slug}
                   </span>
                 </Td>
@@ -154,12 +154,12 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-xs text-slate-500">
+                  <span className="font-mono tabular-nums text-xs text-ink-muted">
                     #{a.first_seen_ledger.toLocaleString()}
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-xs text-slate-500">
+                  <span className="font-mono tabular-nums text-xs text-ink-muted">
                     #{a.last_seen_ledger.toLocaleString()}
                   </span>
                 </Td>
@@ -175,7 +175,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
 function FlagPill({ on, label }: { on?: boolean; label: string }) {
   if (on === undefined) {
     return (
-      <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">
+      <span className="inline-block rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-muted">
         {label}: unknown
       </span>
     );
@@ -203,7 +203,7 @@ function Stat({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className={mono ? 'break-all font-mono text-xs' : 'tabular-nums'}>

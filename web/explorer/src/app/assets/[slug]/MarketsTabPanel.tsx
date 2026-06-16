@@ -55,7 +55,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
       <Panel
         title="Markets"
         source={asExample('/v1/markets', { limit: 100 })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -67,7 +67,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
         title="Markets"
         hint="No active markets in the last 14 days"
         source={asExample('/v1/markets', { limit: 100 })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No (base, quote) pair involving this asset has traded in the
         recency window.
@@ -83,16 +83,16 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Side</Th>
               <Th>Pair</Th>
               <Th align="right">24h trades</Th>
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {matched.map((m) => (
               <Row key={`${m.base}|${m.quote}`} m={m} assetID={assetID} />
             ))}
@@ -107,9 +107,9 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
   const isBase = m.base === assetID;
   const counterparty = isBase ? m.quote : m.base;
   return (
-    <tr className="hover:bg-slate-50">
+    <tr className="hover:bg-surface-muted">
       <Td>
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+        <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
           {isBase ? 'base' : 'quote'}
         </span>
       </Td>
@@ -123,7 +123,7 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
         </span>
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums text-xs text-slate-500">
+        <span className="font-mono tabular-nums text-xs text-ink-muted">
           {formatRelative(m.last_trade_at)}
         </span>
       </Td>

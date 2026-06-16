@@ -140,7 +140,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
     return (
       <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
         <header className="space-y-3">
-          <nav className="text-xs text-slate-500">
+          <nav className="text-xs text-ink-muted">
             <Link href="/issuers" className="hover:text-brand-600">
               Issuers
             </Link>{' '}
@@ -152,7 +152,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         </header>
         <Panel
           title="Issuer not found"
-          bodyClassName="text-sm text-slate-600"
+          bodyClassName="text-sm text-ink-body"
         >
           <p>
             No row found for that G-strkey, or the issuer hasn&apos;t
@@ -222,12 +222,12 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       )}
 
       <header className="space-y-3">
-        <nav className="text-xs text-slate-500">
+        <nav className="text-xs text-ink-muted">
           <Link href="/issuers" className="hover:text-brand-600">
             Issuers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700">
+          <span className="font-mono text-ink-body">
             {detail.org_name || shortKey(g_strkey)}
           </span>
         </nav>
@@ -236,7 +236,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             <h1 className="text-2xl font-semibold tracking-tight">
               {detail.org_name}
             </h1>
-            <p className="font-mono text-xs text-slate-500 break-all">
+            <p className="font-mono text-xs text-ink-muted break-all">
               {g_strkey}
             </p>
           </>
@@ -246,7 +246,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </h1>
         )}
         {detail.home_domain && (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             {/* home_domain is attacker-controlled on-chain data — only
                 link it when it parses as a strict hostname, else render
                 as plain text (phishing guard, WA-02). */}
@@ -261,7 +261,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               </a>
             ) : (
               <span
-                className="font-mono text-slate-500"
+                className="font-mono text-ink-muted"
                 title="Unverified issuer-supplied domain"
               >
                 {detail.home_domain}
@@ -321,7 +321,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       <Panel
         title="External views"
         hint="Cross-reference this issuer on other Stellar explorers"
-        bodyClassName="text-sm text-slate-600"
+        bodyClassName="text-sm text-ink-body"
       >
         <ul className="space-y-2">
           <li>
@@ -332,11 +332,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
             >
               stellar.expert
-              <span className="text-[10px] uppercase tracking-wider text-slate-400">
+              <span className="text-[10px] uppercase tracking-wider text-ink-faint">
                 ↗
               </span>
             </a>
-            <span className="ml-2 text-xs text-slate-400">
+            <span className="ml-2 text-xs text-ink-faint">
               account history, balance, signers
             </span>
           </li>
@@ -348,11 +348,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
             >
               stellarchain.io
-              <span className="text-[10px] uppercase tracking-wider text-slate-400">
+              <span className="text-[10px] uppercase tracking-wider text-ink-faint">
                 ↗
               </span>
             </a>
-            <span className="ml-2 text-xs text-slate-400">
+            <span className="ml-2 text-xs text-ink-faint">
               ledger entries, operations log
             </span>
           </li>
@@ -365,11 +365,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                 className="inline-flex items-center gap-1.5 hover:text-brand-600 hover:underline"
               >
                 stellar.toml
-                <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                <span className="text-[10px] uppercase tracking-wider text-ink-faint">
                   ↗
                 </span>
               </a>
-              <span className="ml-2 text-xs text-slate-400">
+              <span className="ml-2 text-xs text-ink-faint">
                 SEP-1 source on {detail.home_domain}
               </span>
             </li>
@@ -384,14 +384,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         bodyClassName="-mx-4"
       >
         {!detail.assets || detail.assets.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-slate-500">
+          <p className="px-4 py-3 text-sm text-ink-muted">
             No issued assets observed.
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <table className="min-w-full divide-y divide-line text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
                   <Th>Code</Th>
                   <Th align="right">Price</Th>
                   <Th align="right">24h %</Th>
@@ -400,13 +400,13 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   <Th align="right">First seen</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-line-subtle">
                 {detail.assets.map((a) => {
                   const coin = coinPrices.get(a.asset_id);
                   return (
                     <tr
                       key={a.asset_id}
-                      className="hover:bg-slate-50"
+                      className="hover:bg-surface-muted"
                     >
                       <Td>
                         <Link
@@ -415,7 +415,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                         >
                           {a.code}
                         </Link>
-                        <span className="ml-2 font-mono text-[11px] text-slate-500">
+                        <span className="ml-2 font-mono text-[11px] text-ink-muted">
                           {a.slug}
                         </span>
                       </Td>
@@ -477,7 +477,7 @@ function Stat({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd className={mono ? 'font-mono text-xs' : 'tabular-nums'}>{value}</dd>
@@ -492,18 +492,18 @@ function FlagRow({ label, v }: { label: string; v: boolean | undefined }) {
     tone = 'bg-amber-500';
     text = 'true';
   } else if (v === false) {
-    tone = 'bg-slate-300';
+    tone = 'bg-line-strong';
     text = 'false';
   } else {
-    tone = 'bg-slate-200';
+    tone = 'bg-line';
     text = 'unknown';
   }
   return (
     <li className="flex items-center justify-between gap-2 font-mono">
-      <span className="text-slate-600">{label}</span>
+      <span className="text-ink-body">{label}</span>
       <span className="flex items-center gap-1.5">
         <span className={`inline-block h-2 w-2 rounded-full ${tone}`} />
-        <span className="text-slate-700">{text}</span>
+        <span className="text-ink-body">{text}</span>
       </span>
     </li>
   );
@@ -543,28 +543,28 @@ function Td({
 }
 
 function PriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300">—</span>;
+  if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   // 6 dp for sub-dollar (USDC/scam tokens), 4 dp otherwise.
   const fixed = n < 1 ? n.toFixed(6) : n.toFixed(4);
   return (
-    <span className="font-mono tabular-nums text-slate-700">
+    <span className="font-mono tabular-nums text-ink-body">
       ${fixed}
     </span>
   );
 }
 
 function ChangeCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300">—</span>;
+  if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   const tone =
     n > 0
       ? 'text-emerald-600'
       : n < 0
         ? 'text-rose-600'
-        : 'text-slate-500';
+        : 'text-ink-muted';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>
@@ -575,11 +575,11 @@ function ChangeCell({ raw }: { raw?: string | null }) {
 }
 
 function UsdVolumeCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300">—</span>;
+  if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   return (
-    <span className="font-mono tabular-nums text-slate-700">
+    <span className="font-mono tabular-nums text-ink-body">
       ${formatCompact(n)}
     </span>
   );

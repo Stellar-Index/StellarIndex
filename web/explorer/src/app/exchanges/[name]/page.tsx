@@ -100,20 +100,20 @@ export default async function ExchangeDetailPage({
       />
       <Link
         href="/exchanges"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All exchanges
       </Link>
 
-      <header className="space-y-2 border-b border-slate-200 pb-4">
+      <header className="space-y-2 border-b border-line pb-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{info.name}</h1>
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
+          <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
             {info.type}
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600">{info.blurb}</p>
+        <p className="max-w-3xl text-sm text-ink-body">{info.blurb}</p>
         <p className="max-w-3xl rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
           <span className="font-semibold">Curated subscription, not a full mirror.</span>{' '}
           Stellar Index is the protocol explorer for the Stellar network, with an independent pricing API; from each CEX we
@@ -134,7 +134,7 @@ export default async function ExchangeDetailPage({
       <div className="flex flex-wrap gap-3 text-xs">
         <Link
           href={`/sources/${name}`}
-          className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
         >
           Source registry detail →
         </Link>
@@ -142,7 +142,7 @@ export default async function ExchangeDetailPage({
           href={info.homepage}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-slate-500 hover:underline"
+          className="inline-flex items-center gap-1 text-ink-muted hover:underline"
         >
           {info.name} homepage
           <ExternalLink className="h-3 w-3" />
@@ -151,7 +151,7 @@ export default async function ExchangeDetailPage({
           href={info.docsUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-slate-500 hover:underline"
+          className="inline-flex items-center gap-1 text-ink-muted hover:underline"
         >
           API docs
           <ExternalLink className="h-3 w-3" />

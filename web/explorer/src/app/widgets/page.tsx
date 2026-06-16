@@ -53,7 +53,7 @@ export default function WidgetsPage() {
           Embed
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Widgets</h1>
-        <p className="max-w-3xl text-base text-slate-600">
+        <p className="max-w-3xl text-base text-ink-body">
           Drop-in iframe widgets for live Stellar Index prices. Paste
           one snippet — no script, no API key, no build step. Each
           widget renders the same data the explorer pulls from the
@@ -66,10 +66,10 @@ export default function WidgetsPage() {
           <h2 className="text-xl font-semibold tracking-tight">
             Asset card
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-ink-body">
             Live price, 24h change, and a sparkline for one asset.
             Source path is{' '}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs">
               /embed/asset/&lt;slug&gt;
             </code>
             .
@@ -99,9 +99,9 @@ export default function WidgetsPage() {
           <h2 className="text-xl font-semibold tracking-tight">
             Pair card
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-ink-body">
             Live VWAP for a (base, quote) pair. Source path is{' '}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs">
               /embed/pair/&lt;base&gt;~&lt;quote&gt;
             </code>{' '}
             (URL-encode the tilde when embedding from servers that
@@ -130,10 +130,10 @@ export default function WidgetsPage() {
       <section className="space-y-4">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Currency card</h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-ink-body">
             Live USD-base rate + 7d change for one fiat currency.
             Source path is{' '}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs">
               /embed/currency/&lt;ticker&gt;
             </code>
             .
@@ -158,9 +158,9 @@ export default function WidgetsPage() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm">
+      <section className="rounded-xl border border-line bg-surface p-5 text-sm">
         <h2 className="text-base font-semibold">Notes</h2>
-        <ul className="mt-3 space-y-2 text-slate-600">
+        <ul className="mt-3 space-y-2 text-ink-body">
           <li>
             <strong>No auth, no API key.</strong> The widgets read
             from the public tier of the Stellar Index API. Sites with
@@ -173,7 +173,7 @@ export default function WidgetsPage() {
           <li>
             <strong>Light + dark.</strong> The widgets follow the
             embedding page&apos;s color scheme via{' '}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs">
               prefers-color-scheme
             </code>
             . Tested against light, dark, and system-default
@@ -187,7 +187,7 @@ export default function WidgetsPage() {
           <li>
             <strong>Apex domain only.</strong> Embed against the apex
             (
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">
+            <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs">
               stellarindex.io
             </code>
             ), not a preview deployment. Cloudflare-Pages preview URLs
@@ -209,11 +209,11 @@ function WidgetCard({
   snippet: string;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs uppercase tracking-wider text-slate-500">
+    <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
+      <div className="border-b border-line bg-surface-muted px-4 py-2 text-xs uppercase tracking-wider text-ink-muted">
         {label}
       </div>
-      <div className="flex h-[210px] items-center justify-center bg-slate-50 p-4">
+      <div className="flex h-[210px] items-center justify-center bg-surface-muted p-4">
         <iframe
           src={src}
           width="100%"
@@ -221,10 +221,10 @@ function WidgetCard({
           frameBorder="0"
           loading="lazy"
           title={label}
-          className="rounded border border-slate-200"
+          className="rounded border border-line"
         />
       </div>
-      <div className="border-t border-slate-200">
+      <div className="border-t border-line">
         <CopyableSnippet snippet={snippet} />
       </div>
     </div>

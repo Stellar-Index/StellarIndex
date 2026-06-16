@@ -49,7 +49,7 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
           quote: DEFAULT_QUOTE,
           limit: HISTORY_LIMIT,
         })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -67,7 +67,7 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
           quote: DEFAULT_QUOTE,
           limit: HISTORY_LIMIT,
         })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No trades observed against XLM in the recent window. Try the
         Markets tab to see other quote pairs that have traded.
@@ -86,8 +86,8 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
       bodyClassName="overflow-x-auto"
     >
       <table className="w-full min-w-[640px] text-sm">
-        <thead className="text-left text-xs uppercase tracking-wider text-slate-500">
-          <tr className="border-b border-slate-200">
+        <thead className="text-left text-xs uppercase tracking-wider text-ink-muted">
+          <tr className="border-b border-line">
             <th className="py-2 pr-3 font-medium">When</th>
             <th className="py-2 pr-3 font-medium">Source</th>
             <th className="py-2 pr-3 font-medium">Ledger</th>
@@ -100,9 +100,9 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
           {rows.map((r) => (
             <tr
               key={`${r.tx_hash}-${r.op_index}`}
-              className="border-b border-slate-100 last:border-0"
+              className="border-b border-line-subtle last:border-0"
             >
-              <td className="py-2 pr-3 font-mono text-xs text-slate-600">
+              <td className="py-2 pr-3 font-mono text-xs text-ink-body">
                 {r.tx_hash ? (
                   <a
                     href={`https://stellar.expert/explorer/public/tx/${r.tx_hash}`}
@@ -120,12 +120,12 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
               <td className="py-2 pr-3">
                 <Link
                   href={`/sources/${r.source}`}
-                  className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 hover:text-brand-600"
+                  className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-[11px] text-ink-body hover:text-brand-600"
                 >
                   {r.source}
                 </Link>
               </td>
-              <td className="py-2 pr-3 font-mono text-xs text-slate-500">
+              <td className="py-2 pr-3 font-mono text-xs text-ink-muted">
                 {r.ledger}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">

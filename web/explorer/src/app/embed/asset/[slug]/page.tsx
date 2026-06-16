@@ -107,7 +107,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
 
   if (!coin) {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-slate-500">
+      <div className="flex h-full min-h-32 items-center justify-center px-3 py-3 text-sm text-ink-muted">
         <span>No data for {slug}</span>
       </div>
     );
@@ -120,13 +120,13 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
   const points = coin.price_history_24h ?? [];
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900">
+    <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">
             {coin.code}
           </span>
-          <span className="font-mono text-[10px] text-slate-500">
+          <span className="font-mono text-[10px] text-ink-muted">
             Stellar
           </span>
         </div>
@@ -134,7 +134,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
           href={`https://stellarindex.io/assets/${slug}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-[10px] text-slate-400 hover:text-brand-600"
+          className="text-[10px] text-ink-faint hover:text-brand-600"
         >
           rates&shy;engine.net ↗
         </a>
@@ -148,7 +148,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
         <ChangeChip pct={change7d} label="7d" />
       </div>
       {points.length > 0 && <Sparkline points={points} />}
-      <div className="mt-auto flex items-center justify-between text-[10px] text-slate-400">
+      <div className="mt-auto flex items-center justify-between text-[10px] text-ink-faint">
         <span>Powered by Stellar Index</span>
         {coin.volume_24h_usd && (
           <span className="font-mono tabular-nums">
@@ -167,7 +167,7 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
       ? 'bg-emerald-50 text-emerald-700'
       : pct < 0
         ? 'bg-rose-50 text-rose-700'
-        : 'bg-slate-100 text-slate-600';
+        : 'bg-surface-subtle text-ink-body';
   return (
     <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
       {pct > 0 ? '+' : ''}

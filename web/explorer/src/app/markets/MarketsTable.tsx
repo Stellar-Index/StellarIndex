@@ -68,7 +68,7 @@ export function MarketsTable() {
       <Panel
         title="Markets"
         source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -79,7 +79,7 @@ export function MarketsTable() {
       <Panel
         title="Markets"
         source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No active markets in the last 14 days.
       </Panel>
@@ -101,9 +101,9 @@ export function MarketsTable() {
             placeholder="Filter by base or quote asset…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-72 rounded-md border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px] placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-72 rounded-md border border-line bg-surface px-2.5 py-1 font-mono text-[11px] placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <span className="font-mono text-[11px] text-slate-500">
+          <span className="font-mono text-[11px] text-ink-muted">
             {sorted.length} of {data.markets.length} rows
             {filter && (
               <button
@@ -118,9 +118,9 @@ export function MarketsTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>#</Th>
               <Th>
                 <SortHeader
@@ -157,18 +157,18 @@ export function MarketsTable() {
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {sorted.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               return (
               <tr
                 key={`${m.base}|${m.quote}`}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
                   <Link
                     href={`/markets/${encodeURIComponent(slug)}`}
-                    className="text-slate-400 hover:text-brand-600"
+                    className="text-ink-faint hover:text-brand-600"
                   >
                     {i + 1}
                   </Link>
@@ -198,11 +198,11 @@ export function MarketsTable() {
                       ${formatCompact(Number(m.volume_24h_usd))}
                     </span>
                   ) : (
-                    <span className="text-slate-300">—</span>
+                    <span className="text-ink-faint">—</span>
                   )}
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600">
+                  <span className="font-mono tabular-nums text-ink-body">
                     {formatCompact(m.trade_count_24h)}
                   </span>
                 </Td>
@@ -210,7 +210,7 @@ export function MarketsTable() {
                   <SourceSparkline buckets={m.volume_history_24h} />
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-xs text-slate-500">
+                  <span className="font-mono tabular-nums text-xs text-ink-muted">
                     {formatRelative(m.last_trade_at)}
                   </span>
                 </Td>
@@ -290,16 +290,16 @@ function Td({
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300">—</span>;
+  if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
   // Pair prices are quote-per-base — they span >9 orders of
   // magnitude across the 5K active pairs (sub-satoshi memecoins
   // through XLM-USD), so digits adapt to keep precision visible.
   const fixed =
     n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
   return (
-    <span className="font-mono tabular-nums text-slate-700">
+    <span className="font-mono tabular-nums text-ink-body">
       {fixed}
     </span>
   );

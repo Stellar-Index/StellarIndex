@@ -111,7 +111,7 @@ export function BespokeSection({
         >
           {categoryLabel(bespoke.category)}
         </h2>
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-ink-muted">
           tailored on-chain metrics for this protocol
         </span>
       </div>
@@ -155,10 +155,10 @@ export function BespokeSection({
 
       {/* ── Notes / caveats ── */}
       {hasNotes && (
-        <ul className="space-y-1 px-1 text-xs text-slate-500">
+        <ul className="space-y-1 px-1 text-xs text-ink-muted">
           {bespoke.notes!.map((n, i) => (
             <li key={i} className="flex gap-1.5">
-              <span aria-hidden className="select-none text-slate-400">
+              <span aria-hidden className="select-none text-ink-faint">
                 ·
               </span>
               <span>{n}</span>
@@ -174,16 +174,16 @@ export function BespokeSection({
 
 function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
   return (
-    <div className="rounded-lg border border-brand-200/70 bg-white/80 p-3 shadow-sm">
+    <div className="rounded-lg border border-brand-200/70 bg-surface/80 p-3 shadow-sm">
       <div
-        className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500"
+        className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-ink-muted"
         title={kpi.hint || undefined}
       >
         <span className="truncate">{kpi.label}</span>
         {kpi.hint && (
           <span
             aria-hidden
-            className="cursor-help text-slate-400"
+            className="cursor-help text-ink-faint"
             title={kpi.hint}
           >
             ⓘ
@@ -195,11 +195,11 @@ function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
           {kpi.value}
         </span>
         {kpi.unit && (
-          <span className="text-xs font-medium text-slate-500">{kpi.unit}</span>
+          <span className="text-xs font-medium text-ink-muted">{kpi.unit}</span>
         )}
       </div>
       {kpi.hint && (
-        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-400">
+        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-ink-faint">
           {kpi.hint}
         </p>
       )}
@@ -228,9 +228,9 @@ function BespokeTablePanel({
   return (
     <Panel title={table.title} source={source} bodyClassName="-mx-4">
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               {table.columns.map((c, ci) => (
                 <th
                   key={ci}
@@ -242,12 +242,12 @@ function BespokeTablePanel({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {table.rows.length === 0 ? (
               <tr>
                 <td
                   colSpan={table.columns.length}
-                  className="px-4 py-6 text-center text-sm text-slate-500"
+                  className="px-4 py-6 text-center text-sm text-ink-muted"
                 >
                   No rows in the window.
                 </td>
@@ -256,14 +256,14 @@ function BespokeTablePanel({
               table.rows.map((row, ri) => (
                 <tr
                   key={ri}
-                  className="hover:bg-slate-50"
+                  className="hover:bg-surface-muted"
                 >
                   {table.columns.map((_, ci) => (
                     <td
                       key={ci}
                       className={`px-4 py-2 ${
                         numericCols[ci]
-                          ? 'text-right font-mono tabular-nums text-slate-600'
+                          ? 'text-right font-mono tabular-nums text-ink-body'
                           : ''
                       }`}
                     >
@@ -286,7 +286,7 @@ function BespokeTablePanel({
 // The store ships RAW ids — all shortening/linking is presentation, done here.
 function Cell({ value }: { value: string }) {
   if (value === '' || value === '—') {
-    return <span className="text-slate-300">—</span>;
+    return <span className="text-ink-faint">—</span>;
   }
   if (isContractId(value)) {
     return (

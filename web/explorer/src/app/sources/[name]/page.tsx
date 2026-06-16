@@ -160,7 +160,7 @@ export default async function SourceDetailPage({
     return (
       <div className="mx-auto max-w-3xl px-6 py-16 text-center">
         <h1 className="text-2xl font-semibold">Source not found</h1>
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="mt-2 text-sm text-ink-muted">
           No registered source named <code className="font-mono">{name}</code>.
         </p>
         <Link
@@ -195,7 +195,7 @@ export default async function SourceDetailPage({
       <header className="space-y-3">
         <Link
           href="/sources"
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
         >
           ← All sources
         </Link>
@@ -203,7 +203,7 @@ export default async function SourceDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight">{name}</h1>
           <ClassBadge cls={source.class} />
           {source.subclass && (
-            <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-600">
+            <span className="rounded bg-surface-subtle px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
               {source.subclass}
             </span>
           )}
@@ -280,15 +280,15 @@ export default async function SourceDetailPage({
         bodyClassName="-mx-4"
       >
         {cursors.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-slate-500">
+          <p className="px-4 py-3 text-sm text-ink-muted">
             No cursor recorded for this source. Likely either the source has
             never been started in this deployment, or it doesn&apos;t persist
             cursors (e.g. WebSocket-only venues that backfill via REST).
           </p>
         ) : (
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <th className="px-4 py-2 font-medium">Sub-source</th>
                 <th className="px-4 py-2 text-right font-medium">
                   Last ledger
@@ -297,11 +297,11 @@ export default async function SourceDetailPage({
                 <th className="px-4 py-2 text-right font-medium">Lag</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {cursors.map((c, i) => (
                 <tr
                   key={`${c.sub_source ?? ''}|${i}`}
-                  className="hover:bg-slate-50"
+                  className="hover:bg-surface-muted"
                 >
                   <td className="px-4 py-2 font-mono text-xs">
                     {c.sub_source || '—'}
@@ -309,7 +309,7 @@ export default async function SourceDetailPage({
                   <td className="px-4 py-2 text-right font-mono tabular-nums">
                     #{c.last_ledger.toLocaleString()}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-slate-500">
+                  <td className="px-4 py-2 text-right font-mono text-xs text-ink-muted">
                     {c.last_updated.replace('T', ' ').slice(0, 19)} UTC
                   </td>
                   <td className="px-4 py-2 text-right">
@@ -328,15 +328,15 @@ export default async function SourceDetailPage({
         bodyClassName="-mx-4"
       >
         {topMarkets.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-slate-500">
+          <p className="px-4 py-3 text-sm text-ink-muted">
             No markets observed for this source in the trailing 14 days. Either
             the venue isn&apos;t actively producing trades the indexer can decode,
             or the cursor hasn&apos;t advanced past the recency window yet.
           </p>
         ) : (
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <th className="px-4 py-2 font-medium">Base</th>
                 <th className="px-4 py-2 font-medium">Quote</th>
                 <th className="px-4 py-2 text-right font-medium">Last price</th>
@@ -344,13 +344,13 @@ export default async function SourceDetailPage({
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {topMarkets.map((m) => {
                 const slug = encodeURIComponent(`${m.base}~${m.quote}`);
                 return (
                   <tr
                     key={`${m.base}|${m.quote}`}
-                    className="hover:bg-slate-50"
+                    className="hover:bg-surface-muted"
                   >
                     <td className="px-4 py-2">
                       <Link
@@ -370,11 +370,11 @@ export default async function SourceDetailPage({
                     </td>
                     <td className="px-4 py-2 text-right">
                       {m.last_price ? (
-                        <span className="font-mono tabular-nums text-slate-700">
+                        <span className="font-mono tabular-nums text-ink-body">
                           {formatLastPrice(m.last_price)}
                         </span>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -383,10 +383,10 @@ export default async function SourceDetailPage({
                           ${formatCompact(Number(m.volume_24h_usd))}
                         </span>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono tabular-nums text-slate-500">
+                    <td className="px-4 py-2 text-right font-mono tabular-nums text-ink-muted">
                       {formatCompact(m.trade_count_24h)}
                     </td>
                   </tr>
@@ -428,12 +428,12 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4">
+    <section className="rounded-lg border border-line bg-surface p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
           {title}
         </h2>
-        {subtitle && <span className="text-xs text-slate-400">{subtitle}</span>}
+        {subtitle && <span className="text-xs text-ink-faint">{subtitle}</span>}
       </header>
       <div className={bodyClassName ?? ''}>{children}</div>
     </section>
@@ -459,7 +459,7 @@ function Stat({
         : '';
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wider text-slate-500">
+      <dt className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </dt>
       <dd
@@ -504,7 +504,7 @@ function ClassBadge({ cls }: { cls: Source['class'] }) {
         ? 'bg-sky-100 text-sky-800'
         : cls === 'aggregator'
           ? 'bg-amber-100 text-amber-800'
-          : 'bg-slate-100 text-slate-700';
+          : 'bg-surface-subtle text-ink-body';
   return (
     <span
       className={`rounded px-2 py-0.5 font-mono text-xs uppercase tracking-wider ${tone}`}

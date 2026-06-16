@@ -72,8 +72,8 @@ export function SourceStatsPanel({
         />
       </div>
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
-        <div className="mt-4 border-t border-slate-200 pt-3">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="mt-4 border-t border-line pt-3">
+          <div className="text-[10px] uppercase tracking-wider text-ink-muted">
             Volume by hour
           </div>
           <div className="mt-2">
@@ -88,7 +88,7 @@ export function SourceStatsPanel({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>
       <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>

@@ -50,30 +50,30 @@ export default async function DiscoveryDocPage({
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <Link
         href="/research"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to research
       </Link>
 
-      <header className="space-y-3 border-b border-slate-200 pb-6">
+      <header className="space-y-3 border-b border-line pb-6">
         <div className="flex items-center gap-3 text-xs">
-          <span className="font-medium uppercase tracking-wider text-slate-500">
+          <span className="font-medium uppercase tracking-wider text-ink-muted">
             Integration audit
           </span>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-600">
+          <span className="rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-ink-body">
             {doc.category}
           </span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{doc.title}</h1>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           {doc.description}
         </p>
         <a
           href={`https://github.com/StellarIndex/stellar-index/blob/main/${doc.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"
+          className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
         >
           View source on GitHub
           <ExternalLink className="h-3 w-3" />

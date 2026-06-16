@@ -48,7 +48,7 @@ export function IssuersTable() {
       <Panel
         title="Issuers"
         source={asExample('/v1/issuers', { limit: 100 })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         Loading…
       </Panel>
@@ -59,7 +59,7 @@ export function IssuersTable() {
       <Panel
         title="Issuers"
         source={asExample('/v1/issuers', { limit: 100 })}
-        bodyClassName="text-sm text-slate-500"
+        bodyClassName="text-sm text-ink-muted"
       >
         No issuers recorded yet.
       </Panel>
@@ -81,9 +81,9 @@ export function IssuersTable() {
             placeholder="Filter by name, domain, or G-strkey…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-72 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-72 rounded-md border border-line bg-surface px-2.5 py-1 text-xs placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <span className="font-mono text-[11px] text-slate-500">
+          <span className="font-mono text-[11px] text-ink-muted">
             {filtered.length} of {data.length} rows
             {filter && (
               <button
@@ -98,9 +98,9 @@ export function IssuersTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-line text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>#</Th>
               <Th>Organisation</Th>
               <Th>G-strkey</Th>
@@ -109,10 +109,10 @@ export function IssuersTable() {
               <Th align="right">Total observations</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-subtle">
             {filtered.length === 0 && filter && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={6} className="px-4 py-8 text-center text-sm text-ink-muted">
                   No issuers match &quot;{filter}&quot;.
                 </td>
               </tr>
@@ -120,10 +120,10 @@ export function IssuersTable() {
             {filtered.map((row, i) => (
               <tr
                 key={row.g_strkey}
-                className="hover:bg-slate-50"
+                className="hover:bg-surface-muted"
               >
                 <Td>
-                  <span className="text-slate-400">{i + 1}</span>
+                  <span className="text-ink-faint">{i + 1}</span>
                 </Td>
                 <Td>
                   <div className="flex items-center gap-1.5">
@@ -135,7 +135,7 @@ export function IssuersTable() {
                         {row.org_name}
                       </Link>
                     ) : (
-                      <span className="text-xs text-slate-400">—</span>
+                      <span className="text-xs text-ink-faint">—</span>
                     )}
                     {row.scam_reason && (
                       <span
@@ -170,11 +170,11 @@ export function IssuersTable() {
                     // Attacker-controlled on-chain value that doesn't
                     // parse as a strict hostname — render as plain
                     // text, never a clickable link (phishing guard).
-                    <span className="text-xs text-slate-500" title="Unverified issuer-supplied domain">
+                    <span className="text-xs text-ink-muted" title="Unverified issuer-supplied domain">
                       {row.home_domain}
                     </span>
                   ) : (
-                    <span className="text-xs text-slate-400">—</span>
+                    <span className="text-xs text-ink-faint">—</span>
                   )}
                 </Td>
                 <Td align="right">

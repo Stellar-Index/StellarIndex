@@ -83,7 +83,7 @@ export function OraclesView() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Oracles</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Every on-chain Stellar oracle we ingest and cross-reference.
           Oracles are reported alongside our independent VWAP but never
           included in it — mixing them would import their methodology
@@ -98,9 +98,9 @@ export function OraclesView() {
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <Th>Oracle</Th>
                 <Th align="right">24h updates</Th>
                 <Th align="right">Active streams</Th>
@@ -108,26 +108,26 @@ export function OraclesView() {
                 <Th align="right">In VWAP?</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {sources.isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
                     Loading oracles…
                   </td>
                 </tr>
               )}
               {!sources.isLoading && oracles.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No oracles registered.
                   </td>
                 </tr>
               )}
               {oracles.map((o) => {
                 const perSrc = perSourceCounts[o.name];
-                const tone = TONE[o.name] ?? 'bg-slate-100 text-slate-700';
+                const tone = TONE[o.name] ?? 'bg-surface-subtle text-ink-body';
                 return (
-                  <tr key={o.name} className="hover:bg-slate-50">
+                  <tr key={o.name} className="hover:bg-surface-muted">
                     <Td>
                       <Link
                         href={`/sources/${o.name}`}
@@ -137,17 +137,17 @@ export function OraclesView() {
                       </Link>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {o.trade_count_24h && o.trade_count_24h > 0 ? o.trade_count_24h.toLocaleString() : '0'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {perSrc ? perSrc.streams : '—'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono text-xs text-slate-500">
+                      <span className="font-mono text-xs text-ink-muted">
                         {perSrc ? formatRelative(perSrc.latestTs) : '—'}
                       </span>
                     </Td>
@@ -155,7 +155,7 @@ export function OraclesView() {
                       <span
                         className={`inline-block rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
                           o.class === 'oracle'
-                            ? 'bg-slate-200 text-slate-600'
+                            ? 'bg-line text-ink-body'
                             : 'bg-emerald-100 text-emerald-800'
                         }`}
                         title="Oracle observations are reported but never included in the canonical VWAP — that would import their methodology."
@@ -178,9 +178,9 @@ export function OraclesView() {
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <table className="min-w-full divide-y divide-line text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <Th>Oracle</Th>
                 <Th>Asset</Th>
                 <Th>Quote</Th>
@@ -188,25 +188,25 @@ export function OraclesView() {
                 <Th align="right">Updated</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-subtle">
               {streams.isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
                     Loading streams…
                   </td>
                 </tr>
               )}
               {!streams.isLoading && streamRows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No oracle observations in the last 7 days.
                   </td>
                 </tr>
               )}
               {streamRows.map((s, i) => {
-                const tone = TONE[s.source] ?? 'bg-slate-100 text-slate-700';
+                const tone = TONE[s.source] ?? 'bg-surface-subtle text-ink-body';
                 return (
-                  <tr key={`${s.source}|${s.asset}|${s.quote}|${i}`} className="hover:bg-slate-50">
+                  <tr key={`${s.source}|${s.asset}|${s.quote}|${i}`} className="hover:bg-surface-muted">
                     <Td>
                       <Link
                         href={`/sources/${s.source}`}
@@ -222,12 +222,12 @@ export function OraclesView() {
                       <AssetLabel canonical={s.quote} />
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700">
+                      <span className="font-mono tabular-nums text-ink-body">
                         {formatPrice(s.price)}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono text-xs text-slate-500">
+                      <span className="font-mono text-xs text-ink-muted">
                         {formatRelative(s.ts)}
                       </span>
                     </Td>
@@ -243,7 +243,7 @@ export function OraclesView() {
         title="SEP-40 compatibility"
         hint="Drop-in oracle interface"
         source={asExample('/v1/oracle/lastprice', { asset: 'native' })}
-        bodyClassName="space-y-2 text-sm text-slate-600"
+        bodyClassName="space-y-2 text-sm text-ink-body"
       >
         <p>
           We expose three SEP-40 endpoints —{' '}

@@ -23,7 +23,7 @@ export default function DiagnosticsPage() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Diagnostics</h1>
-        <p className="max-w-3xl text-sm text-slate-600">
+        <p className="max-w-3xl text-sm text-ink-body">
           Public system-health view. Today: live per-source ingest cursors
           straight from <code className="font-mono">/v1/diagnostics/cursors</code>.
           Decoder coverage, archive completeness, cross-region consistency, and
@@ -32,14 +32,14 @@ export default function DiagnosticsPage() {
       </header>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-muted">
           Live ingest
         </h2>
         <HealthSummary />
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-muted">
           Backfill workers
         </h2>
         <BackfillSummary />

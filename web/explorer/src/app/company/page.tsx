@@ -19,7 +19,7 @@ export default function CompanyPage() {
         <h1 className="text-4xl font-semibold tracking-tight">
           Pricing infrastructure for Stellar.
         </h1>
-        <p className="text-base text-slate-600">
+        <p className="text-base text-ink-body">
           Stellar Index is a public, vendor-neutral pricing surface for
           the Stellar network. Built against the SDF and Freighter
           RFPs and the awarded CTX proposal.
@@ -28,7 +28,7 @@ export default function CompanyPage() {
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">What we do</h2>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           We ingest every trade on the Stellar network — on-chain DEXes
           (Soroswap, Phoenix, Aquarius, SDEX, Comet), classic SDEX
           orderbooks, lending protocol auctions (Blend), and major
@@ -43,11 +43,11 @@ export default function CompanyPage() {
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">How we ship</h2>
-        <ul className="space-y-2 text-sm text-slate-600">
+        <ul className="space-y-2 text-sm text-ink-body">
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 Apache-2.0.
               </strong>{' '}
               The whole codebase — backend, explorer, status site,
@@ -66,9 +66,9 @@ export default function CompanyPage() {
             </span>
           </li>
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 Three-region active-active.
               </strong>{' '}
               Per{' '}
@@ -93,9 +93,9 @@ export default function CompanyPage() {
             </span>
           </li>
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 Public-first.
               </strong>{' '}
               Anonymous reads work without an account. The free tier
@@ -105,9 +105,9 @@ export default function CompanyPage() {
             </span>
           </li>
           <li className="flex gap-2">
-            <span className="text-slate-400">•</span>
+            <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-slate-700">
+              <strong className="text-ink-body">
                 Honest about what we don&apos;t have.
               </strong>{' '}
               Forex is currently a daily-grain shim while we wire a
@@ -124,7 +124,7 @@ export default function CompanyPage() {
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">Funding</h2>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           The build was funded by the Stellar Community Fund via the
           awarded{' '}
           <Link href="/research/discovery" className="text-brand-600 hover:underline">
@@ -139,7 +139,7 @@ export default function CompanyPage() {
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">What&apos;s next</h2>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           v1 ships in the coming weeks. The roadmap that gets us there
           lives in{' '}
           <a
@@ -160,12 +160,12 @@ export default function CompanyPage() {
         </p>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Link
             href="/contact"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
           >
             <Mail className="h-4 w-4" />
             Contact
@@ -174,14 +174,14 @@ export default function CompanyPage() {
             href="https://github.com/StellarIndex/stellar-index"
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
           >
             <Github className="h-4 w-4" />
             GitHub
           </a>
           <Link
             href="/careers"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
           >
             Careers
           </Link>

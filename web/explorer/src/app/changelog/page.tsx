@@ -23,7 +23,7 @@ export default function ChangelogPage() {
             href="/changelog.atom"
             target="_blank"
             rel="noreferrer noopener"
-            className="text-xs text-slate-500 hover:text-brand-600"
+            className="text-xs text-ink-muted hover:text-brand-600"
             title="Atom feed — subscribe in Feedly, Slack RSS bot, etc."
           >
             Subscribe (Atom) ↗
@@ -32,9 +32,9 @@ export default function ChangelogPage() {
         <h1 className="text-4xl font-semibold tracking-tight">
           Every release, every change.
         </h1>
-        <p className="max-w-2xl text-base text-slate-600">
+        <p className="max-w-2xl text-base text-ink-body">
           Pulled at build time from{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-sm">
+          <code className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-sm">
             CHANGELOG.md
           </code>{' '}
           on{' '}
@@ -81,7 +81,7 @@ export default function ChangelogPage() {
         </div>
       )}
 
-      <div className="border-t border-slate-200 pt-6 text-sm text-slate-500">
+      <div className="border-t border-line pt-6 text-sm text-ink-muted">
         <Link href="/" className="text-brand-600 hover:underline">
           ← Home
         </Link>
@@ -109,9 +109,9 @@ function ReleaseCard({ release }: { release: Release }) {
   return (
     <article
       id={id}
-      className="scroll-mt-20 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+      className="scroll-mt-20 rounded-lg border border-line bg-surface p-6 shadow-sm"
     >
-      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-3">
+      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-line-subtle pb-3">
         <h2 className="font-mono text-2xl font-semibold tracking-tight">
           <a href={`#${id}`} className="hover:text-brand-600">
             {release.version}
@@ -124,7 +124,7 @@ function ReleaseCard({ release }: { release: Release }) {
             </span>
           ) : (
             release.date && (
-              <span className="font-mono tabular-nums text-slate-500">
+              <span className="font-mono tabular-nums text-ink-muted">
                 {release.date}
               </span>
             )
@@ -134,7 +134,7 @@ function ReleaseCard({ release }: { release: Release }) {
               href={`https://github.com/StellarIndex/stellar-index/releases/tag/${release.version}`}
               target="_blank"
               rel="noreferrer noopener"
-              className="rounded border border-slate-200 px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600"
+              className="rounded border border-line px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600"
             >
               GitHub ↗
             </a>
@@ -160,7 +160,7 @@ function BlockSection({ block }: { block: { kind: string; lines: string[] } }) {
           ? 'text-amber-700'
           : block.kind === 'Removed' || block.kind === 'Deprecated'
             ? 'text-rose-700'
-            : 'text-slate-700';
+            : 'text-ink-body';
 
   // Strip the leading "- " bullet from list items so we can group
   // by sub-item; preserve everything else as raw markdown the
@@ -183,7 +183,7 @@ function BlockSection({ block }: { block: { kind: string; lines: string[] } }) {
       <h3 className={`mb-2 text-xs font-semibold uppercase tracking-wider ${tone}`}>
         {block.kind}
       </h3>
-      <ul className="space-y-2 text-sm text-slate-700">
+      <ul className="space-y-2 text-sm text-ink-body">
         {items.map((it, i) => (
           <li key={i}>
             <MarkdownLite text={it} />
@@ -252,7 +252,7 @@ function MarkdownLite({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-slate-900">
+            <strong key={i} className="font-semibold text-ink">
               {t.value}
             </strong>
           );
@@ -260,7 +260,7 @@ function MarkdownLite({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs"
+              className="rounded bg-surface-subtle px-1 py-0.5 font-mono text-xs"
             >
               {t.value}
             </code>
