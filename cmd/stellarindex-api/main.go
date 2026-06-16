@@ -689,6 +689,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// "verified-issuer catalogue moves on human timescale" knob —
 	// same rationale as cachedSourcesStats.
 	cachedIssuersReader := v1.NewCachedIssuersReader(store, 5*time.Minute)
+	// /v1/network/stats is the slowest /v1 route (~485ms p95 on r1 — a
+	// network-wide 24h aggregate over the served tier) and feeds the
+	// explorer's network strip. SWR with a 30s TTL keeps it off the
+	// request path; the trailing-24h figures don't move materially in 30s.
+	cachedNetworkStats := v1.NewCachedNetworkStatsReader(store, 30*time.Second)
 
 	usdPegs := parseUSDPeggedClassics(cfg.Trades.USDPeggedClassicAssets, logger)
 
@@ -910,7 +915,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ProtocolActivity:  protocolActivityReader,
 		ProtocolBespoke:   store,
 		SoroswapPairs:     store,
-		NetworkStats:      store,
+		NetworkStats:      cachedNetworkStats,
 		// Wrap with a 60s TTL cache. The underlying SQL aggregations
 		// (24h trades-hypertable scan grouped by source) take 5-10s;
 		// the explorer hits these on every /dexes + /exchanges page
