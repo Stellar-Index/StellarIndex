@@ -113,7 +113,7 @@ export function DegradedBanner() {
             <>
               {' '}
               · top:{' '}
-              <code className="rounded bg-white/40 px-1 py-0.5 text-[11px]">
+              <code className="rounded bg-surface/40 px-1 py-0.5 text-[11px]">
                 {topAlert}
               </code>
             </>

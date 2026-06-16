@@ -18,13 +18,15 @@ export function Navbar() {
   }, [pathname]);
   if (pathname?.startsWith('/embed/')) return null;
   return (
-    <nav className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+    <nav className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-md supports-[backdrop-filter]:bg-surface/70">
+      <div className="mx-auto flex max-w-page items-center justify-between px-4 py-3 sm:px-6">
         <Link
           href="/"
-          className="flex items-center gap-2 text-sm font-semibold tracking-tight"
+          className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink"
         >
-          <TrendingUp className="h-5 w-5 text-brand-500" />
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-600 text-white">
+            <TrendingUp className="h-3.5 w-3.5" />
+          </span>
           <span>Stellar Index</span>
         </Link>
 
@@ -52,7 +54,7 @@ export function Navbar() {
             onClick={() => setMobileOpen((o) => !o)}
             aria-expanded={mobileOpen}
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-            className="ml-1 inline-flex items-center justify-center rounded-md p-2 text-slate-700 hover:bg-slate-100"
+            className="ml-1 inline-flex items-center justify-center rounded-md p-2 text-ink-body hover:bg-surface-subtle"
           >
             {mobileOpen ? (
               <X className="h-5 w-5" />
@@ -71,11 +73,11 @@ export function Navbar() {
 
 function MobileDrawer({ onClose }: { onClose: () => void }) {
   return (
-    <div className="border-t border-slate-200 bg-white px-4 py-3 text-sm shadow-inner md:hidden">
+    <div className="border-t border-line bg-surface px-4 py-3 text-sm shadow-inner md:hidden">
       <Link
         href="/assets"
         onClick={onClose}
-        className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
+        className="block rounded-md px-3 py-2 text-ink-body hover:bg-surface-subtle"
       >
         Assets
       </Link>
@@ -87,16 +89,16 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
       <a
         href="https://docs.stellarindex.io"
         onClick={onClose}
-        className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
+        className="block rounded-md px-3 py-2 text-ink-body hover:bg-surface-subtle"
       >
         API Docs
       </a>
       <MobileSection label="About" items={ABOUT_ITEMS} onClose={onClose} />
-      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3">
+      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-line pt-3">
         <Link
           href="/signin"
           onClick={onClose}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-center text-sm text-slate-700"
+          className="rounded-md border border-line px-3 py-1.5 text-center text-sm text-ink-body"
         >
           Sign in
         </Link>
@@ -128,7 +130,7 @@ function MobileSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
+        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-ink-body hover:bg-surface-subtle"
       >
         <span>{label}</span>
         <ChevronDown
@@ -144,7 +146,7 @@ function MobileSection({
                 key={it.href}
                 href={it.href}
                 onClick={onClose}
-                className="block rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+                className="block rounded-md px-3 py-1.5 text-sm text-ink-body hover:bg-surface-subtle"
               >
                 {it.label}
               </a>
@@ -153,7 +155,7 @@ function MobileSection({
                 key={it.href}
                 href={it.href}
                 onClick={onClose}
-                className="block rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+                className="block rounded-md px-3 py-1.5 text-sm text-ink-body hover:bg-surface-subtle"
               >
                 {it.label}
               </Link>
@@ -184,7 +186,7 @@ function SignedOutCTAs() {
     <>
       <Link
         href="/signin"
-        className="ml-2 rounded-md px-3 py-1.5 text-slate-700 hover:bg-slate-100"
+        className="ml-2 rounded-md px-3 py-1.5 text-ink-body hover:bg-surface-subtle"
       >
         Sign in
       </Link>
@@ -243,7 +245,7 @@ function SignedInWidget({ email }: { email?: string }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-ink-body hover:border-brand-500 hover:text-brand-600"
       >
         <User className="h-3.5 w-3.5" />
         <span className="max-w-[12ch] truncate">{display}</span>
@@ -255,12 +257,12 @@ function SignedInWidget({ email }: { email?: string }) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg"
+          className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-line bg-surface p-2 shadow-elevated"
         >
           {email && (
-            <div className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500">
+            <div className="border-b border-line-subtle px-3 py-2 text-xs text-ink-muted">
               Signed in as
-              <div className="font-mono text-[11px] text-slate-700">
+              <div className="font-mono text-[11px] text-ink-body">
                 {email}
               </div>
             </div>
@@ -269,7 +271,7 @@ function SignedInWidget({ email }: { email?: string }) {
             href="/account"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100"
+            className="block rounded-md px-3 py-2 text-sm hover:bg-surface-subtle"
           >
             Your account
           </Link>
@@ -277,7 +279,7 @@ function SignedInWidget({ email }: { email?: string }) {
             type="button"
             onClick={handleSignOut}
             role="menuitem"
-            className="flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+            className="flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm text-ink-body hover:bg-surface-subtle"
           >
             <LogOut className="h-3.5 w-3.5" />
             Sign out
@@ -373,7 +375,7 @@ function NavLink({
   external?: boolean;
 }) {
   const cls =
-    'rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600';
+    'rounded-md px-3 py-1.5 text-ink-body hover:bg-surface-subtle hover:text-brand-600';
   if (external) {
     return (
       <a href={href} className={cls}>
@@ -414,7 +416,7 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600"
+        className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-ink-body hover:bg-surface-subtle hover:text-brand-600"
       >
         {label}
         <ChevronDown
@@ -425,7 +427,7 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
       {open && (
         <div
           role="menu"
-          className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-2 shadow-lg"
+          className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-line bg-surface p-2 shadow-elevated"
         >
           {items.map((it) =>
             it.external ? (
@@ -434,13 +436,13 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
                 href={it.href}
                 role="menuitem"
                 onClick={() => setOpen(false)}
-                className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100"
+                className="block rounded-md px-3 py-2 text-sm hover:bg-surface-subtle"
               >
-                <div className="font-medium text-slate-900">
+                <div className="font-medium text-ink">
                   {it.label}
                 </div>
                 {it.description && (
-                  <div className="text-xs text-slate-500">
+                  <div className="text-xs text-ink-muted">
                     {it.description}
                   </div>
                 )}
@@ -451,13 +453,13 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
                 href={it.href}
                 role="menuitem"
                 onClick={() => setOpen(false)}
-                className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100"
+                className="block rounded-md px-3 py-2 text-sm hover:bg-surface-subtle"
               >
-                <div className="font-medium text-slate-900">
+                <div className="font-medium text-ink">
                   {it.label}
                 </div>
                 {it.description && (
-                  <div className="text-xs text-slate-500">
+                  <div className="text-xs text-ink-muted">
                     {it.description}
                   </div>
                 )}
@@ -494,7 +496,7 @@ function StatusPill() {
       href="https://status.stellarindex.io"
       title={title}
       aria-label={`API status: ${overall}`}
-      className="ml-2 inline-flex items-center rounded-md p-2 text-slate-600 hover:bg-slate-100"
+      className="ml-2 inline-flex items-center rounded-md p-2 text-ink-body hover:bg-surface-subtle"
     >
       <span
         className={`h-2 w-2 rounded-full ${tone} ${overall === 'ok' ? 'animate-pulse' : ''}`}
