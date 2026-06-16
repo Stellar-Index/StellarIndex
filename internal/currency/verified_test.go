@@ -345,16 +345,19 @@ func TestBrowseable_ExcludesReferenceOnly_DivergenceUnaffected(t *testing.T) {
 		browseable[vc.Ticker] = true
 	}
 
-	// Reference coins must NOT be browseable.
-	refOnly := []string{"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "POL", "DOT", "LINK", "UNI", "AAVE", "WBTC"}
+	// Reference coins must NOT be browseable. USDT is here too: no
+	// Tether-native Stellar issuer exists (SDEX USDT is third-party
+	// bridged), so it's a reference price only.
+	refOnly := []string{"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "POL", "DOT", "LINK", "UNI", "AAVE", "WBTC", "USDT"}
 	for _, tk := range refOnly {
 		if browseable[tk] {
 			t.Errorf("%s is reference_only but appears in Browseable()", tk)
 		}
 	}
 
-	// Stellar assets + fiats must REMAIN browseable.
-	for _, tk := range []string{"XLM", "USDC", "EURC", "AQUA", "USD", "EUR"} {
+	// Stellar assets + fiats must REMAIN browseable. PYUSD is here:
+	// it has an official Paxos Stellar issuer (added to the catalogue).
+	for _, tk := range []string{"XLM", "USDC", "EURC", "PYUSD", "AQUA", "USD", "EUR"} {
 		if !browseable[tk] {
 			t.Errorf("%s should be browseable but is missing from Browseable()", tk)
 		}

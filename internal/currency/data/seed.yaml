@@ -91,10 +91,13 @@ verified_currencies:
   - ticker: USDT
     slug: usdt
     name: Tether
-    description: Tether-issued USD-pegged stablecoin (Tether Holdings Ltd.).
+    description: Tether-issued USD-pegged stablecoin (Tether Holdings Ltd.). No Tether-native Stellar issuer exists; USDT seen on Stellar SDEX is third-party bridged (e.g. apay.io, home_domain dead.apay.io). Kept as a pricing reference only, not a verified Stellar asset.
     class: stablecoin
     coingecko_id: tether
     coinmarketcap_id: 825
+    # No official Tether issuer on Stellar to verify — reference price only
+    # (coingecko_id=tether still feeds divergence + the USDT->USD aggregator proxy).
+    reference_only: true
     networks:
       - network: ethereum
         contract: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
@@ -108,11 +111,18 @@ verified_currencies:
   - ticker: PYUSD
     slug: pyusd
     name: PayPal USD
-    description: PayPal's USD-pegged stablecoin issued by Paxos Trust.
+    description: PayPal's USD-pegged stablecoin issued by Paxos Trust. Live on Stellar mainnet since 2025-06 (PayPal/Stellar).
     class: stablecoin
     coingecko_id: paypal-usd
     coinmarketcap_id: 27772
+    verified_issuer_label: Paxos Trust (paypal.com)
     networks:
+      # Official PYUSD Stellar issuer per developer.paypal.com/community/blog/pyusd-on-stellar
+      # (Mainnet > Issuer). Confirmed as the dominant SDEX issuer in our lake.
+      - network: stellar
+        code: PYUSD
+        issuer: GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5
+        asset_id: PYUSD-GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5
       - network: ethereum
         contract: "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"
       - network: solana
