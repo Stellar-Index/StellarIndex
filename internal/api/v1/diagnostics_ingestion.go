@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/currency/marketcap"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 	"github.com/StellarIndex/stellar-index/internal/version"
@@ -98,7 +97,6 @@ type IngestionDiagnostics struct {
 	// ClickHouse lake.
 	CAGGCoverage CAGGCoverageView  `json:"cagg_coverage"`
 	FXBackfill   FXBackfillState   `json:"fx_backfill"`
-	MarketCap    MarketCapState    `json:"market_cap"`
 	Supply       SupplyStateView   `json:"supply"`
 	Sources      []SourceHealthRow `json:"sources"`
 }
@@ -418,17 +416,6 @@ type FXBackfillState struct {
 	CurrenciesCount int    `json:"currencies_count"`
 }
 
-// MarketCapState is a slim view of the marketcap.Cache. Populated
-// at request time from cache.All() — small map (~22 catalogue
-// entries today), so no incremental cost. OldestFetchedAt is the
-// LRU age of the oldest entry (if any); a stale OldestFetchedAt
-// signals the CG refresher is wedged.
-type MarketCapState struct {
-	EntriesCount    int    `json:"entries_count"`
-	OldestFetchedAt string `json:"oldest_fetched_at,omitempty"`
-	NewestFetchedAt string `json:"newest_fetched_at,omitempty"`
-}
-
 // SupplyStateView projects timescale.SupplyCoverage onto the wire.
 // Splits "classic" (XLM + CODE:G…) from "SEP-41" (C-strkey
 // contract addresses) so operators can spot a stalled observer
@@ -607,9 +594,8 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 
 	// Run independent fillers concurrently. Each has its own per-
 	// call timeout so a slow reader can't block the others. The
-	// in-memory cached/projected sections (BackfillCoverage,
-	// MarketCap) run inline since they don't touch the DB.
-	out.MarketCap = projectMarketCapState(s.marketCaps)
+	// in-memory cached/projected sections (BackfillCoverage) run
+	// inline since they don't touch the DB.
 	// The background-refreshed trades-scan snapshot is now ONLY a
 	// best-effort enrichment source (per-source trade_count + the
 	// off-chain CEX/FX row presence). The authoritative coverage/
@@ -1151,39 +1137,6 @@ func ledgerStreamLagSeconds(rows []timescale.Cursor) int64 {
 		}
 	}
 	return 0
-}
-
-// projectMarketCapState reads cache.All() once and reduces it to
-// the EntriesCount / Oldest / Newest summary. Iterates the map at
-// most once; no allocs beyond the output. Nil cache → empty state.
-func projectMarketCapState(c *marketcap.Cache) MarketCapState {
-	if c == nil {
-		return MarketCapState{}
-	}
-	all := c.All()
-	if len(all) == 0 {
-		return MarketCapState{}
-	}
-	var oldest, newest time.Time
-	for _, snap := range all {
-		if snap.FetchedAt.IsZero() {
-			continue
-		}
-		if oldest.IsZero() || snap.FetchedAt.Before(oldest) {
-			oldest = snap.FetchedAt
-		}
-		if newest.IsZero() || snap.FetchedAt.After(newest) {
-			newest = snap.FetchedAt
-		}
-	}
-	out := MarketCapState{EntriesCount: len(all)}
-	if !oldest.IsZero() {
-		out.OldestFetchedAt = oldest.UTC().Format(time.RFC3339)
-	}
-	if !newest.IsZero() {
-		out.NewestFetchedAt = newest.UTC().Format(time.RFC3339)
-	}
-	return out
 }
 
 // buildSourceHealth projects the static external.Registry onto

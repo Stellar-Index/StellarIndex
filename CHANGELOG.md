@@ -145,6 +145,31 @@ against.
   discovery, audits, dated entries below) intentionally keep the old name.
   Migration plan + r1 cutover: `docs/operations/stellar-index-migration.md`.
 
+### Removed
+
+- **BREAKING (API/SDK, SemVer-major): cross-chain / multi-network asset wire
+  shapes removed — the public API + Go SDK are now Stellar-only.** Part of the
+  Stellar-focus refactor (`docs/architecture/stellar-focus-refactor-plan.md`,
+  Unit D / Tier 3). Removed: the `GlobalAssetView.networks[]` array,
+  `VerifiedCurrencyListItem.networks[]` + `network_count`, the `NetworkView`
+  and `PerNetworkAssetView` schemas/types, the `GET /v1/assets/{asset_id}/{network}`
+  per-network drill-down route, and the `?network=` query param on `/v1/assets`.
+  The verified-currency catalogue (`internal/currency/data/seed.yaml`) is now a
+  pure Stellar-asset trust registry: every non-Stellar `networks:` entry was
+  stripped, so each browseable entry carries at most one (`stellar`) network
+  entry. Reference-only coins (BTC/ETH/…/USDT) keep their `coingecko_id` /
+  `coinmarketcap_id` mappings — the proposal-scoped divergence/aggregator
+  reference-price pipeline is unaffected. Pre-v1, no production consumers.
+- **Cross-chain market-cap cache (`internal/currency/marketcap`) removed.** The
+  CoinGecko-backed presentation-only cache (and its refresher goroutine + the
+  `MarketCaps` server option + the `/v1/diagnostics/ingestion` `market_cap`
+  state section) populated a CMC-style `market_cap_usd` for non-Stellar coins.
+  It was never read by `divergence`/`aggregate`. Catalogue crypto/stablecoin
+  rows no longer carry a catalogue-level market cap (their per-Stellar-asset F2
+  fields on `/v1/assets/{asset_id}` remain the canonical source). The legit
+  Stellar-native market cap (`AssetDetail.market_cap_usd`, circulating supply ×
+  price) and the fiat M2 × FX market cap are unchanged.
+
 ### Fixed
 
 - **ledgerstream: a bounded range of exactly one ledger is valid.** The

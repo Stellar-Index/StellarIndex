@@ -757,10 +757,7 @@ type Pool struct {
 // GlobalAssetView is the wire shape returned by [Client.Asset]
 // when called with a verified-currency slug ("usdc", "eurc",
 // "aqua"). Distinct from [AssetDetail] which is the per-Stellar-
-// network view returned for canonical asset_ids.
-//
-// See R-018 / docs/architecture/multi-network-assets-migration.md
-// Phase 1.4a for the dispatch rationale.
+// asset view returned for canonical asset_ids.
 type GlobalAssetView struct {
 	Ticker      string `json:"ticker"`
 	Slug        string `json:"slug"`
@@ -787,25 +784,6 @@ type GlobalAssetView struct {
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
 	SupplyDecimals    int     `json:"supply_decimals,omitempty"`
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
-
-	Networks []NetworkView `json:"networks"`
-}
-
-// NetworkView is one per-network identity entry on GlobalAssetView.
-type NetworkView struct {
-	Network string `json:"network"`
-	// DataQuality is "indexed" (Stellar — we ingest trades; deep_link
-	// is set) or "external" (we know the contract address but don't
-	// ingest the network's trades).
-	DataQuality string `json:"data_quality"`
-	// Stellar fields — only present when Network == "stellar".
-	AssetID  string `json:"asset_id,omitempty"`
-	Code     string `json:"code,omitempty"`
-	Issuer   string `json:"issuer,omitempty"`
-	DeepLink string `json:"deep_link,omitempty"`
-	// Non-Stellar fields.
-	Contract     string `json:"contract,omitempty"`
-	ExternalLink string `json:"external_link,omitempty"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to
@@ -828,23 +806,5 @@ type VerifiedCurrencyListItem struct {
 	// MarketCapUSD is computed for fiat rows only (M2 × current FX
 	// rate). Empty for crypto/stablecoin rows. Decimal string with
 	// 2 fractional digits.
-	MarketCapUSD string        `json:"market_cap_usd,omitempty"`
-	NetworkCount int           `json:"network_count"`
-	Networks     []NetworkView `json:"networks"`
-}
-
-// PerNetworkAssetView is the wire shape returned by
-// [Client.AssetByNetwork] (`GET /v1/assets/{slug}/{network}`) when
-// the network entry is non-Stellar. Stellar entries redirect to
-// the canonical `/v1/assets/{asset_id}` view (which returns the
-// full AssetDetail body).
-type PerNetworkAssetView struct {
-	Ticker       string `json:"ticker"`
-	Slug         string `json:"slug"`
-	Name         string `json:"name"`
-	Class        string `json:"class"`
-	Network      string `json:"network"`
-	DataQuality  string `json:"data_quality"`
-	Contract     string `json:"contract,omitempty"`
-	ExternalLink string `json:"external_link,omitempty"`
+	MarketCapUSD string `json:"market_cap_usd,omitempty"`
 }

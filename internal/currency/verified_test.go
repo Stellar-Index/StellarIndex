@@ -206,13 +206,13 @@ func TestLoadFromBytes_validation(t *testing.T) {
 			"slug is required",
 		},
 		{
-			"missing networks",
+			"missing networks (non-fiat, non-reference_only)",
 			`verified_currencies:
   - ticker: FOO
     slug: foo
     name: Foo
 `,
-			"at least one network entry",
+			"a Stellar network entry is required",
 		},
 		{
 			"duplicate slug",
@@ -456,6 +456,56 @@ func TestSeedClassDefaults(t *testing.T) {
 	cny, ok := cat.LookupBySlug("chinese-yuan")
 	if !ok || cny.Class != ClassFiat {
 		t.Errorf("chinese-yuan.Class = %q, want fiat", cny.Class)
+	}
+}
+
+// TestReferenceOnly_AllowsZeroNetworks pins the Stellar-focus
+// invariant: a reference_only entry (BTC/ETH/…) may carry zero
+// network entries — it has no Stellar issuance and exists only for
+// the divergence/aggregator price cross-check. A non-fiat,
+// non-reference_only entry still MUST carry a network entry.
+func TestReferenceOnly_AllowsZeroNetworks(t *testing.T) {
+	y := `verified_currencies:
+  - ticker: REF
+    slug: ref
+    name: Reference Coin
+    class: crypto
+    coingecko_id: ref-coin
+    reference_only: true
+`
+	cat, err := LoadFromBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("reference_only entry with no networks should load: %v", err)
+	}
+	vc, ok := cat.LookupBySlug("ref")
+	if !ok {
+		t.Fatal("ref entry not loaded")
+	}
+	if len(vc.Networks) != 0 {
+		t.Errorf("reference_only entry has %d networks, want 0", len(vc.Networks))
+	}
+	// Still feeds the reference-price pipeline.
+	if cat.CoinGeckoIDs()["REF"] != "ref-coin" {
+		t.Error("reference_only entry dropped from CoinGeckoIDs")
+	}
+}
+
+// TestSeedBrowseable_StellarOnlyNetworks pins that no seed entry
+// carries a non-Stellar network entry post Stellar-focus refactor.
+func TestSeedBrowseable_StellarOnlyNetworks(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	for _, vc := range cat.All() {
+		if len(vc.Networks) > 1 {
+			t.Errorf("%s has %d network entries; expected at most 1 (stellar)", vc.Ticker, len(vc.Networks))
+		}
+		for _, n := range vc.Networks {
+			if n.Network != "stellar" {
+				t.Errorf("%s carries non-Stellar network %q", vc.Ticker, n.Network)
+			}
+		}
 	}
 }
 

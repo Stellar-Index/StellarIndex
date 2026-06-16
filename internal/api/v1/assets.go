@@ -642,47 +642,33 @@ func filterCatalogueByClass(entries []*currency.VerifiedCurrency, target currenc
 }
 
 // computeCatalogueMarketCaps fans out market_cap_usd computation
-// per row, dispatched by class:
-//
-//   - "fiat":        fiatMarketCapUSD (M2 × FX rate via fxHistory).
-//   - "crypto" /
-//     "stablecoin":  read from s.marketCaps (CoinGecko-backed cache
-//     populated by the marketcap.Refresher).
+// per row. Only fiat rows carry a market cap (fiatMarketCapUSD —
+// M2 × FX rate via fxHistory); crypto/stablecoin catalogue rows
+// have no catalogue-level market cap (their per-Stellar-asset F2
+// fields on /v1/assets/{asset_id} are the canonical source).
 //
 // Returns a parallel-indexed slice of market_cap strings (empty for
-// rows where the source returned nothing). Nil-safe on s.marketCaps
-// — crypto/stablecoin rows fall back to empty when the cache hasn't
-// been wired.
+// every non-fiat row, and for fiat rows where no FX rate resolved).
 func (s *Server) computeCatalogueMarketCaps(ctx context.Context, matched []*currency.VerifiedCurrency, class string) []string {
 	caps := make([]string, len(matched))
-	if class == "fiat" {
-		var wg sync.WaitGroup
-		for i, vc := range matched {
-			if vc.CirculatingSupply == "" {
-				continue
-			}
-			i, vc := i, vc
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-					caps[i] = *capStr
-				}
-			}()
-		}
-		wg.Wait()
+	if class != "fiat" {
 		return caps
 	}
-	// Crypto + stablecoin path. Read from the CG market_cap cache;
-	// empty when the slug isn't cached yet.
-	if s.marketCaps == nil {
-		return caps
-	}
+	var wg sync.WaitGroup
 	for i, vc := range matched {
-		if snap, ok := s.marketCaps.Lookup(vc.Slug); ok && snap.MarketCapUSD != "" {
-			caps[i] = snap.MarketCapUSD
+		if vc.CirculatingSupply == "" {
+			continue
 		}
+		i, vc := i, vc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+				caps[i] = *capStr
+			}
+		}()
 	}
+	wg.Wait()
 	return caps
 }
 
@@ -751,8 +737,8 @@ func writeCataloguePage(w http.ResponseWriter, r *http.Request, rows []AssetDeta
 
 // projectCatalogueRow maps a catalogue entry to the listing's
 // AssetDetail wire shape. NO issuer / contract_id / home_domain
-// / sep1_status — those are Stellar-network-specific and belong
-// on /v1/assets/{slug}/{network}.
+// / sep1_status — those are Stellar-asset-specific and belong
+// on the canonical /v1/assets/{asset_id} detail route.
 func projectCatalogueRow(vc *currency.VerifiedCurrency) AssetDetail {
 	name := vc.Name
 	d := AssetDetail{
@@ -960,39 +946,28 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 }
 
 // computeAllCatalogueMarketCaps fans out market_cap_usd across the
-// full catalogue, mixing both sources:
-//
-//   - Fiat rows  → fiatMarketCapUSD (M2 × FX rate).
-//   - Crypto + stablecoin rows → s.marketCaps cache (CG-sourced).
+// full catalogue. Only fiat rows carry a market cap (fiatMarketCapUSD
+// — M2 × FX rate); crypto/stablecoin catalogue rows have no
+// catalogue-level market cap (their per-Stellar-asset F2 fields on
+// /v1/assets/{asset_id} are the canonical source).
 //
 // Parallel-indexed to entries; empty at index i means the row has
-// no market_cap available from either source. Nil-safe on
-// s.marketCaps.
+// no market_cap available.
 func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency) []string {
 	caps := make([]string, len(entries))
 	var wg sync.WaitGroup
 	for i, vc := range entries {
-		switch vc.Class {
-		case currency.ClassFiat:
-			if vc.CirculatingSupply == "" {
-				continue
-			}
-			i, vc := i, vc
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-					caps[i] = *capStr
-				}
-			}()
-		case currency.ClassCrypto, currency.ClassStablecoin:
-			if s.marketCaps == nil {
-				continue
-			}
-			if snap, ok := s.marketCaps.Lookup(vc.Slug); ok && snap.MarketCapUSD != "" {
-				caps[i] = snap.MarketCapUSD
-			}
+		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
+			continue
 		}
+		i, vc := i, vc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+				caps[i] = *capStr
+			}
+		}()
 	}
 	wg.Wait()
 	return caps

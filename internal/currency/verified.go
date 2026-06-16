@@ -28,8 +28,7 @@ const (
 	ClassStablecoin AssetClass = "stablecoin"
 	// ClassFiat — sovereign currencies (USD, EUR, GBP, JPY, CNY, …).
 	// Circulating supply (M2; see seed.yaml comment) lets the
-	// explorer compute a comparable market cap for ranking against
-	// crypto.
+	// explorer surface a fiat market cap (M2 × FX rate).
 	ClassFiat AssetClass = "fiat"
 )
 
@@ -81,7 +80,14 @@ type VerifiedCurrency struct {
 	// 7 for XLM (stroops → XLM); 0 for fiat (raw dollars / yen /
 	// yuan). Zero default works for fiat.
 	SupplyDecimals int
-	Networks       []NetworkEntry
+	// Networks holds this currency's Stellar issuance identity. After
+	// the Stellar-focus refactor each browseable entry has at most one
+	// entry — the `stellar` one (code / issuer / asset_id; native XLM
+	// uses asset_id "native"). Fiat + reference_only entries carry no
+	// network entries. Iterated by indexStellarEntries /
+	// LookupByStellarAssetID / StellarCollision to map an asset_id to
+	// its verified currency.
+	Networks []NetworkEntry
 	// ReferenceOnly marks a non-Stellar entry that exists solely as a
 	// pricing cross-check reference (its coingecko_id / coinmarketcap_id
 	// feed the divergence/aggregator pair set), NOT as a browseable
@@ -92,25 +98,25 @@ type VerifiedCurrency struct {
 	ReferenceOnly bool
 }
 
-// NetworkEntry is one per-network identity for a verified currency.
+// NetworkEntry is the Stellar issuance identity for a verified
+// currency. After the Stellar-focus refactor `Network` is always
+// "stellar" for any populated entry.
 type NetworkEntry struct {
 	// Network identifier — short, lowercase, stable across versions.
-	// Examples: "stellar", "ethereum", "solana", "bitcoin", "tron",
-	// "polygon", "base", "arbitrum", "bsc", "avalanche", "xrpl".
+	// Always "stellar" for browseable entries.
 	Network string
-	// Stellar-specific fields. Populated when Network == "stellar"
+	// Stellar issuance fields. Populated when Network == "stellar"
 	// for classic assets. For native XLM, AssetID == "native" and
 	// Code / Issuer are empty.
 	Code    string
 	Issuer  string
 	AssetID string
-	// Non-Stellar contract address (token address on the source
-	// chain). Empty for native assets of their own chain (BTC on
-	// bitcoin, ETH on ethereum) and for Stellar entries.
-	Contract string
-	// ExternalLink is an optional override for the explorer's
-	// drill-out link. Empty falls back to a network-default
-	// (etherscan.io / solscan.io / etc) at render time.
+	// Contract / ExternalLink are vestigial fields retained on the
+	// raw shape for backward-compatible YAML parsing; the
+	// Stellar-focus refactor stripped all non-Stellar network
+	// entries from the seed, so these are unused on populated
+	// (stellar) entries.
+	Contract     string
 	ExternalLink string
 }
 
@@ -230,11 +236,14 @@ func validateRawEntry(i int, rc rawCurrency) error {
 		return fmt.Errorf("currency: entry %d (%s): slug is required", i, rc.Ticker)
 	case rc.Name == "":
 		return fmt.Errorf("currency: entry %d (%s): name is required", i, rc.Ticker)
-	case len(rc.Networks) == 0 && rc.Class != string(ClassFiat):
+	case len(rc.Networks) == 0 && rc.Class != string(ClassFiat) && !rc.ReferenceOnly:
 		// Fiat entries are network-agnostic (sovereign currencies
-		// don't have on-chain issuance in the cross-chain catalogue
-		// sense). Every other class needs at least one network.
-		return fmt.Errorf("currency: entry %d (%s): at least one network entry required", i, rc.Ticker)
+		// have no on-chain issuance). reference_only coins (BTC/ETH/…)
+		// have no Stellar issuance — they exist solely as a pricing
+		// cross-check reference, so they're allowed zero networks. Every
+		// other class is a browseable Stellar asset and MUST carry its
+		// Stellar network entry.
+		return fmt.Errorf("currency: entry %d (%s): a Stellar network entry is required (non-fiat, non-reference_only)", i, rc.Ticker)
 	}
 	return nil
 }

@@ -16,7 +16,6 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/auth"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/currency"
-	"github.com/StellarIndex/stellar-index/internal/currency/marketcap"
 	"github.com/StellarIndex/stellar-index/internal/incidents"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/version"
@@ -134,13 +133,6 @@ type Server struct {
 	// without the warning surface — that's the same behaviour as
 	// pre-1.1.
 	verifiedCurrencies *currency.Catalogue
-	// marketCaps is the process-local cache of CoinGecko-sourced
-	// market_cap_usd values for catalogue crypto + stablecoin
-	// entries. Populated by a background refresher
-	// (internal/currency/marketcap.Refresher) on a 5-min cadence;
-	// handlers read on demand and gracefully degrade to "—" when
-	// the slug isn't cached yet. Nil-safe.
-	marketCaps *marketcap.Cache
 	// backfillCoverage is the per-source min/max-ledger snapshot
 	// powering /v1/diagnostics/ingestion's coverage section. Nil
 	// leaves that section absent. See [CoverageCache].
@@ -695,13 +687,6 @@ type Options struct {
 	// per-Stellar-asset surface.
 	VerifiedCurrencies *currency.Catalogue
 
-	// MarketCaps, when non-nil, is the process-local CoinGecko-
-	// sourced market_cap_usd cache for catalogue crypto +
-	// stablecoin entries. The cmd/stellarindex-api binary wires it
-	// with a background refresher; tests can pass a populated
-	// stub or leave nil (handlers degrade gracefully).
-	MarketCaps *marketcap.Cache
-
 	// BackfillCoverage, when non-nil, is the process-local cache of
 	// per-source min/max ledger + trade count, refreshed on a 5-min
 	// background goroutine. Powers the per-source coverage section
@@ -796,7 +781,6 @@ func New(opts Options) *Server {
 		dashboardWebhooks:       opts.DashboardWebhooks,
 		sessionAuth:             opts.SessionAuth,
 		verifiedCurrencies:      opts.VerifiedCurrencies,
-		marketCaps:              opts.MarketCaps,
 		backfillCoverage:        opts.BackfillCoverage,
 		globalPrice:             opts.GlobalPrice,
 		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
@@ -1082,20 +1066,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// to anyone reading the mount order.
 	s.mux.HandleFunc("GET /v1/assets/verified", s.handleAssetsVerified)
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.handleAssetGet)
-	// /v1/assets/{asset_id}/metadata is more specific than
-	// /v1/assets/{asset_id}/{network} (literal segment beats
-	// wildcard); Go's mux handles the precedence, but listing the
-	// literal route first keeps the ordering obvious.
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
 	// Live per-token supply from the decode-at-ingest supply_flows lake
-	// (ADR-0034). Literal "supply" beats the {network} wildcard below.
+	// (ADR-0034).
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
-	// Per-network drill-down (R-018 assets-unification step 3). When
-	// {asset_id} is a verified-currency slug, the handler dispatches
-	// per network: Stellar redirects to the canonical asset_id view;
-	// non-Stellar returns a thin PerNetworkAssetView with the catalogue's
-	// contract + external_link.
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/{network}", s.handleAssetByNetwork)
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.

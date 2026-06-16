@@ -342,17 +342,6 @@ export interface paths {
                      *     CoinsReader is wired.
                      */
                     issuer?: string;
-                    /**
-                     * @description Restrict to assets on the named network. `stellar` (or
-                     *     omitted) returns the indexer's full Stellar-network
-                     *     catalogue. Off-Stellar networks (`ethereum`, `solana`,
-                     *     `polygon`, `base`, `arbitrum`, `tron`, `bitcoin`, `bsc`,
-                     *     `avalanche`, `xrpl`) source from the verified-currency
-                     *     catalogue; rows are returned with `type: external` and
-                     *     `asset_id` shaped as `<network>:<contract>`. Drives the
-                     *     `/blockchains/{network}` click-through in the explorer.
-                     */
-                    network?: "stellar" | "ethereum" | "solana" | "polygon" | "base" | "arbitrum" | "tron" | "bitcoin" | "bsc" | "avalanche" | "xrpl";
                 };
                 header?: never;
                 path?: never;
@@ -394,13 +383,12 @@ export interface paths {
          * Verified-currency catalogue listing.
          * @description Returns every entry in the binary's verified-currency
          *     catalogue (`internal/currency/data/seed.yaml`) — the
-         *     hand-curated set of cross-chain currencies (USDC, EURC,
+         *     hand-curated set of verified Stellar assets (USDC, EURC,
          *     AQUA, …) that the API surfaces with a "verified" badge.
          *
          *     Distinct from `/v1/assets` which lists every Stellar-indexed
          *     asset (verified or not). This endpoint is identity-only —
-         *     no price block, no per-currency `network_count` × price
-         *     round-trips — so it's a cheap directory call suitable for
+         *     no price block — so it's a cheap directory call suitable for
          *     building a verified-currencies section on a listing page.
          *
          *     Order matches the seed-file order (deterministic).
@@ -442,20 +430,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Asset detail — Stellar-network view OR cross-chain global view.
+         * Asset detail — per-Stellar-asset view OR verified-currency global view.
          * @description Dispatch depends on the `asset_id` path parameter:
          *
          *     - **Verified-currency slug** (e.g. `usdc`, `eurc`, `aqua`) →
-         *       returns the cross-chain `GlobalAssetView` shape: ticker, slug,
-         *       name, verified-issuer attribution, current USD price + price
-         *       authority, plus a `networks[]` list with one entry per
-         *       network the currency is issued on. Stellar network entries
-         *       carry a `deep_link` to the per-Stellar-asset view; non-
-         *       Stellar entries carry contract + external_link. See R-018
-         *       Phase 1.4a.
+         *       returns the `GlobalAssetView` shape: ticker, slug, name,
+         *       verified-issuer attribution, and the current USD price +
+         *       price authority. Per-issuance Stellar detail lives on the
+         *       canonical asset_id form below.
          *     - **Canonical Stellar asset_id** (`native`, `CODE-G…`,
          *       `C…` SAC contract, `fiat:CODE`) → returns the existing
-         *       `Asset` shape (per-Stellar-network detail with SEP-1
+         *       `Asset` shape (per-Stellar-asset detail with SEP-1
          *       overlay + F2 supply fields).
          *
          *     Slugs match a hand-curated catalogue
@@ -492,92 +477,6 @@ export interface paths {
                     };
                 };
                 400: components["responses"]["BadRequest"];
-                404: components["responses"]["NotFound"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/assets/{asset_id}/{network}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Verified-currency per-network drill-down.
-         * @description Companion to the global view at `/v1/assets/{slug}`. When
-         *     `{asset_id}` is a verified-currency catalogue slug and
-         *     `{network}` matches a network the currency is issued on,
-         *     the handler dispatches:
-         *
-         *     - **Stellar entries** → 303 redirect to
-         *       `/v1/assets/{canonical_asset_id}` so consumers get the
-         *       full `AssetDetail` shape (SEP-1 overlay, F2 supply
-         *       fields, `unverified_warning` flag).
-         *     - **Non-Stellar entries** → 200 `PerNetworkAssetView` with
-         *       the catalogue's contract address + external link.
-         *
-         *     404 when either the slug or the network isn't in the
-         *     catalogue. R-018 assets-unification step 3.
-         *
-         *     Note: the more-specific `/v1/assets/{asset_id}/metadata`
-         *     path wins via Go 1.22+ mux precedence (literal beats
-         *     wildcard).
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /**
-                     * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
-                     *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
-                     *     validated per SEP-23. The handler is strict — short symbols
-                     *     like `XLM` or `USDC` are NOT accepted here; use `native` or
-                     *     the full `<code>-<G…>` form.
-                     * @example native
-                     */
-                    asset_id: components["parameters"]["AssetIdPath"];
-                    /**
-                     * @description Network identifier (lowercase): `stellar`, `ethereum`,
-                     *     `solana`, `polygon`, `base`, `arbitrum`, `bsc`,
-                     *     `avalanche`, `tron`, `bitcoin`, `xrpl`, `cardano`,
-                     *     `dogecoin`, `polkadot`. Must match a network entry on
-                     *     the catalogue's `{asset_id}` slug.
-                     */
-                    network: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Non-Stellar network drill-down — identity + contract address. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeMeta"] & {
-                            data: components["schemas"]["PerNetworkAssetView"];
-                        };
-                    };
-                };
-                /** @description Stellar entry — see Location header for the canonical asset_id view. */
-                303: {
-                    headers: {
-                        /** @description Path to the `/v1/assets/{canonical_asset_id}` view. */
-                        Location?: string;
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
                 404: components["responses"]["NotFound"];
             };
         };
@@ -6546,11 +6445,11 @@ export interface components {
             note: string;
         };
         /**
-         * @description Cross-chain identity surface served by /v1/assets/{slug} (R-018
-         *     Phase 1.4a). Distinct from `Asset` which is the per-Stellar-
-         *     network view. Consumers reach this surface by passing a
-         *     catalogue slug (e.g. `usdc`); the `Asset` surface is reached
-         *     by passing a canonical asset_id (e.g. `USDC-GA5Z…`).
+         * @description Verified-currency identity + headline price surface served by
+         *     /v1/assets/{slug}. Distinct from `Asset`, the per-Stellar-asset
+         *     detail view. Consumers reach this surface by passing a catalogue
+         *     slug (e.g. `usdc`); the `Asset` surface is reached by passing a
+         *     canonical asset_id (e.g. `USDC-GA5Z…`).
          */
         GlobalAssetView: {
             /** @description Display ticker (e.g. "USDC"). */
@@ -6567,7 +6466,7 @@ export interface components {
             coingecko_id?: string;
             /** @description CoinMarketCap integer ID for this currency (when known). */
             coinmarketcap_id?: string;
-            /** @description USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into networks[].stellar.deep_link for the per-Stellar-asset price instead. */
+            /** @description USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead. */
             price_usd?: string | null;
             /**
              * @description Which tier of the fallback chain produced `price_usd`.
@@ -6585,69 +6484,21 @@ export interface components {
              * @description Observation timestamp of the served price.
              */
             price_as_of?: string | null;
-            networks: components["schemas"]["NetworkView"][];
-        };
-        /** @description One per-network identity entry in a GlobalAssetView's networks list. */
-        NetworkView: {
-            /** @description Network identifier (lowercase): `stellar`, `ethereum`, `solana`, `bitcoin`, `tron`, `polygon`, `base`, `arbitrum`, `bsc`, `avalanche`, `xrpl`, etc. */
-            network: string;
-            /**
-             * @description `indexed`: we ingest this network's trades; explorer
-             *     renders a deep_link to the per-Stellar-asset view.
-             *     `external`: we know the asset exists there but don't
-             *     ingest trades; explorer renders contract + an external
-             *     link (etherscan.io, solscan.io, etc).
-             * @enum {string}
-             */
-            data_quality: "indexed" | "external";
-            /** @description Canonical Stellar asset_id (e.g. USDC-GA5Z…). Only present for stellar entries. */
-            asset_id?: string;
-            /** @description Classic asset code (Stellar only). */
-            code?: string;
-            /** @description G-strkey issuer address (Stellar only). */
-            issuer?: string;
-            /** @description Path to the per-Stellar-asset view (e.g. /v1/assets/USDC-GA5Z…). Stellar entries only. */
-            deep_link?: string;
-            /** @description Token contract address on the non-Stellar network. */
-            contract?: string;
-            /** @description Override URL for the explorer's drill-out link. Optional — explorer applies a per-network default when empty. */
-            external_link?: string;
+            /** @description Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source). */
+            circulating_supply?: string | null;
+            /** @description Exponent mapping circulating_supply to display value. 0 for fiat. */
+            supply_decimals?: number;
+            /** @description Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields). */
+            market_cap_usd?: string | null;
         };
         GlobalAssetEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["GlobalAssetView"];
         };
         /**
-         * @description Drill-down shape returned by `/v1/assets/{slug}/{network}`
-         *     for non-Stellar network entries. Stellar entries redirect
-         *     (303) to `/v1/assets/{canonical_asset_id}` instead.
-         */
-        PerNetworkAssetView: {
-            ticker: string;
-            slug: string;
-            name: string;
-            /** @enum {string} */
-            class: "crypto" | "stablecoin" | "fiat";
-            /** @description Network identifier (lowercase). */
-            network: string;
-            /**
-             * @description Always `external` for this surface — we don't ingest
-             *     trades from non-Stellar networks. Stellar dispatches
-             *     via 303 redirect; this view never serves Stellar.
-             * @enum {string}
-             */
-            data_quality: "external";
-            /** @description Token contract address on the target network. */
-            contract?: string;
-            /** @description Block-explorer URL (operator-overridable via the catalogue's external_link field). */
-            external_link?: string;
-        };
-        /**
          * @description One entry in the response to GET /v1/assets/verified — the
          *     verified-currency catalogue directory. Distinct from
-         *     GlobalAssetView in two ways: no price block (listing payload
-         *     stays small; consumers fetch /v1/assets/{slug} per row for
-         *     pricing) and the cross-chain `networks[]` is preserved for
-         *     each row so a listing UI can render network chips inline.
+         *     GlobalAssetView: no price block (listing payload stays small;
+         *     consumers fetch /v1/assets/{slug} per row for pricing).
          */
         VerifiedCurrencyListItem: {
             /** @description Display ticker (e.g. "USDC"). */
@@ -6662,8 +6513,6 @@ export interface components {
             coingecko_id?: string;
             /** @description CoinMarketCap integer ID for this currency (when known). */
             coinmarketcap_id?: string;
-            /** @description Number of networks this currency is issued on — convenience for listing UIs that don't need the full networks[] array. */
-            network_count: number;
             /** @description Decimal string (2 fractional digits). Computed for fiat rows only: M2 × current FX rate. Crypto/stablecoin rows leave this empty (their per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source). */
             market_cap_usd?: string;
             /**
@@ -6675,7 +6524,6 @@ export interface components {
             circulating_supply?: string;
             /** @description Exponent mapping circulating_supply to display value. 0 for fiat. */
             supply_decimals?: number;
-            networks: components["schemas"]["NetworkView"][];
         };
         VerifiedCurrencyListEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["VerifiedCurrencyListItem"][];

@@ -72,7 +72,6 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/currency"
-	"github.com/StellarIndex/stellar-index/internal/currency/marketcap"
 	"github.com/StellarIndex/stellar-index/internal/customerwebhook"
 	"github.com/StellarIndex/stellar-index/internal/divergence"
 	"github.com/StellarIndex/stellar-index/internal/metadata"
@@ -739,27 +738,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedCoinsReader, verifiedAssetIDs)
 
-	// Process-local CG market_cap cache + background refresher.
-	// Populates market_cap_usd for catalogue crypto + stablecoin
-	// rows on /v1/assets / /v1/assets/verified. Free-tier CG
-	// /simple/price with include_market_cap=true&include_24hr_change
-	// =true; one batched call per refresh covers every catalogue
-	// entry with a coingecko_id. Survives CG outages (cache retains
-	// the last successful snapshot).
-	marketCapCache := marketcap.New()
-	marketCapRefresher := &marketcap.Refresher{
-		Cache:   marketCapCache,
-		Cat:     verifiedCurrencies,
-		Logger:  logger.With("component", "marketcap-refresher"),
-		APIKey:  os.Getenv("COINGECKO_API_KEY"),
-		DemoKey: os.Getenv("COINGECKO_DEMO_API_KEY"),
-	}
-	go func() {
-		if err := marketCapRefresher.Run(rootCtx); err != nil {
-			logger.Warn("market_cap refresher exited", "err", err)
-		}
-	}()
-
 	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
 	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
 	// before expiry, but a silent renewal failure (DNS, rate limit,
@@ -965,7 +943,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SACWrappers:        cfg.Supply.SACWrappers,
 		USDPeggedClassics:  usdPegs,
 		VerifiedCurrencies: verifiedCurrencies,
-		MarketCaps:         marketCapCache,
 		BackfillCoverage:   backfillCoverageCache,
 		GlobalPrice: globalPriceReader{
 			s:   store,

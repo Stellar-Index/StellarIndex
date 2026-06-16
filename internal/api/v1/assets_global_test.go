@@ -84,47 +84,14 @@ func TestAssetGet_SlugDispatch_GlobalView(t *testing.T) {
 	if env.Data.PriceAuthority != aggregate.AuthorityVWAPNative {
 		t.Errorf("price_authority = %q, want vwap_native", env.Data.PriceAuthority)
 	}
-	if len(env.Data.Networks) == 0 {
-		t.Error("networks empty")
-	}
-	// Stellar entry must carry a deep_link.
-	var foundStellar bool
-	for _, n := range env.Data.Networks {
-		if n.Network == "stellar" {
-			foundStellar = true
-			if n.DataQuality != "indexed" {
-				t.Errorf("stellar data_quality = %q, want indexed", n.DataQuality)
-			}
-			if n.DeepLink == "" {
-				t.Error("stellar entry missing deep_link")
-			}
-			if n.AssetID == "" {
-				t.Error("stellar entry missing asset_id")
-			}
-		}
-	}
-	if !foundStellar {
-		t.Error("USDC catalogue entry has no stellar network — expected one")
-	}
-	// Non-Stellar entries must be data_quality="external" with no deep_link.
-	for _, n := range env.Data.Networks {
-		if n.Network != "stellar" {
-			if n.DataQuality != "external" {
-				t.Errorf("%s data_quality = %q, want external", n.Network, n.DataQuality)
-			}
-			if n.DeepLink != "" {
-				t.Errorf("%s has deep_link %q; non-Stellar should not", n.Network, n.DeepLink)
-			}
-		}
-	}
 }
 
 func TestAssetGet_SlugDispatch_StellarOnlyTokenNoPrice(t *testing.T) {
 	// AQUA is in the catalogue but `crypto:AQUA` won't be on the
 	// canonical crypto allow-list (it's a Stellar-only token).
-	// Global view still resolves: identity + networks populate;
-	// price block stays nil. Consumers drill into the Stellar
-	// deep_link for the per-asset price.
+	// Global view still resolves: identity populates; price block
+	// stays nil. Consumers drill into the canonical asset_id surface
+	// for the per-asset price.
 	cat := newTestCatalogue(t)
 	reader := &stubGlobalPriceReader{}
 	// No vwap.ok, no agg.rows, no tri.ok — every tier misses.
@@ -149,16 +116,12 @@ func TestAssetGet_SlugDispatch_StellarOnlyTokenNoPrice(t *testing.T) {
 	if env.Data.PriceUSD != nil {
 		t.Errorf("price_usd should be nil for AQUA (no global price), got %v", env.Data.PriceUSD)
 	}
-	// Stellar deep_link still present — consumer's path forward.
-	if len(env.Data.Networks) == 0 || env.Data.Networks[0].DeepLink == "" {
-		t.Error("stellar network/deep_link missing")
-	}
 }
 
 func TestAssetGet_SlugDispatch_NoGlobalPriceReader(t *testing.T) {
 	// When the binary doesn't wire GlobalPrice, the slug still
-	// resolves to the catalogue identity + networks; the price
-	// block is just empty.
+	// resolves to the catalogue identity; the price block is just
+	// empty.
 	cat := newTestCatalogue(t)
 	srv := v1.New(v1.Options{
 		VerifiedCurrencies: cat,
@@ -262,9 +225,6 @@ func TestAssetGet_Fiat_USDIdentity(t *testing.T) {
 	if *d.MarketCapUSD != "21700000000000.00" {
 		t.Errorf("USD market_cap_usd = %q, want 21700000000000.00", *d.MarketCapUSD)
 	}
-	if len(d.Networks) != 0 {
-		t.Errorf("fiat shouldn't have networks; got %d", len(d.Networks))
-	}
 }
 
 // TestAssetGet_Fiat_CNY_MarketCap — non-USD fiat: handler reads
@@ -312,110 +272,24 @@ func TestAssetGet_Fiat_CNY_MarketCap(t *testing.T) {
 	}
 }
 
-// TestAssetByNetwork_StellarRedirect — /v1/assets/usdc/stellar
-// 303-redirects to the canonical /v1/assets/USDC-G… asset_id.
-// Consumers that follow the redirect get the full AssetDetail
-// (SEP-1 overlay + F2 fields + unverified-warning machinery).
-func TestAssetByNetwork_StellarRedirect(t *testing.T) {
-	cat := newTestCatalogue(t)
-	srv := v1.New(v1.Options{VerifiedCurrencies: cat})
-	ts := httpTestServer(t, srv)
-
-	// httptest's default client follows redirects. Strip the client
-	// of its follower to inspect the 303 itself.
-	cli := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := cli.Get(ts.URL + "/v1/assets/usdc/stellar")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", resp.StatusCode)
-	}
-	loc := resp.Header.Get("Location")
-	if loc != "/v1/assets/USDC-"+testUSDCIssuer {
-		t.Errorf("Location = %q, want /v1/assets/USDC-…", loc)
-	}
-}
-
-// TestAssetByNetwork_NonStellar — /v1/assets/usdc/ethereum returns
-// a PerNetworkAssetView with the catalogue's Ethereum contract.
-func TestAssetByNetwork_NonStellar(t *testing.T) {
-	cat := newTestCatalogue(t)
-	srv := v1.New(v1.Options{VerifiedCurrencies: cat})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/usdc/ethereum")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.PerNetworkAssetView `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	d := env.Data
-	if d.Ticker != "USDC" || d.Slug != "usdc" {
-		t.Errorf("identity mismatch: %+v", d)
-	}
-	if d.Network != "ethereum" {
-		t.Errorf("network = %q", d.Network)
-	}
-	if d.DataQuality != "external" {
-		t.Errorf("data_quality = %q, want external", d.DataQuality)
-	}
-	if d.Contract == "" {
-		t.Errorf("contract empty — USDC Ethereum entry should have a contract")
-	}
-}
-
-// TestAssetByNetwork_UnknownNetwork — slug exists, network doesn't.
-func TestAssetByNetwork_UnknownNetwork(t *testing.T) {
-	cat := newTestCatalogue(t)
-	srv := v1.New(v1.Options{VerifiedCurrencies: cat})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/usdc/dogecoin")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (USDC isn't on dogecoin)", resp.StatusCode)
-	}
-}
-
-// TestAssetByNetwork_UnknownSlug — slug isn't in the catalogue.
-func TestAssetByNetwork_UnknownSlug(t *testing.T) {
-	cat := newTestCatalogue(t)
-	srv := v1.New(v1.Options{VerifiedCurrencies: cat})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/not-a-real-slug/stellar")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-// TestAssetByNetwork_MetadataRouteStillWorks — verifies the
-// /v1/assets/{asset_id}/metadata route isn't shadowed by the new
-// /v1/assets/{asset_id}/{network} catch-all. Go 1.22+ mux picks
-// the literal "metadata" segment over the wildcard {network}.
-func TestAssetByNetwork_MetadataRouteStillWorks(t *testing.T) {
+// TestAssetMetadataRouteWorks — verifies the
+// /v1/assets/{asset_id}/metadata route serves the AssetMetadata body.
+func TestAssetMetadataRouteWorks(t *testing.T) {
 	cat := newTestCatalogue(t)
 	srv := v1.New(v1.Options{VerifiedCurrencies: cat})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets/native/metadata")
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("/v1/assets/native/metadata status = %d (network route may be shadowing)", resp.StatusCode)
+		t.Fatalf("/v1/assets/native/metadata status = %d", resp.StatusCode)
 	}
-	// Body shape: AssetMetadata, not PerNetworkAssetView.
+	// Body shape: AssetMetadata.
 	var env struct {
 		Data map[string]any `json:"data"`
 	}
 	mustDecode(t, resp, &env)
 	if _, ok := env.Data["sep1_status"]; !ok {
-		t.Errorf("body missing sep1_status — looks like the network route swallowed /metadata: %+v", env.Data)
+		t.Errorf("body missing sep1_status: %+v", env.Data)
 	}
 }
 

@@ -194,18 +194,6 @@ func TestAssetsVerified_ListsCatalogue(t *testing.T) {
 	if usdc.Ticker != "USDC" || usdc.Name != "USD Coin" {
 		t.Errorf("usdc entry: %+v", usdc)
 	}
-	if usdc.NetworkCount < 2 {
-		t.Errorf("usdc network_count = %d, want at least 2", usdc.NetworkCount)
-	}
-	foundStellarDeepLink := false
-	for _, n := range usdc.Networks {
-		if n.Network == "stellar" && n.DeepLink != "" {
-			foundStellarDeepLink = true
-		}
-	}
-	if !foundStellarDeepLink {
-		t.Error("usdc stellar entry missing deep_link in listing response")
-	}
 
 	xlm, ok := bySlug["xlm"]
 	if !ok {
