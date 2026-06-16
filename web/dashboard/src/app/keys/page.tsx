@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, Trash2, AlertCircle, KeyRound } from 'lucide-react';
+import { KeyRound, Plus, Trash2, Loader2 } from 'lucide-react';
 import { AuthedRoute } from '@/components/AuthedRoute';
+import { useAuth } from '@/lib/auth';
 import {
   ApiError,
   type APIKey,
@@ -12,7 +13,32 @@ import {
   listKeys,
   revokeKey,
 } from '@/lib/api';
-import { cn } from '@/lib/cn';
+import {
+  Container,
+  Section,
+  PageHeader,
+  Card,
+  CardHeader,
+  CardBody,
+  CardFooter,
+  Button,
+  Badge,
+  Field,
+  Input,
+  Textarea,
+  Callout,
+  EmptyState,
+  Skeleton,
+  CopyButton,
+  TableWrap,
+  Table,
+  THead,
+  TBody,
+  TR,
+  Th,
+  Td,
+} from '@/components/ui';
+import { fmtDate, fmtInt, fmtRelative, tierCeiling } from '@/lib/format';
 
 export default function KeysPage() {
   return (
@@ -23,18 +49,21 @@ export default function KeysPage() {
 }
 
 function KeysBody() {
+  const { state } = useAuth();
   const [keys, setKeys] = useState<APIKey[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newKey, setNewKey] = useState<CreateKeyResponse | null>(null);
-  const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       setKeys(await listKeys());
     } catch (err) {
-      setError(err instanceof ApiError ? (err.detail ?? err.message) : 'Failed to load keys');
+      setError(
+        err instanceof ApiError ? (err.detail ?? err.message) : 'Failed to load keys',
+      );
     }
   }, []);
 
@@ -42,162 +71,188 @@ function KeysBody() {
     void refresh();
   }, [refresh]);
 
-  async function handleRevoke(id: string) {
-    if (!confirm('Revoke this key? Apps using it will stop authenticating immediately.')) {
+  async function handleRevoke(key: APIKey) {
+    if (
+      !confirm(
+        `Revoke "${key.name}"? Apps using it will stop authenticating immediately. This cannot be undone.`,
+      )
+    ) {
       return;
     }
     try {
-      await revokeKey(id);
+      await revokeKey(key.id);
       toast.success('Key revoked');
       await refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? (err.detail ?? err.message) : 'Revoke failed');
+      toast.error(
+        err instanceof ApiError ? (err.detail ?? err.message) : 'Revoke failed',
+      );
     }
   }
 
+  const tier = state.kind === 'authed' ? state.me.account.tier : undefined;
+  const active = keys?.filter((k) => !k.revoked_at) ?? [];
+
   return (
-    <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">
-            API keys
-          </h1>
-          <p className="mt-1 text-sm text-ink-muted">
-            Mint and manage the keys your apps use to authenticate against
-            api.stellarindex.io.
-          </p>
-        </div>
-        {!showForm && !newKey && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-900"
-          >
-            New key
-          </button>
-        )}
-      </header>
-
-      {newKey && <NewKeyBanner created={newKey} onDismiss={() => { setNewKey(null); void refresh(); }} />}
-
-      {showForm && (
-        <CreateKeyForm
-          onCreated={(resp) => {
-            setNewKey(resp);
-            setShowForm(false);
-          }}
-          onCancel={() => setShowForm(false)}
-          creating={creating}
-          setCreating={setCreating}
+    <Container className="py-8">
+      <Section className="space-y-6 py-0">
+        <PageHeader
+          eyebrow="Credentials"
+          title="API keys"
+          description="Mint and manage the keys your apps use to authenticate against api.stellarindex.io."
+          actions={
+            !showForm && (
+              <Button onClick={() => setShowForm(true)}>
+                <Plus className="h-4 w-4" />
+                New key
+              </Button>
+            )
+          }
         />
-      )}
 
-      {error && (
-        <div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
+        {newKey && (
+          <NewKeyReveal
+            created={newKey}
+            onDismiss={() => {
+              setNewKey(null);
+              void refresh();
+            }}
+          />
+        )}
 
-      {keys === null && !error && (
-        <div className="rounded-md border border-surface-line bg-surface p-8 text-center text-sm text-ink-faint">
-          Loading…
-        </div>
-      )}
+        {showForm && (
+          <CreateKeyForm
+            tier={tier}
+            creating={creating}
+            setCreating={setCreating}
+            onCreated={(resp) => {
+              setNewKey(resp);
+              setShowForm(false);
+              void refresh();
+            }}
+            onCancel={() => setShowForm(false)}
+          />
+        )}
 
-      {keys && keys.length === 0 && !showForm && !newKey && (
-        <div className="rounded-md border border-dashed border-surface-line bg-surface p-12 text-center">
-          <KeyRound className="mx-auto h-8 w-8 text-ink-faint" />
-          <p className="mt-3 text-sm text-ink-muted">
-            You haven&apos;t minted a key yet.
+        {error && (
+          <Callout tone="bad" title="Couldn't load your keys">
+            {error}
+          </Callout>
+        )}
+
+        {keys === null && !error ? (
+          <Card>
+            <CardBody className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </CardBody>
+          </Card>
+        ) : keys && keys.length === 0 && !showForm ? (
+          <EmptyState
+            icon={<KeyRound className="h-5 w-5" />}
+            title="No API keys yet"
+            description="Mint your first key to start authenticating requests to the Stellar Index API."
+            action={
+              <Button onClick={() => setShowForm(true)}>
+                <Plus className="h-4 w-4" />
+                Create your first key
+              </Button>
+            }
+          />
+        ) : keys && keys.length > 0 ? (
+          <KeysTable keys={keys} onRevoke={handleRevoke} />
+        ) : null}
+
+        {keys && keys.length > 0 && (
+          <p className="text-xs text-ink-faint">
+            {fmtInt(active.length)} active {active.length === 1 ? 'key' : 'keys'}
+            {keys.length > active.length &&
+              `, ${fmtInt(keys.length - active.length)} revoked`}
+            . Revoked keys are kept for your audit trail and stop working
+            immediately.
           </p>
-        </div>
-      )}
-
-      {keys && keys.length > 0 && <KeysTable keys={keys} onRevoke={handleRevoke} />}
-
-      <p className="text-xs text-ink-faint">
-        Keys minted here authenticate against the API once the platform-store
-        cutover ships in the next slice. Operators on Phase&nbsp;1 dev should
-        continue to mint via{' '}
-        <code className="rounded bg-surface-subtle px-1 py-0.5">
-          POST /v1/signup
-        </code>{' '}
-        until then.
-      </p>
-    </div>
+        )}
+      </Section>
+    </Container>
   );
 }
 
-function NewKeyBanner({
+// ─── Reveal banner (secret shown once) ─────────────────────────────
+
+function NewKeyReveal({
   created,
   onDismiss,
 }: {
   created: CreateKeyResponse;
   onDismiss: () => void;
 }) {
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(created.plaintext);
-      toast.success('Copied');
-    } catch {
-      toast.error('Copy failed — select and copy manually');
-    }
-  }
   return (
-    <div className="rounded-md border border-brand-500/40 bg-brand-50 p-5">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-brand-900">
-        <KeyRound className="h-4 w-4" />
-        Save this key now — you won&apos;t see it again.
-      </div>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 break-all rounded bg-white px-3 py-2 font-mono text-sm">
-          {created.plaintext}
-        </code>
-        <button
-          onClick={copy}
-          className="flex items-center gap-1.5 rounded-md border border-surface-line bg-white px-3 py-2 text-sm hover:bg-surface-subtle"
-          title="Copy to clipboard"
-        >
-          <Copy className="h-4 w-4" />
-          Copy
-        </button>
-      </div>
-      <p className="mt-3 text-xs text-brand-900/80">
-        Stored as <code>{created.key.key_prefix}…</code>. The dashboard never
-        re-displays the full plaintext after this. If you lose it, revoke this
-        key and mint a new one.
-      </p>
-      <div className="mt-4 flex justify-end">
-        <button
-          onClick={onDismiss}
-          className="text-sm font-medium text-brand-600 hover:text-brand-900"
-        >
-          Done
-        </button>
-      </div>
-    </div>
+    <Card className="border-brand-200 bg-brand-50/60">
+      <CardHeader
+        className="border-brand-100"
+        eyebrow="New key created"
+        title="Save this key now — you won't see it again"
+        description="We store only a hash. If you lose the plaintext, revoke this key and mint a new one."
+      />
+      <CardBody className="space-y-3">
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2.5">
+          <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-ink">
+            {created.plaintext}
+          </code>
+          <CopyButton value={created.plaintext} className="h-7 w-7" />
+        </div>
+        <p className="text-xs text-ink-muted">
+          Stored as{' '}
+          <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono">
+            {created.key.key_prefix}…
+          </code>
+          {' · '}
+          Send it as the{' '}
+          <code className="rounded bg-surface-subtle px-1 py-0.5 font-mono">
+            X-API-Key
+          </code>{' '}
+          header on every request.
+        </p>
+      </CardBody>
+      <CardFooter className="justify-end">
+        <Button variant="primary" size="sm" onClick={onDismiss}>
+          I&apos;ve saved it
+        </Button>
+      </CardFooter>
+    </Card>
   );
 }
 
+// ─── Create form ───────────────────────────────────────────────────
+
 function CreateKeyForm({
-  onCreated,
-  onCancel,
+  tier,
   creating,
   setCreating,
+  onCreated,
+  onCancel,
 }: {
-  onCreated: (r: CreateKeyResponse) => void;
-  onCancel: () => void;
+  tier: string | undefined;
   creating: boolean;
   setCreating: (b: boolean) => void;
+  onCreated: (r: CreateKeyResponse) => void;
+  onCancel: () => void;
 }) {
+  const ceiling = tierCeiling(tier);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [rateLimit, setRateLimit] = useState(1000);
+  const [rateLimit, setRateLimit] = useState(ceiling ?? 1000);
   const [ipAllowlist, setIpAllowlist] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || creating) return;
+    if (creating) return;
+    if (!name.trim()) {
+      setNameError('Give the key a name so you can find it later.');
+      return;
+    }
     setCreating(true);
     try {
       const ipList = ipAllowlist
@@ -212,182 +267,178 @@ function CreateKeyForm({
       });
       onCreated(resp);
     } catch (err) {
-      toast.error(err instanceof ApiError ? (err.detail ?? err.message) : 'Create failed');
+      toast.error(
+        err instanceof ApiError ? (err.detail ?? err.message) : 'Create failed',
+      );
     } finally {
       setCreating(false);
     }
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className="space-y-4 rounded-md border border-surface-line bg-surface p-6"
-    >
-      <h2 className="text-base font-semibold text-ink">New API key</h2>
-      <Field label="Name" hint="Helps you identify this key in the list later.">
-        <input
-          autoFocus
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="input"
-          placeholder="production-web"
-        />
-      </Field>
-      <Field label="Description (optional)">
-        <input
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="input"
-          placeholder="Used by the production web app at example.com"
-        />
-      </Field>
-      <Field
-        label="Rate limit (requests / minute)"
-        hint="Capped to your account tier — Free 60, Starter 1000, Pro 10000, Business 60000, Enterprise 100000. Higher values silently clamp to the tier ceiling on save."
-      >
-        <input
-          type="number"
-          min={1}
-          max={100000}
-          value={rateLimit}
-          onChange={(e) => setRateLimit(Number(e.target.value) || 1000)}
-          className="input"
-        />
-      </Field>
-      <Field
-        label="IP allowlist (optional)"
-        hint="One per line. CIDR (203.0.113.0/24) or bare IP."
-      >
-        <textarea
-          rows={3}
-          value={ipAllowlist}
-          onChange={(e) => setIpAllowlist(e.target.value)}
-          className="input font-mono"
-        />
-      </Field>
-      <div className="flex justify-end gap-2 pt-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={creating}
-          className="rounded-md border border-surface-line bg-surface px-4 py-2 text-sm hover:bg-surface-subtle"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={creating}
-          className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-900 disabled:opacity-60"
-        >
-          {creating ? 'Creating…' : 'Create key'}
-        </button>
-      </div>
-      <style jsx>{`
-        :global(.input) {
-          width: 100%;
-          border-radius: 0.375rem;
-          border: 1px solid #e2e8f0;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          background: white;
-        }
-        :global(.input:focus) {
-          outline: none;
-          border-color: #0ea5e9;
-          box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
-        }
-      `}</style>
-    </form>
+    <Card>
+      <CardHeader title="New API key" description="Generate a credential for one app or environment." />
+      <form onSubmit={submit}>
+        <CardBody className="space-y-5">
+          <Field
+            label="Name"
+            htmlFor="key-name"
+            required
+            hint="Helps you identify this key in the list later."
+            error={nameError ?? undefined}
+          >
+            <Input
+              id="key-name"
+              autoFocus
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (nameError) setNameError(null);
+              }}
+              placeholder="production-web"
+            />
+          </Field>
+
+          <Field label="Description" htmlFor="key-desc" hint="Optional — what uses this key.">
+            <Input
+              id="key-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Production web app at example.com"
+            />
+          </Field>
+
+          <Field
+            label="Rate limit (requests / minute)"
+            htmlFor="key-rate"
+            hint={
+              ceiling !== null
+                ? `Capped to your ${tier} tier ceiling of ${fmtInt(ceiling)}/min. Higher values clamp on save.`
+                : 'Capped to your account tier ceiling. Higher values clamp on save.'
+            }
+          >
+            <Input
+              id="key-rate"
+              type="number"
+              min={1}
+              max={ceiling ?? 100000}
+              value={rateLimit}
+              onChange={(e) => setRateLimit(Number(e.target.value) || 1)}
+              className="tnum max-w-[12rem]"
+            />
+          </Field>
+
+          <Field
+            label="IP allowlist"
+            htmlFor="key-ips"
+            hint="Optional — one per line. CIDR (203.0.113.0/24) or bare IP. Leave empty to allow any source."
+          >
+            <Textarea
+              id="key-ips"
+              rows={3}
+              value={ipAllowlist}
+              onChange={(e) => setIpAllowlist(e.target.value)}
+              className="font-mono text-[13px]"
+              placeholder={'203.0.113.0/24\n198.51.100.7'}
+            />
+          </Field>
+        </CardBody>
+        <CardFooter className="justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onCancel} disabled={creating}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={creating}>
+            {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+            {creating ? 'Creating…' : 'Create key'}
+          </Button>
+        </CardFooter>
+      </form>
+    </Card>
   );
 }
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm font-medium text-ink">
-        {label}
-      </span>
-      {children}
-      {hint && <span className="mt-1 block text-xs text-ink-faint">{hint}</span>}
-    </label>
-  );
-}
+// ─── Keys table ────────────────────────────────────────────────────
 
 function KeysTable({
   keys,
   onRevoke,
 }: {
   keys: APIKey[];
-  onRevoke: (id: string) => void;
+  onRevoke: (k: APIKey) => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-md border border-surface-line bg-surface">
-      <table className="w-full text-sm">
-        <thead className="bg-surface-subtle text-left text-xs uppercase tracking-wide text-ink-faint">
+    <TableWrap>
+      <Table>
+        <THead>
           <tr>
-            <th className="px-5 py-3 font-medium">Name</th>
-            <th className="px-5 py-3 font-medium">Prefix</th>
-            <th className="px-5 py-3 font-medium">Rate limit</th>
-            <th className="px-5 py-3 font-medium">Status</th>
-            <th className="px-5 py-3 font-medium">Last used</th>
-            <th className="px-5 py-3" />
+            <Th>Name</Th>
+            <Th>Key</Th>
+            <Th align="right">Rate limit</Th>
+            <Th>Created</Th>
+            <Th>Last used</Th>
+            <Th>Status</Th>
+            <Th align="right">Actions</Th>
           </tr>
-        </thead>
-        <tbody className="divide-y divide-surface-line">
-          {keys.map((k) => (
-            <tr key={k.id} className={cn(k.revoked_at && 'opacity-50')}>
-              <td className="px-5 py-3">
-                <div className="font-medium text-ink">{k.name}</div>
-                {k.description && (
-                  <div className="text-xs text-ink-muted">{k.description}</div>
-                )}
-              </td>
-              <td className="px-5 py-3 font-mono text-xs text-ink-muted">
-                {k.key_prefix}…
-              </td>
-              <td className="px-5 py-3 text-ink-muted">
-                {k.rate_limit_per_min}/min
-              </td>
-              <td className="px-5 py-3">
-                {k.revoked_at ? (
-                  <span className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-                    Revoked
+        </THead>
+        <TBody>
+          {keys.map((k) => {
+            const revoked = Boolean(k.revoked_at);
+            return (
+              <TR key={k.id} className={revoked ? 'opacity-60' : undefined}>
+                <Td>
+                  <div className="font-medium text-ink">{k.name}</div>
+                  {k.description && (
+                    <div className="mt-0.5 text-xs text-ink-muted">{k.description}</div>
+                  )}
+                </Td>
+                <Td>
+                  <span className="inline-flex items-center gap-1.5">
+                    <code className="font-mono text-[13px] text-ink-body">
+                      {k.key_prefix}…
+                    </code>
+                    <CopyButton value={k.key_prefix} />
                   </span>
-                ) : (
-                  <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                    Active
+                </Td>
+                <Td align="right">{fmtInt(k.rate_limit_per_min)}/min</Td>
+                <Td>{fmtDate(k.created_at)}</Td>
+                <Td>
+                  <span title={k.last_used_at ?? undefined}>
+                    {k.last_used_at ? fmtRelative(k.last_used_at) : '—'}
                   </span>
-                )}
-              </td>
-              <td className="px-5 py-3 text-xs text-ink-muted">
-                {k.last_used_at
-                  ? new Date(k.last_used_at).toLocaleString()
-                  : '—'}
-              </td>
-              <td className="px-5 py-3 text-right">
-                {!k.revoked_at && (
-                  <button
-                    onClick={() => onRevoke(k.id)}
-                    className="inline-flex items-center gap-1 rounded-md border border-surface-line px-2 py-1 text-xs text-ink-muted hover:bg-red-50 hover:text-red-700"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Revoke
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                </Td>
+                <Td>
+                  {revoked ? (
+                    <Badge tone="down" dot>
+                      Revoked
+                    </Badge>
+                  ) : k.expires_at && new Date(k.expires_at) < new Date() ? (
+                    <Badge tone="warn" dot>
+                      Expired
+                    </Badge>
+                  ) : (
+                    <Badge tone="ok" dot>
+                      Active
+                    </Badge>
+                  )}
+                </Td>
+                <Td align="right">
+                  {!revoked && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-ink-muted hover:bg-bad-50 hover:text-bad-700"
+                      onClick={() => onRevoke(k)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Revoke
+                    </Button>
+                  )}
+                </Td>
+              </TR>
+            );
+          })}
+        </TBody>
+      </Table>
+    </TableWrap>
   );
 }

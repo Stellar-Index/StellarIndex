@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { AppShell } from './AppShell';
 
@@ -25,8 +26,9 @@ export function AuthedRoute({ children }: { children: React.ReactNode }) {
 
   if (state.kind === 'loading' || state.kind === 'anon') {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-ink-faint">
-        Loading…
+      <div className="flex min-h-screen items-center justify-center gap-2 text-sm text-ink-muted">
+        <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+        {state.kind === 'loading' ? 'Loading your dashboard…' : 'Redirecting…'}
       </div>
     );
   }

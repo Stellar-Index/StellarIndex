@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { TrendingUp, Mail, Check, Loader2 } from 'lucide-react';
 import { ApiError, requestMagicLink } from '@/lib/api';
+import { Button, Field, Input, Callout } from '@/components/ui';
 
 export default function SigninPage() {
   const [email, setEmail] = useState('');
@@ -28,65 +30,81 @@ export default function SigninPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-6 rounded-lg border border-surface-line bg-surface p-8 shadow-sm">
-        <div className="space-y-2">
-          <h1 className="text-xl font-semibold tracking-tight text-ink">
-            Sign in to Stellar Index
-          </h1>
-          <p className="text-sm text-ink-muted">
-            We&apos;ll email you a single-use link. New here? The same link
-            creates your account.
-          </p>
+    <div className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
+      <div className="w-full max-w-sm">
+        {/* Brand mark */}
+        <div className="mb-8 flex items-center justify-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
+            <TrendingUp className="h-5 w-5" />
+          </span>
+          <span className="text-lg font-semibold tracking-tight text-ink">
+            Stellar Index
+          </span>
         </div>
 
-        {sent ? (
-          <div className="rounded-md bg-brand-50 p-4 text-sm text-brand-900">
-            <p className="font-medium">Check your email.</p>
-            <p className="mt-1 text-brand-900/80">
-              A sign-in link is on its way to{' '}
-              <span className="font-mono text-brand-900">{email}</span>. The
-              link expires in 15 minutes.
+        <div className="rounded-card border border-line bg-surface p-8 shadow-card">
+          <div className="mb-6 space-y-1.5 text-center">
+            <h1 className="text-h3 font-semibold text-ink">Sign in to your dashboard</h1>
+            <p className="text-sm text-ink-muted">
+              We&apos;ll email you a single-use link. New here? The same link
+              creates your account.
             </p>
-            <button
-              onClick={() => {
-                setSent(false);
-                setEmail('');
-              }}
-              className="mt-3 text-xs text-brand-600 underline hover:text-brand-900"
-            >
-              Use a different email
-            </button>
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-ink">
-                Email
-              </span>
-              <input
-                type="email"
-                autoFocus
-                required
-                inputMode="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-md border border-surface-line bg-white px-3 py-2 text-sm shadow-sm placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-                placeholder="you@example.com"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-900 disabled:opacity-60"
-            >
-              {submitting ? 'Sending…' : 'Email me a sign-in link'}
-            </button>
-          </form>
-        )}
 
-        <p className="text-center text-xs text-ink-faint">
+          {sent ? (
+            <Callout tone="ok" title="Check your email">
+              <p className="mt-1">
+                A sign-in link is on its way to{' '}
+                <span className="font-mono font-medium">{email}</span>. It
+                expires in 15 minutes.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSent(false);
+                  setEmail('');
+                }}
+                className="mt-3 text-xs font-medium text-ok-700 underline hover:no-underline"
+              >
+                Use a different email
+              </button>
+            </Callout>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Field label="Email" htmlFor="signin-email">
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+                  <Input
+                    id="signin-email"
+                    type="email"
+                    autoFocus
+                    required
+                    inputMode="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="pl-9"
+                    placeholder="you@example.com"
+                  />
+                </div>
+              </Field>
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={submitting || !email.trim()}
+              >
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4" />
+                )}
+                {submitting ? 'Sending…' : 'Email me a sign-in link'}
+              </Button>
+            </form>
+          )}
+        </div>
+
+        <p className="mt-6 text-center text-xs text-ink-faint">
           By signing in you agree to the{' '}
           <a
             href="https://stellarindex.io/terms"
