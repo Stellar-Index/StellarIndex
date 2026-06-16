@@ -132,10 +132,10 @@ function Health({
 }) {
   const tone =
     status === 'ok'
-      ? 'bg-up-DEFAULT'
+      ? 'bg-up'
       : status === 'degraded'
         ? 'bg-warn-500'
-        : 'bg-down-DEFAULT';
+        : 'bg-down';
   return (
     <div>
       <div className="flex items-center justify-between">

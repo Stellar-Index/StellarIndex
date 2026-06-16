@@ -207,7 +207,7 @@ export function HomeTryAPI() {
             className="rounded p-1 text-ink-faint hover:bg-ink hover:text-ink-faint"
           >
             {copied ? (
-              <Check className="h-3.5 w-3.5 text-up-DEFAULT" />
+              <Check className="h-3.5 w-3.5 text-up" />
             ) : (
               <Copy className="h-3.5 w-3.5" />
             )}
