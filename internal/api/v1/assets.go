@@ -381,42 +381,20 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	// asset_class filter. Drives the CMC/CoinGecko-style class chip
-	// group on the explorer's /assets page. Recognised values:
+	// asset_class filter. Drives the class chip group on the
+	// explorer's /assets page. Recognised values:
 	//   - "fiat"        → catalogue fiat rows only (USD, EUR, …).
 	//   - "stablecoin"  → catalogue stablecoin rows only (USDC, USDT, …).
-	//   - "crypto" / "blockchain"
-	//                   → catalogue crypto rows only (BTC, ETH, XLM, …).
-	//                   "blockchain" is the spec's surface alias for
-	//                   the same set.
+	//   - "crypto"      → catalogue crypto rows only (XLM, …).
 	//   - "all" / ""    → catalogue rows (all 3 classes, market-cap
 	//                   ordered) THEN classic_assets via volume-desc.
 	//                   See handleAssetListUnified.
 	assetClass := normaliseAssetClass(r.URL.Query().Get("asset_class"))
-	// Network can compose with the class filter — the redesign-spec
-	// explorer surfaces "Network: <chain>" as a sub-dropdown when
-	// the class chip is Blockchain or Stablecoin. Empty / "all" /
-	// "stellar" returns the catalogue subset for that network +
-	// class; explicit non-Stellar narrows to entries with a
-	// matching networks[] row (USDC on ethereum, XLM on stellar,
-	// etc.). Read here so handleAssetListFromCatalogue can apply
-	// it; fiat catalogue entries have no networks so the filter is
-	// effectively a no-op for them.
-	classNetwork := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("network")))
 	if assetClass == "fiat" || assetClass == "stablecoin" || assetClass == "crypto" {
-		s.handleAssetListFromCatalogue(w, r, assetClass, classNetwork, limit, cursor)
+		s.handleAssetListFromCatalogue(w, r, assetClass, limit, cursor)
 		return
 	}
 
-	// Network filter takes precedence over the unified-all path —
-	// the explorer fires /assets?network=ethereum (etc.) from the
-	// /blockchains/{network} click-through and that page wants
-	// catalogue rows projected to that network, not the merged view.
-	network := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("network")))
-	if network != "" && network != "stellar" {
-		s.handleAssetListExternalNetwork(w, r, network, limit, cursor)
-		return
-	}
 	issuer := strings.TrimSpace(r.URL.Query().Get("issuer"))
 
 	// Unified "All" listing — catalogue rows first (market-cap
@@ -600,75 +578,11 @@ func assetDetailFromCoinRow(row timescale.CoinRow) AssetDetail {
 	return d
 }
 
-// externalNetworks is the allowlist for /v1/assets?network= values
-// that route to the verified-currency catalogue. Stellar is handled
-// by the indexer reader; everything in this set is sourced from the
-// catalogue's networks[] arrays.
-var externalNetworks = map[string]struct{}{
-	"ethereum":  {},
-	"solana":    {},
-	"polygon":   {},
-	"base":      {},
-	"arbitrum":  {},
-	"tron":      {},
-	"bitcoin":   {},
-	"bsc":       {},
-	"avalanche": {},
-	"xrpl":      {},
-}
-
-// handleAssetListExternalNetwork serves /v1/assets?network=<chain>
-// for non-Stellar networks. Source is the verified-currency
-// catalogue's networks[] arrays; rows are projected into AssetDetail
-// with type="external" and asset_id="<network>:<contract>" so
-// downstream consumers can treat the response uniformly with the
-// Stellar branch.
-//
-// Pagination is by simple offset for now — the catalogue is small
-// (~45 entries) and the per-network filter narrows it further, so
-// cursor pagination would be over-engineering.
-func (s *Server) handleAssetListExternalNetwork(w http.ResponseWriter, r *http.Request, network string, limit int, cursor string) {
-	if _, ok := externalNetworks[network]; !ok {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-network",
-			"Unknown network", http.StatusBadRequest,
-			"network must be one of: stellar, ethereum, solana, polygon, base, arbitrum, tron, bitcoin, bsc, avalanche, xrpl")
-		return
-	}
-	if s.verifiedCurrencies == nil {
-		writeJSON(w, []AssetDetail{}, Flags{})
-		return
-	}
-	out := projectCatalogueForNetwork(s.verifiedCurrencies.All(), network)
-	// Offset pagination via cursor=<int>. A malformed cursor 400s
-	// rather than silently restarting at page 1 (G3-10).
-	offset, ok := parseOffsetCursor(w, r, cursor)
-	if !ok {
-		return
-	}
-	if offset >= len(out) {
-		writeJSON(w, []AssetDetail{}, Flags{})
-		return
-	}
-	end := offset + limit
-	if end > len(out) {
-		end = len(out)
-	}
-	page := out[offset:end]
-	env := Envelope{Data: page, Flags: Flags{}}
-	if end < len(out) {
-		next := strconv.Itoa(end)
-		env.Pagination = &Pagination{Next: next}
-	}
-	writeEnvelope(w, env)
-}
-
-// normaliseAssetClass folds the spec's surface labels into the
-// catalogue's internal class identifiers. "blockchain" is the
-// explorer's filter chip name for the catalogue's "crypto" class
-// (CMC's / CoinGecko's "Cryptocurrencies" tab equivalent). Empty
-// + "all" both fall through unchanged; the handler treats them as
-// the legacy classic_assets path.
+// normaliseAssetClass folds surface labels into the catalogue's
+// internal class identifiers. "blockchain" / "cryptocurrency" are
+// accepted as back-compat aliases for the catalogue's "crypto"
+// class. Empty + "all" both fall through unchanged; the handler
+// treats them as the legacy classic_assets path.
 func normaliseAssetClass(raw string) string {
 	c := strings.ToLower(strings.TrimSpace(raw))
 	switch c {
@@ -686,7 +600,7 @@ func normaliseAssetClass(raw string) string {
 // rows (USDC-GA5Z..., USDT-GCQT...).
 //
 // Returns rows with:
-//   - asset_id = slug ("usdc", "us-dollar", "btc") — the route
+//   - asset_id = slug ("usdc", "us-dollar", "xlm") — the route
 //     /v1/assets/{slug} dispatches to GlobalAssetView for these.
 //   - type = "global"; consumers distinguishing wire shape can
 //     check (a) the type field or (b) the absence of issuer.
@@ -695,52 +609,22 @@ func normaliseAssetClass(raw string) string {
 //     Crypto + stablecoin rows lack supply data in the catalogue
 //     today; their market_cap stays null until the crypto-supply
 //     pipeline lands.
-//   - networks[] reflected on the wire as a count + the array
-//     itself in the same shape /v1/assets/verified uses.
 //   - issuer/contract_id/home_domain/sep1_status absent — those
-//     are Stellar-network-specific and belong on the
-//     /v1/assets/{slug}/{network} deep-dive route.
+//     are Stellar-asset-specific and belong on the canonical
+//     /v1/assets/{asset_id} detail route.
 //
 // Pagination via offset cursor — the result set is bounded at
 // ≤45 catalogue rows per class, so a simple offset is sufficient.
-func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Request, class, network string, limit int, cursor string) {
+func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Request, class string, limit int, cursor string) {
 	if s.verifiedCurrencies == nil {
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
 	matched := filterCatalogueByClass(s.verifiedCurrencies.All(), currency.AssetClass(class))
-	// Network sub-filter — when set to a specific chain, narrow to
-	// catalogue entries with a matching networks[] row. "all" /
-	// "" passes through. Fiat catalogue entries have empty
-	// networks so a non-empty network filter would drop them all;
-	// that's the spec's intent (fiat class hides the Network
-	// dropdown in the UI, so this is an API-direct-callers path).
-	if network != "" && network != "all" {
-		matched = filterCatalogueByNetwork(matched, network)
-	}
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := projectCatalogueRows(matched, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	writeCataloguePage(w, r, rows, limit, cursor)
-}
-
-// filterCatalogueByNetwork narrows the input slice to entries
-// whose networks[] contains a row matching `network` (case-
-// insensitive). Used by the asset_class + network combo on
-// /v1/assets to power the explorer's "Blockchain on Stellar" /
-// "Stablecoin on Ethereum" / etc. drilldowns.
-func filterCatalogueByNetwork(entries []*currency.VerifiedCurrency, network string) []*currency.VerifiedCurrency {
-	target := strings.ToLower(network)
-	out := make([]*currency.VerifiedCurrency, 0, len(entries))
-	for _, vc := range entries {
-		for _, n := range vc.Networks {
-			if strings.EqualFold(n.Network, target) {
-				out = append(out, vc)
-				break
-			}
-		}
-	}
-	return out
 }
 
 // filterCatalogueByClass returns the catalogue entries matching the
@@ -1112,36 +996,6 @@ func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*c
 	}
 	wg.Wait()
 	return caps
-}
-
-// projectCatalogueForNetwork walks the catalogue and returns one
-// AssetDetail per (verified-currency, network-entry) pair where the
-// network matches. Exported to a free function for unit testing.
-func projectCatalogueForNetwork(entries []*currency.VerifiedCurrency, network string) []AssetDetail {
-	out := make([]AssetDetail, 0, 8)
-	for _, vc := range entries {
-		for _, n := range vc.Networks {
-			if n.Network != network {
-				continue
-			}
-			contract := n.Contract
-			code := vc.Ticker
-			name := vc.Name
-			detail := AssetDetail{
-				AssetID:    network + ":" + contract,
-				Type:       "external",
-				Code:       code,
-				Decimals:   0,
-				Sep1Status: "not_applicable",
-				Name:       &name,
-			}
-			if contract != "" {
-				detail.ContractID = &contract
-			}
-			out = append(out, detail)
-		}
-	}
-	return out
 }
 
 // normaliseAssetIDInput rescues the most common case-typo on
