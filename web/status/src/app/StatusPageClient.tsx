@@ -9,6 +9,9 @@ import {
   XCircle,
 } from 'lucide-react';
 
+import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
+import { SiteFooter, SiteHeader } from '@/components/SiteChrome';
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
@@ -613,62 +616,79 @@ export default function StatusPageClient({
   const overallTone = useMemo(() => toneFor(status?.overall), [status]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
-      <Header />
-      <OverallBanner status={status?.overall ?? 'unknown'} tone={overallTone} />
-      {error && (
-        <div className="rounded-md border border-bad-500/30 bg-bad-50 px-4 py-3 text-sm text-bad-700">
-          Status feed unreachable: {error}.{' '}
-          {status
-            ? 'Showing the last known snapshot below.'
-            : 'No snapshot has been received yet — independent endpoint probes below still show live results, and past incidents are loaded from the build-time corpus.'}
-        </div>
-      )}
-      {loading && !status && !error && (
-        <div className="rounded-md border border-surface-line bg-surface px-4 py-8 text-center text-sm text-ink-faint">
-          Loading status…
-        </div>
-      )}
-      {status && (
-        <>
-          <ServiceGrid services={status.services} />
-          <LatencyStrip latency={status.latency} />
-          <FreshnessRow freshness={status.freshness} />
-          <IngestionRegions
-            regions={REGIONS}
-            snapshots={ingestionByRegion}
+    <div className="flex min-h-screen flex-col">
+      <SiteHeader />
+      <main className="flex-1">
+        <Container className="max-w-5xl space-y-8 py-10">
+          <PageHead />
+          <OverallBanner
+            status={status?.overall ?? 'unknown'}
+            tone={overallTone}
           />
-          <ActiveIncidents incidents={status.incidents.active} />
-        </>
-      )}
-      {/* EndpointMatrix and IncidentHistory render UNCONDITIONALLY —
-          they don't depend on the /v1/status feed. The matrix runs
-          its own independent probes (so red badges show during an
-          outage), and the history is seeded from the build-time
-          corpus (so past incidents survive a full API outage). WB-02 */}
-      <EndpointMatrix endpoints={PUBLIC_ENDPOINTS} health={endpointHealth} />
-      <IncidentHistory entries={incidentHistory} feed={incidentFeed} />
-      {status && <Footer asOf={asOf} region={status.region} />}
+          {error && (
+            <Card className="border-bad-300 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+              Status feed unreachable: {error}.{' '}
+              {status
+                ? 'Showing the last known snapshot below.'
+                : 'No snapshot has been received yet — independent endpoint probes below still show live results, and past incidents are loaded from the build-time corpus.'}
+            </Card>
+          )}
+          {loading && !status && !error && (
+            <Card className="px-4 py-8 text-center text-sm text-ink-faint">
+              Loading status…
+            </Card>
+          )}
+          {status && (
+            <>
+              <ServiceGrid services={status.services} />
+              <LatencyStrip latency={status.latency} />
+              <FreshnessRow freshness={status.freshness} />
+              <IngestionRegions
+                regions={REGIONS}
+                snapshots={ingestionByRegion}
+              />
+              <ActiveIncidents incidents={status.incidents.active} />
+            </>
+          )}
+          {/* EndpointMatrix and IncidentHistory render UNCONDITIONALLY —
+              they don't depend on the /v1/status feed. The matrix runs
+              its own independent probes (so red badges show during an
+              outage), and the history is seeded from the build-time
+              corpus (so past incidents survive a full API outage). WB-02 */}
+          <EndpointMatrix
+            endpoints={PUBLIC_ENDPOINTS}
+            health={endpointHealth}
+          />
+          <IncidentHistory entries={incidentHistory} feed={incidentFeed} />
+          {status && <RegionMeta asOf={asOf} region={status.region} />}
+        </Container>
+      </main>
+      <SiteFooter />
     </div>
   );
 }
 
-function Header() {
+function PageHead() {
   return (
-    <header className="flex items-center justify-between">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <a href="https://stellarindex.io" className="text-sm text-ink-muted">
-          ← Stellar Index
-        </a>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+        <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-brand-600">
           System status
+        </div>
+        <h1 className="text-h1 font-semibold text-ink">
+          Stellar Index status
         </h1>
+        <p className="mt-2 max-w-prose text-[15px] leading-relaxed text-ink-muted">
+          Live service health, request latency, ingest freshness, and the
+          full public-endpoint matrix — probed independently from your
+          browser.
+        </p>
       </div>
-      <div className="hidden items-center gap-2 text-sm text-ink-muted sm:flex">
-        <span className="live-dot inline-block h-2 w-2 rounded-full bg-ok-500" />
+      <div className="flex items-center gap-2 whitespace-nowrap text-sm text-ink-muted">
+        <span className="inline-block h-2 w-2 animate-pulse-dot rounded-full bg-ok-500" />
         Live · refreshed every 30 s
       </div>
-    </header>
+    </div>
   );
 }
 
@@ -693,26 +713,43 @@ function OverallBanner({
     unknown:
       'We can’t reach the status feed. The endpoint probes and incident history below are independent and remain live.',
   };
+  const badgeLabels: Record<ServiceStatus, string> = {
+    ok: 'Operational',
+    degraded: 'Degraded',
+    down: 'Outage',
+    unknown: 'Unknown',
+  };
   const Icon = tone.icon;
   return (
-    <section
-      className={`flex items-start gap-4 rounded-lg border p-6 ${tone.bg} ${tone.border}`}
-    >
-      <Icon className={`h-8 w-8 flex-shrink-0 ${tone.fg}`} />
-      <div>
-        <h2 className={`text-xl font-semibold ${tone.fg}`}>
-          {headlines[status]}
-        </h2>
-        <p className="mt-1 text-sm text-ink-muted">{subtitles[status]}</p>
+    <Card className={`overflow-hidden border ${tone.cardBorder}`}>
+      <div className={`flex items-start gap-4 p-6 ${tone.cardBg}`}>
+        <div
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-card bg-surface ${tone.fg} ring-1 ${tone.ring}`}
+        >
+          <Icon className="h-6 w-6" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-h3 font-semibold text-ink">
+              {headlines[status]}
+            </h2>
+            <Badge tone={tone.badge} dot>
+              {badgeLabels[status]}
+            </Badge>
+          </div>
+          <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">
+            {subtitles[status]}
+          </p>
+        </div>
       </div>
-    </section>
+    </Card>
   );
 }
 
 function ServiceGrid({ services }: { services: ServiceEntry[] }) {
   return (
     <section>
-      <SectionHeader>Services</SectionHeader>
+      <SectionHead>Services</SectionHead>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {services.map((svc) => (
           <ServiceCard key={svc.name} service={svc} />
@@ -726,10 +763,8 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
   const tone = toneFor(service.status);
   const Icon = tone.icon;
   return (
-    <div
-      className={`flex items-start justify-between rounded-md border bg-surface p-4 ${tone.border}`}
-    >
-      <div>
+    <Card className="flex items-start justify-between p-4">
+      <div className="min-w-0">
         <div className="font-medium capitalize text-ink">{service.name}</div>
         {service.last_seen && (
           <div className="mt-1 text-xs text-ink-faint">
@@ -737,8 +772,8 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
           </div>
         )}
       </div>
-      <Icon className={`h-5 w-5 ${tone.fg}`} />
-    </div>
+      <Icon className={`h-5 w-5 shrink-0 ${tone.fg}`} />
+    </Card>
   );
 }
 
@@ -749,14 +784,12 @@ function LatencyStrip({
 }) {
   return (
     <section>
-      <SectionHeader>
-        Request latency{' '}
-        <span className="text-xs font-normal text-ink-faint">
-          {' '}
-          · {Math.round(latency.window_secs / 60)}-min window
-        </span>
-      </SectionHeader>
-      <div className="grid grid-cols-3 gap-3">
+      <SectionHead
+        aside={`${Math.round(latency.window_secs / 60)}-min window`}
+      >
+        Request latency
+      </SectionHead>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <LatencyCell label="p50" value={latency.p50_ms} target={50} />
         <LatencyCell label="p95" value={latency.p95_ms} target={200} />
         <LatencyCell label="p99" value={latency.p99_ms} target={500} />
@@ -777,32 +810,32 @@ function LatencyCell({
   const pct = Math.min(100, (value / target) * 100);
   const tone =
     pct < 60 ? 'ok' : pct < 100 ? 'warn' : ('bad' as const);
-  const colorClasses = {
-    ok: 'text-ok-700 bg-ok-500',
-    warn: 'text-warn-700 bg-warn-500',
-    bad: 'text-bad-700 bg-bad-500',
-  };
+  const fg = {
+    ok: 'text-ok-700',
+    warn: 'text-warn-700',
+    bad: 'text-bad-700',
+  }[tone];
+  const bar = {
+    ok: 'bg-ok-500',
+    warn: 'bg-warn-500',
+    bad: 'bg-bad-500',
+  }[tone];
   return (
-    <div className="rounded-md border border-surface-line bg-surface p-4">
-      <div className="text-[11px] uppercase tracking-wider text-ink-faint">
+    <Card className="p-4">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
         {label}
       </div>
       <div className="mt-1 flex items-baseline gap-2">
-        <span className={`text-2xl font-semibold tabular-nums ${colorClasses[tone].split(' ')[0]}`}>
+        <span className={`text-2xl font-semibold tnum ${fg}`}>
           {value.toFixed(1)}
         </span>
         <span className="text-xs text-ink-muted">ms</span>
-        <span className="ml-auto text-xs text-ink-faint">
-          target {target}
-        </span>
+        <span className="ml-auto text-xs text-ink-faint">target {target}</span>
       </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-line">
-        <div
-          className={`h-full ${colorClasses[tone].split(' ')[1]}`}
-          style={{ width: `${pct}%` }}
-        />
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle">
+        <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -817,35 +850,35 @@ function FreshnessRow({
       : 0;
   return (
     <section>
-      <SectionHeader>Ingest freshness</SectionHeader>
+      <SectionHead>Ingest freshness</SectionHead>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="rounded-md border border-surface-line bg-surface p-4">
-          <div className="text-[11px] uppercase tracking-wider text-ink-faint">
+        <Card className="p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
             Last aggregator tick
           </div>
-          <div className="mt-1 font-mono text-sm">
+          <div className="mt-1 font-mono text-sm text-ink">
             {timeSince(freshness.last_aggregator_tick)} ago
           </div>
-        </div>
-        <div className="rounded-md border border-surface-line bg-surface p-4">
-          <div className="text-[11px] uppercase tracking-wider text-ink-faint">
+        </Card>
+        <Card className="p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
             Active sources
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tabular-nums">
+            <span className="text-2xl font-semibold tnum text-ink">
               {freshness.active_sources}
             </span>
             <span className="text-sm text-ink-muted">
               / {freshness.total_sources}
             </span>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-line">
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle">
             <div
               className="h-full bg-brand-500"
               style={{ width: `${sourcePct}%` }}
             />
           </div>
-        </div>
+        </Card>
       </div>
     </section>
   );
@@ -854,49 +887,45 @@ function FreshnessRow({
 function ActiveIncidents({ incidents }: { incidents: IncidentEntry[] }) {
   return (
     <section>
-      <SectionHeader>Active incidents</SectionHeader>
+      <SectionHead>Active incidents</SectionHead>
       {incidents.length === 0 ? (
-        <div className="rounded-md border border-surface-line bg-surface px-4 py-6 text-center text-sm text-ink-faint">
+        <Card className="px-4 py-6 text-center text-sm text-ink-faint">
           No active incidents.
-        </div>
+        </Card>
       ) : (
         <ul className="space-y-2">
           {incidents.map((inc) => {
-            const tone =
+            const tone: BadgeTone =
               inc.severity === 'page'
                 ? 'bad'
                 : inc.severity === 'ticket'
                   ? 'warn'
-                  : ('ok' as const);
-            const colors = {
-              ok: 'border-ok-500/30 bg-ok-50',
-              warn: 'border-warn-500/30 bg-warn-50',
-              bad: 'border-bad-500/30 bg-bad-50',
-            };
+                  : 'ok';
             return (
-              <li
-                key={inc.name}
-                className={`flex items-start justify-between rounded-md border px-4 py-3 ${colors[tone]}`}
-              >
-                <div>
-                  <div className="font-mono text-sm font-medium">
-                    {inc.name}
+              <li key={inc.name}>
+                <Card className="flex items-start justify-between p-4">
+                  <div className="min-w-0">
+                    <div className="font-mono text-sm font-medium text-ink">
+                      {inc.name}
+                    </div>
+                    <div className="mt-1.5">
+                      <Badge tone={tone} dot>
+                        {inc.severity}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs uppercase tracking-wider text-ink-faint">
-                    {inc.severity}
-                  </div>
-                </div>
-                {inc.runbook_url && (
-                  <a
-                    href={inc.runbook_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-4 flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
-                  >
-                    Runbook
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
+                  {inc.runbook_url && (
+                    <a
+                      href={inc.runbook_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-4 flex shrink-0 items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
+                    >
+                      Runbook
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </Card>
               </li>
             );
           })}
@@ -924,27 +953,27 @@ function EndpointMatrix({
 
   return (
     <section>
-      <SectionHeader>Endpoints</SectionHeader>
-      <div className="space-y-4">
+      <SectionHead>Endpoints</SectionHead>
+      <div className="space-y-5">
         {grouped.map(([group, eps]) => (
           <div key={group}>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
               {group}
             </h3>
-            <div className="overflow-hidden rounded-md border border-surface-line bg-surface">
+            <Card flat className="overflow-hidden">
               <table className="w-full text-sm">
-                <tbody className="divide-y divide-surface-line">
+                <tbody className="divide-y divide-line">
                   {eps.map((ep) => {
                     const probe = health[ep.path];
                     return (
                       <tr key={ep.path}>
-                        <td className="px-4 py-2 font-mono text-xs">
+                        <td className="px-4 py-2.5 font-mono text-xs text-ink-body">
                           {ep.path}
                         </td>
-                        <td className="px-4 py-2 text-xs text-ink-muted">
+                        <td className="hidden px-4 py-2.5 text-xs text-ink-muted sm:table-cell">
                           {ep.description}
                         </td>
-                        <td className="px-4 py-2 text-right">
+                        <td className="px-4 py-2.5 text-right">
                           <EndpointBadge probe={probe} />
                         </td>
                       </tr>
@@ -952,7 +981,7 @@ function EndpointMatrix({
                   })}
                 </tbody>
               </table>
-            </div>
+            </Card>
           </div>
         ))}
       </div>
@@ -1035,47 +1064,47 @@ function probeEndpoint(
 function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
   if (!probe) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] uppercase tracking-wider text-ink-faint">
+      <Badge tone="neutral" className="font-mono text-[10px]">
         —
-      </span>
+      </Badge>
     );
   }
   if (probe.kind === 'static') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] uppercase tracking-wider text-ink-faint">
+      <Badge tone="neutral" className="text-[10px]">
         {probe.label === 'requires-auth' ? "auth req'd" : 'stream'}
-      </span>
+      </Badge>
     );
   }
   if (probe.kind === 'fast') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-ok-50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-ok-700">
+      <Badge tone="ok" className="text-[10px]">
         <CheckCircle2 className="h-3 w-3" />
-        {Math.round(probe.latencyMs)}ms
-      </span>
+        <span className="tnum">{Math.round(probe.latencyMs)}ms</span>
+      </Badge>
     );
   }
   if (probe.kind === 'slow') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-warn-50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-warn-700">
+      <Badge tone="warn" className="text-[10px]">
         <AlertTriangle className="h-3 w-3" />
-        {Math.round(probe.latencyMs)}ms
-      </span>
+        <span className="tnum">{Math.round(probe.latencyMs)}ms</span>
+      </Badge>
     );
   }
   if (probe.kind === 'down') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-bad-50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-bad-700">
+      <Badge tone="bad" className="text-[10px]">
         <XCircle className="h-3 w-3" />
-        {probe.status}
-      </span>
+        <span className="tnum">{probe.status}</span>
+      </Badge>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-bad-50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-bad-700">
+    <Badge tone="bad" className="text-[10px]">
       <XCircle className="h-3 w-3" />
       err
-    </span>
+    </Badge>
   );
 }
 
@@ -1130,6 +1159,12 @@ function mergeIncidents(
   );
 }
 
+function severityBadgeTone(
+  s: IncidentHistoryEntry['severity'],
+): BadgeTone {
+  return s === 'major' ? 'bad' : s === 'minor' ? 'warn' : 'ok';
+}
+
 function IncidentHistory({
   entries,
   feed,
@@ -1139,58 +1174,69 @@ function IncidentHistory({
 }) {
   return (
     <section>
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-muted">
-          Incident history
-        </h2>
-        <a
-          href={`${API_BASE_URL}/v1/incidents.atom`}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="text-xs text-ink-faint hover:text-brand-600"
-          title="Atom feed — subscribe in Feedly, Slack RSS bot, etc."
-        >
-          Subscribe (Atom) ↗
-        </a>
-      </div>
+      <SectionHead
+        action={
+          <a
+            href={`${API_BASE_URL}/v1/incidents.atom`}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-xs text-ink-faint hover:text-brand-600"
+            title="Atom feed — subscribe in Feedly, Slack RSS bot, etc."
+          >
+            Subscribe (Atom) ↗
+          </a>
+        }
+      >
+        Incident history
+      </SectionHead>
       {entries.length === 0 ? (
-        <div className="rounded-md border border-surface-line bg-surface px-4 py-6 text-center text-sm text-ink-faint">
+        <Card className="px-4 py-6 text-center text-sm text-ink-faint">
           {feed === 'error'
             ? 'Incident feed unreachable — and no postmortems are bundled in this build. Past incidents will appear here once the feed is reachable again.'
             : 'No past incidents recorded yet. Resolved incidents will appear here once they post-mortem.'}
-        </div>
+        </Card>
       ) : (
         <ul className="space-y-3">
           {entries.map((e) => (
-            <li
-              key={e.slug || e.date + e.title}
-              className="rounded-md border border-surface-line bg-surface p-4 transition hover:border-brand-300"
-            >
-              <div className="flex items-center justify-between">
-                {e.slug ? (
-                  <a
-                    href={`/incident/${e.slug}/`}
-                    className="font-medium text-ink hover:text-brand-600"
-                  >
-                    {e.title}
-                  </a>
-                ) : (
-                  <span className="font-medium">{e.title}</span>
-                )}
-                <span className="text-xs text-ink-faint">{e.date}</span>
+            <li key={e.slug || e.date + e.title}>
+            <Card interactive className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Badge tone={severityBadgeTone(e.severity)}>
+                    {e.severity}
+                  </Badge>
+                  {e.slug ? (
+                    <a
+                      href={`/incident/${e.slug}/`}
+                      className="truncate font-medium text-ink hover:text-brand-600"
+                    >
+                      {e.title}
+                    </a>
+                  ) : (
+                    <span className="truncate font-medium text-ink">
+                      {e.title}
+                    </span>
+                  )}
+                </div>
+                <span className="shrink-0 font-mono text-xs text-ink-faint">
+                  {e.date}
+                </span>
               </div>
-              <p className="mt-2 text-sm text-ink-muted">{e.summary}</p>
+              <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+                {e.summary}
+              </p>
               <p className="mt-1 text-xs text-ink-faint">
                 Resolved: {e.resolved}
               </p>
               {e.slug && (
                 <a
                   href={`/incident/${e.slug}/`}
-                  className="mt-2 inline-block text-xs text-brand-600 hover:underline"
+                  className="mt-2 inline-block text-xs font-medium text-brand-600 hover:underline"
                 >
                   Read full postmortem →
                 </a>
               )}
+            </Card>
             </li>
           ))}
         </ul>
@@ -1199,7 +1245,7 @@ function IncidentHistory({
   );
 }
 
-function Footer({
+function RegionMeta({
   asOf,
   region,
 }: {
@@ -1207,13 +1253,13 @@ function Footer({
   region: { name: string; deployment: string };
 }) {
   return (
-    <footer className="border-t border-surface-line pt-4 text-xs text-ink-faint">
+    <div className="border-t border-line pt-4 text-xs text-ink-faint">
       Region: <span className="font-mono">{region.name}</span> ·{' '}
       <span className="font-mono">{region.deployment}</span> · Last update:{' '}
       <span className="font-mono">
         {asOf ? new Date(asOf).toISOString() : '—'}
       </span>
-    </footer>
+    </div>
   );
 }
 
@@ -1229,7 +1275,7 @@ function IngestionRegions({
 }) {
   return (
     <section className="space-y-4">
-      <SectionHeader>Ingestion</SectionHeader>
+      <SectionHead>Ingestion</SectionHead>
       {regions.map((r) => (
         <RegionPanel key={r.name} region={r} snapshot={snapshots[r.name]} />
       ))}
@@ -1339,14 +1385,14 @@ function RegionPanel({
 
   if (!snapshot) {
     return (
-      <div className="rounded-md border border-surface-line bg-surface p-4 text-sm text-ink-faint">
+      <Card className="p-4 text-sm text-ink-faint">
         Waiting for first ingestion snapshot from{' '}
         <span className="font-mono">{region.name}</span>…
-      </div>
+      </Card>
     );
   }
   return (
-    <div className="space-y-3 rounded-md border border-surface-line bg-surface p-5">
+    <Card className="space-y-3 p-5">
       <RegionHeader region={region} snapshot={snapshot} />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <LedgerCard ledger={snapshot.ledger} live={liveFresh} />
@@ -1359,7 +1405,7 @@ function RegionPanel({
         asOf={snapshot.backfill_coverage_as_of}
       />
       <SourceHealthTable rows={snapshot.sources} />
-    </div>
+    </Card>
   );
 }
 
@@ -1374,7 +1420,7 @@ function RegionHeader({
   const commitShort = v.commit ? v.commit.slice(0, 7) : '—';
   const dirty = v.dirty === 'true';
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-surface-line pb-3">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-3">
       <div className="flex items-baseline gap-2">
         <span className="font-mono text-sm font-semibold text-ink">
           {region.name}
@@ -1426,12 +1472,12 @@ function LedgerCard({
     bad: 'text-bad-700',
   }[lagTone];
   return (
-    <Card
+    <Panel
       title="Live ledger"
       accessory={
         live ? (
           <span className="flex items-center gap-1 text-[10px] font-medium text-ok-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-ok-700 animate-pulse" />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok-700" />
             live
           </span>
         ) : null
@@ -1450,7 +1496,7 @@ function LedgerCard({
       />
       <Row label="Markets (24h)" value={ledger.markets_count_24h.toLocaleString()} />
       <Row label="Assets indexed" value={ledger.assets_indexed.toLocaleString()} />
-    </Card>
+    </Panel>
   );
 }
 
@@ -1460,7 +1506,7 @@ function FXBackfillCard({
   fx: IngestionSnapshot['fx_backfill'];
 }) {
   return (
-    <Card title="FX backfill (fx_quotes)">
+    <Panel title="FX backfill (fx_quotes)">
       <Row
         label="Coverage"
         value={
@@ -1472,7 +1518,7 @@ function FXBackfillCard({
       />
       <Row label="Currencies" value={fx.currencies_count.toLocaleString()} />
       <Row label="Total quotes" value={fx.total_quotes.toLocaleString()} />
-    </Card>
+    </Panel>
   );
 }
 
@@ -1495,7 +1541,7 @@ function MarketCapCard({ mc }: { mc: IngestionSnapshot['market_cap'] }) {
     neutral: 'text-ink-faint',
   }[ageTone];
   return (
-    <Card title="Market cap cache (CoinGecko)">
+    <Panel title="Market cap cache (CoinGecko)">
       <Row label="Entries" value={mc.entries_count.toLocaleString()} />
       <Row
         label="Newest fetch"
@@ -1516,7 +1562,7 @@ function MarketCapCard({ mc }: { mc: IngestionSnapshot['market_cap'] }) {
         }
         mono
       />
-    </Card>
+    </Panel>
   );
 }
 
@@ -1525,7 +1571,7 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
     ? Math.floor((Date.now() - new Date(supply.last_snapshot_at).getTime()) / 1000)
     : null;
   return (
-    <Card title="Supply observers">
+    <Panel title="Supply observers">
       <Row label="Classic assets" value={supply.classic_assets_with_supply.toLocaleString()} />
       <Row label="SEP-41 assets" value={supply.sep41_assets_with_supply.toLocaleString()} />
       <Row
@@ -1533,7 +1579,7 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
         value={ageS == null ? '—' : `${formatAge(ageS)} ago`}
         mono
       />
-    </Card>
+    </Panel>
   );
 }
 
@@ -1546,7 +1592,7 @@ function BackfillCoverageTable({
 }) {
   if (!rows || rows.length === 0) {
     return (
-      <div className="rounded-md border border-warn-500/30 bg-warn-50 p-3 text-xs text-warn-700">
+      <div className="rounded-lg border border-warn-300 bg-warn-50 p-3 text-xs text-warn-700">
         Coverage snapshot pending — first refresh runs ~30s after process
         start, then every 5 min.
       </div>
@@ -1557,7 +1603,7 @@ function BackfillCoverageTable({
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-faint">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
           Ingest coverage — genesis → tip
         </h3>
         {asOf && (
@@ -1577,9 +1623,9 @@ function BackfillCoverageTable({
         liveness signal exists (the verifier hasn&apos;t run), which can read
         ~100% for sparse or partially-indexed sources.
       </p>
-      <div className="overflow-hidden rounded-md border border-surface-line">
+      <div className="overflow-hidden rounded-lg border border-line">
         <table className="w-full text-xs">
-          <thead className="bg-surface-subtle text-ink-faint">
+          <thead className="bg-surface-muted text-ink-faint">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Source</th>
               <th className="px-3 py-2 text-right font-medium">Genesis</th>
@@ -1589,7 +1635,7 @@ function BackfillCoverageTable({
               <th className="px-3 py-2 text-right font-medium">Entries</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-surface-line">
+          <tbody className="divide-y divide-line">
             {onChain.map((r) => {
               // ADR-0033 truthfulness: a source's coverage is only TRUSTWORTHY
               // once its completeness watermark (completeness_pct) is computed —
@@ -1627,18 +1673,18 @@ function BackfillCoverageTable({
                 ok: 'bg-ok-500 text-ok-700',
                 warn: 'bg-warn-500 text-warn-700',
                 bad: 'bg-bad-500 text-bad-700',
-                pending: 'bg-surface-line text-ink-muted',
+                pending: 'bg-line text-ink-muted',
               };
               return (
                 <tr key={r.source}>
-                  <td className="px-3 py-2 font-mono">{r.source}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-muted">
+                  <td className="px-3 py-2 font-mono text-ink-body">{r.source}</td>
+                  <td className="px-3 py-2 text-right font-mono tnum text-ink-muted">
                     {r.genesis_ledger?.toLocaleString() ?? '—'}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">
+                  <td className="px-3 py-2 text-right font-mono tnum text-ink-body">
                     {r.earliest_ledger?.toLocaleString() ?? '—'}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">
+                  <td className="px-3 py-2 text-right font-mono tnum text-ink-body">
                     {r.latest_ledger?.toLocaleString() ?? '—'}
                   </td>
                   <td
@@ -1651,13 +1697,13 @@ function BackfillCoverageTable({
                   >
                     {ran && reconciled ? (
                       <div className="inline-flex items-center justify-end gap-2">
-                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-line">
+                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-subtle">
                           <div
                             className={`h-full ${colors[tone].split(' ')[0]}`}
                             style={{ width: `${Math.max(2, pct)}%` }}
                           />
                         </div>
-                        <span className={`tabular-nums ${colors[tone].split(' ')[1]}`}>
+                        <span className={`tnum ${colors[tone].split(' ')[1]}`}>
                           {pct.toFixed(1)}%
                         </span>
                       </div>
@@ -1666,24 +1712,24 @@ function BackfillCoverageTable({
                         className="inline-flex items-center justify-end gap-1.5 text-warn-700"
                         title="Captured, not yet verified. The certified lake holds 100% of this source's data (substrate hash-chained to the tip), but the served tier has not reconciled to the lake yet (ADR-0033 complete=false) — so this is NOT yet fully verified. The hourly completeness verify + lake re-derive close the gap."
                       >
-                        <span className="rounded bg-surface-line px-1 py-0.5 text-[10px] uppercase tracking-wide text-warn-700">
+                        <span className="rounded bg-line px-1 py-0.5 text-[10px] uppercase tracking-wide text-warn-700">
                           reconciling
                         </span>
-                        <span className="tabular-nums">{pct.toFixed(1)}% captured</span>
+                        <span className="tnum">{pct.toFixed(1)}% captured</span>
                       </span>
                     ) : (
                       <span
                         className="inline-flex items-center justify-end gap-1.5 text-ink-muted"
                         title="Completeness not yet verified (ADR-0033). The figure is a gap-free liveness signal — no large gap detected — which can read ~100% for sparse or only-partially-indexed sources. Verified completeness is pending the data-recovery backfills."
                       >
-                        <span className="rounded bg-surface-line px-1 py-0.5 text-[10px] uppercase tracking-wide">
+                        <span className="rounded bg-line px-1 py-0.5 text-[10px] uppercase tracking-wide">
                           unverified
                         </span>
-                        <span className="tabular-nums">{pct.toFixed(1)}% gap-free</span>
+                        <span className="tnum">{pct.toFixed(1)}% gap-free</span>
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                  <td className="px-3 py-2 text-right tnum text-ink-muted">
                     {r.entries.toLocaleString()}
                   </td>
                 </tr>
@@ -1695,7 +1741,7 @@ function BackfillCoverageTable({
                 <td className="px-3 py-2 text-right text-[10px] italic" colSpan={4}>
                   off-chain — no Stellar ledger context
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums">
+                <td className="px-3 py-2 text-right tnum">
                   {r.entries.toLocaleString()}
                 </td>
               </tr>
@@ -1718,12 +1764,12 @@ function SourceHealthTable({
   if (safeRows.length === 0) return null;
   return (
     <div>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
         Sources — {safeRows.length} registered
       </h3>
-      <div className="overflow-hidden rounded-md border border-surface-line">
+      <div className="overflow-hidden rounded-lg border border-line">
         <table className="w-full text-xs">
-          <thead className="bg-surface-subtle text-ink-faint">
+          <thead className="bg-surface-muted text-ink-faint">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Source</th>
               <th className="px-3 py-2 text-left font-medium">Class</th>
@@ -1733,25 +1779,25 @@ function SourceHealthTable({
               <th className="px-3 py-2 text-center font-medium">VWAP</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-surface-line">
+          <tbody className="divide-y divide-line">
             {safeRows.map((r) => {
               const classLabel = r.subclass ? `${r.class}/${r.subclass}` : r.class;
               const silent = r.include_in_vwap && r.entries_24h === 0;
               return (
                 <tr key={r.name}>
-                  <td className="px-3 py-2 font-mono">{r.name}</td>
+                  <td className="px-3 py-2 font-mono text-ink-body">{r.name}</td>
                   <td className="px-3 py-2 text-ink-muted">{classLabel}</td>
                   <td
-                    className={`px-3 py-2 text-right tabular-nums ${
-                      silent ? 'text-bad-700' : ''
+                    className={`px-3 py-2 text-right tnum ${
+                      silent ? 'text-bad-700' : 'text-ink-body'
                     }`}
                   >
                     {r.entries_24h.toLocaleString()}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                  <td className="px-3 py-2 text-right tnum text-ink-muted">
                     {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                  <td className="px-3 py-2 text-right tnum text-ink-muted">
                     {r.markets_count_24h.toLocaleString()}
                   </td>
                   <td className="px-3 py-2 text-center">
@@ -1771,7 +1817,9 @@ function SourceHealthTable({
   );
 }
 
-function Card({
+// Panel is a recessed sub-card used inside a RegionPanel for the
+// metric well groups (live ledger, FX, market-cap, supply).
+function Panel({
   title,
   accessory,
   children,
@@ -1781,8 +1829,8 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-md border border-surface-line bg-surface-subtle p-4">
-      <h3 className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
+    <div className="rounded-lg border border-line bg-surface-muted p-4">
+      <h3 className="mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
         <span>{title}</span>
         {accessory}
       </h3>
@@ -1806,7 +1854,7 @@ function Row({
     <div className="flex items-baseline justify-between gap-3">
       <dt className="text-xs text-ink-muted">{label}</dt>
       <dd
-        className={`tabular-nums ${mono ? 'font-mono text-xs' : ''} ${
+        className={`tnum text-ink ${mono ? 'font-mono text-xs' : ''} ${
           valueClass ?? ''
         }`}
       >
@@ -1841,43 +1889,77 @@ function formatAge(s: number): string {
   return `${d}d`;
 }
 
-function SectionHeader({ children }: { children: React.ReactNode }) {
+// SectionHead is the page's between-block heading — an uppercase
+// kicker with an optional right-aligned aside (window label) or
+// action (a link). Mirrors the explorer's SectionHeader rhythm.
+function SectionHead({
+  children,
+  aside,
+  action,
+}: {
+  children: React.ReactNode;
+  aside?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
-    <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-ink-muted">
-      {children}
-    </h2>
+    <div className="mb-3 flex items-baseline justify-between gap-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-ink-muted">
+        {children}
+        {aside && (
+          <span className="ml-2 text-xs font-normal normal-case tracking-normal text-ink-faint">
+            · {aside}
+          </span>
+        )}
+      </h2>
+      {action}
+    </div>
   );
 }
 
-function toneFor(status?: ServiceStatus) {
+function toneFor(status?: ServiceStatus): {
+  icon: typeof CheckCircle2;
+  fg: string;
+  ring: string;
+  cardBg: string;
+  cardBorder: string;
+  badge: BadgeTone;
+} {
   switch (status) {
     case 'ok':
       return {
         icon: CheckCircle2,
         fg: 'text-ok-700',
-        bg: 'bg-ok-50',
-        border: 'border-ok-500/30',
+        ring: 'ring-ok-300/60',
+        cardBg: 'bg-ok-50',
+        cardBorder: 'border-ok-300',
+        badge: 'ok',
       };
     case 'degraded':
       return {
         icon: AlertTriangle,
         fg: 'text-warn-700',
-        bg: 'bg-warn-50',
-        border: 'border-warn-500/30',
+        ring: 'ring-warn-300/60',
+        cardBg: 'bg-warn-50',
+        cardBorder: 'border-warn-300',
+        badge: 'warn',
       };
     case 'down':
       return {
         icon: XCircle,
         fg: 'text-bad-700',
-        bg: 'bg-bad-50',
-        border: 'border-bad-500/30',
+        ring: 'ring-bad-300/60',
+        cardBg: 'bg-bad-50',
+        cardBorder: 'border-bad-300',
+        badge: 'bad',
       };
     default:
       return {
         icon: Info,
         fg: 'text-ink-muted',
-        bg: 'bg-surface-subtle',
-        border: 'border-surface-line',
+        ring: 'ring-line',
+        cardBg: 'bg-surface-muted',
+        cardBorder: 'border-line',
+        badge: 'neutral',
       };
   }
 }
