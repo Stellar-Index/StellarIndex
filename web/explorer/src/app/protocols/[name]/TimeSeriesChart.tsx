@@ -112,7 +112,7 @@ export function TimeSeriesChart({
       <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-xs text-slate-500">
         <span>
           Peak{' '}
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+          <span className="font-mono tabular-nums text-slate-700">
             {formatCompact(peak.value)}
             {unitSuffix}
           </span>{' '}
@@ -120,14 +120,14 @@ export function TimeSeriesChart({
         </span>
         <span>
           Avg/point{' '}
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+          <span className="font-mono tabular-nums text-slate-700">
             {formatCompact(Math.round(geom.avg))}
             {unitSuffix}
           </span>
         </span>
         <span>
           Latest{' '}
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+          <span className="font-mono tabular-nums text-slate-700">
             {formatCompact(points[points.length - 1].value)}
             {unitSuffix}
           </span>

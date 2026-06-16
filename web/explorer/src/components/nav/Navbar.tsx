@@ -18,7 +18,7 @@ export function Navbar() {
   }, [pathname]);
   if (pathname?.startsWith('/embed/')) return null;
   return (
-    <nav className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+    <nav className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
         <Link
           href="/"
@@ -52,7 +52,7 @@ export function Navbar() {
             onClick={() => setMobileOpen((o) => !o)}
             aria-expanded={mobileOpen}
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-            className="ml-1 inline-flex items-center justify-center rounded-md p-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="ml-1 inline-flex items-center justify-center rounded-md p-2 text-slate-700 hover:bg-slate-100"
           >
             {mobileOpen ? (
               <X className="h-5 w-5" />
@@ -71,11 +71,11 @@ export function Navbar() {
 
 function MobileDrawer({ onClose }: { onClose: () => void }) {
   return (
-    <div className="border-t border-slate-200 bg-white px-4 py-3 text-sm shadow-inner dark:border-slate-800 dark:bg-slate-950 md:hidden">
+    <div className="border-t border-slate-200 bg-white px-4 py-3 text-sm shadow-inner md:hidden">
       <Link
         href="/assets"
         onClick={onClose}
-        className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+        className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
       >
         Assets
       </Link>
@@ -87,16 +87,16 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
       <a
         href="https://docs.stellarindex.io"
         onClick={onClose}
-        className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+        className="block rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
       >
         API Docs
       </a>
       <MobileSection label="About" items={ABOUT_ITEMS} onClose={onClose} />
-      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
+      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3">
         <Link
           href="/signin"
           onClick={onClose}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-center text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200"
+          className="rounded-md border border-slate-200 px-3 py-1.5 text-center text-sm text-slate-700"
         >
           Sign in
         </Link>
@@ -128,7 +128,7 @@ function MobileSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-slate-700 hover:bg-slate-100"
       >
         <span>{label}</span>
         <ChevronDown
@@ -144,7 +144,7 @@ function MobileSection({
                 key={it.href}
                 href={it.href}
                 onClick={onClose}
-                className="block rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="block rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
               >
                 {it.label}
               </a>
@@ -153,7 +153,7 @@ function MobileSection({
                 key={it.href}
                 href={it.href}
                 onClick={onClose}
-                className="block rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="block rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
               >
                 {it.label}
               </Link>
@@ -184,7 +184,7 @@ function SignedOutCTAs() {
     <>
       <Link
         href="/signin"
-        className="ml-2 rounded-md px-3 py-1.5 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+        className="ml-2 rounded-md px-3 py-1.5 text-slate-700 hover:bg-slate-100"
       >
         Sign in
       </Link>
@@ -243,7 +243,7 @@ function SignedInWidget({ email }: { email?: string }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:text-slate-200"
+        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
       >
         <User className="h-3.5 w-3.5" />
         <span className="max-w-[12ch] truncate">{display}</span>
@@ -255,12 +255,12 @@ function SignedInWidget({ email }: { email?: string }) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg"
         >
           {email && (
-            <div className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500 dark:border-slate-800">
+            <div className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500">
               Signed in as
-              <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300">
+              <div className="font-mono text-[11px] text-slate-700">
                 {email}
               </div>
             </div>
@@ -269,7 +269,7 @@ function SignedInWidget({ email }: { email?: string }) {
             href="/account"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100"
           >
             Your account
           </Link>
@@ -277,7 +277,7 @@ function SignedInWidget({ email }: { email?: string }) {
             type="button"
             onClick={handleSignOut}
             role="menuitem"
-            className="flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="flex w-full items-center gap-1.5 rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
           >
             <LogOut className="h-3.5 w-3.5" />
             Sign out
@@ -373,7 +373,7 @@ function NavLink({
   external?: boolean;
 }) {
   const cls =
-    'rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600 dark:text-slate-300 dark:hover:bg-slate-800';
+    'rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600';
   if (external) {
     return (
       <a href={href} className={cls}>
@@ -414,7 +414,7 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600 dark:text-slate-300 dark:hover:bg-slate-800"
+        className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-brand-600"
       >
         {label}
         <ChevronDown
@@ -425,7 +425,7 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
       {open && (
         <div
           role="menu"
-          className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-2 shadow-lg"
         >
           {items.map((it) =>
             it.external ? (
@@ -434,13 +434,13 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
                 href={it.href}
                 role="menuitem"
                 onClick={() => setOpen(false)}
-                className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100"
               >
-                <div className="font-medium text-slate-900 dark:text-slate-100">
+                <div className="font-medium text-slate-900">
                   {it.label}
                 </div>
                 {it.description && (
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                  <div className="text-xs text-slate-500">
                     {it.description}
                   </div>
                 )}
@@ -451,13 +451,13 @@ function Dropdown({ label, items }: { label: string; items: Item[] }) {
                 href={it.href}
                 role="menuitem"
                 onClick={() => setOpen(false)}
-                className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="block rounded-md px-3 py-2 text-sm hover:bg-slate-100"
               >
-                <div className="font-medium text-slate-900 dark:text-slate-100">
+                <div className="font-medium text-slate-900">
                   {it.label}
                 </div>
                 {it.description && (
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                  <div className="text-xs text-slate-500">
                     {it.description}
                   </div>
                 )}
@@ -494,7 +494,7 @@ function StatusPill() {
       href="https://status.stellarindex.io"
       title={title}
       aria-label={`API status: ${overall}`}
-      className="ml-2 inline-flex items-center rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+      className="ml-2 inline-flex items-center rounded-md p-2 text-slate-600 hover:bg-slate-100"
     >
       <span
         className={`h-2 w-2 rounded-full ${tone} ${overall === 'ok' ? 'animate-pulse' : ''}`}

@@ -143,7 +143,7 @@ export function PairChart({
         </div>
       )}
       {error && !loading && (
-        <div className="flex h-[360px] items-center justify-center text-sm text-red-600 dark:text-red-400">
+        <div className="flex h-[360px] items-center justify-center text-sm text-red-600">
           {error === 'HTTP 404'
             ? 'No chart data for this pair + window yet'
             : `Chart data unavailable: ${error}`}
@@ -173,7 +173,7 @@ function Picker<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-900">
+    <div className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1">
       <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
         {label}
       </span>
@@ -186,7 +186,7 @@ function Picker<T extends string>({
             className={`rounded px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider ${
               value === o.key
                 ? 'bg-brand-600 text-white'
-                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                : 'text-slate-500 hover:bg-slate-100'
             }`}
           >
             {o.label}

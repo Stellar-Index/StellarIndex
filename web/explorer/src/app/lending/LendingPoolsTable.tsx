@@ -104,7 +104,7 @@ export function LendingPoolsTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <Th>Protocol</Th>
@@ -116,7 +116,7 @@ export function LendingPoolsTable() {
               <Th align="right">Last activity</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {q.isLoading && (
               <tr>
                 <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
@@ -134,9 +134,9 @@ export function LendingPoolsTable() {
             {rows.map((p) => {
               const meta = BLEND_POOL_META[p.pool];
               return (
-                <tr key={p.pool} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+                <tr key={p.pool} className="hover:bg-slate-50">
                   <Td>
-                    <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                    <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800">
                       {p.protocol}
                     </span>
                   </Td>
@@ -159,7 +159,7 @@ export function LendingPoolsTable() {
                   <Td>
                     {meta?.deployedAt ? (
                       <div className="space-y-0.5">
-                        <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                        <div className="font-mono text-[11px] text-slate-700">
                           {meta.deployedAt}
                         </div>
                         {meta.initiator && (
@@ -172,21 +172,21 @@ export function LendingPoolsTable() {
                         )}
                       </div>
                     ) : (
-                      <span className="text-slate-300 dark:text-slate-700">—</span>
+                      <span className="text-slate-300">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                    <span className="font-mono tabular-nums text-slate-700">
                       {p.auctions_24h.toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                    <span className="font-mono tabular-nums text-slate-700">
                       {p.auctions_total.toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                    <span className="font-mono tabular-nums text-slate-700">
                       {p.unique_users_30d.toLocaleString()}
                     </span>
                   </Td>

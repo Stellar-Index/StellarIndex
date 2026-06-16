@@ -127,7 +127,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   const change24h: number | null = null;
 
   return (
-    <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
+    <div className="flex h-full min-h-32 flex-col gap-2 bg-white px-4 py-3 text-slate-900">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">{upper}</span>
@@ -171,10 +171,10 @@ function ChangeChip({ pct, label }: { pct: number | null | undefined; label: str
   if (pct == null || !Number.isFinite(pct)) return null;
   const cls =
     pct > 0
-      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+      ? 'bg-emerald-50 text-emerald-700'
       : pct < 0
-        ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
-        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+        ? 'bg-rose-50 text-rose-700'
+        : 'bg-slate-100 text-slate-600';
   return (
     <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}>
       {pct > 0 ? '+' : ''}

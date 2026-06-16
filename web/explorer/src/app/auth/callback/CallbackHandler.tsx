@@ -57,7 +57,7 @@ export function CallbackHandler() {
 
   if (state.kind === 'error') {
     return (
-      <div className="space-y-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-200">
+      <div className="space-y-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
         <div className="flex items-center justify-center gap-2 font-medium">
           <AlertCircle className="h-4 w-4" />
           Couldn&apos;t sign you in
@@ -73,8 +73,8 @@ export function CallbackHandler() {
   }
   if (state.kind === 'redirecting') {
     return (
-      <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
-        <div className="flex items-center justify-center gap-2 font-medium text-slate-900 dark:text-slate-100">
+      <div className="space-y-2 text-sm text-slate-600">
+        <div className="flex items-center justify-center gap-2 font-medium text-slate-900">
           <CheckCircle2 className="h-4 w-4 text-emerald-600" />
           Signing you in…
         </div>
@@ -83,8 +83,8 @@ export function CallbackHandler() {
     );
   }
   return (
-    <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
-      <div className="flex items-center justify-center gap-2 font-medium text-slate-900 dark:text-slate-100">
+    <div className="space-y-2 text-sm text-slate-600">
+      <div className="flex items-center justify-center gap-2 font-medium text-slate-900">
         <Loader2 className="h-4 w-4 animate-spin" />
         Verifying your sign-in link…
       </div>

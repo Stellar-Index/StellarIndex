@@ -24,11 +24,11 @@ interface SourceRow {
 }
 
 const TONE: Record<string, string> = {
-  soroswap: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
-  phoenix: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
-  aquarius: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',
-  sdex: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
-  comet: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
+  soroswap: 'bg-emerald-100 text-emerald-800',
+  phoenix: 'bg-amber-100 text-amber-800',
+  aquarius: 'bg-sky-100 text-sky-800',
+  sdex: 'bg-slate-200 text-slate-800',
+  comet: 'bg-violet-100 text-violet-800',
 };
 
 /**
@@ -63,7 +63,7 @@ export function DexProtocolsTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <Th>Protocol</Th>
@@ -74,7 +74,7 @@ export function DexProtocolsTable() {
               <Th align="right">VWAP weight</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {q.isLoading && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
@@ -91,9 +91,9 @@ export function DexProtocolsTable() {
             )}
             {rows.map((r) => {
               const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
-              const tone = TONE[r.name] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+              const tone = TONE[r.name] ?? 'bg-slate-100 text-slate-700';
               return (
-                <tr key={r.name} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+                <tr key={r.name} className="hover:bg-slate-50">
                   <Td>
                     <Link
                       href={`/dexes/${r.name}`}
@@ -106,21 +106,21 @@ export function DexProtocolsTable() {
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
                       <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                     ) : (
-                      <span className="text-slate-300 dark:text-slate-700">—</span>
+                      <span className="text-slate-300">—</span>
                     )}
                   </Td>
                   <Td>
                     <SourceSparkline buckets={r.volume_history_24h} />
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                    <span className="font-mono tabular-nums text-slate-700">
                       {r.trade_count_24h && r.trade_count_24h > 0
                         ? formatCompact(r.trade_count_24h)
                         : '0'}
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                    <span className="font-mono tabular-nums text-slate-700">
                       {r.markets_count_24h && r.markets_count_24h > 0
                         ? formatCompact(r.markets_count_24h)
                         : '0'}

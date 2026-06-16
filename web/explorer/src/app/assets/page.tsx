@@ -30,10 +30,10 @@ export default async function AssetsPage() {
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink dark:text-slate-100">
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">
           Assets
         </h1>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           Every classic + Soroban asset observed on Stellar. Live price
           via VWAP across on-chain DEXes, classic SDEX, and major
           off-chain venues. Click through for live charts, recent
@@ -43,7 +43,7 @@ export default async function AssetsPage() {
       <VerifiedCurrenciesStrip verified={verified} />
       <Suspense
         fallback={
-          <div className="rounded-md border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+          <div className="rounded-md border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
             Loading…
           </div>
         }

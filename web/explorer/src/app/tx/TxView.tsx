@@ -50,12 +50,12 @@ export function TxView() {
       <Shell hash={null}>
         <Panel
           title="No transaction selected"
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             This page needs a <code className="font-mono">?hash=</code> query
             parameter — a 64-character transaction hash. Use the search box (
-            <kbd className="rounded border border-slate-300 px-1 text-[10px] dark:border-slate-700">
+            <kbd className="rounded border border-slate-300 px-1 text-[10px]">
               ⌘K
             </kbd>
             ) to look one up.
@@ -71,7 +71,7 @@ export function TxView() {
       <Shell hash={hash}>
         <Panel
           title="Invalid transaction hash"
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             <span className="break-all font-mono">{hash}</span> isn&apos;t a
@@ -94,7 +94,7 @@ export function TxView() {
               : 'Transaction not found'
           }
           source={asExample(`/v1/tx/${hash}`)}
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             {status === 404
@@ -206,7 +206,7 @@ function Shell({
             Ledgers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700 dark:text-slate-300">
+          <span className="font-mono text-slate-700">
             {hash ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : 'tx'}
           </span>
         </nav>
@@ -253,12 +253,12 @@ function OperationCard({ op }: { op: TxOperation }) {
   const fields = op.fields ?? {};
   const fieldKeys = Object.keys(fields);
   return (
-    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+    <div className="rounded-lg border border-slate-200 p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
           #{op.op_index}
         </span>
-        <span className="text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 rounded bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
+        <span className="text-brand-700 rounded bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
           {op.type}
         </span>
         {op.result_code != null && (
@@ -268,8 +268,8 @@ function OperationCard({ op }: { op: TxOperation }) {
             // never from truthiness or a regex on the number.
             className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
               op.result_code === 0
-                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                ? 'bg-emerald-50 text-emerald-700'
+                : 'bg-rose-50 text-rose-700'
             }`}
             title={op.result_code === 0 ? 'success' : `code ${op.result_code}`}
           >
@@ -292,7 +292,7 @@ function OperationCard({ op }: { op: TxOperation }) {
               <dt className="shrink-0 text-[11px] uppercase tracking-wider text-slate-500">
                 {k}
               </dt>
-              <dd className="break-all font-mono text-xs text-slate-700 dark:text-slate-300">
+              <dd className="break-all font-mono text-xs text-slate-700">
                 {renderFieldValue(fields[k])}
               </dd>
             </div>
@@ -302,11 +302,11 @@ function OperationCard({ op }: { op: TxOperation }) {
         <p className="text-xs text-slate-400">No decoded fields.</p>
       )}
       {op.raw_xdr && (
-        <details className="mt-2 rounded border border-slate-200 dark:border-slate-800">
+        <details className="mt-2 rounded border border-slate-200">
           <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-brand-600">
             Raw XDR
           </summary>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-slate-200 px-2 py-2 font-mono text-[10px] leading-relaxed text-slate-600 dark:border-slate-800 dark:text-slate-400">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-slate-200 px-2 py-2 font-mono text-[10px] leading-relaxed text-slate-600">
             {op.raw_xdr}
           </pre>
         </details>
@@ -351,7 +351,7 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th align="right">Op</Th>
@@ -360,11 +360,11 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
               <Th>Topic 0</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {events.map((ev, i) => (
               <tr
                 key={`${ev.op_index}-${ev.event_index ?? i}`}
-                className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                className="hover:bg-slate-50"
               >
                 <Td align="right">
                   <span className="font-mono tabular-nums text-slate-500">
@@ -381,7 +381,7 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-slate-700 dark:text-slate-300">
+                  <span className="font-mono text-xs text-slate-700">
                     {ev.event_type || '—'}
                   </span>
                 </Td>
@@ -408,8 +408,8 @@ function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
     <span
       className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
         ok
-          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-          : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+          ? 'bg-emerald-50 text-emerald-700'
+          : 'bg-rose-50 text-rose-700'
       }`}
       title={codeLabel ?? (ok ? 'success' : 'failed')}
     >

@@ -35,7 +35,7 @@ export function HomeTopAssets() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Top assets by activity
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             Ranked by total observation count across every venue we
             ingest from. 24h volume sums every (base, quote) pair the
             asset participates in.
@@ -43,15 +43,15 @@ export function HomeTopAssets() {
         </div>
         <Link
           href="/assets"
-          className="text-sm text-brand-600 hover:underline dark:text-brand-400"
+          className="text-sm text-brand-600 hover:underline"
         >
           See all →
         </Link>
       </div>
-      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950">
+            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
               <th className="px-4 py-2.5 font-medium">#</th>
               <th className="px-4 py-2.5 font-medium">Asset</th>
               <th className="px-4 py-2.5 text-right font-medium">Price</th>
@@ -67,7 +67,7 @@ export function HomeTopAssets() {
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {isError && (
               <tr>
                 <td
@@ -115,17 +115,17 @@ function Row({
   const price = parseDec(coin.price_usd);
   const volume = parseDec(coin.volume_24h_usd);
   return (
-    <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+    <tr className="hover:bg-slate-50">
       <td className="px-4 py-3 text-slate-400">{rank}</td>
       <td className="px-4 py-3">
         <Link
           href={`/assets/${coin.slug}`}
           className="group flex items-center gap-2"
         >
-          <span aria-hidden className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 font-mono text-xs dark:bg-slate-800">
+          <span aria-hidden className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 font-mono text-xs">
             {iconForCode(coin.code)}
           </span>
-          <span className="font-medium text-ink group-hover:text-brand-600 dark:text-slate-100">
+          <span className="font-medium text-ink group-hover:text-brand-600">
             {coin.code}
           </span>
           {verified && (
@@ -138,7 +138,7 @@ function Row({
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+                className="h-3.5 w-3.5 text-emerald-600"
                 aria-hidden="true"
               >
                 <path
@@ -154,7 +154,7 @@ function Row({
       </td>
       <td className="px-4 py-3 text-right">
         {price != null ? (
-          <span className="font-mono tabular-nums text-ink dark:text-slate-100">
+          <span className="font-mono tabular-nums text-ink">
             ${formatPrice(price)}
           </span>
         ) : (
@@ -166,7 +166,7 @@ function Row({
       </td>
       <td className="px-4 py-3 text-right">
         {volume != null ? (
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+          <span className="font-mono tabular-nums text-slate-700">
             ${formatCompact(volume)}
           </span>
         ) : (
@@ -177,7 +177,7 @@ function Row({
         <RowSparkline points={coin.price_history_24h} />
       </td>
       <td className="px-4 py-3 text-right">
-        <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+        <span className="font-mono tabular-nums text-slate-600">
           {formatCompact(coin.observation_count)}
         </span>
       </td>
@@ -199,7 +199,7 @@ function formatPrice(n: number): string {
 }
 
 function Dash() {
-  return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  return <span className="text-slate-300">—</span>;
 }
 
 function RowSparkline({
@@ -211,7 +211,7 @@ function RowSparkline({
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-slate-300 dark:text-slate-700">—</span>;
+    return <span className="font-mono text-[10px] text-slate-300">—</span>;
   }
   const W = 80;
   const H = 22;
@@ -241,9 +241,9 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
   if (!Number.isFinite(n)) return <Dash />;
   const tone =
     n > 0
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'text-emerald-600'
       : n < 0
-        ? 'text-rose-600 dark:text-rose-400'
+        ? 'text-rose-600'
         : 'text-slate-500';
   const sign = n > 0 ? '+' : '';
   return (

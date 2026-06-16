@@ -282,7 +282,7 @@ export function CopyHash({
   className?: string;
 }) {
   if (!value)
-    return <span className="text-slate-300 dark:text-slate-700">—</span>;
+    return <span className="text-slate-300">—</span>;
   return (
     <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
       <span className="font-mono" title={value}>

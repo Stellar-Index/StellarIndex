@@ -18,7 +18,7 @@ export function HomeBlogStrip() {
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Latest from the blog</h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             Engineering notes + product updates. Sourced from{' '}
             <code className="font-mono text-xs">docs/blog/*.md</code>{' '}
             in the public repo.
@@ -36,7 +36,7 @@ export function HomeBlogStrip() {
           <Link
             key={p.slug}
             href={`/blog/${p.slug}`}
-            className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-500 dark:border-slate-800 dark:bg-slate-900"
+            className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-500"
           >
             <span className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
               {p.date}
@@ -45,7 +45,7 @@ export function HomeBlogStrip() {
               {p.title}
             </h3>
             {p.summary && (
-              <p className="mt-2 line-clamp-3 text-sm text-slate-600 dark:text-slate-400">
+              <p className="mt-2 line-clamp-3 text-sm text-slate-600">
                 {p.summary}
               </p>
             )}

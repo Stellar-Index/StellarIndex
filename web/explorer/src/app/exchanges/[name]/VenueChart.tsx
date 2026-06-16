@@ -164,7 +164,7 @@ export function VenueChart({ venue }: { venue: string }) {
         hint="Pair list unavailable"
         source={asExample('/v1/markets', { source: venue })}
       >
-        <div className="flex h-[360px] items-center justify-center px-4 text-center text-sm text-red-600 dark:text-red-400">
+        <div className="flex h-[360px] items-center justify-center px-4 text-center text-sm text-red-600">
           Couldn&apos;t load pairs for this venue ({pairsError}). Refresh to
           retry, or check{' '}
           <a
@@ -239,7 +239,7 @@ export function VenueChart({ venue }: { venue: string }) {
           </div>
         )}
         {error && !loading && (
-          <div className="flex h-[360px] items-center justify-center text-sm text-red-600 dark:text-red-400">
+          <div className="flex h-[360px] items-center justify-center text-sm text-red-600">
             {error === 'HTTP 404'
               ? 'No chart data for this pair + window yet'
               : `Chart data unavailable: ${error}`}
@@ -280,7 +280,7 @@ function PairPicker({
   onChange: (p: { base: string; quote: string }) => void;
 }) {
   return (
-    <label className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-900">
+    <label className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1">
       <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
         Pair
       </span>
@@ -290,7 +290,7 @@ function PairPicker({
           const [base, quote] = e.target.value.split('|');
           onChange({ base, quote });
         }}
-        className="bg-transparent text-xs font-mono uppercase tracking-wider text-slate-700 focus:outline-none dark:text-slate-300"
+        className="bg-transparent text-xs font-mono uppercase tracking-wider text-slate-700 focus:outline-none"
       >
         {pairs.map((p) => (
           <option key={`${p.base}|${p.quote}`} value={`${p.base}|${p.quote}`}>
@@ -314,7 +314,7 @@ function Picker<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-900">
+    <div className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1">
       <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
         {label}
       </span>
@@ -327,7 +327,7 @@ function Picker<T extends string>({
             className={`rounded px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider ${
               value === o.key
                 ? 'bg-brand-600 text-white'
-                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                : 'text-slate-500 hover:bg-slate-100'
             }`}
           >
             {o.label}

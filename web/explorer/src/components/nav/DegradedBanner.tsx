@@ -84,16 +84,16 @@ export function DegradedBanner() {
   const isDown = overall === 'down' || pageCount > 0;
   const tone = isDown
     ? {
-        bg: 'bg-bad-50 dark:bg-bad-900/20',
+        bg: 'bg-bad-50',
         border: 'border-bad-500/30',
-        fg: 'text-bad-700 dark:text-bad-300',
+        fg: 'text-bad-700',
         Icon: XCircle,
         label: 'Major incident in progress',
       }
     : {
-        bg: 'bg-warn-50 dark:bg-warn-900/20',
+        bg: 'bg-warn-50',
         border: 'border-warn-500/30',
-        fg: 'text-warn-700 dark:text-warn-300',
+        fg: 'text-warn-700',
         Icon: AlertTriangle,
         label: 'Degraded performance',
       };
@@ -113,7 +113,7 @@ export function DegradedBanner() {
             <>
               {' '}
               · top:{' '}
-              <code className="rounded bg-white/40 px-1 py-0.5 text-[11px] dark:bg-black/20">
+              <code className="rounded bg-white/40 px-1 py-0.5 text-[11px]">
                 {topAlert}
               </code>
             </>

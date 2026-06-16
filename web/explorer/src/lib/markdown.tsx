@@ -145,7 +145,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <h2
           key={i}
-          className="mt-8 text-xl font-semibold tracking-tight border-b border-slate-200 pb-1 dark:border-slate-800"
+          className="mt-8 text-xl font-semibold tracking-tight border-b border-slate-200 pb-1"
         >
           <Inline text={b.text} />
         </h2>
@@ -164,13 +164,13 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       );
     case 'p':
       return (
-        <p key={i} className="text-sm leading-6 text-slate-700 dark:text-slate-300">
+        <p key={i} className="text-sm leading-6 text-slate-700">
           <Inline text={b.text} />
         </p>
       );
     case 'ul':
       return (
-        <ul key={i} className="ml-5 list-disc space-y-1 text-sm leading-6 text-slate-700 dark:text-slate-300">
+        <ul key={i} className="ml-5 list-disc space-y-1 text-sm leading-6 text-slate-700">
           {b.items.map((it, j) => (
             <li key={j}>
               <Inline text={it} />
@@ -180,7 +180,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       );
     case 'ol':
       return (
-        <ol key={i} className="ml-5 list-decimal space-y-1 text-sm leading-6 text-slate-700 dark:text-slate-300">
+        <ol key={i} className="ml-5 list-decimal space-y-1 text-sm leading-6 text-slate-700">
           {b.items.map((it, j) => (
             <li key={j}>
               <Inline text={it} />
@@ -192,7 +192,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <pre
           key={i}
-          className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 dark:border-slate-800 dark:bg-slate-900"
+          className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5"
         >
           <code>{b.code}</code>
         </pre>
@@ -201,13 +201,13 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <blockquote
           key={i}
-          className="border-l-2 border-slate-300 pl-4 text-sm italic text-slate-600 dark:border-slate-600 dark:text-slate-400"
+          className="border-l-2 border-slate-300 pl-4 text-sm italic text-slate-600"
         >
           <Inline text={b.text} />
         </blockquote>
       );
     case 'hr':
-      return <hr key={i} className="border-slate-200 dark:border-slate-800" />;
+      return <hr key={i} className="border-slate-200" />;
   }
 }
 
@@ -283,7 +283,7 @@ function Inline({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-slate-900 dark:text-slate-100">
+            <strong key={i} className="font-semibold text-slate-900">
               {t.value}
             </strong>
           );
@@ -291,7 +291,7 @@ function Inline({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-slate-800"
+              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em]"
             >
               {t.value}
             </code>
@@ -308,7 +308,7 @@ function Inline({ text }: { text: string }) {
               href={t.href}
               target={t.href.startsWith('http') ? '_blank' : undefined}
               rel={t.href.startsWith('http') ? 'noreferrer noopener' : undefined}
-              className="text-brand-600 hover:underline dark:text-brand-400"
+              className="text-brand-600 hover:underline"
             >
               {t.value}
             </a>

@@ -18,7 +18,7 @@ export function RankBadge({ delta, isNew, className }: RankBadgeProps) {
     return (
       <span
         className={twMerge(
-          'inline-flex items-center gap-0.5 rounded-full bg-brand-100 px-1.5 py-0 text-[10px] font-bold text-brand-900 dark:bg-brand-900/40 dark:text-brand-100',
+          'inline-flex items-center gap-0.5 rounded-full bg-brand-100 px-1.5 py-0 text-[10px] font-bold text-brand-900',
           className,
         )}
       >
@@ -31,7 +31,7 @@ export function RankBadge({ delta, isNew, className }: RankBadgeProps) {
     return (
       <span
         className={twMerge(
-          'inline-flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-600',
+          'inline-flex items-center gap-0.5 text-xs text-slate-400',
           className,
         )}
         aria-label="no rank change"
@@ -43,8 +43,8 @@ export function RankBadge({ delta, isNew, className }: RankBadgeProps) {
   const Icon = delta > 0 ? ChevronUp : ChevronDown;
   const tone =
     delta > 0
-      ? 'text-up-strong dark:text-up-subtle'
-      : 'text-down-strong dark:text-down-subtle';
+      ? 'text-up-strong'
+      : 'text-down-strong';
   return (
     <span
       className={twMerge('inline-flex items-center gap-0.5 text-xs font-medium', tone, className)}

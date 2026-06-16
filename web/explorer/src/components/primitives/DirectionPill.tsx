@@ -28,7 +28,7 @@ export function DirectionPill({
     return (
       <span
         className={twMerge(
-          'inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-800',
+          'inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500',
           className,
         )}
         aria-label="no data"
@@ -42,18 +42,18 @@ export function DirectionPill({
   const Icon = sign === 'up' ? ArrowUp : sign === 'down' ? ArrowDown : ArrowRight;
   const bg =
     abs < 0.5
-      ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+      ? 'bg-slate-100 text-slate-600'
       : sign === 'up' && abs < 5
-        ? 'bg-up-subtle/40 text-up-strong dark:bg-up-strong/20 dark:text-up'
+        ? 'bg-up-subtle/40 text-up-strong'
         : sign === 'up' && abs < 20
-          ? 'bg-up-subtle text-up-strong dark:bg-up/30 dark:text-up-subtle'
+          ? 'bg-up-subtle text-up-strong'
           : sign === 'up'
-            ? 'bg-up text-white dark:bg-up dark:text-white'
+            ? 'bg-up text-white'
             : sign === 'down' && abs < 5
-              ? 'bg-down-subtle/40 text-down-strong dark:bg-down-strong/20 dark:text-down'
+              ? 'bg-down-subtle/40 text-down-strong'
               : sign === 'down' && abs < 20
-                ? 'bg-down-subtle text-down-strong dark:bg-down/30 dark:text-down-subtle'
-                : 'bg-down text-white dark:bg-down dark:text-white';
+                ? 'bg-down-subtle text-down-strong'
+                : 'bg-down text-white';
   return (
     <span
       className={twMerge(

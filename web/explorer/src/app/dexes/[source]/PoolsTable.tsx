@@ -117,7 +117,7 @@ export function PoolsTable({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <Th>#</Th>
@@ -129,7 +129,7 @@ export function PoolsTable({
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {q.isLoading && !q.data && (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -151,7 +151,7 @@ export function PoolsTable({
               return (
                 <tr
                   key={`${m.base}|${m.quote}`}
-                  className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                  className="hover:bg-slate-50"
                 >
                   <Td>
                     <span className="font-mono text-[11px] text-slate-400">
@@ -183,11 +183,11 @@ export function PoolsTable({
                         ${formatCompact(vol)}
                       </span>
                     ) : (
-                      <span className="text-slate-300 dark:text-slate-700">—</span>
+                      <span className="text-slate-300">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                    <span className="font-mono tabular-nums text-slate-600">
                       {m.trade_count_24h > 0
                         ? formatCompact(m.trade_count_24h)
                         : '0'}
@@ -205,12 +205,12 @@ export function PoolsTable({
         </table>
       </div>
 
-      <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs dark:border-slate-800">
+      <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs">
         <button
           type="button"
           onClick={prevPage}
           disabled={!hasPrev}
-          className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400"
+          className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Previous
         </button>
@@ -221,7 +221,7 @@ export function PoolsTable({
           type="button"
           onClick={nextPage}
           disabled={!hasNext}
-          className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400"
+          className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Next →
         </button>
@@ -246,7 +246,7 @@ function SortPill({
       className={`rounded-md px-2 py-0.5 ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
       }`}
     >
       {children}
@@ -288,13 +288,13 @@ function Td({
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!raw) return <span className="text-slate-300">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
   const fixed =
     n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
   return (
-    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+    <span className="font-mono tabular-nums text-slate-700">
       {fixed}
     </span>
   );

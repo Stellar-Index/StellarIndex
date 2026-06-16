@@ -621,7 +621,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             Assets
           </Link>{' '}
           /{' '}
-          <span className="text-slate-700 dark:text-slate-300">
+          <span className="text-slate-700">
             {coin.code}
           </span>
         </nav>
@@ -630,13 +630,13 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             {coin.code}
           </h1>
           {globalView?.name && globalView.name !== coin.code && (
-            <span className="text-lg text-slate-600 dark:text-slate-400">
+            <span className="text-lg text-slate-600">
               {globalView.name}
             </span>
           )}
           {globalView && (
             <span
-              className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800"
               title={
                 globalView.verified_issuer
                   ? `Verified by ${globalView.verified_issuer}`
@@ -661,7 +661,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           )}
           {detail?.type && (
             <span
-              className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+              className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-slate-600"
               title="Asset type"
             >
               {detail.type}
@@ -669,15 +669,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           )}
         </div>
         {globalView?.verified_issuer && (
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             Issued by{' '}
-            <span className="font-medium text-slate-700 dark:text-slate-300">
+            <span className="font-medium text-slate-700">
               {globalView.verified_issuer}
             </span>
           </p>
         )}
         {!globalView?.verified_issuer && detail?.home_domain && (
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             Issuer home domain:{' '}
             <code className="font-mono">{detail.home_domain}</code>
           </p>
@@ -685,7 +685,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         {coin.issuer_scam_reason && (
           <div
             role="alert"
-            className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+            className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900"
           >
             <strong className="font-semibold">Known scam asset</strong> ·{' '}
             {coin.issuer_scam_reason}. The issuer is on the
@@ -698,13 +698,13 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         {detail?.unverified_warning && (
           <div
             role="alert"
-            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
           >
             <div className="mb-1 flex items-center gap-2">
               <strong className="font-semibold">
                 Unverified {coin.code}
               </strong>
-              <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-900 dark:bg-amber-900/60 dark:text-amber-200">
+              <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-900">
                 Ticker collision
               </span>
             </div>
@@ -713,7 +713,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               available at{' '}
               <Link
                 href={`/assets/${detail.unverified_warning.verified_slug}`}
-                className="font-medium underline hover:text-amber-700 dark:hover:text-amber-100"
+                className="font-medium underline hover:text-amber-700"
               >
                 {detail.unverified_warning.verified_name}
               </Link>
@@ -816,12 +816,12 @@ function OverviewBody({
               );
             })()}
             {price?.flags?.stale && (
-              <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+              <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-amber-800">
                 Stale
               </span>
             )}
             {price?.flags?.triangulated && (
-              <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
+              <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-sky-800">
                 Triangulated via XLM
               </span>
             )}
@@ -830,7 +830,7 @@ function OverviewBody({
             points24h={coin.price_history_24h ?? []}
             points7d={coin.price_history_7d ?? []}
           />
-          <dl className="grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-800 sm:grid-cols-3 lg:grid-cols-5">
+          <dl className="grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
             <Stat
               label="Volume 24h"
               value={fmtUsd(detail?.volume_24h_usd ?? coin.volume_24h_usd)}
@@ -903,7 +903,7 @@ function OverviewBody({
       <Panel
         title="External views"
         hint="Cross-reference this asset on other Stellar explorers"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+        bodyClassName="text-sm text-slate-600"
       >
         <ul className="space-y-2">
           <li>
@@ -950,7 +950,7 @@ function OverviewBody({
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-2 font-medium">Side</th>
@@ -959,16 +959,16 @@ function OverviewBody({
                   <th className="px-4 py-2 text-right font-medium">24h trades</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              <tbody className="divide-y divide-slate-100">
                 {coin.top_markets.map((m) => {
                   const pairURL = topMarketHref(coin.asset_id, m);
                   return (
                     <tr
                       key={`${m.side}|${m.counterparty}`}
-                      className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                      className="hover:bg-slate-50"
                     >
                       <td className="px-4 py-3">
-                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
                           {m.side}
                         </span>
                       </td>
@@ -976,7 +976,7 @@ function OverviewBody({
                         {pairURL ? (
                           <Link
                             href={pairURL}
-                            className="text-slate-700 hover:text-brand-600 hover:underline dark:text-slate-300"
+                            className="text-slate-700 hover:text-brand-600 hover:underline"
                           >
                             {shortCounterparty(m.counterparty)}
                           </Link>
@@ -990,7 +990,7 @@ function OverviewBody({
                             ${fmtCompact(Number(m.volume_24h_usd))}
                           </span>
                         ) : (
-                          <span className="text-slate-300 dark:text-slate-700">—</span>
+                          <span className="text-slate-300">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-500">
@@ -1120,12 +1120,12 @@ function AssetFAQ({ symbol, hasIssuer }: { symbol: string; hasIssuer: boolean })
 
 function AssetFAQItem({ q, a }: { q: string; a: string }) {
   return (
-    <details className="group rounded-lg border border-slate-200 dark:border-slate-800">
-      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-medium text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-900/40">
+    <details className="group rounded-lg border border-slate-200">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-medium text-slate-900 hover:bg-slate-50">
         <span>{q}</span>
         <span aria-hidden className="text-xs text-slate-400 group-open:rotate-45 transition-transform">+</span>
       </summary>
-      <p className="border-t border-slate-200 px-3 py-2 text-sm leading-relaxed text-slate-700 dark:border-slate-800 dark:text-slate-300">
+      <p className="border-t border-slate-200 px-3 py-2 text-sm leading-relaxed text-slate-700">
         {a}
       </p>
     </details>
@@ -1214,7 +1214,7 @@ function peggedTo(code: string): string | null {
 
 function PeggedBadge({ currency }: { currency: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded bg-sky-50 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+    <span className="inline-flex items-center gap-1 rounded bg-sky-50 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-sky-700">
       <span className="text-[10px] opacity-70">PEG</span>
       {currency}
     </span>
@@ -1233,10 +1233,10 @@ function ChangePctLabel({
   if (!Number.isFinite(n)) return null;
   const tone =
     n > 0
-      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+      ? 'bg-emerald-50 text-emerald-700'
       : n < 0
-        ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
-        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+        ? 'bg-rose-50 text-rose-700'
+        : 'bg-slate-100 text-slate-600';
   const sign = n > 0 ? '+' : '';
   return (
     <span
@@ -1308,12 +1308,12 @@ function Stat({
 }) {
   const accentColor =
     accentTone === 'emerald'
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'text-emerald-600'
       : accentTone === 'amber'
-        ? 'text-amber-600 dark:text-amber-400'
+        ? 'text-amber-600'
         : accentTone === 'rose'
-          ? 'text-rose-600 dark:text-rose-400'
-          : 'text-slate-500 dark:text-slate-400';
+          ? 'text-rose-600'
+          : 'text-slate-500';
   return (
     <div>
       <dt className="text-[11px] uppercase tracking-wider text-slate-500">
@@ -1369,7 +1369,7 @@ function VerifiedCurrencyView({
           <span className="font-mono text-base text-slate-500">
             {view.ticker}
           </span>
-          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-slate-600">
             {(view as GlobalAssetView & { class?: string }).class ?? 'verified'}
           </span>
         </h1>
@@ -1380,7 +1380,7 @@ function VerifiedCurrencyView({
           </div>
         )}
         {view.description && (
-          <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+          <p className="max-w-3xl text-sm text-slate-600">
             {view.description}
           </p>
         )}

@@ -81,7 +81,7 @@ export function IssuersTable() {
             placeholder="Filter by name, domain, or G-strkey…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-72 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+            className="w-72 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
           <span className="font-mono text-[11px] text-slate-500">
             {filtered.length} of {data.length} rows
@@ -98,7 +98,7 @@ export function IssuersTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>#</Th>
@@ -109,7 +109,7 @@ export function IssuersTable() {
               <Th align="right">Total observations</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {filtered.length === 0 && filter && (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -120,7 +120,7 @@ export function IssuersTable() {
             {filtered.map((row, i) => (
               <tr
                 key={row.g_strkey}
-                className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                className="hover:bg-slate-50"
               >
                 <Td>
                   <span className="text-slate-400">{i + 1}</span>
@@ -140,7 +140,7 @@ export function IssuersTable() {
                     {row.scam_reason && (
                       <span
                         title={row.scam_reason}
-                        className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-rose-700 dark:bg-rose-900/40 dark:text-rose-200"
+                        className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-rose-700"
                       >
                         SCAM
                       </span>

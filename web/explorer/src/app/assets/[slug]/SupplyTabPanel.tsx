@@ -119,7 +119,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 
 
           {a.supply_basis && (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-slate-500">
               <span className="font-mono">supply_basis</span>: {a.supply_basis}
               {' — '}
               policy under ADR-0011 that produced these numbers.
@@ -127,11 +127,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           )}
 
           {(a.fixed_number || a.max_number || a.is_unlimited != null) && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
               <h4 className="mb-1 font-semibold uppercase tracking-wider text-slate-500">
                 SEP-1 issuance declarations
               </h4>
-              <p className="text-slate-600 dark:text-slate-400">
+              <p className="text-slate-600">
                 What the issuer pledged in their <span className="font-mono">stellar.toml</span>
                 — distinct from the live-ledger numbers above.
               </p>
@@ -162,7 +162,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 // an empty SVG. Once both sides land the chart replaces this body.
 function MarketCapChartEmpty() {
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-400">
+    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
       <h4 className="mb-1 font-semibold uppercase tracking-wider text-xs text-slate-500">
         Market-cap timeline
       </h4>
@@ -188,8 +188,8 @@ function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number
   const burn = parseSmallest(data.burn_total, decimals);
   const clawback = parseSmallest(data.clawback_total, decimals);
   return (
-    <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
-      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-emerald-700">
         On-chain supply (live)
       </h4>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -209,7 +209,7 @@ function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number
           </>
         )}
       </div>
-      <p className="mt-2 text-[11px] text-emerald-700/80 dark:text-emerald-400/70">
+      <p className="mt-2 text-[11px] text-emerald-700/80">
         {native
           ? 'Native XLM total from the ledger header — current to the latest ledger.'
           : 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.'}
@@ -228,13 +228,13 @@ function Metric({
   sublabel?: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="text-xs uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="mt-1 font-mono text-xl font-semibold text-slate-900 dark:text-slate-100">
+      <div className="mt-1 font-mono text-xl font-semibold text-slate-900">
         {value}
       </div>
       {sublabel && (
-        <div className="mt-1 truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">
+        <div className="mt-1 truncate font-mono text-[11px] text-slate-500">
           {sublabel}
         </div>
       )}

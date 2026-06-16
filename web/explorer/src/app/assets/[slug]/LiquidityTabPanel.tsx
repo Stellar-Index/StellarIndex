@@ -80,7 +80,7 @@ export async function LiquidityTabPanel({
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-2 font-medium">Venue</th>
@@ -91,7 +91,7 @@ export async function LiquidityTabPanel({
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
                 const lp = p.last_price ? Number(p.last_price) : null;
@@ -108,12 +108,12 @@ export async function LiquidityTabPanel({
                 return (
                   <tr
                     key={`${p.source}|${p.base}|${p.quote}|${p.side}`}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                    className="hover:bg-slate-50"
                   >
                     <td className="px-4 py-2">
                       <Link
                         href={`/sources/${p.source}`}
-                        className="font-mono text-xs uppercase tracking-wider text-slate-700 hover:text-brand-600 dark:text-slate-300"
+                        className="font-mono text-xs uppercase tracking-wider text-slate-700 hover:text-brand-600"
                       >
                         {p.source}
                       </Link>
@@ -127,17 +127,17 @@ export async function LiquidityTabPanel({
                       </Link>
                     </td>
                     <td className="px-4 py-2">
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
                         {p.side}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">
                       {lpFixed ? (
-                        <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        <span className="font-mono tabular-nums text-slate-700">
                           {lpFixed}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -146,7 +146,7 @@ export async function LiquidityTabPanel({
                           ${formatCompact(Number(p.volume_24h_usd))}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">

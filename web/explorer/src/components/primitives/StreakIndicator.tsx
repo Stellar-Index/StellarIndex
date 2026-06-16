@@ -37,8 +37,8 @@ export function StreakIndicator(props: StreakIndicatorProps & { className?: stri
       const Icon = props.direction === 'up' ? TrendingUp : TrendingDown;
       const tone =
         props.direction === 'up'
-          ? 'bg-up-subtle/50 text-up-strong dark:bg-up/20 dark:text-up-subtle'
-          : 'bg-down-subtle/50 text-down-strong dark:bg-down/20 dark:text-down-subtle';
+          ? 'bg-up-subtle/50 text-up-strong'
+          : 'bg-down-subtle/50 text-down-strong';
       return (
         <span
           className={twMerge(
@@ -56,7 +56,7 @@ export function StreakIndicator(props: StreakIndicatorProps & { className?: stri
       return (
         <span
           className={twMerge(
-            'inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+            'inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800',
             className,
           )}
           title={`All-time high reached ${props.at}`}
@@ -69,7 +69,7 @@ export function StreakIndicator(props: StreakIndicatorProps & { className?: stri
       return (
         <span
           className={twMerge(
-            'inline-flex items-center gap-1 rounded-full bg-down-subtle px-2 py-0.5 text-xs font-medium text-down-strong dark:bg-down/30 dark:text-down-subtle',
+            'inline-flex items-center gap-1 rounded-full bg-down-subtle px-2 py-0.5 text-xs font-medium text-down-strong',
             className,
           )}
           title={`All-time low reached ${props.at}`}
@@ -82,7 +82,7 @@ export function StreakIndicator(props: StreakIndicatorProps & { className?: stri
       return (
         <span
           className={twMerge(
-            'inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-900/40 dark:text-purple-200',
+            'inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800',
             className,
           )}
           title={`First seen ${props.since}`}

@@ -94,13 +94,13 @@ export default function ContactPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
       <header className="mb-10 space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600 dark:text-brand-400">
+        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
           Get in touch
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Contact
         </h1>
-        <p className="max-w-2xl text-base text-slate-600 dark:text-slate-400">
+        <p className="max-w-2xl text-base text-slate-600">
           We don&apos;t run a support inbox for the public tier — issues land on
           GitHub, sales go to email, and security goes to a separate inbox
           with a real disclosure SLA. Pick the channel that fits your
@@ -120,7 +120,7 @@ export default function ContactPage() {
           {FAQS.map((f) => (
             <details
               key={f.q}
-              className="group rounded-xl border border-slate-200 bg-white p-4 open:shadow-sm dark:border-slate-800 dark:bg-slate-900"
+              className="group rounded-xl border border-slate-200 bg-white p-4 open:shadow-sm"
             >
               <summary className="flex cursor-pointer items-center justify-between text-sm font-medium">
                 {f.q}
@@ -128,7 +128,7 @@ export default function ContactPage() {
                   <ArrowRight className="h-3.5 w-3.5 -rotate-90 transition" />
                 </span>
               </summary>
-              <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+              <p className="mt-3 text-sm text-slate-600">
                 {f.a}
               </p>
             </details>
@@ -136,7 +136,7 @@ export default function ContactPage() {
         </div>
       </section>
 
-      <section className="mt-12 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+      <section className="mt-12 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
         <p>
           Want an API key? Sign in with magic-link at{' '}
           <Link href="/signin" className="text-brand-600 hover:underline">
@@ -158,8 +158,8 @@ function ChannelCard({ channel }: { channel: Channel }) {
   const Icon = channel.icon;
   const isInternal = !channel.external;
   const inner = (
-    <div className="flex items-start gap-4 rounded-xl border border-slate-200 bg-white p-5 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700">
-      <div className="rounded-lg bg-slate-100 p-2 text-brand-600 dark:bg-slate-800">
+    <div className="flex items-start gap-4 rounded-xl border border-slate-200 bg-white p-5 transition hover:border-brand-300 hover:shadow-sm">
+      <div className="rounded-lg bg-slate-100 p-2 text-brand-600">
         <Icon className="h-4 w-4" />
       </div>
       <div className="flex-1 space-y-1.5">
@@ -172,7 +172,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
             <ExternalLink className="h-3 w-3 text-slate-400" />
           )}
         </div>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           {channel.blurb}
         </p>
       </div>

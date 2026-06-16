@@ -186,16 +186,16 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800">
             Blend
           </span>
           {label && (
-            <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-brand-800 dark:bg-brand-900/40 dark:text-brand-200">
+            <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-brand-800">
               {label.name}
             </span>
           )}
           {label?.deployedAt && (
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-mono text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-mono text-slate-700">
               deployed {label.deployedAt}
             </span>
           )}
@@ -242,7 +242,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
       {label?.note && (
         <Panel title="About this contract">
-          <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+          <p className="text-sm leading-relaxed text-slate-700">
             {label.note}
           </p>
         </Panel>
@@ -257,9 +257,9 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       {data && (
         <Panel title="Last activity">
           <div className="space-y-1 text-sm">
-            <div className="text-slate-600 dark:text-slate-400">
+            <div className="text-slate-600">
               Most recent auction event:{' '}
-              <span className="font-mono text-slate-800 dark:text-slate-200">
+              <span className="font-mono text-slate-800">
                 {new Date(data.last_seen).toUTCString()}
               </span>
             </div>
@@ -271,7 +271,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         title="Reserve composition"
         hint="Per-asset supply / borrow APY — pending Soroban storage reader (#84)"
       >
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           Today this view tracks pools by their <em>auction</em> stream — every
           time a borrower position liquidates and the pool emits an auction
           event, we count it here. The per-reserve breakdown (which assets
@@ -288,11 +288,11 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="text-[10px] uppercase tracking-wider text-slate-500">
         {label}
       </div>
-      <div className="mt-1 font-mono text-2xl tabular-nums text-slate-900 dark:text-slate-100">
+      <div className="mt-1 font-mono text-2xl tabular-nums text-slate-900">
         {value.toLocaleString()}
       </div>
     </div>

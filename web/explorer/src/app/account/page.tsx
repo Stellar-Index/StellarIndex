@@ -22,10 +22,10 @@ export default function AccountPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
       <header className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
           Your account
         </h1>
-        <p className="mt-3 max-w-2xl text-base text-slate-600 dark:text-slate-400">
+        <p className="mt-3 max-w-2xl text-base text-slate-600">
           See your tier, manage API keys, watch usage. Magic-link
           sign-in — no passwords.
         </p>

@@ -50,23 +50,23 @@ export default async function DiscoveryDocPage({
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <Link
         href="/research"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to research
       </Link>
 
-      <header className="space-y-3 border-b border-slate-200 pb-6 dark:border-slate-800">
+      <header className="space-y-3 border-b border-slate-200 pb-6">
         <div className="flex items-center gap-3 text-xs">
           <span className="font-medium uppercase tracking-wider text-slate-500">
             Integration audit
           </span>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-600">
             {doc.category}
           </span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{doc.title}</h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           {doc.description}
         </p>
         <a

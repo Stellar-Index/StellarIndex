@@ -53,13 +53,13 @@ export default async function ADRPage({
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <Link
         href="/research"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to research
       </Link>
 
-      <header className="space-y-3 border-b border-slate-200 pb-6 dark:border-slate-800">
+      <header className="space-y-3 border-b border-slate-200 pb-6">
         <div className="flex items-center gap-3">
           <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
             ADR-{adr.id}
@@ -116,7 +116,7 @@ function RelatedADRs({ adr }: { adr: ReturnType<typeof loadADR> }) {
   );
   if (related.length === 0) return null;
   return (
-    <section className="border-t border-slate-200 pt-6 dark:border-slate-800">
+    <section className="border-t border-slate-200 pt-6">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
         Related
       </h2>

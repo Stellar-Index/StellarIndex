@@ -116,7 +116,7 @@ export function AssetsTable({
 
   if (isError) {
     return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-200">
+      <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
         Failed to load assets: {error instanceof Error ? error.message : 'unknown error'}
       </div>
     );
@@ -140,10 +140,10 @@ export function AssetsTable({
         }
       />
 
-      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-500">
+            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>#</Th>
               <Th>Asset</Th>
               <Th>Class</Th>
@@ -157,7 +157,7 @@ export function AssetsTable({
               <Th align="right">7d chart</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {isLoading && (
               <tr>
                 <td
@@ -200,15 +200,15 @@ export function AssetsTable({
         }
       />
 
-      <p className="text-xs text-slate-500 dark:text-slate-400">
+      <p className="text-xs text-slate-500">
         Live data from{' '}
-        <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
+        <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
           /v1/assets?asset_class={assetClass}
         </code>
         . Catalogue rows surface first (market-cap desc — fiats top
         the chart), then long-tail Stellar-classic rows by 24h
         volume. Per-asset issuer + on-chain pool detail lives on{' '}
-        <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
+        <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
           /assets/&#123;slug&#125;
         </code>
         .
@@ -244,7 +244,7 @@ function FilterBar({
             className={`rounded-full px-3 py-1 text-xs font-medium tracking-wide ${
               assetClass === opt.value
                 ? 'bg-brand-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
             {opt.label}
@@ -261,7 +261,7 @@ function FilterBar({
             value={q}
             onChange={(e) => onQChange(e.target.value)}
             placeholder="Search by code, slug, or name…"
-            className="w-72 rounded-md border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500"
+            className="w-72 rounded-md border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
         <label className="flex items-center gap-2 text-xs text-slate-500">
@@ -269,7 +269,7 @@ function FilterBar({
           <select
             value={limit}
             onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           >
             <option value={50}>50</option>
             <option value={100}>100</option>
@@ -310,7 +310,7 @@ function AssetRow({
         ? marketCapRaw
         : null;
   return (
-    <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+    <tr className="hover:bg-slate-50">
       <Td>
         <span className="text-slate-400">{rank}</span>
       </Td>
@@ -319,7 +319,7 @@ function AssetRow({
           href={`/assets/${coin.slug}`}
           className="group flex items-baseline gap-2"
         >
-          <span className="font-medium text-ink group-hover:text-brand-600 dark:text-slate-100">
+          <span className="font-medium text-ink group-hover:text-brand-600">
             {coin.code}
           </span>
           {verified && (
@@ -332,7 +332,7 @@ function AssetRow({
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+                className="h-3.5 w-3.5 text-emerald-600"
                 aria-hidden="true"
               >
                 <path
@@ -353,7 +353,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {price != null ? (
-          <span className="font-mono tabular-nums text-ink dark:text-slate-100">
+          <span className="font-mono tabular-nums text-ink">
             ${formatPriceSmart(price)}
           </span>
         ) : (
@@ -371,7 +371,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {marketCap != null ? (
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+          <span className="font-mono tabular-nums text-slate-700">
             ${formatCompact(marketCap)}
           </span>
         ) : (
@@ -380,7 +380,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {volume != null ? (
-          <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+          <span className="font-mono tabular-nums text-slate-700">
             ${formatCompact(volume)}
           </span>
         ) : (
@@ -389,7 +389,7 @@ function AssetRow({
       </Td>
       <Td align="right">
         {supply != null ? (
-          <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+          <span className="font-mono tabular-nums text-slate-600">
             {formatCompact(supply)}
           </span>
         ) : (
@@ -409,10 +409,10 @@ function ClassBadge({ cls }: { cls?: string }) {
   }
   const tone =
     cls === 'fiat'
-      ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+      ? 'bg-amber-50 text-amber-700'
       : cls === 'stablecoin'
-        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-        : 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300';
+        ? 'bg-emerald-50 text-emerald-700'
+        : 'bg-sky-50 text-sky-700';
   const label =
     cls === 'fiat' ? 'Fiat' : cls === 'stablecoin' ? 'Stablecoin' : 'Crypto';
   return (
@@ -429,7 +429,7 @@ function RowSparkline({ points }: { points?: { t: string; p?: string | null }[] 
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-slate-300 dark:text-slate-700">—</span>;
+    return <span className="font-mono text-[10px] text-slate-300">—</span>;
   }
   const W = 80;
   const H = 24;
@@ -472,7 +472,7 @@ function Pagination({
         type="button"
         disabled={!hasPrev}
         onClick={onPrev}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600"
       >
         <ChevronLeft className="h-3.5 w-3.5" />
         Previous
@@ -484,7 +484,7 @@ function Pagination({
         type="button"
         disabled={!hasNext}
         onClick={onNext}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600"
       >
         Next
         <ChevronRight className="h-3.5 w-3.5" />
@@ -532,7 +532,7 @@ function Td({
 function Dash({ title }: { title?: string }) {
   return (
     <span
-      className="text-slate-300 dark:text-slate-700"
+      className="text-slate-300"
       title={title ?? 'No data yet'}
     >
       —
@@ -547,10 +547,10 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
   if (!Number.isFinite(n)) return <Dash />;
   const tone =
     n > 0
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'text-emerald-600'
       : n < 0
-        ? 'text-rose-600 dark:text-rose-400'
-        : 'text-slate-500 dark:text-slate-500';
+        ? 'text-rose-600'
+        : 'text-slate-500';
   const sign = n > 0 ? '+' : '';
   return (
     <span className={`font-mono tabular-nums ${tone}`}>

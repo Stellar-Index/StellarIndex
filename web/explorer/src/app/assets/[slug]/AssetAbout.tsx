@@ -42,7 +42,7 @@ function ExpandableText({ title, body }: { title: string; body: string }) {
   return (
     <Panel
       title={title}
-      bodyClassName="text-sm text-slate-700 dark:text-slate-300 space-y-3 leading-relaxed"
+      bodyClassName="text-sm text-slate-700 space-y-3 leading-relaxed"
     >
       <p>{teaser}</p>
       {expanded && more.map((p, i) => <p key={i}>{p}</p>)}

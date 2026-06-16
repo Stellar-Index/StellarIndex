@@ -139,7 +139,7 @@ export default function PrimitivesPage() {
       </Section>
 
       <Section title="Composite — list-row sample">
-        <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+        <div className="rounded-lg border border-slate-200 p-4">
           <div className="flex items-center gap-4">
             <span className="font-medium">XLM</span>
             <span className="font-mono tabular-nums">$0.1234</span>

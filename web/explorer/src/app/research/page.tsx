@@ -43,7 +43,7 @@ export default function ResearchPage() {
     <div className="mx-auto max-w-7xl space-y-10 px-6 py-8">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Research</h1>
-        <p className="max-w-3xl text-base text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-base text-slate-600">
           The thinking behind every Stellar Index choice. Architecture
           decision records (ADRs) below capture every load-bearing
           design call with its alternatives + consequences. The
@@ -74,7 +74,7 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/architecture/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
+              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
             >
               <div className="flex items-center gap-2">
                 <BookOpen className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
@@ -87,10 +87,10 @@ export default function ResearchPage() {
                   </span>
                 )}
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600 dark:text-slate-100">
+              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
                 {d.title}
               </h4>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
+              <p className="text-xs text-slate-600">
                 {d.description}
               </p>
             </Link>
@@ -115,7 +115,7 @@ export default function ResearchPage() {
             </a>
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           For every on-chain venue we ingest, we verified the event
           schema and decoder against the upstream Rust source. Each
           audit names the contract repo and commit checked, the
@@ -126,7 +126,7 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/discovery/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
+              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
             >
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
@@ -134,10 +134,10 @@ export default function ResearchPage() {
                   {d.category}
                 </span>
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600 dark:text-slate-100">
+              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
                 {d.title}
               </h4>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
+              <p className="text-xs text-slate-600">
                 {d.description}
               </p>
             </Link>
@@ -162,7 +162,7 @@ export default function ResearchPage() {
             </a>
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           The recipes any new operator (or auditor) would want to
           read before standing up their own copy. Per-alert on-call
           runbooks stay private; these four are the cross-cutting
@@ -173,7 +173,7 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/operations/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
+              className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
             >
               <div className="flex items-center gap-2">
                 <Wrench className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
@@ -186,10 +186,10 @@ export default function ResearchPage() {
                   </span>
                 )}
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600 dark:text-slate-100">
+              <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
                 {d.title}
               </h4>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
+              <p className="text-xs text-slate-600">
                 {d.description}
               </p>
             </Link>
@@ -229,7 +229,7 @@ export default function ResearchPage() {
                     <Link
                       key={adr.id}
                       href={`/research/adr/${adr.id}`}
-                      className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
+                      className="group flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 hover:shadow-sm"
                     >
                       <div className="flex items-center gap-2">
                         <FileText className="h-3.5 w-3.5 text-slate-400 group-hover:text-brand-500" />
@@ -241,7 +241,7 @@ export default function ResearchPage() {
                           {adr.date}
                         </span>
                       </div>
-                      <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600 dark:text-slate-100">
+                      <h4 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-brand-600">
                         {adr.title}
                       </h4>
                     </Link>
@@ -263,20 +263,20 @@ export default function ResearchPage() {
                   href={t.href}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
+                  className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-300"
                 >
                   <h3 className="text-sm font-semibold">{t.name}</h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                  <p className="text-xs text-slate-600">
                     {t.description}
                   </p>
                 </a>
               ) : (
                 <div
                   key={t.name}
-                  className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+                  className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4"
                 >
                   <h3 className="text-sm font-semibold">{t.name}</h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                  <p className="text-xs text-slate-600">
                     {t.description}
                   </p>
                 </div>
@@ -286,9 +286,9 @@ export default function ResearchPage() {
         </section>
       )}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm dark:border-slate-800 dark:bg-slate-900">
+      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm">
         <h2 className="text-base font-semibold">Why we publish all of this</h2>
-        <p className="mt-2 text-slate-600 dark:text-slate-400">
+        <p className="mt-2 text-slate-600">
           Stellar already has Horizon. The reason a second pricing
           stack adds value is methodology — what gets included in the
           VWAP, how we handle cross-pair triangulation, what triggers a

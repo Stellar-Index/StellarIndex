@@ -152,7 +152,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         </header>
         <Panel
           title="Issuer not found"
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             No row found for that G-strkey, or the issuer hasn&apos;t
@@ -205,16 +205,16 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLD) }}
       />
       {detail.scam_reason && (
-        <div className="rounded-lg border-2 border-rose-400 bg-rose-50 px-4 py-3 dark:border-rose-700 dark:bg-rose-950/40">
+        <div className="rounded-lg border-2 border-rose-400 bg-rose-50 px-4 py-3">
           <div className="flex items-baseline gap-2">
             <span className="rounded bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
               Warning
             </span>
-            <span className="text-sm font-medium text-rose-900 dark:text-rose-200">
+            <span className="text-sm font-medium text-rose-900">
               This issuer is flagged as malicious or unsafe.
             </span>
           </div>
-          <p className="mt-1.5 text-xs text-rose-800 dark:text-rose-300">
+          <p className="mt-1.5 text-xs text-rose-800">
             {detail.scam_reason}. Do not trust assets issued from this account.
             Source: stellar.expert directory.
           </p>
@@ -227,7 +227,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             Issuers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700 dark:text-slate-300">
+          <span className="font-mono text-slate-700">
             {detail.org_name || shortKey(g_strkey)}
           </span>
         </nav>
@@ -246,7 +246,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </h1>
         )}
         {detail.home_domain && (
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             {/* home_domain is attacker-controlled on-chain data — only
                 link it when it parses as a strict hostname, else render
                 as plain text (phishing guard, WA-02). */}
@@ -321,7 +321,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       <Panel
         title="External views"
         hint="Cross-reference this issuer on other Stellar explorers"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+        bodyClassName="text-sm text-slate-600"
       >
         <ul className="space-y-2">
           <li>
@@ -389,7 +389,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
                   <Th>Code</Th>
@@ -400,13 +400,13 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   <Th align="right">First seen</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              <tbody className="divide-y divide-slate-100">
                 {detail.assets.map((a) => {
                   const coin = coinPrices.get(a.asset_id);
                   return (
                     <tr
                       key={a.asset_id}
-                      className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                      className="hover:bg-slate-50"
                     >
                       <Td>
                         <Link
@@ -492,18 +492,18 @@ function FlagRow({ label, v }: { label: string; v: boolean | undefined }) {
     tone = 'bg-amber-500';
     text = 'true';
   } else if (v === false) {
-    tone = 'bg-slate-300 dark:bg-slate-700';
+    tone = 'bg-slate-300';
     text = 'false';
   } else {
-    tone = 'bg-slate-200 dark:bg-slate-800';
+    tone = 'bg-slate-200';
     text = 'unknown';
   }
   return (
     <li className="flex items-center justify-between gap-2 font-mono">
-      <span className="text-slate-600 dark:text-slate-400">{label}</span>
+      <span className="text-slate-600">{label}</span>
       <span className="flex items-center gap-1.5">
         <span className={`inline-block h-2 w-2 rounded-full ${tone}`} />
-        <span className="text-slate-700 dark:text-slate-300">{text}</span>
+        <span className="text-slate-700">{text}</span>
       </span>
     </li>
   );
@@ -543,27 +543,27 @@ function Td({
 }
 
 function PriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!raw) return <span className="text-slate-300">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
   // 6 dp for sub-dollar (USDC/scam tokens), 4 dp otherwise.
   const fixed = n < 1 ? n.toFixed(6) : n.toFixed(4);
   return (
-    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+    <span className="font-mono tabular-nums text-slate-700">
       ${fixed}
     </span>
   );
 }
 
 function ChangeCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!raw) return <span className="text-slate-300">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
   const tone =
     n > 0
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'text-emerald-600'
       : n < 0
-        ? 'text-rose-600 dark:text-rose-400'
+        ? 'text-rose-600'
         : 'text-slate-500';
   const sign = n > 0 ? '+' : '';
   return (
@@ -575,11 +575,11 @@ function ChangeCell({ raw }: { raw?: string | null }) {
 }
 
 function UsdVolumeCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!raw) return <span className="text-slate-300">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
   return (
-    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+    <span className="font-mono tabular-nums text-slate-700">
       ${formatCompact(n)}
     </span>
   );

@@ -31,7 +31,7 @@ export function HomeTopMarkets() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Top markets
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             Pairs ranked by trailing-24h USD volume across all
             sources. Click a row for chart, recent trades, and
             per-source breakdown.
@@ -44,10 +44,10 @@ export function HomeTopMarkets() {
           All markets →
         </Link>
       </div>
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
         {isError && top.length === 0 ? (
           <div className="px-4 py-6 text-center text-sm">
-            <span className="text-amber-700 dark:text-amber-300">
+            <span className="text-amber-700">
               Couldn&apos;t load top markets right now.
             </span>{' '}
             <Link href="/markets" className="text-brand-600 hover:underline">
@@ -63,8 +63,8 @@ export function HomeTopMarkets() {
             No markets returned.
           </div>
         ) : (
-          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-            <thead className="bg-slate-50 dark:bg-slate-950">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-4 py-2 font-medium">Pair</th>
@@ -79,13 +79,13 @@ export function HomeTopMarkets() {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {top.map((m, i) => {
                 const slug = `${m.base}~${m.quote}`;
                 return (
                   <tr
                     key={`${m.base}|${m.quote}`}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                    className="hover:bg-slate-50"
                   >
                     <td className="px-4 py-2.5 text-slate-400">
                       <Link
@@ -111,11 +111,11 @@ export function HomeTopMarkets() {
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       {m.last_price ? (
-                        <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        <span className="font-mono tabular-nums text-slate-700">
                           {formatLastPrice(m.last_price)}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">
+                        <span className="text-slate-300">
                           —
                         </span>
                       )}
@@ -126,13 +126,13 @@ export function HomeTopMarkets() {
                           ${formatCompact(Number(m.volume_24h_usd))}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">
+                        <span className="text-slate-300">
                           —
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                      <span className="font-mono tabular-nums text-slate-600">
                         {formatCompact(m.trade_count_24h)}
                       </span>
                     </td>

@@ -100,21 +100,21 @@ export default async function ExchangeDetailPage({
       />
       <Link
         href="/exchanges"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All exchanges
       </Link>
 
-      <header className="space-y-2 border-b border-slate-200 pb-4 dark:border-slate-800">
+      <header className="space-y-2 border-b border-slate-200 pb-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{info.name}</h1>
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
             {info.type}
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">{info.blurb}</p>
-        <p className="max-w-3xl rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
+        <p className="max-w-3xl text-sm text-slate-600">{info.blurb}</p>
+        <p className="max-w-3xl rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
           <span className="font-semibold">Curated subscription, not a full mirror.</span>{' '}
           Stellar Index is the protocol explorer for the Stellar network, with an independent pricing API; from each CEX we
           subscribe to the pairs that triangulate to XLM (the largest XLM

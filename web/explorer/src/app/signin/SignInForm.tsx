@@ -48,19 +48,19 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
 
   if (state.kind === 'sent') {
     return (
-      <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-sm dark:border-emerald-900/40 dark:bg-emerald-950/40">
-        <div className="flex items-center gap-2 font-medium text-emerald-900 dark:text-emerald-200">
+      <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-sm">
+        <div className="flex items-center gap-2 font-medium text-emerald-900">
           <Check className="h-5 w-5" />
           Check your inbox.
         </div>
-        <p className="text-emerald-900/80 dark:text-emerald-100/90">
+        <p className="text-emerald-900/80">
           We sent a magic-link sign-in to{' '}
           <span className="font-mono font-medium">{state.email}</span>. The
           link is valid for 15 minutes — clicking it signs you in
           {mode === 'signup' ? ' and creates your account if it doesn’t already exist' : ''}
           .
         </p>
-        <p className="text-xs text-emerald-900/70 dark:text-emerald-100/70">
+        <p className="text-xs text-emerald-900/70">
           Didn&apos;t arrive? Check spam, or{' '}
           <button
             type="button"
@@ -78,7 +78,7 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <label className="block space-y-1">
-        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+        <span className="text-sm font-medium text-slate-700">
           Email
         </span>
         <div className="relative">
@@ -90,13 +90,13 @@ export function SignInForm({ mode = 'signin' }: { mode?: 'signin' | 'signup' }) 
             required
             autoComplete="email"
             placeholder="you@example.com"
-            className="w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500"
+            className="w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
       </label>
 
       {state.kind === 'error' && (
-        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-200">
+        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{state.message}</span>
         </div>

@@ -96,14 +96,14 @@ export function CursorsTable() {
             placeholder="Filter sources or sub-sources…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-64 rounded-md border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px] placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+            className="w-64 rounded-md border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px] placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <label className="inline-flex select-none items-center gap-1.5 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+          <label className="inline-flex select-none items-center gap-1.5 font-mono text-[11px] text-slate-600">
             <input
               type="checkbox"
               checked={hideStale}
               onChange={(e) => setHideStale(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-800"
+              className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
             />
             Hide stale (&gt;1h)
           </label>
@@ -122,7 +122,7 @@ export function CursorsTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>Source</Th>
@@ -132,12 +132,12 @@ export function CursorsTable() {
               <Th align="right">Lag</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {grouped.map(({ source, rows }) =>
               rows.map((c, i) => (
                 <tr
                   key={`${c.source}|${c.sub_source ?? ''}`}
-                  className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                  className="hover:bg-slate-50"
                 >
                   <Td>
                     {i === 0 ? (
@@ -179,7 +179,7 @@ function LagPill({ seconds }: { seconds: number }) {
     seconds <= 60
       ? 'bg-up-soft text-up-strong'
       : seconds <= 600
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-200'
+        ? 'bg-amber-100 text-amber-700'
         : 'bg-down-soft text-down-strong';
   return (
     <span

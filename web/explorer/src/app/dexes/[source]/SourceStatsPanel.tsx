@@ -72,7 +72,7 @@ export function SourceStatsPanel({
         />
       </div>
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
-        <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
+        <div className="mt-4 border-t border-slate-200 pt-3">
           <div className="text-[10px] uppercase tracking-wider text-slate-500">
             Volume by hour
           </div>

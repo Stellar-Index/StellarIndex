@@ -28,7 +28,7 @@ export function HomeTopMovers() {
     <section className="space-y-3">
       <div className="space-y-1">
         <h2 className="text-2xl font-semibold tracking-tight">Top movers</h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           24-hour price change across the most active classic
           assets. Updates every refresh; no synthesised data.
         </p>
@@ -67,9 +67,9 @@ function MoverColumn({
   verifiedSlugs?: Set<string>;
 }) {
   return (
-    <div className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <header className="flex items-baseline justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950">
-        <span className={tone === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}>
+    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <header className="flex items-baseline justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500">
+        <span className={tone === 'up' ? 'text-emerald-700' : 'text-rose-700'}>
           {title}
         </span>
         <span>24h</span>
@@ -81,17 +81,17 @@ function MoverColumn({
           Not enough movement to rank.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        <ul className="divide-y divide-slate-100">
           {coins.map((c) => (
             <li
               key={c.asset_id}
-              className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/40"
+              className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50"
             >
               <Link
                 href={`/assets/${c.slug}`}
                 className="flex items-baseline gap-2 text-sm"
               >
-                <span className="font-medium text-ink dark:text-slate-100">
+                <span className="font-medium text-ink">
                   {c.code}
                 </span>
                 {verifiedSlugs?.has(c.slug.toLowerCase()) && (
@@ -104,7 +104,7 @@ function MoverColumn({
                       xmlns="http://www.w3.org/2000/svg"
                       viewBox="0 0 20 20"
                       fill="currentColor"
-                      className="h-3 w-3 text-emerald-600 dark:text-emerald-400"
+                      className="h-3 w-3 text-emerald-600"
                       aria-hidden="true"
                     >
                       <path
@@ -124,8 +124,8 @@ function MoverColumn({
               <span
                 className={`font-mono tabular-nums text-xs ${
                   Number(c.change_24h_pct) > 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-rose-600 dark:text-rose-400'
+                    ? 'text-emerald-600'
+                    : 'text-rose-600'
                 }`}
               >
                 {Number(c.change_24h_pct) > 0 ? '+' : ''}

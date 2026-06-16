@@ -82,10 +82,10 @@ export function VerifiedCurrenciesStrip({
   return (
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-slate-500">
           Verified currencies
         </h2>
-        <span className="text-xs text-slate-500 dark:text-slate-400">
+        <span className="text-xs text-slate-500">
           {verified.length} verified · catalogue
         </span>
       </div>
@@ -94,7 +94,7 @@ export function VerifiedCurrenciesStrip({
           <Link
             key={vc.slug}
             href={`/assets/${vc.slug}`}
-            className="group inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 transition hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-900/40 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/30"
+            className="group inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 transition hover:border-emerald-400 hover:bg-emerald-50"
             title={
               vc.verified_issuer
                 ? `${vc.name} — ${vc.verified_issuer}`
@@ -105,7 +105,7 @@ export function VerifiedCurrenciesStrip({
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 20 20"
               fill="currentColor"
-              className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+              className="h-3.5 w-3.5 text-emerald-600"
               aria-hidden="true"
             >
               <path

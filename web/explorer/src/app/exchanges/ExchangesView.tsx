@@ -24,10 +24,10 @@ interface SourceRow {
 }
 
 const TONE: Record<string, string> = {
-  binance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200',
-  coinbase: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
-  kraken: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200',
-  bitstamp: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200',
+  binance: 'bg-yellow-100 text-yellow-800',
+  coinbase: 'bg-blue-100 text-blue-800',
+  kraken: 'bg-purple-100 text-purple-800',
+  bitstamp: 'bg-teal-100 text-teal-800',
 };
 
 const LABEL: Record<string, string> = {
@@ -62,7 +62,7 @@ export function ExchangesView() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Exchanges</h1>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           Connected centralised exchanges feeding the Stellar Index
           aggregator. Per-venue 24h USD volume, trade count, and
           coverage. Click a venue for its full pair list. On-chain
@@ -85,7 +85,7 @@ export function ExchangesView() {
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <Th>#</Th>
@@ -97,7 +97,7 @@ export function ExchangesView() {
                 <Th align="right">Share of CEX vol</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {q.isLoading && (
                 <tr>
                   <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
@@ -114,11 +114,11 @@ export function ExchangesView() {
               )}
               {rows.map((r, i) => {
                 const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : 0;
-                const tone = TONE[r.name] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+                const tone = TONE[r.name] ?? 'bg-slate-100 text-slate-700';
                 const label = LABEL[r.name] ?? r.name;
                 const share = totalVol > 0 ? (vol / totalVol) * 100 : 0;
                 return (
-                  <tr key={r.name} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+                  <tr key={r.name} className="hover:bg-slate-50">
                     <Td>
                       <span className="font-mono text-[11px] text-slate-400">{i + 1}</span>
                     </Td>
@@ -134,25 +134,25 @@ export function ExchangesView() {
                       {vol > 0 ? (
                         <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </Td>
                     <Td>
                       <SourceSparkline buckets={r.volume_history_24h} />
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                      <span className="font-mono tabular-nums text-slate-700">
                         {r.trade_count_24h && r.trade_count_24h > 0 ? formatCompact(r.trade_count_24h) : '0'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                      <span className="font-mono tabular-nums text-slate-700">
                         {r.markets_count_24h ?? 0}
                       </span>
                     </Td>
                     <Td align="right">
                       <div className="inline-flex items-center gap-2">
-                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200">
                           <div
                             className="h-full bg-brand-500"
                             style={{ width: `${Math.min(100, share)}%` }}
@@ -234,7 +234,7 @@ function AllCEXMarkets() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <Th>#</Th>
@@ -245,7 +245,7 @@ function AllCEXMarkets() {
               <Th align="right">24h trades</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {queries.isLoading && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
@@ -263,11 +263,11 @@ function AllCEXMarkets() {
             {markets.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
-              const tone = TONE[m.source ?? ''] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+              const tone = TONE[m.source ?? ''] ?? 'bg-slate-100 text-slate-700';
               return (
                 <tr
                   key={`${m.source}|${m.base}|${m.quote}`}
-                  className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                  className="hover:bg-slate-50"
                 >
                   <Td>
                     <span className="font-mono text-[11px] text-slate-400">{i + 1}</span>
@@ -290,22 +290,22 @@ function AllCEXMarkets() {
                   </Td>
                   <Td align="right">
                     {m.last_price ? (
-                      <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                      <span className="font-mono tabular-nums text-slate-700">
                         {Number(m.last_price).toFixed(4)}
                       </span>
                     ) : (
-                      <span className="text-slate-300 dark:text-slate-700">—</span>
+                      <span className="text-slate-300">—</span>
                     )}
                   </Td>
                   <Td align="right">
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
                       <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
                     ) : (
-                      <span className="text-slate-300 dark:text-slate-700">—</span>
+                      <span className="text-slate-300">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                    <span className="font-mono tabular-nums text-slate-600">
                       {m.trade_count_24h > 0 ? formatCompact(m.trade_count_24h) : '0'}
                     </span>
                   </Td>

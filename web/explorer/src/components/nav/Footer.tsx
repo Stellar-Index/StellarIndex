@@ -17,7 +17,7 @@ export function Footer() {
   const pathname = usePathname();
   if (pathname?.startsWith('/embed/')) return null;
   return (
-    <footer className="mt-16 border-t border-slate-200 bg-white py-8 dark:border-slate-800 dark:bg-slate-950">
+    <footer className="mt-16 border-t border-slate-200 bg-white py-8">
       <div className="mx-auto max-w-7xl px-6 text-xs text-slate-500">
         <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
           <FooterColumn
@@ -66,13 +66,13 @@ export function Footer() {
             ]}
           />
         </div>
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
+        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
           <div className="flex flex-wrap items-center gap-4">
             <span>
               API:{' '}
               <a
                 href="https://api.stellarindex.io"
-                className="font-mono hover:text-slate-700 dark:hover:text-slate-300"
+                className="font-mono hover:text-slate-700"
               >
                 api.stellarindex.io
               </a>
@@ -81,7 +81,7 @@ export function Footer() {
               href="https://github.com/StellarIndex/stellar-index"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-slate-700 dark:hover:text-slate-300"
+              className="hover:text-slate-700"
             >
               GitHub
             </a>
@@ -111,7 +111,7 @@ function BuildBadge() {
       target="_blank"
       rel="noopener noreferrer"
       title={`Built ${time} from commit ${sha}`}
-      className="font-mono text-[10px] tracking-tight text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300"
+      className="font-mono text-[10px] tracking-tight text-slate-400 hover:text-slate-700"
     >
       build {short}
       {date && <span className="hidden md:inline"> · {date}</span>}
@@ -139,7 +139,7 @@ function FooterColumn({
                 href={l.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-slate-700 dark:hover:text-slate-300"
+                className="hover:text-slate-700"
               >
                 {l.label}
               </a>
@@ -148,7 +148,7 @@ function FooterColumn({
             <li key={l.href}>
               <Link
                 href={l.href}
-                className="hover:text-slate-700 dark:hover:text-slate-300"
+                className="hover:text-slate-700"
               >
                 {l.label}
               </Link>

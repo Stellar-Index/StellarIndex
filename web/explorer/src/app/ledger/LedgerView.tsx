@@ -54,7 +54,7 @@ export function LedgerView() {
       <Shell seq={null}>
         <Panel
           title="No ledger selected"
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             This page needs a <code className="font-mono">?seq=</code> query
@@ -75,7 +75,7 @@ export function LedgerView() {
         <Panel
           title="Ledger not found"
           source={asExample(`/v1/ledgers/${seq}`)}
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             No ledger <span className="font-mono">#{seq.toLocaleString()}</span>{' '}
@@ -171,7 +171,7 @@ export function LedgerView() {
                 <CopyHash value={l.prev_hash} head={12} tail={12} />
               </span>
             ) : (
-              <span className="text-slate-300 dark:text-slate-700">—</span>
+              <span className="text-slate-300">—</span>
             )}
           </FieldWide>
         </dl>
@@ -203,7 +203,7 @@ function Shell({
             Ledgers
           </Link>{' '}
           /{' '}
-          <span className="font-mono text-slate-700 dark:text-slate-300">
+          <span className="font-mono text-slate-700">
             {seq != null ? `#${seq.toLocaleString()}` : '—'}
           </span>
         </nav>
@@ -211,13 +211,13 @@ function Shell({
           <div className="flex items-center gap-3 text-xs">
             <Link
               href={`/ledger?seq=${seq - 1}`}
-              className="rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:text-slate-300"
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600"
             >
               ← Prev ledger
             </Link>
             <Link
               href={`/ledger?seq=${seq + 1}`}
-              className="rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:text-slate-300"
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600"
             >
               Next ledger →
             </Link>
@@ -284,7 +284,7 @@ function TransactionsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>Hash</Th>
@@ -295,11 +295,11 @@ function TransactionsPanel({
               <Th>Memo</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {data.transactions.map((t) => (
               <tr
                 key={t.hash}
-                className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                className="hover:bg-slate-50"
               >
                 <Td>
                   <Link
@@ -313,14 +313,14 @@ function TransactionsPanel({
                 <Td>
                   <Link
                     href={`/accounts?id=${encodeURIComponent(t.source_account)}`}
-                    className="font-mono text-xs text-slate-600 hover:text-brand-600 dark:text-slate-400"
+                    className="font-mono text-xs text-slate-600 hover:text-brand-600"
                     title={t.source_account}
                   >
                     {t.source_account.slice(0, 6)}…{t.source_account.slice(-4)}
                   </Link>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                  <span className="font-mono tabular-nums text-slate-600">
                     {t.operation_count}
                   </span>
                 </Td>
@@ -342,7 +342,7 @@ function TransactionsPanel({
                       {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
                     </span>
                   ) : (
-                    <span className="text-slate-300 dark:text-slate-700">
+                    <span className="text-slate-300">
                       —
                     </span>
                   )}
@@ -365,8 +365,8 @@ function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
     <span
       className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
         ok
-          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-          : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+          ? 'bg-emerald-50 text-emerald-700'
+          : 'bg-rose-50 text-rose-700'
       }`}
       title={codeLabel ?? (ok ? 'success' : 'failed')}
     >

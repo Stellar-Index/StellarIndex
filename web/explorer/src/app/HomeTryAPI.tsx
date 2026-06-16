@@ -145,7 +145,7 @@ export function HomeTryAPI() {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap gap-1">
         {EXAMPLES.map((ex, i) => (
           <button
@@ -155,14 +155,14 @@ export function HomeTryAPI() {
             className={`rounded-md px-2.5 py-1 text-xs ${
               i === activeIx
                 ? 'bg-brand-600 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
             {ex.label}
           </button>
         ))}
       </div>
-      <div className="mb-2 flex items-center gap-1 border-b border-slate-200 pb-2 dark:border-slate-800">
+      <div className="mb-2 flex items-center gap-1 border-b border-slate-200 pb-2">
         {LANGS.map((l) => (
           <button
             key={l.key}
@@ -170,8 +170,8 @@ export function HomeTryAPI() {
             onClick={() => setLang(l.key)}
             className={`rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
               lang === l.key
-                ? 'bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-slate-100'
-                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                ? 'bg-slate-200 text-slate-900'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             {l.label}
@@ -215,12 +215,12 @@ export function HomeTryAPI() {
         </div>
       </div>
       {response != null && (
-        <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950">
+        <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
           <div
             className={`flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-wider ${
               responseTone === 'ok'
-                ? 'bg-emerald-100/40 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                : 'bg-rose-100/40 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                ? 'bg-emerald-100/40 text-emerald-700'
+                : 'bg-rose-100/40 text-rose-700'
             }`}
           >
             <span>response</span>
@@ -229,7 +229,7 @@ export function HomeTryAPI() {
               {response.length === 4000 && ' (truncated)'}
             </span>
           </div>
-          <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+          <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[11px] text-slate-700">
             {response}
           </pre>
         </div>
