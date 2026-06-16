@@ -42,7 +42,7 @@ export default function AnomaliesPage() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           Every clear→firing freeze transition, with reason +
           recovery + the frozen value still served via{' '}
           <code className="font-mono text-xs">/v1/price</code>. Powered
@@ -57,7 +57,7 @@ export default function AnomaliesPage() {
         title="What freezes a pair"
         bodyClassName="space-y-3"
       >
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           Per{' '}
           <Link
             href="/research/adr/0019"
@@ -74,7 +74,7 @@ export default function AnomaliesPage() {
           {REASONS.map((r) => (
             <div
               key={r.name}
-              className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-900/50"
+              className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs"
             >
               <div className="flex items-baseline justify-between">
                 <code className="font-mono text-[11px] text-down-strong">
@@ -84,7 +84,7 @@ export default function AnomaliesPage() {
               <div className="mt-1.5 text-[11px] uppercase tracking-wider text-slate-500">
                 {r.trigger}
               </div>
-              <p className="mt-1.5 text-slate-600 dark:text-slate-400">
+              <p className="mt-1.5 text-slate-600">
                 {r.meaning}
               </p>
             </div>
@@ -94,7 +94,7 @@ export default function AnomaliesPage() {
 
       <Panel
         title="Coming next"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400 space-y-2"
+        bodyClassName="text-sm text-slate-600 space-y-2"
       >
         <p>
           Currently-firing list, freeze timeline, per-asset rate,

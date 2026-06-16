@@ -49,10 +49,10 @@ export default function SignupPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
       <header className="mb-10">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
           Create your account
         </h1>
-        <p className="mt-3 max-w-2xl text-base text-slate-600 dark:text-slate-400">
+        <p className="mt-3 max-w-2xl text-base text-slate-600">
           Magic-link sign-in — no passwords. Once you&apos;re in, mint
           API keys, watch usage, and manage billing under your account.
           The free tier covers most prototyping; paid plans unlock
@@ -60,7 +60,7 @@ export default function SignupPage() {
         </p>
       </header>
 
-      <section className="mb-12 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-8">
+      <section className="mb-12 rounded-xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
         <SignInForm mode="signup" />
         <p className="mt-4 text-xs text-slate-500">
           Already have an account?{' '}
@@ -72,28 +72,28 @@ export default function SignupPage() {
       </section>
 
       <section className="mb-12">
-        <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">
           Tiers
         </h2>
-        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-          <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-            <thead className="bg-slate-50 dark:bg-slate-800/50">
+        <div className="overflow-hidden rounded-xl border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">
                   Tier
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">
                   Rate limit
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">
                   Cost
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
+            <tbody className="divide-y divide-slate-200 bg-white">
               {TIERS.map((tier) => (
-                <tr key={tier.name} className={tier.highlight ? 'bg-brand-50 dark:bg-brand-900/20' : ''}>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                <tr key={tier.name} className={tier.highlight ? 'bg-brand-50' : ''}>
+                  <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-900">
                     {tier.name}
                     {tier.highlight && (
                       <span className="ml-2 inline-flex items-center rounded-full bg-brand-600 px-2 py-0.5 text-xs font-medium text-white">
@@ -101,10 +101,10 @@ export default function SignupPage() {
                       </span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700 dark:text-slate-300">
+                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                     {tier.rateLimit}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700 dark:text-slate-300">
+                  <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                     {tier.cost === 'Contact sales' || tier.cost === 'Custom' ? (
                       <Link
                         href="/contact"
@@ -121,17 +121,17 @@ export default function SignupPage() {
             </tbody>
           </table>
         </div>
-        <ul className="mt-4 space-y-2 text-sm text-slate-600 dark:text-slate-400">
+        <ul className="mt-4 space-y-2 text-sm text-slate-600">
           {TIERS.map((tier) => (
             <li key={tier.name}>
-              <strong className="text-slate-900 dark:text-slate-100">{tier.name}.</strong>{' '}
+              <strong className="text-slate-900">{tier.name}.</strong>{' '}
               {tier.notes}
             </li>
           ))}
         </ul>
       </section>
 
-      <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+      <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
         <strong>Anonymous reads work without an account.</strong>{' '}
         If you&rsquo;re prototyping, just hit{' '}
         <a href="https://docs.stellarindex.io" className="underline">
@@ -143,7 +143,7 @@ export default function SignupPage() {
         you&rsquo;re ready to ship to customers.
       </section>
 
-      <p className="mt-8 text-xs text-slate-500 dark:text-slate-500">
+      <p className="mt-8 text-xs text-slate-500">
         API base URL: <code className="font-mono">{API_BASE_URL}</code>
       </p>
     </div>

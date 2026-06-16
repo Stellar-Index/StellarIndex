@@ -138,13 +138,13 @@ export default function SDKPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
       <header className="mb-10 space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600 dark:text-brand-400">
+        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
           Go SDK
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Idiomatic Go client for the Stellar Index API
         </h1>
-        <p className="max-w-2xl text-base text-slate-600 dark:text-slate-400">
+        <p className="max-w-2xl text-base text-slate-600">
           Typed, SemVer-stable, no surprises. Anonymous mode for the
           public tier; bearer-token mode for paid tiers and SEP-10
           JWTs. The Go SDK is the same library the operator CLI uses
@@ -155,26 +155,26 @@ export default function SDKPage() {
 
       <section className="mb-10 space-y-4">
         <h2 className="text-xl font-semibold tracking-tight">Install</h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           Single dependency. The module path follows the canonical{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">
             github.com/StellarIndex/stellar-index
           </code>{' '}
           repo path.
         </p>
-        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+        <div className="overflow-hidden rounded-xl border border-slate-200">
           <CopyableSnippet snippet={INSTALL} />
         </div>
       </section>
 
       <section className="mb-12 space-y-4">
         <h2 className="text-xl font-semibold tracking-tight">Quick start</h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           One-asset current-price lookup. Anonymous works at the public
           rate-limit; pass <code className="font-mono text-xs">APIKey</code>{' '}
           to bump to your tier&apos;s budget.
         </p>
-        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+        <div className="overflow-hidden rounded-xl border border-slate-200">
           <CopyableSnippet snippet={QUICKSTART} />
         </div>
       </section>
@@ -187,11 +187,11 @@ export default function SDKPage() {
           <div key={p.title} className="space-y-3">
             <div>
               <h3 className="text-base font-semibold">{p.title}</h3>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              <p className="mt-1 text-sm text-slate-600">
                 {p.blurb}
               </p>
             </div>
-            <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="overflow-hidden rounded-xl border border-slate-200">
               <CopyableSnippet snippet={p.code} />
             </div>
           </div>
@@ -202,7 +202,7 @@ export default function SDKPage() {
         <h2 className="text-xl font-semibold tracking-tight">
           Authentication
         </h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           Three modes mirror the server&apos;s auth middleware:
         </p>
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -215,11 +215,11 @@ export default function SDKPage() {
             def={
               <>
                 Set{' '}
-                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] dark:bg-slate-800">
+                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">
                   Options.APIKey
                 </code>
                 . Sent as{' '}
-                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] dark:bg-slate-800">
+                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">
                   Authorization: Bearer
                 </code>{' '}
                 on every request. Sign in at{' '}
@@ -241,9 +241,9 @@ export default function SDKPage() {
         </dl>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm dark:border-slate-800 dark:bg-slate-900">
+      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm">
         <h2 className="text-base font-semibold">Reference</h2>
-        <ul className="mt-3 space-y-2 text-slate-600 dark:text-slate-400">
+        <ul className="mt-3 space-y-2 text-slate-600">
           <li>
             <a
               href="https://pkg.go.dev/github.com/StellarIndex/stellar-index/pkg/client"
@@ -281,7 +281,7 @@ export default function SDKPage() {
             Other languages? The REST API is plain JSON — generate a
             client for your favourite language from the OpenAPI spec
             at{' '}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] dark:bg-slate-800">
+            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">
               openapi/stellar-index.v1.yaml
             </code>
             . First-party clients beyond Go land as the demand
@@ -301,11 +301,11 @@ function Mode({
   def: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
       <dt className="text-xs font-semibold uppercase tracking-wider text-brand-600">
         {term}
       </dt>
-      <dd className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+      <dd className="mt-1 text-xs text-slate-600">
         {def}
       </dd>
     </div>

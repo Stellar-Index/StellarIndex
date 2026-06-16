@@ -55,7 +55,7 @@ export function ReferencePriceAggregators() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <Th>Source</Th>
@@ -64,7 +64,7 @@ export function ReferencePriceAggregators() {
               <Th>Role</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {q.isLoading && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
@@ -80,13 +80,13 @@ export function ReferencePriceAggregators() {
               </tr>
             )}
             {rows.map((s) => (
-              <tr key={s.name} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+              <tr key={s.name} className="hover:bg-slate-50">
                 <Td>
                   <a
                     href={HOMEPAGES[s.name] ?? '#'}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="font-medium text-slate-900 hover:text-brand-600 dark:text-slate-100"
+                    className="font-medium text-slate-900 hover:text-brand-600"
                   >
                     {NAMES[s.name] ?? s.name}
                   </a>
@@ -95,8 +95,8 @@ export function ReferencePriceAggregators() {
                   <span
                     className={`inline-block rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
                       s.paid
-                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-                        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-100 text-emerald-800'
                     }`}
                   >
                     {s.paid ? 'Paid feed' : 'Free tier'}
@@ -108,7 +108,7 @@ export function ReferencePriceAggregators() {
                   </span>
                 </Td>
                 <Td>
-                  <span className="text-xs text-slate-600 dark:text-slate-400">
+                  <span className="text-xs text-slate-600">
                     Cross-check + divergence detection
                   </span>
                 </Td>
@@ -117,7 +117,7 @@ export function ReferencePriceAggregators() {
           </tbody>
         </table>
       </div>
-      <p className="border-t border-slate-200 px-4 py-2 text-xs text-slate-500 dark:border-slate-800">
+      <p className="border-t border-slate-200 px-4 py-2 text-xs text-slate-500">
         Reference aggregators are <strong>excluded from VWAP</strong> by
         policy — they aggregate the same upstream venues we already
         index, so including them would double-count those underlying

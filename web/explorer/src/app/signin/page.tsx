@@ -14,7 +14,7 @@ export default function SignInPage() {
     <div className="mx-auto max-w-md space-y-6 px-6 py-16">
       <header className="space-y-2 text-center">
         <h1 className="text-3xl font-semibold tracking-tight">Sign in</h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           Magic-link email — no passwords.
         </p>
       </header>

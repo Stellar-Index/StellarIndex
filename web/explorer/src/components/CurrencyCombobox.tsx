@@ -72,8 +72,8 @@ export function CurrencyCombobox({
 
   const triggerCls =
     mode === 'select'
-      ? 'rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs uppercase tracking-wider text-slate-700 hover:border-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-brand-500'
-      : 'rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700';
+      ? 'rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs uppercase tracking-wider text-slate-700 hover:border-brand-500'
+      : 'rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700 hover:bg-slate-200';
 
   return (
     <div ref={wrapRef} className="relative">
@@ -81,7 +81,7 @@ export function CurrencyCombobox({
         {value} ▾
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+        <div className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
           <input
             ref={inputRef}
             value={query}
@@ -103,7 +103,7 @@ export function CurrencyCombobox({
               }
             }}
             placeholder={placeholder}
-            className="w-full border-b border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none dark:border-slate-700 dark:bg-slate-900"
+            className="w-full border-b border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none"
           />
           <ul className="max-h-64 overflow-y-auto py-1 text-sm">
             {filtered.length === 0 && (
@@ -117,8 +117,8 @@ export function CurrencyCombobox({
                   onMouseEnter={() => setHighlight(i)}
                   className={`flex w-full items-center justify-between px-3 py-1.5 font-mono text-xs uppercase tracking-wider ${
                     i === highlight
-                      ? 'bg-brand-50 text-brand-900 dark:bg-brand-900/30 dark:text-brand-100'
-                      : 'text-slate-700 dark:text-slate-300'
+                      ? 'bg-brand-50 text-brand-900'
+                      : 'text-slate-700'
                   }`}
                 >
                   <span>{t}</span>

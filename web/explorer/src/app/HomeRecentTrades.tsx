@@ -98,13 +98,13 @@ export function HomeRecentTrades() {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
             </span>
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             Live feed merging the latest trades across the top {TOP_PAIRS}{' '}
             pairs by 24h USD volume. Refreshes every 30s.
           </p>
         </div>
       </div>
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
         {error && (
           <div className="px-4 py-2 text-xs text-rose-700">
             Live feed unreachable: {error}
@@ -116,8 +116,8 @@ export function HomeRecentTrades() {
           </div>
         ) : (
           <div className="max-h-96 overflow-y-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-              <thead className="sticky top-0 bg-slate-50 dark:bg-slate-950">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="sticky top-0 bg-slate-50">
                 <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-2 font-medium">Time</th>
                   <th className="px-4 py-2 font-medium">Pair</th>
@@ -125,7 +125,7 @@ export function HomeRecentTrades() {
                   <th className="px-4 py-2 text-right font-medium">Price</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-xs dark:divide-slate-800">
+              <tbody className="divide-y divide-slate-100 font-mono text-xs">
                 {trades.map((t, i) => {
                   // Both sides need to be defined to construct a
                   // valid /markets/<base~quote> route. If either
@@ -144,7 +144,7 @@ export function HomeRecentTrades() {
                   return (
                     <tr
                       key={`${t.ts}-${t.source}-${i}`}
-                      className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                      className="hover:bg-slate-50"
                     >
                       <td className="px-4 py-2 tabular-nums text-slate-500">
                         {t.tx_hash ? (
@@ -173,7 +173,7 @@ export function HomeRecentTrades() {
                           <span>{pairLabel}</span>
                         )}
                       </td>
-                      <td className="px-4 py-2 uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                      <td className="px-4 py-2 uppercase tracking-wider text-slate-600">
                         <Link
                           href={`/sources/${t.source}`}
                           className="hover:text-brand-600"

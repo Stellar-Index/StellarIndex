@@ -31,7 +31,7 @@ export function HomeRecentChanges() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Recently shipped
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-slate-600">
             What landed in the last release. Scrolling history at{' '}
             <Link href="/changelog" className="text-brand-600 hover:underline">
               /changelog
@@ -58,7 +58,7 @@ export function HomeRecentChanges() {
         {items.map((it, i) => (
           <li
             key={i}
-            className="rounded-md border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900"
+            className="rounded-md border border-slate-200 bg-white p-3"
           >
             <div className="mb-1 flex items-baseline gap-2">
               <span
@@ -73,7 +73,7 @@ export function HomeRecentChanges() {
                 {it.date && ` · ${it.date}`}
               </span>
             </div>
-            <p className="text-sm text-slate-700 dark:text-slate-300">
+            <p className="text-sm text-slate-700">
               <ChangelogPreview text={it.text} />
             </p>
           </li>
@@ -143,14 +143,14 @@ function readRecentItems(n: number): ChangeItem[] {
 
 function kindTone(kind: string): string {
   if (kind === 'Added')
-    return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
+    return 'bg-emerald-100 text-emerald-800';
   if (kind === 'Fixed')
-    return 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200';
+    return 'bg-sky-100 text-sky-800';
   if (kind === 'Changed')
-    return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
+    return 'bg-amber-100 text-amber-800';
   if (kind === 'Removed' || kind === 'Deprecated')
-    return 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200';
-  return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200';
+    return 'bg-rose-100 text-rose-800';
+  return 'bg-slate-100 text-slate-700';
 }
 
 // ChangelogPreview renders just the FIRST paragraph of a CHANGELOG
@@ -200,7 +200,7 @@ function ChangelogPreview({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-slate-900 dark:text-slate-100">
+            <strong key={i} className="font-semibold text-slate-900">
               {t.value}
             </strong>
           );
@@ -208,7 +208,7 @@ function ChangelogPreview({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs dark:bg-slate-800"
+              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs"
             >
               {t.value}
             </code>

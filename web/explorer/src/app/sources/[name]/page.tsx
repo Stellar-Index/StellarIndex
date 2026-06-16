@@ -203,12 +203,12 @@ export default async function SourceDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight">{name}</h1>
           <ClassBadge cls={source.class} />
           {source.subclass && (
-            <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-600">
               {source.subclass}
             </span>
           )}
           {source.paid && (
-            <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-amber-800">
               paid
             </span>
           )}
@@ -286,7 +286,7 @@ export default async function SourceDetailPage({
             cursors (e.g. WebSocket-only venues that backfill via REST).
           </p>
         ) : (
-          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-2 font-medium">Sub-source</th>
@@ -297,11 +297,11 @@ export default async function SourceDetailPage({
                 <th className="px-4 py-2 text-right font-medium">Lag</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {cursors.map((c, i) => (
                 <tr
                   key={`${c.sub_source ?? ''}|${i}`}
-                  className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                  className="hover:bg-slate-50"
                 >
                   <td className="px-4 py-2 font-mono text-xs">
                     {c.sub_source || '—'}
@@ -334,7 +334,7 @@ export default async function SourceDetailPage({
             or the cursor hasn&apos;t advanced past the recency window yet.
           </p>
         ) : (
-          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-2 font-medium">Base</th>
@@ -344,13 +344,13 @@ export default async function SourceDetailPage({
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {topMarkets.map((m) => {
                 const slug = encodeURIComponent(`${m.base}~${m.quote}`);
                 return (
                   <tr
                     key={`${m.base}|${m.quote}`}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                    className="hover:bg-slate-50"
                   >
                     <td className="px-4 py-2">
                       <Link
@@ -370,11 +370,11 @@ export default async function SourceDetailPage({
                     </td>
                     <td className="px-4 py-2 text-right">
                       {m.last_price ? (
-                        <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        <span className="font-mono tabular-nums text-slate-700">
                           {formatLastPrice(m.last_price)}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -383,7 +383,7 @@ export default async function SourceDetailPage({
                           ${formatCompact(Number(m.volume_24h_usd))}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right font-mono tabular-nums text-slate-500">
@@ -428,9 +428,9 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
           {title}
         </h2>
         {subtitle && <span className="text-xs text-slate-400">{subtitle}</span>}
@@ -453,9 +453,9 @@ function Stat({
 }) {
   const valueClass =
     tone === 'ok'
-      ? 'text-emerald-700 dark:text-emerald-400'
+      ? 'text-emerald-700'
       : tone === 'warn'
-        ? 'text-amber-700 dark:text-amber-400'
+        ? 'text-amber-700'
         : '';
   return (
     <div>
@@ -499,12 +499,12 @@ function auditSlug(source: string): string {
 function ClassBadge({ cls }: { cls: Source['class'] }) {
   const tone =
     cls === 'exchange'
-      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
+      ? 'bg-emerald-100 text-emerald-800'
       : cls === 'oracle'
-        ? 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200'
+        ? 'bg-sky-100 text-sky-800'
         : cls === 'aggregator'
-          ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200';
+          ? 'bg-amber-100 text-amber-800'
+          : 'bg-slate-100 text-slate-700';
   return (
     <span
       className={`rounded px-2 py-0.5 font-mono text-xs uppercase tracking-wider ${tone}`}
@@ -517,10 +517,10 @@ function ClassBadge({ cls }: { cls: Source['class'] }) {
 function LagBadge({ seconds }: { seconds: number }) {
   const tone =
     seconds <= 60
-      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+      ? 'bg-emerald-50 text-emerald-700'
       : seconds <= 600
-        ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-        : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300';
+        ? 'bg-amber-50 text-amber-700'
+        : 'bg-rose-50 text-rose-700';
   const label =
     seconds < 60
       ? `${seconds.toFixed(0)}s`

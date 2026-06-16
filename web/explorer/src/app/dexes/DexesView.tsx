@@ -45,15 +45,15 @@ const SOURCE_NOTE: Record<string, string> = {
 // renders, just without a coloured chip — keeps the table working
 // when new sources land before this map gets updated.
 const SOURCE_TONE: Record<string, string> = {
-  soroswap: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
-  phoenix: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
-  aquarius: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',
-  sdex: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
-  comet: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
-  binance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200',
-  coinbase: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
-  kraken: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200',
-  bitstamp: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200',
+  soroswap: 'bg-emerald-100 text-emerald-800',
+  phoenix: 'bg-amber-100 text-amber-800',
+  aquarius: 'bg-sky-100 text-sky-800',
+  sdex: 'bg-slate-200 text-slate-800',
+  comet: 'bg-violet-100 text-violet-800',
+  binance: 'bg-yellow-100 text-yellow-800',
+  coinbase: 'bg-blue-100 text-blue-800',
+  kraken: 'bg-purple-100 text-purple-800',
+  bitstamp: 'bg-teal-100 text-teal-800',
 };
 
 /**
@@ -121,7 +121,7 @@ export function DexesView() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">DEXes</h1>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           Every Stellar DEX we ingest — Soroswap, Phoenix, Aquarius,
           Comet, and the Stellar-native order book SDEX. The first
           table summarises each protocol; the second lists every
@@ -182,7 +182,7 @@ export function DexesView() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <Th>#</Th>
@@ -195,7 +195,7 @@ export function DexesView() {
                 <Th align="right">Last trade</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {q.isLoading && !q.data && (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -230,7 +230,7 @@ export function DexesView() {
                     <button
                       type="button"
                       onClick={() => q.refetch()}
-                      className="mt-2 rounded-md border border-bad-500/40 px-3 py-1 text-xs text-bad-700 hover:bg-bad-50 dark:hover:bg-bad-900/20"
+                      className="mt-2 rounded-md border border-bad-500/40 px-3 py-1 text-xs text-bad-700 hover:bg-bad-50"
                     >
                       Retry
                     </button>
@@ -248,11 +248,11 @@ export function DexesView() {
                 const slug = `${p.base}~${p.quote}`;
                 const offset = cursorStack.length * PAGE_LIMIT + i + 1;
                 const vol = p.volume_24h_usd ? Number(p.volume_24h_usd) : null;
-                const tone = SOURCE_TONE[p.source] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+                const tone = SOURCE_TONE[p.source] ?? 'bg-slate-100 text-slate-700';
                 return (
                   <tr
                     key={`${p.source}|${p.base}|${p.quote}`}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                    className="hover:bg-slate-50"
                   >
                     <Td>
                       <span className="font-mono text-[11px] text-slate-400">
@@ -297,11 +297,11 @@ export function DexesView() {
                           ${formatCompact(vol)}
                         </span>
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-700">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                      <span className="font-mono tabular-nums text-slate-600">
                         {p.trade_count_24h > 0
                           ? formatCompact(p.trade_count_24h)
                           : '0'}
@@ -319,12 +319,12 @@ export function DexesView() {
           </table>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs dark:border-slate-800">
+        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs">
           <button
             type="button"
             onClick={prevPage}
             disabled={!hasPrev}
-            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400"
+            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ← Previous
           </button>
@@ -335,7 +335,7 @@ export function DexesView() {
             type="button"
             onClick={nextPage}
             disabled={!hasNext}
-            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400"
+            className="rounded-md border border-slate-200 px-3 py-1 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next →
           </button>
@@ -385,7 +385,7 @@ function SortPill({
       className={`rounded-md px-2 py-0.5 ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
       }`}
     >
       {children}
@@ -409,7 +409,7 @@ function SourceChip({
       className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
         active
           ? 'bg-brand-600 text-white'
-          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
+          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
       }`}
     >
       {label}
@@ -451,13 +451,13 @@ function Td({
 }
 
 function LastPriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!raw) return <span className="text-slate-300">—</span>;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-slate-300 dark:text-slate-700">—</span>;
+  if (!Number.isFinite(n)) return <span className="text-slate-300">—</span>;
   const fixed =
     n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
   return (
-    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+    <span className="font-mono tabular-nums text-slate-700">
       {fixed}
     </span>
   );

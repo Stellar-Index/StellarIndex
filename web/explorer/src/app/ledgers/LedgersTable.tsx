@@ -98,7 +98,7 @@ export function LedgersTable() {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>Sequence</Th>
@@ -108,16 +108,16 @@ export function LedgersTable() {
               <Th align="right">Soroban events</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {data.ledgers.map((l) => (
               <tr
                 key={l.sequence}
-                className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                className="hover:bg-slate-50"
               >
                 <Td>
                   <Link
                     href={`/ledger?seq=${l.sequence}`}
-                    className="font-mono font-medium text-slate-700 hover:text-brand-600 dark:text-slate-300"
+                    className="font-mono font-medium text-slate-700 hover:text-brand-600"
                   >
                     #{l.sequence.toLocaleString()}
                   </Link>
@@ -136,12 +136,12 @@ export function LedgersTable() {
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                  <span className="font-mono tabular-nums text-slate-600">
                     {formatCompact(l.op_count)}
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                  <span className="font-mono tabular-nums text-slate-600">
                     {l.soroban_event_count > 0
                       ? formatCompact(l.soroban_event_count)
                       : '—'}
@@ -158,7 +158,7 @@ export function LedgersTable() {
           type="button"
           onClick={() => setBefore(undefined)}
           disabled={before === undefined || isFetching}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300"
+          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Newest
         </button>
@@ -171,7 +171,7 @@ export function LedgersTable() {
             if (data.next_before != null) setBefore(data.next_before);
           }}
           disabled={data.next_before == null || isFetching}
-          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300"
+          className="rounded-md border border-slate-200 px-3 py-1.5 text-slate-600 hover:border-brand-500 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Load older →
         </button>

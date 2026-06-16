@@ -230,13 +230,13 @@ export default async function ConvertPage({ params }: { params: Params }) {
       />
       <Link
         href={assetHrefFor(f)}
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         {f} overview
       </Link>
 
-      <header className="space-y-3 border-b border-slate-200 pb-5 dark:border-slate-800">
+      <header className="space-y-3 border-b border-slate-200 pb-5">
         <h1 className="text-3xl font-semibold tracking-tight">
           {f} to {t}
           {detail?.name && (
@@ -246,14 +246,14 @@ export default async function ConvertPage({ params }: { params: Params }) {
           )}
         </h1>
         {rate != null ? (
-          <p className="text-2xl font-mono tabular-nums text-slate-900 dark:text-slate-100">
+          <p className="text-2xl font-mono tabular-nums text-slate-900">
             1 {f} = {formatRate(rate)} {t}
           </p>
         ) : (
           <p className="text-sm text-slate-500">Rate currently unavailable.</p>
         )}
         {inverse != null && (
-          <p className="text-sm font-mono tabular-nums text-slate-600 dark:text-slate-400">
+          <p className="text-sm font-mono tabular-nums text-slate-600">
             1 {t} = {formatRate(inverse)} {f}
           </p>
         )}
@@ -268,7 +268,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
       <ConvertPair from={f} to={t} initialRate={rate} initialInverse={inverse} />
 
       {rate != null && (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <section className="rounded-xl border border-slate-200 bg-white p-5">
           <h2 className="mb-4 text-lg font-semibold tracking-tight">
             {f} to {t} at common amounts
           </h2>
@@ -276,12 +276,12 @@ export default async function ConvertPage({ params }: { params: Params }) {
             {SNIPPET_AMOUNTS.map((amt) => (
               <div
                 key={amt}
-                className="flex items-baseline justify-between rounded-md bg-slate-50 px-3 py-2 dark:bg-slate-800/50"
+                className="flex items-baseline justify-between rounded-md bg-slate-50 px-3 py-2"
               >
-                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                <span className="font-mono tabular-nums text-slate-700">
                   {amt.toLocaleString()} {f}
                 </span>
-                <span className="font-mono tabular-nums font-medium text-slate-900 dark:text-slate-100">
+                <span className="font-mono tabular-nums font-medium text-slate-900">
                   {formatRate(amt * rate)} {t}
                 </span>
               </div>
@@ -297,20 +297,20 @@ export default async function ConvertPage({ params }: { params: Params }) {
       <section className="flex flex-wrap gap-2 text-sm">
         <Link
           href={`/convert/${t}/${f}`}
-          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600"
         >
           <ArrowLeftRight className="h-3.5 w-3.5" />
           Convert {t} to {f} instead
         </Link>
         <Link
           href={assetHrefFor(f)}
-          className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600"
         >
           {f} cross-rates
         </Link>
         <Link
           href={assetHrefFor(t)}
-          className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:border-brand-500 hover:text-brand-600"
         >
           {t} cross-rates
         </Link>

@@ -51,7 +51,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
       {data.scam_reason && (
         <div
           role="alert"
-          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900"
         >
           <strong className="font-semibold">Known scam issuer</strong> ·{' '}
           {data.scam_reason}. Every asset in the table below was
@@ -119,7 +119,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>Code</Th>
@@ -129,11 +129,11 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
               <Th align="right">Last seen</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {assets.map((a) => (
               <tr
                 key={a.asset_id}
-                className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                className="hover:bg-slate-50"
               >
                 <Td>
                   <Link
@@ -175,13 +175,13 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
 function FlagPill({ on, label }: { on?: boolean; label: string }) {
   if (on === undefined) {
     return (
-      <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-500">
+      <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">
         {label}: unknown
       </span>
     );
   }
   const cls = on
-    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-200'
+    ? 'bg-amber-100 text-amber-700'
     : 'bg-up-soft text-up-strong';
   return (
     <span

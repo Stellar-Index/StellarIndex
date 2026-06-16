@@ -16,7 +16,7 @@ export default function ChangelogPage() {
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
       <header className="space-y-3">
         <div className="flex items-baseline justify-between">
-          <p className="font-mono text-xs uppercase tracking-widest text-brand-600 dark:text-brand-400">
+          <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
             Changelog
           </p>
           <a
@@ -32,9 +32,9 @@ export default function ChangelogPage() {
         <h1 className="text-4xl font-semibold tracking-tight">
           Every release, every change.
         </h1>
-        <p className="max-w-2xl text-base text-slate-600 dark:text-slate-400">
+        <p className="max-w-2xl text-base text-slate-600">
           Pulled at build time from{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-sm dark:bg-slate-800">
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-sm">
             CHANGELOG.md
           </code>{' '}
           on{' '}
@@ -42,7 +42,7 @@ export default function ChangelogPage() {
             href="https://github.com/StellarIndex/stellar-index/blob/main/CHANGELOG.md"
             target="_blank"
             rel="noreferrer noopener"
-            className="text-brand-600 hover:underline dark:text-brand-400"
+            className="text-brand-600 hover:underline"
           >
             main
           </a>
@@ -51,7 +51,7 @@ export default function ChangelogPage() {
             href="https://keepachangelog.com/en/1.1.0/"
             target="_blank"
             rel="noreferrer noopener"
-            className="text-brand-600 hover:underline dark:text-brand-400"
+            className="text-brand-600 hover:underline"
           >
             Keep a Changelog
           </a>
@@ -60,7 +60,7 @@ export default function ChangelogPage() {
       </header>
 
       {releases.length === 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
           CHANGELOG.md not found at build time — this page is a
           stub. See the{' '}
           <a
@@ -81,7 +81,7 @@ export default function ChangelogPage() {
         </div>
       )}
 
-      <div className="border-t border-slate-200 pt-6 text-sm text-slate-500 dark:border-slate-800">
+      <div className="border-t border-slate-200 pt-6 text-sm text-slate-500">
         <Link href="/" className="text-brand-600 hover:underline">
           ← Home
         </Link>
@@ -109,9 +109,9 @@ function ReleaseCard({ release }: { release: Release }) {
   return (
     <article
       id={id}
-      className="scroll-mt-20 rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+      className="scroll-mt-20 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
     >
-      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-3">
         <h2 className="font-mono text-2xl font-semibold tracking-tight">
           <a href={`#${id}`} className="hover:text-brand-600">
             {release.version}
@@ -119,7 +119,7 @@ function ReleaseCard({ release }: { release: Release }) {
         </h2>
         <div className="flex items-center gap-2 text-xs">
           {isUnreleased ? (
-            <span className="rounded bg-amber-100 px-2 py-0.5 font-mono uppercase tracking-wider text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+            <span className="rounded bg-amber-100 px-2 py-0.5 font-mono uppercase tracking-wider text-amber-800">
               unreleased
             </span>
           ) : (
@@ -134,7 +134,7 @@ function ReleaseCard({ release }: { release: Release }) {
               href={`https://github.com/StellarIndex/stellar-index/releases/tag/${release.version}`}
               target="_blank"
               rel="noreferrer noopener"
-              className="rounded border border-slate-200 px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600 dark:border-slate-700"
+              className="rounded border border-slate-200 px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600"
             >
               GitHub ↗
             </a>
@@ -153,14 +153,14 @@ function ReleaseCard({ release }: { release: Release }) {
 function BlockSection({ block }: { block: { kind: string; lines: string[] } }) {
   const tone =
     block.kind === 'Added'
-      ? 'text-emerald-700 dark:text-emerald-400'
+      ? 'text-emerald-700'
       : block.kind === 'Fixed'
-        ? 'text-sky-700 dark:text-sky-400'
+        ? 'text-sky-700'
         : block.kind === 'Changed'
-          ? 'text-amber-700 dark:text-amber-400'
+          ? 'text-amber-700'
           : block.kind === 'Removed' || block.kind === 'Deprecated'
-            ? 'text-rose-700 dark:text-rose-400'
-            : 'text-slate-700 dark:text-slate-300';
+            ? 'text-rose-700'
+            : 'text-slate-700';
 
   // Strip the leading "- " bullet from list items so we can group
   // by sub-item; preserve everything else as raw markdown the
@@ -183,7 +183,7 @@ function BlockSection({ block }: { block: { kind: string; lines: string[] } }) {
       <h3 className={`mb-2 text-xs font-semibold uppercase tracking-wider ${tone}`}>
         {block.kind}
       </h3>
-      <ul className="space-y-2 text-sm text-slate-700 dark:text-slate-300">
+      <ul className="space-y-2 text-sm text-slate-700">
         {items.map((it, i) => (
           <li key={i}>
             <MarkdownLite text={it} />
@@ -252,7 +252,7 @@ function MarkdownLite({ text }: { text: string }) {
       {tokens.map((t, i) => {
         if (t.kind === 'bold')
           return (
-            <strong key={i} className="font-semibold text-slate-900 dark:text-slate-100">
+            <strong key={i} className="font-semibold text-slate-900">
               {t.value}
             </strong>
           );
@@ -260,7 +260,7 @@ function MarkdownLite({ text }: { text: string }) {
           return (
             <code
               key={i}
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs dark:bg-slate-800"
+              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs"
             >
               {t.value}
             </code>
@@ -272,7 +272,7 @@ function MarkdownLite({ text }: { text: string }) {
               href={t.href}
               target={t.href.startsWith('http') ? '_blank' : undefined}
               rel={t.href.startsWith('http') ? 'noreferrer noopener' : undefined}
-              className="text-brand-600 hover:underline dark:text-brand-400"
+              className="text-brand-600 hover:underline"
             >
               {t.value}
             </a>

@@ -108,18 +108,18 @@ export function protocolMeta(name: string): ProtocolRegistryEntry | undefined {
 // categories fall through to a neutral chip (keeps rendering if the Go
 // registry adds a category before this map is updated).
 export const CATEGORY_TONE: Record<string, string> = {
-  dex: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
-  amm: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
-  lending: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200',
-  yield: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
-  bridge: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
-  oracle: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200',
-  token: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200',
+  dex: 'bg-slate-200 text-slate-800',
+  amm: 'bg-emerald-100 text-emerald-800',
+  lending: 'bg-sky-100 text-sky-800',
+  yield: 'bg-violet-100 text-violet-800',
+  bridge: 'bg-amber-100 text-amber-800',
+  oracle: 'bg-indigo-100 text-indigo-800',
+  token: 'bg-teal-100 text-teal-800',
 };
 
 export function categoryTone(category: string): string {
   return (
     CATEGORY_TONE[category] ??
-    'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+    'bg-slate-100 text-slate-700'
   );
 }

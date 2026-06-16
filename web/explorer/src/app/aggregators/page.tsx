@@ -73,7 +73,7 @@ export default function AggregatorsPage() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Aggregators</h1>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           Routers and yield wrappers — protocols that route into the
           underlying{' '}
           <Link href="/dexes" className="underline decoration-dotted">
@@ -90,7 +90,7 @@ export default function AggregatorsPage() {
 
       <Panel
         title="Why aggregators don't price into VWAP"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400 space-y-2"
+        bodyClassName="text-sm text-slate-600 space-y-2"
       >
         <p>
           A trade routed through the Soroswap router still emits a
@@ -116,7 +116,7 @@ export default function AggregatorsPage() {
 
       <Panel
         title="Coming next"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400 space-y-2"
+        bodyClassName="text-sm text-slate-600 space-y-2"
       >
         <p>
           Routed-via attribution (what fraction of each underlying pair
@@ -135,23 +135,23 @@ export default function AggregatorsPage() {
 
 function Card({ entry }: { entry: Entry }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">{entry.name}</h2>
         <span
           className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
             entry.type === 'router'
-              ? 'bg-brand-100 text-brand-700 dark:bg-brand-900 dark:text-brand-200'
-              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+              ? 'bg-brand-100 text-brand-700'
+              : 'bg-slate-100 text-slate-600'
           }`}
         >
           {entry.type === 'router' ? 'Router' : 'Yield vault'}
         </span>
       </div>
-      <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">
+      <p className="mt-3 text-sm text-slate-700">
         {entry.blurb}
       </p>
-      <ul className="mt-3 space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
+      <ul className="mt-3 space-y-1.5 text-xs text-slate-600">
         {entry.notes.map((n, i) => (
           <li key={i} className="flex gap-2">
             <span className="text-slate-400">•</span>
@@ -160,14 +160,14 @@ function Card({ entry }: { entry: Entry }) {
         ))}
       </ul>
       {entry.contractRefs && entry.contractRefs.length > 0 && (
-        <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
+        <div className="mt-4 border-t border-slate-200 pt-3">
           <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
             Mainnet contracts
           </div>
           <ul className="mt-1.5 space-y-1 text-xs">
             {entry.contractRefs.map((c) => (
               <li key={c.cstrkey} className="flex items-baseline justify-between gap-3">
-                <span className="text-slate-600 dark:text-slate-400">
+                <span className="text-slate-600">
                   {c.label}
                 </span>
                 <a

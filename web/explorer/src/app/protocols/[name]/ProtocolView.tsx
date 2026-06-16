@@ -93,7 +93,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         <Panel
           title="Couldn't load this protocol"
           source={source}
-          bodyClassName="text-sm text-slate-600 dark:text-slate-400"
+          bodyClassName="text-sm text-slate-600"
         >
           <p>
             The protocol directory is unreachable right now:{' '}
@@ -131,13 +131,13 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   return (
     <Shell name={name} label={label}>
       {/* ── Header ── */}
-      <header className="space-y-3 border-b border-slate-200 pb-5 dark:border-slate-800">
+      <header className="space-y-3 border-b border-slate-200 pb-5">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{label}</h1>
           <CategoryChip category={data.category} />
           <CompletenessBadge completeness={data.completeness} />
         </div>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           {data.description}
         </p>
         <AtAGlance data={data} analyticsAvailable={analyticsAvailable} windowDays={windowDays} />
@@ -246,7 +246,7 @@ function Shell({
           <ArrowLeft className="h-3 w-3" aria-hidden />
           All protocols
         </Link>{' '}
-        / <span className="text-slate-700 dark:text-slate-300">{label || name}</span>
+        / <span className="text-slate-700">{label || name}</span>
       </nav>
       {children}
     </div>
@@ -273,7 +273,7 @@ function CompletenessBadge({
   if (!completeness) {
     return (
       <span
-        className="rounded bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+        className="rounded bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wider text-slate-500"
         title="No completeness verdict recorded for this source yet."
       >
         Coverage unknown
@@ -283,7 +283,7 @@ function CompletenessBadge({
   if (completeness.complete) {
     return (
       <span
-        className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+        className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-800"
         title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString()} (ADR-0033 substrate + recognition + projection reconcile).`}
       >
         ✓ Verified complete
@@ -292,7 +292,7 @@ function CompletenessBadge({
   }
   return (
     <span
-      className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+      className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-amber-800"
       title={`Partial coverage to ledger #${completeness.watermark_ledger.toLocaleString()}.`}
     >
       Partial coverage
@@ -312,7 +312,7 @@ function Kpi({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="text-[10px] uppercase tracking-wider text-slate-500">
         {label}
       </div>
@@ -373,7 +373,7 @@ function AtAGlance({
       {bits.map((b, i) => (
         <span key={i} className="flex items-center gap-x-3">
           {i > 0 && (
-            <span aria-hidden className="text-slate-300 dark:text-slate-700">
+            <span aria-hidden className="text-slate-300">
               ·
             </span>
           )}
@@ -396,7 +396,7 @@ function Glance({
   return (
     <span>
       <span
-        className={`tabular-nums text-slate-700 dark:text-slate-300 ${mono ? 'font-mono' : 'font-semibold'}`}
+        className={`tabular-nums text-slate-700 ${mono ? 'font-mono' : 'font-semibold'}`}
       >
         {label}
       </span>{' '}
@@ -435,25 +435,25 @@ function EventBreakdown({
             <li key={b.event_type}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
                 <span
-                  className="truncate font-mono text-slate-700 dark:text-slate-300"
+                  className="truncate font-mono text-slate-700"
                   title={b.event_type}
                 >
                   {b.event_type}
                 </span>
                 <span className="shrink-0 tabular-nums text-slate-500">
-                  <span className="font-mono text-slate-700 dark:text-slate-300">
+                  <span className="font-mono text-slate-700">
                     {formatCompact(b.count)}
                   </span>{' '}
                   · {pct.toFixed(pct >= 10 ? 0 : 1)}%
                 </span>
               </div>
               <div
-                className="h-2.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
+                className="h-2.5 overflow-hidden rounded-full bg-slate-100"
                 role="img"
                 aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
               >
                 <div
-                  className="h-full rounded-full bg-brand-500 motion-safe:transition-[width] dark:bg-brand-400"
+                  className="h-full rounded-full bg-brand-500 motion-safe:transition-[width]"
                   style={{ width: `${Math.max(barPct, 1.5)}%` }}
                 />
               </div>
@@ -544,7 +544,7 @@ function ContractRoster({
         <button
           type="button"
           onClick={() => setSortKey(keyName)}
-          className={`ml-auto flex items-center gap-1 rounded uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 ${active ? 'text-brand-600' : 'hover:text-slate-700 dark:hover:text-slate-300'}`}
+          className={`ml-auto flex items-center gap-1 rounded uppercase tracking-wider focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 ${active ? 'text-brand-600' : 'hover:text-slate-700'}`}
         >
           {label}
           <span aria-hidden className="text-[8px]">
@@ -563,7 +563,7 @@ function ContractRoster({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <th scope="col" className="px-4 py-2">
@@ -581,11 +581,11 @@ function ContractRoster({
               <SortHeader label="Last seen" keyName="last_seen" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {[...factories, ...visibleInstances].map((c) => (
               <tr
                 key={c.contract_id}
-                className="hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                className="hover:bg-slate-50"
               >
                 <td className="px-4 py-2">
                   <RoleChip kind={c.kind} />
@@ -605,15 +605,15 @@ function ContractRoster({
                         {shortId(c.token0)} / {shortId(c.token1)}
                       </span>
                     ) : (
-                      <span className="text-slate-300 dark:text-slate-700">—</span>
+                      <span className="text-slate-300">—</span>
                     )}
                   </td>
                 )}
-                <td className="px-4 py-2 text-right font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                <td className="px-4 py-2 text-right font-mono tabular-nums text-slate-600">
                   {c.events != null && c.events > 0 ? (
                     formatCompact(c.events)
                   ) : (
-                    <span className="text-slate-300 dark:text-slate-700">
+                    <span className="text-slate-300">
                       {analyticsAvailable ? '0' : '—'}
                     </span>
                   )}
@@ -627,7 +627,7 @@ function ContractRoster({
                       {relativeAge(c.last_seen)}
                     </span>
                   ) : (
-                    <span className="text-slate-300 dark:text-slate-700">—</span>
+                    <span className="text-slate-300">—</span>
                   )}
                 </td>
               </tr>
@@ -660,13 +660,13 @@ const ROSTER_TOP_N = 25;
 function RoleChip({ kind }: { kind?: string }) {
   if (kind === 'factory') {
     return (
-      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-amber-800">
         factory
       </span>
     );
   }
   return (
-    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-slate-600">
       instance
     </span>
   );
@@ -687,7 +687,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
               <li key={f}>
                 <Link
                   href={`/contract?id=${encodeURIComponent(f)}`}
-                  className="inline-flex items-center rounded border border-slate-200 px-2 py-1 font-mono text-[11px] text-brand-600 hover:border-brand-500 hover:underline dark:border-slate-700"
+                  className="inline-flex items-center rounded border border-slate-200 px-2 py-1 font-mono text-[11px] text-brand-600 hover:border-brand-500 hover:underline"
                 >
                   {shortId(f)}
                 </Link>
@@ -706,7 +706,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
             {data.event_kinds.map((k) => (
               <li
                 key={k}
-                className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600"
               >
                 {k}
               </li>
@@ -715,7 +715,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-800">
+      <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-200 pt-3 text-xs">
         {data.verification_page && (
           <a
             href={`https://github.com/StellarIndex/stellar-index/blob/main/${data.verification_page}`}

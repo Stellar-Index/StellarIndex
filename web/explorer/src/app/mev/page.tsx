@@ -46,7 +46,7 @@ export default function MevPage() {
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           Suspicious-pattern detector feed. Sandwich attacks, oracle
           sandwiches, liquidation cascades, wash trading — the
           patterns Stellar exhibits, with the same canonical-VWAP
@@ -62,10 +62,10 @@ export default function MevPage() {
           {PATTERNS.map((p) => (
             <div
               key={p.name}
-              className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-900/50"
+              className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs"
             >
               <h3 className="text-sm font-semibold">{p.name}</h3>
-              <p className="mt-1 text-slate-600 dark:text-slate-400">
+              <p className="mt-1 text-slate-600">
                 {p.description}
               </p>
               <p className="mt-2 italic text-slate-500">
@@ -78,7 +78,7 @@ export default function MevPage() {
 
       <Panel
         title="Why this matters for pricing"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400 space-y-2"
+        bodyClassName="text-sm text-slate-600 space-y-2"
       >
         <p>
           MEV trades show up as ordinary swaps on the wire. Without
@@ -99,7 +99,7 @@ export default function MevPage() {
 
       <Panel
         title="Coming next"
-        bodyClassName="text-sm text-slate-600 dark:text-slate-400 space-y-2"
+        bodyClassName="text-sm text-slate-600 space-y-2"
       >
         <p>
           Auto-flagged event feed, per-kind tally, event drill-down

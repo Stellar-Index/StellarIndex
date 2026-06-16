@@ -23,7 +23,7 @@ export function HealthSummary() {
 
   if (isLoading || !data) {
     return (
-      <section className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+      <section className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-500">
         Loading health summary…
       </section>
     );
@@ -126,14 +126,14 @@ function Cell({
 }) {
   const valueClass =
     tone === 'ok'
-      ? 'text-emerald-700 dark:text-emerald-400'
+      ? 'text-emerald-700'
       : tone === 'warn'
-        ? 'text-amber-700 dark:text-amber-400'
+        ? 'text-amber-700'
         : tone === 'bad'
-          ? 'text-rose-700 dark:text-rose-400'
+          ? 'text-rose-700'
           : '';
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-md border border-slate-200 bg-white p-3">
       <div className="text-[10px] uppercase tracking-wider text-slate-500">
         {label}
       </div>

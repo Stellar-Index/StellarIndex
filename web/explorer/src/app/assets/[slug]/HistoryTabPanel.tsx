@@ -87,7 +87,7 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
     >
       <table className="w-full min-w-[640px] text-sm">
         <thead className="text-left text-xs uppercase tracking-wider text-slate-500">
-          <tr className="border-b border-slate-200 dark:border-slate-800">
+          <tr className="border-b border-slate-200">
             <th className="py-2 pr-3 font-medium">When</th>
             <th className="py-2 pr-3 font-medium">Source</th>
             <th className="py-2 pr-3 font-medium">Ledger</th>
@@ -100,9 +100,9 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
           {rows.map((r) => (
             <tr
               key={`${r.tx_hash}-${r.op_index}`}
-              className="border-b border-slate-100 last:border-0 dark:border-slate-800/60"
+              className="border-b border-slate-100 last:border-0"
             >
-              <td className="py-2 pr-3 font-mono text-xs text-slate-600 dark:text-slate-400">
+              <td className="py-2 pr-3 font-mono text-xs text-slate-600">
                 {r.tx_hash ? (
                   <a
                     href={`https://stellar.expert/explorer/public/tx/${r.tx_hash}`}
@@ -120,7 +120,7 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
               <td className="py-2 pr-3">
                 <Link
                   href={`/sources/${r.source}`}
-                  className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 hover:text-brand-600 dark:bg-slate-800 dark:text-slate-300"
+                  className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 hover:text-brand-600"
                 >
                   {r.source}
                 </Link>

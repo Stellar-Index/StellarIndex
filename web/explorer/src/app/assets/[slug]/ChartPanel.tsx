@@ -208,7 +208,7 @@ export function ChartPanel({
           </div>
         )}
         {error && !loading && (
-          <div className="flex h-[420px] items-center justify-center text-sm text-red-600 dark:text-red-400">
+          <div className="flex h-[420px] items-center justify-center text-sm text-red-600">
             {error === 'HTTP 404'
               ? 'No chart data for this asset + window yet'
               : `Chart data unavailable: ${error}`}
@@ -222,7 +222,7 @@ export function ChartPanel({
         {!loading && !error && data.length > 0 && (
           <>
             {meta?.truncated && meta.data_starts_at && (
-              <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+              <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 Showing data from{' '}
                 <strong>{formatYMD(meta.data_starts_at)}</strong> — the
                 deployment hasn&apos;t accumulated the full {timeframe}{' '}
@@ -261,7 +261,7 @@ function Picker<T extends string>({
       <span className="text-[11px] uppercase tracking-wider text-slate-500">
         {label}
       </span>
-      <div className="inline-flex overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
+      <div className="inline-flex overflow-hidden rounded-md border border-slate-200">
         {options.map((opt) => (
           <button
             key={opt.key}
@@ -270,7 +270,7 @@ function Picker<T extends string>({
             className={`px-2 py-1 text-xs ${
               opt.key === value
                 ? 'bg-brand-500 text-white'
-                : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+                : 'bg-white text-slate-600 hover:bg-slate-50'
             }`}
           >
             {opt.label}

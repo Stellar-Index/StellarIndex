@@ -134,7 +134,7 @@ export function AssetConverter({
       <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <label className="space-y-1">
           <span className="text-xs uppercase tracking-wider text-slate-500">From</span>
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
             <input
               type="number"
               value={amount}
@@ -154,7 +154,7 @@ export function AssetConverter({
                 tickers={allTickers}
               />
             ) : (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700">
                 {fromUnit}
               </span>
             )}
@@ -167,15 +167,15 @@ export function AssetConverter({
           onClick={() =>
             setDirection((d) => (d === 'fiat-to-asset' ? 'asset-to-fiat' : 'fiat-to-asset'))
           }
-          className="self-center rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:border-brand-500 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400 sm:mb-1"
+          className="self-center rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:border-brand-500 hover:text-brand-600 sm:mb-1"
         >
           ⇄
         </button>
 
         <label className="space-y-1">
           <span className="text-xs uppercase tracking-wider text-slate-500">To</span>
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
-            <span className="w-full text-2xl font-mono tabular-nums text-slate-900 dark:text-slate-100">
+          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
+            <span className="w-full text-2xl font-mono tabular-nums text-slate-900">
               {result != null ? formatResult(result) : '—'}
             </span>
             {direction === 'asset-to-fiat' ? (
@@ -188,7 +188,7 @@ export function AssetConverter({
                 tickers={allTickers}
               />
             ) : (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-slate-700">
                 {toUnit}
               </span>
             )}

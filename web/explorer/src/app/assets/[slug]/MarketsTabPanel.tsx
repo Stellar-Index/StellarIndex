@@ -83,7 +83,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
               <Th>Side</Th>
@@ -92,7 +92,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-slate-100">
             {matched.map((m) => (
               <Row key={`${m.base}|${m.quote}`} m={m} assetID={assetID} />
             ))}
@@ -107,9 +107,9 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
   const isBase = m.base === assetID;
   const counterparty = isBase ? m.quote : m.base;
   return (
-    <tr className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+    <tr className="hover:bg-slate-50">
       <Td>
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
           {isBase ? 'base' : 'quote'}
         </span>
       </Td>

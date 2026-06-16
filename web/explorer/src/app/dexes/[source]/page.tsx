@@ -112,22 +112,22 @@ export default async function SourceDetailPage({
       />
       <Link
         href="/dexes"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-brand-600"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All DEXes
       </Link>
 
-      <header className="space-y-2 border-b border-slate-200 pb-4 dark:border-slate-800">
+      <header className="space-y-2 border-b border-slate-200 pb-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">
             {info.name}
           </h1>
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-600">
             {info.type}
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-400">
+        <p className="max-w-3xl text-sm text-slate-600">
           {info.blurb}
         </p>
       </header>

@@ -21,7 +21,7 @@ export default function NotFound() {
         <h1 className="text-3xl font-semibold tracking-tight">
           Couldn&apos;t find that page.
         </h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+        <p className="text-sm text-slate-600">
           The URL doesn&apos;t map to anything on Stellar Index. If you
           followed a link, the destination may have been renamed or
           removed.

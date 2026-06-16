@@ -133,9 +133,9 @@ function Cell({
 }) {
   const subTone =
     tone === 'up'
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'text-emerald-600'
       : tone === 'down'
-        ? 'text-rose-600 dark:text-rose-400'
+        ? 'text-rose-600'
         : 'text-slate-500';
   const inner = (
     <>
@@ -154,12 +154,12 @@ function Cell({
     </>
   );
   const baseClass =
-    'block rounded-md border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900';
+    'block rounded-md border border-slate-200 bg-white p-3';
   if (href) {
     return (
       <Link
         href={href}
-        className={`${baseClass} transition hover:border-brand-300 hover:shadow-sm dark:hover:border-brand-700`}
+        className={`${baseClass} transition hover:border-brand-300 hover:shadow-sm`}
       >
         {inner}
       </Link>

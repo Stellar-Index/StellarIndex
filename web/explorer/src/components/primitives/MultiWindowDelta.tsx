@@ -39,11 +39,11 @@ export function MultiWindowDelta({
     >
       {windows.map((w, i) => (
         <span key={w.label} className="inline-flex items-center gap-1">
-          <span className="text-slate-500 dark:text-slate-400">{w.label}:</span>
+          <span className="text-slate-500">{w.label}:</span>
           <DirectionPill deltaPct={w.deltaPct} compact={compact} />
           {i < windows.length - 1 && (
             <span
-              className="text-slate-300 dark:text-slate-700"
+              className="text-slate-300"
               aria-hidden
             >
               ·
