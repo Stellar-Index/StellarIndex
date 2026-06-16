@@ -30,14 +30,13 @@ export function Footer() {
             ]}
           />
           <FooterColumn
-            title="Blockchain"
+            title="Explore"
             links={[
               { label: 'Exchanges', href: '/exchanges' },
               { label: 'DEXes', href: '/dexes' },
               { label: 'Lending', href: '/lending' },
               { label: 'Aggregators', href: '/aggregators' },
               { label: 'Oracles', href: '/oracles' },
-              { label: 'Networks', href: '/networks' },
             ]}
           />
           <FooterColumn

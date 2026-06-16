@@ -12,15 +12,10 @@ export interface VerifiedItem {
   name: string;
   class?: 'crypto' | 'stablecoin' | 'fiat';
   verified_issuer?: string;
-  network_count: number;
   // market_cap_usd is populated for fiat rows by /v1/assets/verified
   // (R-018 assets-unification step 5). Decimal string with 2
   // fractional digits. Empty for crypto/stablecoin rows.
   market_cap_usd?: string;
-  networks: Array<{
-    network: string;
-    data_quality: 'indexed' | 'external';
-  }>;
 }
 
 // CI builds use a stub hostname that doesn't resolve; bypass the
@@ -91,7 +86,7 @@ export function VerifiedCurrenciesStrip({
           Verified currencies
         </h2>
         <span className="text-xs text-slate-500 dark:text-slate-400">
-          {verified.length} cross-chain · catalogue
+          {verified.length} verified · catalogue
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -120,10 +115,6 @@ export function VerifiedCurrenciesStrip({
               />
             </svg>
             <span>{vc.ticker}</span>
-            <span className="text-[10px] text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-300">
-              {vc.network_count}
-              <span className="ml-0.5">net{vc.network_count === 1 ? '' : 's'}</span>
-            </span>
           </Link>
         ))}
       </div>

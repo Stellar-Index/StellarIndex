@@ -440,16 +440,9 @@ export type AssetsPage = {
  *   - `asset_class=stablecoin` → 5 stablecoin catalogue rows.
  *   - `asset_class=blockchain` → 21 crypto catalogue rows
  *                                (server-side alias for `crypto`).
- *
- * The `network` param can narrow blockchain/stablecoin to a single
- * chain (e.g. `network=ethereum`). For non-Stellar networks the
- * server returns catalogue rows projected to that chain via
- * /v1/assets?network= (handler routes to
- * handleAssetListExternalNetwork).
  */
 export function useAssets(
   assetClass: AssetClassFilter,
-  network: string | undefined,
   limit: number,
   cursor: string,
   q: string | undefined,
@@ -463,7 +456,6 @@ export function useAssets(
       '/v1/assets',
       'unified',
       assetClass,
-      network ?? '',
       limit,
       cursor,
       q ?? '',
@@ -472,7 +464,6 @@ export function useAssets(
     queryFn: async () => {
       const env = await apiGet<AssetsListEnvelope>('/v1/assets', {
         asset_class: assetClass,
-        ...(network && network !== 'all' ? { network } : {}),
         limit,
         ...(cursor ? { cursor } : {}),
         ...(q ? { q } : {}),

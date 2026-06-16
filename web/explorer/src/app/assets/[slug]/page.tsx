@@ -12,14 +12,11 @@ import { AssetAbout } from './AssetAbout';
 import { AssetConverter } from './AssetConverter';
 import { ChartPanel } from './ChartPanel';
 import { PriceSparklines } from './PriceSparklines';
-// IssuerPanel intentionally NOT imported here — issuer info is
-// Stellar-network-specific and lives on /assets/{slug}/stellar
-// per the assets-redesign spec (R-018 phase 2).
+import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
-import { NetworksPanel } from './NetworksPanel';
 import { lookupGlobalAsset, getCatalogue, type GlobalAssetView } from '../catalogue';
 
 /**
@@ -205,7 +202,7 @@ interface PriceResp {
  * is the cross-chain identity surface (when the route's slug
  * happens to be a verified-currency slug).
  */
-// GlobalAssetView lives in ../catalogue.ts (shared with [network]).
+// GlobalAssetView lives in ../catalogue.ts.
 
 // Static export hits every page once at build time. CI's stub
 // hostname doesn't resolve, and Node's DNS retry budget swallows
@@ -287,8 +284,8 @@ function getBuildCoinsCache(): Promise<Map<string, CoinSummary> | null> {
 
 // fetchVerifiedSlugsForStaticParams pulls the verified-currency
 // catalogue slugs from the shared catalogue (single
-// /v1/assets/verified call, memoised across [slug] and
-// [network] generateStaticParams).
+// /v1/assets/verified call, memoised across this route's
+// generateStaticParams).
 async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
   const map = await getCatalogue();
   return Array.from(map.keys());
@@ -304,7 +301,7 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 // Shape discriminator: /v1/assets/{slug} returns TWO different
 // wire shapes (per CLAUDE.md "Things that will surprise you"):
 //   - GlobalAssetView (catalogue slug like "usdc", "us-dollar",
-//     "btc"): keys are ticker/slug/name/class/networks. NO
+//     "btc"): keys are ticker/slug/name/class. NO
 //     asset_id, NO code.
 //   - AssetDetail (canonical asset_id like "USDC-GA5Z...",
 //     "native"): keys are asset_id/code/issuer/...
@@ -470,18 +467,16 @@ export async function generateMetadata({
     }
   }
 
-  // Cross-chain identity (catalogue match) → multi-network framing.
+  // Verified-currency catalogue match → "<Class>" framing.
   // Stellar-only (no catalogue) → "Stellar asset" framing.
   const classLabel = globalView?.class
     ? globalView.class.charAt(0).toUpperCase() + globalView.class.slice(1)
     : null;
   const title = globalView
-    ? `${code}${suffix} — ${classLabel ?? 'Cross-chain asset'}`
+    ? `${code}${suffix} — ${classLabel ?? 'Verified asset'}`
     : `${code}${suffix} — Stellar asset`;
   const description = globalView
-    ? `${globalView.name}: live prices and markets across ${globalView.networks
-        .map((n) => n.network.charAt(0).toUpperCase() + n.network.slice(1))
-        .join(', ')}.`
+    ? `${globalView.name}: live prices and markets on Stellar.`
     : priceNum != null
       ? `${code} on Stellar:${suffix} · live VWAP across on-chain DEXes, classic SDEX, and major exchanges.`
       : `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`;
@@ -523,12 +518,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   ]);
 
   // For verified-catalogue slugs, /assets/[slug] is the
-  // cross-chain identity page — no issuer-specific info, no
-  // Stellar SDEX markets. Issuer + Stellar trades belong on
-  // /assets/[slug]/Stellar (the [network] route). This branch
-  // fires regardless of whether /v1/coins also returned a row
-  // for the slug (USDC has rows; XLM has native); the catalogue
-  // dispatch is authoritative for the parent page.
+  // verified-currency identity page. This branch fires regardless
+  // of whether /v1/coins also returned a row for the slug (USDC
+  // has rows; XLM has native); the catalogue dispatch is
+  // authoritative for the parent page.
   if (globalViewEarly) {
     return <VerifiedCurrencyView slug={slug} view={globalViewEarly} />;
   }
@@ -738,14 +731,16 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         )}
       </header>
 
-      {globalView && globalView.networks.length > 0 && (
-        <NetworksPanel
-          ticker={globalView.ticker}
-          slug={globalView.slug}
-          networks={globalView.networks}
-          source={asExample(`/v1/assets/${globalView.slug}`)}
-        />
-      )}
+      {(() => {
+        const parts = coin.asset_id.split('-');
+        const issuer =
+          parts.length === 2 && parts[1].startsWith('G') ? parts[1] : null;
+        return issuer ? (
+          <Suspense fallback={null}>
+            <IssuerPanel gStrkey={issuer} />
+          </Suspense>
+        ) : null;
+      })()}
 
       <Suspense fallback={null}>
         <AssetTabs slug={coin.slug} hasIssuer={false} />
@@ -760,10 +755,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           markets={<MarketsTabPanel assetID={coin.asset_id} />}
           history={<HistoryTabPanel assetID={coin.asset_id} />}
           supply={<SupplyTabPanel assetID={coin.asset_id} />}
-          // Issuer panel removed per R-018 phase 2 — Stellar-
-          // specific issuer info now lives on /assets/{slug}/stellar.
-          // The NetworksPanel above links into the per-network deep
-          // dive when the catalogue has a Stellar entry.
+          // Issuer detail is rendered inline above for classic
+          // (G-strkey) issuers.
           liquidity={
             <LiquidityTabPanel assetID={coin.asset_id} code={coin.code} />
           }
@@ -1347,9 +1340,9 @@ function Stat({
 // loops on a /v1/coins/{slug} retry that's never going to succeed.
 //
 // Renders: header with name + ticker + class + USD price (from
-// GlobalAssetView.price_usd); networks panel; chart panel (only
-// fires for fiat:fiat pairs via /v1/chart's fx_quotes path —
-// crypto verified slugs without a Stellar issuer skip the chart).
+// GlobalAssetView.price_usd); chart panel (only fires for
+// fiat:fiat pairs via /v1/chart's fx_quotes path — crypto
+// verified slugs without a Stellar issuer skip the chart).
 function VerifiedCurrencyView({
   slug,
   view,
@@ -1359,8 +1352,7 @@ function VerifiedCurrencyView({
 }) {
   const isFiat = (view as GlobalAssetView & { class?: string }).class === 'fiat';
   // For fiat tickers the canonical chart asset_id is `fiat:<ISO>`.
-  // For crypto verified slugs we don't have a chart for the slug
-  // itself; the per-network drill-down covers that.
+  // For crypto verified slugs we don't have a slug-level chart.
   const chartAssetID = isFiat ? `fiat:${view.ticker}` : null;
   const priceNum = view.price_usd ? Number(view.price_usd) : null;
   return (
@@ -1393,12 +1385,6 @@ function VerifiedCurrencyView({
           </p>
         )}
       </header>
-      <NetworksPanel
-        ticker={view.ticker}
-        slug={view.slug}
-        networks={view.networks ?? []}
-        source={asExample(`/v1/assets/${view.slug}`)}
-      />
 
       {chartAssetID && (
         <ChartPanel assetID={chartAssetID} />

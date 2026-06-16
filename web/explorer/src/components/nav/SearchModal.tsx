@@ -130,7 +130,6 @@ const STATIC_PAGES: Result[] = [
   { type: 'page', label: 'Aggregators', href: '/aggregators' },
   { type: 'page', label: 'Oracles', href: '/oracles' },
   { type: 'page', label: 'Sources', href: '/sources' },
-  { type: 'page', label: 'Networks', href: '/networks' },
   {
     type: 'page',
     label: 'Methodology',

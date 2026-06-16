@@ -24,9 +24,8 @@ import { formatCompact } from '@/lib/format';
  *     ticker-or-canonical-id LookupBySlug).
  *
  * Columns are deliberately data-dense and right-aligned for
- * numerics. Issuer is intentionally NOT a column — that's a
- * Stellar-network-specific concern and belongs on the
- * `/assets/{slug}/{network}` deep-dive route.
+ * numerics. Issuer is intentionally NOT a column — issuer detail
+ * is surfaced inline on the `/assets/{slug}` detail page.
  */
 
 // MARKET_CAP_VOLUME_THRESHOLD_USD — below this 24h USD volume, the
@@ -41,27 +40,8 @@ const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 const ASSET_CLASS_OPTIONS: { value: AssetClassFilter; label: string }[] = [
   { value: 'all', label: 'All Assets' },
   { value: 'fiat', label: 'Fiat Currency' },
-  { value: 'blockchain', label: 'Blockchain' },
+  { value: 'blockchain', label: 'Crypto' },
   { value: 'stablecoin', label: 'Stablecoin' },
-];
-
-// NETWORK_OPTIONS — chains the catalogue knows about plus Stellar
-// (which the indexer is the source of truth for). The Network
-// dropdown only shows when asset_class is "blockchain" or
-// "stablecoin" — fiats have no network and "All" mixes everything.
-const NETWORK_OPTIONS = [
-  { value: 'all', label: 'All networks' },
-  { value: 'stellar', label: 'Stellar' },
-  { value: 'ethereum', label: 'Ethereum' },
-  { value: 'solana', label: 'Solana' },
-  { value: 'polygon', label: 'Polygon' },
-  { value: 'base', label: 'Base' },
-  { value: 'arbitrum', label: 'Arbitrum' },
-  { value: 'tron', label: 'Tron' },
-  { value: 'bitcoin', label: 'Bitcoin' },
-  { value: 'bsc', label: 'BSC' },
-  { value: 'avalanche', label: 'Avalanche' },
-  { value: 'xrpl', label: 'XRPL' },
 ];
 
 function parseAssetClass(raw: string | null): AssetClassFilter {
@@ -92,22 +72,11 @@ export function AssetsTable({
   const limitParam = params.get('limit');
   const queryParam = params.get('q') ?? '';
   const assetClass = parseAssetClass(params.get('asset_class'));
-  const networkParam = params.get('network') ?? 'all';
 
   const limit = parseLimit(limitParam);
 
-  // Network filter is only meaningful for blockchain/stablecoin
-  // classes; the API ignores `network` on fiat and on the "all"
-  // unified listing (catalogue's fiats have empty networks[] and
-  // the unified walk doesn't sub-filter).
-  const networkPassThrough =
-    assetClass === 'blockchain' || assetClass === 'stablecoin'
-      ? networkParam
-      : 'all';
-
   const { data, isLoading, isError, error } = useAssets(
     assetClass,
-    networkPassThrough,
     limit,
     cursor,
     queryParam || undefined,
@@ -135,7 +104,6 @@ export function AssetsTable({
       limit: string;
       q: string;
       asset_class: string;
-      network: string;
     }>,
   ) {
     const next = new URLSearchParams(params.toString());
@@ -168,15 +136,7 @@ export function AssetsTable({
             // Reset cursor when class changes — different phase,
             // different stream.
             cursor: '',
-            // Reset network when leaving blockchain/stablecoin.
-            ...(v !== 'blockchain' && v !== 'stablecoin'
-              ? { network: '' }
-              : {}),
           })
-        }
-        network={networkParam}
-        onNetworkChange={(v) =>
-          setQuery({ network: v === 'all' ? '' : v, cursor: '' })
         }
       />
 
@@ -244,13 +204,12 @@ export function AssetsTable({
         Live data from{' '}
         <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
           /v1/assets?asset_class={assetClass}
-          {networkPassThrough !== 'all' ? `&network=${networkPassThrough}` : ''}
         </code>
         . Catalogue rows surface first (market-cap desc — fiats top
         the chart), then long-tail Stellar-classic rows by 24h
         volume. Per-asset issuer + on-chain pool detail lives on{' '}
         <code className="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-800">
-          /assets/&#123;slug&#125;/stellar
+          /assets/&#123;slug&#125;
         </code>
         .
       </p>
@@ -265,8 +224,6 @@ function FilterBar({
   onLimitChange,
   assetClass,
   onAssetClassChange,
-  network,
-  onNetworkChange,
 }: {
   q: string;
   onQChange: (v: string) => void;
@@ -274,11 +231,7 @@ function FilterBar({
   onLimitChange: (v: number) => void;
   assetClass: AssetClassFilter;
   onAssetClassChange: (v: AssetClassFilter) => void;
-  network: string;
-  onNetworkChange: (v: string) => void;
 }) {
-  const showNetwork =
-    assetClass === 'blockchain' || assetClass === 'stablecoin';
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -297,22 +250,6 @@ function FilterBar({
             {opt.label}
           </button>
         ))}
-        {showNetwork && (
-          <>
-            <span className="ml-3 text-slate-500">Network:</span>
-            <select
-              value={network}
-              onChange={(e) => onNetworkChange(e.target.value)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
-            >
-              {NETWORK_OPTIONS.map((n) => (
-                <option key={n.value} value={n.value}>
-                  {n.label}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

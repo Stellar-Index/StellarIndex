@@ -32,7 +32,7 @@ export function Navbar() {
         {/* Desktop nav */}
         <div className="hidden items-center gap-1 text-sm md:flex">
           <NavLink href="/assets" label="Assets" />
-          <Dropdown label="Blockchain" items={BLOCKCHAIN_ITEMS} />
+          <Dropdown label="Explore" items={EXPLORE_ITEMS} />
           <NavLink
             href="https://docs.stellarindex.io"
             label="API Docs"
@@ -83,8 +83,8 @@ function MobileDrawer({ onClose }: { onClose: () => void }) {
         Assets
       </Link>
       <MobileSection
-        label="Blockchain"
-        items={BLOCKCHAIN_ITEMS}
+        label="Explore"
+        items={EXPLORE_ITEMS}
         onClose={onClose}
       />
       <a
@@ -298,7 +298,7 @@ type Item = {
   description?: string;
 };
 
-const BLOCKCHAIN_ITEMS: Item[] = [
+const EXPLORE_ITEMS: Item[] = [
   {
     label: 'Ledgers',
     href: '/ledgers',
@@ -308,7 +308,7 @@ const BLOCKCHAIN_ITEMS: Item[] = [
   {
     label: 'Assets',
     href: '/assets',
-    description: 'Every asset across every connected network.',
+    description: 'Every asset on Stellar.',
   },
   {
     label: 'Exchanges',
@@ -341,11 +341,6 @@ const BLOCKCHAIN_ITEMS: Item[] = [
     label: 'Oracles',
     href: '/oracles',
     description: 'On-chain price oracles + the streams they publish.',
-  },
-  {
-    label: 'Networks',
-    href: '/networks',
-    description: 'Per-network macro pulse — ingest tip, totals, contributors.',
   },
 ];
 

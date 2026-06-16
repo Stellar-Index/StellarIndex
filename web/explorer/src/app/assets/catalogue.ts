@@ -1,32 +1,20 @@
 /**
- * Shared build-time catalogue source for /assets/[slug] and
- * /assets/[slug]/[network] static export.
+ * Shared build-time catalogue source for /assets/[slug] static
+ * export.
  *
  * Next.js's data-cache opts out of dedup when `signal` is set on
  * fetch, so without a module-level memo every prerendered route
  * would re-fetch `/v1/assets/{slug}` and the build would trip
- * r1's anonymous-tier rate limit. Both [slug] and [slug]/[network]
- * routes share this single `/v1/assets/verified` call (retried on
- * 429) to build a slug → GlobalAssetView map.
+ * r1's anonymous-tier rate limit. The [slug] route shares this
+ * single `/v1/assets/verified` call (retried on 429) to build a
+ * slug → GlobalAssetView map.
  *
  * The catalogue listing already carries `ticker`, `slug`, `name`,
- * `class`, and `networks[]` per entry — that's everything the
- * static pages need at build time, so per-slug fetches are
- * redundant.
+ * and `class` per entry — that's everything the static pages need
+ * at build time, so per-slug fetches are redundant.
  */
 
 import { API_BASE_URL } from '@/api/client';
-
-export interface NetworkEntry {
-  network: string;
-  data_quality: 'indexed' | 'external';
-  asset_id?: string;
-  code?: string;
-  issuer?: string;
-  contract?: string;
-  external_link?: string;
-  deep_link?: string;
-}
 
 export interface GlobalAssetView {
   ticker: string;
@@ -41,7 +29,6 @@ export interface GlobalAssetView {
   price_authority?: 'vwap_native' | 'aggregator_avg' | 'triangulated';
   price_sources?: string[];
   price_as_of?: string | null;
-  networks: NetworkEntry[];
 }
 
 interface VerifiedCurrencyListItem {
@@ -49,7 +36,6 @@ interface VerifiedCurrencyListItem {
   slug: string;
   name: string;
   class?: string;
-  networks: NetworkEntry[];
 }
 
 const isCIStub =
@@ -94,7 +80,6 @@ async function fetchCatalogueWithRetry(): Promise<Map<string, GlobalAssetView>> 
           slug: item.slug,
           name: item.name,
           class: item.class as GlobalAssetView['class'],
-          networks: item.networks ?? [],
         });
       }
       return map;

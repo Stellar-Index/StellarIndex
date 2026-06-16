@@ -87,3 +87,8 @@
 /currencies/sek/  /assets/swedish-krona/  301
 /currencies/norwegian-krone/  /assets/norwegian-krone/  301
 /currencies/nok/  /assets/norwegian-krone/  301
+
+# Stellar-focus refactor: retired cross-chain routes
+/networks            /            301
+/networks/*          /            301
+/assets/:slug/:network   /assets/:slug   301

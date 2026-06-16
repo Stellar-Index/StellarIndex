@@ -46,10 +46,10 @@ export function NetworkLivePanel() {
         </div>
 
         <Link
-          href="/networks"
+          href="/ledgers"
           className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
         >
-          Open network <ArrowRight className="h-3 w-3" />
+          Open ledgers <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
     </Panel>
