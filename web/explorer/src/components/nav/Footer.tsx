@@ -17,8 +17,8 @@ export function Footer() {
   const pathname = usePathname();
   if (pathname?.startsWith('/embed/')) return null;
   return (
-    <footer className="mt-16 border-t border-slate-200 bg-white py-8">
-      <div className="mx-auto max-w-7xl px-6 text-xs text-slate-500">
+    <footer className="mt-16 border-t border-line bg-surface py-8">
+      <div className="mx-auto max-w-7xl px-6 text-xs text-ink-muted">
         <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
           <FooterColumn
             title="Browse"
@@ -66,13 +66,13 @@ export function Footer() {
             ]}
           />
         </div>
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
           <div className="flex flex-wrap items-center gap-4">
             <span>
               API:{' '}
               <a
                 href="https://api.stellarindex.io"
-                className="font-mono hover:text-slate-700"
+                className="font-mono hover:text-ink-body"
               >
                 api.stellarindex.io
               </a>
@@ -81,7 +81,7 @@ export function Footer() {
               href="https://github.com/StellarIndex/stellar-index"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-slate-700"
+              className="hover:text-ink-body"
             >
               GitHub
             </a>
@@ -111,7 +111,7 @@ function BuildBadge() {
       target="_blank"
       rel="noopener noreferrer"
       title={`Built ${time} from commit ${sha}`}
-      className="font-mono text-[10px] tracking-tight text-slate-400 hover:text-slate-700"
+      className="font-mono text-[10px] tracking-tight text-ink-faint hover:text-ink-body"
     >
       build {short}
       {date && <span className="hidden md:inline"> · {date}</span>}
@@ -128,7 +128,7 @@ function FooterColumn({
 }) {
   return (
     <div className="space-y-2">
-      <h4 className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+      <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
         {title}
       </h4>
       <ul className="space-y-1">
@@ -139,7 +139,7 @@ function FooterColumn({
                 href={l.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-slate-700"
+                className="hover:text-ink-body"
               >
                 {l.label}
               </a>
@@ -148,7 +148,7 @@ function FooterColumn({
             <li key={l.href}>
               <Link
                 href={l.href}
-                className="hover:text-slate-700"
+                className="hover:text-ink-body"
               >
                 {l.label}
               </Link>
