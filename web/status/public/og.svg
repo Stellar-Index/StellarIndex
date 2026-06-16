@@ -1,33 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#022c22"/>
-      <stop offset="100%" stop-color="#064e3b"/>
-    </linearGradient>
-  </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="#fbfcfe"/>
+  <rect x="0" y="0" width="1200" height="630" fill="none" stroke="#e3e8ef" stroke-width="2"/>
 
-  <!-- Pulse dot -->
-  <circle cx="100" cy="100" r="14" fill="#10b981"/>
-  <circle cx="100" cy="100" r="28" fill="none" stroke="#10b981" stroke-width="2" opacity="0.3"/>
+  <!-- Brand mark tile -->
+  <rect x="80" y="78" width="56" height="56" rx="12" fill="#1f4ae0"/>
+  <path d="M 96 116 L 105 107 L 112 113 L 124 96"
+        fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="124" cy="96" r="4" fill="#ffffff"/>
 
-  <text x="140" y="110" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="32" font-weight="600" fill="#ecfdf5">
+  <text x="156" y="116" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="34" font-weight="600" fill="#0b1220">
     Stellar Index
   </text>
 
-  <text x="80" y="280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="76" font-weight="700" fill="#ecfdf5">
+  <text x="80" y="290" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="80" font-weight="700" letter-spacing="-2" fill="#0b1220">
     System status
   </text>
 
-  <text x="80" y="380" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="400" fill="#a7f3d0">
+  <text x="80" y="384" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="400" fill="#37415b">
     Live per-service health, latency p50/p95/p99,
   </text>
-  <text x="80" y="420" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="400" fill="#a7f3d0">
+  <text x="80" y="426" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="400" fill="#37415b">
     ingest freshness, active incidents, and history.
   </text>
 
-  <text x="80" y="560" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="20" font-weight="500" fill="#34d399">
+  <!-- operational dot -->
+  <circle cx="92" cy="552" r="7" fill="#22c55e"/>
+  <text x="112" y="560" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="22" font-weight="500" fill="#1f4ae0">
     status.stellarindex.io
   </text>
 </svg>

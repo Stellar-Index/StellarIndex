@@ -1,5 +1,22 @@
 import type { Metadata } from 'next';
+import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+
+// Inter (UI) + JetBrains Mono (numeric / addresses / code) — loaded exactly
+// like the explorer so the status page renders in the same type system.
+// next/font self-hosts both at build time (no runtime Google dependency, no
+// layout shift) and exposes them as the --font-sans / --font-mono CSS
+// variables the Tailwind theme reads.
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-sans',
+});
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-mono',
+});
 
 const SITE_URL = 'https://status.stellarindex.io';
 const SITE_DESCRIPTION =
@@ -41,8 +58,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-surface-subtle">{children}</body>
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <body className="min-h-screen bg-surface-canvas">{children}</body>
     </html>
   );
 }

@@ -2,18 +2,72 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
-  --font-mono:
-    'SF Mono', Menlo, Consolas, ui-monospace, monospace;
+/* ─────────────────────────────────────────────────────────────────────────
+   Stellar Index — base layer (light mode only, v2 redesign 2026-06-17).
+   Shared with the explorer (web/explorer/src/app/globals.css) so the status
+   page reads as one product with the main site. Fonts (Inter / JetBrains
+   Mono) are loaded via next/font in layout.tsx and exposed as --font-sans /
+   --font-mono on <html>. Design tokens live in tailwind.config.ts; see
+   docs/architecture/design-system.md.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    /* Inter: enable contextual alternates + stylistic set so the type
+       reads crisp; numeric alignment is handled by the .tnum utility. */
+    font-feature-settings: 'cv11', 'ss01';
+    font-variant-ligatures: contextual;
+  }
+
+  body {
+    @apply bg-surface-canvas text-ink-body antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-ink;
+    text-wrap: balance;
+  }
+
+  ::selection {
+    @apply bg-brand-600/15 text-ink;
+  }
+
+  /* Consistent, accessible focus ring across interactive elements. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-600/60 ring-offset-2 ring-offset-surface-canvas;
+  }
+
+  /* Hairline default border colour so `border` alone reads as a hairline. */
+  *,
+  ::before,
+  ::after {
+    border-color: theme('colors.line.DEFAULT');
+  }
 }
 
-html { background: theme('colors.surface.subtle'); color: theme('colors.ink.DEFAULT'); }
-body { font-family: var(--font-sans); font-feature-settings: 'cv11'; }
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+@layer utilities {
+  /* Tabular (monospaced) figures for aligned numeric columns. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
 }
-.live-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

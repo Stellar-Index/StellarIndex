@@ -140,7 +140,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <h2
           key={i}
-          className="mt-8 text-xl font-semibold tracking-tight text-ink border-b border-surface-line pb-1"
+          className="mt-8 text-xl font-semibold tracking-tight text-ink border-b border-line pb-1"
         >
           <Inline text={b.text} />
         </h2>
@@ -187,7 +187,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <pre
           key={i}
-          className="overflow-x-auto rounded-md border border-surface-line bg-surface-subtle p-3 text-xs leading-5"
+          className="overflow-x-auto rounded-md border border-line bg-surface-muted p-3 text-xs leading-5"
         >
           <code>{b.code}</code>
         </pre>
@@ -196,13 +196,13 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <blockquote
           key={i}
-          className="border-l-2 border-surface-line pl-4 text-sm italic text-ink-muted"
+          className="border-l-2 border-line pl-4 text-sm italic text-ink-muted"
         >
           <Inline text={b.text} />
         </blockquote>
       );
     case 'hr':
-      return <hr key={i} className="border-surface-line" />;
+      return <hr key={i} className="border-line" />;
   }
 }
 
