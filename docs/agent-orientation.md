@@ -14,7 +14,9 @@ and trade for every major Stellar protocol — captured from a certified
 raw ledger lake (ADR-0034), verified for completeness (ADR-0033), and
 attributed by contract identity (ADR-0035; per-protocol verification
 pages live in docs/protocols/). Long-term it grows into a comprehensive
-blockchain explorer (classic/native + Soroban).
+Stellar explorer (classic/native + Soroban) — not a multi-chain explorer;
+the cross-chain asset model (R-018) was removed in the Stellar-focus
+refactor (docs/architecture/stellar-focus-refactor-plan.md).
 
 Its flagship product is the **pricing API**: it ingests on-chain and
 off-chain price data, aggregates into VWAP / TWAP / OHLC, and serves
@@ -392,13 +394,15 @@ linked doc first.
 - **`/v1/assets/{slug}` returns two different wire shapes.**
   When `{slug}` is a verified-currency catalogue slug (`usdc`,
   `eurc`, `aqua`, …) the handler returns `GlobalAssetView`
-  (cross-chain identity + `networks[]`); when it's a canonical
-  asset_id (`USDC-G…`, `native`, `C…`, `fiat:USD`) it returns
-  `AssetDetail` (per-Stellar-asset detail). Same route, two
-  shapes — Go's mux dispatches on the catalogue lookup before
-  parsing as canonical. Clients distinguish via wire-shape
-  discriminators (`ticker` + `networks` array vs `asset_id` +
-  `type`). See R-018 / `docs/architecture/multi-network-assets-migration.md`.
+  (Stellar-asset identity + headline USD price + Stellar issuance);
+  when it's a canonical asset_id (`USDC-G…`, `native`, `C…`,
+  `fiat:USD`) it returns `AssetDetail` (per-Stellar-asset detail).
+  Same route, two shapes — Go's mux dispatches on the catalogue
+  lookup before parsing as canonical. Clients distinguish via
+  wire-shape discriminators (`ticker` + `price_usd` vs `asset_id`
+  + `type`). The old cross-chain `networks[]` array + the
+  `/v1/assets/{slug}/{network}` drill-down were removed in the
+  Stellar-focus refactor (docs/architecture/stellar-focus-refactor-plan.md).
 - **`internal/currency` is the verified-currency trust surface.**
   Hand-curated YAML at `internal/currency/data/seed.yaml`, embedded
   in the binary via `//go:embed`. Adding a verified currency means

@@ -1,11 +1,22 @@
 ---
 title: Multi-network assets migration — consolidate /v1/coins into /v1/assets
 date: 2026-05-11
-status: in progress
+status: superseded
+superseded_by: docs/architecture/stellar-focus-refactor-plan.md (2026-06-16)
 scope: v1.0 launch-blocking
 related_findings: R-018 (docs/review-2026-05-10.md)
-last_verified: 2026-05-11
+last_verified: 2026-06-16
 ---
+
+> **SUPERSEDED (2026-06-16).** The cross-chain / multi-network asset model
+> described below (the `networks[]` identity, per-network drill-down routes,
+> and browse-by-blockchain surfaces) was **removed** in the Stellar-focus
+> refactor — see `docs/architecture/stellar-focus-refactor-plan.md`. The
+> `/v1/coins → /v1/assets` consolidation itself stands; only the cross-chain
+> presentation was reverted. Non-Stellar coins that remain (BTC/ETH/…) are
+> pricing-reference only (`reference_only`), kept solely for the proposal's
+> divergence cross-check, and are not browseable entities. This doc is
+> retained as a historical record of the (now-reverted) multi-network design.
 
 # Multi-network assets migration
 
