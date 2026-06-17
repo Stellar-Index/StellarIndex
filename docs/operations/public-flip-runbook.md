@@ -4,8 +4,8 @@ Makes the project completely open source — publicly accessible and
 reproducible. Strategy: a **fresh single-commit public repo** — never
 push the private history (it once contained a GCP key that GitHub
 push-protection caught; and the audit working dirs carry internal r1
-security evidence). See `public-flip-preflight-2026-06-12.md` for the
-CLEAN pre-flight (no secrets / Apache-2.0 / VERSIONS current).
+security evidence). A pre-flight check (no secrets / Apache-2.0 / VERSIONS current)
+gates the push.
 
 ## Prerequisites (operator-only — cannot be scripted)
 

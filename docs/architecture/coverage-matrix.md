@@ -15,8 +15,7 @@ now has a `Prod` column with curl-tested status against
 production review for the full production findings register
 (R-001 through R-023).
 **Re-baselined: 2026-06-13** — `Prod` cells re-read against the
-2026-06-12 production re-probe
-([prod-verification-2026-06-12.md](prod-verification-2026-06-12.md)).
+2026-06-12 production re-probe.
 The probes run against the production deployment:
 `https://api.stellarindex.io`, binary
 `v0.5.0-rc.108-65-gb040514d` per `/v1/version`.
@@ -62,8 +61,7 @@ the 2026-06-12 probe unless a cell says otherwise:
 Counts cover all 90 per-requirement `Prod` cells (the 2026-05-10
 snapshot read 28✅ / 13⚠ / 5❌ / 18📦 / 3🟡 / 2⏳ on a smaller
 tally). The 2026-06-12 probe run itself scored 30 PASS · 4 FAIL ·
-2 SKIPPED(auth) · 5 ⚠ — see
-[prod-verification-2026-06-12.md](prod-verification-2026-06-12.md) §3.
+2 SKIPPED(auth) · 5 ⚠.
 
 | Status | Count | Meaning |
 |---|---|---|
@@ -695,7 +693,7 @@ week lands.
   review doc tracks each row → PR.
 
 - **2026-06-13** — **Re-baseline against the 2026-06-12 production
-  re-probe** ([prod-verification-2026-06-12.md](prod-verification-2026-06-12.md))
+  re-probe**
   on the production deployment (`api.stellarindex.io`,
   `v0.5.0-rc.108-65-gb040514d`). 19 `Prod` cells flipped to ✅
   (all five 2026-05-10 ❌s — S6.4, F2.1, F2.2, F5.3, F6.5; all

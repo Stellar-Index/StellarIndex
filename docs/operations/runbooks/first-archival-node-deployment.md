@@ -4,7 +4,6 @@ last_verified: 2026-05-03
 status: SUPERSEDED 2026-04-23 (late) — retained for historical context
 superseded_by:
   - docs/operations/r1-deployment-state.md
-  - docs/architecture/ecosystem-review-2026-04-23.md
 ---
 
 > **⚠️ SUPERSEDED (same day as drafted).**
@@ -17,7 +16,6 @@ superseded_by:
 > on 2026-04-23.
 >
 > **For current state:** [r1-deployment-state.md](../r1-deployment-state.md).
-> **For architectural rationale:** [ecosystem-review-2026-04-23.md](../../architecture/ecosystem-review-2026-04-23.md).
 >
 > The sections below are preserved because the hardware sizing,
 > ZFS layout, burn-test approach, and archive-mirror sequencing
