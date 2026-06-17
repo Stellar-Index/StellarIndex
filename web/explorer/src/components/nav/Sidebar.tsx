@@ -23,6 +23,7 @@ import {
   Radio,
   Settings,
   Share2,
+  ShieldCheck,
   Tag,
   TrendingUp,
   User,
@@ -91,7 +92,8 @@ const NAV: NavGroup[] = [
 ];
 
 // Shown only when signed in — the logged-in "Account" section (the former
-// standalone dashboard, now part of the site).
+// standalone dashboard, now part of the site). The Admin row is appended
+// only for staff sessions (see SidebarNav).
 const ACCOUNT_GROUP: NavGroup = {
   title: 'Account',
   items: [
@@ -100,6 +102,12 @@ const ACCOUNT_GROUP: NavGroup = {
     { href: '/account/usage', label: 'Usage', icon: Gauge },
     { href: '/account/settings', label: 'Settings', icon: Settings },
   ],
+};
+
+const ADMIN_ITEM: NavItem = {
+  href: '/account/admin',
+  label: 'Admin',
+  icon: ShieldCheck,
 };
 
 function isActive(pathname: string | null, href: string): boolean {
@@ -144,8 +152,13 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const me = useMe();
   const signedIn = !!(me.data && (me.data.user?.email || me.data.key_id));
-  // Logged-in users get the Account section right after Overview.
-  const groups = signedIn ? [NAV[0], ACCOUNT_GROUP, ...NAV.slice(1)] : NAV;
+  const isStaff = !!me.data?.user?.is_staff;
+  // Logged-in users get the Account section right after Overview; staff
+  // sessions also get the Admin cockpit row.
+  const accountGroup: NavGroup = isStaff
+    ? { ...ACCOUNT_GROUP, items: [...ACCOUNT_GROUP.items, ADMIN_ITEM] }
+    : ACCOUNT_GROUP;
+  const groups = signedIn ? [NAV[0], accountGroup, ...NAV.slice(1)] : NAV;
   return (
     <div className="flex h-full flex-col bg-surface-muted">
       {/* Logo */}

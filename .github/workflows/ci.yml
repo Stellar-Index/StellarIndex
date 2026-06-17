@@ -373,39 +373,6 @@ jobs:
       - run: pnpm audit --audit-level high
 
   # ────────────────────────────────────────────────────────────────
-  # Customer dashboard — same shape as web-explorer. Static-export
-  # Next.js app at web/dashboard/ deployed to app.stellarindex.io.
-  # ────────────────────────────────────────────────────────────────
-  web-dashboard:
-    name: web/dashboard
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web/dashboard
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093  # v6
-        with:
-          version: "10"
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
-        with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: web/dashboard/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm build
-        env:
-          NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
-      # F-1207 (codex audit-2026-05-12): pnpm advisory gate. Fails
-      # on any HIGH or CRITICAL advisory across the dashboard's
-      # transitive deps. Without this, vulnerable next.js versions
-      # (e.g. 15.0.4) shipped to production for months unnoticed
-      # because Dependabot only covered gomod/actions/docker.
-      - run: pnpm audit --audit-level high
-
-  # ────────────────────────────────────────────────────────────────
   # Status page — public-facing status.stellarindex.io. Replaces
   # the cstate Hugo build with a custom Next.js static-export.
   # ────────────────────────────────────────────────────────────────

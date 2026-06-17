@@ -8,8 +8,10 @@ last_verified: 2026-06-17
 # Design system
 
 The shared visual language for every Stellar Index web surface — the public
-explorer (`web/explorer`), the status page (`web/status`), and the customer
-dashboard (`web/dashboard`). One system, applied everywhere.
+explorer (`web/explorer`, which now also hosts the in-site customer account at
+`/account/*`) and the status page (`web/status`). One system, applied
+everywhere. (The standalone `web/dashboard` app was consolidated into the
+explorer on 2026-06-17.)
 
 **Live reference:** `/dev/styleguide` in the explorer renders every token and
 component. **Tokens:** `web/explorer/tailwind.config.ts`. **Base layer:**
