@@ -20,7 +20,7 @@
 #
 # Required secrets (set once in repo settings):
 #   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on the
-#                             ratesengine-showcase project (the
+#                             stellarindex-showcase project (the
 #                             rename to stellarindex-explorer is
 #                             pending — task #23; the existing
 #                             project still serves the apex domain)
@@ -100,5 +100,5 @@ jobs:
           workingDirectory: web/explorer
           command: >-
             pages deploy out
-            --project-name ratesengine-showcase
+            --project-name stellarindex-showcase
             --branch ${{ github.event.inputs.environment == 'production' && 'main' || github.ref_name }}
