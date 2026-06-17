@@ -80,7 +80,7 @@ export default async function ADRPage({
       </header>
 
       <article>
-        <Markdown source={stripDuplicateH1(adr.body, adr.title)} />
+        <Markdown source={stripDuplicateH1(adr.body, adr.title)} sourcePath={adr.source_path} />
       </article>
 
       <RelatedADRs adr={adr} />
