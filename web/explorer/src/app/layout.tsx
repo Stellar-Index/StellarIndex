@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
@@ -23,6 +23,11 @@ const SITE_URL = 'https://stellarindex.io';
 const SITE_NAME = 'Stellar Index';
 const SITE_DESCRIPTION =
   'The protocol explorer for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus an independent VWAP pricing API across on-chain DEXes, classic SDEX, and major exchanges.';
+
+// Mobile address-bar / PWA theme tint — the primary brand blue (brand-600).
+export const viewport: Viewport = {
+  themeColor: '#1f4ae0',
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
