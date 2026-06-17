@@ -162,11 +162,6 @@ interface IngestionSnapshot {
     total_quotes: number;
     currencies_count: number;
   };
-  market_cap: {
-    entries_count: number;
-    oldest_fetched_at?: string;
-    newest_fetched_at?: string;
-  };
   supply: {
     classic_assets_with_supply: number;
     sep41_assets_with_supply: number;
@@ -1389,7 +1384,6 @@ function RegionPanel({
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <LedgerCard ledger={snapshot.ledger} live={liveFresh} />
         <FXBackfillCard fx={snapshot.fx_backfill} />
-        <MarketCapCard mc={snapshot.market_cap} />
         <SupplyCard supply={snapshot.supply} />
       </div>
       <BackfillCoverageTable
@@ -1512,51 +1506,6 @@ function FXBackfillCard({ fx }: { fx: IngestionSnapshot['fx_backfill'] }) {
       />
       <Row label="Currencies" value={fx.currencies_count.toLocaleString()} />
       <Row label="Total quotes" value={fx.total_quotes.toLocaleString()} />
-    </Panel>
-  );
-}
-
-function MarketCapCard({ mc }: { mc: IngestionSnapshot['market_cap'] }) {
-  const ageS = mc.newest_fetched_at
-    ? Math.floor((Date.now() - new Date(mc.newest_fetched_at).getTime()) / 1000)
-    : null;
-  const ageTone =
-    ageS == null
-      ? 'neutral'
-      : ageS < 600
-        ? 'ok'
-        : ageS < 1800
-          ? 'warn'
-          : ('bad' as const);
-  const ageColor = {
-    ok: 'text-ok-700',
-    warn: 'text-warn-700',
-    bad: 'text-bad-700',
-    neutral: 'text-ink-faint',
-  }[ageTone];
-  return (
-    <Panel title="Market cap cache (CoinGecko)">
-      <Row label="Entries" value={mc.entries_count.toLocaleString()} />
-      <Row
-        label="Newest fetch"
-        value={ageS == null ? '—' : `${formatAge(ageS)} ago`}
-        valueClass={ageColor}
-        mono
-      />
-      <Row
-        label="Oldest fetch"
-        value={
-          mc.oldest_fetched_at
-            ? `${formatAge(
-                Math.floor(
-                  (Date.now() - new Date(mc.oldest_fetched_at).getTime()) /
-                    1000,
-                ),
-              )} ago`
-            : '—'
-        }
-        mono
-      />
     </Panel>
   );
 }
