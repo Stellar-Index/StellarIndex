@@ -15,10 +15,13 @@ import {
   Coins,
   ExternalLink,
   GitCompare,
+  Gauge,
+  KeyRound,
   Landmark,
   LayoutDashboard,
   LogOut,
   Radio,
+  Settings,
   Share2,
   Tag,
   TrendingUp,
@@ -33,7 +36,7 @@ import { useMe } from '@/api/hooks';
 import { cn } from '@/lib/cn';
 import { SearchModal } from './SearchModal';
 
-type NavItem = { href: string; label: string; icon: LucideIcon; external?: boolean };
+type NavItem = { href: string; label: string; icon: LucideIcon; external?: boolean; exact?: boolean };
 type NavGroup = { title?: string; items: NavItem[] };
 
 // The console IA — grouped so a data-heavy site stays navigable.
@@ -87,6 +90,18 @@ const NAV: NavGroup[] = [
   },
 ];
 
+// Shown only when signed in — the logged-in "Account" section (the former
+// standalone dashboard, now part of the site).
+const ACCOUNT_GROUP: NavGroup = {
+  title: 'Account',
+  items: [
+    { href: '/account', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    { href: '/account/keys', label: 'API keys', icon: KeyRound },
+    { href: '/account/usage', label: 'Usage', icon: Gauge },
+    { href: '/account/settings', label: 'Settings', icon: Settings },
+  ],
+};
+
 function isActive(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
   if (href === '/') return pathname === '/';
@@ -95,7 +110,8 @@ function isActive(pathname: string | null, href: string): boolean {
 
 function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const active = !item.external && isActive(pathname, item.href);
+  const active =
+    !item.external && (item.exact ? pathname === item.href : isActive(pathname, item.href));
   const Icon = item.icon;
   const cls = cn(
     'group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
@@ -126,6 +142,10 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
 
 /** The console nav body — shared by the desktop rail + the mobile drawer. */
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  const me = useMe();
+  const signedIn = !!(me.data && (me.data.user?.email || me.data.key_id));
+  // Logged-in users get the Account section right after Overview.
+  const groups = signedIn ? [NAV[0], ACCOUNT_GROUP, ...NAV.slice(1)] : NAV;
   return (
     <div className="flex h-full flex-col bg-surface-muted">
       {/* Logo */}
@@ -149,7 +169,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Nav */}
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4">
-        {NAV.map((group, gi) => (
+        {groups.map((group, gi) => (
           <div key={group.title ?? `g${gi}`} className="space-y-0.5">
             {group.title && (
               <div className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
