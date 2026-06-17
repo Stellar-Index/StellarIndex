@@ -8,6 +8,7 @@ import { loadOperationsDocs } from '@/lib/operations';
 import { StatusBadge } from './StatusBadge';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/research' },
   title: 'Research — architecture decisions and methodology',
   description:
     'Every architectural decision behind Stellar Index, with rationale, alternatives considered, and consequences. Browse the ADR archive, architecture narratives, and operations runbooks.',

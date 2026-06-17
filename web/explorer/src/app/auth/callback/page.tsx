@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { CallbackHandler } from './CallbackHandler';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/auth/callback' },
   title: 'Signing you in… — Stellar Index',
   description:
     'Verifying your magic-link sign-in. You will be redirected to your account in a moment.',

@@ -9,6 +9,7 @@ import {
 } from './VerifiedCurrenciesStrip';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/assets' },
   title: 'Assets — every token on Stellar',
   description:
     'Browse every classic and Soroban asset observed on Stellar — live price, 24h volume, market cap, supply, issuer. The canonical Stellar asset directory.',

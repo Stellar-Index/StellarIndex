@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { AccountView } from './AccountView';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/accounts' },
   title: 'Account — Stellar account detail',
   description:
     'Sourced/submitted activity for a single Stellar account: the transactions it submitted and the operations it sourced, decoded straight from the certified raw lake.',

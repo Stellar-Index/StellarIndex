@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { loadBlogPosts } from '@/lib/blog';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/blog' },
   title: 'Blog — engineering notes + product updates',
   description:
     'Stellar Index engineering blog — release notes, architecture decisions, post-mortems, product updates.',

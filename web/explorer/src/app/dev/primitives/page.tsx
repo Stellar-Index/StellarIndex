@@ -25,6 +25,7 @@ import {
 // layout's default robots: { index: true } shipped to this page
 // because no override was set.
 export const metadata: Metadata = {
+  alternates: { canonical: '/dev/primitives' },
   title: 'Design-system primitives — dev sandbox',
   robots: { index: false, follow: false },
 };

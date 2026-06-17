@@ -33,6 +33,7 @@ import {
 } from '@/components/ui';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/dev/styleguide' },
   title: 'Style guide — design system',
   robots: { index: false, follow: false },
 };

@@ -5,6 +5,7 @@ import { Wrench } from 'lucide-react';
 import { loadOperationsDocs } from '@/lib/operations';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/research/operations' },
   title: 'Operations runbooks — Stellar Index research',
   description:
     'Operator runbooks: archival-node bring-up, release process, deploy workflow, disaster recovery.',

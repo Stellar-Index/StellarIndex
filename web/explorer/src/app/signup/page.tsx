@@ -6,6 +6,7 @@ import { API_BASE_URL } from '@/api/client';
 import { SignInForm } from '../signin/SignInForm';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/signup' },
   title: 'Create account — Stellar Index',
   description:
     'Create your Stellar Index account. Magic-link email auth — no passwords. Free tier included; paid plans unlock higher rate limits + dedicated SLAs.',

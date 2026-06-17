@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { TxView } from './TxView';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/tx' },
   title: 'Transaction — Stellar transaction detail',
   description:
     'Full detail for a single Stellar transaction: summary, decoded operations, and the contract events it emitted.',

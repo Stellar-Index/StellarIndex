@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { IssuersTable } from './IssuersTable';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/issuers' },
   title: 'Issuers — every G-account that mints classic assets on Stellar',
   description:
     'The issuer directory ranked by total observation count. Each row is a G-strkey that has minted at least one classic asset, with home_domain (when SEP-1 has resolved it) and per-asset counts.',

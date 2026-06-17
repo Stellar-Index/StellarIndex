@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { LedgersTable } from './LedgersTable';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/ledgers' },
   title: 'Ledgers — recent Stellar ledgers',
   description:
     'Every recent ledger close on the Stellar network — sequence, close time, transaction / operation counts, and Soroban event counts, straight from the certified raw lake.',

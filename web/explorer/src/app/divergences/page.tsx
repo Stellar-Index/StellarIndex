@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
   description:
     'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko, Chainlink HTTP, Reflector, Redstone, Band). Persistent gaps flip flags.divergence_warning.',

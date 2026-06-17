@@ -6,6 +6,7 @@ import { Panel } from '@/components/reveal';
 import { LendingPoolsTable } from './LendingPoolsTable';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/lending' },
   title: 'Lending — collateralised lending on Stellar',
   description:
     'Blend is the primary collateralised-lending protocol on Stellar. Backstop pools, Reflector dependency, MEV-relevant liquidations.',

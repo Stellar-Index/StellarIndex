@@ -5,6 +5,7 @@ import { BookOpen } from 'lucide-react';
 import { loadArchitectureDocs } from '@/lib/architecture';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/research/architecture' },
   title: 'Architecture narratives — Stellar Index research',
   description:
     'Long-form architecture narratives covering the Stellar Index ingest pipeline, aggregation methodology, and operational invariants.',

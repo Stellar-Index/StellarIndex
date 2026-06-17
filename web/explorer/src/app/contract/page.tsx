@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { ContractView } from './ContractView';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/contract' },
   title: 'Contract — Stellar contract detail',
   description:
     'Recent contract events for a single Soroban contract on Stellar — ledger, transaction, event type, and topic, straight from the certified raw lake.',

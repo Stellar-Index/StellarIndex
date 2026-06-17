@@ -5,6 +5,7 @@ import { Container, PageHeader, Skeleton } from '@/components/ui';
 import { MarketsTable } from './MarketsTable';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/markets' },
   title: 'Markets — every active trading pair',
   description:
     'Every (base, quote) pair that has traded on Stellar in the last 14 days. Sortable by 24h trade count, with last-trade-relative timestamps.',

@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { LedgerView } from './LedgerView';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/ledger' },
   title: 'Ledger — Stellar ledger detail',
   description:
     'Full detail for a single Stellar ledger: header (hashes, protocol version, total coins, fee pool) and every transaction it closed.',

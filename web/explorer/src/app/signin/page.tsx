@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { SignInForm } from './SignInForm';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/signin' },
   title: 'Sign in — Stellar Index',
   description:
     'Sign in to your Stellar Index account. Magic-link email auth — no passwords.',

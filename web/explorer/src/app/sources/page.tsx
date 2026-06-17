@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { SourcesTable } from './SourcesTable';
 
 export const metadata: Metadata = {
+  alternates: { canonical: '/sources' },
   title: 'Sources — every venue we ingest',
   description:
     'Live source registry, grouped by class (exchange / aggregator / oracle / authority sanity). Only Class=exchange contributes to VWAP by default.',
