@@ -13,13 +13,12 @@ import { SourceStatsPanel } from './SourceStatsPanel';
 // here automatically get a /dexes/<source> page.
 const DEX_INFO: Record<
   string,
-  { name: string; type: string; status: string; discoveryDoc: string; contractsUrl?: string; blurb: string }
+  { name: string; type: string; status: string; contractsUrl?: string; blurb: string }
 > = {
   soroswap: {
     name: 'Soroswap',
     type: 'Uniswap V2 clone (Soroban)',
     status: 'live',
-    discoveryDoc: '/research/discovery/soroswap',
     contractsUrl: 'https://github.com/soroswap/core',
     blurb:
       'Constant-product AMM. Each pool below is a SoroswapPair contract. Click a pool to drill into its trade history and live VWAP.',
@@ -28,7 +27,6 @@ const DEX_INFO: Record<
     name: 'Phoenix',
     type: 'AMM (Soroban)',
     status: 'live',
-    discoveryDoc: '/research/discovery/phoenix',
     blurb:
       'Soroban AMM with per-field event split. Each pool below is one Phoenix pair contract.',
   },
@@ -36,7 +34,6 @@ const DEX_INFO: Record<
     name: 'Aquarius',
     type: 'AMM with gauges (Soroban)',
     status: 'live',
-    discoveryDoc: '/research/discovery/aquarius',
     blurb:
       'Curve-style AMM with bribe/gauge layer. Constant-product and stableswap pools render uniformly.',
   },
@@ -44,7 +41,6 @@ const DEX_INFO: Record<
     name: 'SDEX',
     type: 'Native order book (classic)',
     status: 'native',
-    discoveryDoc: '/research/discovery/sdex',
     blurb:
       'Stellar-native on-chain order book. Each row below is a (base, quote) classic-asset pair that traded on SDEX in the recency window.',
   },
@@ -52,7 +48,6 @@ const DEX_INFO: Record<
     name: 'Comet',
     type: 'Balancer V1 fork (Soroban)',
     status: 'experimental',
-    discoveryDoc: '/research/discovery/comet',
     blurb:
       'Balancer-style multi-asset pool. Shared ("POOL", <event>) topic across every Comet pool contract.',
   },
@@ -137,12 +132,6 @@ export default async function SourceDetailPage({
       <PoolsTable source={source} sourceName={info.name} />
 
       <div className="flex flex-wrap gap-3 text-xs">
-        <Link
-          href={info.discoveryDoc}
-          className="inline-flex items-center gap-1 text-brand-600 hover:underline"
-        >
-          Read integration audit →
-        </Link>
         <Link
           href={`/sources/${source}`}
           className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"

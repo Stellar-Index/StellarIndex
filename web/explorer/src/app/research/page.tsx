@@ -1,17 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { BookOpen, FileText, ShieldCheck, Wrench } from 'lucide-react';
+import { BookOpen, FileText, Wrench } from 'lucide-react';
 
 import { loadADRs } from '@/lib/adr';
 import { loadArchitectureDocs } from '@/lib/architecture';
-import { loadDiscoveryDocs } from '@/lib/discovery';
 import { loadOperationsDocs } from '@/lib/operations';
 import { StatusBadge } from './StatusBadge';
 
 export const metadata: Metadata = {
   title: 'Research — architecture decisions and methodology',
   description:
-    'Every architectural decision behind Stellar Index, with rationale, alternatives considered, and consequences. Browse the ADR archive, integration audits, and operations runbooks.',
+    'Every architectural decision behind Stellar Index, with rationale, alternatives considered, and consequences. Browse the ADR archive, architecture narratives, and operations runbooks.',
 };
 
 // TOPICS held the GitHub-only catch-all topic cards. As each
@@ -23,7 +22,6 @@ const TOPICS: { name: string; description: string; href?: string }[] = [];
 export default function ResearchPage() {
   const adrs = loadADRs();
   const archDocs = loadArchitectureDocs();
-  const discoveryDocs = loadDiscoveryDocs();
   const opsDocs = loadOperationsDocs();
 
   // Sort newest first within each status group; status order
@@ -47,8 +45,8 @@ export default function ResearchPage() {
           The thinking behind every Stellar Index choice. Architecture
           decision records (ADRs) below capture every load-bearing
           design call with its alternatives + consequences. The
-          discovery audits, operations runbooks, and architecture
-          narratives live alongside the source on GitHub.
+          operations runbooks and architecture narratives live
+          alongside the source on GitHub.
         </p>
       </header>
 
@@ -86,53 +84,6 @@ export default function ResearchPage() {
                     Verified {d.last_verified}
                   </span>
                 )}
-              </div>
-              <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
-                {d.title}
-              </h4>
-              <p className="text-xs text-ink-body">
-                {d.description}
-              </p>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-xl font-semibold tracking-tight">
-            Integration audits
-          </h2>
-          <span className="text-xs text-ink-muted">
-            {discoveryDocs.length} audits ·{' '}
-            <a
-              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/discovery"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600"
-            >
-              source on GitHub
-            </a>
-          </span>
-        </div>
-        <p className="max-w-3xl text-sm text-ink-body">
-          For every on-chain venue we ingest, we verified the event
-          schema and decoder against the upstream Rust source. Each
-          audit names the contract repo and commit checked, the
-          quirks we found, and how the decoder handles them.
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {discoveryDocs.map((d) => (
-            <Link
-              key={d.slug}
-              href={`/research/discovery/${d.slug}`}
-              className="group flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition hover:border-brand-300 hover:shadow-sm"
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-3.5 w-3.5 text-ink-faint group-hover:text-brand-500" />
-                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
-                  {d.category}
-                </span>
               </div>
               <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                 {d.title}
@@ -295,8 +246,7 @@ export default function ResearchPage() {
           freeze, how we audit a Soroban contract before flipping
           BackfillSafe. None of that is useful behind a closed door.
           Every choice has an ADR with a &quot;Why this not the
-          alternative&quot; section; every audit is captured in
-          discovery notes; every alert has a runbook.
+          alternative&quot; section; every alert has a runbook.
         </p>
       </section>
     </div>

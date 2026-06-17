@@ -4,7 +4,6 @@ import { API_BASE_URL } from '@/api/client';
 import { loadADRs } from '@/lib/adr';
 import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadBlogPosts } from '@/lib/blog';
-import { loadDiscoveryDocs } from '@/lib/discovery';
 import { loadOperationsDocs } from '@/lib/operations';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 
@@ -92,12 +91,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     lastModified: now,
     changeFrequency: 'monthly',
     priority: 0.6,
-  }));
-  const discoveryPages: MetadataRoute.Sitemap = loadDiscoveryDocs().map((d) => ({
-    url: siteURL(`/research/discovery/${d.slug}`),
-    lastModified: now,
-    changeFrequency: 'monthly',
-    priority: 0.5,
   }));
   const opsPages: MetadataRoute.Sitemap = loadOperationsDocs().map((d) => ({
     url: siteURL(`/research/operations/${d.slug}`),
@@ -213,7 +206,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...blogPages,
     ...adrPages,
     ...archPages,
-    ...discoveryPages,
     ...opsPages,
     ...assetPages,
     ...issuerPages,

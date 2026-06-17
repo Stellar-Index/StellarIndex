@@ -91,18 +91,6 @@ export default function LendingPage() {
           </li>
         </ul>
         <div className="mt-4 flex flex-wrap gap-3 text-xs">
-          <Link
-            href="/research/discovery/blend"
-            className="inline-flex items-center gap-1 text-brand-600 hover:underline"
-          >
-            Read Blend integration audit →
-          </Link>
-          <Link
-            href="/research/discovery/comet"
-            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
-          >
-            Comet backstop audit →
-          </Link>
           <a
             href="https://github.com/blend-capital/blend-contracts"
             className="inline-flex items-center gap-1 text-ink-muted hover:underline"
