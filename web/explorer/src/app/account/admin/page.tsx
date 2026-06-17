@@ -1,38 +1,37 @@
 'use client';
 
-import { ShieldCheck, Users, Sliders, AlertTriangle } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
-import { AuthedRoute } from '@/components/AuthedRoute';
+import { AlertTriangle, ShieldCheck, Sliders, Users } from 'lucide-react';
+
+import type { MeResponse } from '@/api/hooks';
 import {
-  Container,
-  Section,
-  PageHeader,
-  Card,
-  CardBody,
   Badge,
   Callout,
+  Card,
+  CardBody,
+  Container,
   EmptyState,
+  PageHeader,
+  Section,
 } from '@/components/ui';
 
-// Staff-only landing. Today this gates on `is_staff` and shows the planned
-// staff surfaces; Phase 1.5 fills them with the customer look-up +
-// impersonation tools from the platform spec §6.
+import { AccountGate } from '../AccountGate';
+
+/**
+ * /account/admin — staff-only cockpit. Gated on the magic-link session
+ * (AccountGate) and then on `me.user.is_staff`. Today it advertises the
+ * planned staff surfaces; Phase 1.5 fills them with the customer look-up +
+ * impersonation tools from the platform spec §6. Ported from the standalone
+ * dashboard's /admin when that app was consolidated into the site.
+ */
 export default function AdminPage() {
-  return (
-    <AuthedRoute>
-      <AdminBody />
-    </AuthedRoute>
-  );
+  return <AccountGate>{(me) => <AdminBody me={me} />}</AccountGate>;
 }
 
-function AdminBody() {
-  const { state } = useAuth();
-  if (state.kind !== 'authed') return null;
-
-  if (!state.me.user.is_staff) {
+function AdminBody({ me }: { me: MeResponse }) {
+  if (!me.user?.is_staff) {
     return (
-      <Container className="py-8">
-        <Section className="max-w-2xl py-0">
+      <Container>
+        <Section className="max-w-2xl">
           <Callout tone="bad" title="Restricted area">
             This area is restricted to staff users.
           </Callout>
@@ -60,8 +59,8 @@ function AdminBody() {
   ];
 
   return (
-    <Container className="py-8">
-      <Section className="space-y-6 py-0">
+    <Container>
+      <Section className="space-y-6">
         <PageHeader
           eyebrow="Internal"
           title="Staff cockpit"

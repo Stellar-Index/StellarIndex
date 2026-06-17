@@ -1,9 +1,10 @@
 # Stellar Index — showcase site
 
 Public explorer for the Stellar Index API. Lives at
-`stellarindex.io` (Cloudflare Pages). The companion
-customer dashboard lives at `app.stellarindex.io` — see
-[`web/dashboard/README.md`](../dashboard/README.md).
+`stellarindex.io` (Cloudflare Pages). The customer account
+(login, API keys, usage, settings, staff admin) is built in at
+`/account/*` — the standalone dashboard app was consolidated
+here on 2026-06-17.
 
 The original [implementation plan](../../docs/architecture/explorer-implementation-plan.md)
 called this Phase 0 scaffolding through Phase 7 panels; reality
