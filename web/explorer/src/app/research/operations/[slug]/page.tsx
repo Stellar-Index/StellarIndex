@@ -85,7 +85,7 @@ export default async function OperationsDocPage({
       </header>
 
       <article>
-        <Markdown source={stripDuplicateH1(doc.body)} />
+        <Markdown source={stripDuplicateH1(doc.body)} sourcePath={doc.source_path} />
       </article>
     </div>
   );

@@ -87,7 +87,7 @@ export default async function ArchitectureDocPage({
       </header>
 
       <article>
-        <Markdown source={stripDuplicateH1(doc.body, doc.title)} />
+        <Markdown source={stripDuplicateH1(doc.body, doc.title)} sourcePath={doc.source_path} />
       </article>
     </div>
   );

@@ -124,8 +124,56 @@ function tokenize(md: string): Block[] {
   return out;
 }
 
-export function Markdown({ source }: { source: string }) {
-  const blocks = tokenize(source);
+const GH_BLOB = 'https://github.com/StellarIndex/stellar-index/blob/main/';
+const GH_TREE = 'https://github.com/StellarIndex/stellar-index/tree/main/';
+
+// resolveDocLink turns a repo-relative markdown link (authored in the doc at
+// `sourcePath`, relative to ITS directory) into a URL that actually resolves
+// on the web. Without this, links like `../adr/0015-x.md` or
+// `../../internal/x.go` render as literal hrefs and 404 on /research/* pages.
+// ADR cross-refs map to their in-site page (every docs/adr/NNNN-*.md renders);
+// everything else (sibling docs, code, CHANGELOG, configs) maps to the GitHub
+// source, which always resolves.
+export function resolveDocLink(href: string, sourcePath: string): string {
+  const h = href.trim();
+  if (/^(https?:|mailto:|tel:|#|\/)/i.test(h)) return href; // external / anchor / absolute
+  const m = h.match(/^([^#?]*)([#?].*)?$/);
+  const rel = m ? m[1]! : h;
+  const suffix = m && m[2] ? m[2] : '';
+  const stack = sourcePath.split('/').slice(0, -1);
+  for (const seg of rel.split('/')) {
+    if (seg === '..') stack.pop();
+    else if (seg !== '.' && seg !== '') stack.push(seg);
+  }
+  const target = stack.join('/');
+  if (!target) return href;
+  const adr = target.match(/^docs\/adr\/(\d{4})-[^/]+\.md$/);
+  if (adr) return `/research/adr/${adr[1]}/${suffix}`; // trailing slash = site convention (no 308 hop)
+  const last = target.split('/').pop() ?? '';
+  const isDir = rel.endsWith('/') || !last.includes('.');
+  return `${isDir ? GH_TREE : GH_BLOB}${target}${suffix}`;
+}
+
+function rewriteDocLinks(md: string, sourcePath: string): string {
+  return md.replace(
+    /\]\(([^)\s]+)(\s+"[^"]*")?\)/g,
+    (_full, href: string, title?: string) =>
+      `](${resolveDocLink(href, sourcePath)}${title ?? ''})`,
+  );
+}
+
+export function Markdown({
+  source,
+  sourcePath,
+}: {
+  source: string;
+  // Repo-relative path of the doc being rendered (e.g.
+  // "docs/architecture/aggregation-plan.md"). When set, repo-relative links
+  // in the body are rewritten to working web/GitHub URLs.
+  sourcePath?: string;
+}) {
+  const md = sourcePath ? rewriteDocLinks(source, sourcePath) : source;
+  const blocks = tokenize(md);
   return (
     <div className="prose-readable space-y-4">
       {blocks.map((b, i) => renderBlock(b, i))}
