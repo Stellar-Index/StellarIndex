@@ -57,11 +57,11 @@ export const metadata: Metadata = {
     locale: 'en_US',
     images: [
       {
-        url: '/og.svg',
+        url: '/og.png',
         width: 1200,
         height: 630,
         alt: `${SITE_NAME} — Stellar pricing explorer`,
-        type: 'image/svg+xml',
+        type: 'image/png',
       },
     ],
   },
@@ -69,7 +69,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: `${SITE_NAME} — Stellar pricing explorer`,
     description: SITE_DESCRIPTION,
-    images: ['/og.svg'],
+    images: ['/og.png'],
   },
   robots: {
     index: true,
