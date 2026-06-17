@@ -7,9 +7,8 @@ status: living; one section per SLO
 # Performance SLOs & guarantees
 
 The operational service-level objectives Stellar Index holds itself to,
-each with concrete, re-runnable proof. Companion docs:
-`prod-verification-2026-06-12.md` (probe-level), `coverage-matrix.md`
-(requirement-level), `freshness-definition.md`.
+each with concrete, re-runnable proof. Companion docs: `coverage-matrix.md`
+(requirement-level) and `freshness-definition.md`.
 
 ## Freshness — real-time price staleness ≤ 30 s
 

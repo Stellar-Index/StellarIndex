@@ -34,8 +34,7 @@ closed-interval data on comparable surfaces.
 - 2026-06-13 spot checks: `/price/tip?asset=crypto:XLM` and (post
   alias-fix 8fde6c84) `?asset=native` both report `observed_at` within
   single-digit seconds.
-- The 2026-06-12 production re-verification
-  (`docs/architecture/prod-verification-2026-06-12.md`) documents the
+- The 2026-06-12 production re-verification documented the
   pre-fix native-spelling gap and its closure.
 
 ## The integrator-facing summary (one sentence)
