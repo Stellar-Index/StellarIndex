@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import {
+  AreaSeries,
   ColorType,
   createChart,
   type IChartApi,
@@ -85,7 +86,7 @@ export function LineChart({
 
     const lineColor = isUp ? '#059669' : '#e11d48';
     const fillColor = isUp ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
-    const series = chart.addAreaSeries({
+    const series = chart.addSeries(AreaSeries, {
       lineColor,
       topColor: fillColor,
       bottomColor: 'rgba(0,0,0,0)',

@@ -1,14 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import {
-  AlertTriangle,
-  ArrowRight,
-  ExternalLink,
-  Github,
-  KeyRound,
-  Lock,
-  MessageSquare,
-} from 'lucide-react';
+import { AlertTriangle, ArrowRight, ExternalLink, KeyRound, Lock, MessageSquare } from 'lucide-react';
+import { GithubIcon } from '@/components/GithubIcon';
 
 export const metadata: Metadata = {
   title: 'Contact — Stellar Index',
@@ -44,7 +37,7 @@ const CHANNELS: Channel[] = [
     href: 'mailto:sales@stellarindex.io',
   },
   {
-    icon: Github,
+    icon: GithubIcon,
     title: 'General issues + feature requests',
     blurb:
       "Open a GitHub issue. Bug? Open it under Issues. Feature idea? Open under Discussions. The team triages daily; we don't run a separate support email for general questions.",

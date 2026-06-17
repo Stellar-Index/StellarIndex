@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Github } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
+import { GithubIcon } from '@/components/GithubIcon';
 
 import { loadBlogPost, loadBlogPosts } from '@/lib/blog';
 import { Markdown } from '@/lib/markdown';
@@ -71,7 +72,7 @@ export default async function BlogPostPage({ params }: { params: Params }) {
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
         >
-          <Github className="h-3.5 w-3.5" />
+          <GithubIcon className="h-3.5 w-3.5" />
           Source: {post.source_path}
         </a>
       </footer>

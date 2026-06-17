@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight, Github, Mail } from 'lucide-react';
+import { ArrowRight, Mail } from 'lucide-react';
+import { GithubIcon } from '@/components/GithubIcon';
 
 export const metadata: Metadata = {
   title: 'Careers — work on Stellar pricing infrastructure',
@@ -157,7 +158,7 @@ export default function CareersPage() {
             rel="noreferrer noopener"
             className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
           >
-            <Github className="h-4 w-4" />
+            <GithubIcon className="h-4 w-4" />
             GitHub
           </a>
         </div>

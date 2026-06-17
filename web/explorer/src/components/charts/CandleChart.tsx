@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import {
+  CandlestickSeries,
   ColorType,
   createChart,
   type CandlestickData,
@@ -77,10 +78,8 @@ export function CandleChart({ data, height = 360, className }: CandleChartProps)
     });
     chartRef.current = chart;
 
-    // Prefer the v4 API. addCandlestickSeries is named differently in
-    // v5 (`addSeries(CandlestickSeries)`) — pin v4 on package.json so
-    // the call below stays valid.
-    const series = chart.addCandlestickSeries({
+    // lightweight-charts v5 series API: addSeries(SeriesDefinition, options).
+    const series = chart.addSeries(CandlestickSeries, {
       upColor: '#16a34a', // up-DEFAULT
       downColor: '#dc2626', // down-DEFAULT
       wickUpColor: '#16a34a',
