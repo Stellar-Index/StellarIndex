@@ -13,7 +13,9 @@
 //
 // Twitter card images use the same asset.
 
-export const SITE_OG_IMAGE_PATH = '/og.svg';
+// PNG, not SVG: Twitter/X, Facebook, LinkedIn, Slack, iMessage all reject
+// SVG og:images (no raster = no link-preview thumbnail). Keep it 1200×630.
+export const SITE_OG_IMAGE_PATH = '/og.png';
 
 export const SITE_OG_IMAGES = [
   {
@@ -21,7 +23,7 @@ export const SITE_OG_IMAGES = [
     width: 1200,
     height: 630,
     alt: 'Stellar Index — Stellar pricing explorer',
-    type: 'image/svg+xml',
+    type: 'image/png',
   },
 ];
 
