@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.112] — 2026-06-18
+
+### Fixed
+
+- **`/v1/contracts` + `/v1/contracts/{id}/interactions` 500'd against real
+  ClickHouse** — `count()` returns `UInt64` but the directory/interaction
+  readers scanned into `int64` (the stub-backed unit tests didn't catch the
+  driver-level type mismatch). Cast with `toInt64(count())`.
+
 ## [v0.5.0-rc.111] — 2026-06-18
 
 ### Changed

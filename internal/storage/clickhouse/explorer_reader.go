@@ -407,7 +407,7 @@ func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLe
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	const q = `SELECT contract_id, count() AS events, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+	const q = `SELECT contract_id, toInt64(count()) AS events, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
 		FROM stellar.contract_events
 		WHERE ledger_seq >= ?
 		GROUP BY contract_id
@@ -451,7 +451,7 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	const q = `SELECT contract_id, count() AS shared
+	const q = `SELECT contract_id, toInt64(count()) AS shared
 		FROM stellar.contract_events
 		WHERE ledger_seq >= ?
 		  AND contract_id != ?
