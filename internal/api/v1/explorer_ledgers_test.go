@@ -16,6 +16,7 @@ type stubExplorerReader struct {
 	ops            []clickhouse.OpRow
 	opTypeStats    []clickhouse.OpTypeCount
 	throughput     []clickhouse.ThroughputBucket
+	reserves       []clickhouse.BlendReserveState
 	opResults      map[uint32]int32
 	events         []clickhouse.EventSummary
 	contractEvents []clickhouse.ContractActivityRow
@@ -65,6 +66,10 @@ func (s *stubExplorerReader) OperationTypeStats(_ context.Context, _ uint32) ([]
 
 func (s *stubExplorerReader) NetworkThroughput(_ context.Context, _ int) ([]clickhouse.ThroughputBucket, error) {
 	return s.throughput, s.err
+}
+
+func (s *stubExplorerReader) BlendPoolReserves(_ context.Context, _ string, _ []string) ([]clickhouse.BlendReserveState, error) {
+	return s.reserves, s.err
 }
 
 func (s *stubExplorerReader) TransactionByHash(_ context.Context, hash string) (clickhouse.TxSummary, bool, error) {

@@ -2072,6 +2072,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/reserves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Blend pool — REAL per-reserve current state (TVL/util/APY).
+         * @description The pool's per-reserve CURRENT on-chain state (ADR-0039),
+         *     decoded from the Blend pool contract's Soroban storage in the
+         *     certified lake — distinct from the `/v1/lending/pools` window
+         *     net-flow PROXY. For each reserve: supplied / borrowed amounts
+         *     (`supplied` / `borrowed`, underlying token base units),
+         *     utilization, and supply/borrow APR — all computed with the
+         *     pool's own interest-rate model (b_rate/d_rate + the rate curve),
+         *     matching the chain bit-for-bit.
+         *
+         *     USD values (`supplied_usd` / `borrowed_usd`, and the pool
+         *     `tvl_usd` = Σ supplied_usd) are BEST-EFFORT: present when we hold
+         *     a USD price for the reserve's underlying token, null otherwise —
+         *     the token-unit amounts + utilization + APR are always exact.
+         *     Coverage = the live contract-storage capture window; a reserve
+         *     with no captured entry is absent.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Pool contract C-strkey. */
+                    pool: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-reserve current state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                pool?: string;
+                                /** @description Σ supplied_usd across priced reserves; null when none priced. */
+                                tvl_usd?: string | null;
+                                reserves?: {
+                                    /** @description Reserve underlying token (C-strkey). */
+                                    asset?: string;
+                                    decimals?: number;
+                                    /** @description Total supplied */
+                                    supplied?: string;
+                                    /** @description Total borrowed */
+                                    borrowed?: string;
+                                    supplied_usd?: string | null;
+                                    borrowed_usd?: string | null;
+                                    /** @description Borrowed/supplied */
+                                    utilization_pct?: number;
+                                    /** @description Borrow APR as a fraction (0.05 = 5%). */
+                                    borrow_apr?: number;
+                                    /** @description Supply APR as a fraction. */
+                                    supply_apr?: number;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mev": {
         parameters: {
             query?: never;

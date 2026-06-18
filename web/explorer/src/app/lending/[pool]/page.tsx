@@ -5,6 +5,8 @@ import { ExternalLink, ArrowLeft } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
 
+import { PoolReserves } from './PoolReserves';
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
@@ -267,21 +269,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         </Panel>
       )}
 
-      <Panel
-        title="Reserve composition"
-        hint="Per-asset supply / borrow APY — pending Soroban storage reader (#84)"
-      >
-        <p className="text-sm text-ink-body">
-          Today this view tracks pools by their <em>auction</em> stream — every
-          time a borrower position liquidates and the pool emits an auction
-          event, we count it here. The per-reserve breakdown (which assets
-          this pool accepts as collateral, current supply/borrow APYs, total
-          deposited, total borrowed) needs a Blend-pool-storage reader that
-          queries each pool contract&apos;s persistent storage. That reader is
-          on the roadmap; until it lands the pool address is the canonical
-          identifier and stellar.expert has the raw on-chain state.
-        </p>
-      </Panel>
+      <PoolReserves pool={pool} />
     </div>
   );
 }

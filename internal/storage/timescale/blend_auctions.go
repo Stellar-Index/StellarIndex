@@ -316,6 +316,34 @@ type BlendPoolSummary struct {
 	NetBorrowed30d string // token base-units, 30d net flow (proxy)
 }
 
+// BlendPoolAssets returns the distinct reserve assets (underlying
+// token C-strkeys) seen in the pool's position-event stream — the
+// reserve set whose current-state (ResData/ResConfig) the ADR-0039
+// reader looks up. Ordered by event volume so the busiest reserves
+// come first.
+func (s *Store) BlendPoolAssets(ctx context.Context, pool string) ([]string, error) {
+	const q = `
+        SELECT asset
+          FROM blend_positions
+         WHERE pool = $1
+         GROUP BY asset
+         ORDER BY count(*) DESC`
+	rows, err := s.db.QueryContext(ctx, q, pool)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: BlendPoolAssets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, fmt.Errorf("timescale: BlendPoolAssets scan: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ListBlendPools returns one row per distinct pool contract observed
 // in EITHER blend_auctions OR blend_positions, with auction counts,
 // last-seen, and a 30-day net-flow proxy for supply/borrow. Sorted

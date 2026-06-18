@@ -17,6 +17,18 @@ against.
 
 ### Added
 
+- **Real Blend per-pool TVL / utilization / APY (ADR-0039, #84 complete).** New
+  `GET /v1/lending/pools/{pool}/reserves` reads each reserve's CURRENT on-chain
+  state from the lake (point-lookup of the `ResData`/`ResConfig` contract_data
+  entries by exact key, decoded with the new storage decoder), and reports
+  supplied/borrowed amounts, utilization, and supply/borrow APR computed with
+  the pool's own interest-rate model — verified against real r1 data (Pool #1
+  USDC: ~$55M supplied, ~$37M borrowed, 67.8% util). USD TVL is best-effort
+  (priced reserves only); token-unit amounts + util + APR are always exact.
+  The Lending pool detail page replaces its "#84 pending" placeholder with the
+  live reserve table. This is real current-state, distinct from the
+  `/v1/lending/pools` window net-flow proxy.
+
 - **Soroban contract current-state reader (ADR-0039) — Blend reserve decoder +
   interest model.** First half of #84: read on-chain contract state from the
   lake instead of only events. New `internal/sources/blend/storage.go` decodes
