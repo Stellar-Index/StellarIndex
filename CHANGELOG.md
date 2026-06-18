@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.120] — 2026-06-18
+
 ### Added
 
 - **Network throughput time-series + `/network` page, and the asset market-cap
