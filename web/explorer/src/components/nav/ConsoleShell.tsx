@@ -21,6 +21,16 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setDrawer(false);
   }, [pathname]);
+  // Escape closes the mobile drawer — keyboard users otherwise have to
+  // Tab to the close button.
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawer(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [drawer]);
 
   if (pathname?.startsWith('/embed/')) return <>{children}</>;
 
@@ -40,6 +50,8 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             type="button"
             onClick={() => setDrawer(true)}
             aria-label="Open navigation"
+            aria-expanded={drawer}
+            aria-controls="mobile-nav-drawer"
             className="-mr-1 inline-flex items-center justify-center rounded-md p-2 text-ink-body hover:bg-surface-subtle"
           >
             <Menu className="h-5 w-5" />
@@ -60,7 +72,10 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             onClick={() => setDrawer(false)}
             aria-hidden
           />
-          <div className="absolute left-0 top-0 h-full w-72 max-w-[85vw] border-r border-line shadow-elevated">
+          <div
+            id="mobile-nav-drawer"
+            className="absolute left-0 top-0 h-full w-72 max-w-[85vw] border-r border-line shadow-elevated"
+          >
             <button
               type="button"
               onClick={() => setDrawer(false)}
