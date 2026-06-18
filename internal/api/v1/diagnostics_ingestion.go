@@ -316,14 +316,23 @@ var sourceGenesisLedger = map[string]int64{
 	// not falsely.
 	"defindex": 57_056_338,
 
-	// TODO(#40, #41): add `cctp` + `rozo` genesis ledgers once their
-	// per-source WASM-history walks complete. Both are brand-new
-	// cross-chain bridges on Stellar with very short on-chain history
-	// (BackfillSafe=false until audited; see registry.go). Until the
-	// walks land at docs/operations/wasm-audits/{cctp,rozo}.md they
-	// stay out of this map — the buildBackfillCoverage cache-row
-	// fallback still surfaces them as "no genesis → no density",
-	// which is the honest signal that the audit is owed.
+	// cctp + rozo (#40 / #41) — exact deploy ledgers from the
+	// completed WASM-history walks (docs/operations/wasm-audits/
+	// {cctp,rozo}.md). Each audit records a single one-time deploy per
+	// contract with a UTC timestamp; the genesis is the MIN across the
+	// source's contracts, resolved to the exact ledger via the lake's
+	// ledgers table (first ledger at/after the deploy close_time).
+	//
+	// cctp: 3 contracts deployed 2026-04-16, earliest at 15:43:48 UTC →
+	// L62,147,265 (TokenMessengerMinter + MessageTransmitter; the
+	// CctpForwarder followed ~3 min later).
+	"cctp": 62_147_265,
+	// rozo: earliest of its 3 payment contracts deployed 2026-01-18
+	// 16:40:31 UTC → L60,829,370 (two on 2026-01-18, one 2026-03-24).
+	// This predates the contract-storage capture window, so density
+	// reading a gap below ~62M is the HONEST "pre-capture history not
+	// backfilled" signal, not a decoder fault.
+	"rozo": 60_829_370,
 }
 
 // RegionInfo identifies which deployment generated this snapshot.

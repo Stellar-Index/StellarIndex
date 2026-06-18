@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **CCTP + Rozo bridges now have exact genesis ledgers in the coverage
+  diagnostics** (#40 / #41). Both were absent from `sourceGenesisLedger`, so
+  `/v1/diagnostics/ingestion` reported them as "no genesis → no density".
+  Added the exact deploy ledgers derived from the completed WASM-history audits
+  (`docs/operations/wasm-audits/{cctp,rozo}.md`): cctp = L62,147,265
+  (2026-04-16), rozo = L60,829,370 (2026-01-18). Rozo's predates the
+  contract-storage capture window, so a density gap below ~62M is the honest
+  "pre-capture history not backfilled" signal.
+
 ## [v0.5.0-rc.123] — 2026-06-19
 
 ### Fixed
