@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Account tx/ops participant query no longer full-scans.** The rc.118
+  Phase-B union used `source_account = ? OR (…) IN (subquery)`, which defeats
+  the `source_account` skip-index and full-scans the 23 B-row operations table
+  (every account, not just whales). Rewritten as a `UNION ALL` of two
+  index-friendly arms — sourced (via the source_account index) and participant
+  (matched on the operations PRIMARY KEY `(ledger_seq, tx_index, op_index)` via
+  the account-prefixed `operation_participants`). r1-timed: the participant arm
+  is 0.018s; remaining latency for very-high-activity accounts is the
+  pre-existing `source_account`-ordering cost, unchanged by this feature.
+
 ## [v0.5.0-rc.118] — 2026-06-18
 
 ### Changed

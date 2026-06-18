@@ -244,18 +244,34 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT ` + txCols + ` FROM stellar.transactions
-		WHERE (source_account = ?
-		   OR (ledger_seq, tx_hash) IN (
-		        SELECT ledger_seq, tx_hash FROM stellar.operation_participants WHERE account = ?))`
-	args := []any{account, account}
+	// Two index-friendly arms UNION'd, NOT `source_account = ? OR … IN (…)`:
+	// an OR with a subquery defeats the source_account skip-index and
+	// full-scans the 23 B-row table. Arm 1 (sourced) uses the
+	// source_account index; arm 2 (participant) matches transactions on its
+	// PRIMARY KEY (ledger_seq, tx_index) via op-keys from the account-
+	// prefixed operation_participants — both stay index-bounded. DISTINCT
+	// dedups the rare tx that is BOTH sourced by the account AND has it as a
+	// non-source participant of one of its ops.
+	cursorClause := ""
+	var cursorArgs []any
 	if cur.IsSet() {
 		// Tuple comparison: strictly older than the (ledger, tx_index) we last
 		// served — never re-emits a served row, never skips an unserved one.
-		q += ` AND (ledger_seq, tx_index) < (?, ?)`
-		args = append(args, cur.Ledger, cur.A)
+		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
+		cursorArgs = []any{cur.Ledger, cur.A}
 	}
-	q += ` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`
+	q := `SELECT DISTINCT ` + txCols + ` FROM (
+		(SELECT ` + txCols + ` FROM stellar.transactions
+		   WHERE source_account = ?` + cursorClause + `)
+		UNION ALL
+		(SELECT ` + txCols + ` FROM stellar.transactions
+		   WHERE (ledger_seq, tx_index) IN (
+		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `)
+	) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`
+	args := []any{account}
+	args = append(args, cursorArgs...)
+	args = append(args, account)
+	args = append(args, cursorArgs...)
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -276,16 +292,31 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT ` + opCols + ` FROM stellar.operations
-		WHERE (source_account = ?
-		   OR (ledger_seq, tx_hash, op_index) IN (
-		        SELECT ledger_seq, tx_hash, op_index FROM stellar.operation_participants WHERE account = ?))`
-	args := []any{account, account}
+	// UNION of two index-friendly arms (see AccountTransactions for why an
+	// `OR … IN (…)` is wrong). Arm 1 (sourced) uses the source_account
+	// index; arm 2 (participant) matches operations on its PRIMARY KEY
+	// (ledger_seq, tx_index, op_index) via op-keys from the account-prefixed
+	// operation_participants. No DISTINCT needed: an op is sourced XOR has
+	// the account as a NON-source participant (participants exclude the op's
+	// own source), so the arms never overlap.
+	cursorClause := ""
+	var cursorArgs []any
 	if cur.IsSet() {
-		q += ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
-		args = append(args, cur.Ledger, cur.A, cur.B)
+		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
 	}
-	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
+	q := `SELECT ` + opCols + ` FROM (
+		(SELECT ` + opCols + ` FROM stellar.operations
+		   WHERE source_account = ?` + cursorClause + `)
+		UNION ALL
+		(SELECT ` + opCols + ` FROM stellar.operations
+		   WHERE (ledger_seq, tx_index, op_index) IN (
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `)
+	) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
+	args := []any{account}
+	args = append(args, cursorArgs...)
+	args = append(args, account)
+	args = append(args, cursorArgs...)
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
