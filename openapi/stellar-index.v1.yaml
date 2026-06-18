@@ -77,6 +77,11 @@ tags:
       Per-protocol surfaces — the directory + deep-dive backing the
       explorer's Protocols pillar, plus protocol-scoped listings
       (lending pools).
+  - name: analytics
+    description: |
+      Cross-cutting analytics surfaces — auto-flagged MEV events,
+      anomalies, divergence. Derived signals over the trade + oracle
+      data, backing the explorer's Analytics pillar.
 
 security:
   - {}                          # anonymous allowed on most endpoints
@@ -1210,6 +1215,56 @@ paths:
                         net_supplied_30d:    { type: string, description: "Token base-units, 30d net-flow proxy (not TVL)." }
                         net_borrowed_30d:    { type: string, description: "Token base-units, 30d net-flow proxy." }
                         utilization_30d_pct: { type: number, nullable: true, description: "Window borrow/supply ratio %; null when net supply ≤ 0." }
+
+  /mev:
+    get:
+      tags: [analytics]
+      summary: Auto-flagged MEV-event feed (atomic arbitrage today).
+      description: |
+        The MEV detector's output, newest first. v1 flags ATOMIC
+        ARBITRAGE: a single transaction in which one taker trades a
+        closed asset cycle (≥2 legs returning to a starting asset)
+        across pools/venues — the one pattern the served trade data
+        supports unambiguously (rows carry tx_hash + taker + op_index
+        but not intra-ledger transaction ordering, so cross-transaction
+        sandwich detection would be guesswork).
+
+        Each row's `detail` carries the evidence (assets, venues, the
+        cyclic legs, and summed USD notional). `profit_usd` is null for
+        arbitrage — v1 does not estimate attacker profit (leg direction
+        is ambiguous in the served rows); see `detail.note`. The
+        other kinds (sandwich / oracle_deviation / liquidation_cascade
+        / wash_trade) are reserved for lake-backed signals not yet wired.
+
+        200 + empty array when nothing's been detected or the reader
+        isn't wired (feature-gated, like /v1/lending/pools).
+      parameters:
+        - { name: kind, in: query, description: "Filter to one pattern (e.g. arbitrage).", schema: { type: string, enum: [arbitrage, sandwich, oracle_deviation, liquidation_cascade, wash_trade] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+      responses:
+        "200":
+          description: MEV events, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        event_id:           { type: string, format: uuid }
+                        detected_at:        { type: string, format: date-time }
+                        detected_at_ledger: { type: integer, format: int64 }
+                        kind:               { type: string }
+                        asset_id:           { type: string }
+                        quote_id:           { type: string }
+                        tx_hashes:          { type: array, items: { type: string } }
+                        accounts:           { type: array, items: { type: string } }
+                        detail:             { type: object, description: "Pattern evidence (arbitrage: assets/sources/legs/notional)." }
+                        profit_usd:         { type: string, nullable: true, description: "Attacker-profit estimate; null for arbitrage (not estimated)." }
+        "400": { $ref: "#/components/responses/BadRequest" }
 
   /oracle/streams:
     get:

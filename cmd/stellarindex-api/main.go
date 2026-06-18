@@ -901,6 +901,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// load. 60s freshness is plenty for a 24h-trailing aggregate.
 		SourcesStats: cachedSourcesStats,
 		Lending:      store,
+		MEV:          store,
 		Currencies:   newForexAdapter(forexCache),
 		FXHistory:    &fxHistoryReader{store: store},
 		SEP10:        sep10Validator,

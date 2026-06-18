@@ -17,6 +17,20 @@ against.
 
 ### Added
 
+- **MEV feed: atomic-arbitrage detection.** New `/v1/mev` endpoint + a
+  detection worker (`internal/aggregate/mev`, runs in the aggregator every
+  5 min) that flags atomic arbitrage — a single transaction where one taker
+  trades a closed asset cycle (≥2 legs returning to a starting asset) across
+  pools/venues. This is the one MEV pattern the served trade data supports
+  unambiguously (rows lack intra-ledger tx ordering, so cross-tx sandwich
+  detection would be guesswork). Each event stores its evidence (assets /
+  venues / cyclic legs / USD notional); idempotent via a dedup key
+  (migration 0067 adds the `arbitrage` kind + `dedup_key`). The explorer
+  `/mev` page now renders the live feed. Paired Prometheus metrics
+  (`mev_detect_runs_total` / `_duration_seconds` + `mev_events_inserted_total`).
+  `profit_usd` stays null — v1 detects the cycle structurally, it does not
+  estimate profit (leg direction is ambiguous in the served rows).
+
 - **Blend per-pool lending stats.** `/v1/lending/pools` now lists pools seen in
   EITHER the auction OR position stream and adds a 30-day net-flow proxy per
   pool (`net_supplied_30d` / `net_borrowed_30d` in token base-units +

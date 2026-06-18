@@ -3,10 +3,12 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 
+import { MevFeed } from './MevFeed';
+
 export const metadata: Metadata = {
-  title: 'MEV — suspicious-pattern detector',
+  title: 'MEV — on-chain MEV detector',
   description:
-    'Sandwich attacks, oracle-update sandwiches, liquidation cascades, wash trading. The MEV detector watches Stellar specifically.',
+    'Atomic arbitrage cycles detected on Stellar (live), plus the sandwich / oracle-sandwich / liquidation-cascade / wash-trade patterns the detector watches for.',
   alternates: { canonical: '/mev' },
 };
 
@@ -47,12 +49,15 @@ export default function MevPage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
         <p className="max-w-3xl text-sm text-ink-body">
-          Suspicious-pattern detector feed. Sandwich attacks, oracle
-          sandwiches, liquidation cascades, wash trading — the
-          patterns Stellar exhibits, with the same canonical-VWAP
-          context surrounding each event.
+          On-chain MEV detector. Atomic arbitrage — one taker trading a
+          closed asset cycle within a single transaction — is detected
+          live from the canonical trade stream. Sandwich, oracle-update
+          sandwich, liquidation cascade and wash trading are the
+          patterns we additionally watch for.
         </p>
       </header>
+
+      <MevFeed />
 
       <Panel
         title="What we look for"
@@ -102,12 +107,14 @@ export default function MevPage() {
         bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
-          Auto-flagged event feed, per-kind tally, event drill-down
-          with tx-hash deep links plumb in once the{' '}
-          <code className="font-mono text-xs">/v1/mev</code> endpoint
-          ships (Phase 5). The schema is in place; the detector
-          worker (Phase 3) lands as the aggregator data flow
-          stabilises. For the underlying methodology see the{' '}
+          Atomic arbitrage ships first because the served trade data
+          supports it unambiguously: a closed asset cycle inside one
+          transaction is its own evidence. The remaining patterns
+          (sandwich, oracle-update sandwich, liquidation cascade, wash
+          trading) need signals the served rows don&apos;t carry yet —
+          notably intra-ledger transaction ordering, and Blend /
+          Reflector correlation — and land as those lake-backed inputs
+          are wired. For the underlying methodology see the{' '}
           <Link href="/research" className="underline decoration-dotted">
             research index
           </Link>
