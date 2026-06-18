@@ -6,6 +6,7 @@ import {
   Activity,
   ArrowLeftRight,
   BadgeCheck,
+  BarChart3,
   Blocks,
   BookOpen,
   Boxes,
@@ -54,7 +55,8 @@ const NAV: NavGroup[] = [
       { href: '/accounts', label: 'Accounts', icon: Wallet },
       { href: '/issuers', label: 'Issuers', icon: BadgeCheck },
       { href: '/assets', label: 'Assets', icon: Coins },
-      { href: '/dexes', label: 'AMM Pools', icon: Boxes },
+      { href: '/dexes/sdex', label: 'SDEX Markets', icon: BarChart3 },
+      { href: '/dexes', label: 'AMM Pools', icon: Boxes, exact: true },
     ],
   },
   {
