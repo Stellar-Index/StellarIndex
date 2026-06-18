@@ -68,7 +68,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0024](0024-redis-ha-via-sentinel.md) | Accepted | Redis HA via Sentinel (not Cluster) | 2026-04-30 |
 | [0025](0025-caddy-cloudflare-trusted-proxy.md) | Accepted | Caddy trusts Cloudflare for client-IP signal via CIDR-pinned static list | 2026-05-10 |
 | [0026](0026-stablecoin-fiat-proxy-late-binding.md) | Accepted | Stablecoin → fiat proxy is late-binding aggregator policy, not eager ingest normalisation | 2026-05-10 |
-| [0027](0027-lcm-cache-tiering.md) | *Proposed* | LCM cache tiering — local galexie-archive as hot, aws-public-blockchain as cold | 2026-05-20 |
+| [0027](0027-lcm-cache-tiering.md) | Accepted | LCM cache tiering — local galexie-archive as hot, aws-public-blockchain as cold | 2026-05-20 |
 | [0028](0028-rwa-asset-representation.md) | Accepted | Tokenized real-world assets as `AssetType = "rwa"` — RedStone RWA feeds (BENJI, GILTS, …) | 2026-05-27 |
 | [0029](0029-soroban-events-landing-zone.md) | Superseded by [0034](0034-tiered-clickhouse-architecture.md) | soroban_events raw-event landing zone | 2026-05-25 |
 | [0030](0030-per-source-coverage-invariant.md) | Accepted | Per-source coverage invariant | 2026-05-28 |

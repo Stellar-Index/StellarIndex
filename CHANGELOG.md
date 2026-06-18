@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **ADR-0027 (LCM cache tiering) accepted.** The dual-source read path +
+  trim/rehydrate operators are implemented and gated behind the safe-by-default
+  `ColdTieringEnabled()` flag, so the design is the architecture of record. The
+  status note records that production activation (enable flag + bulk trim) is a
+  single operator-gated step — enabling §3 without §4 only adds the cold-path
+  failure mode with no headroom benefit. ADR-0012 (quorum-set composition)
+  remains Proposed by design: it's a deliberate placeholder gated on the
+  post-launch Tier-1 validator rollout (ADR-0004 Phase 3), not an open decision
+  we can make pre-launch without fabricating a validator trust set.
+
 ### Added
 
 - **Account incoming/participant history (ADR-0038 Phase B completion).** A new
