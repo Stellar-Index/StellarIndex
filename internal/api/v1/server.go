@@ -98,6 +98,7 @@ type Server struct {
 	networkStats            NetworkStatsReader
 	sourcesStats            SourcesStatsReader
 	lending                 LendingReader
+	mev                     MEVReader
 	currencies              CurrenciesReader
 	explorer                ExplorerReader
 	fxHistory               FXHistoryReader
@@ -462,6 +463,10 @@ type Options struct {
 	// empty array — same degradation pattern as Markets.
 	Lending LendingReader
 
+	// MEV, when non-nil, backs /v1/mev (the auto-flagged MEV-event
+	// feed). Leave nil and the handler serves an empty array.
+	MEV MEVReader
+
 	// Currencies, when non-nil, supplies the world fiat-currency
 	// rates snapshot used by /v1/assets fiat rows + chart fiat:fiat
 	// fallback. The standalone /v1/currencies route was removed in
@@ -755,6 +760,7 @@ func New(opts Options) *Server {
 		networkStats:            opts.NetworkStats,
 		sourcesStats:            opts.SourcesStats,
 		lending:                 opts.Lending,
+		mev:                     opts.MEV,
 		currencies:              opts.Currencies,
 		explorer:                opts.Explorer,
 		fxHistory:               opts.FXHistory,
@@ -1161,6 +1167,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 
 	// Lending — Blend pools observed in the auction stream.
 	s.mux.HandleFunc("GET /v1/lending/pools", s.handleLendingPools)
+
+	// MEV — auto-flagged MEV-event feed (arbitrage cycles today).
+	s.mux.HandleFunc("GET /v1/mev", s.handleMEVEvents)
 
 	// Source catalogue — every venue the aggregator knows about,
 	// with class + IncludeInVWAP metadata.

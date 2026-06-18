@@ -1127,8 +1127,56 @@ handler now skips + bumps this counter instead of failing the
 whole response, but operators should still investigate + delete
 any row that increments this counter.
 
+## MEV detection (aggregator binary)
+
+The MEV worker (`internal/aggregate/mev`) scans the recent trade
+window every 5 minutes for atomic-arbitrage cycles and writes new
+ones to `mev_events` (backing `/v1/mev`). These metrics make the
+worker's health + output rate observable.
+
+### `stellarindex_mev_detect_runs_total`
+
+Counter, label `outcome` ∈ `ok | scan_error | write_error`.
+
+Per-run outcome of the MEV detection loop. `ok` = the scan +
+detection completed (new inserts are counted separately). `scan_error`
+= the bounded trades scan failed (Postgres unreachable / slow) and the
+run was skipped (retried next tick). `write_error` = an `mev_events`
+insert failed mid-run.
+
+**When to look:** a sustained non-`ok` rate means the `/v1/mev` feed
+is going stale. Not alert-worthy on its own — this is analytics, not
+an SLO path — but a persistent `scan_error` streak points at the same
+Postgres health the ingest/aggregator alerts already cover.
+
+### `stellarindex_mev_events_inserted_total`
+
+Counter, no labels.
+
+New (non-duplicate) MEV events persisted across all runs. The detector
+re-scans overlapping windows and dedups on write (`dedup_key`), so this
+counts genuine first-detections, not re-observations. A flat line is
+normal (arbitrage is intermittent on Stellar); use it to confirm the
+detector is wired, not as an alert.
+
+### `stellarindex_mev_detect_duration_seconds`
+
+Histogram, label `outcome` (same set as the runs counter).
+
+Per-run latency. A healthy run (bounded ts-window scan + in-memory
+grouping + a few inserts) is sub-second; chart the `ok` p95/p99
+separately from `scan_error` to tell "Postgres scan is slow" from
+"detector is failing fast".
+
 ## Changelog
 
+- 2026-06-18 — added the MEV detection metrics
+  (`stellarindex_mev_detect_runs_total`,
+  `stellarindex_mev_events_inserted_total`,
+  `stellarindex_mev_detect_duration_seconds`), emitted by the
+  aggregator's MEV worker (atomic-arbitrage detector backing
+  `/v1/mev`). Paired counter + duration-histogram + new-events
+  counter, matching the divergence_refresh / supply_refresh shape.
 - 2026-06-12 — added `stellarindex_ch_live_sink_ledgers_total`
   (`outcome=written|buffered|dropped|errored`), emitted by the
   indexer's periodic stats goroutine when the ClickHouse real-time

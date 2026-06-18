@@ -108,6 +108,19 @@ func registerAppMetrics() {
 		ChLiveSinkLedgersTotal,
 
 		MarketsSkippedRowsTotal,
+	)
+	registerAppMetricsTail()
+}
+
+// registerAppMetricsTail registers the remainder of the app metric set
+// — split out of registerAppMetrics purely to keep each function under
+// the funlen ceiling as the metric set grows (same reason init() calls
+// registerAppMetrics).
+func registerAppMetricsTail() {
+	Registry.MustRegister(
+		MEVDetectRunsTotal,
+		MEVEventsInsertedTotal,
+		MEVDetectDurationSeconds,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -145,6 +158,9 @@ func registerAppMetrics() {
 	}
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"ok", "scan_error", "write_error"} {
+		MEVDetectRunsTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -761,6 +777,49 @@ var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_divergence_refresh_duration_seconds",
 		Help:    "Per-pair divergence-refresh latency, labelled by outcome (ok|no_vwap|parse_error|refresh_error).",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// MEVDetectRunsTotal — per-run outcome counter for the aggregator's
+// MEV detection worker (internal/aggregate/mev). Labels:
+//
+//   - `ok`          — scan + detection completed (any inserts counted
+//     separately via MEVEventsInsertedTotal).
+//   - `scan_error`  — the trades scan failed (Postgres unreachable /
+//     slow). The run is skipped; retried next tick.
+//   - `write_error` — an mev_events insert failed mid-run.
+//
+// A sustained non-`ok` rate means the /v1/mev feed is going stale.
+// Not alert-worthy on its own (analytics, not an SLO).
+var MEVDetectRunsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_mev_detect_runs_total",
+		Help: "MEV detection run outcomes (ok|scan_error|write_error).",
+	},
+	[]string{"outcome"},
+)
+
+// MEVEventsInsertedTotal — count of NEW (non-duplicate) MEV events
+// written across all runs. The detector re-scans overlapping windows
+// and dedups on write, so this counts genuine first-detections, not
+// re-observations.
+var MEVEventsInsertedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_mev_events_inserted_total",
+		Help: "New MEV events persisted (post-dedup) across detection runs.",
+	},
+)
+
+// MEVDetectDurationSeconds — per-run latency, labelled by outcome.
+// The run is a bounded ts-window trades scan + in-memory grouping +
+// per-candidate inserts; healthy runs are sub-second, a slow Postgres
+// scan stretches the `ok`/`scan_error` tail.
+var MEVDetectDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_mev_detect_duration_seconds",
+		Help:    "MEV detection run latency, labelled by outcome (ok|scan_error|write_error).",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
 )

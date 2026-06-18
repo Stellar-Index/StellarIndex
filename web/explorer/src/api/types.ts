@@ -2072,6 +2072,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mev": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auto-flagged MEV-event feed (atomic arbitrage today).
+         * @description The MEV detector's output, newest first. v1 flags ATOMIC
+         *     ARBITRAGE: a single transaction in which one taker trades a
+         *     closed asset cycle (≥2 legs returning to a starting asset)
+         *     across pools/venues — the one pattern the served trade data
+         *     supports unambiguously (rows carry tx_hash + taker + op_index
+         *     but not intra-ledger transaction ordering, so cross-transaction
+         *     sandwich detection would be guesswork).
+         *
+         *     Each row's `detail` carries the evidence (assets, venues, the
+         *     cyclic legs, and summed USD notional). `profit_usd` is null for
+         *     arbitrage — v1 does not estimate attacker profit (leg direction
+         *     is ambiguous in the served rows); see `detail.note`. The
+         *     other kinds (sandwich / oracle_deviation / liquidation_cascade
+         *     / wash_trade) are reserved for lake-backed signals not yet wired.
+         *
+         *     200 + empty array when nothing's been detected or the reader
+         *     isn't wired (feature-gated, like /v1/lending/pools).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Filter to one pattern (e.g. arbitrage). */
+                    kind?: "arbitrage" | "sandwich" | "oracle_deviation" | "liquidation_cascade" | "wash_trade";
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description MEV events, newest first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                /** Format: uuid */
+                                event_id?: string;
+                                /** Format: date-time */
+                                detected_at?: string;
+                                /** Format: int64 */
+                                detected_at_ledger?: number;
+                                kind?: string;
+                                asset_id?: string;
+                                quote_id?: string;
+                                tx_hashes?: string[];
+                                accounts?: string[];
+                                /** @description Pattern evidence (arbitrage: assets/sources/legs/notional). */
+                                detail?: Record<string, never>;
+                                /** @description Attacker-profit estimate; null for arbitrage (not estimated). */
+                                profit_usd?: string | null;
+                            }[];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/oracle/streams": {
         parameters: {
             query?: never;

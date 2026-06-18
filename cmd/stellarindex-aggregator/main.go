@@ -78,6 +78,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/changesummary"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/mev"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/orchestrator"
 	"github.com/StellarIndex/stellar-index/internal/api/streaming/redispub"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
@@ -538,6 +539,23 @@ func run(cfgPath string, dryRun bool) error {
 		defer refresherWG.Done()
 		if err := timescale.RunGapDetector(rootCtx, store, logger.With("component", "gap-detector")); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("gap-detector exited with error", "err", err)
+		}
+	}()
+
+	// ─── MEV detection worker (§7.20) ───────────────────────────
+	// Scans the recent trade window every 5 min for atomic-arbitrage
+	// cycles (one taker, one tx, a closed asset cycle) and writes new
+	// ones to mev_events for the explorer's /mev feed. Idempotent via
+	// the dedup key, so overlapping windows are safe.
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		mevWorker := mev.NewWorker(store, store, mev.WorkerConfig{
+			Logger:   logger.With("component", "mev"),
+			Observer: mevObserver{},
+		})
+		if err := mevWorker.Run(rootCtx, 5*time.Minute); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("mev worker exited with error", "err", err)
 		}
 	}()
 
@@ -1325,4 +1343,18 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger)
 	}
 
 	return refs
+}
+
+// mevObserver adapts the MEV worker's per-run outcomes to the
+// Prometheus metrics (paired counter + duration histogram, plus the
+// new-events counter), matching the divergence_refresh /
+// supply_refresh observability shape.
+type mevObserver struct{}
+
+func (mevObserver) Run(outcome string, dur time.Duration, _ int, inserted int) {
+	obs.MEVDetectRunsTotal.WithLabelValues(outcome).Inc()
+	obs.MEVDetectDurationSeconds.WithLabelValues(outcome).Observe(dur.Seconds())
+	if inserted > 0 {
+		obs.MEVEventsInsertedTotal.Add(float64(inserted))
+	}
 }
