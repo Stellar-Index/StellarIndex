@@ -86,18 +86,29 @@
         - not (migrations_skip | default(false) | bool)
 
     - name: Apply outstanding migrations
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/stellarindex-migrate
-          - -dsn
-          - "{{ migrate_dsn | default('postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable') }}"
-          - -migrations
-          - /usr/local/share/stellarindex/migrations
-          - up
+      # Source the host's env (STELLARINDEX_POSTGRES_DSN — the real,
+      # password-bearing DSN that the services already use) and let
+      # stellarindex-migrate read it, rather than the old hardcoded
+      # passwordless `postgres://stellarindex@127.0.0.1` DSN, which fails
+      # auth against the live db (28P01 — F-1301). That auth failure is why
+      # operators set migrations_skip=true; with the `| bool` skip fix this
+      # step actually runs now, so it has to use working credentials. Same
+      # mechanism as the bootstrap role + manual applies. An operator can
+      # still override with -e migrate_dsn=… .
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          {% if migrate_dsn is defined and migrate_dsn | length > 0 %}
+          export STELLARINDEX_POSTGRES_DSN={{ migrate_dsn | quote }}
+          {% else %}
+          set -a
+          . /etc/default/stellarindex
+          set +a
+          {% endif %}
+          /usr/local/bin/stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up
       register: migrate_result
       changed_when: "'migrations applied' in migrate_result.stdout"
-      failed_when:
-        - migrate_result.rc != 0
+      failed_when: migrate_result.rc != 0
       when: not (migrations_skip | default(false) | bool)
 
     - name: Migration sync skipped — operator override
