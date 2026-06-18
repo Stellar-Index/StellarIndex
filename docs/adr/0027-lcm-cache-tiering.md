@@ -1,7 +1,7 @@
 ---
 adr: 0027
 title: LCM cache tiering — local galexie-archive as hot, aws-public-blockchain as cold
-status: Proposed
+status: Accepted
 date: 2026-05-20
 supersedes: []
 superseded_by: null
@@ -237,3 +237,26 @@ SHA-256 against AWS's published checksums per partition.
   `drop_chunks` policy.** trades, prices_1m, etc. have their
   own retention story per ADR-0006 + the chunk policy in
   migration 0001.
+
+## Status — Accepted 2026-06-18
+
+The design is accepted and **implemented**: the dual-source read path
+(`TieredDataStore` in `internal/ledgerstream/tiered.go`, with
+cold-tier-hit Prometheus metrics), the `trim-galexie-archive` operator
+(`cmd/stellarindex-ops/trim_galexie_archive.go`, dry-run-by-default with
+upstream-presence verification + max-file caps), and the
+`rehydrate-galexie-archive` recovery operator are all in tree, gated
+behind the safe-by-default `ColdTieringEnabled()` flag (zero-value =
+disabled, matching Sequencing Step 1).
+
+**What remains is operational, not architectural — and is operator-gated.**
+Sequencing steps 3 (enable the flag) and 4 (first bulk trim) MUST be done
+as a SINGLE operational step: enabling the dual-source flag without then
+trimming gains nothing and merely introduces the cold-path failure mode
+(an `aws-public-blockchain` dependency on the read path) with no headroom
+benefit. Do not enable §3 in isolation. The bulk trim itself stays gated
+on an operator running it with the `Pause-If-Pool-Capacity-Exceeds 90%`
+guard, since it deletes local LCM ranges.
+
+Accepting the ADR records the decision + the shipped implementation; it
+does NOT flip the production flag.
