@@ -5,6 +5,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
 
 // extractEntryChanges populates ext.Changes with one row per LedgerEntryChange
@@ -106,7 +108,37 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 		return LedgerEntryChangeRow{}, false
 	}
 	row.KeyXDR = keyB64
+	row.AccountID, row.Asset = ownerAndAsset(key)
 	return row, true
+}
+
+// ownerAndAsset extracts the queryable owner account (G-strkey) and asset
+// (canonical "CODE-ISSUER" / "native" / "pool:<hex>") from a ledger key, for
+// the account-state + asset-holder explorer indexes. Both empty for entry
+// types with no single owning account (claimable balances, liquidity pools,
+// contract data/code, ttl, config); asset is empty for everything but
+// trustlines.
+func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
+	switch key.Type {
+	case xdr.LedgerEntryTypeAccount:
+		if a, ok := key.GetAccount(); ok {
+			accountID = a.AccountId.Address()
+		}
+	case xdr.LedgerEntryTypeTrustline:
+		if t, ok := key.GetTrustLine(); ok {
+			accountID = t.AccountId.Address()
+			asset = xdrjson.TrustLineAssetID(t.Asset)
+		}
+	case xdr.LedgerEntryTypeOffer:
+		if o, ok := key.GetOffer(); ok {
+			accountID = o.SellerId.Address()
+		}
+	case xdr.LedgerEntryTypeData:
+		if d, ok := key.GetData(); ok {
+			accountID = d.AccountId.Address()
+		}
+	}
+	return accountID, asset
 }
 
 // ledgerEntryOf returns the LedgerEntry for a created/updated/state change.

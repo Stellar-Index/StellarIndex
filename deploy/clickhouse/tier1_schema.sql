@@ -137,7 +137,18 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     entry_type   LowCardinality(String),
     key_xdr      String,
     entry_xdr    String,
-    ingested_at  DateTime DEFAULT now()
+    -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
+    -- reads). account_id = owning G-strkey for account-owned entries (account
+    -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"
+    -- / "pool:<hex>" for trustlines. Empty otherwise. Bloom skip-indexes so a
+    -- WHERE account_id=? / asset=? prunes parts — the sort key is
+    -- (ledger_seq, tx_hash, …), so these predicates would otherwise full-scan.
+    -- Existing rows backfill to '' until a ch re-derive repopulates them.
+    account_id   String DEFAULT '',
+    asset        String DEFAULT '',
+    ingested_at  DateTime DEFAULT now(),
+    INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
