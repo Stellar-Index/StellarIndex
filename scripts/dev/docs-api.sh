@@ -22,6 +22,18 @@ set -euo pipefail
 # self-contained: HTML, CSS, and JS in one URL.
 SCALAR_VERSION="1.55.3"
 
+# Subresource Integrity hash for the pinned bundle above. The docs
+# host loads this script from a third-party CDN (jsdelivr); SRI makes
+# the browser reject the script if jsdelivr ever serves bytes that
+# don't match this hash (CDN compromise / tampering). It MUST be
+# recomputed whenever SCALAR_VERSION changes, or the script will be
+# blocked and the docs page will render blank:
+#
+#   curl -sL "https://cdn.jsdelivr.net/npm/@scalar/api-reference@${SCALAR_VERSION}/dist/browser/standalone.js" \
+#     | openssl dgst -sha384 -binary | openssl base64 -A
+#
+SCALAR_SRI="sha384-lqNSpgZBaLA+vZvHYhcvbchU39mp7CC1Els+8Cxe2rZ34jCZp7iQM8ySSD4KZId5"
+
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$REPO_ROOT"
 
@@ -117,7 +129,11 @@ cat > "$OUT_DIR/index.html" <<EOF
         }
       }'
     ></script>
-    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@${SCALAR_VERSION}/dist/browser/standalone.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@${SCALAR_VERSION}/dist/browser/standalone.js"
+      integrity="${SCALAR_SRI}"
+      crossorigin="anonymous"
+    ></script>
   </body>
 </html>
 EOF
