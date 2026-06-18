@@ -1,7 +1,8 @@
 // Minimal markdown block renderer for incident postmortems.
 // Mirrors the explorer's lib/markdown.tsx so authored content
 // renders the same on both sites — h1–h4, paragraphs, lists,
-// fenced code, blockquotes, plus inline bold/code/link.
+// fenced code, blockquotes, GFM pipe tables (the incident
+// template's timeline table), plus inline bold/code/link.
 
 import React from 'react';
 
@@ -15,6 +16,7 @@ type Block =
   | { kind: 'ol'; items: string[] }
   | { kind: 'pre'; lang: string; code: string }
   | { kind: 'blockquote'; text: string }
+  | { kind: 'table'; headers: string[]; rows: string[][] }
   | { kind: 'hr' };
 
 function tokenize(md: string): Block[] {
@@ -96,6 +98,28 @@ function tokenize(md: string): Block[] {
         i++;
       }
       out.push({ kind: 'ol', items });
+      continue;
+    }
+    // GFM table: a header row with '|', then a delimiter row (| --- | :--: |),
+    // then body rows. Without this, table lines fall through to the paragraph
+    // branch and render as a wall of literal pipes.
+    const isDelimRow = (l: string) =>
+      /^[\s|:-]+$/.test(l) && l.includes('-') && l.includes('|');
+    if (line.includes('|') && i + 1 < lines.length && isDelimRow(lines[i + 1]!)) {
+      const splitRow = (r: string): string[] => {
+        let cells = r.trim().split('|');
+        if (cells[0] === '') cells = cells.slice(1);
+        if (cells.length && cells[cells.length - 1] === '') cells = cells.slice(0, -1);
+        return cells.map((c) => c.trim());
+      };
+      const headers = splitRow(line);
+      i += 2; // consume header + delimiter
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i]!.includes('|') && lines[i]!.trim() !== '') {
+        rows.push(splitRow(lines[i]!));
+        i++;
+      }
+      out.push({ kind: 'table', headers, rows });
       continue;
     }
     if (line.trim() === '') {
@@ -200,6 +224,33 @@ function renderBlock(b: Block, i: number): React.ReactElement {
         >
           <Inline text={b.text} />
         </blockquote>
+      );
+    case 'table':
+      return (
+        <div key={i} className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm leading-6 text-ink-muted">
+            <thead>
+              <tr className="border-b border-line text-left">
+                {b.headers.map((h, j) => (
+                  <th key={j} className="px-3 py-2 font-semibold text-ink">
+                    <Inline text={h} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {b.rows.map((row, r) => (
+                <tr key={r} className="border-b border-line align-top">
+                  {row.map((cell, c) => (
+                    <td key={c} className="px-3 py-2">
+                      <Inline text={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     case 'hr':
       return <hr key={i} className="border-line" />;
