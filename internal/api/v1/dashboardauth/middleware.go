@@ -3,6 +3,7 @@ package dashboardauth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -54,6 +55,21 @@ func parseIP(s string) net.IP {
 // single session would otherwise dominate at high request
 // rates from a single tab.
 func Middleware(cfg *Config) func(http.Handler) http.Handler {
+	// Defensive defaults. The auth Handlers get a validated Config
+	// copy via NewHandlers (validate() fills these in), but the
+	// resolver Middleware is constructed straight from the caller's
+	// Config, which may never have run validate(). resolveSession
+	// calls cfg.Now() and cfg.Logger.Warn() — a nil here panics every
+	// authenticated request, which is exactly how /v1/account/me
+	// started 500-ing after a successful magic-link login. Default the
+	// fields resolveSession depends on so the middleware is
+	// self-sufficient regardless of how the Config was built.
+	if cfg.Now == nil {
+		cfg.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	tracker := newTouchTracker(time.Minute)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

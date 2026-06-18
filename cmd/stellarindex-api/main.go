@@ -1266,11 +1266,19 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	}
 
 	authCfg := dashboardauth.Config{
-		Accounts:         accounts,
-		Users:            users,
-		Tokens:           tokens,
-		Sender:           sender,
-		Logger:           logger.With("component", "dashboard-auth"),
+		Accounts: accounts,
+		Users:    users,
+		Tokens:   tokens,
+		Sender:   sender,
+		Logger:   logger.With("component", "dashboard-auth"),
+		// Now is consumed by BOTH NewHandlers (which defaults it in
+		// validate()) AND the session-resolver Middleware (which gets
+		// this Config raw, without validate()). Set it here explicitly
+		// so the two paths share one clock — leaving it nil previously
+		// nil-derefed cfg.Now() in resolveSession on every authenticated
+		// request (the magic-link cookie resolved fine, then /v1/account/me
+		// 500'd, so login looked broken).
+		Now:              func() time.Time { return time.Now().UTC() },
 		DashboardBaseURL: cfg.BaseURL,
 		EmailFrom:        cfg.EmailFrom,
 		MagicLinkTTL:     time.Duration(cfg.MagicLinkTTLMinutes) * time.Minute,
