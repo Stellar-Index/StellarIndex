@@ -73,6 +73,18 @@ type OperationResultRow struct {
 	ResultXDR  string
 }
 
+// OperationParticipantRow mirrors stellar.operation_participants — one
+// row per (non-source account, operation) for ADR-0038 Phase B account
+// history.
+type OperationParticipantRow struct {
+	Account   string
+	LedgerSeq uint32
+	CloseTime time.Time
+	TxHash    string
+	TxIndex   uint32
+	OpIndex   uint32
+}
+
 // ContractEventRow mirrors stellar.contract_events.
 type ContractEventRow struct {
 	LedgerSeq        uint32
@@ -138,13 +150,14 @@ type SupplyFlowRow struct {
 // LedgerExtract is one ledger's full structural decode — all rows produced
 // from a single LedgerCloseMeta.
 type LedgerExtract struct {
-	Ledger      LedgerRow
-	Txs         []TransactionRow
-	Ops         []OperationRow
-	Results     []OperationResultRow
-	Events      []ContractEventRow
-	Changes     []LedgerEntryChangeRow
-	SupplyFlows []SupplyFlowRow
+	Ledger       LedgerRow
+	Txs          []TransactionRow
+	Ops          []OperationRow
+	Results      []OperationResultRow
+	Participants []OperationParticipantRow
+	Events       []ContractEventRow
+	Changes      []LedgerEntryChangeRow
+	SupplyFlows  []SupplyFlowRow
 
 	// TxReadErrors / TxEventReadErrors count transactions this extract
 	// could NOT fully read (a malformed tx, or a tx whose
@@ -177,13 +190,14 @@ type Sink struct {
 	flushEvery       int
 	maxBufferLedgers int // hard cap on buffered ledgers; 0 = unbounded (backfill).
 
-	ledgers     []LedgerRow
-	txs         []TransactionRow
-	ops         []OperationRow
-	results     []OperationResultRow
-	events      []ContractEventRow
-	changes     []LedgerEntryChangeRow
-	supplyFlows []SupplyFlowRow
+	ledgers      []LedgerRow
+	txs          []TransactionRow
+	ops          []OperationRow
+	results      []OperationResultRow
+	participants []OperationParticipantRow
+	events       []ContractEventRow
+	changes      []LedgerEntryChangeRow
+	supplyFlows  []SupplyFlowRow
 }
 
 // SetMaxBufferLedgers caps how many ledgers' worth of rows the Sink will hold
@@ -255,6 +269,7 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	s.txs = append(s.txs, e.Txs...)
 	s.ops = append(s.ops, e.Ops...)
 	s.results = append(s.results, e.Results...)
+	s.participants = append(s.participants, e.Participants...)
 	s.events = append(s.events, e.Events...)
 	s.changes = append(s.changes, e.Changes...)
 	s.supplyFlows = append(s.supplyFlows, e.SupplyFlows...)
@@ -291,6 +306,9 @@ func (s *Sink) Flush(ctx context.Context) error {
 	if err := s.flushResults(ctx); err != nil {
 		return err
 	}
+	if err := s.flushParticipants(ctx); err != nil {
+		return err
+	}
 	if err := s.flushEvents(ctx); err != nil {
 		return err
 	}
@@ -313,6 +331,7 @@ func (s *Sink) reset() {
 	s.txs = s.txs[:0]
 	s.ops = s.ops[:0]
 	s.results = s.results[:0]
+	s.participants = s.participants[:0]
 	s.events = s.events[:0]
 	s.changes = s.changes[:0]
 	s.supplyFlows = s.supplyFlows[:0]
@@ -378,6 +397,19 @@ func (s *Sink) flushResults(ctx context.Context) error {
 		}
 	}
 	return wrapSend(b.Send(), "operation_results")
+}
+
+func (s *Sink) flushParticipants(ctx context.Context) error {
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.operation_participants (account, ledger_seq, close_time, tx_hash, tx_index, op_index)")
+	if err != nil {
+		return fmt.Errorf("clickhouse: prepare operation_participants: %w", err)
+	}
+	for _, r := range s.participants {
+		if err := b.Append(r.Account, r.LedgerSeq, r.CloseTime, r.TxHash, r.TxIndex, r.OpIndex); err != nil {
+			return fmt.Errorf("clickhouse: append participant %s/%s/%d: %w", r.Account, r.TxHash, r.OpIndex, err)
+		}
+	}
+	return wrapSend(b.Send(), "operation_participants")
 }
 
 func (s *Sink) flushEvents(ctx context.Context) error {

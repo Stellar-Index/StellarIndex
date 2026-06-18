@@ -24,13 +24,13 @@ const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
 const PAGE_SIZE = 50;
 
 /**
- * Client view for /accounts?id=G…. Fetches the account's sourced
- * transactions and sourced operations in parallel and renders them.
+ * Client view for /accounts?id=G…. Fetches the account's transactions
+ * and operations in parallel and renders them.
  *
- * SCOPE: this is "sourced/submitted" activity only — what the account
- * itself submitted (its source), NOT incoming transfers or full
- * participant history. The backend stamps a `scope` field saying so;
- * full balances + incoming history land in Phase C.
+ * SCOPE: "all" (ADR-0038 Phase B) — both what the account sourced and
+ * where it's a non-source participant (incoming payments, trustlines,
+ * merges, …). The backend stamps a `scope` field; incoming coverage
+ * tracks the participant-index capture + backfill.
  */
 export function AccountView() {
   const params = useSearchParams();
@@ -131,8 +131,9 @@ export function AccountView() {
         <p className="rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-ink-muted">
           Balances + trustlines + offers below reflect the lake&apos;s captured
           ledger-entry window; the activity tables show{' '}
-          <strong>sourced/submitted</strong> history (incoming/participant
-          history follows in a later phase).
+          <strong>all</strong> history — both what the account sourced and where
+          it&apos;s a participant (incoming payments, trustlines, merges).
+          Incoming coverage tracks the participant-index backfill.
         </p>
       </Panel>
 
@@ -465,7 +466,7 @@ function TransactionsPanel({
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        No sourced transactions observed for this account.
+        No transactions observed for this account yet.
       </Panel>
     );
   }
@@ -591,7 +592,7 @@ function OperationsPanel({
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        No sourced operations observed for this account.
+        No operations observed for this account yet.
       </Panel>
     );
   }

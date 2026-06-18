@@ -20117,11 +20117,11 @@
               "description": "",
               "item": [
                 {
-                  "name": "Transactions an account submitted (sourced), newest first.",
+                  "name": "Transactions involving an account (sourced + incoming), newest first.",
                   "request": {
-                    "name": "Transactions an account submitted (sourced), newest first.",
+                    "name": "Transactions involving an account (sourced + incoming), newest first.",
                     "description": {
-                      "content": "The transactions for which this account is the source/fee-payer,\nnewest first, keyset-paged with `?cursor=<opaque>` (echo back\n`next_cursor`). The cursor is the composite `(ledger, tx_index)`.\n\nSCOPE: this is **sourced/submitted** activity only (`scope: \"sourced\"`).\nIncoming/participant activity — where the account is a payment\ndestination, trustor, merge target, clawback victim, etc. — requires\nthe participant index (ADR-0038 Phase B completion) and is NOT included\nhere yet.\n",
+                      "content": "The transactions INVOLVING this account, newest first, keyset-paged\nwith `?cursor=<opaque>` (echo back `next_cursor`). The cursor is the\ncomposite `(ledger, tx_index)`.\n\nSCOPE: `scope: \"all\"` (ADR-0038 Phase B) — both transactions the\naccount SOURCED (source/fee-payer) AND those where it's a non-source\nPARTICIPANT in any operation (payment destination, trustor, merge\ntarget, clawback victim, …), via the operation-participant index.\nIncoming coverage tracks the participant-index capture + historical\nbackfill — a transaction whose only link to the account predates\nparticipant capture surfaces once the re-derive lands.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -20178,7 +20178,7 @@
                   },
                   "response": [
                     {
-                      "name": "Sourced transactions for the account.",
+                      "name": "Transactions involving the account (sourced + incoming).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -20239,7 +20239,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"transactions\": [\n      {\n        \"hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"index\": \"<integer>\",\n        \"source_account\": \"<string>\",\n        \"fee_charged\": \"<integer>\",\n        \"max_fee\": \"<integer>\",\n        \"operation_count\": \"<integer>\",\n        \"successful\": \"<boolean>\",\n        \"result_code\": \"<integer>\",\n        \"memo_type\": \"<string>\",\n        \"memo\": \"<string>\"\n      },\n      {\n        \"hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"index\": \"<integer>\",\n        \"source_account\": \"<string>\",\n        \"fee_charged\": \"<integer>\",\n        \"max_fee\": \"<integer>\",\n        \"operation_count\": \"<integer>\",\n        \"successful\": \"<boolean>\",\n        \"result_code\": \"<integer>\",\n        \"memo_type\": \"<string>\",\n        \"memo\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"sourced\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"transactions\": [\n      {\n        \"hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"index\": \"<integer>\",\n        \"source_account\": \"<string>\",\n        \"fee_charged\": \"<integer>\",\n        \"max_fee\": \"<integer>\",\n        \"operation_count\": \"<integer>\",\n        \"successful\": \"<boolean>\",\n        \"result_code\": \"<integer>\",\n        \"memo_type\": \"<string>\",\n        \"memo\": \"<string>\"\n      },\n      {\n        \"hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"index\": \"<integer>\",\n        \"source_account\": \"<string>\",\n        \"fee_charged\": \"<integer>\",\n        \"max_fee\": \"<integer>\",\n        \"operation_count\": \"<integer>\",\n        \"successful\": \"<boolean>\",\n        \"result_code\": \"<integer>\",\n        \"memo_type\": \"<string>\",\n        \"memo\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -20388,11 +20388,11 @@
               "description": "",
               "item": [
                 {
-                  "name": "Operations an account sourced (decoded), newest first.",
+                  "name": "Operations involving an account (sourced + incoming), newest first.",
                   "request": {
-                    "name": "Operations an account sourced (decoded), newest first.",
+                    "name": "Operations involving an account (sourced + incoming), newest first.",
                     "description": {
-                      "content": "The operations whose effective source is this account, decoded\n(human-readable fields), newest first, keyset-paged with\n`?cursor=<opaque>` (echo back `next_cursor`). The cursor is the\ncomposite `(ledger, tx_index, op_index)`.\n\nSCOPE: **sourced** activity only (`scope: \"sourced\"`) — see the\ntransactions endpoint above for the participant-index caveat.\n",
+                      "content": "The operations INVOLVING this account, decoded (human-readable\nfields), newest first, keyset-paged with `?cursor=<opaque>` (echo back\n`next_cursor`). The cursor is the composite `(ledger, tx_index,\nop_index)`.\n\nSCOPE: `scope: \"all\"` (ADR-0038 Phase B) — operations the account\nSOURCED plus those where it's a non-source PARTICIPANT — see the\ntransactions endpoint above for the coverage/backfill note.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -20510,7 +20510,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1817.7670752629638\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"sourced\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1817.7670752629638\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },

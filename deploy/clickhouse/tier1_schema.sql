@@ -96,6 +96,36 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (ledger_seq, tx_hash, op_index);
 
+-- Per-op NON-SOURCE participants (ADR-0038 Phase B). One row per
+-- (account, operation) where `account` is a G-strkey the op TOUCHES but
+-- did not source: a payment destination, trustor, merge target, clawback
+-- victim, etc. Derived in the Go extract via xdrjson.ParticipantAccounts
+-- (decodes the op body's G-strkey fields); the op's own source stays in
+-- stellar.operations.source_account. Account history (GET
+-- /v1/accounts/{g}/operations|transactions) is then the UNION of
+-- operations.source_account = G (sourced) and a lookup here (incoming).
+--
+-- ORDER BY (account, …) so a per-account lookup is a primary-key range
+-- scan — `account` is the sort prefix, so no separate skip-index is
+-- needed (unlike operations.source_account, which is a non-prefix column
+-- and therefore carries a bloom index). Live ingest fills this going
+-- forward; the historical re-derive over the full op history is a
+-- (multi-day, operator-gated) ch-backfill, like the Phase-C entry-change
+-- fill.
+CREATE TABLE IF NOT EXISTS stellar.operation_participants
+(
+    account     String,
+    ledger_seq  UInt32,
+    close_time  DateTime('UTC'),
+    tx_hash     String,
+    tx_index    UInt32,
+    op_index    UInt32,
+    ingested_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (account, ledger_seq, tx_index, op_index);
+
 -- The soroban_events replacement. Retains topic/body/arg XDR for any event decoder.
 CREATE TABLE IF NOT EXISTS stellar.contract_events
 (

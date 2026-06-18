@@ -14,8 +14,9 @@ type AccountTransactionsView struct {
 	Account      string          `json:"account"`
 	Transactions []TxSummaryView `json:"transactions"`
 	NextCursor   string          `json:"next_cursor,omitempty"`
-	// Scope documents that this is source/submitter activity (Phase B v1);
-	// incoming/participant activity needs the participant index.
+	// Scope documents the coverage: "all" = sourced + incoming/participant
+	// activity (ADR-0038 Phase B — the participant index is wired). Incoming
+	// coverage tracks the participant-index capture + backfill.
 	Scope string `json:"scope"`
 }
 
@@ -29,7 +30,10 @@ type AccountOperationsView struct {
 	Scope      string   `json:"scope"`
 }
 
-const accountScopeSourced = "sourced" // submitted/sourced by this account (not incoming)
+// accountScopeAll = sourced + incoming/participant activity (ADR-0038 Phase B;
+// the participant index is wired). Incoming coverage tracks participant-index
+// capture + backfill.
+const accountScopeAll = "all"
 
 // parseAccountStrkey validates the {g_strkey} path segment. ok=false (after a
 // problem+json) on an invalid strkey.
@@ -45,7 +49,8 @@ func (s *Server) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (str
 }
 
 // handleAccountTransactions serves GET /v1/accounts/{g_strkey}/transactions —
-// transactions the account submitted (its source), newest first.
+// transactions involving the account (sourced + incoming/participant), newest
+// first (scope: "all", ADR-0038 Phase B).
 func (s *Server) handleAccountTransactions(w http.ResponseWriter, r *http.Request) {
 	if s.explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -73,7 +78,7 @@ func (s *Server) handleAccountTransactions(w http.ResponseWriter, r *http.Reques
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	out := AccountTransactionsView{Account: g, Scope: accountScopeSourced, Transactions: make([]TxSummaryView, len(rows))}
+	out := AccountTransactionsView{Account: g, Scope: accountScopeAll, Transactions: make([]TxSummaryView, len(rows))}
 	for i, t := range rows {
 		out.Transactions[i] = txSummaryView(t)
 	}
@@ -85,7 +90,8 @@ func (s *Server) handleAccountTransactions(w http.ResponseWriter, r *http.Reques
 }
 
 // handleAccountOperations serves GET /v1/accounts/{g_strkey}/operations —
-// operations the account sourced, decoded, newest first.
+// operations involving the account (sourced + incoming/participant), decoded,
+// newest first (scope: "all", ADR-0038 Phase B).
 func (s *Server) handleAccountOperations(w http.ResponseWriter, r *http.Request) {
 	if s.explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -113,7 +119,7 @@ func (s *Server) handleAccountOperations(w http.ResponseWriter, r *http.Request)
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	out := AccountOperationsView{Account: g, Scope: accountScopeSourced, Operations: make([]OpView, len(rows))}
+	out := AccountOperationsView{Account: g, Scope: accountScopeAll, Operations: make([]OpView, len(rows))}
 	for i, o := range rows {
 		out.Operations[i] = opView(o)
 	}

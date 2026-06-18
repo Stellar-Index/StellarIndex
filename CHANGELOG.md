@@ -17,6 +17,17 @@ against.
 
 ### Added
 
+- **Account incoming/participant history (ADR-0038 Phase B completion).** A new
+  `stellar.operation_participants` index (one row per non-source account an op
+  touches — payment destination, trustor, merge target, clawback victim, …,
+  derived in the Go extract via `xdrjson.ParticipantAccounts`). The
+  `/v1/accounts/{g}/transactions` + `/operations` endpoints now UNION sourced
+  activity with participant activity and stamp `scope: "all"` (was `"sourced"`).
+  Live capture fills the index going forward (the extract is shared by the live
+  sink + `ch-backfill`); historical incoming coverage requires re-running
+  `ch-backfill` over the range (operator-gated). The explorer account view copy
+  is updated to reflect full (sourced + incoming) history.
+
 - **MEV feed: atomic-arbitrage detection.** New `/v1/mev` endpoint + a
   detection worker (`internal/aggregate/mev`, runs in the aggregator every
   5 min) that flags atomic arbitrage — a single transaction where one taker

@@ -229,17 +229,26 @@ type ExplorerCursor struct {
 // continuation page, not the first page).
 func (c ExplorerCursor) IsSet() bool { return c.Ledger > 0 }
 
-// AccountTransactions returns transactions SUBMITTED by an account (its
-// source/fee-payer), newest first, keyset-paged by the composite
-// (ledger_seq, tx_index) cursor. Uses the source_account bloom skip-index.
-// (Incoming/participant txs — where the account is a destination etc. —
-// require the participant index, Phase B completion.)
+// AccountTransactions returns transactions INVOLVING an account — both those
+// it sourced (source/fee-payer) and those where it's a non-source participant
+// in any operation (payment destination, trustor, merge target, …) — newest
+// first, keyset-paged by the composite (ledger_seq, tx_index) cursor (ADR-0038
+// Phase B). Sourced via the source_account skip-index; incoming via an
+// account-prefixed lookup of stellar.operation_participants.
+//
+// Incoming coverage tracks the participant-index capture + backfill: live
+// ingest fills operation_participants going forward, so a tx whose only link
+// to the account predates participant capture surfaces once the historical
+// re-derive lands.
 func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT ` + txCols + ` FROM stellar.transactions WHERE source_account = ?`
-	args := []any{account}
+	q := `SELECT ` + txCols + ` FROM stellar.transactions
+		WHERE (source_account = ?
+		   OR (ledger_seq, tx_hash) IN (
+		        SELECT ledger_seq, tx_hash FROM stellar.operation_participants WHERE account = ?))`
+	args := []any{account, account}
 	if cur.IsSet() {
 		// Tuple comparison: strictly older than the (ledger, tx_index) we last
 		// served — never re-emits a served row, never skips an unserved one.
@@ -256,16 +265,22 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	return scanTxSummaries(rows)
 }
 
-// AccountOperations returns operations SOURCED by an account (effective op
-// source), newest first, keyset-paged by the composite (ledger_seq, tx_index,
-// op_index) cursor. Uses the source_account bloom skip-index on
-// stellar.operations.
+// AccountOperations returns operations INVOLVING an account — both those it
+// sourced (effective op source) and those where it's a non-source participant
+// — newest first, keyset-paged by the composite (ledger_seq, tx_index,
+// op_index) cursor (ADR-0038 Phase B). Sourced via the source_account
+// skip-index on stellar.operations; incoming via an account-prefixed lookup of
+// stellar.operation_participants. Incoming coverage tracks the participant-
+// index capture + backfill (see AccountTransactions).
 func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT ` + opCols + ` FROM stellar.operations WHERE source_account = ?`
-	args := []any{account}
+	q := `SELECT ` + opCols + ` FROM stellar.operations
+		WHERE (source_account = ?
+		   OR (ledger_seq, tx_hash, op_index) IN (
+		        SELECT ledger_seq, tx_hash, op_index FROM stellar.operation_participants WHERE account = ?))`
+	args := []any{account, account}
 	if cur.IsSet() {
 		q += ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		args = append(args, cur.Ledger, cur.A, cur.B)

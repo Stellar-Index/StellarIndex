@@ -11,6 +11,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
 
 // ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows.
@@ -169,6 +171,27 @@ func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clo
 			BodyXDR:       body,
 		})
 		ext.Ledger.OpCount++
+
+		// ADR-0038 Phase B: index the op's NON-source participants (the
+		// incoming/counterparty accounts in the op body — payment dest,
+		// trustor, merge target, clawback victim, …) so account history
+		// covers received activity, not just sourced. The op source stays
+		// in operations.source_account; the reader unions the two.
+		if parts, perr := xdrjson.ParticipantAccounts(body); perr == nil {
+			for _, acct := range parts {
+				if acct == opSource {
+					continue // already covered by operations.source_account
+				}
+				ext.Participants = append(ext.Participants, OperationParticipantRow{
+					Account:   acct,
+					LedgerSeq: seq,
+					CloseTime: closeTime,
+					TxHash:    txHash,
+					TxIndex:   txIndex,
+					OpIndex:   uint32(i),
+				})
+			}
+		}
 		if hasResults && i < len(opResults) {
 			appendOpResult(ext, seq, txHash, uint32(i), opResults[i]) // capture all op results (incl. failed) for the lake
 			if successful {

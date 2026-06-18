@@ -6175,16 +6175,18 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Transactions an account submitted (sourced), newest first.
-         * @description The transactions for which this account is the source/fee-payer,
-         *     newest first, keyset-paged with `?cursor=<opaque>` (echo back
-         *     `next_cursor`). The cursor is the composite `(ledger, tx_index)`.
+         * Transactions involving an account (sourced + incoming), newest first.
+         * @description The transactions INVOLVING this account, newest first, keyset-paged
+         *     with `?cursor=<opaque>` (echo back `next_cursor`). The cursor is the
+         *     composite `(ledger, tx_index)`.
          *
-         *     SCOPE: this is **sourced/submitted** activity only (`scope: "sourced"`).
-         *     Incoming/participant activity — where the account is a payment
-         *     destination, trustor, merge target, clawback victim, etc. — requires
-         *     the participant index (ADR-0038 Phase B completion) and is NOT included
-         *     here yet.
+         *     SCOPE: `scope: "all"` (ADR-0038 Phase B) — both transactions the
+         *     account SOURCED (source/fee-payer) AND those where it's a non-source
+         *     PARTICIPANT in any operation (payment destination, trustor, merge
+         *     target, clawback victim, …), via the operation-participant index.
+         *     Incoming coverage tracks the participant-index capture + historical
+         *     backfill — a transaction whose only link to the account predates
+         *     participant capture surfaces once the re-derive lands.
          */
         get: {
             parameters: {
@@ -6202,7 +6204,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Sourced transactions for the account. */
+                /** @description Transactions involving the account (sourced + incoming). */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -6233,14 +6235,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Operations an account sourced (decoded), newest first.
-         * @description The operations whose effective source is this account, decoded
-         *     (human-readable fields), newest first, keyset-paged with
-         *     `?cursor=<opaque>` (echo back `next_cursor`). The cursor is the
-         *     composite `(ledger, tx_index, op_index)`.
+         * Operations involving an account (sourced + incoming), newest first.
+         * @description The operations INVOLVING this account, decoded (human-readable
+         *     fields), newest first, keyset-paged with `?cursor=<opaque>` (echo back
+         *     `next_cursor`). The cursor is the composite `(ledger, tx_index,
+         *     op_index)`.
          *
-         *     SCOPE: **sourced** activity only (`scope: "sourced"`) — see the
-         *     transactions endpoint above for the participant-index caveat.
+         *     SCOPE: `scope: "all"` (ADR-0038 Phase B) — operations the account
+         *     SOURCED plus those where it's a non-source PARTICIPANT — see the
+         *     transactions endpoint above for the coverage/backfill note.
          */
         get: {
             parameters: {
@@ -6410,9 +6413,10 @@ export interface components {
             topic_0?: string;
         };
         /**
-         * @description An account's sourced/submitted transactions (newest first), with an
-         *     opaque composite keyset cursor. `scope` is always "sourced" in this
-         *     phase — incoming/participant txs require the participant index.
+         * @description Transactions involving an account (newest first), with an opaque
+         *     composite keyset cursor. `scope` is "all" (ADR-0038 Phase B): sourced
+         *     plus incoming/participant. Incoming coverage tracks participant-index
+         *     capture + backfill.
          */
         AccountTransactions: {
             /** @description The G-strkey this listing is for. */
@@ -6421,14 +6425,15 @@ export interface components {
             /** @description Opaque composite cursor (ledger.tx_index) for the next older page; absent on the last page. */
             next_cursor?: string;
             /**
-             * @description Activity scope. "sourced" = the account is the tx source/fee-payer (not incoming).
+             * @description Activity scope. "all" = the account sourced the tx OR is a non-source participant in one of its operations.
              * @enum {string}
              */
-            scope?: "sourced";
+            scope?: "all";
         };
         /**
-         * @description An account's sourced operations, decoded (newest first), with an opaque
-         *     composite keyset cursor. `scope` is always "sourced" in this phase.
+         * @description Operations involving an account, decoded (newest first), with an opaque
+         *     composite keyset cursor. `scope` is "all" (ADR-0038 Phase B): sourced
+         *     plus incoming/participant.
          */
         AccountOperations: {
             /** @description The G-strkey this listing is for. */
@@ -6437,10 +6442,10 @@ export interface components {
             /** @description Opaque composite cursor (ledger.tx_index.op_index) for the next older page; absent on the last page. */
             next_cursor?: string;
             /**
-             * @description Activity scope. "sourced" = the account is the op source.
+             * @description Activity scope. "all" = the account sourced the op OR is a non-source participant in it.
              * @enum {string}
              */
-            scope?: "sourced";
+            scope?: "all";
         };
         /**
          * @description Dashboard view of an API key. Plaintext is NEVER on this

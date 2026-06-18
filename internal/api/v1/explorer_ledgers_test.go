@@ -297,7 +297,7 @@ func TestExplorer_AccountActivity(t *testing.T) {
 		Data v1.AccountTransactionsView `json:"data"`
 	}
 	mustDecode(t, resp, &tb)
-	if tb.Data.Account != g || len(tb.Data.Transactions) != 1 || tb.Data.Scope != "sourced" {
+	if tb.Data.Account != g || len(tb.Data.Transactions) != 1 || tb.Data.Scope != "all" {
 		t.Errorf("account txs = %+v", tb.Data)
 	}
 

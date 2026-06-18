@@ -153,9 +153,18 @@ fetch the API client-side at runtime** (the explorer already fetches
 - **Phase B v1 (shipped + deployed):** `GET /v1/accounts/{g}/transactions`
   + `/operations` — an account's submitted/sourced activity, via
   `source_account` bloom skip-indexes on transactions + operations
-  (MATERIALIZE'd). Verified live. Full incoming/participant activity is
-  the Phase B completion (a 23 B-op XDR-decode derive into
-  `operation_participants` — a multi-day backfill).
+  (MATERIALIZE'd). Verified live.
+- **Phase B completion (shipped):** the `stellar.operation_participants`
+  index (one row per (non-source account, op), derived in the Go extract
+  via `xdrjson.ParticipantAccounts` — payment dest / trustor / merge
+  target / clawback victim / …). The account tx/ops readers now UNION
+  `source_account = G` with a participant lookup, so the endpoints stamp
+  `scope: "all"` (sourced + incoming). **Live capture fills it going
+  forward** (the extract is shared by the live sink + ch-backfill);
+  incoming coverage for history requires re-running `ch-backfill` over
+  the range (a multi-day, operator-gated re-derive over the 23 B-op
+  history). Results-derived participants (path-payment intermediaries)
+  are a follow-up — v1 indexes op-body participants.
 - **Phase C substrate (shipped):** `extractEntryChanges` now populates
   `ledger_entry_changes` in the lake (closes G12-03). Lives in the
   indexer/ch-rebuild path. **Activation is operationally significant**
