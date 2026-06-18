@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Account state + asset holders (explorer Wave 3 — deep entity state).** New
+  `GET /v1/accounts/{g}` returns an account's current on-chain state
+  reconstructed from the lake — native balance, sequence, sub-entries, flags,
+  home domain, signer set + thresholds, live trustlines (per-asset balance +
+  limit) and open offers. New `GET /v1/assets/{id}/holders` returns the top
+  holders of an asset by trustline balance + the total holder count. Both back
+  new explorer UI: a **State** panel on the account page (balances/signers/
+  trustlines/offers) and a **Holders** tab on the asset page.
+- **Owner/asset/balance indexing on the entry-change lake (Wave 3 substrate).**
+  The `ledger_entry_changes` extractor now populates queryable, bloom-indexed
+  `account_id` + `asset` columns and a `balance` column from each entry's
+  ledger key — so account-state / asset-holder reads prune by owner/asset and
+  sort/aggregate balances in SQL instead of full-scanning + decoding. Additive
+  + idempotent (live-capture populates going forward; a ch re-derive backfills
+  history). Coverage grows with the capture window; `exists:false` / empty
+  until the Phase-C genesis backfill completes.
+
+### Changed
+
+- **Account nav section moved to the bottom of the rail** (below the explorer /
+  protocol / analytics groups).
+- **Contract interaction query bounded** to the subject's most-recent 50k
+  transactions so mega-contracts (tens of millions of events) no longer time
+  out.
+
 ## [v0.5.0-rc.112] — 2026-06-18
 
 ### Fixed

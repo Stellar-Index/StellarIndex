@@ -110,6 +110,11 @@ type LedgerEntryChangeRow struct {
 	// "pool:<hex>") for trustline entries, "" otherwise — the queryable
 	// key for asset-holder reads.
 	Asset string
+	// Balance is the entry's balance in stroops for account (native) +
+	// trustline entries, 0 otherwise. A queryable column so top-holders /
+	// account-balance reads sort + aggregate in SQL without decoding every
+	// entry's XDR. Int64 (XLM / classic balances are i64 in XDR).
+	Balance int64
 }
 
 // SupplyFlowRow mirrors stellar.supply_flows: one decoded supply-affecting
@@ -401,12 +406,12 @@ func (s *Sink) flushChanges(ctx context.Context) error {
 	if len(s.changes) == 0 {
 		return nil // G12-03: always taken today — Extract.Changes is never populated.
 	}
-	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset)")
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset, balance)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare ledger_entry_changes: %w", err)
 	}
 	for _, r := range s.changes {
-		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset); err != nil {
+		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset, r.Balance); err != nil {
 			return fmt.Errorf("clickhouse: append change %s/%d/%d: %w", r.TxHash, r.OpIndex, r.ChangeIndex, err)
 		}
 	}

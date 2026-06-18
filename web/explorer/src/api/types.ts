@@ -596,6 +596,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/holders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Top holders of an asset by trustline balance.
+         * @description The accounts holding the largest balances of an asset, plus the total
+         *     count of holders with a positive balance — reconstructed from the
+         *     latest `ledger_entry_changes` trustline per account (ADR-0038 Phase C).
+         *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`). Balances
+         *     are strings (ADR-0003). Coverage grows with the entry-change capture
+         *     window; full once the Phase-C backfill lands.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                     *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                     *     validated per SEP-23. The handler is strict — short symbols
+                     *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                     *     the full `<code>-<G…>` form.
+                     * @example native
+                     */
+                    asset_id: components["parameters"]["AssetIdPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Ranked holders + total holder count. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                asset?: string;
+                                /** Format: int64 */
+                                holder_count?: number;
+                                holders?: {
+                                    account_id?: string;
+                                    balance?: string;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price": {
         parameters: {
             query?: never;
@@ -5766,6 +5834,97 @@ export interface paths {
                                     /** @description Owning protocol when attributed; absent otherwise. */
                                     protocol?: string;
                                 }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{g_strkey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Account state — balance, signers, thresholds, trustlines, offers.
+         * @description The account's current on-chain state, reconstructed from the certified
+         *     lake (latest `ledger_entry_changes` per key, ADR-0038 Phase C): native
+         *     XLM balance, sequence number, sub-entry count, flags, home domain,
+         *     signer set + thresholds, plus its live trustlines (per-asset balances +
+         *     limits) and open offers.
+         *
+         *     `exists:false` (with HTTP 200, not 404) when the account has no live
+         *     AccountEntry in the captured ledger window — never created, merged away,
+         *     or its create predates live capture (resolves once the Phase-C backfill
+         *     lands). Balances are strings (ADR-0003).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account G-strkey. */
+                    g_strkey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Account state (or `exists:false`). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                account_id?: string;
+                                exists?: boolean;
+                                /** @description Native XLM balance in stroops. */
+                                balance?: string;
+                                seq_num?: string;
+                                num_subentries?: number;
+                                flags?: number;
+                                home_domain?: string;
+                                thresholds?: {
+                                    master?: number;
+                                    low?: number;
+                                    med?: number;
+                                    high?: number;
+                                };
+                                signers?: {
+                                    key?: string;
+                                    weight?: number;
+                                }[];
+                                trustlines?: {
+                                    asset?: string;
+                                    balance?: string;
+                                    limit?: string;
+                                    flags?: number;
+                                }[];
+                                offers?: {
+                                    /** Format: int64 */
+                                    offer_id?: number;
+                                    selling?: string;
+                                    buying?: string;
+                                    amount?: string;
+                                    price_n?: number;
+                                    price_d?: number;
+                                }[];
+                                /** Format: int64 */
+                                last_modified_ledger?: number;
                             };
                         };
                     };

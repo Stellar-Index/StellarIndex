@@ -20,6 +20,7 @@ import { ChartPanel } from './ChartPanel';
 import { PriceSparklines } from './PriceSparklines';
 import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
+import { HoldersTabPanel } from './HoldersTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
@@ -745,6 +746,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           markets={<MarketsTabPanel assetID={coin.asset_id} />}
           history={<HistoryTabPanel assetID={coin.asset_id} />}
           supply={<SupplyTabPanel assetID={coin.asset_id} />}
+          holders={<HoldersTabPanel assetID={coin.asset_id} />}
           // Issuer detail is rendered inline above for classic
           // (G-strkey) issuers.
           liquidity={

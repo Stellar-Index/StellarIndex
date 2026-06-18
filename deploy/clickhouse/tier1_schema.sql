@@ -146,6 +146,10 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- Existing rows backfill to '' until a ch re-derive repopulates them.
     account_id   String DEFAULT '',
     asset        String DEFAULT '',
+    -- Stroop balance for account (native) + trustline entries, 0 otherwise.
+    -- Lets top-holder / account-balance reads sort + aggregate in SQL without
+    -- decoding every entry's XDR.
+    balance      Int64 DEFAULT 0,
     ingested_at  DateTime DEFAULT now(),
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1

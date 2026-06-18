@@ -87,6 +87,7 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 		}
 		key = k
 		row.EntryType = entryTypeName(entry.Data.Type)
+		row.Balance = entryBalance(entry)
 		entryB64, err := xdr.MarshalBase64(entry)
 		if err != nil {
 			return LedgerEntryChangeRow{}, false
@@ -139,6 +140,23 @@ func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 		}
 	}
 	return accountID, asset
+}
+
+// entryBalance returns the stroop balance carried by an account (native) or
+// trustline entry, 0 for every other entry type. Stored as a queryable column
+// so top-holder / account-balance reads sort + aggregate in SQL.
+func entryBalance(e xdr.LedgerEntry) int64 {
+	switch e.Data.Type {
+	case xdr.LedgerEntryTypeAccount:
+		if a, ok := e.Data.GetAccount(); ok {
+			return int64(a.Balance)
+		}
+	case xdr.LedgerEntryTypeTrustline:
+		if t, ok := e.Data.GetTrustLine(); ok {
+			return int64(t.Balance)
+		}
+	}
+	return 0
 }
 
 // ledgerEntryOf returns the LedgerEntry for a created/updated/state change.

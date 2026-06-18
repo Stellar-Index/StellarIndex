@@ -77,8 +77,23 @@ func TestOwnerAndAsset_AccountOwnedEntries(t *testing.T) {
 	}}
 	row, ok := entryChangeRow(100, time.Unix(0, 0).UTC(), "tx", 0, 0,
 		xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: &acct})
-	if !ok || row.AccountID != ecTestG || row.Asset != "" {
-		t.Errorf("account: account_id=%q asset=%q (ok=%v), want %q / \"\"", row.AccountID, row.Asset, ok, ecTestG)
+	if !ok || row.AccountID != ecTestG || row.Asset != "" || row.Balance != 1000 {
+		t.Errorf("account: account_id=%q asset=%q balance=%d (ok=%v), want %q / \"\" / 1000", row.AccountID, row.Asset, row.Balance, ok, ecTestG)
+	}
+
+	// Created trustline → balance carried from the entry.
+	tlEntry := xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+		Type: xdr.LedgerEntryTypeTrustline,
+		TrustLine: &xdr.TrustLineEntry{
+			AccountId: xdr.MustAddress(ecTestG),
+			Asset:     xdr.MustNewCreditAsset("USDC", ecTestIssuer).ToTrustLineAsset(),
+			Balance:   250,
+		},
+	}}
+	row, ok = entryChangeRow(100, time.Unix(0, 0).UTC(), "tx", 0, 9,
+		xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: &tlEntry})
+	if !ok || row.AccountID != ecTestG || row.Asset != "USDC-"+ecTestIssuer || row.Balance != 250 {
+		t.Errorf("created trustline: account_id=%q asset=%q balance=%d, want %q / %q / 250", row.AccountID, row.Asset, row.Balance, ecTestG, "USDC-"+ecTestIssuer)
 	}
 
 	// Trustline (removed → key only) → owner = holder, asset = CODE-ISSUER.

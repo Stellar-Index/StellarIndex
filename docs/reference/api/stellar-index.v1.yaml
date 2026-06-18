@@ -388,6 +388,43 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /assets/{asset_id}/holders:
+    get:
+      tags: [assets]
+      summary: Top holders of an asset by trustline balance.
+      description: |
+        The accounts holding the largest balances of an asset, plus the total
+        count of holders with a positive balance — reconstructed from the
+        latest `ledger_entry_changes` trustline per account (ADR-0038 Phase C).
+        `asset_id` is the canonical form (`CODE-ISSUER`, or `native`). Balances
+        are strings (ADR-0003). Coverage grows with the entry-change capture
+        window; full once the Phase-C backfill lands.
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Ranked holders + total holder count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      asset: { type: string }
+                      holder_count: { type: integer, format: int64 }
+                      holders:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            account_id: { type: string }
+                            balance: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /price:
     get:
       tags: [price]
@@ -3663,6 +3700,79 @@ paths:
                             contract_id: { type: string }
                             shared_txs: { type: integer, format: int64 }
                             protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /accounts/{g_strkey}:
+    get:
+      tags: [explorer]
+      summary: Account state — balance, signers, thresholds, trustlines, offers.
+      description: |
+        The account's current on-chain state, reconstructed from the certified
+        lake (latest `ledger_entry_changes` per key, ADR-0038 Phase C): native
+        XLM balance, sequence number, sub-entry count, flags, home domain,
+        signer set + thresholds, plus its live trustlines (per-asset balances +
+        limits) and open offers.
+
+        `exists:false` (with HTTP 200, not 404) when the account has no live
+        AccountEntry in the captured ledger window — never created, merged away,
+        or its create predates live capture (resolves once the Phase-C backfill
+        lands). Balances are strings (ADR-0003).
+      parameters:
+        - { name: g_strkey, in: path, required: true, description: Account G-strkey., schema: { type: string } }
+      responses:
+        "200":
+          description: Account state (or `exists:false`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      account_id: { type: string }
+                      exists: { type: boolean }
+                      balance: { type: string, description: Native XLM balance in stroops. }
+                      seq_num: { type: string }
+                      num_subentries: { type: integer }
+                      flags: { type: integer }
+                      home_domain: { type: string }
+                      thresholds:
+                        type: object
+                        properties:
+                          master: { type: integer }
+                          low: { type: integer }
+                          med: { type: integer }
+                          high: { type: integer }
+                      signers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            key: { type: string }
+                            weight: { type: integer }
+                      trustlines:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            asset: { type: string }
+                            balance: { type: string }
+                            limit: { type: string }
+                            flags: { type: integer }
+                      offers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            offer_id: { type: integer, format: int64 }
+                            selling: { type: string }
+                            buying: { type: string }
+                            amount: { type: string }
+                            price_n: { type: integer }
+                            price_d: { type: integer }
+                      last_modified_ledger: { type: integer, format: int64 }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
