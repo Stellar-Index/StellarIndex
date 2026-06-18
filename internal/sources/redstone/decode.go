@@ -320,9 +320,17 @@ func pickTimestamp(packageMs uint64, closedAt time.Time) time.Time {
 	if packageMs == 0 {
 		return closedAt.UTC()
 	}
-	ts := time.UnixMilli(int64(packageMs)).UTC()
-	if ts.After(closedAt.Add(sanityFutureWindow)) {
+	// Bound the RAW u64 before the int64 cast. The old guard cast first
+	// and checked `ts.After(close+24h)`, which catches far-future values
+	// below math.MaxInt64 — but a packageMs > math.MaxInt64 wraps
+	// NEGATIVE in the cast and produces a far-PAST time that the
+	// future-only check misses and that overflows the oracle_updates
+	// timestamptz INSERT (same class as the band/router deadline_ts bug).
+	// Checking the raw u64 upper bound catches both and keeps the cast
+	// provably in range.
+	maxMs := uint64(closedAt.Add(sanityFutureWindow).UnixMilli())
+	if packageMs > maxMs {
 		return closedAt.UTC()
 	}
-	return ts
+	return time.UnixMilli(int64(packageMs)).UTC()
 }
