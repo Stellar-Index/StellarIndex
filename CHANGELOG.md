@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.119] — 2026-06-18
+
 ### Fixed
 
 - **Account tx/ops participant query no longer full-scans.** The rc.118
