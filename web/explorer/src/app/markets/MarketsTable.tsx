@@ -9,7 +9,7 @@ import { asExample } from '@/api/client';
 import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets } from '@/api/hooks';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatRelative } from '@/lib/format';
 import { Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 
 /**
@@ -268,14 +268,4 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
       {fixed}
     </span>
   );
-}
-
-function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0) return 'now';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86_400)}d ago`;
 }

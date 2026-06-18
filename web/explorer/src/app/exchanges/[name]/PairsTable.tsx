@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatRelative } from '@/lib/format';
 
 interface Market {
   base: string;
@@ -253,15 +253,4 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
       {fixed}
     </span>
   );
-}
-
-function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms)) return '—';
-  const s = Math.round(ms / 1000);
-  if (s < 0) return 'now';
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
 }
