@@ -158,6 +158,37 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (ledger_seq, tx_hash, op_index, change_index);
 
+-- Current-state projection of ledger_entry_changes: the LATEST entry per
+-- (entry_type, key) — ReplacingMergeTree(ledger_seq) keeps the highest-ledger
+-- row, FINAL forces read-time dedup. Backs the account-state + asset-holder
+-- reads (ADR-0038 Phase C): instead of a GROUP BY over all of an account's /
+-- asset's historical changes (which grows unboundedly with the backfill), a
+-- read touches ~1 row per live entry via the account_id / asset skip-indexes.
+-- Kept current by the materialized view below — every insert into
+-- ledger_entry_changes (live-capture + ch-backfill re-derive) flows through.
+CREATE TABLE IF NOT EXISTS stellar.ledger_entries_current
+(
+    entry_type  LowCardinality(String),
+    key_xdr     String,
+    account_id  String DEFAULT '',
+    asset       String DEFAULT '',
+    balance     Int64 DEFAULT 0,
+    change_type LowCardinality(String),
+    ledger_seq  UInt32,
+    close_time  DateTime('UTC'),
+    entry_xdr   String,
+    INDEX idx_lecur_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_lecur_asset asset TYPE bloom_filter(0.01) GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(ledger_seq)
+ORDER BY (entry_type, key_xdr);
+
+-- Feeds ledger_entries_current from every ledger_entry_changes insert.
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ledger_entries_current_mv
+TO stellar.ledger_entries_current AS
+SELECT entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr
+FROM stellar.ledger_entry_changes;
+
 -- Per-token supply events (CAP-67 classic SAC + SEP-41 mint/burn/clawback) with
 -- the i128 amount DECODED at ingest (decode-at-ingest, ADR-0034). Total supply
 -- for a token is a pure SQL sum over this table:

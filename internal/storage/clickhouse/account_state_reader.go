@@ -66,11 +66,12 @@ type AssetHolder struct {
 func (r *ExplorerReader) AccountState(ctx context.Context, account string) (AccountState, error) {
 	var st AccountState
 
-	// Account entry — latest change wins; a trailing 'removed' = merged away.
+	// Account entry — the current-state projection (ledger_entries_current)
+	// already holds the latest entry per key (ReplacingMergeTree); FINAL forces
+	// read-time dedup. A trailing 'removed' = merged away.
 	const accQ = `SELECT entry_xdr, change_type, balance, ledger_seq
-		FROM stellar.ledger_entry_changes
+		FROM stellar.ledger_entries_current FINAL
 		WHERE account_id = ? AND entry_type = 'account'
-		ORDER BY ledger_seq DESC, change_index DESC
 		LIMIT 1`
 	var (
 		entryXDR, changeType string
@@ -128,14 +129,9 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 }
 
 func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) ([]TrustlineState, error) {
-	const q = `SELECT asset,
-		argMax(entry_xdr, (ledger_seq, change_index)) AS ex,
-		argMax(change_type, (ledger_seq, change_index)) AS ct,
-		argMax(balance, (ledger_seq, change_index)) AS bal
-		FROM stellar.ledger_entry_changes
-		WHERE account_id = ? AND entry_type = 'trustline'
-		GROUP BY asset
-		HAVING ct != 'removed'
+	const q = `SELECT asset, entry_xdr AS ex, balance AS bal
+		FROM stellar.ledger_entries_current FINAL
+		WHERE account_id = ? AND entry_type = 'trustline' AND change_type != 'removed'
 		ORDER BY bal DESC`
 	rows, err := r.conn.Query(ctx, q, account)
 	if err != nil {
@@ -144,9 +140,9 @@ func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) 
 	defer func() { _ = rows.Close() }()
 	var out []TrustlineState
 	for rows.Next() {
-		var asset, ex, ct string
+		var asset, ex string
 		var bal int64
-		if err := rows.Scan(&asset, &ex, &ct, &bal); err != nil {
+		if err := rows.Scan(&asset, &ex, &bal); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan trustline: %w", err)
 		}
 		t := TrustlineState{Asset: asset, Balance: bal}
@@ -163,13 +159,9 @@ func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) 
 }
 
 func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]OfferState, error) {
-	const q = `SELECT
-		argMax(entry_xdr, (ledger_seq, change_index)) AS ex,
-		argMax(change_type, (ledger_seq, change_index)) AS ct
-		FROM stellar.ledger_entry_changes
-		WHERE account_id = ? AND entry_type = 'offer'
-		GROUP BY key_xdr
-		HAVING ct != 'removed'`
+	const q = `SELECT entry_xdr AS ex
+		FROM stellar.ledger_entries_current FINAL
+		WHERE account_id = ? AND entry_type = 'offer' AND change_type != 'removed'`
 	rows, err := r.conn.Query(ctx, q, account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account offers: %w", err)
@@ -177,8 +169,8 @@ func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]O
 	defer func() { _ = rows.Close() }()
 	var out []OfferState
 	for rows.Next() {
-		var ex, ct string
-		if err := rows.Scan(&ex, &ct); err != nil {
+		var ex string
+		if err := rows.Scan(&ex); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan offer: %w", err)
 		}
 		var le xdr.LedgerEntry
@@ -208,14 +200,10 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	const holdersQ = `SELECT account_id,
-		argMax(balance, (ledger_seq, change_index)) AS bal,
-		argMax(change_type, (ledger_seq, change_index)) AS ct
-		FROM stellar.ledger_entry_changes
-		WHERE entry_type = 'trustline' AND asset = ?
-		GROUP BY account_id
-		HAVING ct != 'removed' AND bal > 0
-		ORDER BY bal DESC
+	const holdersQ = `SELECT account_id, balance
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0
+		ORDER BY balance DESC
 		LIMIT ?`
 	rows, err := r.conn.Query(ctx, holdersQ, asset, limit)
 	if err != nil {
@@ -225,8 +213,7 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	var out []AssetHolder
 	for rows.Next() {
 		var h AssetHolder
-		var ct string
-		if err := rows.Scan(&h.AccountID, &h.Balance, &ct); err != nil {
+		if err := rows.Scan(&h.AccountID, &h.Balance); err != nil {
 			return nil, 0, fmt.Errorf("clickhouse: scan holder: %w", err)
 		}
 		out = append(out, h)
@@ -235,15 +222,9 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 		return nil, 0, err
 	}
 
-	const countQ = `SELECT toInt64(count()) FROM (
-		SELECT account_id,
-			argMax(balance, (ledger_seq, change_index)) AS bal,
-			argMax(change_type, (ledger_seq, change_index)) AS ct
-		FROM stellar.ledger_entry_changes
-		WHERE entry_type = 'trustline' AND asset = ?
-		GROUP BY account_id
-		HAVING ct != 'removed' AND bal > 0
-	)`
+	const countQ = `SELECT toInt64(count())
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0`
 	var total int64
 	if err := r.conn.QueryRow(ctx, countQ, asset).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("clickhouse: asset holder count: %w", err)
