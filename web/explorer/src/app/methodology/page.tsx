@@ -126,8 +126,9 @@ export default function MethodologyPage() {
             (XLM/USDC, XLM/USDT, XLM/PYUSD, etc.).
           </li>
           <li>
-            The aggregator maps USDT → USD, USDC → USD, PYUSD → USD,
-            EURC → EUR, EUROB → EUR, MXNe → MXN at VWAP compute time.
+            The aggregator maps the pegged stablecoins to their fiat
+            at VWAP compute time: USDT, USDC, DAI, PYUSD, USDP → USD;
+            EURC, EUROC, EUROB → EUR; MXNe → MXN.
           </li>
           <li>
             <strong>Eager normalisation at ingest would hide a depeg
