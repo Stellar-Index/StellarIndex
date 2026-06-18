@@ -1216,6 +1216,58 @@ paths:
                         net_borrowed_30d:    { type: string, description: "Token base-units, 30d net-flow proxy." }
                         utilization_30d_pct: { type: number, nullable: true, description: "Window borrow/supply ratio %; null when net supply ≤ 0." }
 
+  /lending/pools/{pool}/reserves:
+    get:
+      tags: [protocols]
+      summary: Blend pool — REAL per-reserve current state (TVL/util/APY).
+      description: |
+        The pool's per-reserve CURRENT on-chain state (ADR-0039),
+        decoded from the Blend pool contract's Soroban storage in the
+        certified lake — distinct from the `/v1/lending/pools` window
+        net-flow PROXY. For each reserve: supplied / borrowed amounts
+        (`supplied` / `borrowed`, underlying token base units),
+        utilization, and supply/borrow APR — all computed with the
+        pool's own interest-rate model (b_rate/d_rate + the rate curve),
+        matching the chain bit-for-bit.
+
+        USD values (`supplied_usd` / `borrowed_usd`, and the pool
+        `tvl_usd` = Σ supplied_usd) are BEST-EFFORT: present when we hold
+        a USD price for the reserve's underlying token, null otherwise —
+        the token-unit amounts + utilization + APR are always exact.
+        Coverage = the live contract-storage capture window; a reserve
+        with no captured entry is absent.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+      responses:
+        "200":
+          description: Per-reserve current state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      pool:    { type: string }
+                      tvl_usd: { type: string, nullable: true, description: "Σ supplied_usd across priced reserves; null when none priced." }
+                      reserves:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            asset:           { type: string, description: Reserve underlying token (C-strkey). }
+                            decimals:        { type: integer }
+                            supplied:        { type: string, description: Total supplied, underlying token base units. }
+                            borrowed:        { type: string, description: Total borrowed, underlying token base units. }
+                            supplied_usd:    { type: string, nullable: true }
+                            borrowed_usd:    { type: string, nullable: true }
+                            utilization_pct: { type: number, description: Borrowed/supplied, 0..100. }
+                            borrow_apr:      { type: number, description: Borrow APR as a fraction (0.05 = 5%). }
+                            supply_apr:      { type: number, description: Supply APR as a fraction. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /mev:
     get:
       tags: [analytics]

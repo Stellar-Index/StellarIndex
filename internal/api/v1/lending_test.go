@@ -15,8 +15,9 @@ import (
 
 // stubLendingReader is the in-memory test seam.
 type stubLendingReader struct {
-	pools []timescale.BlendPoolSummary
-	err   error
+	pools  []timescale.BlendPoolSummary
+	assets []string
+	err    error
 }
 
 func (r *stubLendingReader) ListBlendPools(_ context.Context) ([]timescale.BlendPoolSummary, error) {
@@ -24,6 +25,10 @@ func (r *stubLendingReader) ListBlendPools(_ context.Context) ([]timescale.Blend
 		return nil, r.err
 	}
 	return r.pools, nil
+}
+
+func (r *stubLendingReader) BlendPoolAssets(_ context.Context, _ string) ([]string, error) {
+	return r.assets, r.err
 }
 
 // TestLendingPools_EmptyArrayWhenReaderNil — feature-gated reader.

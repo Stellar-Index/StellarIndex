@@ -1180,6 +1180,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 
 	// Lending — Blend pools observed in the auction stream.
 	s.mux.HandleFunc("GET /v1/lending/pools", s.handleLendingPools)
+	// Real per-reserve current-state TVL/util/APY from the lake (ADR-0039).
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves", s.handleLendingPoolReserves)
 
 	// MEV — auto-flagged MEV-event feed (arbitrage cycles today).
 	s.mux.HandleFunc("GET /v1/mev", s.handleMEVEvents)
