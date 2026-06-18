@@ -635,6 +635,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -1719,6 +1728,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -2171,6 +2189,15 @@
                         "type": "text/plain"
                       },
                       "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
                       "value": "<integer>"
                     }
                   ],
@@ -2694,6 +2721,15 @@
                             "type": "text/plain"
                           },
                           "key": "X-RateLimit-Remaining",
+                          "value": "<integer>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-RateLimit-Reset",
                           "value": "<integer>"
                         }
                       ],
@@ -3334,6 +3370,15 @@
                         "type": "text/plain"
                       },
                       "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
                       "value": "<integer>"
                     }
                   ],
@@ -4609,6 +4654,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -5771,6 +5825,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -6481,6 +6544,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -7030,6 +7102,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -7425,6 +7506,15 @@
                         "type": "text/plain"
                       },
                       "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
                       "value": "<integer>"
                     }
                   ],
@@ -8571,6 +8661,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -8941,6 +9040,15 @@
                   },
                   "key": "X-RateLimit-Remaining",
                   "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
+                  "value": "<integer>"
                 }
               ],
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -9290,6 +9398,15 @@
                         "type": "text/plain"
                       },
                       "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
                       "value": "<integer>"
                     }
                   ],
@@ -9726,6 +9843,15 @@
                             "type": "text/plain"
                           },
                           "key": "X-RateLimit-Remaining",
+                          "value": "<integer>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-RateLimit-Reset",
                           "value": "<integer>"
                         }
                       ],
@@ -10711,6 +10837,15 @@
                           },
                           "key": "X-RateLimit-Remaining",
                           "value": "<integer>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-RateLimit-Reset",
+                          "value": "<integer>"
                         }
                       ],
                       "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -11107,6 +11242,15 @@
                       },
                       "key": "X-RateLimit-Remaining",
                       "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
+                      "value": "<integer>"
                     }
                   ],
                   "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
@@ -11371,6 +11515,15 @@
                         "type": "text/plain"
                       },
                       "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
                       "value": "<integer>"
                     }
                   ],
@@ -12765,6 +12918,15 @@
                     "type": "text/plain"
                   },
                   "key": "X-RateLimit-Remaining",
+                  "value": "<integer>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-RateLimit-Reset",
                   "value": "<integer>"
                 }
               ],

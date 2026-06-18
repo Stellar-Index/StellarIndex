@@ -3794,6 +3794,14 @@ components:
           schema: { type: integer }
         X-RateLimit-Remaining:
           schema: { type: integer }
+        X-RateLimit-Reset:
+          schema: { type: integer }
+          description: >-
+            Unix-epoch seconds at which the current fixed-window
+            bucket resets. Clients compute
+            `seconds_until_reset = X-RateLimit-Reset - now` to back
+            off proactively (GitHub / Twitter header semantics).
+            Emitted on every response, not just 429s.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
