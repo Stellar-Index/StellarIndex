@@ -65,6 +65,19 @@ export function AccountView() {
     staleTime: 30_000,
   });
 
+  const stateQ = useQuery<AccountStateResp>({
+    queryKey: ['/v1/accounts/{id}', id],
+    enabled: id.length > 0 && looksValid,
+    retry: false,
+    queryFn: async () => {
+      const env = await apiGet<Envelope<AccountStateResp>>(
+        `/v1/accounts/${encodeURIComponent(id)}`,
+      );
+      return env.data;
+    },
+    staleTime: 30_000,
+  });
+
   if (id.length === 0) {
     return (
       <Shell id={null}>
@@ -132,13 +145,15 @@ export function AccountView() {
             </a>
           </li>
         </ul>
-        <p className="rounded-md border border-warn-300 bg-warn-50 px-3 py-2 text-xs text-warn-700">
-          Showing <strong>sourced/submitted</strong> activity only — the
-          transactions this account submitted and the operations it sourced
-          (the <code className="font-mono">scope</code> the API reports). Full
-          balances and incoming/participant history are coming in Phase C.
+        <p className="rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-ink-muted">
+          Balances + trustlines + offers below reflect the lake&apos;s captured
+          ledger-entry window; the activity tables show{' '}
+          <strong>sourced/submitted</strong> history (incoming/participant
+          history follows in a later phase).
         </p>
       </Panel>
+
+      <AccountStatePanel id={id} state={stateQ.data} isLoading={stateQ.isLoading} isError={stateQ.isError} />
 
       <TransactionsPanel
         id={id}
@@ -155,6 +170,139 @@ export function AccountView() {
         data={opsQ.data}
       />
     </Shell>
+  );
+}
+
+// ── Account state (balances / signers / trustlines / offers) ────────────
+// Mirrors api/v1.AccountStateView (GET /v1/accounts/{g}).
+interface AccountStateResp {
+  account_id: string;
+  exists: boolean;
+  balance?: string;
+  seq_num?: string;
+  num_subentries?: number;
+  flags?: number;
+  home_domain?: string;
+  thresholds?: { master: number; low: number; med: number; high: number };
+  signers?: { key: string; weight: number }[];
+  trustlines?: { asset: string; balance: string; limit: string; flags: number }[];
+  offers?: { offer_id: number; selling: string; buying: string; amount: string; price_n: number; price_d: number }[];
+  last_modified_ledger?: number;
+}
+
+function AccountStatePanel({
+  id,
+  state,
+  isLoading,
+  isError,
+}: {
+  id: string;
+  state: AccountStateResp | undefined;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  const source = asExample(`/v1/accounts/${id}`);
+  if (isLoading) {
+    return (
+      <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
+        Loading account state…
+      </Panel>
+    );
+  }
+  if (isError || !state || !state.exists) {
+    return (
+      <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
+        No live account state in the captured ledger window yet — the account
+        wasn’t touched since entry-change capture began (resolves once the
+        Phase-C backfill lands). Sourced activity still shows below.
+      </Panel>
+    );
+  }
+  return (
+    <Panel title="State" source={source} bodyClassName="space-y-5">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
+        <Stat label="Native balance" value={`${stroopsToXlm(state.balance ?? '0')} XLM`} mono />
+        <Stat label="Sequence" value={state.seq_num ?? '—'} mono />
+        <Stat label="Sub-entries" value={String(state.num_subentries ?? 0)} />
+        <Stat label="Home domain" value={state.home_domain || '—'} />
+        {state.thresholds && (
+          <Stat
+            label="Thresholds (L/M/H)"
+            mono
+            value={`${state.thresholds.low}/${state.thresholds.med}/${state.thresholds.high}`}
+          />
+        )}
+        <Stat label="Master weight" value={String(state.thresholds?.master ?? '—')} />
+      </dl>
+
+      {state.signers && state.signers.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">Signers</div>
+          <ul className="space-y-1 text-xs">
+            {state.signers.map((s) => (
+              <li key={s.key} className="flex items-center gap-2">
+                <span className="font-mono text-ink-body" title={s.key}>
+                  {s.key.slice(0, 8)}…{s.key.slice(-6)}
+                </span>
+                <span className="text-ink-faint">weight {s.weight}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {state.trustlines && state.trustlines.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+            Trustlines ({state.trustlines.length})
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-line text-sm">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+                  <th className="py-1.5 pr-4">Asset</th>
+                  <th className="py-1.5 pr-4 text-right">Balance</th>
+                  <th className="py-1.5 text-right">Limit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line-subtle">
+                {state.trustlines.map((t) => (
+                  <tr key={t.asset}>
+                    <td className="py-1.5 pr-4 font-mono text-xs text-ink-body">{t.asset}</td>
+                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{stroopsToXlm(t.balance)}</td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-ink-muted">{stroopsToXlm(t.limit)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {state.offers && state.offers.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+            Open offers ({state.offers.length})
+          </div>
+          <ul className="space-y-1 text-xs font-mono text-ink-body">
+            {state.offers.map((o) => (
+              <li key={o.offer_id}>
+                #{o.offer_id}: {stroopsToXlm(o.amount)} {o.selling} → {o.buying} @ {o.price_n}/{o.price_d}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">{label}</dt>
+      <dd className={mono ? 'mt-0.5 break-all font-mono text-xs' : 'mt-0.5 text-sm'}>{value}</dd>
+    </div>
   );
 }
 

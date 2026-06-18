@@ -9,6 +9,7 @@ export type AssetTab =
   | 'markets'
   | 'history'
   | 'supply'
+  | 'holders'
   | 'issuer'
   | 'liquidity';
 
@@ -28,6 +29,7 @@ export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolea
     { key: 'markets', label: 'Markets' },
     { key: 'history', label: 'History' },
     { key: 'supply', label: 'Supply' },
+    { key: 'holders', label: 'Holders' },
     ...(hasIssuer ? ([{ key: 'issuer', label: 'Issuer' }] as const) : []),
     { key: 'liquidity', label: 'Liquidity' },
   ];
@@ -60,6 +62,7 @@ export function ActiveTabSlot({
   markets,
   history,
   supply,
+  holders,
   issuer,
   liquidity,
 }: {
@@ -68,6 +71,7 @@ export function ActiveTabSlot({
   markets?: React.ReactNode;
   history?: React.ReactNode;
   supply?: React.ReactNode;
+  holders?: React.ReactNode;
   issuer?: React.ReactNode;
   liquidity?: React.ReactNode;
 }) {
@@ -78,6 +82,7 @@ export function ActiveTabSlot({
       markets={markets}
       history={history}
       supply={supply}
+      holders={holders}
       issuer={issuer}
       liquidity={liquidity}
     />
@@ -90,6 +95,7 @@ function ActiveBody({
   markets,
   history,
   supply,
+  holders,
   issuer,
   liquidity,
 }: {
@@ -98,6 +104,7 @@ function ActiveBody({
   markets?: React.ReactNode;
   history?: React.ReactNode;
   supply?: React.ReactNode;
+  holders?: React.ReactNode;
   issuer?: React.ReactNode;
   liquidity?: React.ReactNode;
 }) {
@@ -107,6 +114,7 @@ function ActiveBody({
   if (tab === 'markets' && markets) return <>{markets}</>;
   if (tab === 'history' && history) return <>{history}</>;
   if (tab === 'supply' && supply) return <>{supply}</>;
+  if (tab === 'holders' && holders) return <>{holders}</>;
   if (tab === 'issuer' && issuer) return <>{issuer}</>;
   if (tab === 'liquidity' && liquidity) return <>{liquidity}</>;
   return <>{overview}</>;

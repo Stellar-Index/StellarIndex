@@ -1033,6 +1033,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}", s.handleContractDetail)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/wasm", s.handleContractWasm)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/interactions", s.handleContractInteractions)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.handleAccountState)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.handleAccountTransactions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.handleAccountOperations)
 
@@ -1072,6 +1073,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034).
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.handleAssetHolders)
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.
