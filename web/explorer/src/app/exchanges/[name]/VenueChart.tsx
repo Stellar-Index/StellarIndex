@@ -332,6 +332,7 @@ function Picker<T extends string>({
             key={o.key}
             type="button"
             onClick={() => onChange(o.key)}
+            aria-pressed={value === o.key}
             className={`rounded px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider ${
               value === o.key
                 ? 'bg-brand-600 text-white'

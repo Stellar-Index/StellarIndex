@@ -40,6 +40,7 @@ export function AssetTabs({ slug, hasIssuer }: { slug: string; hasIssuer: boolea
           href={
             t.key === 'overview' ? `/assets/${slug}` : `/assets/${slug}?tab=${t.key}`
           }
+          aria-current={t.key === active ? 'page' : undefined}
           className={`border-b-2 px-3 py-2 ${
             t.key === active
               ? 'border-brand-500 font-medium text-brand-600'

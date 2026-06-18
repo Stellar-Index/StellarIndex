@@ -252,6 +252,7 @@ function FilterBar({
             key={opt.value}
             type="button"
             onClick={() => onAssetClassChange(opt.value)}
+            aria-pressed={assetClass === opt.value}
             className={`rounded-full px-3 py-1 text-xs font-medium tracking-wide ${
               assetClass === opt.value
                 ? 'bg-brand-600 text-white'
