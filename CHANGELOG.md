@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.115] — 2026-06-18
+
 ### Added
 
 - **Contract code/upgrade history.** New `GET /v1/contracts/{id}/code-history`
