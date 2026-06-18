@@ -155,12 +155,13 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const me = useMe();
   const signedIn = !!(me.data && (me.data.user?.email || me.data.key_id));
   const isStaff = !!me.data?.user?.is_staff;
-  // Logged-in users get the Account section right after Overview; staff
-  // sessions also get the Admin cockpit row.
+  // Logged-in users get the Account section at the BOTTOM of the rail (just
+  // above the account card), after the explorer/protocol/analytics groups;
+  // staff sessions also get the Admin cockpit row.
   const accountGroup: NavGroup = isStaff
     ? { ...ACCOUNT_GROUP, items: [...ACCOUNT_GROUP.items, ADMIN_ITEM] }
     : ACCOUNT_GROUP;
-  const groups = signedIn ? [NAV[0], accountGroup, ...NAV.slice(1)] : NAV;
+  const groups = signedIn ? [...NAV, accountGroup] : NAV;
   return (
     <div className="flex h-full flex-col bg-surface-muted">
       {/* Logo */}
