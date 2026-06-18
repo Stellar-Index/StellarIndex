@@ -13,8 +13,8 @@ interface ReserveRow {
   supplied_usd: string | null;
   borrowed_usd: string | null;
   utilization_pct: number;
-  borrow_apr: number;
-  supply_apr: number;
+  borrow_apr: number | null;
+  supply_apr: number | null;
 }
 
 interface ReservesResp {
@@ -31,8 +31,8 @@ function tokenAmount(base: string, decimals: number): string {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
 }
 
-function pct(f: number): string {
-  return `${(f * 100).toFixed(2)}%`;
+function pct(f: number | null): string {
+  return f == null ? '—' : `${(f * 100).toFixed(2)}%`;
 }
 
 export function PoolReserves({ pool }: { pool: string }) {
@@ -115,8 +115,10 @@ export function PoolReserves({ pool }: { pool: string }) {
         </div>
       )}
       <p className="text-[11px] text-ink-muted">
-        Token-unit amounts, utilisation, and APR are exact (the pool&apos;s own interest-rate model). USD values are
-        shown for reserves we hold a price for. Distinct from the auction-stream window proxy on the pools list.
+        Supplied / borrowed / utilisation are exact current-state from the reserve&apos;s on-chain b_rate/d_rate.
+        APR (the pool&apos;s own interest-rate model) shows when the reserve&apos;s rate config is in the captured
+        storage window, else <span className="font-mono">—</span>. USD values are shown for reserves we hold a price
+        for. Distinct from the auction-stream window proxy on the pools list.
       </p>
     </Panel>
   );

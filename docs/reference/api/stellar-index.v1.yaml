@@ -1263,8 +1263,8 @@ paths:
                             supplied_usd:    { type: string, nullable: true }
                             borrowed_usd:    { type: string, nullable: true }
                             utilization_pct: { type: number, description: Borrowed/supplied, 0..100. }
-                            borrow_apr:      { type: number, description: Borrow APR as a fraction (0.05 = 5%). }
-                            supply_apr:      { type: number, description: Supply APR as a fraction. }
+                            borrow_apr:      { type: number, nullable: true, description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
+                            supply_apr:      { type: number, nullable: true, description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 

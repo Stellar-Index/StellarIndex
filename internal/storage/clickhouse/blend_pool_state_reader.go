@@ -11,13 +11,17 @@ import (
 )
 
 // BlendReserveState is one Blend reserve's decoded current state +
-// derived metrics (ADR-0039), read from the certified lake.
+// derived metrics (ADR-0039), read from the certified lake. ResData
+// (the volatile state) is always present; ResConfig (the rate-model
+// params + decimals) may not be captured (it's written rarely, often
+// before the contract-storage capture window began) — Metrics.HasAPR
+// reflects that, and Decimals falls back to 7 (the Stellar/SAC default).
 type BlendReserveState struct {
-	Pool    string
-	Asset   string // reserve underlying token (C-strkey)
-	Data    blend.ReserveData
-	Config  blend.ReserveConfig
-	Metrics blend.ReserveMetrics
+	Pool     string
+	Asset    string // reserve underlying token (C-strkey)
+	Decimals uint32
+	Data     blend.ReserveData
+	Metrics  blend.ReserveMetrics
 }
 
 // BlendPoolReserves reads the CURRENT reserve state for a Blend pool
@@ -67,20 +71,30 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ass
 		return nil, err
 	}
 
-	// Assemble in the caller's asset order; a reserve needs both
-	// ResData + ResConfig to produce metrics.
+	// Assemble in the caller's asset order. ResData is mandatory (it's
+	// the state); ResConfig is optional — without it we still report
+	// supplied/borrowed/utilization (config-free) and default decimals
+	// to 7, but APY is omitted (HasAPR=false).
 	out := make([]BlendReserveState, 0, len(assets))
 	for _, asset := range assets {
 		p := parts[asset]
-		if p == nil || p.data == nil || p.config == nil {
+		if p == nil || p.data == nil {
 			continue
 		}
+		decimals := uint32(7)
+		var metrics blend.ReserveMetrics
+		if p.config != nil {
+			decimals = p.config.Decimals
+			metrics = blend.Metrics(*p.data, *p.config, bstop)
+		} else {
+			metrics = blend.BaseMetrics(*p.data)
+		}
 		out = append(out, BlendReserveState{
-			Pool:    pool,
-			Asset:   asset,
-			Data:    *p.data,
-			Config:  *p.config,
-			Metrics: blend.Metrics(*p.data, *p.config, bstop),
+			Pool:     pool,
+			Asset:    asset,
+			Decimals: decimals,
+			Data:     *p.data,
+			Metrics:  metrics,
 		})
 	}
 	return out, nil
