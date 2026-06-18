@@ -25,6 +25,7 @@ type stubExplorerReader struct {
 	accountState   clickhouse.AccountState
 	holders        []clickhouse.AssetHolder
 	holderCount    int64
+	wealth         []clickhouse.AccountWealth
 	err            error
 }
 
@@ -102,6 +103,10 @@ func (s *stubExplorerReader) AccountState(_ context.Context, _ string) (clickhou
 
 func (s *stubExplorerReader) AssetHolders(_ context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, error) {
 	return s.holders, s.holderCount, s.err
+}
+
+func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {
+	return s.wealth, s.err
 }
 
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {

@@ -32,6 +32,7 @@ type ExplorerReader interface {
 	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
+	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
 }
 
 // explorerUnavailable writes the standard 503 when no explorer reader is wired

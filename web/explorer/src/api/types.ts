@@ -5910,6 +5910,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Accounts directory — ranked by total USD wealth.
+         * @description The accounts directory, ranked by the total USD value of their
+         *     holdings: native XLM plus every trustline asset we hold a verified USD
+         *     price for (the verified-currency catalogue; stablecoins resolve through
+         *     the fiat proxy). Computed in one pass over the current-state projection
+         *     (latest `ledger_entry_changes` per key, ADR-0038 Phase C).
+         *
+         *     `priced_assets` is the count of assets that contributed (how many of the
+         *     catalogue had a live price at request time). `usd_value` is a decimal
+         *     string (2dp). Coverage tracks the entry-change capture + Phase-C
+         *     backfill — an account ranks once its balances are captured.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accounts ranked by USD wealth, descending. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                /** @description Number of assets that contributed a price. */
+                                priced_assets?: number;
+                                accounts?: {
+                                    account_id?: string;
+                                    /** @description Total holdings value in USD (decimal string). */
+                                    usd_value?: string;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}": {
         parameters: {
             query?: never;

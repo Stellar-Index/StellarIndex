@@ -1,9 +1,116 @@
 package v1
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
+
+// AccountsListView is the wire response for GET /v1/accounts — accounts ranked
+// by total USD value of their holdings.
+type AccountsListView struct {
+	PricedAssets int                `json:"priced_assets"`
+	Accounts     []AccountWealthRow `json:"accounts"`
+}
+
+type AccountWealthRow struct {
+	AccountID string `json:"account_id"`
+	USDValue  string `json:"usd_value"`
+}
+
+// handleAccountsList serves GET /v1/accounts — the accounts directory ranked
+// by total USD wealth: native XLM plus every trustline asset we have a verified
+// USD price for. Builds the price map from the verified-currency catalogue
+// (the curated set of assets we price), then ranks over the current-state
+// projection. Coverage tracks the entry-change capture + backfill.
+func (s *Server) handleAccountsList(w http.ResponseWriter, r *http.Request) {
+	if s.explorer == nil {
+		s.explorerUnavailable(w, r)
+		return
+	}
+	if s.prices == nil {
+		writeProblem(w, r, "https://api.stellarindex.io/errors/unavailable",
+			"Pricing unavailable", http.StatusServiceUnavailable, "wealth ranking needs the pricing layer")
+		return
+	}
+	limit, ok := parseExplorerLimit(w, r, 100, 500)
+	if !ok {
+		return
+	}
+
+	assets, prices := s.usdPriceMap(r.Context())
+	ranked, err := s.explorer.AccountsByWealth(r.Context(), assets, prices, limit)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("explorer AccountsByWealth failed", "err", err)
+		writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked))}
+	for i, a := range ranked {
+		out.Accounts[i] = AccountWealthRow{AccountID: a.AccountID, USDValue: strconv.FormatFloat(a.USD, 'f', 2, 64)}
+	}
+	writeJSON(w, out, Flags{})
+}
+
+// usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native
+// XLM plus every browseable verified-currency Stellar asset that currently has
+// a USD price. "native" is the key for the account entry's XLM balance. Prices
+// resolve through lookupUSDPrice, so stablecoins pick up the fiat-proxy
+// fallback (USDC/USDT/… → ~$1) rather than dropping out for want of a direct
+// fiat:USD market.
+func (s *Server) usdPriceMap(ctx context.Context) (assets []string, prices []float64) {
+	for _, key := range s.priceableAssetIDs() {
+		asset, err := canonical.ParseAsset(key)
+		if err != nil {
+			continue
+		}
+		raw, ok := s.lookupUSDPrice(ctx, asset)
+		if !ok {
+			continue
+		}
+		p, perr := strconv.ParseFloat(raw, 64)
+		if perr != nil || p <= 0 {
+			continue
+		}
+		assets = append(assets, key)
+		prices = append(prices, p)
+	}
+	return assets, prices
+}
+
+// priceableAssetIDs is the de-duplicated set of canonical asset ids we attempt
+// to price for wealth ranking: native XLM plus every browseable verified
+// currency's Stellar asset (the catalogue can list the same asset under more
+// than one currency entry — dedup by id). "native" parses via canonical too.
+func (s *Server) priceableAssetIDs() []string {
+	keys := []string{"native"}
+	seen := map[string]struct{}{"native": {}}
+	if s.verifiedCurrencies == nil {
+		return keys
+	}
+	for _, vc := range s.verifiedCurrencies.All() {
+		if vc.ReferenceOnly {
+			continue
+		}
+		for _, n := range vc.Networks {
+			if n.AssetID == "" {
+				continue
+			}
+			if _, dup := seen[n.AssetID]; dup {
+				continue
+			}
+			seen[n.AssetID] = struct{}{}
+			keys = append(keys, n.AssetID)
+		}
+	}
+	return keys
+}
 
 // AccountStateView is the wire response for GET /v1/accounts/{g_strkey}.
 // Balances are strings (ADR-0003 — stroop amounts past 2^53 lose precision as

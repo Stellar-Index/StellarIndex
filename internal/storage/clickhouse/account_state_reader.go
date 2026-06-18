@@ -232,6 +232,57 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	return out, total, nil
 }
 
+// AccountWealth is one row of the wealth-ranked accounts directory.
+type AccountWealth struct {
+	AccountID string
+	USD       float64
+}
+
+// AccountsByWealth ranks accounts by total USD value of their holdings —
+// native XLM (the account entry) plus every trustline asset for which the
+// caller supplied a USD price. assets/prices are parallel arrays (assets[i]
+// priced at prices[i]; the native XLM key is "native"). Computed over the
+// current-state projection in one pass (sum balance×price per account); only
+// priced assets contribute. Coverage tracks the entry-change capture +
+// backfill — accounts/assets not yet captured simply aren't ranked yet.
+func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]AccountWealth, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if len(assets) == 0 || len(assets) != len(prices) {
+		return nil, nil
+	}
+	// balance is stroops (1e7); k = "native" for the account entry, else the
+	// trustline asset. has(assets, k) keeps only priced rows; indexOf maps the
+	// key to its price. Sum per account, rank desc.
+	const q = `SELECT account_id,
+		sum(toFloat64(balance) / 1e7 * arrayElement(?, indexOf(?, k))) AS usd
+		FROM (
+			SELECT account_id, balance, if(entry_type = 'account', 'native', asset) AS k
+			FROM stellar.ledger_entries_current FINAL
+			WHERE change_type != 'removed' AND entry_type IN ('account', 'trustline')
+		)
+		WHERE has(?, k)
+		GROUP BY account_id
+		HAVING usd > 0
+		ORDER BY usd DESC
+		LIMIT ?`
+	rows, err := r.conn.Query(ctx, q, prices, assets, assets, limit)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: accounts by wealth: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AccountWealth
+	for rows.Next() {
+		var w AccountWealth
+		if err := rows.Scan(&w.AccountID, &w.USD); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan account wealth: %w", err)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // signerAddress renders a SignerKey strkey without panicking on an unknown
 // discriminant (degrades to "").
 func signerAddress(k xdr.SignerKey) string {
