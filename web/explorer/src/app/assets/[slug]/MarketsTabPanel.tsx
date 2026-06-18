@@ -5,7 +5,7 @@ import { useMemo } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useMarkets, type Market } from '@/api/hooks';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatRelative } from '@/lib/format';
 
 /**
  * MarketsTabPanel — backs the "Markets" tab on /assets/[slug].
@@ -172,14 +172,4 @@ function Td({
       {children}
     </td>
   );
-}
-
-function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0) return 'now';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86_400)}d ago`;
 }

@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
+import { formatRelative } from '@/lib/format';
 
 interface SourceRow {
   name: string;
@@ -276,18 +277,6 @@ function Td({ children, align }: { children: React.ReactNode; align?: 'left' | '
   return (
     <td className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>{children}</td>
   );
-}
-
-
-function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms)) return '—';
-  const s = Math.round(ms / 1000);
-  if (s < 0) return 'now';
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
 }
 
 function formatPrice(p: string): string {

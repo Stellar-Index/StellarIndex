@@ -39,3 +39,21 @@ export function formatPctChange(fraction: number): string {
 export function formatLedger(ledger: number): string {
   return `#${ledger.toLocaleString('en-US')}`;
 }
+
+// Relative "time ago" label for an ISO timestamp. Returns '—' for a
+// missing/unparseable value and 'now' for a (near-)future one — so a
+// null/empty/garbage timestamp can never render as the literal
+// "NaNd ago". Canonical home for what used to be ~7 copy-pasted
+// `formatRelative` helpers across the table components, two of which
+// had dropped the finite-guard and did render "NaN".
+export function formatRelative(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return '—';
+  if (ms < 0) return 'now';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86_400)}d ago`;
+}

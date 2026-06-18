@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useCursors, type Cursor } from '@/api/hooks';
+import { formatRelative } from '@/lib/format';
 
 /**
  * Live ingest-cursor table backed by `/v1/diagnostics/cursors`.
@@ -195,16 +196,6 @@ function formatLag(s: number): string {
   if (s < 3600) return `${Math.round(s / 60)}m`;
   if (s < 86_400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86_400)}d`;
-}
-
-function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0) return 'now';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86_400)}d ago`;
 }
 
 function groupBySource(rows: Cursor[]): { source: string; rows: Cursor[] }[] {
