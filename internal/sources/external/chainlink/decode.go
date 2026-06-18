@@ -23,6 +23,17 @@ import (
 // aggregators or was it freshly computed in this round"). For our
 // purposes the round is uniquely identified by RoundID + the feed
 // address; answeredInRound adds no information for ingestion.
+// maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix
+// seconds). Real Chainlink rounds carry a recent block timestamp
+// (~1.7e9); anything past ~year 2286 is garbage. Critically, a value
+// that exceeds the int64 / timestamptz range would wrap NEGATIVE in the
+// int64() cast (→ far-past time) or land beyond Postgres's timestamptz
+// max and overflow the oracle_updates INSERT — the class guarded across
+// the band / reflector / redstone decoders. Chainlink data comes from a
+// trusted feed via trusted RPC, so this is defence-in-depth, but it
+// reaches the same timestamptz column with no downstream clamp.
+const maxPlausibleUpdatedAtUnix = 10_000_000_000 // ~year 2286
+
 func decodeLatestRoundData(rawHex, feedAddress string) (Round, error) {
 	bytes, err := hexBytes(rawHex)
 	if err != nil {
@@ -58,8 +69,8 @@ func decodeLatestRoundData(rawHex, feedAddress string) (Round, error) {
 	// authoritative timestamp).
 	// updatedAt — uint256 in word 3.
 	updatedAt := bigEndianUint64(bytes[120:128])
-	if updatedAt == 0 {
-		return Round{}, fmt.Errorf("%w: feed=%s round=%d zero updatedAt", ErrMalformedResult, feedAddress, roundID)
+	if updatedAt == 0 || updatedAt > maxPlausibleUpdatedAtUnix {
+		return Round{}, fmt.Errorf("%w: feed=%s round=%d out-of-range updatedAt %d", ErrMalformedResult, feedAddress, roundID, updatedAt)
 	}
 	// answeredInRound — uint80 in word 4 (ignored).
 
@@ -118,8 +129,8 @@ func decodeAnswerUpdatedLog(entry LogEntry) (Round, error) {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated.data expected 32 bytes (one uint256), got %d", ErrMalformedResult, len(dataBytes))
 	}
 	updatedAt := bigEndianUint64(dataBytes[24:32])
-	if updatedAt == 0 {
-		return Round{}, fmt.Errorf("%w: %s round=%d zero updatedAt", ErrMalformedResult, entry.Address, roundID)
+	if updatedAt == 0 || updatedAt > maxPlausibleUpdatedAtUnix {
+		return Round{}, fmt.Errorf("%w: %s round=%d out-of-range updatedAt %d", ErrMalformedResult, entry.Address, roundID, updatedAt)
 	}
 
 	return Round{

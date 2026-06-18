@@ -84,6 +84,27 @@ func TestDecodeLatestRoundData_happy(t *testing.T) {
 	}
 }
 
+// TestDecodeLatestRoundData_outOfRangeUpdatedAt rejects an updatedAt
+// past the plausibility ceiling — including values > math.MaxInt64 that
+// would wrap NEGATIVE in the int64() cast and stamp a far-past time that
+// overflows the oracle_updates timestamptz INSERT.
+func TestDecodeLatestRoundData_outOfRangeUpdatedAt(t *testing.T) {
+	t.Parallel()
+	for name, updatedAt := range map[string]uint64{
+		"justOverCeiling":  20_000_000_000,            // ~year 2603, > maxPlausibleUpdatedAtUnix
+		"justOverMaxInt64": 9_223_372_036_854_775_808, // wraps negative in int64 cast
+		"maxUint64":        18_446_744_073_709_551_615,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rawHex := buildLatestRoundDataReturn(t, 1, big.NewInt(100), 0, updatedAt, 1)
+			_, err := decodeLatestRoundData(rawHex, "0xabc")
+			if !errors.Is(err, ErrMalformedResult) {
+				t.Errorf("err = %v, want ErrMalformedResult (out-of-range updatedAt must be rejected, not wrapped)", err)
+			}
+		})
+	}
+}
+
 // TestDecodeLatestRoundData_negativeAnswer covers the
 // non-positive-price guard. Some legacy Chainlink feeds did emit
 // negative values during stress; we drop them rather than write a

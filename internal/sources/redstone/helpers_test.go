@@ -1,6 +1,7 @@
 package redstone
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,25 @@ func TestPickTimestamp_farFutureClampsToClosedAt(t *testing.T) {
 	got := pickTimestamp(pkgMs, closedAt)
 	if !got.Equal(closedAt) {
 		t.Errorf("got %v, want %v (far-future packageMs should clamp to closedAt)", got, closedAt)
+	}
+}
+
+func TestPickTimestamp_overflowWrapsClampToClosedAt(t *testing.T) {
+	// packageMs values ABOVE math.MaxInt64 wrap NEGATIVE in the int64
+	// cast → a far-PAST time that the old future-only After() guard
+	// missed (it's not After the close) and that overflows the
+	// timestamptz INSERT. Must clamp to ledger close.
+	closedAt := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	for name, pkgMs := range map[string]uint64{
+		"justOverMaxInt64": uint64(math.MaxInt64) + 1,
+		"1e19wrapsFarPast": 10_000_000_000_000_000_000,
+		"maxUint64":        math.MaxUint64,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := pickTimestamp(pkgMs, closedAt); !got.Equal(closedAt) {
+				t.Errorf("got %v, want %v (>MaxInt64 packageMs must clamp, not wrap)", got, closedAt)
+			}
+		})
 	}
 }
 
