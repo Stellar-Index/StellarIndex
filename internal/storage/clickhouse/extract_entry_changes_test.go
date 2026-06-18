@@ -65,6 +65,55 @@ func TestEntryChangeRow_RemovedTrustline(t *testing.T) {
 	}
 }
 
+// ecTestIssuer is a distinct G-strkey used as the asset issuer so the
+// asset-key assertion can't accidentally pass by matching the holder.
+const ecTestIssuer = "GBUKBCG5VLRKAVYAIREJRUJHOKLIADZJOICRW43WVJCLES52BDOTCQZU"
+
+func TestOwnerAndAsset_AccountOwnedEntries(t *testing.T) {
+	// Account entry → owner set, no asset.
+	acct := xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+		Type:    xdr.LedgerEntryTypeAccount,
+		Account: &xdr.AccountEntry{AccountId: xdr.MustAddress(ecTestG), Balance: 1000},
+	}}
+	row, ok := entryChangeRow(100, time.Unix(0, 0).UTC(), "tx", 0, 0,
+		xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: &acct})
+	if !ok || row.AccountID != ecTestG || row.Asset != "" {
+		t.Errorf("account: account_id=%q asset=%q (ok=%v), want %q / \"\"", row.AccountID, row.Asset, ok, ecTestG)
+	}
+
+	// Trustline (removed → key only) → owner = holder, asset = CODE-ISSUER.
+	tlKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{
+		AccountId: xdr.MustAddress(ecTestG),
+		Asset:     xdr.MustNewCreditAsset("USDC", ecTestIssuer).ToTrustLineAsset(),
+	}}
+	row, ok = entryChangeRow(100, time.Unix(0, 0).UTC(), "tx", 0, 1,
+		xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryRemoved, Removed: &tlKey})
+	wantAsset := "USDC-" + ecTestIssuer
+	if !ok || row.AccountID != ecTestG || row.Asset != wantAsset {
+		t.Errorf("trustline: account_id=%q asset=%q, want %q / %q", row.AccountID, row.Asset, ecTestG, wantAsset)
+	}
+
+	// Offer → owner = seller, no asset.
+	offerKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeOffer, Offer: &xdr.LedgerKeyOffer{
+		SellerId: xdr.MustAddress(ecTestG), OfferId: 42,
+	}}
+	row, ok = entryChangeRow(100, time.Unix(0, 0).UTC(), "tx", 0, 2,
+		xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryRemoved, Removed: &offerKey})
+	if !ok || row.AccountID != ecTestG || row.Asset != "" {
+		t.Errorf("offer: account_id=%q asset=%q, want %q / \"\"", row.AccountID, row.Asset, ecTestG)
+	}
+
+	// Data entry → owner = account, no asset.
+	dataKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeData, Data: &xdr.LedgerKeyData{
+		AccountId: xdr.MustAddress(ecTestG), DataName: "config",
+	}}
+	row, ok = entryChangeRow(100, time.Unix(0, 0).UTC(), "tx", 0, 3,
+		xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryRemoved, Removed: &dataKey})
+	if !ok || row.AccountID != ecTestG || row.Asset != "" {
+		t.Errorf("data: account_id=%q asset=%q, want %q / \"\"", row.AccountID, row.Asset, ecTestG)
+	}
+}
+
 func TestEntryTypeName(t *testing.T) {
 	cases := map[xdr.LedgerEntryType]string{
 		xdr.LedgerEntryTypeAccount:          "account",

@@ -2,6 +2,7 @@ package xdrjson
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"strconv"
 	"strings"
 
@@ -41,6 +42,36 @@ func assetID(a xdr.Asset) string {
 // assetCode trims the trailing NUL padding from a fixed-width asset code.
 func assetCode(raw []byte) string {
 	return strings.TrimRight(string(raw), "\x00")
+}
+
+// AssetID is the exported canonical asset id ("native" / "CODE-ISSUER") —
+// the same form the rest of the API + explorer use. Lets other packages
+// (e.g. the lake entry-change extractor) tag rows with a queryable,
+// API-consistent asset key.
+func AssetID(a xdr.Asset) string { return assetID(a) }
+
+// TrustLineAssetID renders a trustline entry's asset in the canonical
+// explorer form. Regular credits → "CODE-ISSUER"; native → "native";
+// liquidity-pool-share trustlines → "pool:<hex pool id>" (a distinct
+// namespace so they never collide with a credit-asset key).
+func TrustLineAssetID(t xdr.TrustLineAsset) string {
+	switch t.Type {
+	case xdr.AssetTypeAssetTypeNative:
+		return "native"
+	case xdr.AssetTypeAssetTypeCreditAlphanum4:
+		an := t.MustAlphaNum4()
+		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+	case xdr.AssetTypeAssetTypeCreditAlphanum12:
+		an := t.MustAlphaNum12()
+		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+	case xdr.AssetTypeAssetTypePoolShare:
+		if t.LiquidityPoolId != nil {
+			return "pool:" + hex.EncodeToString((*t.LiquidityPoolId)[:])
+		}
+		return "pool"
+	default:
+		return "unknown_asset"
+	}
 }
 
 // assetPath maps a path-payment asset path to a slice of canonical ids.

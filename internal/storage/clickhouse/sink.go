@@ -101,6 +101,15 @@ type LedgerEntryChangeRow struct {
 	EntryType   string
 	KeyXDR      string
 	EntryXDR    string
+	// AccountID is the owning account G-strkey for account-owned entries
+	// (account / trustline / offer / data), "" otherwise. The queryable
+	// owner column for account-state explorer reads (ADR-0038 Phase C) —
+	// ledger_entry_changes is otherwise keyed only by (ledger, tx).
+	AccountID string
+	// Asset is the canonical asset id ("CODE-ISSUER" / "native" /
+	// "pool:<hex>") for trustline entries, "" otherwise — the queryable
+	// key for asset-holder reads.
+	Asset string
 }
 
 // SupplyFlowRow mirrors stellar.supply_flows: one decoded supply-affecting
@@ -392,12 +401,12 @@ func (s *Sink) flushChanges(ctx context.Context) error {
 	if len(s.changes) == 0 {
 		return nil // G12-03: always taken today — Extract.Changes is never populated.
 	}
-	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr)")
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare ledger_entry_changes: %w", err)
 	}
 	for _, r := range s.changes {
-		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR); err != nil {
+		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset); err != nil {
 			return fmt.Errorf("clickhouse: append change %s/%d/%d: %w", r.TxHash, r.OpIndex, r.ChangeIndex, err)
 		}
 	}
