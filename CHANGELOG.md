@@ -17,6 +17,13 @@ against.
 
 ### Added
 
+- **Operations directory + per-type stats.** `GET /v1/operations` without a
+  `?ledger=` now returns the network-wide recent-operations directory (newest
+  first, keyset-paged via `?cursor=`) plus `op_type_stats` — the per-op-type
+  counts over the trailing ~24h (`?ledger=<seq>` still returns that ledger's
+  ops). New explorer `/operations` page (+ nav entry) renders the decoded feed
+  and the type breakdown. r1-timed: reverse-scan 0.16s, stats group-by 0.02s.
+
 - **Anomalies + divergence read endpoints (ADR-0019) + live explorer pages.**
   New `GET /v1/anomalies` (the freeze-event timeline from `freeze_events`:
   firing-now count + per-reason tally + clear→firing transitions with duration

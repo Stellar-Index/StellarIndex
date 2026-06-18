@@ -14,6 +14,7 @@ type stubExplorerReader struct {
 	ledgers        []clickhouse.LedgerHeader
 	txs            []clickhouse.TxSummary
 	ops            []clickhouse.OpRow
+	opTypeStats    []clickhouse.OpTypeCount
 	opResults      map[uint32]int32
 	events         []clickhouse.EventSummary
 	contractEvents []clickhouse.ContractActivityRow
@@ -51,6 +52,14 @@ func (s *stubExplorerReader) LedgerTransactions(_ context.Context, _ uint32, _ i
 
 func (s *stubExplorerReader) OperationsByLedger(_ context.Context, _ uint32, _ int) ([]clickhouse.OpRow, error) {
 	return s.ops, s.err
+}
+
+func (s *stubExplorerReader) RecentOperations(_ context.Context, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
+	return s.ops, s.err
+}
+
+func (s *stubExplorerReader) OperationTypeStats(_ context.Context, _ uint32) ([]clickhouse.OpTypeCount, error) {
+	return s.opTypeStats, s.err
 }
 
 func (s *stubExplorerReader) TransactionByHash(_ context.Context, hash string) (clickhouse.TxSummary, bool, error) {

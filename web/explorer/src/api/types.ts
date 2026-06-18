@@ -5782,15 +5782,24 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Operations in a ledger (decoded).
-         * @description A ledger's operations, each decoded from XDR. `?ledger=<seq>` selects
-         *     the ledger; omitted, it defaults to the latest ledger.
+         * Operations — a ledger's ops, or the network-wide recent directory.
+         * @description Two shapes on one route:
+         *
+         *     - **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR
+         *       (partition-pruned; `?limit=` up to 2000, default 500).
+         *     - **no `?ledger`** — the network-wide recent-operations DIRECTORY:
+         *       newest first, keyset-paged via `?cursor=<opaque>` (echo back
+         *       `next_cursor`; composite `ledger.tx_index.op_index`), plus
+         *       `op_type_stats` — the per-op-type counts over the trailing ~24h of
+         *       ledgers (first page only). `?limit=` up to 200, default 50.
          */
         get: {
             parameters: {
                 query?: {
-                    /** @description Ledger sequence (defaults to tip). */
+                    /** @description Ledger sequence. Omit for the network-wide recent directory. */
                     ledger?: number;
+                    /** @description Opaque keyset cursor (directory mode only). */
+                    cursor?: string;
                     limit?: number;
                 };
                 header?: never;
@@ -5799,7 +5808,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Decoded operations. */
+                /** @description Decoded operations (ledger-scoped or the recent directory). */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5807,12 +5816,22 @@ export interface paths {
                     content: {
                         "application/json": {
                             data?: {
+                                /** @description The ledger (ledger-scoped mode); 0 in directory mode. */
                                 ledger?: number;
                                 operations?: components["schemas"]["Operation"][];
+                                /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
+                                next_cursor?: string;
+                                /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
+                                op_type_stats?: {
+                                    type?: string;
+                                    /** Format: int64 */
+                                    count?: number;
+                                }[];
                             };
                         };
                     };
                 };
+                400: components["responses"]["BadRequest"];
                 503: components["responses"]["ServiceUnavailable"];
             };
         };

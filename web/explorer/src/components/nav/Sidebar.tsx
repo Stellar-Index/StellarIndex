@@ -20,6 +20,7 @@ import {
   KeyRound,
   Landmark,
   LayoutDashboard,
+  ListTree,
   LogOut,
   Network,
   Radio,
@@ -52,6 +53,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/', label: 'Home', icon: LayoutDashboard, exact: true },
       { href: '/transactions', label: 'Transactions', icon: Receipt },
+      { href: '/operations', label: 'Operations', icon: ListTree },
       { href: '/ledgers', label: 'Ledgers', icon: Blocks },
       { href: '/accounts', label: 'Accounts', icon: Wallet },
       { href: '/assets', label: 'Assets', icon: Coins },

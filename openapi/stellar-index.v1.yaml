@@ -3683,16 +3683,24 @@ paths:
   /operations:
     get:
       tags: [explorer]
-      summary: Operations in a ledger (decoded).
+      summary: Operations — a ledger's ops, or the network-wide recent directory.
       description: |
-        A ledger's operations, each decoded from XDR. `?ledger=<seq>` selects
-        the ledger; omitted, it defaults to the latest ledger.
+        Two shapes on one route:
+
+        - **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR
+          (partition-pruned; `?limit=` up to 2000, default 500).
+        - **no `?ledger`** — the network-wide recent-operations DIRECTORY:
+          newest first, keyset-paged via `?cursor=<opaque>` (echo back
+          `next_cursor`; composite `ledger.tx_index.op_index`), plus
+          `op_type_stats` — the per-op-type counts over the trailing ~24h of
+          ledgers (first page only). `?limit=` up to 200, default 50.
       parameters:
-        - { name: ledger, in: query, description: Ledger sequence (defaults to tip)., schema: { type: integer } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 2000, default: 500 } }
+        - { name: ledger, in: query, description: Ledger sequence. Omit for the network-wide recent directory., schema: { type: integer } }
+        - { name: cursor, in: query, description: Opaque keyset cursor (directory mode only)., schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 2000 } }
       responses:
         "200":
-          description: Decoded operations.
+          description: Decoded operations (ledger-scoped or the recent directory).
           content:
             application/json:
               schema:
@@ -3701,8 +3709,18 @@ paths:
                   data:
                     type: object
                     properties:
-                      ledger: { type: integer }
+                      ledger: { type: integer, description: "The ledger (ledger-scoped mode); 0 in directory mode." }
                       operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
+                      next_cursor: { type: string, description: "Directory mode: opaque cursor for the next older page; absent on the last page." }
+                      op_type_stats:
+                        type: array
+                        description: "Directory mode, first page only: per-op-type counts over the trailing ~24h."
+                        items:
+                          type: object
+                          properties:
+                            type:  { type: string }
+                            count: { type: integer, format: int64 }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /contracts:

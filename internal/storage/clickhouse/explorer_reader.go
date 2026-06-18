@@ -190,6 +190,65 @@ func scanOps(rows driver.Rows) ([]OpRow, error) {
 	return out, rows.Err()
 }
 
+// RecentOperations returns the most-recent operations network-wide,
+// newest first, keyset-paged by the composite (ledger_seq, tx_index,
+// op_index) cursor. A bare reverse scan from the tip of the table's
+// sort key — fast, no extra index. Backs the /v1/operations directory.
+func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur ExplorerCursor) ([]OpRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT ` + opCols + ` FROM stellar.operations`
+	args := []any{}
+	if cur.IsSet() {
+		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+		args = append(args, cur.Ledger, cur.A, cur.B)
+	}
+	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := r.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: recent operations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanOps(rows)
+}
+
+// OpTypeCount is one op-type's count in the stats window.
+type OpTypeCount struct {
+	OpType string
+	Count  int64
+}
+
+// OperationTypeStats returns the per-op-type operation counts over the
+// most-recent `windowLedgers` ledgers (default ~24h at 5 s close
+// time). Bounded to the table's tip via `ledger_seq > max - window`,
+// so partition pruning keeps it to the last chunk(s). Sorted desc.
+func (r *ExplorerReader) OperationTypeStats(ctx context.Context, windowLedgers uint32) ([]OpTypeCount, error) {
+	if windowLedgers == 0 {
+		windowLedgers = 17280 // ~24h at 5s ledger close
+	}
+	const q = `SELECT op_type, toInt64(count()) AS c
+		FROM stellar.operations
+		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?
+		GROUP BY op_type
+		ORDER BY c DESC`
+	rows, err := r.conn.Query(ctx, q, windowLedgers)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: operation type stats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OpTypeCount
+	for rows.Next() {
+		var c OpTypeCount
+		if err := rows.Scan(&c.OpType, &c.Count); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan op-type stat: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // OperationsByLedger returns the operations in a ledger, ordered by
 // (tx_index, op_index). Ledger-scoped → partition-pruned + fast (no tx_hash
 // index needed).

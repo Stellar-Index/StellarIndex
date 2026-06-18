@@ -63,16 +63,31 @@ func normalizeLakeOpType(s string) string {
 }
 
 // OperationsView is the wire response for GET /v1/operations.
+//
+// Two shapes on one route: with ?ledger=<seq> it's that ledger's ops
+// (Ledger set, no cursor/stats); without it it's the network-wide
+// recent-operations directory (Ledger 0, NextCursor for paging, and
+// OpTypeStats — the trailing-24h per-type breakdown).
 type OperationsView struct {
-	Ledger     uint32   `json:"ledger"`
-	Operations []OpView `json:"operations"`
+	Ledger      uint32        `json:"ledger"`
+	Operations  []OpView      `json:"operations"`
+	NextCursor  string        `json:"next_cursor,omitempty"`
+	OpTypeStats []OpTypeStatV `json:"op_type_stats,omitempty"`
 }
 
-// handleOperations serves GET /v1/operations?ledger=<seq> — operations in a
-// ledger, decoded. When ?ledger is omitted it defaults to the latest ledger
-// (recent activity out of the box). Ledger-scoped so the query is
-// partition-pruned (no tx_hash index needed). Global cross-ledger browse is a
-// follow-up (needs the participant index, ADR-0038 Phase B).
+// OpTypeStatV is one op-type's count in the trailing-24h window.
+type OpTypeStatV struct {
+	Type  string `json:"type"`
+	Count int64  `json:"count"`
+}
+
+// handleOperations serves GET /v1/operations.
+//
+//   - ?ledger=<seq>: that ledger's operations, decoded (partition-pruned).
+//   - no ?ledger: the network-wide recent-operations DIRECTORY — newest
+//     first, keyset-paged via ?cursor=<opaque> (echo back next_cursor;
+//     composite ledger.tx_index.op_index), plus op_type_stats (per-type
+//     counts over the trailing ~24h of ledgers).
 func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
 	if s.explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -82,27 +97,13 @@ func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if seq == 0 {
+		s.handleOperationsDirectory(w, r)
+		return
+	}
 	limit, ok := parseExplorerLimit(w, r, 500, 2000)
 	if !ok {
 		return
-	}
-	if seq == 0 {
-		// Default to the latest ledger.
-		tip, err := s.explorer.RecentLedgers(r.Context(), 1, 0)
-		if err != nil {
-			if clientAborted(r, err) {
-				return
-			}
-			s.logger.Error("explorer tip lookup failed", "err", err)
-			writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
-				"Internal error", http.StatusInternalServerError, "")
-			return
-		}
-		if len(tip) == 0 {
-			writeJSON(w, OperationsView{Operations: []OpView{}}, Flags{})
-			return
-		}
-		seq = tip[0].Seq
 	}
 	rows, err := s.explorer.OperationsByLedger(r.Context(), seq, limit)
 	if err != nil {
@@ -117,6 +118,51 @@ func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
 	out := OperationsView{Ledger: seq, Operations: make([]OpView, len(rows))}
 	for i, o := range rows {
 		out.Operations[i] = opView(o)
+	}
+	writeJSON(w, out, Flags{})
+}
+
+// handleOperationsDirectory serves the no-ledger path: network-wide
+// recent operations (keyset-paged) + the trailing-24h op-type stats.
+func (s *Server) handleOperationsDirectory(w http.ResponseWriter, r *http.Request) {
+	limit, ok := parseExplorerLimit(w, r, 50, 200)
+	if !ok {
+		return
+	}
+	cur, ok := parseExplorerCursor(w, r, 3) // (ledger, tx_index, op_index)
+	if !ok {
+		return
+	}
+	rows, err := s.explorer.RecentOperations(r.Context(), limit, cur)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("explorer RecentOperations failed", "err", err)
+		writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	out := OperationsView{Operations: make([]OpView, len(rows))}
+	for i, o := range rows {
+		out.Operations[i] = opView(o)
+	}
+	if n := len(rows); n == limit {
+		last := rows[n-1]
+		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)
+	}
+	// Op-type stats are best-effort context — a failure here shouldn't
+	// fail the listing (only attached on the first page to keep paging
+	// responses lean).
+	if !cur.IsSet() {
+		if stats, serr := s.explorer.OperationTypeStats(r.Context(), 0); serr == nil {
+			out.OpTypeStats = make([]OpTypeStatV, len(stats))
+			for i, st := range stats {
+				out.OpTypeStats[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+			}
+		} else if !clientAborted(r, serr) {
+			s.logger.Warn("explorer OperationTypeStats failed", "err", serr)
+		}
 	}
 	writeJSON(w, out, Flags{})
 }

@@ -20011,11 +20011,11 @@
       "description": "",
       "item": [
         {
-          "name": "Operations in a ledger (decoded).",
+          "name": "Operations — a ledger's ops, or the network-wide recent directory.",
           "request": {
-            "name": "Operations in a ledger (decoded).",
+            "name": "Operations — a ledger's ops, or the network-wide recent directory.",
             "description": {
-              "content": "A ledger's operations, each decoded from XDR. `?ledger=<seq>` selects\nthe ledger; omitted, it defaults to the latest ledger.\n",
+              "content": "Two shapes on one route:\n\n- **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR\n  (partition-pruned; `?limit=` up to 2000, default 500).\n- **no `?ledger`** — the network-wide recent-operations DIRECTORY:\n  newest first, keyset-paged via `?cursor=<opaque>` (echo back\n  `next_cursor`; composite `ledger.tx_index.op_index`), plus\n  `op_type_stats` — the per-op-type counts over the trailing ~24h of\n  ledgers (first page only). `?limit=` up to 200, default 50.\n",
               "type": "text/plain"
             },
             "url": {
@@ -20029,7 +20029,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Ledger sequence (defaults to tip).",
+                    "content": "Ledger sequence. Omit for the network-wide recent directory.",
                     "type": "text/plain"
                   },
                   "key": "ledger",
@@ -20038,11 +20038,20 @@
                 {
                   "disabled": false,
                   "description": {
+                    "content": "Opaque keyset cursor (directory mode only).",
+                    "type": "text/plain"
+                  },
+                  "key": "cursor",
+                  "value": "<string>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
                     "content": "",
                     "type": "text/plain"
                   },
                   "key": "limit",
-                  "value": "500"
+                  "value": "<integer>"
                 }
               ],
               "variable": []
@@ -20059,7 +20068,7 @@
           },
           "response": [
             {
-              "name": "Decoded operations.",
+              "name": "Decoded operations (ledger-scoped or the recent directory).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -20072,7 +20081,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Ledger sequence (defaults to tip).",
+                        "content": "Ledger sequence. Omit for the network-wide recent directory.",
                         "type": "text/plain"
                       },
                       "key": "ledger",
@@ -20081,11 +20090,20 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Opaque keyset cursor (directory mode only).",
+                        "type": "text/plain"
+                      },
+                      "key": "cursor",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "",
                         "type": "text/plain"
                       },
                       "key": "limit",
-                      "value": "500"
+                      "value": "<integer>"
                     }
                   ],
                   "variable": []
@@ -20107,7 +20125,69 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2645\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 5745,\n          \"key_1\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\",\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
+              "cookie": [],
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "Client-supplied parameters didn't validate.",
+              "originalRequest": {
+                "url": {
+                  "path": [
+                    "operations"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Ledger sequence. Omit for the network-wide recent directory.",
+                        "type": "text/plain"
+                      },
+                      "key": "ledger",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Opaque keyset cursor (directory mode only).",
+                        "type": "text/plain"
+                      },
+                      "key": "cursor",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "",
+                        "type": "text/plain"
+                      },
+                      "key": "limit",
+                      "value": "<integer>"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/problem+json"
+                  }
+                ],
+                "method": "GET",
+                "body": {}
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -20125,7 +20205,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Ledger sequence (defaults to tip).",
+                        "content": "Ledger sequence. Omit for the network-wide recent directory.",
                         "type": "text/plain"
                       },
                       "key": "ledger",
@@ -20134,11 +20214,20 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Opaque keyset cursor (directory mode only).",
+                        "type": "text/plain"
+                      },
+                      "key": "cursor",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "",
                         "type": "text/plain"
                       },
                       "key": "limit",
-                      "value": "500"
+                      "value": "<integer>"
                     }
                   ],
                   "variable": []
@@ -20896,7 +20985,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 3041.6102707386017,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2648,\n          \"key_1\": \"string\",\n          \"key_2\": true,\n          \"key_3\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -21127,7 +21216,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"transaction\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"ledger\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
