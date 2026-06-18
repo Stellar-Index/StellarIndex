@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.123] — 2026-06-19
+
+### Fixed
+
+- **Blend reserves return real data even without ResConfig.** A reserve's
+  `ResConfig` (rate-model params) was set before the contract-storage capture
+  window began (~ledger 62M) and never changed, so it's not in the lake
+  (count=0) — requiring it produced empty reserves. `ResData` (the volatile
+  state) IS captured. Now `ResData` is mandatory → exact supplied / borrowed /
+  utilization (config-free), and `ResConfig` is optional → `borrow_apr` /
+  `supply_apr` are nullable, `decimals` defaults to 7. So the reserve shows real
+  current-state TVL + utilization even when the APY can't be computed.
+
 ## [v0.5.0-rc.122] — 2026-06-19
 
 ### Fixed
