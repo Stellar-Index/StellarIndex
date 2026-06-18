@@ -2132,10 +2132,10 @@ export interface paths {
                                     borrowed_usd?: string | null;
                                     /** @description Borrowed/supplied */
                                     utilization_pct?: number;
-                                    /** @description Borrow APR as a fraction (0.05 = 5%). */
-                                    borrow_apr?: number;
-                                    /** @description Supply APR as a fraction. */
-                                    supply_apr?: number;
+                                    /** @description Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window. */
+                                    borrow_apr?: number | null;
+                                    /** @description Supply APR as a fraction. Null when the rate-model config is uncaptured. */
+                                    supply_apr?: number | null;
                                 }[];
                             };
                         };

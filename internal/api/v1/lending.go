@@ -123,8 +123,11 @@ type ReserveView struct {
 	SuppliedUSD    *string `json:"supplied_usd"`
 	BorrowedUSD    *string `json:"borrowed_usd"`
 	UtilizationPct float64 `json:"utilization_pct"`
-	BorrowAPR      float64 `json:"borrow_apr"`
-	SupplyAPR      float64 `json:"supply_apr"`
+	// APRs are null when the reserve's ReserveConfig (rate-model params)
+	// isn't in the captured contract-storage window — supplied /
+	// borrowed / utilization are still exact.
+	BorrowAPR *float64 `json:"borrow_apr"`
+	SupplyAPR *float64 `json:"supply_apr"`
 }
 
 // handleLendingPoolReserves serves GET /v1/lending/pools/{pool}/reserves
@@ -199,18 +202,22 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat) {
 	rv := ReserveView{
 		Asset:          st.Asset,
-		Decimals:       st.Config.Decimals,
+		Decimals:       st.Decimals,
 		Supplied:       st.Metrics.SuppliedUnderlying.String(),
 		Borrowed:       st.Metrics.BorrowedUnderlying.String(),
 		UtilizationPct: round2(st.Metrics.UtilizationPct),
-		BorrowAPR:      round4(st.Metrics.BorrowAPR),
-		SupplyAPR:      round4(st.Metrics.SupplyAPR),
+	}
+	if st.Metrics.HasAPR {
+		b := round4(st.Metrics.BorrowAPR)
+		sup := round4(st.Metrics.SupplyAPR)
+		rv.BorrowAPR = &b
+		rv.SupplyAPR = &sup
 	}
 	price, ok := s.reservePriceUSD(ctx, st.Asset)
 	if !ok {
 		return rv, nil
 	}
-	dec := int(st.Config.Decimals)
+	dec := int(st.Decimals)
 	var suppliedContrib *big.Rat
 	if usd, err := usdMarketValue(st.Metrics.SuppliedUnderlying, price, dec); err == nil {
 		rv.SuppliedUSD = &usd

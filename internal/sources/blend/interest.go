@@ -134,26 +134,40 @@ func rate7ToFloat(rate *big.Int) float64 {
 }
 
 // ReserveMetrics bundles the derived current-state metrics for one
-// reserve, ready for the API.
+// reserve, ready for the API. HasAPR is false when the reserve's
+// ReserveConfig (the rate-model params) isn't available — supplied /
+// borrowed / utilization come from ReserveData alone and are always
+// present; the APR fields need the config and are meaningless without it.
 type ReserveMetrics struct {
 	SuppliedUnderlying *big.Int // smallest unit of the underlying token
 	BorrowedUnderlying *big.Int
 	UtilizationPct     float64 // 0..100
-	BorrowAPR          float64 // fraction (0.05 = 5%)
+	HasAPR             bool
+	BorrowAPR          float64 // fraction (0.05 = 5%); valid only when HasAPR
 	SupplyAPR          float64
 }
 
-// Metrics derives the per-reserve current-state metrics from the
-// decoded reserve state + the pool's backstop take rate.
+// BaseMetrics derives the config-FREE current-state metrics (supplied /
+// borrowed / utilization) from ReserveData alone — used when the
+// reserve's ReserveConfig isn't captured, so APY can't be computed.
+func BaseMetrics(rd ReserveData) ReserveMetrics {
+	return ReserveMetrics{
+		SuppliedUnderlying: rd.SuppliedUnderlying(),
+		BorrowedUnderlying: rd.BorrowedUnderlying(),
+		UtilizationPct:     rate7ToFloat(rd.Utilization()) * 100,
+	}
+}
+
+// Metrics derives the full per-reserve current-state metrics (incl.
+// APY) from the decoded reserve state + config + the pool's backstop
+// take rate.
 func Metrics(rd ReserveData, rc ReserveConfig, bstopRate uint32) ReserveMetrics {
 	util := rd.Utilization()
 	borrowRate := rc.BorrowRate(util, rd.IRMod)
 	supplyRate := SupplyRate(borrowRate, util, bstopRate)
-	return ReserveMetrics{
-		SuppliedUnderlying: rd.SuppliedUnderlying(),
-		BorrowedUnderlying: rd.BorrowedUnderlying(),
-		UtilizationPct:     rate7ToFloat(util) * 100,
-		BorrowAPR:          rate7ToFloat(borrowRate),
-		SupplyAPR:          rate7ToFloat(supplyRate),
-	}
+	m := BaseMetrics(rd)
+	m.HasAPR = true
+	m.BorrowAPR = rate7ToFloat(borrowRate)
+	m.SupplyAPR = rate7ToFloat(supplyRate)
+	return m
 }
