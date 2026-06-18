@@ -3739,6 +3739,44 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts:
+    get:
+      tags: [explorer]
+      summary: Accounts directory — ranked by total USD wealth.
+      description: |
+        The accounts directory, ranked by the total USD value of their
+        holdings: native XLM plus every trustline asset we hold a verified USD
+        price for (the verified-currency catalogue; stablecoins resolve through
+        the fiat proxy). Computed in one pass over the current-state projection
+        (latest `ledger_entry_changes` per key, ADR-0038 Phase C).
+
+        `priced_assets` is the count of assets that contributed (how many of the
+        catalogue had a live price at request time). `usd_value` is a decimal
+        string (2dp). Coverage tracks the entry-change capture + Phase-C
+        backfill — an account ranks once its balances are captured.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Accounts ranked by USD wealth, descending.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      priced_assets: { type: integer, description: Number of assets that contributed a price. }
+                      accounts:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            account_id: { type: string }
+                            usd_value: { type: string, description: Total holdings value in USD (decimal string). }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}:
     get:
       tags: [explorer]

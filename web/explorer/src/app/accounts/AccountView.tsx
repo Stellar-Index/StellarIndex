@@ -79,24 +79,7 @@ export function AccountView() {
   });
 
   if (id.length === 0) {
-    return (
-      <Shell id={null}>
-        <Panel
-          title="No account selected"
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            This page needs an <code className="font-mono">?id=</code> query
-            parameter — a 56-character Stellar account ID (starts with{' '}
-            <code className="font-mono">G</code>). Use the search box (
-            <kbd className="rounded border border-line-strong px-1 text-[10px]">
-              ⌘K
-            </kbd>
-            ) to look one up.
-          </p>
-        </Panel>
-      </Shell>
-    );
+    return <AccountsDirectory />;
   }
 
   if (!looksValid) {
@@ -170,6 +153,110 @@ export function AccountView() {
         data={opsQ.data}
       />
     </Shell>
+  );
+}
+
+// ── Accounts directory (ranked by USD wealth) ───────────────────────────
+// Mirrors api/v1.AccountsListView (GET /v1/accounts). Lists accounts ranked
+// by the total USD value of their holdings — native XLM plus every trustline
+// asset we hold a verified price for, summed over the current-state projection.
+interface AccountsListResp {
+  priced_assets: number;
+  accounts: { account_id: string; usd_value: string }[];
+}
+
+const DIRECTORY_SIZE = 100;
+
+const usdFmt = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
+
+function AccountsDirectory() {
+  const q = useQuery<AccountsListResp>({
+    queryKey: ['/v1/accounts', DIRECTORY_SIZE],
+    retry: false,
+    queryFn: async () => {
+      const env = await apiGet<Envelope<AccountsListResp>>('/v1/accounts', {
+        limit: DIRECTORY_SIZE,
+      });
+      return env.data;
+    },
+    staleTime: 60_000,
+  });
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+      <header className="space-y-2">
+        <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
+        <p className="max-w-3xl text-sm text-ink-body">
+          The richest accounts on Stellar, ranked by the total USD value of
+          their holdings — native XLM plus every trustline asset we hold a
+          verified price for, summed straight from the certified lake&apos;s
+          current-state projection.
+        </p>
+      </header>
+
+      <Panel
+        title="Ranked by USD wealth"
+        source={asExample('/v1/accounts', { limit: DIRECTORY_SIZE })}
+        bodyClassName="space-y-3"
+      >
+        {q.isLoading && <p className="text-sm text-ink-muted">Loading…</p>}
+        {q.isError && (
+          <p className="text-sm text-ink-muted">
+            The accounts directory is unavailable right now (the current-state
+            projection is still backfilling, or pricing is offline).
+          </p>
+        )}
+        {q.data && q.data.accounts.length === 0 && (
+          <p className="text-sm text-ink-muted">No priced accounts yet.</p>
+        )}
+        {q.data && q.data.accounts.length > 0 && (
+          <>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
+                  <th className="w-12 py-1.5 pr-4 text-right font-normal">#</th>
+                  <th className="py-1.5 pr-4 font-normal">Account</th>
+                  <th className="py-1.5 text-right font-normal">USD value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {q.data.accounts.map((a, i) => (
+                  <tr
+                    key={a.account_id}
+                    className="border-b border-line/60 last:border-0 hover:bg-surface-muted"
+                  >
+                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-ink-muted">
+                      {i + 1}
+                    </td>
+                    <td className="py-1.5 pr-4 font-mono">
+                      <Link
+                        href={`/accounts?id=${encodeURIComponent(a.account_id)}`}
+                        className="hover:text-brand-600 hover:underline"
+                      >
+                        {a.account_id.slice(0, 10)}…{a.account_id.slice(-8)}
+                      </Link>
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums">
+                      {usdFmt.format(Number(a.usd_value))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-ink-muted">
+              Summed across {q.data.priced_assets} priced asset
+              {q.data.priced_assets === 1 ? '' : 's'}. Wealth not yet captured
+              in the lake&apos;s ledger-entry window (Phase-C backfill in
+              progress) is excluded.
+            </p>
+          </>
+        )}
+      </Panel>
+    </div>
   );
 }
 

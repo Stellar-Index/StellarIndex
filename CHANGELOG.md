@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Accounts directory ranked by USD wealth.** New `GET /v1/accounts` ranks
+  accounts by the total USD value of their holdings — native XLM plus every
+  verified-currency Stellar asset we hold a live price for (stablecoins resolve
+  through the fiat proxy), summed in one pass over the
+  `ledger_entries_current` projection. The `/accounts` explorer page (with no
+  `?id=`) now renders this leaderboard; `/accounts?id=G…` keeps the
+  single-account detail view. Coverage tracks the entry-change capture +
+  Phase-C backfill.
+
 ## [v0.5.0-rc.116] — 2026-06-18
 
 ### Changed
