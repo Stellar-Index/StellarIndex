@@ -3491,6 +3491,45 @@ paths:
                       operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /contracts:
+    get:
+      tags: [explorer]
+      summary: Contracts directory — most active contracts over a recent window.
+      description: |
+        The most active Soroban contracts ranked by emitted-event count over a
+        recent window (`?days=`, default 30, max 365). Each entry is tagged with
+        its owning `protocol` when the contract is in the factory-anchored
+        registry (ADR-0035) — the attribution hinge that lets the explorer say
+        "this contract IS a Blend pool". `since_ledger` echoes the window floor.
+      parameters:
+        - { name: days, in: query, description: Window size in days., schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Ranked contracts directory.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      window_days: { type: integer }
+                      since_ledger: { type: integer, format: int64 }
+                      contracts:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            contract_id: { type: string }
+                            events: { type: integer, format: int64 }
+                            last_ledger: { type: integer, format: int64 }
+                            last_seen: { type: string, format: date-time }
+                            protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /contracts/{contract_id}:
     get:
       tags: [explorer]
@@ -3583,6 +3622,48 @@ paths:
                       source_note: { type: string, description: Provenance + any degraded-stage explanation. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /contracts/{contract_id}/interactions:
+    get:
+      tags: [explorer]
+      summary: Contract interaction map — co-occurring contracts (cross-contract calls).
+      description: |
+        The contracts that emitted events in the same transactions as this one,
+        ranked by shared-transaction count over a recent window (`?days=`,
+        default 90, max 365). Co-occurrence within a transaction is a strong
+        proxy for a cross-contract call: a Soroban invoke nests its sub-calls
+        inside one `InvokeHostFunction` op, so the callee's events land in the
+        caller's transaction. Each edge is tagged with the other contract's
+        owning `protocol` where known. Powers the contract page's interaction
+        graph.
+      parameters:
+        - { name: contract_id, in: path, required: true, description: C-strkey contract id., schema: { type: string } }
+        - { name: days, in: query, description: Window size in days., schema: { type: integer, minimum: 1, maximum: 365, default: 90 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200":
+          description: Ranked interaction edges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      contract_id: { type: string }
+                      window_days: { type: integer }
+                      since_ledger: { type: integer, format: int64 }
+                      interactions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            contract_id: { type: string }
+                            shared_txs: { type: integer, format: int64 }
+                            protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /accounts/{g_strkey}/transactions:

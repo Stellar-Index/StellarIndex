@@ -169,6 +169,8 @@ export function ContractView() {
 
       <WasmPanel id={data.contract_id || id} />
 
+      <InteractionsPanel id={data.contract_id || id} />
+
       <EventsPanel
         id={id}
         events={data.events}
@@ -349,6 +351,114 @@ function CodeDisclosure({ label, code }: { label: string; code: string }) {
   );
 }
 
+// ── Interaction map ─────────────────────────────────────────────────────
+// Mirrors api/v1.ContractInteractionsView (GET /v1/contracts/{id}/interactions):
+// the contracts that emitted events in the same transactions as this one — a
+// proxy for cross-contract calls (Soroban sub-invocations nest within one tx).
+interface InteractionEdge {
+  contract_id: string;
+  shared_txs: number;
+  protocol?: string;
+}
+interface InteractionsResp {
+  contract_id: string;
+  window_days: number;
+  since_ledger: number;
+  interactions: InteractionEdge[];
+}
+
+/**
+ * InteractionsPanel — the contract's cross-contract interaction map: other
+ * contracts that co-occur in its transactions, ranked by shared-tx count and
+ * tagged with their protocol where known. The 90-day window keeps it scoped to
+ * current behaviour.
+ */
+function InteractionsPanel({ id }: { id: string }) {
+  const { data, isLoading, isError } = useQuery<InteractionsResp>({
+    queryKey: ['/v1/contracts/{id}/interactions', id],
+    enabled: CONTRACT_RE.test(id),
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const env = await apiGet<Envelope<InteractionsResp>>(
+        `/v1/contracts/${encodeURIComponent(id)}/interactions`,
+        { days: 90, limit: 50 },
+      );
+      return env.data;
+    },
+  });
+
+  const source = asExample(`/v1/contracts/${id}/interactions`, { days: 90, limit: 50 });
+  const edges = data?.interactions ?? [];
+
+  if (isLoading) {
+    return (
+      <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
+        Loading interactions…
+      </Panel>
+    );
+  }
+  if (isError || edges.length === 0) {
+    return (
+      <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
+        No cross-contract interactions observed in the last 90 days — this
+        contract didn’t share transactions with other contracts in the window.
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel
+      title={`Interaction map (${edges.length})`}
+      hint="contracts sharing transactions · last 90d"
+      source={source}
+      bodyClassName="-mx-4"
+    >
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-line text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+              <th scope="col" className="px-4 py-2">Contract</th>
+              <th scope="col" className="px-4 py-2">Protocol</th>
+              <th scope="col" className="px-4 py-2 text-right">Shared txs</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line-subtle">
+            {edges.map((e) => (
+              <tr key={e.contract_id} className="hover:bg-surface-muted">
+                <td className="px-4 py-3">
+                  <Link
+                    href={`/contract?id=${encodeURIComponent(e.contract_id)}`}
+                    className="font-mono text-xs text-brand-600 hover:underline"
+                    title={e.contract_id}
+                  >
+                    {e.contract_id.slice(0, 8)}…{e.contract_id.slice(-6)}
+                  </Link>
+                </td>
+                <td className="px-4 py-3">
+                  {e.protocol ? (
+                    <Link
+                      href={`/protocols/${encodeURIComponent(e.protocol)}`}
+                      className="inline-flex items-center rounded bg-brand-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-brand-800 hover:bg-brand-200"
+                    >
+                      {e.protocol}
+                    </Link>
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
+                  {e.shared_txs.toLocaleString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function Shell({
   id,
   children,
@@ -360,7 +470,7 @@ function Shell({
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
         <nav className="text-xs text-ink-muted">
-          <Link href="/dexes" className="hover:text-brand-600">
+          <Link href="/contracts" className="hover:text-brand-600">
             Contracts
           </Link>{' '}
           /{' '}

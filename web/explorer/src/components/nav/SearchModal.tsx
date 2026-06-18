@@ -126,6 +126,7 @@ const STATIC_PAGES: Result[] = [
   },
   { type: 'page', label: 'Issuers', href: '/issuers' },
   { type: 'page', label: 'Transactions', href: '/transactions', hint: 'recent network activity' },
+  { type: 'page', label: 'Contracts', href: '/contracts', hint: 'active Soroban contracts' },
   { type: 'page', label: 'SDEX Markets', href: '/dexes/sdex', hint: 'native order book' },
   { type: 'page', label: 'AMM Pools', href: '/dexes' },
   { type: 'page', label: 'Lending', href: '/lending' },

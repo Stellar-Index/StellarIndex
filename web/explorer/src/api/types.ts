@@ -5496,6 +5496,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/contracts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contracts directory — most active contracts over a recent window.
+         * @description The most active Soroban contracts ranked by emitted-event count over a
+         *     recent window (`?days=`, default 30, max 365). Each entry is tagged with
+         *     its owning `protocol` when the contract is in the factory-anchored
+         *     registry (ADR-0035) — the attribution hinge that lets the explorer say
+         *     "this contract IS a Blend pool". `since_ledger` echoes the window floor.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Window size in days. */
+                    days?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Ranked contracts directory. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                window_days?: number;
+                                /** Format: int64 */
+                                since_ledger?: number;
+                                contracts?: {
+                                    contract_id?: string;
+                                    /** Format: int64 */
+                                    events?: number;
+                                    /** Format: int64 */
+                                    last_ledger?: number;
+                                    /** Format: date-time */
+                                    last_seen?: string;
+                                    /** @description Owning protocol when attributed; absent otherwise. */
+                                    protocol?: string;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/contracts/{contract_id}": {
         parameters: {
             query?: never;
@@ -5636,6 +5702,75 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 404: components["responses"]["NotFound"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/contracts/{contract_id}/interactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contract interaction map — co-occurring contracts (cross-contract calls).
+         * @description The contracts that emitted events in the same transactions as this one,
+         *     ranked by shared-transaction count over a recent window (`?days=`,
+         *     default 90, max 365). Co-occurrence within a transaction is a strong
+         *     proxy for a cross-contract call: a Soroban invoke nests its sub-calls
+         *     inside one `InvokeHostFunction` op, so the callee's events land in the
+         *     caller's transaction. Each edge is tagged with the other contract's
+         *     owning `protocol` where known. Powers the contract page's interaction
+         *     graph.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Window size in days. */
+                    days?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description C-strkey contract id. */
+                    contract_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Ranked interaction edges. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                contract_id?: string;
+                                window_days?: number;
+                                /** Format: int64 */
+                                since_ledger?: number;
+                                interactions?: {
+                                    contract_id?: string;
+                                    /** Format: int64 */
+                                    shared_txs?: number;
+                                    /** @description Owning protocol when attributed; absent otherwise. */
+                                    protocol?: string;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
                 503: components["responses"]["ServiceUnavailable"];
             };
         };

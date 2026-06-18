@@ -28,6 +28,21 @@ against.
 
 ### Added
 
+- **Contracts as a first-class entity — directory + interaction map.** New
+  `GET /v1/contracts` ranks the most active Soroban contracts over a recent
+  window, each tagged with its owning `protocol` from the factory-anchored
+  registry (the attribution hinge). New
+  `GET /v1/contracts/{id}/interactions` returns the contract's cross-contract
+  interaction map — other contracts that co-occur in its transactions (a proxy
+  for cross-contract calls, since Soroban sub-invocations nest within one tx),
+  ranked by shared-tx count and protocol-tagged. Both back the explorer's new
+  `/contracts` directory page (top-level nav) and an interaction-map panel on
+  the contract detail page (alongside the existing events + decoded-code
+  panels). Lake-backed (`stellar.contract_events`), window-scoped to stay on
+  the primary-key range.
+- **Transactions page + SDEX Markets nav split** — `/transactions` (recent
+  network activity, ledger-paged) and a distinct "SDEX Markets" nav entry
+  (native order book) separate from "AMM Pools".
 - **`/bridges` page** — cross-chain settlement directory (Circle CCTP v2 + Rozo),
   a category landing over `/v1/protocols` (reuses the protocol-directory grid).
 

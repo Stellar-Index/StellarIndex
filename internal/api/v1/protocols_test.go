@@ -38,9 +38,10 @@ func (s *stubProtocolActivityReader) ProtocolContractActivity(context.Context, [
 }
 
 type stubProtocolContractsReader struct {
-	bySource     map[string][]timescale.ProtocolContract
-	projBySource map[string][]string
-	err          error
+	bySource      map[string][]timescale.ProtocolContract
+	projBySource  map[string][]string
+	contractIndex map[string]string
+	err           error
 }
 
 func (s *stubProtocolContractsReader) ListProtocolContracts(_ context.Context, source string) ([]timescale.ProtocolContract, error) {
@@ -49,6 +50,10 @@ func (s *stubProtocolContractsReader) ListProtocolContracts(_ context.Context, s
 
 func (s *stubProtocolContractsReader) ListSourceContractsFromProjection(_ context.Context, source string) ([]string, error) {
 	return s.projBySource[source], nil
+}
+
+func (s *stubProtocolContractsReader) ProtocolContractIndex(_ context.Context) (map[string]string, error) {
+	return s.contractIndex, s.err
 }
 
 type stubProtocolStatsReader struct {

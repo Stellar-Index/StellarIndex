@@ -68,6 +68,35 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 //
 // first_ledger is NULL when the seeding path didn't know it; that maps
 // to FirstLedger 0 here (and the NULLs sort last).
+// ProtocolContractIndex returns a contract_id → source map over every
+// registered protocol contract, regardless of source. Backs the explorer's
+// contract-attribution overlay (the "this contract IS a Blend pool" hinge):
+// the contracts directory + contract detail look each contract_id up in this
+// map to tag it with its owning protocol. The table is small (factory-
+// descended pools across all gated sources — tens to low-hundreds of rows),
+// so loading it whole and mapping in-process is cheaper than a per-id query.
+func (s *Store) ProtocolContractIndex(ctx context.Context) (map[string]string, error) {
+	const q = `SELECT contract_id, source FROM protocol_contracts`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ProtocolContractIndex: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]string, 256)
+	for rows.Next() {
+		var contractID, source string
+		if err := rows.Scan(&contractID, &source); err != nil {
+			return nil, fmt.Errorf("timescale: ProtocolContractIndex scan: %w", err)
+		}
+		out[contractID] = source
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ProtocolContractIndex rows: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]ProtocolContract, error) {
 	if source == "" {
 		return nil, errors.New("timescale: ListProtocolContracts: empty source")

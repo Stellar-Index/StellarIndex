@@ -77,6 +77,12 @@ type ProtocolContractsReader interface {
 	// full roster + the lake analytics scoped to it, without waiting on the
 	// factory-enumeration team answer.
 	ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error)
+	// ProtocolContractIndex returns a contract_id → source map over every
+	// registered protocol contract — the explorer's contract-attribution
+	// overlay (the contracts directory + contract detail tag each contract
+	// with its owning protocol). Returns an empty map (never an error) when
+	// nothing is seeded.
+	ProtocolContractIndex(ctx context.Context) (map[string]string, error)
 }
 
 // ProtocolStatsReader supplies the trailing-24h event count per source

@@ -19,6 +19,8 @@ type stubExplorerReader struct {
 	contractEvents []clickhouse.ContractActivityRow
 	wasm           clickhouse.ContractWasmInfo
 	wasmErr        error
+	directory      []clickhouse.ContractDirectoryRow
+	interactions   []clickhouse.ContractEdgeRow
 	err            error
 }
 
@@ -76,6 +78,14 @@ func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _
 
 func (s *stubExplorerReader) ContractWasm(_ context.Context, _ string) (clickhouse.ContractWasmInfo, error) {
 	return s.wasm, s.wasmErr
+}
+
+func (s *stubExplorerReader) RecentContracts(_ context.Context, _ int, _ uint32) ([]clickhouse.ContractDirectoryRow, error) {
+	return s.directory, s.err
+}
+
+func (s *stubExplorerReader) ContractInteractions(_ context.Context, _ string, _ int, _ uint32) ([]clickhouse.ContractEdgeRow, error) {
+	return s.interactions, s.err
 }
 
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {

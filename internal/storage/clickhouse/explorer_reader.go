@@ -388,6 +388,96 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	return out, rows.Err()
 }
 
+// ContractDirectoryRow is one row of the contracts directory: a contract
+// ranked by recent on-chain event activity.
+type ContractDirectoryRow struct {
+	ContractID string
+	Events     int64
+	LastLedger uint32
+	LastSeen   time.Time
+}
+
+// RecentContracts returns the most active contracts by contract-event count
+// within [sinceLedger, tip] — the contracts directory (GET /v1/contracts).
+// Window-scoped so the GROUP BY stays bounded (contract_events is billions of
+// rows all-time); the caller derives sinceLedger from the tip. NOT FINAL —
+// FINAL would defeat the contract_id bloom index, and a slightly stale
+// dedup count is fine for a ranking.
+func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]ContractDirectoryRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	const q = `SELECT contract_id, count() AS events, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+		FROM stellar.contract_events
+		WHERE ledger_seq >= ?
+		GROUP BY contract_id
+		ORDER BY events DESC
+		LIMIT ?`
+	rows, err := r.conn.Query(ctx, q, sinceLedger, limit)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: recent contracts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ContractDirectoryRow
+	for rows.Next() {
+		var c ContractDirectoryRow
+		if err := rows.Scan(&c.ContractID, &c.Events, &c.LastLedger, &c.LastSeen); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan contract directory row: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ContractEdgeRow is one edge of a contract's interaction map: another
+// contract that emitted events in the same transactions as the subject.
+type ContractEdgeRow struct {
+	ContractID string
+	SharedTxs  int64
+}
+
+// ContractInteractions returns the contracts that co-occur with contractID
+// in the same transactions, ranked by shared-tx count — the contract
+// interaction map (GET /v1/contracts/{id}/interactions). Co-occurrence in a
+// tx is a strong proxy for a cross-contract call (Soroban invokes nest within
+// one InvokeHostFunction op, so the callee's events land in the caller's tx).
+//
+// Implemented as an IN-subquery (the inner query rides the contract_id bloom
+// index to collect the subject's (ledger_seq, tx_hash) set; the outer scan
+// finds the other contracts in those txs) rather than a self-join, which
+// ClickHouse would materialise more expensively. Window-scoped via
+// sinceLedger to bound both halves.
+func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]ContractEdgeRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	const q = `SELECT contract_id, count() AS shared
+		FROM stellar.contract_events
+		WHERE ledger_seq >= ?
+		  AND contract_id != ?
+		  AND (ledger_seq, tx_hash) IN (
+		      SELECT ledger_seq, tx_hash FROM stellar.contract_events
+		      WHERE contract_id = ? AND ledger_seq >= ?
+		  )
+		GROUP BY contract_id
+		ORDER BY shared DESC
+		LIMIT ?`
+	rows, err := r.conn.Query(ctx, q, sinceLedger, contractID, contractID, sinceLedger, limit)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: contract %s interactions: %w", contractID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ContractEdgeRow
+	for rows.Next() {
+		var e ContractEdgeRow
+		if err := rows.Scan(&e.ContractID, &e.SharedTxs); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan contract edge: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // EventSummary is a lightweight contract-event row for the tx-detail view.
 type EventSummary struct {
 	OpIndex    uint32
