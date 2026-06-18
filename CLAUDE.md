@@ -540,7 +540,15 @@ If it doesn't, that's a CI failure.
 ### "Change the OpenAPI spec"
 
 1. Edit `openapi/stellar-index.v1.yaml`.
-2. `make docs-api` regenerates reference docs.
+2. Regenerate **every** spec-derived artifact and commit the diffs —
+   three separate generators, and it's easy to forget the last two
+   (both have silently drifted onto main before):
+   - `make docs-api` — rendered reference + colocated YAML (the only
+     one `make docs-all` and the CI drift-lint cover).
+   - `make docs-postman` — `examples/postman/…json` (deterministic
+     since the generator's RNG is seeded; NOT drift-guarded).
+   - `make web-generate-api` — `web/explorer/src/api/types.ts`, the
+     explorer's compile-time contract (NOT drift-guarded).
 3. Handlers in `internal/api/v1/` get updated; contract tests
    verify they match.
 4. Bump the API minor version if the change is additive, major
