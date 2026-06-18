@@ -52,9 +52,15 @@ const config: Config = {
         ink: {
           DEFAULT: '#0b1220', // headings / strongest body
           strong: '#0b1220',
-          body: '#37415b', // default paragraph text
-          muted: '#64748b', // secondary / labels
-          faint: '#94a3b8', // captions / disabled / placeholders
+          body: '#37415b', // default paragraph text — ~10:1 on canvas
+          // muted/faint darkened to clear WCAG AA (4.5:1) on every
+          // surface bg incl. the subtle wells/table-headers. Prior
+          // values (#64748b / #94a3b8) failed: faint was 2.5:1 — below
+          // even the 3:1 large-text floor — and used for ~150 content
+          // elements (timestamps, captions, ranks). Hierarchy preserved
+          // (body darkest < muted < faint lightest).
+          muted: '#555f6e', // secondary / labels — 5.75:1 worst case
+          faint: '#636d7e', // captions / de-emphasised — 4.65:1 worst case
         },
         // ─── Semantic deltas (price up/down) ───
         up: {
