@@ -118,13 +118,17 @@ type keyDTO struct {
 	RateLimitPerMin        int       `json:"rate_limit_per_min"`
 	MonthlyQuota           int64     `json:"monthly_quota,omitempty"`
 	UsageAlertThresholdPct int       `json:"usage_alert_threshold_pct,omitempty"`
-	IPAllowlist            []string  `json:"ip_allowlist,omitempty"`
-	RefererAllowlist       []string  `json:"referer_allowlist,omitempty"`
-	ExpiresAt              time.Time `json:"expires_at,omitempty"`
-	RevokedAt              time.Time `json:"revoked_at,omitempty"`
-	RevokedReason          string    `json:"revoked_reason,omitempty"`
-	LastUsedAt             time.Time `json:"last_used_at,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
+	IPAllowlist            []string   `json:"ip_allowlist,omitempty"`
+	RefererAllowlist       []string   `json:"referer_allowlist,omitempty"`
+	// Pointer times so a zero value (no expiry / not revoked / never used)
+	// actually omits — `omitempty` does NOT omit a zero time.Time (it's a
+	// non-empty struct), which previously serialized "0001-01-01T00:00:00Z"
+	// and made a fresh key look revoked + "last used ~2025 years ago".
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	RevokedReason string     `json:"revoked_reason,omitempty"`
+	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 func toDTO(k platform.APIKey) keyDTO {
@@ -138,10 +142,10 @@ func toDTO(k platform.APIKey) keyDTO {
 		MonthlyQuota:           k.MonthlyQuota,
 		UsageAlertThresholdPct: k.UsageAlertThresholdPct,
 		RefererAllowlist:       k.RefererAllowlist,
-		ExpiresAt:              k.ExpiresAt,
-		RevokedAt:              k.RevokedAt,
+		ExpiresAt:              nilIfZero(k.ExpiresAt),
+		RevokedAt:              nilIfZero(k.RevokedAt),
 		RevokedReason:          k.RevokedReason,
-		LastUsedAt:             k.LastUsedAt,
+		LastUsedAt:             nilIfZero(k.LastUsedAt),
 		CreatedAt:              k.CreatedAt,
 	}
 	if len(k.IPAllowlist) > 0 {
@@ -151,6 +155,16 @@ func toDTO(k platform.APIKey) keyDTO {
 		}
 	}
 	return dto
+}
+
+// nilIfZero returns nil for a zero time.Time so the DTO's `omitempty` pointer
+// fields are genuinely omitted (absent = no expiry / not revoked / never used)
+// rather than serialized as the year-1 zero timestamp.
+func nilIfZero(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
 
 type listResponse struct {
@@ -442,14 +456,16 @@ func canManageKeys(role platform.Role) bool {
 	}
 }
 
-// generatePlaintext mints a new `rek_<64hex>` plaintext using
-// crypto/rand. 32 bytes = 256 bits = preimage-safe.
+// generatePlaintext mints a new `sip_<64hex>` plaintext (Stellar Index
+// Prefix) using crypto/rand. 32 bytes = 256 bits = preimage-safe. The prefix
+// is display/identification only — auth hashes the full plaintext — so older
+// `rek_` (Rates-Engine-era) keys keep authenticating unchanged.
 func generatePlaintext() (string, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "", fmt.Errorf("read entropy: %w", err)
 	}
-	return "rek_" + hex.EncodeToString(buf[:]), nil
+	return "sip_" + hex.EncodeToString(buf[:]), nil
 }
 
 // generateKeyID returns `kid_<24hex>` — the schema's regex
