@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.113] — 2026-06-18
+
 ### Added
 
 - **Account state + asset holders (explorer Wave 3 — deep entity state).** New
