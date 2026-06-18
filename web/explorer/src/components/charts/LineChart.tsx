@@ -28,6 +28,11 @@ export type LineChartProps = {
    * wants to keep the line stable).
    */
   positive?: boolean;
+  /**
+   * Text alternative for the canvas-rendered chart (WCAG 1.1.1).
+   * See [CandleChart] — same rationale.
+   */
+  ariaLabel?: string;
 };
 
 /**
@@ -43,6 +48,7 @@ export function LineChart({
   height = 320,
   className,
   positive,
+  ariaLabel,
 }: LineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -123,6 +129,11 @@ export function LineChart({
       ref={containerRef}
       className={className}
       style={{ width: '100%', height }}
+      role="img"
+      aria-label={
+        ariaLabel ??
+        `Line price chart${data.length ? ` with ${data.length} points` : ''}`
+      }
     />
   );
 }

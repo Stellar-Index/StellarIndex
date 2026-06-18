@@ -155,7 +155,11 @@ export function PairChart({
         </div>
       )}
       {!loading && !error && data.length > 0 && (
-        <CandleChart data={data} height={360} />
+        <CandleChart
+          data={data}
+          height={360}
+          ariaLabel={`${baseLabel}/${quoteLabel} price candlestick chart`}
+        />
       )}
     </div>
   );

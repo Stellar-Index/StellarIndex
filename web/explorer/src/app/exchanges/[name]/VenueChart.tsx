@@ -251,7 +251,15 @@ export function VenueChart({ venue }: { venue: string }) {
           </div>
         )}
         {!loading && !error && data.length > 0 && (
-          <CandleChart data={data} height={360} />
+          <CandleChart
+            data={data}
+            height={360}
+            ariaLabel={
+              selected
+                ? `${selected.base}/${selected.quote} price candlestick chart`
+                : undefined
+            }
+          />
         )}
       </div>
     </Panel>

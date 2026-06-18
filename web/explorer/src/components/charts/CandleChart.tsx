@@ -24,6 +24,14 @@ export type CandleChartProps = {
   data: CandlePoint[];
   height?: number;
   className?: string;
+  /**
+   * Text alternative for the canvas-rendered chart (WCAG 1.1.1).
+   * lightweight-charts paints to a <canvas> with no DOM text, so
+   * screen readers get nothing without this. Callers should pass a
+   * summary like "XLM/USD daily candles"; falls back to a generic
+   * label with the bar count.
+   */
+  ariaLabel?: string;
 };
 
 /**
@@ -42,7 +50,7 @@ export type CandleChartProps = {
  * Panel chrome. Override via CSS custom properties if a panel
  * needs a different palette.
  */
-export function CandleChart({ data, height = 360, className }: CandleChartProps) {
+export function CandleChart({ data, height = 360, className, ariaLabel }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -121,6 +129,11 @@ export function CandleChart({ data, height = 360, className }: CandleChartProps)
       ref={containerRef}
       className={className}
       style={{ width: '100%', height }}
+      role="img"
+      aria-label={
+        ariaLabel ??
+        `Candlestick price chart${data.length ? ` with ${data.length} bars` : ''}`
+      }
     />
   );
 }

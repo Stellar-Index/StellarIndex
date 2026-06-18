@@ -230,7 +230,11 @@ export function ChartPanel({
                 ingestion continues.
               </div>
             )}
-            <CandleChart data={data} height={420} />
+            <CandleChart
+              data={data}
+              height={420}
+              ariaLabel={`${assetID} priced in ${quote}, ${timeframe} candlestick chart`}
+            />
           </>
         )}
       </Panel>
