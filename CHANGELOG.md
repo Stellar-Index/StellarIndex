@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.124] — 2026-06-19
+
 ### Fixed
 
 - **CCTP + Rozo bridges now have exact genesis ledgers in the coverage
