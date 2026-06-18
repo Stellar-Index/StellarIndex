@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard API keys: wrong prefix + a fresh key looked revoked / "last used
+  ~2025 years ago" / first-request-already-done.** The key DTO used `omitempty`
+  on `time.Time` fields, which does NOT omit a zero time (it's a non-empty
+  struct → `"0001-01-01T00:00:00Z"`), so the UI saw a `revoked_at` +
+  `last_used_at` on every new key and rendered it revoked, ancient-last-used,
+  and "traffic seen". Switched `revoked_at`/`last_used_at`/`expires_at` to
+  pointer times omitted when zero. Also minted keys now use the `sip_` prefix
+  (Stellar Index) instead of the rebrand-leftover `rek_` (existing `rek_` keys
+  keep authenticating — the prefix is display-only).
+
 ## [v0.5.0-rc.114] — 2026-06-18
 
 ### Fixed

@@ -88,7 +88,7 @@ func TestHandleCreate_HappyPath(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !strings.HasPrefix(resp.Plaintext, "rek_") || len(resp.Plaintext) < 20 {
+	if !strings.HasPrefix(resp.Plaintext, "sip_") || len(resp.Plaintext) < 20 {
 		t.Errorf("plaintext = %q", resp.Plaintext)
 	}
 	if resp.Key.KeyPrefix != resp.Plaintext[:12] {
@@ -423,3 +423,35 @@ func (f *fakeKeyStore) TouchUsage(_ context.Context, id string, ip net.IP, ua st
 }
 
 var _ platform.APIKeyStore = (*fakeKeyStore)(nil)
+
+// TestToDTO_OmitsZeroTimes is the regression for the dashboard bugs where a
+// fresh key looked "revoked" + "last used ~2025 years ago": a zero time.Time
+// with `omitempty` is NOT omitted (it's a non-empty struct → "0001-01-01...").
+// Pointer times + nilIfZero must drop them so a never-revoked / never-used /
+// never-expiring key omits the fields entirely.
+func TestToDTO_OmitsZeroTimes(t *testing.T) {
+	dto := toDTO(platform.APIKey{
+		ID: "kid_1", Name: "fresh", KeyPrefix: "sip_abc123",
+		CreatedAt: time.Now().UTC(),
+		// RevokedAt / LastUsedAt / ExpiresAt left zero.
+	})
+	b, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	for _, banned := range []string{"revoked_at", "last_used_at", "expires_at"} {
+		if strings.Contains(s, banned) {
+			t.Errorf("fresh-key DTO must omit %q, got: %s", banned, s)
+		}
+	}
+	if !strings.Contains(s, "created_at") {
+		t.Errorf("created_at should always be present: %s", s)
+	}
+
+	// A revoked key DOES surface revoked_at.
+	rev := toDTO(platform.APIKey{ID: "kid_2", CreatedAt: time.Now().UTC(), RevokedAt: time.Now().UTC()})
+	if rb, _ := json.Marshal(rev); !strings.Contains(string(rb), "revoked_at") {
+		t.Errorf("revoked key must include revoked_at: %s", rb)
+	}
+}
