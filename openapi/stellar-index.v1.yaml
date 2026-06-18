@@ -3703,6 +3703,42 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /contracts/{contract_id}/code-history:
+    get:
+      tags: [explorer]
+      summary: Contract code/upgrade history — WASM-hash timeline.
+      description: |
+        The contract's "change over time": each distinct WASM executable its
+        instance has pointed at, in chronological order, so an in-place
+        `update_contract` upgrade surfaces as a new version (ledger +
+        close time + wasm hash). Reconstructed from the captured
+        `ledger_entry_changes` instance entries; empty when the instance isn't
+        in the captured window (fills with the Phase-C backfill).
+      parameters:
+        - { name: contract_id, in: path, required: true, description: C-strkey contract id., schema: { type: string } }
+      responses:
+        "200":
+          description: Chronological WASM-hash versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      contract_id: { type: string }
+                      versions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            ledger: { type: integer, format: int64 }
+                            close_time: { type: string, format: date-time }
+                            wasm_hash: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}:
     get:
       tags: [explorer]

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -148,6 +149,77 @@ func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xd
 		return *inst.Executable.WasmHash, true, rows.Err()
 	}
 	return xdr.Hash{}, false, rows.Err()
+}
+
+// ContractCodeVersion is one entry in a contract's code-upgrade timeline: the
+// ledger at which the contract's instance began pointing at WasmHash.
+type ContractCodeVersion struct {
+	Ledger    uint32
+	CloseTime time.Time
+	WasmHash  string
+}
+
+// ContractCodeHistory returns a contract's WASM-hash timeline — the contract's
+// "change over time" (ADR-0038 Phase C): every distinct executable the
+// contract instance has pointed at, in chronological order, so an in-place
+// `update_contract` upgrade surfaces as a new version. Reads the instance
+// contract_data entry's executable across all captured changes and collapses
+// consecutive identical hashes. Coverage = the captured entry-change window
+// (same substrate as the "see the code" view); fills back with the Phase-C
+// backfill. Empty (not an error) when the contract's instance isn't captured.
+func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
+	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+	}
+	var cidHash xdr.Hash
+	copy(cidHash[:], dec)
+	keys, err := instanceKeyXDR(cidHash)
+	if err != nil {
+		return nil, err
+	}
+
+	const q = `SELECT ledger_seq, close_time, entry_xdr FROM stellar.ledger_entry_changes
+		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
+		ORDER BY ledger_seq ASC, change_index ASC, ingested_at ASC`
+	rows, err := r.conn.Query(ctx, q, keys)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: contract code history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ContractCodeVersion
+	var lastHash string
+	for rows.Next() {
+		var (
+			seq       uint32
+			closeTime time.Time
+			b64       string
+		)
+		if err := rows.Scan(&seq, &closeTime, &b64); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan code history: %w", err)
+		}
+		var entry xdr.LedgerEntry
+		if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
+			continue
+		}
+		cd, ok := entry.Data.GetContractData()
+		if !ok || cd.Key.Type != xdr.ScValTypeScvLedgerKeyContractInstance {
+			continue
+		}
+		inst, ok := cd.Val.GetInstance()
+		if !ok || inst.Executable.Type != xdr.ContractExecutableTypeContractExecutableWasm ||
+			inst.Executable.WasmHash == nil {
+			continue
+		}
+		h := hex.EncodeToString(inst.Executable.WasmHash[:])
+		if h == lastHash {
+			continue // unchanged executable — not an upgrade
+		}
+		lastHash = h
+		out = append(out, ContractCodeVersion{Ledger: seq, CloseTime: closeTime, WasmHash: h})
+	}
+	return out, rows.Err()
 }
 
 // instanceKeyXDR returns the base64 LedgerKey(s) for a contract's

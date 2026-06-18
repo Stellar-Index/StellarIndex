@@ -165,6 +165,53 @@ func (s *Server) handleContractInteractions(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, out, Flags{})
 }
 
+// ContractCodeVersionV is one entry in a contract's code-upgrade timeline.
+type ContractCodeVersionV struct {
+	Ledger    uint32 `json:"ledger"`
+	CloseTime string `json:"close_time"`
+	WasmHash  string `json:"wasm_hash"`
+}
+
+// ContractCodeHistoryView is the wire response for
+// GET /v1/contracts/{contract_id}/code-history.
+type ContractCodeHistoryView struct {
+	ContractID string                 `json:"contract_id"`
+	Versions   []ContractCodeVersionV `json:"versions"`
+}
+
+// handleContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history
+// — the contract's WASM-hash timeline ("change over time"): each distinct
+// executable the contract instance has pointed at, chronologically, so an
+// in-place upgrade shows as a new version. Empty when the instance isn't in the
+// captured ledger window (fills with the Phase-C backfill).
+func (s *Server) handleContractCodeHistory(w http.ResponseWriter, r *http.Request) {
+	if s.explorer == nil {
+		s.explorerUnavailable(w, r)
+		return
+	}
+	cid := r.PathValue("contract_id")
+	if cid == "" {
+		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-contract",
+			"Invalid contract", http.StatusBadRequest, "contract_id path segment is required")
+		return
+	}
+	versions, err := s.explorer.ContractCodeHistory(r.Context(), cid)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("explorer ContractCodeHistory failed", "err", err, "contract", cid)
+		writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	out := ContractCodeHistoryView{ContractID: cid, Versions: make([]ContractCodeVersionV, len(versions))}
+	for i, v := range versions {
+		out.Versions[i] = ContractCodeVersionV{Ledger: v.Ledger, CloseTime: v.CloseTime.UTC().Format(time.RFC3339), WasmHash: v.WasmHash}
+	}
+	writeJSON(w, out, Flags{})
+}
+
 // windowFloorLedger returns the ledger sequence `days` days before the tip,
 // or 0 when the tip is unknown / the window reaches past genesis. Keeps the
 // contract aggregates scoped to a primary-key range rather than a full scan.

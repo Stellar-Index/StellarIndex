@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Contract code/upgrade history.** New `GET /v1/contracts/{id}/code-history`
+  returns a contract's WASM-hash timeline — each distinct executable its
+  instance has pointed at, chronologically, so an in-place `update_contract`
+  upgrade shows as a new version. Backs a **Code history** panel on the
+  contract page (alongside events / decoded WASM / interaction map). Coverage =
+  the captured entry-change window; fills with the Phase-C backfill.
+
 ### Fixed
 
 - **Dashboard API keys: wrong prefix + a fresh key looked revoked / "last used

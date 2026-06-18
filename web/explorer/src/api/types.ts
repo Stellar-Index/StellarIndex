@@ -5850,6 +5850,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/contracts/{contract_id}/code-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contract code/upgrade history — WASM-hash timeline.
+         * @description The contract's "change over time": each distinct WASM executable its
+         *     instance has pointed at, in chronological order, so an in-place
+         *     `update_contract` upgrade surfaces as a new version (ledger +
+         *     close time + wasm hash). Reconstructed from the captured
+         *     `ledger_entry_changes` instance entries; empty when the instance isn't
+         *     in the captured window (fills with the Phase-C backfill).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description C-strkey contract id. */
+                    contract_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Chronological WASM-hash versions. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data?: {
+                                contract_id?: string;
+                                versions?: {
+                                    /** Format: int64 */
+                                    ledger?: number;
+                                    /** Format: date-time */
+                                    close_time?: string;
+                                    wasm_hash?: string;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}": {
         parameters: {
             query?: never;

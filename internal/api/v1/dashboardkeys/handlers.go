@@ -110,16 +110,16 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 // subsequent reads. KeyHash is omitted entirely so the API can't
 // be mis-used to seed an offline brute-force.
 type keyDTO struct {
-	ID                     string    `json:"id"`
-	Name                   string    `json:"name"`
-	Description            string    `json:"description,omitempty"`
-	KeyPrefix              string    `json:"key_prefix"`
-	Tier                   string    `json:"tier"`
-	RateLimitPerMin        int       `json:"rate_limit_per_min"`
-	MonthlyQuota           int64     `json:"monthly_quota,omitempty"`
-	UsageAlertThresholdPct int       `json:"usage_alert_threshold_pct,omitempty"`
-	IPAllowlist            []string   `json:"ip_allowlist,omitempty"`
-	RefererAllowlist       []string   `json:"referer_allowlist,omitempty"`
+	ID                     string   `json:"id"`
+	Name                   string   `json:"name"`
+	Description            string   `json:"description,omitempty"`
+	KeyPrefix              string   `json:"key_prefix"`
+	Tier                   string   `json:"tier"`
+	RateLimitPerMin        int      `json:"rate_limit_per_min"`
+	MonthlyQuota           int64    `json:"monthly_quota,omitempty"`
+	UsageAlertThresholdPct int      `json:"usage_alert_threshold_pct,omitempty"`
+	IPAllowlist            []string `json:"ip_allowlist,omitempty"`
+	RefererAllowlist       []string `json:"referer_allowlist,omitempty"`
 	// Pointer times so a zero value (no expiry / not revoked / never used)
 	// actually omits — `omitempty` does NOT omit a zero time.Time (it's a
 	// non-empty struct), which previously serialized "0001-01-01T00:00:00Z"

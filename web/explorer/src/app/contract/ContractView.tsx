@@ -169,6 +169,8 @@ export function ContractView() {
 
       <WasmPanel id={data.contract_id || id} />
 
+      <CodeHistoryPanel id={data.contract_id || id} />
+
       <InteractionsPanel id={data.contract_id || id} />
 
       <EventsPanel
@@ -348,6 +350,93 @@ function CodeDisclosure({ label, code }: { label: string; code: string }) {
         {code}
       </pre>
     </details>
+  );
+}
+
+// ── Code history (change over time) ─────────────────────────────────────
+// Mirrors api/v1.ContractCodeHistoryView (GET /v1/contracts/{id}/code-history):
+// the contract's WASM-hash timeline — each in-place upgrade as a new version.
+interface CodeVersion {
+  ledger: number;
+  close_time: string;
+  wasm_hash: string;
+}
+interface CodeHistoryResp {
+  contract_id: string;
+  versions: CodeVersion[];
+}
+
+function CodeHistoryPanel({ id }: { id: string }) {
+  const { data, isLoading, isError } = useQuery<CodeHistoryResp>({
+    queryKey: ['/v1/contracts/{id}/code-history', id],
+    enabled: CONTRACT_RE.test(id),
+    retry: false,
+    staleTime: 600_000,
+    queryFn: async () => {
+      const env = await apiGet<Envelope<CodeHistoryResp>>(
+        `/v1/contracts/${encodeURIComponent(id)}/code-history`,
+      );
+      return env.data;
+    },
+  });
+
+  const source = asExample(`/v1/contracts/${id}/code-history`);
+  const versions = data?.versions ?? [];
+
+  if (isLoading) {
+    return (
+      <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
+        Loading upgrade history…
+      </Panel>
+    );
+  }
+  if (isError || versions.length === 0) {
+    return (
+      <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
+        No code changes in the captured ledger window — the contract’s
+        instance/upgrade entries aren’t captured yet (fills in with the
+        Phase-C backfill).
+      </Panel>
+    );
+  }
+  return (
+    <Panel
+      title={`Code history (${versions.length} version${versions.length === 1 ? '' : 's'})`}
+      hint={versions.length > 1 ? 'in-place upgrades over time' : 'deployed executable'}
+      source={source}
+      bodyClassName="-mx-4"
+    >
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-line text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+              <th scope="col" className="px-4 py-2">#</th>
+              <th scope="col" className="px-4 py-2">From ledger</th>
+              <th scope="col" className="px-4 py-2">When</th>
+              <th scope="col" className="px-4 py-2">WASM hash</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line-subtle">
+            {versions.map((v, i) => (
+              <tr key={`${v.ledger}-${v.wasm_hash}`} className="hover:bg-surface-muted">
+                <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
+                <td className="px-4 py-3">
+                  <Link href={`/ledger?seq=${v.ledger}`} className="font-mono text-xs text-brand-600 hover:underline">
+                    #{v.ledger.toLocaleString()}
+                  </Link>
+                </td>
+                <td className="px-4 py-3 text-xs text-ink-muted" title={formatTimestamp(v.close_time)}>
+                  {relativeAge(v.close_time)}
+                </td>
+                <td className="px-4 py-3 font-mono text-xs text-ink-body" title={v.wasm_hash}>
+                  {v.wasm_hash.slice(0, 12)}…{v.wasm_hash.slice(-8)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
   );
 }
 

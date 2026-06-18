@@ -93,3 +93,26 @@ func TestExplorer_ContractInteractions(t *testing.T) {
 		t.Errorf("shared_txs = %d, want 42", body.Data.Interactions[0].SharedTxs)
 	}
 }
+
+func TestExplorer_ContractCodeHistory(t *testing.T) {
+	now := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	reader := &stubExplorerReader{codeHistory: []clickhouse.ContractCodeVersion{
+		{Ledger: 51000000, CloseTime: now, WasmHash: "aaaa"},
+		{Ledger: 52000000, CloseTime: now, WasmHash: "bbbb"},
+	}}
+	base := explorerTestServer(t, reader)
+	resp := mustGet(t, base+"/v1/contracts/CSUBJECT/code-history")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ContractCodeHistoryView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if body.Data.ContractID != "CSUBJECT" || len(body.Data.Versions) != 2 {
+		t.Fatalf("got %+v", body.Data)
+	}
+	if body.Data.Versions[0].WasmHash != "aaaa" || body.Data.Versions[1].Ledger != 52000000 {
+		t.Errorf("versions = %+v", body.Data.Versions)
+	}
+}
