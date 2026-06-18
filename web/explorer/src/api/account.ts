@@ -70,6 +70,20 @@ export async function logout(): Promise<void> {
   await accountFetch<void>('/auth/logout', { method: 'POST' });
 }
 
+/**
+ * POST /v1/auth/verify-code — exchange the 6-digit email code for a
+ * session. Credentialed (via accountFetch) so the Set-Cookie sticks;
+ * the caller does a full-page navigation afterwards so the cookie-
+ * authed dashboard loads. Throws ApiError on a wrong/expired code
+ * (status 400) — callers surface `.detail`.
+ */
+export async function verifyCode(email: string, code: string): Promise<void> {
+  await accountFetch<{ status: string }>('/auth/verify-code', {
+    method: 'POST',
+    body: { email, code },
+  });
+}
+
 // ─── Keys ──────────────────────────────────────────────────────────
 
 // APIKey mirrors the `/v1/dashboard/keys` keyDTO wire shape

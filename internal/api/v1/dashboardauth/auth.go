@@ -61,17 +61,33 @@ func generateMagicLinkToken(read func([]byte) (int, error)) (plaintext string, h
 	plaintext = hex.EncodeToString(buf)
 	sum := sha256.Sum256([]byte(plaintext))
 
-	// Code = first 24 bits of the hash, base32-encoded → 6 digits 0-9.
-	// Numeric-only is mobile keyboard friendly. We use the high
-	// 24 bits (3 bytes) of sha256 — independent of the link
-	// token for replay-resistance, so disclosing one doesn't
-	// reveal the other.
-	codeBytes := sum[:3]
-	codeBase32 := base32.StdEncoding.WithPadding(base32.NoPadding).
-		EncodeToString(codeBytes)
-	code = numericFromBase32(codeBase32)
+	return plaintext, sum[:], CodeFromHash(sum[:]), nil
+}
 
-	return plaintext, sum[:], code, nil
+// CodeFromHash derives the paste-friendly 6-digit numeric code from a
+// stored token hash. The code is the high 32 bits (4 bytes) of the
+// sha256 token hash, base32-encoded then mapped to 6 digits — so it is
+// a deterministic function of the hash we already persist. The
+// verify-code handler recomputes it per active token (it can't be
+// reversed, only re-derived from a candidate's hash) and constant-time
+// compares against the user-supplied code.
+//
+// 4 bytes → 7 base32 chars, of which we keep 6: 3 bytes only yields 5
+// base32 chars, which left numericFromBase32 one digit short (it
+// padded the 6th with a NUL, so the emailed "6-digit code" was really
+// 5 digits). Now that the code is a typed credential it must be a full
+// clean 6 digits.
+//
+// Numeric-only is mobile-keyboard friendly. Code and link plaintext
+// stay independent for replay-resistance: knowing one doesn't reveal
+// the other.
+func CodeFromHash(hash []byte) string {
+	if len(hash) < 4 {
+		return ""
+	}
+	codeBase32 := base32.StdEncoding.WithPadding(base32.NoPadding).
+		EncodeToString(hash[:4])
+	return numericFromBase32(codeBase32)
 }
 
 // numericFromBase32 maps a base32 string into 6 numeric digits
@@ -79,14 +95,18 @@ func generateMagicLinkToken(read func([]byte) (int, error)) (plaintext string, h
 // the base32 alphabet [A-Z2-7] and map them by ord modulo 10.
 // Collision rate is acceptable at our scale (15-min TTL means
 // even with 1000 active tokens the odds of two having the same
-// 6-digit code are negligible — base32^6 = 1.07B distinct
-// codes; mod 10 truncates to 1M; 1000 tokens × 999 / 2M ≈
-// 25% collision, but the WHOLE TOKEN (plaintext, not code) is
-// what gates consumption — code is just a UX shortcut).
+// 6-digit code are negligible). Callers pass ≥6 chars (4 hash
+// bytes → 7 base32 chars); if fewer arrive the short positions
+// map through '0' rather than a NUL byte, so the result is always
+// a well-formed 6-digit numeric string.
 func numericFromBase32(s string) string {
 	out := make([]byte, 6)
-	for i := 0; i < 6 && i < len(s); i++ {
-		out[i] = '0' + (s[i] % 10)
+	for i := 0; i < 6; i++ {
+		var c byte
+		if i < len(s) {
+			c = s[i]
+		}
+		out[i] = '0' + (c % 10)
 	}
 	return string(out)
 }

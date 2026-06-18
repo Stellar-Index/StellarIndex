@@ -3,6 +3,7 @@ package dashboardauth
 import (
 	"context"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -300,6 +301,41 @@ func (f *fakeTokenStore) ConsumeMagicLinkToken(_ context.Context, hash []byte) (
 	t.ConsumedAt = f.now()
 	f.tokens[k] = t
 	return t, nil
+}
+
+func (f *fakeTokenStore) ConsumableLoginCandidates(_ context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	var out []platform.MagicLinkToken
+	for _, t := range f.tokens {
+		if t.Email != email || t.Purpose != platform.TokenPurposeLogin {
+			continue
+		}
+		if !t.ConsumedAt.IsZero() || !t.ExpiresAt.After(now) || t.Attempts >= maxAttempts {
+			continue
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (f *fakeTokenStore) IncrementLoginCodeAttempts(_ context.Context, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	for k, t := range f.tokens {
+		if t.Email != email || t.Purpose != platform.TokenPurposeLogin {
+			continue
+		}
+		if !t.ConsumedAt.IsZero() || !t.ExpiresAt.After(now) {
+			continue
+		}
+		t.Attempts++
+		f.tokens[k] = t
+	}
+	return nil
 }
 
 func (f *fakeTokenStore) CreateInvite(_ context.Context, i platform.Invite) error {

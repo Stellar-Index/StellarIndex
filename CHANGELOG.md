@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard sign-in was completely broken — every authenticated request
+  500'd.** `main.go` built the dashboard auth `Config` without a `Now` clock
+  and passed it raw to the session-resolver middleware; `NewHandlers` defaulted
+  `Now` only on its own copy, so `resolveSession` nil-deref-panicked on every
+  request carrying a session cookie. The magic link set the cookie correctly,
+  then `/v1/account/me` 500'd and the dashboard never loaded — so login looked
+  dead. `Now` is now set explicitly and the middleware defaults `Now`/`Logger`
+  defensively.
+- **The emailed "6-digit code" was really 5 digits + a NUL byte.** It was
+  derived from 3 hash bytes → 5 base32 chars, leaving the 6th position unset.
+  Now derived from 4 bytes so it is a clean 6 ASCII digits — required, since
+  the code is now a typed credential.
+
+### Added
+
+- **Sign in with a 6-digit code, not just the magic link.** New
+  `POST /v1/auth/verify-code {email, code}` consumes the emailed code and mints
+  the same session cookie the magic-link callback does (returns JSON, no
+  redirect — the SPA calls it via credentialed `fetch`). The sign-in page is now
+  a two-step flow (email → code) and the email leads with the code; the
+  one-click link still works. Brute-force is bounded by a per-token attempt cap
+  (migration 0065 adds `magic_link_tokens.attempts`); all code-failure modes
+  return one generic 400.
+
 ### Changed
 
 - **Cross-origin session auth (F-03) — the in-site `/account` section now

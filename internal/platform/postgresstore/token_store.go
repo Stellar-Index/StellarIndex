@@ -105,6 +105,71 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 	return out, nil
 }
 
+// ConsumableLoginCandidates returns active login tokens for an email
+// whose attempt count is still under maxAttempts. The verify-code
+// handler recomputes each row's 6-digit code from its hash and matches
+// the user-supplied code, so we return the full rows (TokenHash is the
+// load-bearing field).
+func (r *TokenStore) ConsumableLoginCandidates(ctx context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
+	now := r.now()
+	const q = `
+		SELECT token_hash, email, purpose, expires_at, consumed_at,
+		       requested_ip, created_at, attempts
+		FROM magic_link_tokens
+		WHERE email = $1
+		  AND purpose = 'login'
+		  AND consumed_at IS NULL
+		  AND expires_at > $2
+		  AND attempts < $3
+		ORDER BY created_at DESC
+	`
+	rows, err := r.s.db.QueryContext(ctx, q, email, now, maxAttempts)
+	if err != nil {
+		return nil, fmt.Errorf("consumable login candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []platform.MagicLinkToken
+	for rows.Next() {
+		var (
+			t          platform.MagicLinkToken
+			consumedAt sql.NullTime
+			ipText     string
+		)
+		if err := rows.Scan(
+			&t.TokenHash, &t.Email, &t.Purpose, &t.ExpiresAt,
+			&consumedAt, &ipText, &t.CreatedAt, &t.Attempts,
+		); err != nil {
+			return nil, fmt.Errorf("consumable login candidates scan: %w", err)
+		}
+		if consumedAt.Valid {
+			t.ConsumedAt = consumedAt.Time
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// IncrementLoginCodeAttempts bumps attempts on every active login
+// token for the email. A wrong code thus moves all in-flight tokens
+// closer to the cap, after which ConsumableLoginCandidates stops
+// returning them.
+func (r *TokenStore) IncrementLoginCodeAttempts(ctx context.Context, email string) error {
+	now := r.now()
+	const q = `
+		UPDATE magic_link_tokens
+		SET attempts = attempts + 1
+		WHERE email = $1
+		  AND purpose = 'login'
+		  AND consumed_at IS NULL
+		  AND expires_at > $2
+	`
+	if _, err := r.s.db.ExecContext(ctx, q, email, now); err != nil {
+		return fmt.Errorf("increment login code attempts: %w", err)
+	}
+	return nil
+}
+
 // classifyMagicLinkMiss runs after the consume UPDATE found no
 // rows. Distinguishes:
 //   - row exists, past expiry → ErrTokenExpired

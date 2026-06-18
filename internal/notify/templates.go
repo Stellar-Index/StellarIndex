@@ -87,11 +87,15 @@ const magicLinkHTMLTemplate = `<!DOCTYPE html>
   <table style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px;border:1px solid #e2e8f0;" cellpadding="0" cellspacing="0" border="0" role="presentation">
     <tr><td>
       <h1 style="margin:0 0 12px;font-size:20px;font-weight:600;letter-spacing:-0.01em;">Sign in to Stellar Index</h1>
-      <p style="margin:0 0 24px;color:#475569;line-height:1.5;">Click the button below to sign in. The link expires in {{.ExpiresInMinutes}} minutes and can only be used once.</p>
+      <p style="margin:0 0 16px;color:#475569;line-height:1.5;">Enter this code on the sign-in page:</p>
+      <p style="margin:0 0 8px;text-align:center;">
+        <span style="display:inline-block;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:32px;font-weight:600;letter-spacing:0.35em;background:#f1f5f9;color:#0f172a;padding:16px 24px;border-radius:8px;">{{.Code}}</span>
+      </p>
+      <p style="margin:0 0 24px;color:#94a3b8;font-size:13px;line-height:1.5;text-align:center;">Expires in {{.ExpiresInMinutes}} minutes · single use</p>
+      <p style="margin:0 0 24px;color:#64748b;font-size:13px;line-height:1.5;">Or just click to sign in:</p>
       <p style="margin:0 0 24px;">
         <a href="{{.LinkURL}}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:500;">Sign in</a>
       </p>
-      <p style="margin:0 0 24px;color:#64748b;font-size:13px;line-height:1.5;">Or paste this code into the sign-in page: <strong style="font-family:'SF Mono',Menlo,Consolas,monospace;background:#f1f5f9;padding:4px 8px;border-radius:4px;letter-spacing:0.1em;">{{.Code}}</strong></p>
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
       <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">
         Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{if .UserAgent}} ({{.UserAgent}}){{end}}.<br>
@@ -104,15 +108,15 @@ const magicLinkHTMLTemplate = `<!DOCTYPE html>
 
 const magicLinkTextTemplate = `Sign in to Stellar Index
 
-Click this link to sign in (expires in {{.ExpiresInMinutes}} minutes, single-use):
-
-  {{.LinkURL}}
-
-Or paste this code into the sign-in page:
+Enter this code on the sign-in page (expires in {{.ExpiresInMinutes}} minutes, single-use):
 
   {{.Code}}
 
+Or click this link to sign in:
+
+  {{.LinkURL}}
+
 Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{if .UserAgent}} ({{.UserAgent}}){{end}}.
 
-If you didn't request this, you can safely ignore this email — without the link the request can't proceed.
+If you didn't request this, you can safely ignore this email — neither the code nor the link works without this email.
 `

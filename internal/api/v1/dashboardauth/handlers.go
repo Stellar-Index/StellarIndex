@@ -3,6 +3,7 @@ package dashboardauth
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -158,8 +159,9 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 
 // Mount installs the auth routes onto a mux:
 //
-//	POST /v1/auth/login        — request magic link
-//	GET  /v1/auth/callback     — consume token, mint session
+//	POST /v1/auth/login        — request sign-in email (link + code)
+//	GET  /v1/auth/callback     — consume magic-link token, mint session
+//	POST /v1/auth/verify-code  — consume the 6-digit code, mint session
 //	POST /v1/auth/logout       — revoke current session
 //
 // Caller wires the result into the regular middleware stack
@@ -170,8 +172,16 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/login", h.HandleLogin)
 	mux.HandleFunc("GET /v1/auth/callback", h.HandleCallback)
+	mux.HandleFunc("POST /v1/auth/verify-code", h.HandleVerifyCode)
 	mux.HandleFunc("POST /v1/auth/logout", h.HandleLogout)
 }
+
+// maxCodeAttempts caps wrong 6-digit code guesses against a single
+// login token before it stops being a code candidate (the magic link
+// still works — the cap gates code matching only). 5 keeps the
+// brute-force success probability against the ~1e6 code space
+// negligible while tolerating a fat-fingered user.
+const maxCodeAttempts = 5
 
 // loginRequest is the JSON body POST /v1/auth/login accepts.
 type loginRequest struct {
@@ -318,30 +328,138 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find-or-create user.
-	user, err := h.cfg.Users.GetUserByEmail(r.Context(), tok.Email)
+	if err := h.startSessionForEmail(w, r, tok.Email); err != nil {
+		h.cfg.Logger.Error("start session (callback)", "err", err, "email", tok.Email)
+		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
+		return
+	}
+
+	// Redirect into the dashboard. Caller-supplied `next` URL
+	// is path-only (we never honour absolute URLs to avoid
+	// open-redirect attacks); empty falls through to "/".
+	next := r.URL.Query().Get("next")
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		next = "/"
+	}
+	dest := strings.TrimRight(h.cfg.DashboardBaseURL, "/") + next
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// verifyCodeRequest is the JSON body POST /v1/auth/verify-code accepts.
+type verifyCodeRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
+type verifyCodeResponse struct {
+	Status string `json:"status"`
+}
+
+// HandleVerifyCode consumes the 6-digit email code — the paste-friendly
+// alternative to clicking the magic link — and mints the same session
+// cookie HandleCallback does. Unlike the callback it returns JSON
+// (`{status:"ok"}`) rather than a 303, because the SPA calls it via a
+// credentialed fetch: the Set-Cookie rides the response and the SPA
+// navigates itself. Same find-or-create-on-first-login semantics.
+//
+// The code is matched only against the email's in-flight login tokens
+// and each wrong guess burns an attempt (see [maxCodeAttempts]); all
+// failure modes return one generic error so a caller can't tell "no
+// token" from "wrong code" from "too many attempts".
+func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	if err != nil {
-		if !errors.Is(err, platform.ErrNotFound) {
-			h.cfg.Logger.Error("get user by email", "err", err, "email", tok.Email)
-			writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
+		writeProblem(w, http.StatusBadRequest, "body too large", "/v1/auth/verify-code")
+		return
+	}
+	var req verifyCodeRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeProblem(w, http.StatusBadRequest, "malformed JSON", "/v1/auth/verify-code")
+		return
+	}
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	code := strings.TrimSpace(req.Code)
+	if !looksLikeEmail(email) || !looksLikeCode(code) {
+		writeProblem(w, http.StatusBadRequest, "invalid email or code", "/v1/auth/verify-code")
+		return
+	}
+
+	cands, err := h.cfg.Tokens.ConsumableLoginCandidates(r.Context(), email, maxCodeAttempts)
+	if err != nil {
+		h.cfg.Logger.Error("consumable login candidates", "err", err, "email", email)
+		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
+		return
+	}
+
+	var matchedHash []byte
+	for i := range cands {
+		expected := CodeFromHash(cands[i].TokenHash)
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
+			matchedHash = cands[i].TokenHash
+			break
+		}
+	}
+	if matchedHash == nil {
+		// Wrong (or no) code. Burn an attempt against the email's
+		// in-flight tokens so the small code space can't be ground
+		// down, then return the generic error.
+		if incErr := h.cfg.Tokens.IncrementLoginCodeAttempts(r.Context(), email); incErr != nil {
+			h.cfg.Logger.Warn("increment login code attempts", "err", incErr, "email", email)
+		}
+		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
+		return
+	}
+
+	// Atomically consume the matched token so the code can't be
+	// replayed and so it races safely against a magic-link click or a
+	// concurrent verify. The expected terminal states (lost race /
+	// expired in the gap) map to the same generic 400, not a 500.
+	if _, err := h.cfg.Tokens.ConsumeMagicLinkToken(r.Context(), matchedHash); err != nil {
+		if errors.Is(err, platform.ErrNotFound) || errors.Is(err, platform.ErrTokenExpired) {
+			writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 			return
 		}
-		user, err = h.signupNewUser(r.Context(), tok.Email)
+		h.cfg.Logger.Error("consume code token", "err", err, "email", email)
+		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
+		return
+	}
+
+	if err := h.startSessionForEmail(w, r, email); err != nil {
+		h.cfg.Logger.Error("start session (verify-code)", "err", err, "email", email)
+		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(verifyCodeResponse{Status: "ok"})
+}
+
+// startSessionForEmail finds-or-creates the user for a just-verified
+// email, marks it verified + bumps last_login, mints a session, and
+// writes the session cookie. Shared by HandleCallback (magic link) and
+// HandleVerifyCode (email code): both arrive here once a login token
+// has been validated + atomically consumed. On success it writes only
+// the Set-Cookie header — the caller owns the response body (303
+// redirect vs JSON) so it can shape errors appropriately.
+func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, email string) error {
+	user, err := h.cfg.Users.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		if !errors.Is(err, platform.ErrNotFound) {
+			return fmt.Errorf("get user by email: %w", err)
+		}
+		user, err = h.signupNewUser(r.Context(), email)
 		if err != nil {
-			h.cfg.Logger.Error("signup new user", "err", err, "email", tok.Email)
-			writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
-			return
+			return fmt.Errorf("signup new user: %w", err)
 		}
 	}
 
-	// Mark email verified + last_login_at.
+	// Mark email verified + last_login_at. Non-fatal on error — the
+	// session can still issue; we just won't have a fresh verified-at
+	// on the next /me lookup.
 	now := h.cfg.Now()
 	user.EmailVerifiedAt = now
 	user.LastLoginAt = now
 	if err := h.cfg.Users.UpdateUser(r.Context(), user); err != nil {
-		// Non-fatal — the session can still issue, but we
-		// want to log this since it means the verified-at
-		// field will be wrong on the next /me lookup.
 		h.cfg.Logger.Warn("update user post-login", "err", err, "user_id", user.ID)
 	}
 
@@ -355,9 +473,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		GeoLastSeen:  r.Header.Get("CF-IPCountry"),
 	})
 	if err != nil {
-		h.cfg.Logger.Error("create session", "err", err, "user_id", user.ID)
-		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
-		return
+		return fmt.Errorf("create session: %w", err)
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -370,16 +486,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   h.cfg.CookieSecure,
 		SameSite: sessionSameSite(h.cfg.CookieSecure),
 	})
-
-	// Redirect into the dashboard. Caller-supplied `next` URL
-	// is path-only (we never honour absolute URLs to avoid
-	// open-redirect attacks); empty falls through to "/".
-	next := r.URL.Query().Get("next")
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		next = "/"
-	}
-	dest := strings.TrimRight(h.cfg.DashboardBaseURL, "/") + next
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	return nil
 }
 
 // HandleLogout revokes the current session and clears the
@@ -618,6 +725,21 @@ func looksLikeEmail(s string) bool {
 	}
 	if strings.IndexByte(s[at+1:], '.') < 0 {
 		return false
+	}
+	return true
+}
+
+// looksLikeCode reports whether s is a well-formed 6-digit numeric
+// code. Cheap pre-filter so a malformed body never reaches the token
+// store; the real check is the constant-time match in HandleVerifyCode.
+func looksLikeCode(s string) bool {
+	if len(s) != 6 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
 	}
 	return true
 }

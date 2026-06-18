@@ -4998,6 +4998,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/verify-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — exchange the 6-digit email code for a session cookie.
+         * @description The paste-friendly alternative to clicking the magic link. The
+         *     sign-in email carries both a clickable link (consumed by
+         *     `/auth/callback`) and a 6-digit numeric code; this endpoint
+         *     consumes the code. The SPA calls it via a credentialed `fetch`
+         *     — on success it sets the same HttpOnly + Secure session cookie
+         *     (`stellarindex_session`) the callback does and returns
+         *     `{status:"ok"}` (no redirect; the SPA navigates itself).
+         *
+         *     First-time emails get a free-tier account + owner-role user
+         *     provisioned here, exactly as on the callback path.
+         *
+         *     The code is matched only against the email's in-flight login
+         *     tokens, and each wrong guess burns an attempt — after a small
+         *     cap the token stops being a code candidate (the link still
+         *     works). All failure modes — no outstanding token, wrong code,
+         *     expired, too many attempts — return the same generic 400 so a
+         *     caller can't probe which one occurred.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /**
+                         * Format: email
+                         * @description The address the code was sent to.
+                         */
+                        email: string;
+                        /** @description The 6-digit numeric code from the sign-in email. */
+                        code: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Authenticated; session cookie set. */
+                200: {
+                    headers: {
+                        /** @description HttpOnly + Secure session cookie. */
+                        "Set-Cookie"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status: "ok";
+                        };
+                    };
+                };
+                /** @description Malformed input, or invalid/expired/exhausted code (generic — modes are indistinguishable). */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/logout": {
         parameters: {
             query?: never;

@@ -31,6 +31,12 @@ type MagicLinkToken struct {
 	ConsumedAt  time.Time // zero = unconsumed
 	RequestedIP net.IP
 	CreatedAt   time.Time
+	// Attempts counts failed email-code verification tries against
+	// this token. The magic LINK ignores it (consumed by full
+	// plaintext); the 6-digit CODE path increments it on each wrong
+	// guess and stops treating the token as a code candidate past a
+	// cap, bounding brute-force of the small code space.
+	Attempts int
 }
 
 // Invite is a pending team-member invitation. The TokenHash key
@@ -62,6 +68,20 @@ type TokenStore interface {
 	// consumed, and returns the row. ErrNotFound if absent or
 	// already consumed; ErrTokenExpired if past expires_at.
 	ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte) (MagicLinkToken, error)
+
+	// ConsumableLoginCandidates returns the active (unconsumed,
+	// unexpired) login-purpose tokens for an email whose Attempts
+	// count is still below maxAttempts. Backs the email-code sign-in
+	// path: the caller recomputes each token's 6-digit code from its
+	// hash and matches the user-supplied code. Returns an empty slice
+	// (not an error) when none qualify. Ordered most-recent first.
+	ConsumableLoginCandidates(ctx context.Context, email string, maxAttempts int) ([]MagicLinkToken, error)
+
+	// IncrementLoginCodeAttempts bumps the Attempts counter on every
+	// active (unconsumed, unexpired) login-purpose token for an email.
+	// Called after a wrong code so a token self-retires from
+	// ConsumableLoginCandidates once it crosses the cap.
+	IncrementLoginCodeAttempts(ctx context.Context, email string) error
 
 	// CreateInvite inserts.
 	CreateInvite(ctx context.Context, i Invite) error
