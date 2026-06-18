@@ -52,8 +52,11 @@ const config: Config = {
           DEFAULT: '#0b1220', // headings / strongest body
           strong: '#0b1220',
           body: '#37415b', // default paragraph text
-          muted: '#64748b', // secondary / labels
-          faint: '#94a3b8', // captions / disabled / placeholders
+          // Kept in lockstep with the explorer's tokens; darkened to
+          // clear WCAG AA (4.5:1) on every surface bg (prior #64748b /
+          // #94a3b8 failed — faint was 2.5:1).
+          muted: '#555f6e', // secondary / labels — 5.75:1 worst case
+          faint: '#636d7e', // captions / de-emphasised — 4.65:1 worst case
         },
         // ─── Semantic deltas (price up/down) ───
         up: {
