@@ -838,14 +838,37 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			view := s.buildGlobalAssetView(priceCtx, vc)
-			page[i].PriceUSD = view.PriceUSD
-			if page[i].MarketCapUSD == nil && view.MarketCapUSD != nil {
-				page[i].MarketCapUSD = view.MarketCapUSD
+			price, mcap := s.catalogueRowPricing(priceCtx, vc)
+			page[i].PriceUSD = price
+			if page[i].MarketCapUSD == nil {
+				page[i].MarketCapUSD = mcap
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+// catalogueRowPricing resolves the headline USD price (and market cap) for
+// one catalogue entry: the global three-tier price from buildGlobalAssetView,
+// falling back to the Stellar trades-derived price for Stellar-only tokens
+// (AQUA, yXLM, SHX, …) that have no global CEX/aggregator price — the same
+// price the classic /v1/assets listing shows — so a catalogue row matches
+// the classic asset row instead of listing null.
+func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedCurrency) (priceUSD, marketCapUSD *string) {
+	view := s.buildGlobalAssetView(ctx, vc)
+	priceUSD = view.PriceUSD
+	marketCapUSD = view.MarketCapUSD
+	if priceUSD != nil || s.coins == nil {
+		return priceUSD, marketCapUSD
+	}
+	se := vc.StellarEntry()
+	if se == nil || se.AssetID == "" {
+		return priceUSD, marketCapUSD
+	}
+	if cr, err := s.coins.GetCoinByAssetID(ctx, se.AssetID); err == nil && cr.PriceUSD != nil {
+		priceUSD = cr.PriceUSD
+	}
+	return priceUSD, marketCapUSD
 }
 
 // projectCatalogueRow maps a catalogue entry to the listing's

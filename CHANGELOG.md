@@ -53,7 +53,10 @@ against.
   the headline price through the same three-tier chain as the single-asset
   `/v1/assets/{slug}` view, bounded to the page (not the whole catalogue)
   so the unified first page doesn't fan a price computation over every
-  catalogue entry.
+  catalogue entry. Stellar-only tokens (AQUA, yXLM, SHX, …) that have no
+  global CEX/aggregator price fall back to their Stellar trades-derived
+  price (the same one the classic listing shows), so a class-filtered row
+  matches the classic asset row instead of listing null.
 - `/v1/assets` listing now fills `market_cap_usd` + `circulating_supply`
   WHERE the supply pipeline covers the asset (the major assets) instead
   of leaving every row null — a `supply_1d` lookup keyed to the listing
