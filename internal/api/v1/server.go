@@ -94,40 +94,45 @@ type Server struct {
 	protocolStats           ProtocolStatsReader
 	protocolActivity        ProtocolActivityReader
 	protocolBespoke         ProtocolBespokeReader
-	soroswapPairs           SoroswapPairsReader
-	networkStats            NetworkStatsReader
-	marketSources           MarketSourceReader
-	sourcesStats            SourcesStatsReader
-	lending                 LendingReader
-	mev                     MEVReader
-	anomalies               AnomalyReader
-	divergences             DivergenceReader
-	currencies              CurrenciesReader
-	explorer                ExplorerReader
-	fxHistory               FXHistoryReader
-	sessionPeeker           SessionPeeker
-	incidents               []incidents.Incident
-	sep10                   auth.SEP10Validator
-	cors                    middleware.Middleware
-	auth                    middleware.Middleware
-	keyPolicy               middleware.Middleware
-	rateLimit               middleware.Middleware
-	monthlyQuota            middleware.Middleware
-	touchUsage              middleware.Middleware
-	requireEmailVerified    middleware.Middleware
-	usageTracker            middleware.Middleware
-	usageReader             UsageReader
-	hub                     *streaming.Hub
-	confidence              ConfidenceLooker
-	triangulated            TriangulatedPriceLooker
-	cdnEnabled              bool
-	statusBackend           StatusBackend
-	regionName              string
-	regionDeployment        string
-	dashboardAuth           DashboardAuthMounter
-	dashboardKeys           DashboardAuthMounter
-	dashboardWebhooks       DashboardAuthMounter
-	sessionAuth             middleware.Middleware
+	// Per-server TTL + single-flight cache for the expensive
+	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
+	protoDetailMu        sync.Mutex
+	protoDetailCache     map[string]protoDetailEntry
+	protoDetailFlight    map[string]chan struct{}
+	soroswapPairs        SoroswapPairsReader
+	networkStats         NetworkStatsReader
+	marketSources        MarketSourceReader
+	sourcesStats         SourcesStatsReader
+	lending              LendingReader
+	mev                  MEVReader
+	anomalies            AnomalyReader
+	divergences          DivergenceReader
+	currencies           CurrenciesReader
+	explorer             ExplorerReader
+	fxHistory            FXHistoryReader
+	sessionPeeker        SessionPeeker
+	incidents            []incidents.Incident
+	sep10                auth.SEP10Validator
+	cors                 middleware.Middleware
+	auth                 middleware.Middleware
+	keyPolicy            middleware.Middleware
+	rateLimit            middleware.Middleware
+	monthlyQuota         middleware.Middleware
+	touchUsage           middleware.Middleware
+	requireEmailVerified middleware.Middleware
+	usageTracker         middleware.Middleware
+	usageReader          UsageReader
+	hub                  *streaming.Hub
+	confidence           ConfidenceLooker
+	triangulated         TriangulatedPriceLooker
+	cdnEnabled           bool
+	statusBackend        StatusBackend
+	regionName           string
+	regionDeployment     string
+	dashboardAuth        DashboardAuthMounter
+	dashboardKeys        DashboardAuthMounter
+	dashboardWebhooks    DashboardAuthMounter
+	sessionAuth          middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +

@@ -45,6 +45,15 @@ against.
   — far more detail per window.
 
 ### Fixed
+- `/v1/assets` listing now fills `market_cap_usd` + `circulating_supply`
+  WHERE the supply pipeline covers the asset (the major assets) instead
+  of leaving every row null — a `supply_1d` lookup keyed to the listing
+  rows, computed `(circulating / 10^decimals) × price`. Assets without
+  supply stay honestly null (no fabrication); coverage grows with the
+  supply pipeline.
+- `/v1/protocols/{name}` is now served from a 60s per-server single-flight
+  cache, so concurrent requests no longer each re-run the ~15s lake scans
+  and peg CPU (compounding the 25s ceiling below).
 - `/v1/protocols/{name}` can no longer peg CPU for minutes: the
   lake-analytics + bespoke scans (~15s warm) had no request ceiling and
   were observed running away to several minutes under concurrent load

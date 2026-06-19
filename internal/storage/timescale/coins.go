@@ -102,6 +102,42 @@ func (s *Store) ListCoins(ctx context.Context, limit int, issuer, cursor string)
 	return s.ListCoinsExt(ctx, ListCoinsOptions{Limit: limit, Issuer: issuer, Cursor: cursor})
 }
 
+// LatestCirculatingSupply returns the most-recent circulating supply per
+// canonical asset_id from the supply_1d CAGG — the set the three-domain
+// supply pipeline currently tracks (the major classic + native assets).
+// Keys are canonical asset_ids: supply_1d's asset_key is CODE:ISSUER
+// (colon) and `XLM`, which we translate to the listing's CODE-ISSUER
+// (dash) and `native`. The /v1/assets listing uses this to fill
+// market_cap WHERE supply exists rather than leaving every row null;
+// coverage grows as the supply pipeline expands (it's small today).
+func (s *Store) LatestCirculatingSupply(ctx context.Context) (map[string]string, error) {
+	const q = `
+        SELECT CASE WHEN asset_key = 'XLM' THEN 'native'
+                    ELSE replace(asset_key, ':', '-') END AS asset_id,
+               circulating_supply::text
+          FROM supply_1d s1
+         WHERE circulating_supply IS NOT NULL
+           AND bucket = (SELECT max(bucket) FROM supply_1d s2 WHERE s2.asset_key = s1.asset_key)
+    `
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestCirculatingSupply: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]string)
+	for rows.Next() {
+		var assetID, circ string
+		if err := rows.Scan(&assetID, &circ); err != nil {
+			return nil, fmt.Errorf("timescale: LatestCirculatingSupply scan: %w", err)
+		}
+		out[assetID] = circ
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestCirculatingSupply rows: %w", err)
+	}
+	return out, nil
+}
+
 // ListCoinsExt is ListCoins with the full options bag. ListCoins
 // is preserved as the legacy 3-arg call so existing callers
 // (handler, integration tests) compile unchanged; new callers

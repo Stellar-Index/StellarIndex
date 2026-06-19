@@ -505,6 +505,7 @@ func (s *Server) handleAssetListFromCoins(
 	for _, row := range rows {
 		out = append(out, assetDetailFromCoinRow(row))
 	}
+	s.fillMarketCapsFromSupply(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
@@ -513,6 +514,68 @@ func (s *Server) handleAssetListFromCoins(
 		}
 	}
 	writeEnvelope(w, env)
+}
+
+// fillMarketCapsFromSupply fills market_cap (and circulating_supply) on
+// listing rows WHERE the supply pipeline covers the asset and we have a
+// USD price. The base listing query deliberately leaves market_cap null
+// rather than fabricate (it won't run a per-row supply lookup), so the
+// covered (major) assets showed an empty market-cap column (audit
+// 2026-06-19). This surfaces it for them; coverage grows as the supply
+// pipeline expands. Type-asserted so coins readers without the method
+// (test stubs) simply skip — best-effort, never fails the response.
+func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail) {
+	sr, ok := s.coins.(interface {
+		LatestCirculatingSupply(context.Context) (map[string]string, error)
+	})
+	if !ok {
+		return
+	}
+	supply, err := sr.LatestCirculatingSupply(ctx)
+	if err != nil || len(supply) == 0 {
+		return
+	}
+	for i := range rows {
+		if rows[i].MarketCapUSD != nil || rows[i].PriceUSD == nil {
+			continue
+		}
+		circ, has := supply[rows[i].AssetID]
+		if !has {
+			continue
+		}
+		if mc := computeMarketCapUSD(circ, *rows[i].PriceUSD, rows[i].Decimals); mc != "" {
+			rows[i].MarketCapUSD = &mc
+			if rows[i].CirculatingSupply == nil {
+				c := circ
+				rows[i].CirculatingSupply = &c
+			}
+		}
+	}
+}
+
+// computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a
+// 2-dp decimal string. circulating is raw integer units (stroops-scale);
+// dividing by 10^decimals yields whole-asset units before the price
+// multiply. Returns "" on unparseable input. big.Float throughout so a
+// 50-billion-unit supply doesn't lose precision (ADR-0003).
+func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
+	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
+	if !ok {
+		return ""
+	}
+	price, ok := new(big.Float).SetPrec(128).SetString(priceRaw)
+	if !ok {
+		return ""
+	}
+	scale := new(big.Float).SetPrec(128).SetInt(
+		new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil),
+	)
+	mc := new(big.Float).SetPrec(128).Quo(circ, scale)
+	mc.Mul(mc, price)
+	if mc.Sign() <= 0 {
+		return ""
+	}
+	return mc.Text('f', 2)
 }
 
 // assetDetailFromCoinRow projects a storage CoinRow into the
@@ -931,6 +994,7 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 	for _, row := range rows {
 		out = append(out, assetDetailFromCoinRow(row))
 	}
+	s.fillMarketCapsFromSupply(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]

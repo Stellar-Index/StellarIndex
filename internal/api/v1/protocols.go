@@ -9,6 +9,65 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
+// protocolDetailTTL caches the expensive /v1/protocols/{name} detail
+// (lake-analytics + bespoke scans run ~15s) per-process for 60s with
+// single-flight, so concurrent requests collapse to one query instead
+// of pegging CPU (2026-06-19 incident). The proper fix — a CAGG so the
+// scan is fast — is tracked in docs/archive/page-audit-2026-06-19/.
+const protocolDetailTTL = 60 * time.Second
+
+type protoDetailEntry struct {
+	view ProtocolDetailView
+	at   time.Time
+}
+
+// cachedProtocolDetail returns a TTL-cached detail view for `name`,
+// computing it via build() at most once per TTL across concurrent
+// callers. Per-server (the maps live on Server, lazy-init'd) so it never
+// leaks across test instances. Returns ok=false only when the caller's
+// context is cancelled while waiting on another caller's in-flight
+// build. A build that runs to completion is cached; one that returns
+// under a cancelled context (the 25s ceiling fired) is returned but NOT
+// cached, so a partial result can't stick for the full TTL.
+func (s *Server) cachedProtocolDetail(ctx context.Context, name string, build func(context.Context) ProtocolDetailView) (ProtocolDetailView, bool) {
+	s.protoDetailMu.Lock()
+	if s.protoDetailCache == nil {
+		s.protoDetailCache = map[string]protoDetailEntry{}
+		s.protoDetailFlight = map[string]chan struct{}{}
+	}
+	if e, ok := s.protoDetailCache[name]; ok && time.Since(e.at) < protocolDetailTTL {
+		s.protoDetailMu.Unlock()
+		return e.view, true
+	}
+	if ch, inflight := s.protoDetailFlight[name]; inflight {
+		s.protoDetailMu.Unlock()
+		select {
+		case <-ch:
+			s.protoDetailMu.Lock()
+			e, ok := s.protoDetailCache[name]
+			s.protoDetailMu.Unlock()
+			return e.view, ok
+		case <-ctx.Done():
+			return ProtocolDetailView{}, false
+		}
+	}
+	done := make(chan struct{})
+	s.protoDetailFlight[name] = done
+	s.protoDetailMu.Unlock()
+
+	view := build(ctx)
+	complete := ctx.Err() == nil
+
+	s.protoDetailMu.Lock()
+	if complete {
+		s.protoDetailCache[name] = protoDetailEntry{view: view, at: time.Now()}
+	}
+	delete(s.protoDetailFlight, name)
+	s.protoDetailMu.Unlock()
+	close(done)
+	return view, true
+}
+
 // protocolActivityWindowDays is the lookback for the windowed per-protocol
 // analytics (the activity time-series). ~90 days ≈ 1.55M ledgers — bounded so
 // the lake query prunes partitions and stays fast on the 12B-row table.
@@ -328,16 +387,26 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// is tracked in docs/archive/page-audit-2026-06-19/REMAINING.md.)
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	contracts := s.protocolContracts(ctx, meta.Name)
-	classifyContractKinds(contracts, meta.Factories)
-	view := ProtocolDetailView{
-		ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(ctx), s.protocolVerdicts(ctx)),
-		Contracts:        contracts,
-		EventKinds:       append([]string{}, meta.EventKinds...),
-		VerificationPage: meta.VerificationPage,
+	view, ok := s.cachedProtocolDetail(ctx, meta.Name, func(c context.Context) ProtocolDetailView {
+		contracts := s.protocolContracts(c, meta.Name)
+		classifyContractKinds(contracts, meta.Factories)
+		v := ProtocolDetailView{
+			ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(c), s.protocolVerdicts(c)),
+			Contracts:        contracts,
+			EventKinds:       append([]string{}, meta.EventKinds...),
+			VerificationPage: meta.VerificationPage,
+		}
+		s.enrichProtocolAnalytics(c, meta, &v)
+		s.enrichBespoke(c, meta, &v)
+		return v
+	})
+	if !ok {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/protocol-detail-timeout",
+			"Protocol detail timed out", http.StatusServiceUnavailable,
+			"the protocol analytics are being recomputed; retry in a few seconds")
+		return
 	}
-	s.enrichProtocolAnalytics(ctx, meta, &view)
-	s.enrichBespoke(ctx, meta, &view)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{})
