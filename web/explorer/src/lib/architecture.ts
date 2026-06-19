@@ -27,7 +27,7 @@ const DOCS_DIR = path.join(REPO_ROOT, 'docs', 'architecture');
 // CURATED — every doc that should be browsable on the public
 // site. Order is presentation order on /research (most-foundational
 // first). The `description` powers the index card; pick something
-// a non-Rates-Engine engineer would understand.
+// a non-Stellar-Index engineer would understand.
 const CURATED: { slug: string; description: string }[] = [
   {
     slug: 'ingest-pipeline',

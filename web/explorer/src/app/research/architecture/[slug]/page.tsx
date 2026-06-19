@@ -13,7 +13,7 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 // Each curated architecture doc rendered as a static page.
 // Reuses the same loader/renderer pattern as ADRs and incident
 // postmortems — the underlying markdown is the source of truth,
-// the page just layers on Rates-Engine chrome.
+// the page just layers on Stellar Index chrome.
 
 export const dynamic = 'error';
 export const dynamicParams = false;
