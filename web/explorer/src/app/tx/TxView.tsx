@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Breadcrumbs } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   type Envelope,
@@ -201,15 +202,13 @@ function Shell({
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="space-y-2">
-        <nav className="text-xs text-ink-muted">
-          <Link href="/ledgers" className="hover:text-brand-600">
-            Ledgers
-          </Link>{' '}
-          /{' '}
-          <span className="font-mono text-ink-body">
-            {hash ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : 'tx'}
-          </span>
-        </nav>
+        <Breadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: 'Transactions', href: '/transactions' },
+            { label: hash ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : 'tx' },
+          ]}
+        />
         <h1 className="text-2xl font-semibold tracking-tight">Transaction</h1>
       </header>
       {children}
