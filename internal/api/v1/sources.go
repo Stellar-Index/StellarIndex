@@ -20,10 +20,13 @@ type SourcesStatsReader interface {
 
 // VolumeBucket is one wire-shape hour bucket on the per-source
 // 24h sparkline. Hour is RFC 3339; volume_usd is numeric-stringified
-// to preserve precision through the JSON boundary.
+// to preserve precision through the JSON boundary; trade_count is the
+// number of trades in the hour (powers the trade-count line above the
+// $-volume bars on the source page chart).
 type VolumeBucket struct {
-	Hour      time.Time `json:"hour"`
-	VolumeUSD string    `json:"volume_usd"`
+	Hour       time.Time `json:"hour"`
+	VolumeUSD  string    `json:"volume_usd"`
+	TradeCount int64     `json:"trade_count"`
 }
 
 // Source is the wire shape for /v1/sources entries.
@@ -175,23 +178,28 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			// Build per-source raw maps first so we can fill missing
 			// hours with zero buckets (clients render a continuous
 			// sparkline rather than gappy bars).
-			rawBySource := map[string]map[time.Time]string{}
+			type hourRaw struct {
+				vol   string
+				count int64
+			}
+			rawBySource := map[string]map[time.Time]hourRaw{}
 			for _, b := range buckets {
 				if rawBySource[b.Source] == nil {
-					rawBySource[b.Source] = map[time.Time]string{}
+					rawBySource[b.Source] = map[time.Time]hourRaw{}
 				}
-				rawBySource[b.Source][b.Hour.UTC()] = b.VolumeUSD
+				rawBySource[b.Source][b.Hour.UTC()] = hourRaw{vol: b.VolumeUSD, count: b.TradeCount}
 			}
 			now := time.Now().UTC().Truncate(time.Hour)
 			for src, raw := range rawBySource {
 				series := make([]VolumeBucket, 0, 24)
 				for i := 23; i >= 0; i-- {
 					hour := now.Add(time.Duration(-i) * time.Hour)
-					vol := raw[hour]
+					hr := raw[hour]
+					vol := hr.vol
 					if vol == "" {
 						vol = "0"
 					}
-					series = append(series, VolumeBucket{Hour: hour, VolumeUSD: vol})
+					series = append(series, VolumeBucket{Hour: hour, VolumeUSD: vol, TradeCount: hr.count})
 				}
 				historyBySource[src] = series
 			}

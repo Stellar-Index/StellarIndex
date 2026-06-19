@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-hour `trade_count` on the source sparkline.** `/v1/sources?include=sparkline`
+  buckets now carry `trade_count` alongside `volume_usd` (the count was already
+  computed in `GetSourceVolumeHistory24h`, just dropped on serialization).
+  Powers the source page's new activity chart — trade-count line over USD-volume
+  bars — replacing the flat volume-by-hour sparkline. Additive + backward-compatible.
+
 ## [v0.5.0-rc.126] — 2026-06-19
 
 ### Added

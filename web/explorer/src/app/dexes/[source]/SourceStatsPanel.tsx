@@ -4,11 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { SourceSparkline } from '@/components/SourceSparkline';
+import { SourceActivityChart } from './SourceActivityChart';
 
 interface VolumeBucket {
   hour: string;
   volume_usd: string;
+  trade_count?: number;
 }
 
 interface SourceStats {
@@ -73,11 +74,12 @@ export function SourceStatsPanel({
       </div>
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
         <div className="mt-4 border-t border-line pt-3">
-          <div className="text-[10px] uppercase tracking-wider text-ink-muted">
-            Volume by hour
+          <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wider text-ink-muted">
+            <span>Trades / hour</span>
+            <span className="text-ink-faint">USD volume / hour (bars)</span>
           </div>
           <div className="mt-2">
-            <SourceSparkline buckets={data.volume_history_24h} width={400} height={48} />
+            <SourceActivityChart buckets={data.volume_history_24h} height={200} />
           </div>
         </div>
       )}

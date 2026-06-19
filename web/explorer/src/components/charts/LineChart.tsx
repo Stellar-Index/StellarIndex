@@ -42,6 +42,11 @@ export type LineChartProps = {
    * (used for dense count-series like throughput). Default true.
    */
   area?: boolean;
+  /**
+   * Show time-of-day on the x-axis (for intraday/hourly series).
+   * Default false (daily series read better without it).
+   */
+  timeVisible?: boolean;
 };
 
 /**
@@ -59,6 +64,7 @@ export function LineChart({
   positive,
   ariaLabel,
   area = true,
+  timeVisible = false,
 }: LineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -87,7 +93,7 @@ export function LineChart({
         vertLines: { color: 'rgba(148, 163, 184, 0.10)' },
       },
       timeScale: {
-        timeVisible: false,
+        timeVisible,
         secondsVisible: false,
         borderColor: 'rgba(148, 163, 184, 0.25)',
       },
@@ -146,10 +152,11 @@ export function LineChart({
       seriesRef.current = null;
       volumeRef.current = null;
     };
-    // height / isUp / hasVolume / area drive chart re-creation; data
-    // updates are pushed via setData in the second effect.
+    // height / isUp / hasVolume / area / timeVisible drive chart
+    // re-creation; data updates are pushed via setData in the second
+    // effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [height, isUp, hasVolume, area]);
+  }, [height, isUp, hasVolume, area, timeVisible]);
 
   useEffect(() => {
     seriesRef.current?.setData(toSeries(data));
