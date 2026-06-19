@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
+import { DonutChart } from '@/components/charts/DonutChart';
 import { useSources, useCursors, type Source } from '@/api/hooks';
 
 /**
@@ -37,6 +38,12 @@ export function SourcesTable() {
   }, [data, filter]);
 
   const grouped = useMemo(() => groupByClass(filteredData), [filteredData]);
+
+  const classMix = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of data ?? []) m.set(s.class, (m.get(s.class) ?? 0) + 1);
+    return Array.from(m, ([label, value]) => ({ label: titleCase(label), value }));
+  }, [data]);
 
   // Aggregate the cursors slice by source — one source can have
   // many cursors (live + per-range backfills). We surface the most
@@ -116,6 +123,15 @@ export function SourcesTable() {
           )}
         </span>
       </div>
+      {!filter && classMix.length > 1 && (
+        <Panel
+          title="By class"
+          hint="Source registry composition — only exchange-class contributes to VWAP"
+          source={asExample('/v1/sources')}
+        >
+          <DonutChart data={classMix} centerLabel={String(data.length)} centerSub="sources" />
+        </Panel>
+      )}
       {filter && grouped.length === 0 && (
         <Panel
           title="Sources"
