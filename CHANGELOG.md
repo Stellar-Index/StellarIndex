@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Market/asset/exchange charts now show real OHLC candles + volume bars.**
+  The candle charts on `/markets/[pair]`, `/assets/[slug]`, and
+  `/exchanges/[name]` were rendering FLAT fake candles (open=high=low=close=VWAP)
+  with no volume, because they pulled `/v1/chart` (VWAP-only). They now use a new
+  shared `MarketChart` over `/v1/ohlc?interval=` — true open/high/low/close plus a
+  volume histogram underneath (`CandleChart` gained an optional volume series),
+  with a single exchange-style timeframe control that auto-picks candle
+  granularity. One reusable component replaces three near-duplicate chart impls.
+
 ## [v0.5.0-rc.125] — 2026-06-19
 
 ### Added
