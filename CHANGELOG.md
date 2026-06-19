@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /v1/markets/sources` — per-source 24h volume breakdown.** Trailing-24h
+  USD volume + trade count grouped by source for a single pair (`?base=&quote=`)
+  or an asset across every pair it appears in (`?asset=`), with each source's
+  `share_pct` of the total. Backs the volume-by-source pie on the market-pair +
+  asset pages (the `/v1/history` feed only samples recent trades, so an accurate
+  24h share needs this server-side aggregate). Same XLM/USD volume derivation as
+  `/v1/sources?include=stats`.
+
 ### Changed
 
 - **Status page moved onto the main site at `/status`.** The standalone status
