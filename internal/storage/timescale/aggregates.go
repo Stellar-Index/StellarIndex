@@ -337,31 +337,39 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	// price of $1 in $2, then trade-count-weight them within the latest
 	// closed bucket. Closed-bucket-only (ADR-0015) is preserved, and the
 	// combine is deterministic across regions.
+	// Find the latest closed bucket via the (base,quote,bucket DESC)
+	// index — one fast max() per direction, UNIONed — then point-read +
+	// combine just that bucket's 1-2 rows. The earlier form scanned the
+	// pair's ENTIRE prices_1m history (back to 2015) before LIMIT 1,
+	// which measured ~1s warm and ballooned to ~9s under load (it drove
+	// a latency-burn incident on 2026-06-19). This version is bounded.
 	const q = `
-        WITH closed AS (
-            SELECT bucket, base_asset, vwap,
-                   COALESCE(trade_count, 0) AS tc, sources
-              FROM prices_1m
-             WHERE ((base_asset = $1 AND quote_asset = $2)
-                 OR (base_asset = $2 AND quote_asset = $1))
-               AND bucket + INTERVAL '1 minute' <= now()
+        WITH latest AS (
+            SELECT max(b) AS b FROM (
+                SELECT max(bucket) AS b FROM prices_1m
+                 WHERE base_asset = $1 AND quote_asset = $2
+                   AND bucket + INTERVAL '1 minute' <= now()
+                UNION ALL
+                SELECT max(bucket) AS b FROM prices_1m
+                 WHERE base_asset = $2 AND quote_asset = $1
+                   AND bucket + INTERVAL '1 minute' <= now()
+            ) u
         ),
-        agg AS (
-            SELECT bucket,
-                   (SUM((CASE WHEN base_asset = $1 THEN vwap
-                              ELSE 1.0 / NULLIF(vwap, 0) END) * tc)
-                      / NULLIF(SUM(tc), 0))::text AS vwap,
-                   SUM(tc)::bigint AS trade_count
-              FROM closed
-             GROUP BY bucket
-             ORDER BY bucket DESC
-             LIMIT 1
+        r AS (
+            SELECT base_asset, vwap, COALESCE(trade_count, 0) AS tc, sources
+              FROM prices_1m
+             WHERE bucket = (SELECT b FROM latest)
+               AND ((base_asset = $1 AND quote_asset = $2)
+                 OR (base_asset = $2 AND quote_asset = $1))
         )
-        SELECT a.bucket, $1::text, $2::text, a.vwap, a.trade_count,
-               (SELECT array_agg(DISTINCT sc)
-                  FROM closed c, unnest(c.sources) sc
-                 WHERE c.bucket = a.bucket) AS sources
-          FROM agg a
+        SELECT (SELECT b FROM latest), $1::text, $2::text,
+               (SUM((CASE WHEN base_asset = $1 THEN vwap
+                          ELSE 1.0 / NULLIF(vwap, 0) END) * tc)
+                  / NULLIF(SUM(tc), 0))::text AS vwap,
+               SUM(tc)::bigint AS trade_count,
+               (SELECT array_agg(DISTINCT sc) FROM r r2, unnest(r2.sources) sc) AS sources
+          FROM r
+         HAVING count(*) > 0
     `
 	var row Vwap1mRow
 	err := s.db.QueryRowContext(ctx, q,
