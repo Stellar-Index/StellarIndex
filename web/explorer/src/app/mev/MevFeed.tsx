@@ -1,8 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 
 interface MevLeg {
@@ -31,15 +33,6 @@ interface MevEvent {
   accounts: string[];
   detail: MevDetail;
   profit_usd: string | null;
-}
-
-function shortAsset(a: string): string {
-  // "CODE-GISSUER…" → CODE; "native" → XLM; contract C… → C…6
-  if (a === 'native') return 'XLM';
-  const dash = a.indexOf('-');
-  if (dash > 0) return a.slice(0, dash);
-  if (a.length > 12) return `${a.slice(0, 4)}…${a.slice(-4)}`;
-  return a;
 }
 
 const usdFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -88,13 +81,26 @@ export function MevFeed() {
                   <span className="inline-block rounded bg-down-subtle px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-down-strong">
                     {e.kind}
                   </span>
-                  <span className="font-mono text-xs text-ink-body">
-                    {assets.map(shortAsset).join(' → ')}
-                    {assets.length > 0 && ` → ${shortAsset(assets[0])}`}
+                  <span className="inline-flex flex-wrap items-center gap-1 font-mono text-xs text-ink-body">
+                    {assets.map((a, i) => (
+                      <span key={`${a}-${i}`} className="inline-flex items-center gap-1">
+                        <AssetText canonical={a} />
+                        <span className="text-ink-faint">→</span>
+                      </span>
+                    ))}
+                    {assets.length > 0 && <AssetText canonical={assets[0]} />}
                   </span>
                   {sources.length > 0 && (
                     <span className="text-[11px] text-ink-muted">
-                      via {sources.join(', ')}
+                      via{' '}
+                      {sources.map((s, i) => (
+                        <span key={s}>
+                          {i > 0 && ', '}
+                          <Link href={`/sources/${encodeURIComponent(s)}`} className="hover:text-brand-600 hover:underline">
+                            {s}
+                          </Link>
+                        </span>
+                      ))}
                     </span>
                   )}
                   {e.detail.notional_usd && (
@@ -108,17 +114,21 @@ export function MevFeed() {
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-4 text-[11px] text-ink-muted">
                   {taker && (
-                    <span className="font-mono" title={taker}>
+                    <Link
+                      href={`/accounts?id=${encodeURIComponent(taker)}`}
+                      className="font-mono hover:text-brand-600 hover:underline"
+                      title={taker}
+                    >
                       taker {taker.slice(0, 6)}…{taker.slice(-4)}
-                    </span>
+                    </Link>
                   )}
                   {tx && (
-                    <a
+                    <Link
                       href={`/tx?hash=${encodeURIComponent(tx)}`}
                       className="font-mono hover:text-brand-600 hover:underline"
                     >
                       tx {tx.slice(0, 8)}…
-                    </a>
+                    </Link>
                   )}
                   <span>{e.detail.legs?.length ?? 0} legs</span>
                 </div>

@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 
 interface DivergenceObs {
@@ -19,14 +20,6 @@ interface DivergenceObs {
 
 interface DivergenceResp {
   observations: DivergenceObs[];
-}
-
-function shortAsset(a: string): string {
-  if (a === 'native') return 'XLM';
-  const dash = a.indexOf('-');
-  if (dash > 0) return a.slice(0, dash);
-  if (a.startsWith('fiat:')) return a.slice(5);
-  return a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a;
 }
 
 function fmtTs(iso: string): string {
@@ -89,7 +82,9 @@ export function DivergenceFeed() {
                   className="border-b border-line/60 last:border-0 hover:bg-surface-muted"
                 >
                   <td className="py-1.5 pr-4 font-mono">
-                    {shortAsset(d.asset_id)}/{shortAsset(d.quote_id)}
+                    <AssetText canonical={d.asset_id} />
+                    <span className="text-ink-faint">/</span>
+                    <AssetText canonical={d.quote_id} />
                   </td>
                   <td className="py-1.5 pr-4">
                     <code className="text-[11px]">{d.reference}</code>

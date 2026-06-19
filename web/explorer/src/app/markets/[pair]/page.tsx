@@ -642,16 +642,35 @@ function Stat({ label, value }: { label: string; value: string }) {
 // open /assets/{id}).
 function AssetBadge({ canonical }: { canonical: string }) {
   let label = canonical;
-  if (canonical === 'native') label = 'XLM';
-  else if (canonical.startsWith('fiat:')) label = canonical.replace('fiat:', '');
-  else if (canonical.startsWith('crypto:')) label = canonical.replace('crypto:', '');
-  else {
+  // slug is the static-export-safe link target — the SHORT code/ticker
+  // form (`/assets/USDC`), never the long asset_id (`/assets/USDC-GA5Z…`
+  // 404s: long-form ids aren't pre-rendered). null → render plain text.
+  let slug: string | null = null;
+  if (canonical === 'native' || /^\d+$/.test(canonical)) {
+    label = 'XLM';
+    slug = 'native';
+  } else if (canonical.startsWith('fiat:')) {
+    label = canonical.replace('fiat:', '');
+    slug = label;
+  } else if (canonical.startsWith('crypto:')) {
+    label = canonical.replace('crypto:', '');
+    slug = label;
+  } else if (/^C[A-Za-z0-9]{55}$/.test(canonical)) {
+    // Raw SAC contract — no safe asset route; show truncated, no link.
+    label = `${canonical.slice(0, 4)}…${canonical.slice(-4)}`;
+  } else {
     const dashIx = canonical.indexOf('-');
-    if (dashIx !== -1) label = canonical.slice(0, dashIx);
+    if (dashIx !== -1) {
+      label = canonical.slice(0, dashIx);
+      slug = label;
+    } else if (canonical.length <= 12) {
+      slug = canonical;
+    }
   }
+  if (!slug) return <span>{label}</span>;
   return (
     <Link
-      href={`/assets/${encodeURIComponent(canonical)}`}
+      href={`/assets/${encodeURIComponent(slug)}`}
       className="transition-colors hover:text-brand-600"
     >
       {label}

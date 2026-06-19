@@ -5,7 +5,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { AssetLabel } from '@/components/AssetLabel';
+import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
 
@@ -217,10 +217,10 @@ export function OraclesView() {
                       </Link>
                     </Td>
                     <Td>
-                      <AssetLabel canonical={s.asset} />
+                      <AssetLink canonical={s.asset} />
                     </Td>
                     <Td>
-                      <AssetLabel canonical={s.quote} />
+                      <AssetLink canonical={s.quote} />
                     </Td>
                     <Td align="right">
                       <span className="font-mono tabular-nums text-ink-body">

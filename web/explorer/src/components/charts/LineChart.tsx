@@ -5,6 +5,8 @@ import {
   AreaSeries,
   ColorType,
   createChart,
+  HistogramSeries,
+  type HistogramData,
   type IChartApi,
   type ISeriesApi,
   type LineData,
@@ -15,6 +17,8 @@ export type LinePoint = {
   /** Unix epoch seconds */
   time: number;
   value: number;
+  /** Optional per-bar volume — renders a histogram under the line. */
+  volume?: number;
 };
 
 export type LineChartProps = {
@@ -33,15 +37,20 @@ export type LineChartProps = {
    * See [CandleChart] — same rationale.
    */
   ariaLabel?: string;
+  /**
+   * When false, force the area-fill off and render a thin line only
+   * (used for dense count-series like throughput). Default true.
+   */
+  area?: boolean;
 };
 
 /**
- * LineChart — TradingView Lightweight Charts wrapper for daily
- * scalar series (typically fx rates or other 1d-grain data).
- *
- * Companion to [CandleChart] — same lifecycle, theme, and resize
- * behaviour. Use this when you have (time, value) points; use
- * CandleChart when you have OHLC.
+ * LineChart — TradingView Lightweight Charts wrapper for scalar
+ * (time, value) series, with an OPTIONAL volume histogram underneath
+ * (rendered when any point carries a `volume`). Companion to
+ * [CandleChart] — same lifecycle, theme, resize, and bottom-pinned
+ * volume overlay scale. Use this for line/area price series or any
+ * metric trend; use CandleChart when you have OHLC.
  */
 export function LineChart({
   data,
@@ -49,15 +58,18 @@ export function LineChart({
   className,
   positive,
   ariaLabel,
+  area = true,
 }: LineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
   // Resolve trend tone — first vs last value when the caller doesn't
   // specify. Renders green when the series is up, red when down,
   // neutral grey-blue when flat or empty.
   const isUp = positive ?? trendUp(data);
+  const hasVolume = data.some((p) => p.volume != null && Number.isFinite(p.volume));
 
   useEffect(() => {
     const container = containerRef.current;
@@ -81,6 +93,8 @@ export function LineChart({
       },
       rightPriceScale: {
         borderColor: 'rgba(148, 163, 184, 0.25)',
+        // Leave room at the bottom for the volume histogram when present.
+        scaleMargins: hasVolume ? { top: 0.08, bottom: 0.26 } : { top: 0.1, bottom: 0.1 },
       },
       crosshair: {
         mode: 1,
@@ -91,7 +105,11 @@ export function LineChart({
     chartRef.current = chart;
 
     const lineColor = isUp ? '#059669' : '#e11d48';
-    const fillColor = isUp ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
+    const fillColor = area
+      ? isUp
+        ? 'rgba(16, 185, 129, 0.15)'
+        : 'rgba(244, 63, 94, 0.15)'
+      : 'rgba(0,0,0,0)';
     const series = chart.addSeries(AreaSeries, {
       lineColor,
       topColor: fillColor,
@@ -100,6 +118,19 @@ export function LineChart({
       priceLineVisible: false,
     });
     seriesRef.current = series;
+
+    if (hasVolume) {
+      const volume = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      chart.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
+      volumeRef.current = volume;
+    }
 
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) {
@@ -113,14 +144,16 @@ export function LineChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      volumeRef.current = null;
     };
-    // height + isUp drive chart re-creation; data updates are
-    // pushed via setData in the second effect.
+    // height / isUp / hasVolume / area drive chart re-creation; data
+    // updates are pushed via setData in the second effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [height, isUp]);
+  }, [height, isUp, hasVolume, area]);
 
   useEffect(() => {
     seriesRef.current?.setData(toSeries(data));
+    volumeRef.current?.setData(toVolume(data));
     chartRef.current?.timeScale().fitContent();
   }, [data]);
 
@@ -132,7 +165,7 @@ export function LineChart({
       role="img"
       aria-label={
         ariaLabel ??
-        `Line price chart${data.length ? ` with ${data.length} points` : ''}`
+        `Line chart${data.length ? ` with ${data.length} points` : ''}`
       }
     />
   );
@@ -143,6 +176,24 @@ function toSeries(points: LinePoint[]): LineData<Time>[] {
     time: p.time as Time,
     value: p.value,
   }));
+}
+
+// Volume bars, tinted by the bar-over-bar direction of the value
+// series (green when the point rose vs the previous, red when it
+// fell) at low opacity so they read as context, not foreground.
+function toVolume(points: LinePoint[]): HistogramData<Time>[] {
+  const out: HistogramData<Time>[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (p.volume == null || !Number.isFinite(p.volume)) continue;
+    const rising = i === 0 ? true : p.value >= points[i - 1].value;
+    out.push({
+      time: p.time as Time,
+      value: p.volume,
+      color: rising ? 'rgba(22, 163, 74, 0.45)' : 'rgba(220, 38, 38, 0.45)',
+    });
+  }
+  return out;
 }
 
 function trendUp(points: LinePoint[]): boolean {
