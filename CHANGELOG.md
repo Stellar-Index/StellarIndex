@@ -45,6 +45,21 @@ against.
   — far more detail per window.
 
 ### Fixed
+- Explorer per-page audit fixes (2026-06-19, frontend):
+  - **`/assets/XLM` showed wrapped-XLM data** (~330× wrong price) — a
+    scam "XLM" classic asset shared the `XLM` listing slug. `fetchCoin`
+    now resolves XLM/native directly to the native asset.
+  - **Case-sensitive asset/embed routes** — lowercase slugs (`/assets/btc`,
+    `/embed/asset/xlm`) 404'd or rendered a half-empty `GlobalAssetView`.
+    `fetchCoin` now does a case-insensitive cache lookup and
+    `generateStaticParams` emits both cases for every slug.
+  - **`/convert/{from}/{to}` inverted rates** ("1 USD = 1.15 EUR" was the
+    EUR→USD rate mislabeled) — now inverted correctly.
+  - **`/sources` "Last ingest" always "—"** — the cursor venue lives in
+    `sub_source` (the `source` field is the cursor type); both the index
+    and per-source panels now key on the venue.
+  - `/oracles` dropped the always-zero "24h updates" column (oracles
+    don't trade).
 - `/v1/price` latency regression (caused a latency-burn incident
   2026-06-19): the rc.131 cross-direction VWAP combine scanned a pair's
   ENTIRE `prices_1m` history (back to 2015) before `LIMIT 1` — ~1s warm,

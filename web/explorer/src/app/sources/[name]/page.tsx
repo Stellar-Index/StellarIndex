@@ -180,7 +180,17 @@ export default async function SourceDetailPage({
     );
   }
 
-  const cursors = allCursors.filter((c) => c.source === name);
+  // The cursor's `source` is the cursor TYPE (backfill / projector /
+  // ledgerstream); the venue lives in `sub_source` — projector rows
+  // carry it bare ("soroswap"), backfill rows prefix a ledger range
+  // ("<from-to>:sdex"). Filtering by `source === name` (the prior bug,
+  // audit 2026-06-19) matched nothing → the panel always read empty.
+  const cursorVenue = (c: { sub_source?: string }): string => {
+    const ss = (c.sub_source ?? '').trim();
+    const colon = ss.lastIndexOf(':');
+    return colon >= 0 ? ss.slice(colon + 1) : ss;
+  };
+  const cursors = allCursors.filter((c) => cursorVenue(c) === name);
 
   // Schema.org BreadcrumbList — Home → Sources → <name>.
   const breadcrumbLD = {

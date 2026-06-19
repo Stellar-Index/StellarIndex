@@ -51,16 +51,21 @@ export function SourcesTable() {
     return Array.from(m, ([label, value]) => ({ label: titleCase(label), value }));
   }, [stellar]);
 
-  // Aggregate the cursors slice by source — one source can have
-  // many cursors (live + per-range backfills). We surface the most
-  // recently updated row's last_ledger + lag as the "latest tip"
-  // per source.
+  // Aggregate the cursors slice by VENUE — one venue can have many
+  // cursors (live + per-range backfills). The cursor's `source` field
+  // is the cursor TYPE (backfill / projector / ledgerstream), NOT the
+  // venue; the venue lives in `sub_source` (projector rows:
+  // "soroswap"; backfill rows: "<range>:sdex"). Keying by `source`
+  // (the prior bug, audit 2026-06-19) meant every venue's "Last
+  // ingest" rendered "—". Surface the most-recent row's tip per venue.
   const latestBySource = useMemo(() => {
     const m = new Map<string, { last_ledger: number; lag_seconds: number; last_updated: string }>();
     for (const c of cursors.data ?? []) {
-      const prev = m.get(c.source);
+      const venue = cursorVenue(c);
+      if (!venue) continue;
+      const prev = m.get(venue);
       if (!prev || prev.last_ledger < c.last_ledger) {
-        m.set(c.source, {
+        m.set(venue, {
           last_ledger: c.last_ledger,
           lag_seconds: c.lag_seconds,
           last_updated: c.last_updated,
@@ -330,6 +335,18 @@ function Td({
       {children}
     </td>
   );
+}
+
+// cursorVenue extracts the venue name from a /v1/diagnostics/cursors
+// row. The row's `source` is the cursor TYPE (backfill / projector /
+// ledgerstream); the venue lives in `sub_source` — projector rows carry
+// it bare ("soroswap"), backfill rows prefix a ledger range
+// ("<from-to>:sdex"), so strip everything up to the last ':'.
+function cursorVenue(c: { sub_source?: string }): string {
+  const ss = (c.sub_source ?? '').trim();
+  if (!ss) return '';
+  const colon = ss.lastIndexOf(':');
+  return colon >= 0 ? ss.slice(colon + 1) : ss;
 }
 
 function groupByClass(rows: Source[]): { klass: Source['class']; rows: Source[] }[] {

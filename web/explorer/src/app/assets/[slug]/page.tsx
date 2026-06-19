@@ -62,42 +62,26 @@ export async function generateStaticParams() {
   if ((!cache || cache.size === 0) && verifiedSlugs.length === 0) {
     return fallback;
   }
-  // For catalogue entries we emit BOTH cases so user-typed URLs
-  // and existing table links both resolve. /v1/coins emits
-  // uppercase short-form slugs (XLM, USDC, AQUA); /v1/assets/verified
-  // emits lowercase catalogue slugs. Without both, either the
-  // explorer's own tables 404 (they link uppercase from /v1/coins)
-  // or user-typed lowercase URLs 404.
-  //
-  // Non-catalogue Stellar assets (unverified codes like sBNB,
-  // FOO, etc) keep their /v1/coins casing — they only ever appear
-  // in one form.
+  // Emit BOTH cases for EVERY slug so user-typed URLs resolve
+  // regardless of casing. The /v1/assets listing keys slugs uppercase
+  // (XLM, USDC, BTC, sBNB); the verified catalogue keys them lowercase
+  // (usdc, us-dollar). Users naturally type lowercase, and the audit
+  // (2026-06-19) found /assets/btc, /assets/usdc etc. 404'd or rendered
+  // half-empty. Lowercase pages are cheap — fetchCoin's case-insensitive
+  // cache lookup serves them from the same in-memory listing (no extra
+  // API call per page).
   const seen = new Set<string>();
   const out: { slug: string }[] = [];
-  const verifiedSet = new Set(verifiedSlugs.map((s) => s.toLowerCase()));
   const cacheKeys = cache ? Array.from(cache.keys()) : [];
   for (const slug of [
     ...verifiedSlugs,
     ...cacheKeys,
     ...fallback.map((f) => f.slug),
   ]) {
-    if (!seen.has(slug)) {
-      seen.add(slug);
-      out.push({ slug });
-    }
-    // For catalogue slugs, also emit the alternate casing so
-    // both /assets/usdc/ and /assets/USDC/ resolve. /v1/coins
-    // gives us USDC; verified gives us usdc; both should work.
-    const lower = slug.toLowerCase();
-    const upper = slug.toUpperCase();
-    if (verifiedSet.has(lower)) {
-      if (!seen.has(lower)) {
-        seen.add(lower);
-        out.push({ slug: lower });
-      }
-      if (!seen.has(upper)) {
-        seen.add(upper);
-        out.push({ slug: upper });
+    for (const variant of [slug, slug.toLowerCase(), slug.toUpperCase()]) {
+      if (variant && !seen.has(variant)) {
+        seen.add(variant);
+        out.push({ slug: variant });
       }
     }
   }
@@ -316,19 +300,17 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 // is a GlobalAssetView shape, return null so the page routes to
 // VerifiedCurrencyView via the !coin branch. The discriminator is
 // `asset_id` being present + truthy.
-async function fetchCoin(slug: string): Promise<CoinSummary | null> {
+// fetchCoinDirect fetches /v1/assets/{idOrSlug} and returns the rich
+// CoinSummary (an AssetDetail superset), or null on 4xx / the
+// GlobalAssetView shape (no asset_id) / repeated failure. Retries 3×
+// with 500ms backoff on 5xx/network. Used for cache misses and the
+// XLM special-case below.
+async function fetchCoinDirect(idOrSlug: string): Promise<CoinSummary | null> {
   if (isCIStub) return null;
-  // Cache-first: one listing call covers up to 500 rows. Per-slug
-  // fetches only fire on misses (slugs the listing didn't return).
-  const cache = await getBuildCoinsCache();
-  if (cache) {
-    const hit = cache.get(slug);
-    if (hit) return hit;
-  }
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(
-        `${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`,
+        `${API_BASE_URL}/v1/assets/${encodeURIComponent(idOrSlug)}`,
         { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
       );
       if (res.status >= 400 && res.status < 500) return null;
@@ -341,9 +323,9 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
       }
       const env = (await res.json()) as { data: CoinSummary };
       const data = env.data ?? null;
-      // GlobalAssetView (catalogue slug) discriminator — the
-      // catalogue dispatch response has no asset_id. Treat as
-      // null so the caller renders VerifiedCurrencyView.
+      // GlobalAssetView (catalogue slug) discriminator — the catalogue
+      // dispatch response has no asset_id. Treat as null so the caller
+      // renders VerifiedCurrencyView.
       if (!data || typeof data.asset_id !== 'string' || !data.asset_id) {
         return null;
       }
@@ -357,6 +339,33 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
     }
   }
   return null;
+}
+
+async function fetchCoin(slug: string): Promise<CoinSummary | null> {
+  if (isCIStub) return null;
+  const norm = slug.toLowerCase();
+  // XLM / native special-case (CRITICAL FIX): a wrapped-XLM classic
+  // asset ("XLM-GAE5…WXLM") ALSO carries slug "XLM" in the listing, so
+  // a cache hit on "XLM"/"xlm" returns the WRONG asset — ~330× off
+  // ($0.00067 vs the real ~$0.22). Native XLM is the canonical answer;
+  // resolve it directly, bypassing the (WXLM-poisoned) cache slug.
+  if (norm === 'xlm' || norm === 'native') {
+    return fetchCoinDirect('native');
+  }
+  // Cache-first, CASE-INSENSITIVE: the /v1/assets listing keys slugs in
+  // their canonical casing (USDC, AQUA, BTC), but user-typed and
+  // lowercase catalogue URLs (usdc, aqua) must hit the SAME rich row —
+  // otherwise they miss the cache and fall through to the thin
+  // GlobalAssetView (no asset_id / null price → half-empty page).
+  const cache = await getBuildCoinsCache();
+  if (cache) {
+    const hit =
+      cache.get(slug) ?? cache.get(slug.toUpperCase()) ?? cache.get(norm);
+    if (hit) return hit;
+  }
+  // Cache miss: a slug the listing didn't return — e.g. a canonical
+  // asset_id (USDC-GA5Z…) or a long-tail asset. Fetch it directly.
+  return fetchCoinDirect(slug);
 }
 
 async function fetchAssetDetail(assetId: string): Promise<AssetDetail | null> {

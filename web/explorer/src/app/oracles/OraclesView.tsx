@@ -103,7 +103,6 @@ export function OraclesView() {
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                 <Th>Oracle</Th>
-                <Th align="right">24h updates</Th>
                 <Th align="right">Active streams</Th>
                 <Th align="right">Last update</Th>
                 <Th align="right">In VWAP?</Th>
@@ -112,14 +111,14 @@ export function OraclesView() {
             <tbody className="divide-y divide-line-subtle">
               {sources.isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
                     Loading oracles…
                   </td>
                 </tr>
               )}
               {!sources.isLoading && oracles.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
                     No oracles registered.
                   </td>
                 </tr>
@@ -136,11 +135,6 @@ export function OraclesView() {
                       >
                         {o.name}
                       </Link>
-                    </Td>
-                    <Td align="right">
-                      <span className="font-mono tabular-nums text-ink-body">
-                        {o.trade_count_24h && o.trade_count_24h > 0 ? o.trade_count_24h.toLocaleString() : '0'}
-                      </span>
                     </Td>
                     <Td align="right">
                       <span className="font-mono tabular-nums text-ink-body">

@@ -37,13 +37,18 @@ export async function generateStaticParams() {
       .map((d) => d.slug || d.asset_id || '')
       .filter(Boolean);
     if (slugs.length === 0) return fallback;
-    // Always include XLM + native explicitly.
+    // Always include XLM + native explicitly, and emit BOTH cases for
+    // every slug — embeds are hand-typed into 3rd-party iframe src=
+    // attributes where lowercase is the natural instinct, and the audit
+    // (2026-06-19) found /embed/asset/xlm etc. 404'd.
     const seen = new Set<string>();
     const out: { slug: string }[] = [];
     for (const slug of ['XLM', 'native', ...slugs]) {
-      if (!seen.has(slug)) {
-        seen.add(slug);
-        out.push({ slug });
+      for (const variant of [slug, slug.toLowerCase(), slug.toUpperCase()]) {
+        if (variant && !seen.has(variant)) {
+          seen.add(variant);
+          out.push({ slug: variant });
+        }
       }
     }
     return out;
@@ -72,9 +77,16 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
   // for the read columns this embed renders (price_usd /
   // change_*_pct / volume_24h_usd / price_history_24h / code).
   if (isCIStub) return null;
+  // XLM / native: /v1/assets/XLM returns the THIN GlobalAssetView
+  // (price only — no change chips, sparkline, or 24h volume) and can
+  // collide with the wrapped-XLM classic asset; native returns the full
+  // AssetDetail. Resolve XLM→native so the flagship widget isn't
+  // degraded (audit 2026-06-19).
+  const norm = slug.toLowerCase();
+  const id = norm === 'xlm' || norm === 'native' ? 'native' : slug;
   try {
     const res = await fetch(
-      `${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`,
+      `${API_BASE_URL}/v1/assets/${encodeURIComponent(id)}`,
       { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
     );
     if (!res.ok) return null;

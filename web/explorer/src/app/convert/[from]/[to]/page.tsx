@@ -159,7 +159,14 @@ async function fetchDetail(from: string, to: string): Promise<CurrencyDetail | n
     const toRateRow = (priceEnv.data ?? []).find(
       (r) => r.asset_id === `fiat:${to.toUpperCase()}`,
     );
-    const fromToRate = toRateRow?.price ? Number(toRateRow.price) : 0;
+    // price/batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the
+    // value of 1 {to} in {from} units (e.g. 1 EUR = 1.15 USD). The
+    // converter displays "1 {from} = ? {to}", which is the INVERSE.
+    // Pre-fix (audit 2026-06-19) this was shown un-inverted, so
+    // /convert/USD/EUR read "1 USD = 1.15 EUR" — actually the EUR→USD
+    // rate mislabeled. Invert here.
+    const toInFromUnits = toRateRow?.price ? Number(toRateRow.price) : 0;
+    const fromToRate = toInFromUnits > 0 ? 1 / toInFromUnits : 0;
     return {
       ticker: v.ticker,
       name: v.name,
