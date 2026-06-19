@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowLeft, ArrowLeftRight } from 'lucide-react';
+import { ArrowLeftRight } from 'lucide-react';
 
+import { Breadcrumbs } from '@/components/ui';
 import { SITE_OG_IMAGES, serializeJsonLd } from '@/lib/seo';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import { ConvertPair } from './ConvertPair';
+import { ConvertChart } from './ConvertChart';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
@@ -228,13 +230,14 @@ export default async function ConvertPage({ params }: { params: Params }) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
       />
-      <Link
-        href={assetHrefFor(f)}
-        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        {f} overview
-      </Link>
+      <Breadcrumbs
+        items={[
+          { label: 'Home', href: '/' },
+          { label: 'Assets', href: '/assets' },
+          { label: f, href: assetHrefFor(f) },
+          { label: `${f} → ${t}` },
+        ]}
+      />
 
       <header className="space-y-3 border-b border-line pb-5">
         <h1 className="text-3xl font-semibold tracking-tight">
@@ -267,8 +270,10 @@ export default async function ConvertPage({ params }: { params: Params }) {
 
       <ConvertPair from={f} to={t} initialRate={rate} initialInverse={inverse} />
 
+      <ConvertChart from={f} to={t} />
+
       {rate != null && (
-        <section className="rounded-xl border border-line bg-surface p-5">
+        <section className="rounded-card border border-line bg-surface p-5">
           <h2 className="mb-4 text-lg font-semibold tracking-tight">
             {f} to {t} at common amounts
           </h2>
