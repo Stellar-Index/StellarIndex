@@ -24,8 +24,12 @@ against.
   ~62M, so dormant-pre-62M accounts / trustlines / contract code+instances are
   missing (the contract-WASM user-contract tail, incomplete account state +
   issuer flags, possible trustline-supply undercount). A checkpoint snapshot is
-  the source of truth for that tail, read in one pass (no genesis replay). This
-  command quantifies the gap before any backfill is scheduled; it never writes.
+  the source of truth for that tail, read in one pass (no genesis replay). Its
+  `-write` mode backfills the contract_code + contract_instance entries (the
+  bounded G1 scope) into `ledger_entry_changes` via a direct insert that writes
+  NO commit-marker ledgers row (so it never advances the completeness
+  watermark) — closing the contract-WASM gap for user contracts whose code was
+  deployed before the entry-capture window. Default mode is read-only tally.
 - Staff **customer look-up** (`/account/admin`, audit 2026-06-19 item 16):
   the cockpit's first tool is now live instead of a placeholder. New
   staff-gated `GET /v1/account/admin/lookup?email=|slug=` resolves an

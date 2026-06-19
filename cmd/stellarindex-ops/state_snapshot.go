@@ -15,6 +15,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 )
 
 const (
@@ -31,6 +32,14 @@ type snapTally struct {
 	sacInstances  uint64
 	elapsed       time.Duration
 	partial       bool
+
+	// collect=true accumulates the contract_code + contract_instance entries
+	// (the bounded G1 backfill scope) into contractRows for InsertEntryChanges.
+	// closeTime stamps every collected row (metadata only — readers key on
+	// ledger_seq, set to the entry's LastModifiedLedgerSeq).
+	collect      bool
+	closeTime    time.Time
+	contractRows []clickhouse.LedgerEntryChangeRow
 }
 
 // stateSnapshot reads a history-archive checkpoint's full current ledger-entry
@@ -51,6 +60,8 @@ func stateSnapshot(args []string) error {
 	archiveURL := fs.String("archive", "", "history archive URL (default: cfg.Stellar.HistoryArchiveURL)")
 	checkpoint := fs.Uint("checkpoint", 0, "checkpoint ledger (default: latest checkpoint)")
 	limit := fs.Uint64("limit", 2_000_000, "max entries to read (0 = full snapshot)")
+	write := fs.Bool("write", false, "BACKFILL: write contract_code + instance entries into ClickHouse ledger_entry_changes (DATA-TRUTH-PLAN G1)")
+	chAddr := fs.String("ch", "127.0.0.1:9000", "ClickHouse native address for -write")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -69,13 +80,24 @@ func stateSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "state-snapshot: reading checkpoint %d from %s (limit=%d)\n", seq, url, *limit)
+	fmt.Fprintf(os.Stderr, "state-snapshot: reading checkpoint %d from %s (limit=%d, write=%v)\n", seq, url, *limit, *write)
 
-	t, err := tallyCheckpoint(ctx, arch, seq, *limit)
+	t, err := tallyCheckpoint(ctx, arch, seq, *limit, *write)
 	if err != nil {
 		return err
 	}
 	printTally(seq, t)
+
+	if *write {
+		fmt.Fprintf(os.Stderr, "state-snapshot: writing %d contract entries → %s ledger_entry_changes ...\n",
+			len(t.contractRows), *chAddr)
+		n, werr := clickhouse.InsertEntryChanges(ctx, *chAddr, t.contractRows)
+		if werr != nil {
+			return fmt.Errorf("write contract entries (wrote %d): %w", n, werr)
+		}
+		fmt.Printf("\n✅ wrote %d contract_code + instance entries into ledger_entry_changes.\n", n)
+		fmt.Printf("   The WASM reader + ledger_entries_current MV pick these up (G1).\n")
+	}
 	return nil
 }
 
@@ -115,14 +137,14 @@ func resolveCheckpoint(arch *historyarchive.Archive, want uint32) (uint32, error
 
 // tallyCheckpoint streams the checkpoint's bucket list and rolls it up by entry
 // type (read-only). limit>0 stops early for a bounded proof.
-func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint32, limit uint64) (*snapTally, error) {
+func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint32, limit uint64, collect bool) (*snapTally, error) {
 	reader, err := ingest.NewCheckpointChangeReader(ctx, arch, seq)
 	if err != nil {
 		return nil, fmt.Errorf("checkpoint change reader @ %d: %w", seq, err)
 	}
 	defer func() { _ = reader.Close() }()
 
-	t := &snapTally{byType: map[xdr.LedgerEntryType]uint64{}}
+	t := &snapTally{byType: map[xdr.LedgerEntryType]uint64{}, collect: collect, closeTime: time.Now().UTC()}
 	start := time.Now()
 	for {
 		ch, rerr := reader.Read()
@@ -158,6 +180,7 @@ func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 	switch typ {
 	case xdr.LedgerEntryTypeContractCode:
 		t.contractCode++
+		t.collectContract(typ, post)
 	case xdr.LedgerEntryTypeContractData:
 		cd, ok := post.Data.GetContractData()
 		if !ok || cd.Key.Type != xdr.ScValTypeScvLedgerKeyContractInstance {
@@ -173,7 +196,44 @@ func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 		case xdr.ContractExecutableTypeContractExecutableWasm:
 			t.wasmInstances++
 		}
+		t.collectContract(typ, post)
 	}
+}
+
+// collectContract buffers a ledger_entry_changes row for a contract_code or
+// contract_instance entry when -write is set (the bounded G1 backfill scope).
+// Keyed on the entry's real LedgerKey + LastModifiedLedgerSeq so the WASM
+// reader's key_xdr lookup matches and newest-wins ordering stays correct. A
+// marshal error skips the one entry rather than aborting the backfill.
+func (t *snapTally) collectContract(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
+	if !t.collect {
+		return
+	}
+	key, err := post.LedgerKey()
+	if err != nil {
+		return
+	}
+	keyB64, err := xdr.MarshalBase64(key)
+	if err != nil {
+		return
+	}
+	entryB64, err := xdr.MarshalBase64(post)
+	if err != nil {
+		return
+	}
+	et := "contract_data"
+	if typ == xdr.LedgerEntryTypeContractCode {
+		et = "contract_code"
+	}
+	t.contractRows = append(t.contractRows, clickhouse.LedgerEntryChangeRow{
+		LedgerSeq:  uint32(post.LastModifiedLedgerSeq),
+		CloseTime:  t.closeTime,
+		OpIndex:    -1,
+		ChangeType: "state",
+		EntryType:  et,
+		KeyXDR:     keyB64,
+		EntryXDR:   entryB64,
+	})
 }
 
 func printTally(seq uint32, t *snapTally) {
