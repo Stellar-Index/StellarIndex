@@ -76,7 +76,7 @@ async function fetchFxSeries(ticker: string): Promise<{ date: string; inverse_us
   if (isCIStub) return [];
   try {
     const res = await fetch(
-      `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(ticker)}&quote=fiat:USD&timeframe=7d&granularity=1d`,
+      `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(ticker)}&quote=fiat:USD&timeframe=1w&granularity=1d`,
       { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
     );
     if (!res.ok) return [];
