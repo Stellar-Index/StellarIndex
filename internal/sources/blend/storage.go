@@ -1,6 +1,7 @@
 package blend
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -63,6 +64,49 @@ type PoolConfig struct {
 	BstopRate     uint32 // backstop take rate, 7 decimals
 	Status        uint32
 	MaxPositions  uint32
+}
+
+// reserveConfigMetadata is the JSON shape of a queue_set_reserve
+// event's ReserveConfig, as persisted to blend_admin.attributes
+// ('metadata' key) by the event decoder. The rate-model params (util /
+// r_* / reactivity / decimals) come from here — the live ResConfig
+// storage entry is often uncaptured (set at reserve init, never
+// re-written), but the queue_set_reserve EVENT carries the same config.
+type reserveConfigMetadata struct {
+	Index      uint32 `json:"index"`
+	Decimals   uint32 `json:"decimals"`
+	CFactor    uint32 `json:"c_factor"`
+	LFactor    uint32 `json:"l_factor"`
+	Util       uint32 `json:"util"`
+	MaxUtil    uint32 `json:"max_util"`
+	RBase      uint32 `json:"r_base"`
+	ROne       uint32 `json:"r_one"`
+	RTwo       uint32 `json:"r_two"`
+	RThree     uint32 `json:"r_three"`
+	Reactivity uint32 `json:"reactivity"`
+	SupplyCap  string `json:"supply_cap"`
+	Enabled    bool   `json:"enabled"`
+}
+
+// ParseReserveConfigMetadata builds a ReserveConfig from a
+// queue_set_reserve event's metadata JSON (blend_admin.attributes ->
+// 'metadata'). This is the event-derived source of the rate-model
+// params for APY, used when the on-chain ResConfig storage entry isn't
+// in the captured window.
+func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
+	var m reserveConfigMetadata
+	if err := json.Unmarshal(b, &m); err != nil {
+		return ReserveConfig{}, fmt.Errorf("blend: reserve config metadata: %w", err)
+	}
+	supplyCap, ok := new(big.Int).SetString(m.SupplyCap, 10)
+	if !ok {
+		supplyCap = big.NewInt(0)
+	}
+	return ReserveConfig{
+		Index: m.Index, Decimals: m.Decimals, CFactor: m.CFactor, LFactor: m.LFactor,
+		Util: m.Util, MaxUtil: m.MaxUtil, RBase: m.RBase, ROne: m.ROne, RTwo: m.RTwo,
+		RThree: m.RThree, Reactivity: m.Reactivity, SupplyCap: supplyCap, Enabled: m.Enabled,
+	}, nil
 }
 
 // DecodeReserveData decodes a ReserveData ScVal (the value of a

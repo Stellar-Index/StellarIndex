@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Blend lending: USD TVL + real APY now populate** (ADR-0039 follow-ups).
+  - **SAC→USD**: `/v1/lending/pools/{pool}/reserves` now prices reserves —
+    it maps each reserve's Stellar-Asset-Contract id back to the classic/native
+    asset it wraps (computed from the verified-currency catalogue via
+    `xdrjson.SACContractID`, validated against the known XLM + USDC SACs) and
+    prices that, so `supplied_usd` / `borrowed_usd` / pool `tvl_usd` fill in.
+  - **APY**: the rate-model config (util / r_* / reactivity / decimals) is read
+    from `blend_admin` `queue_set_reserve` events (`metadata`) — the on-chain
+    `ResConfig` storage entry is uncaptured (set pre-capture, never rewritten),
+    but the event carries the same config, so `borrow_apr` / `supply_apr`
+    compute without a storage backfill.
+
+### Changed
+
+- **`key_xdr` bloom skip-index on `ledger_entry_changes`** (schema + r1
+  MATERIALIZE). Point lookups of a specific contract_data key now prune
+  granules instead of full-scanning ~1.7B rows: the wasm-hash + code-history
+  readers' instance-key lookups dropped **~21s → ~0.7s** on r1. (Blend ResData
+  is rewritten constantly so its key spans many granules — the bloom prunes
+  little there, so the reserve reader keeps its recent-ledger window bound.)
+
 ## [v0.5.0-rc.124] — 2026-06-19
 
 ### Fixed

@@ -10,14 +10,16 @@ import (
 	"time"
 
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // stubLendingReader is the in-memory test seam.
 type stubLendingReader struct {
-	pools  []timescale.BlendPoolSummary
-	assets []string
-	err    error
+	pools   []timescale.BlendPoolSummary
+	assets  []string
+	configs map[string]blend.ReserveConfig
+	err     error
 }
 
 func (r *stubLendingReader) ListBlendPools(_ context.Context) ([]timescale.BlendPoolSummary, error) {
@@ -29,6 +31,10 @@ func (r *stubLendingReader) ListBlendPools(_ context.Context) ([]timescale.Blend
 
 func (r *stubLendingReader) BlendPoolAssets(_ context.Context, _ string) ([]string, error) {
 	return r.assets, r.err
+}
+
+func (r *stubLendingReader) BlendReserveConfigs(_ context.Context, _ string) (map[string]blend.ReserveConfig, error) {
+	return r.configs, r.err
 }
 
 // TestLendingPools_EmptyArrayWhenReaderNil — feature-gated reader.

@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
 
 // LendingReader is the storage-side seam for /v1/lending/pools.
@@ -16,6 +18,7 @@ import (
 type LendingReader interface {
 	ListBlendPools(ctx context.Context) ([]timescale.BlendPoolSummary, error)
 	BlendPoolAssets(ctx context.Context, pool string) ([]string, error)
+	BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error)
 }
 
 // LendingPool is the wire shape for /v1/lending/pools entries.
@@ -168,7 +171,18 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	states, err := s.explorer.BlendPoolReserves(ctx, pool, assets)
+	// Rate-model configs (for APY) come from blend_admin events — the
+	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
+	// a failure here just means APY is omitted, not a failed response.
+	configs, err := s.lending.BlendReserveConfigs(ctx, pool)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
+		configs = nil
+	}
+	states, err := s.explorer.BlendPoolReserves(ctx, pool, assets, configs)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -232,14 +246,63 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 }
 
 // reservePriceUSD resolves a USD price for a Blend reserve's underlying
-// token (a Soroban SAC contract id). Best-effort: returns ok=false when
-// no price is available (TVL is then reported in token units only).
+// token (a Soroban SAC contract id). It maps the SAC contract back to
+// the classic/native asset it wraps (via the verified-currency
+// catalogue's SAC ids) and prices THAT — our price feeds are keyed by
+// the classic asset (USDC-G…), not the SAC C-id. Falls back to pricing
+// the Soroban asset directly for a non-SAC reserve token. Best-effort:
+// ok=false → TVL is reported in token units only.
 func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (string, bool) {
+	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
+		if a, err := canonical.ParseAsset(canonicalID); err == nil {
+			if p, ok := s.lookupUSDPrice(ctx, a); ok {
+				return p, true
+			}
+		}
+	}
 	asset, err := canonical.ParseAsset(assetC)
 	if err != nil {
 		return "", false
 	}
 	return s.lookupUSDPrice(ctx, asset)
+}
+
+// pubnetPassphrase is the Stellar mainnet network passphrase — the
+// verified-currency catalogue is pubnet-only, so SAC contract ids are
+// computed against it.
+const pubnetPassphrase = "Public Global Stellar Network ; September 2015"
+
+// resolveSACAsset maps a SAC contract C-strkey → the canonical
+// classic/native asset id it wraps, using a map built once from the
+// verified-currency catalogue's Stellar assets (+ native XLM). ok=false
+// when the contract isn't a known asset's SAC.
+func (s *Server) resolveSACAsset(contractC string) (string, bool) {
+	s.sacReserveOnce.Do(func() { s.sacReserveAssets = s.buildSACReserveMap() })
+	id, ok := s.sacReserveAssets[contractC]
+	return id, ok
+}
+
+// buildSACReserveMap computes the SAC contract id for native XLM + every
+// verified-currency Stellar asset and indexes them by C-strkey.
+func (s *Server) buildSACReserveMap() map[string]string {
+	m := make(map[string]string)
+	if sac, ok := xdrjson.SACContractID("native", pubnetPassphrase); ok {
+		m[sac] = "native"
+	}
+	if s.verifiedCurrencies == nil {
+		return m
+	}
+	for _, vc := range s.verifiedCurrencies.All() {
+		for _, n := range vc.Networks {
+			if n.AssetID == "" {
+				continue
+			}
+			if sac, ok := xdrjson.SACContractID(n.AssetID, pubnetPassphrase); ok {
+				m[sac] = n.AssetID
+			}
+		}
+	}
+	return m
 }
 
 func round2(f float64) float64 { return float64(int64(f*100+0.5)) / 100 }

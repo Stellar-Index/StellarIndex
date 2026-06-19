@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 )
 
@@ -22,7 +23,7 @@ type ExplorerReader interface {
 	RecentOperations(ctx context.Context, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
 	OperationTypeStats(ctx context.Context, windowLedgers uint32) ([]clickhouse.OpTypeCount, error)
 	NetworkThroughput(ctx context.Context, windowDays int) ([]clickhouse.ThroughputBucket, error)
-	BlendPoolReserves(ctx context.Context, pool string, assets []string) ([]clickhouse.BlendReserveState, error)
+	BlendPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error)
 	TransactionByHash(ctx context.Context, hash string) (clickhouse.TxSummary, bool, error)
 	OperationsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.OpRow, error)
 	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error)

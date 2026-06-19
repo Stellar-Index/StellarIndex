@@ -136,6 +136,12 @@ type Server struct {
 	// without the warning surface — that's the same behaviour as
 	// pre-1.1.
 	verifiedCurrencies *currency.Catalogue
+	// sacReserveAssets maps a Stellar-Asset-Contract (SAC) contract
+	// C-strkey → the canonical classic/native asset it wraps, built
+	// lazily from verifiedCurrencies (ADR-0039 lending TVL: a Blend
+	// reserve's underlying is the asset's SAC, so we price via this).
+	sacReserveAssets map[string]string
+	sacReserveOnce   sync.Once
 	// backfillCoverage is the per-source min/max-ledger snapshot
 	// powering /v1/diagnostics/ingestion's coverage section. Nil
 	// leaves that section absent. See [CoverageCache].

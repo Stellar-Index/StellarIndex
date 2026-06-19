@@ -7,6 +7,7 @@ import (
 	"time"
 
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 )
 
@@ -68,7 +69,7 @@ func (s *stubExplorerReader) NetworkThroughput(_ context.Context, _ int) ([]clic
 	return s.throughput, s.err
 }
 
-func (s *stubExplorerReader) BlendPoolReserves(_ context.Context, _ string, _ []string) ([]clickhouse.BlendReserveState, error) {
+func (s *stubExplorerReader) BlendPoolReserves(_ context.Context, _ string, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
 	return s.reserves, s.err
 }
 

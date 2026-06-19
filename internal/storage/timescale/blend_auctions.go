@@ -344,6 +344,41 @@ func (s *Store) BlendPoolAssets(ctx context.Context, pool string) ([]string, err
 	return out, rows.Err()
 }
 
+// BlendReserveConfigs returns the latest ReserveConfig per reserve
+// asset for a pool, read from its queue_set_reserve admin events (whose
+// 'metadata' carries the full rate-model config). This is the
+// event-derived source of the APY inputs (util / r_* / reactivity /
+// decimals) — the on-chain ResConfig storage entry is often uncaptured
+// (set at reserve init, never re-written), but the event isn't.
+func (s *Store) BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error) {
+	const q = `
+        SELECT DISTINCT ON (asset) asset, attributes->'metadata'
+          FROM blend_admin
+         WHERE contract_id = $1
+           AND event_kind = 'queue_set_reserve'
+           AND asset IS NOT NULL AND asset <> ''
+           AND attributes ? 'metadata'
+         ORDER BY asset, ledger_close_time DESC`
+	rows, err := s.db.QueryContext(ctx, q, pool)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: BlendReserveConfigs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]blend.ReserveConfig)
+	for rows.Next() {
+		var asset, metaJSON string
+		if err := rows.Scan(&asset, &metaJSON); err != nil {
+			return nil, fmt.Errorf("timescale: BlendReserveConfigs scan: %w", err)
+		}
+		cfg, err := blend.ParseReserveConfigMetadata([]byte(metaJSON))
+		if err != nil {
+			continue // skip an unparseable config rather than fail the pool
+		}
+		out[asset] = cfg
+	}
+	return out, rows.Err()
+}
+
 // ListBlendPools returns one row per distinct pool contract observed
 // in EITHER blend_auctions OR blend_positions, with auction counts,
 // last-seen, and a 30-day net-flow proxy for supply/borrow. Sorted

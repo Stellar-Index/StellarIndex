@@ -182,7 +182,13 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     balance      Int64 DEFAULT 0,
     ingested_at  DateTime DEFAULT now(),
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1
+    INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
+    -- Point lookups of a specific contract_data / ledger-entry key
+    -- (ADR-0039 Blend reserve reads, wasm-hash + code-history readers).
+    -- key_xdr is NOT in the sort key, so `WHERE key_xdr = ? / IN (…)`
+    -- would full-scan ~1.7B rows; the bloom prunes granules. MATERIALIZE
+    -- INDEX backfills existing parts (heavy mutation; run off-peak).
+    INDEX idx_lec_key_xdr key_xdr TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
