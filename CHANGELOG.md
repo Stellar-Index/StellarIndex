@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.5.0-rc.126] — 2026-06-19
+
 ### Added
 
 - **`GET /v1/markets/sources` — per-source 24h volume breakdown.** Trailing-24h
