@@ -3,19 +3,17 @@
 import Link from 'next/link';
 
 import { MarketChart } from '@/components/charts/MarketChart';
-import { useCoins } from '@/api/hooks';
+import { useNativeUsdPrice } from '@/api/hooks';
 
 /**
  * HomeHeroChart — a featured XLM/USD OHLC+volume chart on the landing
  * page so the home view leads with live price action, not just tables.
- * XLM (native) is the network's representative asset; the headline price
- * + 24h change come from /v1/assets, the candles from /v1/ohlc.
+ * The headline price + 24h change come from /v1/price?asset=native (the
+ * canonical XLM VWAP) — NOT /v1/assets, which excludes native XLM and
+ * would resolve to USDC at ~$1.00. The candles come from /v1/ohlc.
  */
 export function HomeHeroChart() {
-  const { data } = useCoins(1, undefined, undefined, 'XLM');
-  const xlm = data?.coins?.find((c) => c.code === 'XLM' || c.slug.toLowerCase() === 'xlm') ?? data?.coins?.[0];
-  const price = xlm?.price_usd ? Number(xlm.price_usd) : null;
-  const change = xlm?.change_24h_pct != null ? Number(xlm.change_24h_pct) : null;
+  const { price, change24hPct: change } = useNativeUsdPrice();
 
   return (
     <section className="rounded-card border border-line bg-surface p-5 shadow-card">

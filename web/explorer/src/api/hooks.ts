@@ -331,6 +331,53 @@ export function useSources(
   });
 }
 
+/**
+ * useNativeUsdPrice — the canonical XLM/USD price from
+ * /v1/price?asset=native (VWAP), plus a 24h % change derived from the
+ * /v1/chart 24h series. CRITICAL: native XLM has NO row in
+ * classic_assets, so it never appears in /v1/assets (useCoins) — code
+ * that pulled "the first coin" or searched `q=XLM` resolved to USDC
+ * (top by observation) and showed ~$1.00 mislabelled as XLM. Always
+ * source XLM's price from /v1/price?asset=native, never the coins list.
+ */
+export function useNativeUsdPrice() {
+  const price = useQuery<number | null>({
+    queryKey: ['/v1/price', 'native', 'fiat:USD'],
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const env = await apiGet<{ data: { price?: string | null } }>('/v1/price', {
+        asset: 'native',
+        quote: 'fiat:USD',
+      });
+      const p = env.data?.price ? Number(env.data.price) : null;
+      return p != null && Number.isFinite(p) && p > 0 ? p : null;
+    },
+  });
+  const change = useQuery<number | null>({
+    queryKey: ['/v1/chart', 'native', 'fiat:USD', '24h-change'],
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const env = await apiGet<{ data: { points?: { p?: string | null }[] } }>(
+        '/v1/chart',
+        { asset: 'native', quote: 'fiat:USD', timeframe: '24h', granularity: '1h' },
+      );
+      const pts = (env.data?.points ?? [])
+        .map((x) => (x.p != null ? Number(x.p) : NaN))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (pts.length < 2 || pts[0] <= 0) return null;
+      return ((pts[pts.length - 1] - pts[0]) / pts[0]) * 100;
+    },
+  });
+  return {
+    price: price.data ?? null,
+    change24hPct: change.data ?? null,
+    isLoading: price.isLoading,
+    isError: price.isError,
+  };
+}
+
 export type Coin = {
   slug: string;
   asset_id: string;
