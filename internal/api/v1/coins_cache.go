@@ -70,6 +70,20 @@ func NewCachedCoinsReader(upstream CoinsReader, ttl time.Duration) *CachedCoinsR
 	}
 }
 
+// LatestCirculatingSupply passes through to the upstream's supply
+// reader (used by the /v1/assets market_cap enrichment). Not part of
+// CoinsReader — exposed so the handler's type-assert resolves through
+// this wrapper instead of skipping enrichment. Uncached: the underlying
+// supply_1d lookup is a handful of rows.
+func (c *CachedCoinsReader) LatestCirculatingSupply(ctx context.Context) (map[string]string, error) {
+	if sr, ok := c.upstream.(interface {
+		LatestCirculatingSupply(context.Context) (map[string]string, error)
+	}); ok {
+		return sr.LatestCirculatingSupply(ctx)
+	}
+	return nil, nil
+}
+
 // ListCoinsExt — cached on a key derived from the options struct.
 func (c *CachedCoinsReader) ListCoinsExt(ctx context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
 	if c.ttl <= 0 {
