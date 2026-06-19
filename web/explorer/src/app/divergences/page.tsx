@@ -9,26 +9,38 @@ export const metadata: Metadata = {
   alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
   description:
-    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko, Chainlink HTTP, Reflector, Redstone, Band). Persistent gaps flip flags.divergence_warning.',
+    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko active; Chainlink HTTP configured; Reflector/Redstone/Band planned). Persistent gaps flip flags.divergence_warning.',
 };
 
 type FeedRef = { pair: string; address: string };
+// status reflects what the divergence WORKER actually cross-checks
+// today (audit 2026-06-19) — not just feeds we ingest elsewhere:
+//   active     — producing divergence_observations rows now
+//   configured — implemented + operator-configured, may be between
+//                refreshes / awaiting upstream data
+//   planned    — described, but not yet wired as a divergence check
+//                (Reflector/Redstone/Band are ingested as ORACLE feeds
+//                — see /oracles — not yet compared here)
+type RefStatus = 'active' | 'configured' | 'planned';
 type Reference = {
   name: string;
   type: string;
   blurb: string;
+  status: RefStatus;
   feeds?: FeedRef[];
 };
 const REFERENCES: Reference[] = [
   {
     name: 'CoinGecko',
     type: 'HTTP price index',
+    status: 'active',
     blurb:
       "Aggregator-of-aggregators. Useful as a sanity reference because it's not on-chain and pulls from a different upstream set.",
   },
   {
     name: 'Chainlink HTTP',
     type: 'HTTP feed (off-chain Chainlink)',
+    status: 'configured',
     blurb:
       'Independent price index via mainnet AggregatorV3 contracts on Ethereum. Queried over public RPC (eth.llamarpc.com). Drives the divergence worker\'s "are we wildly off" alerting threshold.',
     feeds: [
@@ -42,22 +54,38 @@ const REFERENCES: Reference[] = [
   {
     name: 'Reflector (DEX/CEX/FX)',
     type: 'On-chain SEP-40 oracle',
+    status: 'planned',
     blurb:
       'Stellar-native oracle trio. Reflector divergence often signals an oracle update lag rather than a real price move — important to distinguish for downstream consumers like Blend.',
   },
   {
     name: 'Redstone',
     type: 'On-chain adapter contract',
+    status: 'planned',
     blurb:
       'Pull-style oracle on Stellar. Divergence here is rare but high-signal — Redstone batches many feeds in one transaction so divergence on one feed often precedes a wider reading update.',
   },
   {
     name: 'Band',
     type: 'On-chain Soroban contract (no events)',
+    status: 'planned',
     blurb:
       'Operation-args ingest (Band emits zero events). Divergence checks read the same relayed value the on-chain consumer would see.',
   },
 ];
+
+function RefStatusBadge({ status }: { status: RefStatus }) {
+  const cfg = {
+    active: { label: 'Active', cls: 'bg-up-subtle text-up-strong' },
+    configured: { label: 'Configured', cls: 'bg-warn-50 text-warn-700' },
+    planned: { label: 'Planned', cls: 'bg-surface-subtle text-ink-muted' },
+  }[status];
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${cfg.cls}`}>
+      {cfg.label}
+    </span>
+  );
+}
 
 export default function DivergencesPage() {
   return (
@@ -113,7 +141,10 @@ export default function DivergencesPage() {
             key={r.name}
             className="rounded-xl border border-line bg-surface p-5 shadow-sm"
           >
-            <h2 className="text-lg font-semibold tracking-tight">{r.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold tracking-tight">{r.name}</h2>
+              <RefStatusBadge status={r.status} />
+            </div>
             <p className="mt-1 text-xs uppercase tracking-wider text-ink-muted">
               {r.type}
             </p>

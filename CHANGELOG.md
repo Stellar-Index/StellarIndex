@@ -66,6 +66,10 @@ against.
     and per-source panels now key on the venue.
   - `/oracles` dropped the always-zero "24h updates" column (oracles
     don't trade).
+  - `/divergences` now marks each reference Active / Configured / Planned
+    — only CoinGecko + Chainlink-HTTP are actual cross-checks; Reflector/
+    Redstone/Band are ingested as oracle feeds, not yet compared here, so
+    the page no longer implies all five are live.
 - `/v1/price` latency regression (caused a latency-burn incident
   2026-06-19): the rc.131 cross-direction VWAP combine scanned a pair's
   ENTIRE `prices_1m` history (back to 2015) before `LIMIT 1` — ~1s warm,
