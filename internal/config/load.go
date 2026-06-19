@@ -93,6 +93,16 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
 		c.External.Chainlink.RPCUrl = v
+		// The divergence Chainlink reference is a SECOND consumer of the
+		// same Ethereum JSON-RPC endpoint (internal/divergence/chainlink.go).
+		// It historically carried its own env-less rpc_url, which silently
+		// fell back to a public RPC that now answers eth_call with a
+		// Cloudflare JS-challenge HTML page instead of JSON — so every
+		// LookupPrice failed its JSON decode and the divergence service
+		// recorded 0 chainlink rows, ever (audit 2026-06-19). Point both
+		// consumers at the one operator-provided endpoint so a single
+		// CHAINLINK_RPC_URL keeps the cross-check working.
+		c.Divergence.Chainlink.RPCURL = v
 	}
 	if v := os.Getenv("STELLARINDEX_STRIPE_WEBHOOK_SECRET"); v != "" {
 		c.API.Stripe.SigningSecret = v

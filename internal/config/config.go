@@ -121,7 +121,7 @@ type DivergenceCoinGeckoConfig struct {
 // cross-checked.
 type DivergenceChainlinkConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether the Chainlink reference is wired into the divergence service." default:"false"`
-	RPCURL  string `toml:"rpc_url" doc:"Ethereum JSON-RPC endpoint. Empty defaults to https://cloudflare-eth.com." default:""`
+	RPCURL  string `toml:"rpc_url" doc:"Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com." env:"CHAINLINK_RPC_URL" default:""`
 	// FeedMap maps canonical pair string → mainnet feed address.
 	// Pair string format: "<base>/<quote>" e.g. "fiat:EUR/fiat:USD".
 	// Decimals defaults to 8 (Chainlink's standard).

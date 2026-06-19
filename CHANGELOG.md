@@ -66,6 +66,22 @@ against.
   from the XLM leg × current XLM/USD VWAP (the same fallback the markets
   queries use), matching how the rest of the API values on-chain volume.
   Applies to newly-detected cycles.
+- Chainlink divergence cross-check now actually runs — it had produced
+  **zero** `divergence_observations` rows ever (audit 2026-06-19). The
+  divergence Chainlink reference carried its own env-less `rpc_url` that
+  fell back to a public RPC (`eth.llamarpc.com`) which now answers
+  `eth_call` with a Cloudflare JS-challenge HTML page, so every
+  `LookupPrice` failed its JSON decode silently. `CHAINLINK_RPC_URL` now
+  also overrides the divergence reference's endpoint (it already drove the
+  ingest poller), so one operator-provided RPC serves both. BTC/USD +
+  ETH/USD now cross-check against Chainlink mainnet feeds (~0.1% delta,
+  verified live on r1).
+- `/v1/issuers/{g}` now populates `auth_required` / `auth_revocable` /
+  `auth_immutable` / `auth_clawback` from the on-chain AccountEntry flags
+  bitmask we already index (via the explorer's `AccountState`), instead of
+  leaving them null when the dedicated SEP-1 flag resolver hasn't run. The
+  explorer's Auth-flags panel shows real values instead of "Not yet
+  resolved" for any issuer whose account we've observed.
 - Explorer per-page audit fixes (2026-06-19, frontend):
   - **`/assets/XLM` showed wrapped-XLM data** (~330× wrong price) — a
     scam "XLM" classic asset shared the `XLM` listing slug. `fetchCoin`
