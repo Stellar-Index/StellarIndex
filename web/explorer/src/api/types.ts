@@ -2534,6 +2534,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/markets/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-source 24h volume breakdown for a pair or asset.
+         * @description Trailing-24h USD volume + trade count grouped by source, for
+         *     either a single market pair (`base` + `quote`) or an asset
+         *     across every pair it appears in (`asset`). Backs the
+         *     volume-by-source breakdown (pie) on the market-pair + asset
+         *     pages — the `/v1/history` feed only samples recent trades, so
+         *     an accurate 24h share needs this server-side aggregate.
+         *
+         *     Volume derivation matches `/v1/sources?include=stats` (the
+         *     XLM/USD fallback for native / XLM-SAC legs); a source whose
+         *     trades carry no derivable USD volume still appears with its
+         *     trade count and a null `volume_24h_usd`. `share_pct` is the
+         *     source's share of the total derivable USD volume across all
+         *     sources (0 when the total is unknown).
+         *
+         *     Pass EITHER `base`+`quote` OR `asset` — combining them is a
+         *     400.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Canonical base asset_id (with `quote`, for a single pair). */
+                    base?: string;
+                    /** @description Canonical quote asset_id (with `base`, for a single pair). */
+                    quote?: string;
+                    /**
+                     * @description Canonical asset_id; aggregates every pair the asset appears
+                     *     in (base or quote side). Mutually exclusive with `base`/`quote`.
+                     */
+                    asset?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-source breakdown (standard envelope). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data?: {
+                                base?: string;
+                                quote?: string;
+                                asset?: string;
+                                /** @description Aggregation window in seconds (86400 = trailing 24h). */
+                                window_secs: number;
+                                sources: {
+                                    /** @description Source name (see /v1/sources). */
+                                    source: string;
+                                    /** @description SUM derivable USD volume over 24h. Decimal string per ADR-0003. */
+                                    volume_24h_usd?: string | null;
+                                    trade_count_24h: number;
+                                    /** @description Share of total derivable USD volume across sources (%). */
+                                    share_pct: number;
+                                }[];
+                            };
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/issuers": {
         parameters: {
             query?: never;

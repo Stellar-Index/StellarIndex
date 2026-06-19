@@ -96,6 +96,7 @@ type Server struct {
 	protocolBespoke         ProtocolBespokeReader
 	soroswapPairs           SoroswapPairsReader
 	networkStats            NetworkStatsReader
+	marketSources           MarketSourceReader
 	sourcesStats            SourcesStatsReader
 	lending                 LendingReader
 	mev                     MEVReader
@@ -460,6 +461,11 @@ type Options struct {
 	// timescale.Store directly. Nil makes the endpoint 503.
 	NetworkStats NetworkStatsReader
 
+	// MarketSources backs GET /v1/markets/sources (per-source 24h
+	// volume breakdown for a pair or asset). timescale.Store satisfies
+	// it directly; nil makes the endpoint return an empty list.
+	MarketSources MarketSourceReader
+
 	// SourcesStats, when non-nil, populates the per-source
 	// trade_count_24h field on /v1/sources?include=stats. Without
 	// it, the include flag is silently ignored and the response
@@ -774,6 +780,7 @@ func New(opts Options) *Server {
 		protocolBespoke:         opts.ProtocolBespoke,
 		soroswapPairs:           opts.SoroswapPairs,
 		networkStats:            opts.NetworkStats,
+		marketSources:           opts.MarketSources,
 		sourcesStats:            opts.SourcesStats,
 		lending:                 opts.Lending,
 		mev:                     opts.MEV,
@@ -1160,6 +1167,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 
 	// Distinct trading pairs.
 	s.mux.HandleFunc("GET /v1/markets", s.handleMarkets)
+	s.mux.HandleFunc("GET /v1/markets/sources", s.handleMarketSources)
 
 	// Per-pool listing — every (source, base, quote) tuple in the
 	// recency window. Backs the /dexes table on the explorer.

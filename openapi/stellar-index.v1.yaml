@@ -1518,6 +1518,88 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /markets/sources:
+    get:
+      tags: [markets]
+      summary: Per-source 24h volume breakdown for a pair or asset.
+      description: |
+        Trailing-24h USD volume + trade count grouped by source, for
+        either a single market pair (`base` + `quote`) or an asset
+        across every pair it appears in (`asset`). Backs the
+        volume-by-source breakdown (pie) on the market-pair + asset
+        pages — the `/v1/history` feed only samples recent trades, so
+        an accurate 24h share needs this server-side aggregate.
+
+        Volume derivation matches `/v1/sources?include=stats` (the
+        XLM/USD fallback for native / XLM-SAC legs); a source whose
+        trades carry no derivable USD volume still appears with its
+        trade count and a null `volume_24h_usd`. `share_pct` is the
+        source's share of the total derivable USD volume across all
+        sources (0 when the total is unknown).
+
+        Pass EITHER `base`+`quote` OR `asset` — combining them is a
+        400.
+      parameters:
+        - name: base
+          in: query
+          required: false
+          description: Canonical base asset_id (with `quote`, for a single pair).
+          schema: { type: string }
+        - name: quote
+          in: query
+          required: false
+          description: Canonical quote asset_id (with `base`, for a single pair).
+          schema: { type: string }
+        - name: asset
+          in: query
+          required: false
+          description: |
+            Canonical asset_id; aggregates every pair the asset appears
+            in (base or quote side). Mutually exclusive with `base`/`quote`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-source breakdown (standard envelope).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [window_secs, sources]
+                        properties:
+                          base: { type: string }
+                          quote: { type: string }
+                          asset: { type: string }
+                          window_secs:
+                            type: integer
+                            description: Aggregation window in seconds (86400 = trailing 24h).
+                          sources:
+                            type: array
+                            items:
+                              type: object
+                              required: [source, trade_count_24h, share_pct]
+                              properties:
+                                source:
+                                  type: string
+                                  description: Source name (see /v1/sources).
+                                volume_24h_usd:
+                                  type: string
+                                  nullable: true
+                                  description: SUM derivable USD volume over 24h. Decimal string per ADR-0003.
+                                trade_count_24h:
+                                  type: integer
+                                share_pct:
+                                  type: number
+                                  description: Share of total derivable USD volume across sources (%).
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /issuers:
     get:
       tags: [meta]

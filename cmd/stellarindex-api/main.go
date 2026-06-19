@@ -895,6 +895,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ProtocolBespoke:   store,
 		SoroswapPairs:     store,
 		NetworkStats:      cachedNetworkStats,
+		// Per-source 24h volume breakdown (/v1/markets/sources). Reads the
+		// raw store directly — a single-pair GROUP BY source is cheap and
+		// doesn't need the markets cache layer.
+		MarketSources: store,
 		// Wrap with a 60s TTL cache. The underlying SQL aggregations
 		// (24h trades-hypertable scan grouped by source) take 5-10s;
 		// the explorer hits these on every /dexes + /exchanges page

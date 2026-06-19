@@ -168,3 +168,84 @@ func (s *Store) GetSourceVolumeHistory24h(ctx context.Context) ([]SourceVolumeBu
 	}
 	return out, nil
 }
+
+// PairSourceStats returns trailing-24h per-source USD volume + trade
+// count for a single (base, quote) market, ordered by volume desc.
+// Backs the volume-by-source breakdown (pie) on the market-pair page —
+// the recent-trades feed only samples a page of rows, so an accurate
+// 24h share needs this aggregate. Same volume derivation as
+// GetSourceStats (XLM/USD fallback for native / XLM-SAC legs).
+func (s *Store) PairSourceStats(ctx context.Context, base, quote string) ([]SourceStats, error) {
+	return s.sourceStatsWhere(ctx, "base_asset = $1 AND quote_asset = $2", base, quote)
+}
+
+// AssetSourceStats returns trailing-24h per-source USD volume + trade
+// count aggregated over every market the asset appears in (base OR
+// quote side). Backs the volume-by-source breakdown on the asset page.
+func (s *Store) AssetSourceStats(ctx context.Context, asset string) ([]SourceStats, error) {
+	return s.sourceStatsWhere(ctx, "(base_asset = $1 OR quote_asset = $1)", asset)
+}
+
+// sourceStatsWhere is the shared body for the pair/asset per-source
+// breakdowns. `pred` is a trusted constant predicate (never user
+// input — only the $N placeholders bind args), appended to the 24h
+// window filter. MarketsCount24h is meaningful only for the asset
+// variant (distinct pairs per source); it's 1 for a single pair.
+func (s *Store) sourceStatsWhere(ctx context.Context, pred string, args ...any) ([]SourceStats, error) {
+	q := `
+		WITH xlm_usd AS (
+		  SELECT vwap
+		    FROM prices_1m
+		   WHERE base_asset = 'native'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'fiat:USD'
+		     )
+		     AND vwap IS NOT NULL
+		     AND bucket >= NOW() - INTERVAL '24 hours'
+		   ORDER BY bucket DESC
+		   LIMIT 1
+		)
+		SELECT source,
+		       COUNT(*)::bigint AS trades_24h,
+		       SUM(
+		         CASE
+		           WHEN usd_volume IS NOT NULL
+		             THEN usd_volume::numeric
+		           WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
+		           WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
+		           ELSE NULL
+		         END
+		       )::text AS volume_usd_24h,
+		       COUNT(DISTINCT (base_asset, quote_asset))::bigint AS markets_24h
+		  FROM trades
+		 WHERE ts >= now() - INTERVAL '24 hours'
+		   AND ` + pred + `
+		 GROUP BY source
+		 ORDER BY 2 DESC
+	`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: sourceStatsWhere: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []SourceStats
+	for rows.Next() {
+		var ss SourceStats
+		if err := rows.Scan(
+			&ss.Source,
+			&ss.TradeCount24h,
+			&ss.VolumeUSD24h,
+			&ss.MarketsCount24h,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: sourceStatsWhere scan: %w", err)
+		}
+		out = append(out, ss)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: sourceStatsWhere rows: %w", err)
+	}
+	return out, nil
+}
