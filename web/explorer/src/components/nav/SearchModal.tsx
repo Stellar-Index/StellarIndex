@@ -155,7 +155,7 @@ const STATIC_PAGES: Result[] = [
     type: 'page',
     label: 'Status',
     hint: 'live system status',
-    href: 'https://status.stellarindex.io',
+    href: '/status',
   },
   { type: 'page', label: 'API docs', href: 'https://docs.stellarindex.io' },
   { type: 'page', label: 'Sign in', hint: 'magic-link auth', href: '/signin' },

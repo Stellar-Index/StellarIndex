@@ -50,8 +50,8 @@ const CHANNELS: Channel[] = [
     title: 'Incident updates',
     blurb:
       'Status page shows live system state. Subscribe to /v1/incidents.atom (Feedly, Slack RSS bot, etc.) for push-style notifications when an incident posts or resolves.',
-    destination: 'status.stellarindex.io',
-    href: 'https://status.stellarindex.io',
+    destination: 'stellarindex.io/status',
+    href: '/status',
     external: true,
   },
   {

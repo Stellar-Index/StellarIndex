@@ -231,12 +231,12 @@ export function DexesView() {
                       The pools query is timing out (likely a hot
                       trades-hypertable scan). Retry or check{' '}
                       <a
-                        href="https://status.stellarindex.io"
+                        href="/status"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="underline-offset-2 hover:underline"
                       >
-                        status.stellarindex.io
+                        the status page
                       </a>
                       .
                     </div>

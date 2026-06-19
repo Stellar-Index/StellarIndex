@@ -5,6 +5,7 @@ import { loadADRs } from '@/lib/adr';
 import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadBlogPosts } from '@/lib/blog';
 import { loadOperationsDocs } from '@/lib/operations';
+import { loadIncidents } from '@/lib/incidents';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 
 // Required for `output: 'export'` — sitemap is generated at build
@@ -33,10 +34,10 @@ function siteURL(path: string): string {
 /**
  * sitemap.xml — generated at build time. Static pages are
  * enumerated explicitly; dynamic /assets/[slug] entries mirror
- * generateStaticParams: live API only, no seed fallback (the
- * /docs and /status routes have moved to the dedicated
- * docs.stellarindex.io and status.stellarindex.io subdomains
- * and are NOT enumerated here).
+ * generateStaticParams: live API only, no seed fallback. The
+ * status page now lives on this site at /status (+ per-incident
+ * /status/incident/[slug] pages) and IS enumerated below; only the
+ * /docs reference lives on a separate docs.stellarindex.io subdomain.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date().toISOString();
@@ -66,6 +67,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/blog',
     '/company',
     '/careers',
+    '/status',
     // NOTE: auth/app routes (/signin, /signup, /account) are deliberately
     // NOT listed — they're robots:noindex (no SEO value / private), and a
     // noindex URL in the sitemap is a Search Console error
@@ -104,6 +106,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     lastModified: now,
     changeFrequency: 'monthly',
     priority: 0.6,
+  }));
+  // Incident postmortems — one permanent page each under /status.
+  const incidentPages: MetadataRoute.Sitemap = loadIncidents().map((inc) => ({
+    url: siteURL(`/status/incident/${inc.slug}`),
+    lastModified: now,
+    changeFrequency: 'monthly',
+    priority: 0.4,
   }));
 
   const [
@@ -205,6 +214,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   return [
     ...staticPages,
     ...blogPages,
+    ...incidentPages,
     ...adrPages,
     ...archPages,
     ...opsPages,

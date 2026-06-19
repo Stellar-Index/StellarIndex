@@ -100,12 +100,12 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
             {error instanceof Error ? error.message : 'unknown error'}. Retry, or
             check{' '}
             <a
-              href="https://status.stellarindex.io"
+              href="/status"
               target="_blank"
               rel="noopener noreferrer"
               className="underline-offset-2 hover:underline"
             >
-              status.stellarindex.io
+              the status page
             </a>
             .
           </p>

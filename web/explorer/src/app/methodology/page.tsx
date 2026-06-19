@@ -180,10 +180,10 @@ export default function MethodologyPage() {
         <Aside>
           Active freezes are reported in real time on{' '}
           <a
-            href="https://status.stellarindex.io"
+            href="/status"
             className="text-brand-600 hover:underline"
           >
-            status.stellarindex.io
+            the status page
           </a>
           , and historically as Atom syndication via{' '}
           <code className="rounded bg-surface-subtle px-1 py-0.5 text-xs">
@@ -253,10 +253,10 @@ export default function MethodologyPage() {
               <td className="py-2">&lt; 50 ms</td>
               <td className="py-2 text-ink-muted">
                 <a
-                  href="https://status.stellarindex.io"
+                  href="/status"
                   className="text-brand-600 hover:underline"
                 >
-                  status.stellarindex.io
+                  the status page
                 </a>
               </td>
             </tr>
@@ -340,10 +340,10 @@ export default function MethodologyPage() {
           audited per WASM-version before backfill is permitted.
           Every incident gets a public postmortem on{' '}
           <a
-            href="https://status.stellarindex.io"
+            href="/status"
             className="text-brand-600 hover:underline"
           >
-            status.stellarindex.io
+            the status page
           </a>
           .
         </p>

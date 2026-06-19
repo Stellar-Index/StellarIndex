@@ -47,7 +47,7 @@ export function Footer() {
               { label: 'Company', href: '/company' },
               { label: 'Careers', href: '/careers' },
               { label: 'Contact', href: '/contact' },
-              { label: 'API status', href: 'https://status.stellarindex.io', external: true },
+              { label: 'API status', href: '/status' },
             ]}
           />
           <FooterColumn

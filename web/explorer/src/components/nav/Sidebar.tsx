@@ -91,7 +91,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: 'https://docs.stellarindex.io', label: 'API docs', icon: BookOpen, external: true },
       { href: '/sdk', label: 'SDK', icon: Code2 },
-      { href: 'https://status.stellarindex.io', label: 'Status', icon: Activity, external: true },
+      { href: '/status', label: 'Status', icon: Activity },
     ],
   },
 ];

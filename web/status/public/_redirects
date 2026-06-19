@@ -1,0 +1,5 @@
+# The status page moved onto the main site at stellarindex.io/status
+# (one site → unified nav). This CF Pages project (stellarindex-status,
+# still bound to status.stellarindex.io) now does nothing but 301 every
+# path to the new location, preserving incident deep-links via :splat.
+/*  https://stellarindex.io/status/:splat  301
