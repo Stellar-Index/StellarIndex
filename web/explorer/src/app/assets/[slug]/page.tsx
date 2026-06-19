@@ -524,20 +524,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     fetchGlobalAsset(slug),
   ]);
 
-  // For verified-catalogue slugs, /assets/[slug] is the
-  // verified-currency identity page. This branch fires regardless
-  // of whether /v1/coins also returned a row for the slug (USDC
-  // has rows; XLM has native); the catalogue dispatch is
-  // authoritative for the parent page.
-  if (globalViewEarly) {
-    return <VerifiedCurrencyView slug={slug} view={globalViewEarly} />;
-  }
-
   if (!coin) {
-    // No catalogue entry AND no /v1/coins row. Two reasons:
-    //   (a) slug really doesn't exist
-    //   (b) build host couldn't reach the API — fall back to the
-    //       client component to retry from the user's browser.
+    // No Stellar asset row for this slug. If it's a verified-currency
+    // catalogue entry that doesn't trade on Stellar (us-dollar, wbtc,
+    // …), render the cross-chain identity view. Otherwise either the
+    // slug doesn't exist OR the build host couldn't reach the API —
+    // fall back to the client component to retry from the browser.
+    if (globalViewEarly) {
+      return <VerifiedCurrencyView slug={slug} view={globalViewEarly} />;
+    }
     return (
       <Container className="space-y-8 py-8 sm:py-10">
         <header className="space-y-3">
