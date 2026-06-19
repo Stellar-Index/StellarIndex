@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { formatCompact } from '@/lib/format';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { Breadcrumbs } from '@/components/ui';
 import { PairChart } from './PairChart';
 
 const API_BASE_URL =
@@ -345,12 +346,13 @@ export default async function PairPage({ params }: { params: Params }) {
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
       />
       <header className="space-y-3">
-        <Link
-          href="/markets"
-          className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
-        >
-          ← All markets
-        </Link>
+        <Breadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: 'Markets', href: '/markets' },
+            { label: `${baseLabel} / ${quoteLabel}` },
+          ]}
+        />
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">
             <AssetBadge canonical={base} /> /{' '}
@@ -635,19 +637,26 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+// AssetBadge renders an asset's short ticker as a link to its asset
+// page, so a pair's two legs are click-throughs (e.g. XLM / USDC each
+// open /assets/{id}).
 function AssetBadge({ canonical }: { canonical: string }) {
-  if (canonical === 'native') {
-    return <span>XLM</span>;
+  let label = canonical;
+  if (canonical === 'native') label = 'XLM';
+  else if (canonical.startsWith('fiat:')) label = canonical.replace('fiat:', '');
+  else if (canonical.startsWith('crypto:')) label = canonical.replace('crypto:', '');
+  else {
+    const dashIx = canonical.indexOf('-');
+    if (dashIx !== -1) label = canonical.slice(0, dashIx);
   }
-  if (canonical.startsWith('fiat:')) {
-    return <span>{canonical.replace('fiat:', '')}</span>;
-  }
-  if (canonical.startsWith('crypto:')) {
-    return <span>{canonical.replace('crypto:', '')}</span>;
-  }
-  const dashIx = canonical.indexOf('-');
-  if (dashIx === -1) return <span>{canonical}</span>;
-  return <span>{canonical.slice(0, dashIx)}</span>;
+  return (
+    <Link
+      href={`/assets/${encodeURIComponent(canonical)}`}
+      className="transition-colors hover:text-brand-600"
+    >
+      {label}
+    </Link>
+  );
 }
 
 function shortAsset(canonical: string): string {

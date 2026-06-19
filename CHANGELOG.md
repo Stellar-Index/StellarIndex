@@ -17,6 +17,11 @@ against.
 
 ### Changed
 
+- **Explorer navigation cohesion.** A market pair's two asset badges (e.g. XLM /
+  USDC) are now click-throughs to each asset's page; the tx, contract, and
+  market-pair detail pages use the shared `Breadcrumbs` (consistent Home / …
+  trail, fixing the tx page's wrong "Ledgers" parent) instead of ad-hoc nav.
+
 - **Market/asset/exchange charts now show real OHLC candles + volume bars.**
   The candle charts on `/markets/[pair]`, `/assets/[slug]`, and
   `/exchanges/[name]` were rendering FLAT fake candles (open=high=low=close=VWAP)
