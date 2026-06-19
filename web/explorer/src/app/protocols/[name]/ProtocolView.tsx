@@ -141,6 +141,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
           {data.description}
         </p>
         <AtAGlance data={data} analyticsAvailable={analyticsAvailable} windowDays={windowDays} />
+        <ProtocolCrossLinks name={name} category={data.category} />
       </header>
 
       {/* ── KPI row ── */}
@@ -222,6 +223,36 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       {/* ── Footer ── */}
       <Footer data={data} name={name} />
     </Shell>
+  );
+}
+
+// ─── Cross-links ───────────────────────────────────────────────────────────
+// Sources with a dedicated DEX detail page (/dexes/[source]).
+const DEX_PAGES = new Set(['soroswap', 'phoenix', 'aquarius', 'sdex', 'comet']);
+
+function ProtocolCrossLinks({ name, category }: { name: string; category: string }) {
+  const isDex = category === 'dex' || category === 'amm';
+  return (
+    <div className="flex flex-wrap gap-3 pt-1 text-xs">
+      <Link href={`/sources/${encodeURIComponent(name)}`} className="text-brand-600 hover:underline">
+        Source registry →
+      </Link>
+      {isDex && DEX_PAGES.has(name) && (
+        <Link href={`/dexes/${encodeURIComponent(name)}`} className="text-brand-600 hover:underline">
+          Pools &amp; chart →
+        </Link>
+      )}
+      {category === 'lending' && (
+        <Link href="/lending" className="text-brand-600 hover:underline">
+          Lending pools →
+        </Link>
+      )}
+      {category === 'oracle' && (
+        <Link href="/oracles" className="text-brand-600 hover:underline">
+          Oracle feeds →
+        </Link>
+      )}
+    </div>
   );
 }
 

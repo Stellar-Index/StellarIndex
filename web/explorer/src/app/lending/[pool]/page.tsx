@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
@@ -221,6 +222,15 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           </p>
         )}
         <div className="flex flex-wrap gap-3 pt-1 text-xs">
+          <Link href="/protocols/blend" className="text-brand-600 hover:underline">
+            Blend protocol →
+          </Link>
+          <Link
+            href={`/contract?id=${encodeURIComponent(pool)}`}
+            className="text-brand-600 hover:underline"
+          >
+            Contract events →
+          </Link>
           <a
             href={`https://stellar.expert/explorer/public/contract/${pool}`}
             target="_blank"

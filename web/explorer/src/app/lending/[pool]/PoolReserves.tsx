@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 
 interface ReserveRow {
@@ -138,7 +139,7 @@ export function PoolReserves({ pool }: { pool: string }) {
               {reserves.map((rv) => (
                 <tr key={rv.asset} className="border-b border-line/60 last:border-0 hover:bg-surface-muted">
                   <td className="py-1.5 pr-4 font-mono text-[11px]" title={rv.asset}>
-                    {rv.asset.slice(0, 4)}…{rv.asset.slice(-4)}
+                    <AssetLink canonical={rv.asset} />
                   </td>
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                     {rv.supplied_usd ? (
