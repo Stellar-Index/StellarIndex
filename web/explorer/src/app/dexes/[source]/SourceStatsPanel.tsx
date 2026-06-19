@@ -41,8 +41,13 @@ export function SourceStatsPanel({
   const { data } = useQuery<SourceStats | null>({
     queryKey: ['/v1/sources', 'stats+sparkline', source],
     queryFn: async () => {
+      // NOTE: 7d (`sparkline7d`) is intentionally NOT requested — the
+      // live 7d derivation is a ~18s raw-trades scan (blows the API's
+      // 8s ceiling), so the 7d toggle stays hidden until a per-source
+      // hourly volume continuous-aggregate backs it. The endpoint +
+      // chart toggle are wired and ready for that follow-up.
       const env = await apiGet<{ data: SourceStats[] }>('/v1/sources', {
-        include: 'stats,sparkline,sparkline7d',
+        include: 'stats,sparkline',
       });
       return env.data?.find((r) => r.name === source) ?? null;
     },
@@ -80,11 +85,9 @@ export function SourceStatsPanel({
             <span className="text-ink-faint">USD volume / hour (bars)</span>
           </div>
           <div className="mt-2">
-            <SourceActivityChart
-              buckets24h={data.volume_history_24h}
-              buckets7d={data.volume_history_7d}
-              height={200}
-            />
+            {/* buckets7d intentionally omitted until a CAGG backs the
+                7d query — the chart auto-hides its 7d toggle without it. */}
+            <SourceActivityChart buckets24h={data.volume_history_24h} height={200} />
           </div>
         </div>
       )}

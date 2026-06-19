@@ -121,7 +121,15 @@ func (s *Store) GetSourceVolumeHistory24h(ctx context.Context) ([]SourceVolumeBu
 }
 
 // GetSourceVolumeHistory7d is the 7-day variant — same hourly grouping
-// (168 buckets/source), powering the source page's 7d activity toggle.
+// (168 buckets/source).
+//
+// EXPENSIVE / NOT WIRED TO THE FRONTEND YET: the per-row USD-volume
+// derivation over 7 days of trades is ~18s for the heaviest source
+// (SDEX), well past the API's 8s ceiling. The /v1/sources?include=
+// sparkline7d path + the explorer's 24h/7d toggle are in place but the
+// frontend deliberately doesn't request it until a per-source hourly
+// volume continuous-aggregate backs this query. See the source-page
+// activity chart.
 func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBucket, error) {
 	return s.sourceVolumeHistory(ctx, "7 days")
 }
