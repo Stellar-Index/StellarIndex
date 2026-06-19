@@ -136,7 +136,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
           rel="noreferrer noopener"
           className="text-[10px] text-ink-faint hover:text-brand-600"
         >
-          rates&shy;engine.net ↗
+          stellarindex.io ↗
         </a>
       </div>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">

@@ -64,6 +64,31 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
+interface ChartPoint {
+  t: string;
+  p?: string | null;
+}
+
+// fetchFxSeries pulls the trailing-7d daily FX series (1 ticker = X USD)
+// from /v1/chart so the widget shows a real sparkline + 7d change rather
+// than a static price. Degrades to [] on any error (price-only render).
+async function fetchFxSeries(ticker: string): Promise<{ date: string; inverse_usd: number }[]> {
+  if (isCIStub) return [];
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(ticker)}&quote=fiat:USD&timeframe=7d&granularity=1d`,
+      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+    );
+    if (!res.ok) return [];
+    const env = (await res.json()) as { data?: { points?: ChartPoint[] } };
+    return (env.data?.points ?? [])
+      .map((p) => ({ date: p.t, inverse_usd: p.p != null ? Number(p.p) : NaN }))
+      .filter((p) => Number.isFinite(p.inverse_usd) && p.inverse_usd > 0);
+  } catch {
+    return [];
+  }
+}
+
 async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
   // Migrated from /v1/currencies/{ticker} → /v1/assets/{ticker}.
@@ -106,7 +131,10 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
 export default async function EmbedCurrencyPage({ params }: { params: Params }) {
   const { ticker } = await params;
   const upper = ticker.toUpperCase();
-  const cur = await fetchCurrency(upper);
+  const [cur, series] = await Promise.all([
+    fetchCurrency(upper),
+    fetchFxSeries(upper),
+  ]);
 
   if (!cur) {
     return (
@@ -117,13 +145,13 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
   }
 
   const priceUSD = cur.inverse_usd > 0 ? cur.inverse_usd : null;
-  // F-1201 migration: 24h / 7d change + sparkline points need a
-  // separate /v1/chart hookup against the new global-view surface
-  // (the inline `history_7d` field on the old /v1/currencies/{ticker}
-  // shape no longer exists). Tracked outside the audit; widget
-  // degrades to a clean price-only render in the meantime.
-  const series: Array<{ date: string; inverse_usd: number }> = [];
-  const change7d: number | null = null;
+  // 7d change + sparkline now come from /v1/chart (fetchFxSeries). 24h
+  // change needs intraday granularity we don't pull here, so the 24h
+  // chip stays hidden — better honest than fabricated.
+  const change7d: number | null =
+    series.length >= 2 && series[0].inverse_usd > 0
+      ? ((series[series.length - 1].inverse_usd - series[0].inverse_usd) / series[0].inverse_usd) * 100
+      : null;
   const change24h: number | null = null;
 
   return (
@@ -139,7 +167,7 @@ export default async function EmbedCurrencyPage({ params }: { params: Params }) 
           rel="noreferrer noopener"
           className="text-[10px] text-ink-faint hover:text-brand-600"
         >
-          rates&shy;engine.net ↗
+          stellarindex.io ↗
         </a>
       </div>
       <div className="flex items-baseline gap-2">

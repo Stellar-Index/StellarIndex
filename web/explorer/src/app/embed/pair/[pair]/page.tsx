@@ -166,7 +166,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
           rel="noreferrer noopener"
           className="text-[10px] text-ink-faint hover:text-brand-600"
         >
-          rates&shy;engine.net ↗
+          stellarindex.io ↗
         </a>
       </div>
       <div className="flex items-baseline gap-2">
