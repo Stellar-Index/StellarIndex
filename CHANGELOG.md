@@ -45,6 +45,15 @@ against.
   — far more detail per window.
 
 ### Fixed
+- Class-filtered + unified `/v1/assets` listings now carry `price_usd`.
+  `?asset_class=crypto|stablecoin|fiat` (and the explorer's
+  `?asset_class=all` first page) projected catalogue rows from the
+  price-less catalogue projection, so every row — even XLM — listed
+  `price_usd: null` (audit 2026-06-19 item 4). The sliced page now fills
+  the headline price through the same three-tier chain as the single-asset
+  `/v1/assets/{slug}` view, bounded to the page (not the whole catalogue)
+  so the unified first page doesn't fan a price computation over every
+  catalogue entry.
 - `/v1/assets` listing now fills `market_cap_usd` + `circulating_supply`
   WHERE the supply pipeline covers the asset (the major assets) instead
   of leaving every row null — a `supply_1d` lookup keyed to the listing

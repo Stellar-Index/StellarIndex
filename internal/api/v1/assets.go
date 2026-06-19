@@ -687,7 +687,7 @@ func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Req
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := projectCatalogueRows(matched, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
-	writeCataloguePage(w, r, rows, limit, cursor)
+	s.writeCataloguePage(w, r, rows, limit, cursor)
 }
 
 // filterCatalogueByClass returns the catalogue entries matching the
@@ -777,7 +777,14 @@ func parseOffsetCursor(w http.ResponseWriter, r *http.Request, cursor string) (i
 // writeCataloguePage applies offset-cursor pagination + writes the
 // envelope. Catalogue paging is small (≤45 rows per class) so offset
 // is sufficient.
-func writeCataloguePage(w http.ResponseWriter, r *http.Request, rows []AssetDetail, limit int, cursor string) {
+//
+// Fills the headline USD price on the sliced page (not the whole
+// catalogue) before writing, so a class-filtered listing row carries
+// the same price_usd as the single-asset /v1/assets/{slug} view —
+// previously these rows came from the price-less catalogue projection,
+// so every crypto/stablecoin row (even XLM) listed price_usd: null
+// (audit 2026-06-19 item 4).
+func (s *Server) writeCataloguePage(w http.ResponseWriter, r *http.Request, rows []AssetDetail, limit int, cursor string) {
 	offset, ok := parseOffsetCursor(w, r, cursor)
 	if !ok {
 		return
@@ -790,12 +797,55 @@ func writeCataloguePage(w http.ResponseWriter, r *http.Request, rows []AssetDeta
 	if end > len(rows) {
 		end = len(rows)
 	}
-	env := Envelope{Data: rows[offset:end], Flags: Flags{}}
+	page := rows[offset:end]
+	s.fillCataloguePricesForPage(r.Context(), page)
+	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
 		next := strconv.Itoa(end)
 		env.Pagination = &Pagination{Next: next}
 	}
 	writeEnvelope(w, env)
+}
+
+// fillCataloguePricesForPage resolves the headline USD price for each
+// row on an already-sliced catalogue page, reusing buildGlobalAssetView's
+// three-tier fallback chain so listing rows match the single-asset view.
+//
+// Bounded to the page (≤limit rows), NOT the whole catalogue, so the
+// unified "all" listing's first page doesn't fan a price computation
+// over every catalogue entry on every request. Each lookup is a point
+// read on prices_1m / the triangulated FX cache (cheap); the fan-out is
+// parallel under the caller's request context. Rows that already carry a
+// price (or whose slug no longer resolves) are skipped. Market cap is
+// adopted from the view only when the row doesn't already have one (fiat
+// rows are pre-filled by the catalogue market-cap path).
+func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDetail) {
+	if s.verifiedCurrencies == nil {
+		return
+	}
+	priceCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := range page {
+		if page[i].PriceUSD != nil {
+			continue
+		}
+		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
+		if !ok {
+			continue
+		}
+		i, vc := i, vc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			view := s.buildGlobalAssetView(priceCtx, vc)
+			page[i].PriceUSD = view.PriceUSD
+			if page[i].MarketCapUSD == nil && view.MarketCapUSD != nil {
+				page[i].MarketCapUSD = view.MarketCapUSD
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // projectCatalogueRow maps a catalogue entry to the listing's
@@ -947,7 +997,13 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	if end > len(rows) {
 		end = len(rows)
 	}
-	env := Envelope{Data: rows[offset:end], Flags: Flags{}}
+	page := rows[offset:end]
+	// Fill the headline USD price on the sliced page (same bounded
+	// fan-out as the class-filtered path) so the unified "all" listing's
+	// catalogue rows (XLM, USDC, …) carry price_usd instead of null
+	// (audit 2026-06-19 item 4).
+	s.fillCataloguePricesForPage(r.Context(), page)
+	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
 		env.Pagination = &Pagination{Next: "catalogue:" + strconv.Itoa(end)}
 	} else {
