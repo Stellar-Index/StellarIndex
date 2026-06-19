@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Added
+- `source_volume_1h` continuous aggregate (migration 0068) — per-source
+  hourly trade-count + pre-aggregated USD-volume inputs. The source
+  page's activity chart now reads this CAGG instead of scanning raw
+  trades, making the 7d window cheap (the live derivation was ~18s for
+  the heaviest source, past the 8s API ceiling). The explorer's 24h/7d
+  toggle on `/dexes/{source}` + `/exchanges/{source}` is now live, and
+  the 24h sparkline is faster too. `/v1/sources?include=sparkline7d` is
+  now surfaced by the frontend.
+
 ## [v0.5.0-rc.128] — 2026-06-19
 
 ### Added
