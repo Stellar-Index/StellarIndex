@@ -39,15 +39,13 @@ export function SourceStatsPanel({
   unitsLabel?: string;
 }) {
   const { data } = useQuery<SourceStats | null>({
-    queryKey: ['/v1/sources', 'stats+sparkline', source],
+    queryKey: ['/v1/sources', 'stats+sparkline7d', source],
     queryFn: async () => {
-      // NOTE: 7d (`sparkline7d`) is intentionally NOT requested — the
-      // live 7d derivation is a ~18s raw-trades scan (blows the API's
-      // 8s ceiling), so the 7d toggle stays hidden until a per-source
-      // hourly volume continuous-aggregate backs it. The endpoint +
-      // chart toggle are wired and ready for that follow-up.
+      // 7d (`sparkline7d`) is now cheap: it reads the source_volume_1h
+      // continuous aggregate (migration 0068) rather than scanning raw
+      // trades, so the chart's 24h/7d toggle is live.
       const env = await apiGet<{ data: SourceStats[] }>('/v1/sources', {
-        include: 'stats,sparkline',
+        include: 'stats,sparkline,sparkline7d',
       });
       return env.data?.find((r) => r.name === source) ?? null;
     },
@@ -61,8 +59,8 @@ export function SourceStatsPanel({
   return (
     <Panel
       title="24h activity"
-      hint={`Live from /v1/sources?include=stats,sparkline (source=${source})`}
-      source={asExample('/v1/sources', { include: 'stats,sparkline' })}
+      hint={`Live from /v1/sources?include=stats,sparkline,sparkline7d (source=${source})`}
+      source={asExample('/v1/sources', { include: 'stats,sparkline,sparkline7d' })}
     >
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Stat
@@ -85,9 +83,11 @@ export function SourceStatsPanel({
             <span className="text-ink-faint">USD volume / hour (bars)</span>
           </div>
           <div className="mt-2">
-            {/* buckets7d intentionally omitted until a CAGG backs the
-                7d query — the chart auto-hides its 7d toggle without it. */}
-            <SourceActivityChart buckets24h={data.volume_history_24h} height={200} />
+            <SourceActivityChart
+              buckets24h={data.volume_history_24h}
+              buckets7d={data.volume_history_7d}
+              height={200}
+            />
           </div>
         </div>
       )}

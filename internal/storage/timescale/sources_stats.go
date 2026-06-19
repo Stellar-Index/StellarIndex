@@ -113,23 +113,16 @@ type SourceVolumeBucket struct {
 // /dexes + /exchanges overview tables. Sources with no trades in
 // any given hour are absent — callers fill missing hours with a
 // zero datapoint client-side.
-//
-// Same volume-derivation CTE as GetSourceStats; the only
-// difference is the per-hour grouping.
 func (s *Store) GetSourceVolumeHistory24h(ctx context.Context) ([]SourceVolumeBucket, error) {
 	return s.sourceVolumeHistory(ctx, "24 hours")
 }
 
 // GetSourceVolumeHistory7d is the 7-day variant — same hourly grouping
-// (168 buckets/source).
-//
-// EXPENSIVE / NOT WIRED TO THE FRONTEND YET: the per-row USD-volume
-// derivation over 7 days of trades is ~18s for the heaviest source
-// (SDEX), well past the API's 8s ceiling. The /v1/sources?include=
-// sparkline7d path + the explorer's 24h/7d toggle are in place but the
-// frontend deliberately doesn't request it until a per-source hourly
-// volume continuous-aggregate backs this query. See the source-page
-// activity chart.
+// (168 buckets/source). Cheap because it reads the source_volume_1h
+// continuous aggregate (migration 0068), not the raw trades hypertable:
+// the live raw-trades derivation measured ~18s for the heaviest source
+// (SDEX) over 7d, past the API's 8s ceiling, which is why this is
+// CAGG-backed.
 func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBucket, error) {
 	return s.sourceVolumeHistory(ctx, "7 days")
 }
@@ -137,8 +130,14 @@ func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBuc
 // sourceVolumeHistory returns per-(source, hour) volume + trade count
 // over a trailing window. `window` is a Postgres interval literal bound
 // as $1 (e.g. "24 hours", "7 days") — a bind param, not concatenated.
-// The xlm_usd price CTE stays at 24h (we want the CURRENT XLM/USD rate
-// to value legs, regardless of the history window).
+//
+// Reads the source_volume_1h CAGG (migration 0068), which pre-aggregates
+// the per-hour inputs: sum_usd_priced (trades already USD-valued) plus
+// sum_xlm_base / sum_xlm_quote (the native/XLM-SAC fallback legs). The
+// CAGG can't cross-reference prices_1m, so the XLM/USD multiply happens
+// here at read time — sum_usd_priced + (xlm legs)/1e7 * current vwap —
+// reproducing GetSourceStats's per-row CASE. The xlm_usd CTE stays at
+// 24h: we want the CURRENT XLM/USD rate regardless of the history window.
 func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]SourceVolumeBucket, error) {
 	const q = `
 		WITH xlm_usd AS (
@@ -155,22 +154,13 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 		   LIMIT 1
 		)
 		SELECT source,
-		       date_trunc('hour', ts) AS hour,
-		       COALESCE(SUM(
-		         CASE
-		           WHEN usd_volume IS NOT NULL
-		             THEN usd_volume::numeric
-		           WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           ELSE NULL
-		         END
-		       ), 0)::text AS volume_usd,
-		       COUNT(*)::bigint AS trade_count
-		  FROM trades
-		 WHERE ts >= date_trunc('hour', NOW() - $1::interval)
-		 GROUP BY source, hour
+		       bucket AS hour,
+		       (COALESCE(sum_usd_priced, 0)
+		         + (COALESCE(sum_xlm_base, 0) + COALESCE(sum_xlm_quote, 0)) / 1e7::numeric
+		           * COALESCE((SELECT vwap FROM xlm_usd), 0))::text AS volume_usd,
+		       trade_count::bigint AS trade_count
+		  FROM source_volume_1h
+		 WHERE bucket >= date_trunc('hour', NOW() - $1::interval)
 		 ORDER BY source, hour
 	`
 	rows, err := s.db.QueryContext(ctx, q, window)
