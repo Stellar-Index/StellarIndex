@@ -214,6 +214,15 @@ export function NetworkView() {
 // /v1/network/stats snapshot with the chain-state fields off the
 // freshest ledger header (total XLM, fee pool, protocol version).
 function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
+  // Stellar ON-CHAIN 24h volume (SDEX + Soroban DEXes), summed from the
+  // DEX-subclass /v1/sources. /v1/network/stats.volume_24h_usd is the
+  // ALL-source total (CEX feeds dominate) — not "Stellar volume".
+  // Matches the home strip. (The "Volume by venue type" donut below
+  // still shows the full CEX-vs-on-chain split by design.)
+  const { data: sources } = useSources(undefined, true);
+  const stellarVolume = (sources ?? [])
+    .filter((x) => x.subclass === 'dex')
+    .reduce((sum, x) => sum + (x.volume_24h_usd ? Number(x.volume_24h_usd) : 0), 0);
   return (
     <StatGrid cols={4}>
       <StatCell>
@@ -226,7 +235,8 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
       <StatCell>
         <Stat
           label="24h volume"
-          value={s?.volume_24h_usd ? `$${formatCompact(Number(s.volume_24h_usd))}` : '—'}
+          value={stellarVolume > 0 ? `$${formatCompact(stellarVolume)}` : '—'}
+          sub="Stellar on-chain"
         />
       </StatCell>
       <StatCell>
