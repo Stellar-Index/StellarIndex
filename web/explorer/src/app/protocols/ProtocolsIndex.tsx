@@ -15,6 +15,7 @@ import {
   StatCell,
   StatGrid,
 } from '@/components/ui';
+import { DonutChart } from '@/components/charts/DonutChart';
 import { categoryTone, protocolMeta, PROTOCOLS } from './registry';
 
 // Mirrors internal/api/v1/protocols.go ProtocolView.
@@ -96,6 +97,12 @@ export function ProtocolsIndex({
   const totalEvents24h = cards.reduce((s, c) => s + (c.events_24h ?? 0), 0);
   const verifiedCount = cards.filter((c) => c.completeness?.complete).length;
 
+  const categoryMix = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of cards) if (c.category) m.set(c.category, (m.get(c.category) ?? 0) + 1);
+    return Array.from(m, ([label, value]) => ({ label, value }));
+  }, [cards]);
+
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader eyebrow={eyebrow} title={title} description={description} />
@@ -124,6 +131,17 @@ export function ProtocolsIndex({
           show the static registry without live counts. The per-protocol pages
           still work.
         </Callout>
+      )}
+
+      {!lockedCategory && categoryMix.length > 1 && (
+        <div className="rounded-card border border-line bg-surface p-5">
+          <h2 className="mb-3 text-h3 font-semibold text-ink">By category</h2>
+          <DonutChart
+            data={categoryMix}
+            centerLabel={String(cards.length)}
+            centerSub="protocols"
+          />
+        </div>
       )}
 
       {!lockedCategory && categories.length > 0 && (

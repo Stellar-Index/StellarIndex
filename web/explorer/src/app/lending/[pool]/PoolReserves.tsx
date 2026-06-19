@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
+import { DonutChart } from '@/components/charts/DonutChart';
 import { apiGet, asExample } from '@/api/client';
+import { formatCompact } from '@/lib/format';
 
 interface ReserveRow {
   asset: string;
@@ -25,20 +27,6 @@ interface ReservesResp {
 }
 
 const usdFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-
-// Composition palette — distinct hues for the TVL-share bar + legend.
-// Fixed list rather than the semantic up/down tokens because these are
-// categorical (one per reserve), not directional.
-const PALETTE = [
-  'bg-brand-500',
-  'bg-emerald-500',
-  'bg-amber-500',
-  'bg-violet-500',
-  'bg-cyan-500',
-  'bg-pink-500',
-  'bg-orange-500',
-  'bg-slate-400',
-];
 
 function shortAsset(asset: string): string {
   return `${asset.slice(0, 4)}…${asset.slice(-4)}`;
@@ -85,29 +73,15 @@ export function PoolReserves({ pool }: { pool: string }) {
         </div>
       )}
       {priced.length > 0 && totalUsd > 0 && (
-        <div className="space-y-2">
-          <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-muted">
-            {priced.map((rv, i) => (
-              <div
-                key={rv.asset}
-                className={PALETTE[i % PALETTE.length]}
-                style={{ width: `${(Number(rv.supplied_usd) / totalUsd) * 100}%` }}
-                title={`${shortAsset(rv.asset)} — ${usdFmt.format(Number(rv.supplied_usd))} (${((Number(rv.supplied_usd) / totalUsd) * 100).toFixed(1)}%)`}
-              />
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-body">
-            {priced.map((rv, i) => (
-              <span key={rv.asset} className="inline-flex items-center gap-1.5" title={rv.asset}>
-                <span className={`h-2 w-2 rounded-full ${PALETTE[i % PALETTE.length]}`} />
-                <span className="font-mono">{shortAsset(rv.asset)}</span>
-                <span className="text-ink-muted">
-                  {((Number(rv.supplied_usd) / totalUsd) * 100).toFixed(1)}%
-                </span>
-              </span>
-            ))}
-          </div>
-        </div>
+        <DonutChart
+          data={priced.map((rv) => ({
+            label: shortAsset(rv.asset),
+            value: Number(rv.supplied_usd),
+          }))}
+          centerLabel={`$${formatCompact(totalUsd)}`}
+          centerSub="TVL"
+          formatValue={(n) => usdFmt.format(n)}
+        />
       )}
       {q.isLoading && <p className="text-sm text-ink-muted">Loading reserve state…</p>}
       {q.isError && (
