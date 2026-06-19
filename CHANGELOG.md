@@ -45,6 +45,12 @@ against.
   — far more detail per window.
 
 ### Fixed
+- `/v1/price` latency regression (caused a latency-burn incident
+  2026-06-19): the rc.131 cross-direction VWAP combine scanned a pair's
+  ENTIRE `prices_1m` history (back to 2015) before `LIMIT 1` — ~1s warm,
+  ~9s under load. Now it finds the latest closed bucket via an index
+  `max()` per direction (UNIONed), then point-reads + combines just that
+  bucket — bounded, ~250ms, same result.
 - CEX dust no longer pollutes OHLC high/low on the API. Sub-$0.001
   streamed CEX fills — tiny integer amounts whose `quote/base` is a
   meaningless round fraction (1/8, 1/10, …) — are dropped at ingest
