@@ -45,6 +45,12 @@ against.
   — far more detail per window.
 
 ### Fixed
+- MEV feed notionals no longer read ~$0 on real cycles: the arb scanner
+  read raw `usd_volume` (NULL for SDEX XLM/token + token/token legs), so
+  cycle notionals summed to ~$0. It now estimates each leg's USD value
+  from the XLM leg × current XLM/USD VWAP (the same fallback the markets
+  queries use), matching how the rest of the API values on-chain volume.
+  Applies to newly-detected cycles.
 - Explorer per-page audit fixes (2026-06-19, frontend):
   - **`/assets/XLM` showed wrapped-XLM data** (~330× wrong price) — a
     scam "XLM" classic asset shared the `XLM` listing slug. `fetchCoin`

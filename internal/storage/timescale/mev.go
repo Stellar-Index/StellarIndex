@@ -24,12 +24,41 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	if limit <= 0 {
 		limit = 50_000
 	}
+	// Per-leg USD value: prefer the stored usd_volume, else estimate
+	// from the XLM leg × the current XLM/USD VWAP (same fallback the
+	// markets queries use). Without this, SDEX arb legs — which usually
+	// quote XLM/token and carry NULL usd_volume — summed to ~$0, so the
+	// MEV feed showed "$0" notionals on real multi-leg cycles (audit
+	// 2026-06-19). Token/token legs with no XLM side stay '' (no USD
+	// basis). 'CAS3J7…' is the native-XLM SAC.
 	const q = `
+        WITH xlm_usd AS (
+          SELECT vwap
+            FROM prices_1m
+           WHERE base_asset = 'native'
+             AND quote_asset IN (
+               'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+               'fiat:USD'
+             )
+             AND vwap IS NOT NULL
+             AND bucket >= NOW() - INTERVAL '24 hours'
+           ORDER BY bucket DESC
+           LIMIT 1
+        )
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
                base_amount, quote_amount,
                COALESCE(maker, ''), COALESCE(taker, ''),
-               COALESCE(usd_volume::text, '')
+               COALESCE((COALESCE(
+                 usd_volume,
+                 CASE
+                   WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                     THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
+                   WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                     THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
+                   ELSE NULL
+                 END
+               ))::text, '')
           FROM trades
          WHERE ts > $1
            AND ledger > 0
