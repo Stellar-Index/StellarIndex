@@ -78,12 +78,17 @@ against.
   crypto:XLM/fiat:USD accrued dense history (CEX coinbase/kraken trades, from
   ~20:00 UTC 2026-06-19) it ballooned to **~446ms execution + 55k planner
   buffers**, driving the price p95 from ~50ms to ~400ms and the SLO burn /
-  sla-probe alerts. Rewrote to the arithmetically-identical-but-sargable
-  `bucket <= now() - INTERVAL '1 minute'`, so the ChunkAppend reads just the
-  newest chunk's max via the index: **446ms → ~7ms** (66×). (The rc.133 fix to
-  this same function only bounded the sparse case; this closes the dense case.
-  The sibling `ORDER BY bucket DESC LIMIT` readers were verified unaffected —
-  ordered index scan stops early.)
+  sla-probe alerts. Two-part fix: **(1)** rewrote the non-sargable predicate to
+  the arithmetically-identical `bucket <= now() - INTERVAL '1 minute'`
+  (execution 446ms → 26ms); **(2)** that still left ~280ms of *planning* time —
+  prices_1m has ~374 chunks and `now()` only enables runtime chunk exclusion,
+  so the planner still enumerated every chunk. Added a LITERAL recent lower
+  bound (`bucket >= <cutoff>`, computed in Go) so the planner prunes old chunks
+  at PLAN time, collapsing planning to ~2ms. Net: **~390ms → ~8ms** end-to-end.
+  Idle pairs (no closed bucket in the 14-day fast window) fall back to the
+  unbounded scan so the latest-closed-bucket contract is preserved. (The rc.133
+  fix to this function only bounded the sparse case; the sibling
+  `ORDER BY bucket DESC LIMIT` readers were verified unaffected.)
 - `/v1/contracts/{id}/wasm` now distinguishes a **Stellar Asset Contract**
   (the built-in SAC behind `native`, USDC, and every classic asset — among
   the busiest contracts on the network) from a genuinely-uncaptured WASM
