@@ -344,32 +344,71 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	// which measured ~1s warm and ballooned to ~9s under load (it drove
 	// a latency-burn incident on 2026-06-19).
 	//
-	// The "closed bucket" predicate MUST be written `bucket <= now() - 1min`,
-	// NOT `bucket + 1min <= now()`. The latter applies a function to the
-	// indexed `bucket` column, making it non-sargable: TimescaleDB can't do
-	// chunk exclusion or an ordered index scan, so max() scans EVERY chunk
-	// of the pair's history (each a full per-chunk partial-aggregate over
-	// thousands of rows). That re-introduced the same latency-burn incident
-	// on 2026-06-19 once a dense pair (crypto:XLM/fiat:USD via CEX) accrued
-	// long history: ~446ms execution + 55k planner buffers. The sargable
-	// form lets the ChunkAppend read just the newest chunk's max via the
-	// index (~7ms). The two predicates are arithmetically identical.
-	const q = `
+	// PERF (two layers, both required — 2026-06-20 latency-burn incident):
+	//
+	//  1. The "closed bucket" predicate MUST be `bucket <= now() - 1min`, NOT
+	//     `bucket + 1min <= now()`. The latter is a function on the indexed
+	//     `bucket` column → non-sargable → max() runs a per-chunk partial
+	//     aggregate over the WHOLE history. The sargable form lets max() read
+	//     the newest chunk via the index (446ms → 26ms execution).
+	//  2. That still left ~280ms of PLANNING time: prices_1m has ~374 chunks,
+	//     and `now()` is only known at RUN time, so TimescaleDB does runtime
+	//     (startup) chunk exclusion — the PLANNER still enumerates all 374
+	//     chunks. We add a LITERAL recent lower bound (`bucket >= <cutoff>`,
+	//     cutoff computed in Go) so the planner excludes old chunks at PLAN
+	//     time, collapsing planning to ~2ms. The literal is our own UTC
+	//     timestamp — no injection surface.
+	//
+	// A single bounded query — NO unbounded fallback. An earlier two-tier
+	// (bounded → unbounded) made the no-data case slow again: the handler
+	// reads native/fiat:USD as an alias on every XLM query, that synthetic
+	// pair has zero rows, so the bounded miss fell through to the slow
+	// all-chunk scan finding nothing. A pair with no closed bucket in the
+	// (generous, ~400-day) window returns ErrNoRows, which the price handler
+	// already resolves via its Redis-triangulation / last-trade fallback
+	// chain — the right path for a synthetic pair, and the honest answer for
+	// a genuinely-dead asset (a >400-day-old "latest" is not a current price).
+	// The window is wide enough to cover every actively- or recently-priced
+	// pair (the staleness long tail is ~250k delisted assets) yet still lets
+	// the planner exclude the bulk of prices_1m's ~374 chunks at PLAN time.
+	cutoff := time.Now().UTC().Add(-latestVWAPWindow)
+	return s.latestClosedVWAP1m(ctx, p, cutoff)
+}
+
+// latestVWAPWindow bounds the lookback for [LatestClosedVWAP1mForPair]. A
+// LITERAL cutoff this many days back is interpolated into the query so the
+// planner prunes old chunks at PLAN time (planning ~6ms vs ~280ms unbounded).
+// 400 days is generous — it covers every recently-traded pair while still
+// excluding most of prices_1m's decade of chunks.
+const latestVWAPWindow = 400 * 24 * time.Hour
+
+// latestClosedVWAP1m runs the combined-direction latest-closed-bucket query
+// with a LITERAL `bucket >= since` lower bound on every prices_1m scan, so the
+// planner prunes old chunks at PLAN time (see [LatestClosedVWAP1mForPair]).
+// Returns [sql.ErrNoRows] when no closed bucket exists for the pair within the
+// window.
+//
+// latestClosedVWAP1mTemplate is the query with a single `%[1]s` slot for the
+// literal lower-bound clause, repeated on all three prices_1m scans.
+const latestClosedVWAP1mTemplate = `
         WITH latest AS (
             SELECT max(b) AS b FROM (
                 SELECT max(bucket) AS b FROM prices_1m
                  WHERE base_asset = $1 AND quote_asset = $2
                    AND bucket <= now() - INTERVAL '1 minute'
+                   %[1]s
                 UNION ALL
                 SELECT max(bucket) AS b FROM prices_1m
                  WHERE base_asset = $2 AND quote_asset = $1
                    AND bucket <= now() - INTERVAL '1 minute'
+                   %[1]s
             ) u
         ),
         r AS (
             SELECT base_asset, vwap, COALESCE(trade_count, 0) AS tc, sources
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
+               %[1]s
                AND ((base_asset = $1 AND quote_asset = $2)
                  OR (base_asset = $2 AND quote_asset = $1))
         )
@@ -382,6 +421,18 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
           FROM r
          HAVING count(*) > 0
     `
+
+func (s *Store) latestClosedVWAP1m(ctx context.Context, p canonical.Pair, since time.Time) (Vwap1mRow, error) {
+	// Literal lower bound, interpolated (our own timestamp, not user input).
+	// Applied to both max() arms AND the point-read so all three prices_1m
+	// scans get plan-time chunk exclusion.
+	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", since.Format("2006-01-02 15:04:05-07"))
+	// G201 is suppressed below: the ONLY interpolated value is `lower`, built
+	// from our own time.Time formatted to a fixed layout — never user input, no
+	// injection surface. The pair strings stay bound parameters ($1/$2). The
+	// literal (vs a $N bind parameter) is REQUIRED: TimescaleDB only does
+	// plan-time chunk exclusion for a constant, not a bind parameter.
+	q := fmt.Sprintf(latestClosedVWAP1mTemplate, lower) //nolint:gosec // G201: see note above
 	var row Vwap1mRow
 	err := s.db.QueryRowContext(ctx, q,
 		p.Base.String(), p.Quote.String(),
