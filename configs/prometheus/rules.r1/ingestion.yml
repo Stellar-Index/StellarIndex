@@ -263,9 +263,23 @@ groups:
       # above. wave-96 pair lint requires both copies to stay in
       # sync.
       - alert: stellarindex_ingestion_source_insert_stale
+        # 1 h budget for normal sources; 6 h for the genuinely-sparse Soroban
+        # AMMs (comet, phoenix). Comet is tiny — ~20-70 trades/day, bursty —
+        # so multi-hour quiet stretches are normal and the flat 1 h budget
+        # false-fired (2026-06-20). The 6 h budget still catches a real
+        # day-scale stall (both produce every day). Tune the regex as new
+        # sparse sources appear.
         expr: |
-          time() - stellarindex_source_last_insert_unix > 3600
-          and on (source) stellarindex_source_enabled == 1
+          (
+            time() - stellarindex_source_last_insert_unix > 3600
+            and on (source) stellarindex_source_enabled == 1
+            unless on (source) stellarindex_source_last_insert_unix{source=~"comet|phoenix"}
+          )
+          or
+          (
+            time() - stellarindex_source_last_insert_unix{source=~"comet|phoenix"} > 21600
+            and on (source) stellarindex_source_enabled == 1
+          )
         for: 10m
         labels:
           severity: ticket
