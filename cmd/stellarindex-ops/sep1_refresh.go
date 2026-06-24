@@ -80,6 +80,15 @@ func sep1RefreshCmd(args []string) error {
 		sep, err := resolver.Resolve(ctx, c.HomeDomain)
 		if err != nil {
 			fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
+			// Bump sep1_resolved_at so this (usually dead) domain moves to
+			// the back of the refresh queue — otherwise NULL-resolved dead
+			// domains clog the front of `ORDER BY ... NULLS FIRST` forever
+			// and good issuers behind them never get reached. Best-effort.
+			if !*dryRun {
+				if merr := store.MarkIssuerSep1Attempted(ctx, c.GStrkey); merr != nil {
+					fmt.Printf("WARN  %s  mark-attempted: %v\n", c.GStrkey, merr)
+				}
+			}
 			failed++
 			continue
 		}
@@ -90,38 +99,7 @@ func sep1RefreshCmd(args []string) error {
 		// (spoofing). Callers MUST only merge/group issuers by org when this is
 		// true; one-directional matches are "claimed, unverified".
 		orgVerified := tomlListsIssuer(sep.Currencies, c.GStrkey)
-		// Compact payload — OrgName/Documentation for /v1/issuers,
-		// Currencies for the per-asset SEP-1 overlay on /v1/assets/{id}
-		// (the latter used to live-fetch per request; this cron is now
-		// the source of truth so the handler is a DB lookup). Raw +
-		// NetworkPassphrase excluded — nothing reads them.
-		currencies := make([]map[string]any, 0, len(sep.Currencies))
-		for _, c := range sep.Currencies {
-			currencies = append(currencies, map[string]any{
-				"Code":            c.Code,
-				"Issuer":          c.Issuer,
-				"Decimals":        c.Decimals,
-				"DisplayDecimals": c.DisplayDecimals,
-				"Name":            c.Name,
-				"Description":     c.Description,
-				"Conditions":      c.Conditions,
-				"Image":           c.Image,
-				"FixedNumber":     c.FixedNumber,
-				"MaxNumber":       c.MaxNumber,
-				"IsUnlimited":     c.IsUnlimited,
-				"AnchorAsset":     c.AnchorAsset,
-				"AnchorAssetType": c.AnchorAssetType,
-				"Status":          c.Status,
-			})
-		}
-		payload, jerr := json.Marshal(map[string]any{
-			"OrgName":       sep.OrgName,
-			"OrgVerified":   orgVerified,
-			"Version":       sep.Version,
-			"Documentation": sep.Documentation,
-			"Currencies":    currencies,
-			"FetchedAt":     sep.FetchedAt.UTC().Format(time.RFC3339),
-		})
+		payload, jerr := marshalSep1Payload(sep, orgVerified)
 		if jerr != nil {
 			fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
 			failed++
@@ -134,7 +112,7 @@ func sep1RefreshCmd(args []string) error {
 				continue
 			}
 		}
-		fmt.Printf("OK    %s  %s  org=%q\n", c.GStrkey, c.HomeDomain, sep.OrgName)
+		fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
 		ok++
 	}
 	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
@@ -154,4 +132,39 @@ func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 		}
 	}
 	return false
+}
+
+// marshalSep1Payload builds the compact sep1_payload JSON persisted to the
+// issuers row: OrgName/OrgVerified/Documentation for /v1/issuers, plus the
+// per-currency overlay /v1/assets/{id} reads (that handler used to live-fetch
+// per request; this cron is now the source of truth so it's a DB lookup). Raw
+// + NetworkPassphrase are excluded — nothing reads them.
+func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
+	currencies := make([]map[string]any, 0, len(sep.Currencies))
+	for _, c := range sep.Currencies {
+		currencies = append(currencies, map[string]any{
+			"Code":            c.Code,
+			"Issuer":          c.Issuer,
+			"Decimals":        c.Decimals,
+			"DisplayDecimals": c.DisplayDecimals,
+			"Name":            c.Name,
+			"Description":     c.Description,
+			"Conditions":      c.Conditions,
+			"Image":           c.Image,
+			"FixedNumber":     c.FixedNumber,
+			"MaxNumber":       c.MaxNumber,
+			"IsUnlimited":     c.IsUnlimited,
+			"AnchorAsset":     c.AnchorAsset,
+			"AnchorAssetType": c.AnchorAssetType,
+			"Status":          c.Status,
+		})
+	}
+	return json.Marshal(map[string]any{
+		"OrgName":       sep.OrgName,
+		"OrgVerified":   orgVerified,
+		"Version":       sep.Version,
+		"Documentation": sep.Documentation,
+		"Currencies":    currencies,
+		"FetchedAt":     sep.FetchedAt.UTC().Format(time.RFC3339),
+	})
 }

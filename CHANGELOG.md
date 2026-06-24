@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Bidirectional SEP-1 org verification (`org_verified`).** `/v1/issuers`
+  now carries `org_verified` — true only when the issuer's `home_domain`
+  `stellar.toml` lists THIS issuer's account back in its `[[CURRENCIES]]`
+  (i.e. the domain owner attests to the account). A one-directional
+  `home_domain → ORG_NAME` match is spoofable: anyone can point their
+  account's `home_domain` at `circle.com` and inherit "Circle". The
+  explorer's issuer table renders a `✓ Verified` badge only on the
+  bidirectional match, so org grouping/merging is trustworthy. The
+  `sep1-refresh` cron computes the flag (`tomlListsIssuer`) and persists it
+  in the `sep1_payload` JSONB; `/v1/issuers` reads
+  `sep1_payload->>'OrgVerified'`. Each `OK` line now prints `verified=…`.
 - `stellarindex-ops state-snapshot` — reads a history-archive checkpoint's full
   current ledger-entry state (the bucket list) via the SDK's
   `CheckpointChangeReader` and tallies it by entry type. The read-only
@@ -68,6 +79,19 @@ against.
   — far more detail per window.
 
 ### Fixed
+- **`sep1-refresh` could never reach good issuers — failed fetches now bump
+  `sep1_resolved_at`.** A resolve failure (dead `home_domain`, TLS error,
+  SSRF-blocked) used to `continue` without writing anything, leaving the
+  issuer's `sep1_resolved_at` NULL. Since `IssuersNeedingSep1Refresh` orders
+  `sep1_resolved_at ASC NULLS FIRST`, the **43,156** pubnet issuers with dead
+  domains permanently occupied the front of the queue — the refresh re-tried
+  the same dead domains every run and **never made forward progress** to the
+  ~100 good issuers behind them (Circle, Aquarius, …). `org_name` /
+  `org_verified` could therefore never populate at scale. New
+  `MarkIssuerSep1Attempted` bumps `sep1_resolved_at` on failure (without
+  writing a payload), so a dead domain moves to the back of the queue and is
+  retried only on the next `-older-than` cadence; a later success overwrites
+  the payload as before.
 - **`/v1/price` latency-burn incident (page severity) — root-caused + fixed.**
   `LatestClosedVWAP1mForPair`'s "latest closed bucket" predicate was
   `bucket + INTERVAL '1 minute' <= now()` — a function on the indexed `bucket`
