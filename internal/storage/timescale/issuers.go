@@ -293,6 +293,28 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey string, payloa
 	return nil
 }
 
+// MarkIssuerSep1Attempted bumps sep1_resolved_at to now() WITHOUT
+// touching sep1_payload — recording that we tried this issuer's
+// home_domain but the fetch/parse failed (dead domain, TLS error,
+// SSRF-blocked, …).
+//
+// Without this, a failed fetch leaves sep1_resolved_at NULL, so the
+// issuer stays permanently at the front of IssuersNeedingSep1Refresh's
+// `ORDER BY sep1_resolved_at ASC NULLS FIRST`. The thousands of dead
+// home_domains on pubnet would then clog the queue forever and good
+// issuers (Circle, Aquarius, …) behind them would never be reached —
+// org_name/org_verified could never populate. Bumping on failure moves
+// the dead domain to the back so the refresh makes forward progress;
+// it's retried on the next -older-than cadence and a later success
+// overwrites the payload.
+func (s *Store) MarkIssuerSep1Attempted(ctx context.Context, gStrkey string) error {
+	const q = `UPDATE issuers SET sep1_resolved_at = NOW() WHERE g_strkey = $1`
+	if _, err := s.db.ExecContext(ctx, q, gStrkey); err != nil {
+		return fmt.Errorf("timescale: MarkIssuerSep1Attempted: %w", err)
+	}
+	return nil
+}
+
 // ListIssuerAssets returns every classic asset issued by the given
 // G-strkey, ordered by observation count desc (a cheap activity
 // proxy).
