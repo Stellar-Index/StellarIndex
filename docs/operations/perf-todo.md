@@ -1,6 +1,6 @@
 ---
 title: API performance follow-ups
-last_verified: 2026-05-05
+last_verified: 2026-06-24
 status: living doc
 ---
 
@@ -108,3 +108,72 @@ Three angles, no consensus on which is right:
 (3) is the right move; punted to a follow-up when launch traffic
 arrives — the noise is a pre-launch artifact and will heal as
 real polling fan-out dilutes it.
+
+### 4. `/v1/tx/{hash}` cold lookup ~5–6 s — `tx_hash` has no ordered index
+
+Investigated 2026-06-24 during the SEO audit (the transaction-detail
+entity page reads this endpoint).
+
+**Measured on R1:**
+
+| Signal | Value |
+|--------|------:|
+| `/v1/tx/{hash}` end-to-end (cold, cache-busted) | **5.3–6.3 s** |
+| `stellar.transactions` row count | **10,241,480,666** |
+| Rows read to resolve one hash | **96,618,934** |
+| Server-side query elapsed | **5.41 s** |
+
+**Root cause.** `stellar.transactions` is `ORDER BY (ledger_seq,
+tx_index)` — its sort key has nothing to do with `tx_hash`. The only
+acceleration on the hash column is a `bloom_filter(0.01)` skip-index
+(`idx_tx_hash`, granularity 1). At 10.2 B rows that bloom prunes ~99 %
+of granules but the **residual is still ~96.6 M rows** scanned per
+lookup. A bloom skip-index fundamentally cannot deliver point-lookup
+latency on a high-cardinality random hash at this scale — it prunes,
+it does not seek. (`handleTxDetail` → `ExplorerReader.TransactionByHash`
+in `internal/storage/clickhouse/explorer_reader.go`. Once the ledger
+is known, every downstream query is ledger-scoped and sub-100 ms; the
+hash→ledger resolution is the entire cost.)
+
+**This is NOT an SEO blocker.** `/transactions/{hash}` (and the other
+long-tail entity shells: `/ledgers/{seq}`, `/accounts/{g}`,
+`/contracts/{id}`) ship `robots: { index: false, follow: true }` by the
+plan's R2 decision — we deliberately do not index millions of thin
+entity pages. Crawlers never fetch `/v1/tx` at scale, so the latency is
+a **UX** concern for users who deep-link to a specific transaction, not
+a crawl-budget or Core-Web-Vitals problem. The SEO upgrade is complete
+without this fix.
+
+**Fix (operator-scale; the standing rule forbids rushing CH backfills
+on live R1):** add a hash-ordered lookup table so the resolution is a
+binary search, not a scan.
+
+1. **Schema** —
+   ```sql
+   CREATE TABLE stellar.tx_hash_index
+     (tx_hash String, ledger_seq UInt32, tx_index UInt16)
+     ENGINE = MergeTree ORDER BY tx_hash;
+   CREATE MATERIALIZED VIEW stellar.tx_hash_index_mv TO stellar.tx_hash_index AS
+     SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions;
+   ```
+   The MV makes every **newly-ingested** tx instantly fast; only three
+   narrow columns, so write amplification on the ingest path is small.
+2. **Reader** — `TransactionByHash` becomes two steps: `SELECT ledger_seq
+   FROM tx_hash_index WHERE tx_hash = ?` (ordered → µs), then the
+   existing ledger-scoped summary query `WHERE ledger_seq = ? AND
+   tx_hash = ?`. Fall back to today's direct scan when the hash is not
+   yet in the index (historical rows, pre-backfill) so there is no
+   correctness regression during the backfill.
+3. **Historical backfill (the heavy, operator step)** —
+   `INSERT INTO stellar.tx_hash_index SELECT tx_hash, ledger_seq,
+   tx_index FROM stellar.transactions` over all 10.2 B rows. **Chunk by
+   `ledger_seq` range** (e.g. 5 M-ledger windows) and watch the CH log
+   partition between chunks — a single unbounded `INSERT … SELECT` over
+   10 B rows risks the ClickHouse-log → root-fill → Postgres-crash
+   failure mode from the 2026-06-11 incident (logs on the small root
+   volume). Run under the root-<2 G watchdog.
+
+Until the backfill runs, lookups of pre-deploy transactions still pay
+the scan; new transactions are fast immediately after step 1–2 deploy.
+Storage cost of the index is ~3 narrow columns × 10.2 B rows
+(`String` hash dominates) — bounded and acceptable.
