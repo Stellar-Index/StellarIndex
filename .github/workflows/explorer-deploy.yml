@@ -92,6 +92,13 @@ jobs:
           test -f out/index.html || { echo "out/index.html missing — sitemap or routing broken"; exit 1; }
           ls -la out/ | head
 
+      # Fail BEFORE the CF upload if the static export approaches Cloudflare
+      # Pages' 20,000-file-per-deployment cap (Spike A 2026-06-24; SEO plan R1).
+      # Exceeding it makes `wrangler pages deploy` fail opaquely; this surfaces
+      # it early with the fix (lower the curated pre-render caps / shard).
+      - name: Cloudflare file-budget guard
+        run: bash scripts/ci/explorer-file-budget.sh web/explorer/out
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0  # v4.0.0
         with:
