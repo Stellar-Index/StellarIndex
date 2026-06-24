@@ -57,6 +57,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/oracles',
     '/research',
     '/methodology',
+    '/docs',
     '/widgets',
     '/sdk',
     '/contact',
