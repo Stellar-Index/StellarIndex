@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
+import { LegacyEntityRedirect } from '@/components/LegacyEntityRedirect';
 import { TxView } from './TxView';
 
 export const metadata: Metadata = {
@@ -21,7 +22,9 @@ export const metadata: Metadata = {
 export default function TxPage() {
   return (
     <Suspense fallback={null}>
-      <TxView />
+      <LegacyEntityRedirect param="hash" base="/transactions">
+        <TxView />
+      </LegacyEntityRedirect>
     </Suspense>
   );
 }

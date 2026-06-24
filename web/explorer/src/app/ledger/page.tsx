@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
+import { LegacyEntityRedirect } from '@/components/LegacyEntityRedirect';
 import { LedgerView } from './LedgerView';
 
 export const metadata: Metadata = {
@@ -22,7 +23,9 @@ export const metadata: Metadata = {
 export default function LedgerPage() {
   return (
     <Suspense fallback={null}>
-      <LedgerView />
+      <LegacyEntityRedirect param="seq" base="/ledgers">
+        <LedgerView />
+      </LegacyEntityRedirect>
     </Suspense>
   );
 }
