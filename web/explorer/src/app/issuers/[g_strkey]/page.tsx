@@ -6,7 +6,7 @@ import { Breadcrumbs } from '@/components/ui';
 import { asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { serializeJsonLd, ogImageFor } from '@/lib/seo';
 
 /**
  * /issuers/[g_strkey] — single-issuer detail page.
@@ -122,8 +122,8 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'website', images: SITE_OG_IMAGES },
-    twitter: { card: 'summary_large_image', title, description, images: SITE_TWITTER_IMAGES },
+    openGraph: { title, description, url: canonical, type: 'website', images: [ogImageFor('issuers', g_strkey)] },
+    twitter: { card: 'summary_large_image', title, description, images: [ogImageFor('issuers', g_strkey)] },
   };
 }
 
