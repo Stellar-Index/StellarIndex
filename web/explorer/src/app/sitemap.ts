@@ -7,6 +7,7 @@ import { loadBlogPosts } from '@/lib/blog';
 import { loadOperationsDocs } from '@/lib/operations';
 import { loadIncidents } from '@/lib/incidents';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
+import { PROTOCOLS } from './protocols/registry';
 
 // Required for `output: 'export'` — sitemap is generated at build
 // time and emitted as a static file. Same applies to robots.ts.
@@ -114,6 +115,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     changeFrequency: 'monthly',
     priority: 0.4,
   }));
+  // Per-protocol verification pages — pre-rendered from the static PROTOCOLS
+  // registry (generateStaticParams in protocols/[name]). These were orphaned
+  // from the sitemap despite being indexable, content-rich hubs.
+  const protocolPages: MetadataRoute.Sitemap = PROTOCOLS.map((p) => ({
+    url: siteURL(`/protocols/${p.name}`),
+    lastModified: now,
+    changeFrequency: 'daily',
+    priority: 0.7,
+  }));
 
   const [
     assetSlugs,
@@ -218,6 +228,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...adrPages,
     ...archPages,
     ...opsPages,
+    ...protocolPages,
     ...assetPages,
     ...issuerPages,
     ...currencyPages,
