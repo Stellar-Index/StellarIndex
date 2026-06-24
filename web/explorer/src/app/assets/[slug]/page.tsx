@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact, formatPrice } from '@/lib/format';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd, datasetJsonLd } from '@/lib/seo';
 import {
   Badge,
   Breadcrumbs,
@@ -666,6 +666,16 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       },
     })),
   };
+  // schema.org Dataset — Google Dataset Search eligibility. contentUrl points
+  // at the real /v1/assets/{slug} endpoint backing this page.
+  const datasetLD = datasetJsonLd({
+    name: `${coin.code} price & market data — Stellar Index`,
+    description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
+    url: `https://stellarindex.io/assets/${coin.slug}`,
+    keywords: [coin.code, `${coin.code} price`, 'Stellar', 'asset', 'VWAP'],
+    variableMeasured: ['price (USD)', 'market cap', 'circulating supply', '24h volume'],
+    contentUrl: `https://api.stellarindex.io/v1/assets/${encodeURIComponent(coin.slug)}`,
+  });
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <script
@@ -675,6 +685,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(faqLD) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(datasetLD) }}
       />
       <header className="space-y-3">
         <Breadcrumbs
