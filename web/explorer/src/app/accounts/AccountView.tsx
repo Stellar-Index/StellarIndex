@@ -259,7 +259,7 @@ function AccountsDirectory() {
                     </td>
                     <td className="py-1.5 pr-4 font-mono">
                       <Link
-                        href={`/accounts?id=${encodeURIComponent(a.account_id)}`}
+                        href={`/accounts/${encodeURIComponent(a.account_id)}/`}
                         className="hover:text-brand-600 hover:underline"
                       >
                         {a.account_id.slice(0, 10)}…{a.account_id.slice(-8)}
@@ -518,7 +518,7 @@ function TransactionsPanel({
               >
                 <Td>
                   <Link
-                    href={`/tx?hash=${t.hash}`}
+                    href={`/transactions/${t.hash}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={t.hash}
                   >
@@ -527,7 +527,7 @@ function TransactionsPanel({
                 </Td>
                 <Td>
                   <Link
-                    href={`/ledger?seq=${t.ledger}`}
+                    href={`/ledgers/${t.ledger}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                   >
                     #{t.ledger.toLocaleString()}
@@ -645,7 +645,7 @@ function OperationCard({ op }: { op: TxOperation }) {
         </span>
         {op.tx_hash && (
           <Link
-            href={`/tx?hash=${op.tx_hash}`}
+            href={`/transactions/${op.tx_hash}/`}
             className="font-mono text-[11px] text-brand-600 hover:underline"
             title={op.tx_hash}
           >
@@ -654,7 +654,7 @@ function OperationCard({ op }: { op: TxOperation }) {
         )}
         {op.ledger != null && (
           <Link
-            href={`/ledger?seq=${op.ledger}`}
+            href={`/ledgers/${op.ledger}/`}
             className="font-mono text-[11px] text-ink-muted hover:text-brand-600"
           >
             #{op.ledger.toLocaleString()}

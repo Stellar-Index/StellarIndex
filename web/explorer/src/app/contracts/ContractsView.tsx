@@ -86,7 +86,7 @@ export function ContractsView() {
                   <tr key={c.contract_id} className="hover:bg-surface-muted">
                     <td className="px-4 py-3">
                       <Link
-                        href={`/contract?id=${encodeURIComponent(c.contract_id)}`}
+                        href={`/contracts/${encodeURIComponent(c.contract_id)}/`}
                         className="font-mono text-xs text-brand-600 hover:underline"
                         title={c.contract_id}
                       >
@@ -122,7 +122,7 @@ export function ContractsView() {
       <p className="text-xs text-ink-muted">
         Looking for a specific contract? Paste its <code className="font-mono">C…</code>{' '}
         address into search, or open it directly at{' '}
-        <code className="font-mono">/contract?id=&lt;C…&gt;</code>.
+        <code className="font-mono">/contracts/&lt;C…&gt;</code>.
       </p>
     </Container>
   );

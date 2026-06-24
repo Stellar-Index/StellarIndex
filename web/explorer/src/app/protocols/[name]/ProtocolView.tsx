@@ -623,7 +623,7 @@ function ContractRoster({
                 </td>
                 <td className="px-4 py-2">
                   <Link
-                    href={`/contract?id=${encodeURIComponent(c.contract_id)}`}
+                    href={`/contracts/${encodeURIComponent(c.contract_id)}/`}
                     className="text-brand-600 hover:underline"
                   >
                     <CopyHash value={c.contract_id} head={8} tail={6} />
@@ -717,7 +717,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
             {data.factories.map((f) => (
               <li key={f}>
                 <Link
-                  href={`/contract?id=${encodeURIComponent(f)}`}
+                  href={`/contracts/${encodeURIComponent(f)}/`}
                   className="inline-flex items-center rounded border border-line px-2 py-1 font-mono text-[11px] text-brand-600 hover:border-brand-500 hover:underline"
                 >
                   {shortId(f)}

@@ -226,7 +226,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             Blend protocol →
           </Link>
           <Link
-            href={`/contract?id=${encodeURIComponent(pool)}`}
+            href={`/contracts/${encodeURIComponent(pool)}/`}
             className="text-brand-600 hover:underline"
           >
             Contract events →

@@ -291,7 +291,7 @@ function Cell({ value }: { value: string }) {
   if (isContractId(value)) {
     return (
       <Link
-        href={`/contract?id=${encodeURIComponent(value)}`}
+        href={`/contracts/${encodeURIComponent(value)}/`}
         className="text-brand-600 hover:underline"
       >
         <CopyHash value={value} head={8} tail={6} />
@@ -301,7 +301,7 @@ function Cell({ value }: { value: string }) {
   if (isAccountId(value)) {
     return (
       <Link
-        href={`/accounts?id=${encodeURIComponent(value)}`}
+        href={`/accounts/${encodeURIComponent(value)}/`}
         className="text-brand-600 hover:underline"
       >
         <CopyHash value={value} head={8} tail={6} />

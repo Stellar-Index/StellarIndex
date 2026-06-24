@@ -74,7 +74,7 @@ export function HoldersTabPanel({ assetID }: { assetID: string }) {
                   <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
                   <td className="px-4 py-3">
                     <Link
-                      href={`/accounts?id=${encodeURIComponent(h.account_id)}`}
+                      href={`/accounts/${encodeURIComponent(h.account_id)}/`}
                       className="font-mono text-xs text-brand-600 hover:underline"
                       title={h.account_id}
                     >

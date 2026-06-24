@@ -432,7 +432,7 @@ function CodeHistoryPanel({ id }: { id: string }) {
               <tr key={`${v.ledger}-${v.wasm_hash}`} className="hover:bg-surface-muted">
                 <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
                 <td className="px-4 py-3">
-                  <Link href={`/ledger?seq=${v.ledger}`} className="font-mono text-xs text-brand-600 hover:underline">
+                  <Link href={`/ledgers/${v.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
                     #{v.ledger.toLocaleString()}
                   </Link>
                 </td>
@@ -528,7 +528,7 @@ function InteractionsPanel({ id }: { id: string }) {
               <tr key={e.contract_id} className="hover:bg-surface-muted">
                 <td className="px-4 py-3">
                   <Link
-                    href={`/contract?id=${encodeURIComponent(e.contract_id)}`}
+                    href={`/contracts/${encodeURIComponent(e.contract_id)}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={e.contract_id}
                   >
@@ -637,7 +637,7 @@ function EventsPanel({
               >
                 <Td>
                   <Link
-                    href={`/ledger?seq=${ev.ledger}`}
+                    href={`/ledgers/${ev.ledger}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                   >
                     #{ev.ledger.toLocaleString()}
@@ -653,7 +653,7 @@ function EventsPanel({
                 </Td>
                 <Td>
                   <Link
-                    href={`/tx?hash=${ev.tx_hash}`}
+                    href={`/transactions/${ev.tx_hash}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={ev.tx_hash}
                   >

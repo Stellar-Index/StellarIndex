@@ -175,7 +175,7 @@ function Card({ entry }: { entry: Entry }) {
                   {c.label}
                 </span>
                 <Link
-                  href={`/contract?id=${encodeURIComponent(c.cstrkey)}`}
+                  href={`/contracts/${encodeURIComponent(c.cstrkey)}/`}
                   className="font-mono text-[11px] text-brand-600 hover:underline"
                   title={`${c.cstrkey} — contract events + code`}
                 >

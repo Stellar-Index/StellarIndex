@@ -165,7 +165,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
             {l.prev_hash ? (
               <span className="inline-flex items-center gap-2">
                 <Link
-                  href={`/ledger?seq=${l.sequence - 1}`}
+                  href={`/ledgers/${l.sequence - 1}/`}
                   className="font-mono text-xs text-brand-600 hover:underline"
                   title={`Ledger #${(l.sequence - 1).toLocaleString()}`}
                 >
@@ -211,13 +211,13 @@ function Shell({
         {seq != null && (
           <div className="flex items-center gap-3 text-xs">
             <Link
-              href={`/ledger?seq=${seq - 1}`}
+              href={`/ledgers/${seq - 1}/`}
               className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
             >
               ← Prev ledger
             </Link>
             <Link
-              href={`/ledger?seq=${seq + 1}`}
+              href={`/ledgers/${seq + 1}/`}
               className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
             >
               Next ledger →
@@ -304,7 +304,7 @@ function TransactionsPanel({
               >
                 <Td>
                   <Link
-                    href={`/tx?hash=${t.hash}`}
+                    href={`/transactions/${t.hash}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={t.hash}
                   >
@@ -313,7 +313,7 @@ function TransactionsPanel({
                 </Td>
                 <Td>
                   <Link
-                    href={`/accounts?id=${encodeURIComponent(t.source_account)}`}
+                    href={`/accounts/${encodeURIComponent(t.source_account)}/`}
                     className="font-mono text-xs text-ink-body hover:text-brand-600"
                     title={t.source_account}
                   >

@@ -116,7 +116,7 @@ export function LedgersTable() {
               >
                 <Td>
                   <Link
-                    href={`/ledger?seq=${l.sequence}`}
+                    href={`/ledgers/${l.sequence}/`}
                     className="font-mono font-medium text-ink-body hover:text-brand-600"
                   >
                     #{l.sequence.toLocaleString()}

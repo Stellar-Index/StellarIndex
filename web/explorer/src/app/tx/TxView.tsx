@@ -141,7 +141,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           </FieldWide>
           <Field label="Ledger">
             <Link
-              href={`/ledger?seq=${tx.ledger}`}
+              href={`/ledgers/${tx.ledger}/`}
               className="font-mono text-xs text-brand-600 hover:underline"
             >
               #{tx.ledger.toLocaleString()}
@@ -177,7 +177,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           <FieldWide label="Source account">
             <span className="inline-flex items-center gap-2">
               <Link
-                href={`/accounts?id=${encodeURIComponent(tx.source_account)}`}
+                href={`/accounts/${encodeURIComponent(tx.source_account)}/`}
                 className="font-mono text-xs text-brand-600 hover:underline"
                 title={tx.source_account}
               >
@@ -379,7 +379,7 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
                 </Td>
                 <Td>
                   <Link
-                    href={`/contract?id=${ev.contract_id}`}
+                    href={`/contracts/${ev.contract_id}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={ev.contract_id}
                   >
