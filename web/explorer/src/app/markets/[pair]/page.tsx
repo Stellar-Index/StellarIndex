@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { formatCompact } from '@/lib/format';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd, datasetJsonLd } from '@/lib/seo';
 import { Breadcrumbs } from '@/components/ui';
 import { PairChart } from './PairChart';
 import { SourceBreakdown } from './SourceBreakdown';
@@ -340,11 +340,25 @@ export default async function PairPage({ params }: { params: Params }) {
       },
     ],
   };
+  // schema.org Dataset — eligibility for Google Dataset Search. contentUrl
+  // points at the real public /v1/chart endpoint this page already uses.
+  const datasetLD = datasetJsonLd({
+    name: `${baseLabel}/${quoteLabel} price & volume — Stellar Index`,
+    description: `Aggregated volume-weighted average price (VWAP), OHLC candles, and trade volume for the ${baseLabel}/${quoteLabel} market on Stellar, computed by Stellar Index across on-chain venues (SDEX, AMMs) and tracked exchanges.`,
+    url: `https://stellarindex.io/markets/${encodeURIComponent(`${base}~${quote}`)}`,
+    keywords: [baseLabel, quoteLabel, `${baseLabel} price`, `${baseLabel} ${quoteLabel}`, 'Stellar', 'VWAP', 'OHLC'],
+    variableMeasured: ['VWAP', 'OHLC', 'trade volume', '24h price change'],
+    contentUrl: `https://api.stellarindex.io/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
+  });
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLD) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(datasetLD) }}
       />
       <header className="space-y-3">
         <Breadcrumbs

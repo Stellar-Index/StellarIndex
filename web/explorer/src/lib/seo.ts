@@ -59,3 +59,44 @@ export function serializeJsonLd(data: unknown): string {
     .split(paraSep)
     .join('\\u2029');
 }
+
+/**
+ * schema.org Dataset node for our data surfaces (price/market/asset pages).
+ * Makes them eligible for Google Dataset Search — a differentiator for a
+ * pricing product. Pass an accurate `contentUrl` (a real public API endpoint)
+ * so the DataDownload points at fetchable JSON; omit it if unsure.
+ */
+export function datasetJsonLd(opts: {
+  name: string;
+  description: string;
+  url: string;
+  keywords?: string[];
+  variableMeasured?: string[];
+  contentUrl?: string;
+}): Record<string, unknown> {
+  const node: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'Dataset',
+    name: opts.name,
+    description: opts.description,
+    url: opts.url,
+    isAccessibleForFree: true,
+    creator: {
+      '@type': 'Organization',
+      name: 'Stellar Index',
+      url: 'https://stellarindex.io',
+    },
+  };
+  if (opts.keywords?.length) node.keywords = opts.keywords;
+  if (opts.variableMeasured?.length) node.variableMeasured = opts.variableMeasured;
+  if (opts.contentUrl) {
+    node.distribution = [
+      {
+        '@type': 'DataDownload',
+        encodingFormat: 'application/json',
+        contentUrl: opts.contentUrl,
+      },
+    ];
+  }
+  return node;
+}
