@@ -8,6 +8,7 @@ import { loadOperationsDocs } from '@/lib/operations';
 import { loadIncidents } from '@/lib/incidents';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 import { PROTOCOLS } from './protocols/registry';
+import { buildConvertParams } from '@/lib/convert-params';
 
 // Required for `output: 'export'` — sitemap is generated at build
 // time and emitted as a static file. Same applies to robots.ts.
@@ -162,6 +163,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }));
 
+  // Convert pages — high-intent "X to Y" queries, pre-rendered as the same
+  // hub-and-spoke matrix the route builds (shared buildConvertParams over the
+  // same fiat ticker set, so the sitemap can't list a pair that 404s). These
+  // were orphaned from the sitemap despite being indexed.
+  const convertPages: MetadataRoute.Sitemap = buildConvertParams(
+    currencyTickers,
+  ).map(({ from, to }) => ({
+    url: siteURL(`/convert/${from}/${to}`),
+    lastModified: now,
+    changeFrequency: 'weekly',
+    priority: 0.6,
+  }));
+
   // Per-pair detail pages. The route is /markets/{base}~{quote},
   // URL-encoded once. We pre-render the top 100 by 24h volume at
   // build time (see markets/[pair]/page.tsx); listing them in the
@@ -229,6 +243,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...archPages,
     ...opsPages,
     ...protocolPages,
+    ...convertPages,
     ...assetPages,
     ...issuerPages,
     ...currencyPages,
