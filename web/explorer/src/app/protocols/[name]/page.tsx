@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { serializeJsonLd, ogImageFor } from '@/lib/seo';
 import { ProtocolView } from './ProtocolView';
 import { PROTOCOLS, protocolMeta } from '../registry';
 
@@ -44,13 +44,13 @@ export async function generateMetadata({
       description,
       url: canonical,
       type: 'website',
-      images: SITE_OG_IMAGES,
+      images: [ogImageFor('protocols', name)],
     },
     twitter: {
       card: 'summary_large_image',
       title,
       description,
-      images: SITE_TWITTER_IMAGES,
+      images: [ogImageFor('protocols', name)],
     },
   };
 }

@@ -27,7 +27,7 @@ function prettyLabel(type, id) {
 
 const TYPE_LABEL = {
   markets: 'Market', assets: 'Asset', transactions: 'Transaction',
-  ledgers: 'Ledger', accounts: 'Account', contracts: 'Contract', protocols: 'Protocol',
+  ledgers: 'Ledger', accounts: 'Account', contracts: 'Contract', protocols: 'Protocol', issuers: 'Issuer',
 };
 
 async function liveSubline(type, rawId) {
