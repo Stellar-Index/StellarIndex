@@ -92,3 +92,8 @@
 /networks            /            301
 /networks/*          /            301
 /assets/:slug/:network   /assets/:slug   301
+
+# Ecosystem short-form alias: /address/{G} (EVM/Bitcoin habit) → /accounts/{G}
+# (Stellar's native term + Horizon convention). Clean path redirect (no query
+# string), so a _redirects 301 is correct. SEO plan D-redirect set.
+/address/*  /accounts/:splat  301
