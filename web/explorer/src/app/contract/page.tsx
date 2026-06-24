@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
+import { LegacyEntityRedirect } from '@/components/LegacyEntityRedirect';
 import { ContractView } from './ContractView';
 
 export const metadata: Metadata = {
@@ -21,7 +22,9 @@ export const metadata: Metadata = {
 export default function ContractPage() {
   return (
     <Suspense fallback={null}>
-      <ContractView />
+      <LegacyEntityRedirect param="id" base="/contracts">
+        <ContractView />
+      </LegacyEntityRedirect>
     </Suspense>
   );
 }

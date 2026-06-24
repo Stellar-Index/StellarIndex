@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
+import { LegacyEntityRedirect } from '@/components/LegacyEntityRedirect';
 import { AccountView } from './AccountView';
 
 export const metadata: Metadata = {
@@ -27,7 +28,9 @@ export const metadata: Metadata = {
 export default function AccountPage() {
   return (
     <Suspense fallback={null}>
-      <AccountView />
+      <LegacyEntityRedirect param="id" base="/accounts">
+        <AccountView />
+      </LegacyEntityRedirect>
     </Suspense>
   );
 }
