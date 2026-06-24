@@ -102,3 +102,18 @@
 # entities use plural /accounts/{g}). Keep old bookmarks working.
 /account            /dashboard/         301
 /account/*          /dashboard/:splat   301
+
+# Restructure (SEO plan D5) — singular category + /external aliases resolve to
+# the existing (indexed) category/source pages, so the plan's URL names work
+# without re-indexing churn. New dedicated sections (/amm, /yield, /sdex,
+# /liquidity-pools, /external/forex) are a follow-up content migration.
+/dex                /dexes/             301
+/dex/*              /dexes/:splat       301
+/oracle             /oracles/           301
+/oracle/*           /oracles/:splat     301
+/bridge             /bridges/           301
+/bridge/*           /bridges/:splat     301
+/external           /sources/           301
+/external/exchanges /exchanges/         301
+/external/exchanges/* /exchanges/:splat 301
+/external/aggregators /aggregators/     301
