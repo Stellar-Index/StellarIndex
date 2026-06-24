@@ -71,16 +71,16 @@ function explorerHref(c: SearchClassification): string | null {
   const canonical = c.canonical?.trim();
   switch (c.kind) {
     case 'transaction':
-      return canonical ? `/tx?hash=${encodeURIComponent(canonical)}` : null;
+      return canonical ? `/transactions/${encodeURIComponent(canonical)}/` : null;
     case 'ledger':
-      return canonical ? `/ledger?seq=${encodeURIComponent(canonical)}` : null;
+      return canonical ? `/ledgers/${encodeURIComponent(canonical)}/` : null;
     case 'contract':
-      return canonical ? `/contract?id=${encodeURIComponent(canonical)}` : null;
+      return canonical ? `/contracts/${encodeURIComponent(canonical)}/` : null;
     case 'account':
       // Accounts are unbounded → the query-param explorer page
       // (/accounts?id=), NOT /issuers/{g} (which only static-exports
       // the top ~100 issuers and 404s every ordinary account).
-      return canonical ? `/accounts?id=${encodeURIComponent(canonical)}` : null;
+      return canonical ? `/accounts/${encodeURIComponent(canonical)}/` : null;
     case 'asset':
       // The classification may hand back a ready-made explorer href
       // (e.g. /assets/<slug>); prefer it, else build from canonical.
@@ -547,7 +547,7 @@ function search(
       type: 'account',
       label: `Account ${gMatch[0].slice(0, 8)}…${gMatch[0].slice(-4)}`,
       hint: 'open account detail',
-      href: `/accounts?id=${encodeURIComponent(gMatch[0])}`,
+      href: `/accounts/${encodeURIComponent(gMatch[0])}/`,
     });
   }
 

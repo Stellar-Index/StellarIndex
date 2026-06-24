@@ -145,7 +145,7 @@ export function OperationsView() {
                     <td className="px-4 py-3">
                       {op.source_account ? (
                         <Link
-                          href={`/accounts?id=${encodeURIComponent(op.source_account)}`}
+                          href={`/accounts/${encodeURIComponent(op.source_account)}/`}
                           className="font-mono text-xs text-ink-body hover:text-brand-600"
                           title={op.source_account}
                         >
@@ -157,7 +157,7 @@ export function OperationsView() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
-                        href={`/ledger?seq=${op.ledger}`}
+                        href={`/ledgers/${op.ledger}/`}
                         className="font-mono tabular-nums text-xs text-ink-body hover:text-brand-600"
                       >
                         {op.ledger.toLocaleString()}
@@ -165,7 +165,7 @@ export function OperationsView() {
                     </td>
                     <td className="px-4 py-3">
                       <Link
-                        href={`/tx?hash=${op.tx_hash}`}
+                        href={`/transactions/${op.tx_hash}/`}
                         className="font-mono text-xs text-brand-600 hover:underline"
                         title={op.tx_hash}
                       >

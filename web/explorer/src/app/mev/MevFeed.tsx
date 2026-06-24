@@ -115,7 +115,7 @@ export function MevFeed() {
                 <div className="mt-1 flex flex-wrap gap-x-4 text-[11px] text-ink-muted">
                   {taker && (
                     <Link
-                      href={`/accounts?id=${encodeURIComponent(taker)}`}
+                      href={`/accounts/${encodeURIComponent(taker)}/`}
                       className="font-mono hover:text-brand-600 hover:underline"
                       title={taker}
                     >
@@ -124,7 +124,7 @@ export function MevFeed() {
                   )}
                   {tx && (
                     <Link
-                      href={`/tx?hash=${encodeURIComponent(tx)}`}
+                      href={`/transactions/${encodeURIComponent(tx)}/`}
                       className="font-mono hover:text-brand-600 hover:underline"
                     >
                       tx {tx.slice(0, 8)}…

@@ -126,7 +126,7 @@ export function OperationView() {
             Transaction <span className="font-mono">{tx.hash.slice(0, 12)}…</span>{' '}
             has {(tx.operations ?? []).length} operation(s); index {idx} is out of
             range.{' '}
-            <Link href={`/tx?hash=${tx.hash}`} className="text-brand-600 hover:underline">
+            <Link href={`/transactions/${tx.hash}/`} className="text-brand-600 hover:underline">
               View the transaction →
             </Link>
           </p>
@@ -148,14 +148,14 @@ export function OperationView() {
             <OpResultBadge code={op.result_code} />
           </Field>
           <Field label="Ledger">
-            <Link href={`/ledger?seq=${tx.ledger}`} className="font-mono text-xs text-brand-600 hover:underline">
+            <Link href={`/ledgers/${tx.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
               #{tx.ledger.toLocaleString()}
             </Link>
           </Field>
           <Field label="Close time" value={formatTimestamp(tx.close_time)} />
           <FieldWide label="Transaction">
             <span className="inline-flex items-center gap-2">
-              <Link href={`/tx?hash=${tx.hash}`} className="font-mono text-xs text-brand-600 hover:underline" title={tx.hash}>
+              <Link href={`/transactions/${tx.hash}/`} className="font-mono text-xs text-brand-600 hover:underline" title={tx.hash}>
                 {tx.hash.slice(0, 16)}…{tx.hash.slice(-16)}
               </Link>
               <CopyValue value={tx.hash} />
@@ -165,7 +165,7 @@ export function OperationView() {
             {op.source_account ? (
               <span className="inline-flex items-center gap-2">
                 <Link
-                  href={`/accounts?id=${encodeURIComponent(op.source_account)}`}
+                  href={`/accounts/${encodeURIComponent(op.source_account)}/`}
                   className="font-mono text-xs text-brand-600 hover:underline"
                   title={op.source_account}
                 >
@@ -176,7 +176,7 @@ export function OperationView() {
             ) : (
               <span className="inline-flex items-center gap-2 text-sm text-ink-muted">
                 <span className="font-mono text-xs">inherits tx source</span>
-                <Link href={`/accounts?id=${encodeURIComponent(tx.source_account)}`} className="text-brand-600 hover:underline">
+                <Link href={`/accounts/${encodeURIComponent(tx.source_account)}/`} className="text-brand-600 hover:underline">
                   <CopyHash value={tx.source_account} head={6} tail={4} />
                 </Link>
               </span>
@@ -246,7 +246,7 @@ function OpEventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
               <TR key={`${ev.event_index ?? i}`}>
                 <Td>
                   <Link
-                    href={`/contract?id=${ev.contract_id}`}
+                    href={`/contracts/${ev.contract_id}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={ev.contract_id}
                   >
@@ -286,7 +286,7 @@ function Shell({
           items={[
             { label: 'Home', href: '/' },
             { label: 'Operations', href: '/operations' },
-            ...(hash ? [{ label: 'Transaction', href: `/tx?hash=${hash}` }] : []),
+            ...(hash ? [{ label: 'Transaction', href: `/transactions/${hash}/` }] : []),
             { label: last },
           ]}
         />

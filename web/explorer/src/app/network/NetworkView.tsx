@@ -382,7 +382,7 @@ function LatestLedgers({
                 <TR key={l.sequence}>
                   <Td>
                     <Link
-                      href={`/ledger?seq=${l.sequence}`}
+                      href={`/ledgers/${l.sequence}/`}
                       className="font-mono tabular-nums text-brand-600 hover:underline"
                     >
                       #{l.sequence.toLocaleString()}

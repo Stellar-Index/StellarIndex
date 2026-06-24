@@ -163,7 +163,7 @@ function TxTable({
               <tr key={t.hash} className="hover:bg-surface-muted">
                 <td className="px-4 py-3">
                   <Link
-                    href={`/tx?hash=${t.hash}`}
+                    href={`/transactions/${t.hash}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={t.hash}
                   >
@@ -172,7 +172,7 @@ function TxTable({
                 </td>
                 <td className="px-4 py-3">
                   <Link
-                    href={`/accounts?id=${encodeURIComponent(t.source_account)}`}
+                    href={`/accounts/${encodeURIComponent(t.source_account)}/`}
                     className="font-mono text-xs text-ink-body hover:text-brand-600"
                     title={t.source_account}
                   >
