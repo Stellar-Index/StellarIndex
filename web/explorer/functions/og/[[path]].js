@@ -10,6 +10,8 @@ import { ImageResponse } from 'workers-og';
 function code(s) {
   if (!s) return '';
   if (s === 'native') return 'XLM';
+  const colon = s.indexOf(':');
+  if (colon > 0) s = s.slice(colon + 1);
   const dash = s.indexOf('-');
   return (dash > 0 ? s.slice(0, dash) : s).toUpperCase();
 }
@@ -40,7 +42,10 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const parts = url.pathname.replace(/^\/og\/?/, '').split('/').filter(Boolean);
   const type = (parts[0] || 'home').replace(/[^a-z0-9-]/gi, '');
-  const rawId = decodeURIComponent(parts.slice(1).join('/') || '');
+  let rawId = parts.slice(1).join('/') || '';
+  for (let i = 0; i < 2; i++) {
+    try { const d = decodeURIComponent(rawId); if (d === rawId) break; rawId = d; } catch { break; }
+  }
   const label = prettyLabel(type, rawId) || 'Stellar pricing & protocol explorer';
   const kicker = TYPE_LABEL[type] ? `Stellar Index · ${TYPE_LABEL[type]}` : 'Stellar Index';
 
