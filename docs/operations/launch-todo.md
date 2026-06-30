@@ -27,6 +27,48 @@ status: living document
 
 ---
 
+## ⭐ CURRENT STATUS — where we are (updated 2026-06-30, end of long session)
+
+**Two numbering schemes — don't conflate them:**
+- **Launch phases P0–P5** (this doc's sections): P0 ops fixes → P1 backfills/data
+  → P2 launch-blocking → P3 multi-region → P4 ADR features → P5 post-launch.
+- **Resync phases A–E** (the "true + complete + never-behind" data work, run
+  inside P0/P1): A substrate → B trustworthy verdict → C re-derives → D hygiene
+  → E verdict green + steady-state.
+
+**DONE this session (all committed + pushed + live on r1):**
+- **P0 — COMPLETE.** sep1-refresh + compute-completeness + data-freshness
+  timers; prometheus→ZFS (root 94%→60%); nft-drop off syslog; `massive` FX
+  bridged into the registry. (P0-3 CoinGecko = operator purchase, pending.)
+- **P1 — mostly done.** P1-1/P1-3/P1-6 were already done (verified, not re-run).
+  **P1-5** supply_flows deduped (213M dup rows gone). **P1-7 SEP-41 supply
+  gap — SOLVED** (served lake-derived, complete vs lake, deduped, current,
+  monitored). Remaining P1: P1-2 (/v1/tx index, low priority — noindex), P1-4
+  (CH Phase-4 re-derive — verify if needed), P1-8 (data-truth, in progress).
+- **Resync A–E — done.** A substrate proven; B verdict trustworthy +
+  self-maintaining + **15/15 green** (rc.149 preseed fix); C SEP-41 done;
+  D supply_flows deduped; E verdict green. **Steady-state "never behind"
+  watchdog LIVE** (data-freshness: per-domain + verdict + supply_flows;
+  coingecko correctly flagged).
+
+**NEXT — not started:**
+- **P2 — launch-blocking infra** (the push-to-launch priority): pre-launch
+  hardening (9 steps), Stripe webhook + email-verify enforcement, external
+  security review, launch-day cutover (L6.4). See Phase 2 below.
+- **P3 — multi-region** (committed): R2 (AWS) + R3 (Vultr) provisioning,
+  cross-region DNS + Postgres replication, failover chaos. **We are NOT at P3
+  yet** — P2 (launch-blocking) comes first per the push-to-launch decision.
+
+**PENDING OPERATOR ACTIONS (only humans can do):**
+1. **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
+2. Sequence/approve the remaining heavy backfills (P1-2 /v1/tx index, P1-4) when
+   wanted — all paced, none blocking.
+
+**Release train:** latest is **rc.150** (API: SEP-41 supply serving). r1 ops
+binary is rc.149 (compute-completeness preseed). Last commit: `cbb7a897`.
+
+---
+
 ## Phase 0 — Operational fixes (low-hanging fruit, do first)
 
 **Status 2026-06-30: COMPLETE.** P0-1/P0-2/P0-5/P0-6/P0-7 done; P0-4 was a false
