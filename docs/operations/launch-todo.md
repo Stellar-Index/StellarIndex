@@ -51,21 +51,36 @@ status: living document
   watchdog LIVE** (data-freshness: per-domain + verdict + supply_flows;
   coingecko correctly flagged).
 
-**NEXT — not started:**
-- **P2 — launch-blocking infra** (the push-to-launch priority): pre-launch
-  hardening (9 steps), Stripe webhook + email-verify enforcement, external
-  security review, launch-day cutover (L6.4). See Phase 2 below.
+**P2 — launch-blocking infra (skip Stripe) — code-side COMPLETE 2026-06-30:**
+- **P2-4 pricing polish — ✅ done (code).** (a) /price/tip fiat:USD verified live;
+  (b) **crypto:USDC self-peg FIXED** (`aggregate.FiatProxy` arm in
+  `tryStablecoinFiatProxy` → `1.0`/peg for `crypto:<STABLE>`/its-peg-fiat across
+  /price, /price/tip, /observations, /oracle; cross-peg stays 404); (c)
+  `min_usd_volume=0` verified intentional. **Needs deploy (rc.151 API).**
+- **P2-1 hardening — ✅ code/config done on r1** (verified via
+  `scripts/ops/pre-launch-check.sh`): loopback bind, CORS narrow, services/timers,
+  Caddy :443, zero SECURITY warnings. Remainder = operator-secret accounts only.
+- **P2-2 — Stripe SKIPPED** (per goal); email-verify machinery built but
+  deliberately off (avoids onboarding dead-end; product decision).
+- **P2-3 security review** — external = operator-procurement; code-side diff
+  reviewed clean. **P2-5 cutover** — api/explorer already DNS-live + TLS-valid;
+  remainder operator (CF orange-cloud + announce). **P2-6** — launch-day ops.
+
+**NEXT after P2:**
 - **P3 — multi-region** (committed): R2 (AWS) + R3 (Vultr) provisioning,
-  cross-region DNS + Postgres replication, failover chaos. **We are NOT at P3
-  yet** — P2 (launch-blocking) comes first per the push-to-launch decision.
+  cross-region DNS + Postgres replication, failover chaos. Mostly `[OPS]`.
 
 **PENDING OPERATOR ACTIONS (only humans can do):**
 1. **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
-2. Sequence/approve the remaining heavy backfills (P1-2 /v1/tx index, P1-4) when
+2. **Create Healthchecks.io + Slack accounts** → paste the 4× `HEALTHCHECKS_URL_*`
+   + deadmansswitch + Slack webhook URLs on r1, rerun `pre-launch-check.sh` (P2-1).
+3. Sequence/approve the remaining heavy backfills (P1-2 /v1/tx index, P1-4) when
    wanted — all paced, none blocking.
+4. Optional: Cloudflare orange-cloud in front of `api.` (P2-1 ④); book external
+   security review (P2-3); launch-day cutover + announcement (P2-5/P2-6).
 
-**Release train:** latest is **rc.150** (API: SEP-41 supply serving). r1 ops
-binary is rc.149 (compute-completeness preseed). Last commit: `cbb7a897`.
+**Release train:** latest tag **rc.150**; **rc.151 cut this session** (API:
+crypto:USDC self-peg, P2-4b). Last commit: `d42a84c2`.
 
 ---
 
@@ -156,12 +171,12 @@ compute-completeness catch-up finishes to avoid stacking lake I/O.
 
 | # | Item | Ref | Status | Notes |
 |---|------|-----|--------|-------|
-| P2-1 | **Pre-launch hardening** — 9 steps before flipping DNS: loopback bind, CORS narrow, Cloudflare proxy, Stripe secret, Healthchecks URLs, FX keys, smoke, backup baseline. | `pre-launch-hardening.md` | 🔴 | Gate for public flip. |
-| P2-2 | **Stripe webhook handler** — lifts per-key `RateLimitPerMin` on payment; not built. Email-verification enforcement not built. | r1-deploy-state | 🔴 [code] | Monetization path. |
-| P2-3 | **External security review** | L5.6 | 🔴 | Before public. |
+| P2-1 | **Pre-launch hardening** — 9 steps before flipping DNS: loopback bind, CORS narrow, Cloudflare proxy, Stripe secret, Healthchecks URLs, FX keys, smoke, backup baseline. | `pre-launch-hardening.md` | 🟢 code/config done; 🔴 [OPS-secrets] | **Verified 2026-06-30 via `scripts/ops/pre-launch-check.sh` against r1.** All code/config-side items are **already DONE on r1**: ① `listen_addr = 127.0.0.1:3000` loopback ✅ (external `:3000` refuses — confirmed); ② CORS narrowed to the 4 stellarindex.io hostnames ✅; ③ trusted_proxy_cidrs correct ✅; ⑥/⑦ all services + heartbeat/smoke timers active ✅; Caddy on :443 ✅; **zero `SECURITY:` startup warnings** ✅. Remaining 4 FAIL + 2 WARN are **pure operator account-creation** (cannot be done from code): Healthchecks.io URLs (4× `HEALTHCHECKS_URL_*` into `/etc/default/stellarindex-healthchecks`), deadmansswitch + Slack webhook (`/etc/default/alertmanager-secrets`). ④ Cloudflare orange-cloud proxy = recommended, not blocking. ⑤ Stripe secret = SKIP. ⑧ outside-smoke + ⑨ backup baseline = do at flip. **Action for operator:** create the Healthchecks.io + Slack accounts, paste the URLs, rerun the verifier → expect 0 fails. |
+| P2-2 | **Stripe webhook handler** (SKIP per goal) + email-verification enforcement. | r1-deploy-state | 🟢 (skip Stripe) | **2026-06-30:** Stripe webhook = **out of scope** (goal: "complete P2 but skip Stripe"). The email-verification note was **stale** — the enforcement machinery is fully built: `RequireEmailVerified` middleware (`internal/api/v1/server.go:609`), `SignupRequireEmailVerification` config flag, `EmailVerifiedAt` user field, `/v1/signup/verify` + `MarkEmailVerified`. It is **deliberately disabled on r1** (`SignupRequireEmailVerification=false`) to avoid the AC7 onboarding dead-end (2026-06-13). Flipping it on is a product decision gated on the Resend emailer being wired + the verify flow tested end-to-end — NOT a blind flag flip (would recreate the dead-end). Left off for launch. |
+| P2-3 | **External security review** | L5.6 | 🟡 | **2026-06-30:** An *external* (third-party) review is operator-procurement, not a code task. Code-side substitute: the P2-4(b) diff is constant-returning (synthesises a fixed `1.0` peg; no user input flows into the price value; no injection/escaping surface) — reviewed clean. The standing internal gate is `/security-review` on each diff + the audit register (`docs/audit-2026-06-11/`, last full cold pass). Operator: book the external engagement before public announcement. |
 | P2-4 | **Pricing polish** (3 sub-items). | r1-deploy-state | ✅ done | **Done 2026-06-30 (P2 goal):** (a) `/v1/price/tip` fiat:USD = **✅ STALE/RESOLVED** — `?asset=X&quote=fiat:USD` returns 200 with prices (BTC 58602, ETH 1570, XLM 0.18; param is `asset`+`quote`, not `pair`). (b) **USDC/USD≈1.0 synthesis = ✅ FIXED** — root cause was narrower than recorded: `?asset=USDC` 400s (bare ticker, `ParseAsset` rejects it); the real gap was `crypto:USDC` (the global-ticker form the catalogue/explorer use) → 404, while the classic `USDC-GA5Z…` already returned `1.0 peg` via `usdPeggedClassics` (F-1232). Added a `aggregate.FiatProxy` self-peg arm at the top of `tryStablecoinFiatProxy` (`internal/api/v1/price.go`): when the asset is a `crypto:<STABLE>` whose peg fiat == the requested quote, return `1.0`/`price_type:peg`. Covers USD+EUR+MXN pegs and flows through `/v1/price`, `/v1/price/tip`, `/v1/observations`, `/v1/oracle` (all share the helper). Cross-peg (`crypto:USDC/fiat:EUR`) correctly stays a 404 (real cross-rate). Import boundary OK (api→aggregate already allowed). 2 regression tests added; full api/v1 suite green. (c) **`min_usd_volume=0` = ✅ VERIFIED INTENTIONAL** — `[aggregate] min_usd_volume = 0` on r1 is a documented stop-gap (config comment + r1-deployment-state.md): default is 10000, but r1 is on-chain-only until CEX/CoinGecko connectors land, and micro-volume on-chain XLM/USDC trades are the only price data we have — filtering at 10000 would zero out every price. Correct for now; **re-raise to the 10000 default once [[project_pending_coingecko_purchase]] / CEX connectors flow** (tracked in P0-3). Not changed. |
-| P2-5 | **Launch-day checklist L6.4 cutover** — DNS flip, enable public rate-limit tier, public-flip, showcase + status go-live, 24h watch. | `launch-day-checklist.md`, L6.4 | 🔴 [OPS] | The flip itself. |
-| P2-6 | **API-walkthrough demo (L6.6) + first 24h watch (L6.7)** | L6.6/6.7 | 🔴 | Launch ops. |
+| P2-5 | **Launch-day checklist L6.4 cutover** — DNS flip, enable public rate-limit tier, public-flip, showcase + status go-live, 24h watch. | `launch-day-checklist.md`, L6.4 | 🟢 largely live; 🔴 [OPS] final | **2026-06-30:** The endpoints are **already DNS-live + TLS-valid**: `api.stellarindex.io` → 200 over HTTPS (direct to R1 origin 136.243.90.96, grey-cloud); `stellarindex.io` → live via Cloudflare Pages. So the technical cutover is effectively done. Remaining is operator/launch-day only: (a) optional Cloudflare orange-cloud proxy in front of `api.` (P2-1 ④, recommended for L7/WAF); (b) confirm public rate-limit tier; (c) the go-live announcement + status-page flip. No code work. |
+| P2-6 | **API-walkthrough demo (L6.6) + first 24h watch (L6.7)** | L6.6/6.7 | 🔴 [OPS] | Launch-day ops (operator). The data-freshness watchdog + smoke timers (P0/steady-state) are the automated half of the 24h watch — already live. |
 
 ---
 
