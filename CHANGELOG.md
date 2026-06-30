@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`massive` FX feed registered as an external source.** The active fiat-FX
+  feed (`internal/sources/forex` worker, massive.com = Polygon's backend,
+  `fx_quotes` path) was missing from `external.Registry`, so it never appeared
+  in `/v1/sources` and `Lookup("massive")` fail-closed. Now registered as an
+  external FX source (`ClassExchange`/`SubclassFX`, off-chain). Fixes a latent
+  classification bug: `IsOnChain("massive")` previously fell through to `true`
+  (which would have placed the off-chain FX feed on the explorer's Stellar
+  `/network` surface); it is now correctly `false`. (launch-todo P0-7.)
 - **Two missing cron timers — `sep1-refresh` + `compute-completeness`.** Neither
   had ever existed as a systemd timer, so both data sets silently froze: issuer
   `org_name`/`org_verified` only updated on a manual `sep1-refresh`, and the

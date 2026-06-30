@@ -41,10 +41,11 @@ not-a-bug. Only genuine residual = the CoinGecko purchase (operator action).
 | P0-4 | ~~Massive FX poller stalled~~ | [OPS] | ✅ **FALSE ALARM** — FX is healthy; the worker runs in the **API** binary (`fx_quotes persisted rows:797` hourly). The audit misread `observed_at` (data-publish time, not write time). No action. |
 | P0-5 | **Prometheus off the 49G root** — 13G of root, chronic >90%. | [OPS] | ✅ **DONE** — relocated to a `data/prometheus` ZFS dataset (zstd 11.87×, 13G→1.31G); root **94%→60%**. Codified in the ZFS role defaults. Prometheus verified healthy. |
 | P0-6 | **`nft-drop` syslog spam** — ~10k dropped-packet lines / 200k. | [code] | ✅ **DONE** — rsyslog routes `nft-drop` to a logrotated `/var/log/nft-drop.log` and stops (off syslog). Safe (no firewall edit). |
-| P0-7 | ~~Source-catalogue drift~~ | [code] | 🟡 **RECLASSIFIED — not a bug.** `coinmarketcap`/`cryptocompare`/`polygon-forex`/`exchangeratesapi` are intentionally-present **disabled paid connectors** (config structs + key envs + 62 refs); `/v1/sources` honestly lists available-but-off sources. Only real gap: the active FX source `massive` lives in `internal/sources/forex/` (not `external.Registry`), so it's absent from `/v1/sources` — a framework-bridge PR, deferred. |
+| P0-7 | **Source-catalogue: `massive` missing from `/v1/sources`** | [code] | ✅ **DONE** — bridged the active FX feed `massive` (the `internal/sources/forex` worker, `fx_quotes` path) into `external.Registry` as an external FX source. Now visible in `/v1/sources` + correctly `IsOnChain=false` (fixed a latent bug where it fell through to on-chain). `coinmarketcap`/`cryptocompare`/`polygon-forex`/`exchangeratesapi` confirmed as intentionally-present disabled **paid** connectors (honest catalogue). Needs an API deploy to show live. |
 
-### Disk follow-ups surfaced during P0-5 (not blockers)
-- ZFS-dataset drift: `data/{clickhouse,loki,pgbackrest}` exist on r1 but aren't in the Ansible `zfs_datasets` defaults — reconcile in a dedicated pass.
+### Follow-ups surfaced during P0 (tracked, not blockers)
+- **FX-path debt** — the X2.5 triangulation forex-snap (`FXQuoteAtOrBefore`) reads the **`trades`** table filtered by `FXSources()` (the disabled connector-path sources), so it *always* soft-falls-back (`AggregatorFXSnapFallbackTotal`). The active FX feed `massive` writes **`fx_quotes`**, a different table. Unify the two FX paths — point the snap at `fx_quotes`, or collapse the redundant `massive`↔`polygon-forex` (same upstream provider). Low impact today (only non-USD-fiat-quoted pairs hit an FX leg).
+- **ZFS-dataset drift** — `data/{clickhouse,loki,pgbackrest}` exist on r1 but aren't in the Ansible `zfs_datasets` defaults — reconcile in a dedicated pass.
 
 ---
 

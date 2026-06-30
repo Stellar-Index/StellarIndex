@@ -90,6 +90,24 @@ var Registry = map[string]Metadata{
 	"coinbase": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
+	// `massive` is the ACTIVE fiat-FX feed (massive.com = Polygon's backend).
+	// It runs as the internal/sources/forex worker in the API binary and
+	// writes hourly fiat rates to the `fx_quotes` table — the USD-anchor
+	// reference behind /v1/currencies + per-trade usd_volume. It is an
+	// off-chain vendor feed (not a Stellar source), hence registered here so
+	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
+	// instead of fail-closing through Lookup's unknown-source fallback.
+	//
+	// `polygon-forex` + `exchangeratesapi` are the SAME-role external.Connector
+	// implementations (trades-path, currently disabled); polygon-forex is the
+	// same upstream provider as `massive`. NOTE: the X2.5 triangulation
+	// forex-snap (FXQuoteAtOrBefore) reads `trades` filtered by FXSources(),
+	// so it only sees these connector-path sources — with them disabled it
+	// always soft-falls-back. Unifying the two FX paths (point the snap at
+	// `fx_quotes`, or collapse massive↔polygon-forex) is tracked as FX-debt in
+	// docs/operations/launch-todo.md; massive's own consumers read fx_quotes
+	// directly and are unaffected.
+	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true},
 	"polygon-forex":    {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true},
 

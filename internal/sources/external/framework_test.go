@@ -14,7 +14,7 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 		"reflector-dex", "reflector-cex", "reflector-fx",
 		"redstone", "band",
 		"binance", "kraken", "bitstamp", "coinbase",
-		"polygon-forex", "exchangeratesapi",
+		"massive", "polygon-forex", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
 		"ecb",
 	}
@@ -35,7 +35,7 @@ func TestIsOnChain_Partition(t *testing.T) {
 		// CEX
 		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true,
 		// FX
-		"polygon-forex": true, "exchangeratesapi": true,
+		"massive": true, "polygon-forex": true, "exchangeratesapi": true,
 		// aggregators
 		"coingecko": true, "coinmarketcap": true, "cryptocompare": true,
 		// sovereign anchor
@@ -145,7 +145,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		"comet",         // audited 2026-04-29 (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
 		"blend",         // audited 2026-05-02 (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
 		"binance", "kraken", "bitstamp", "coinbase",
-		"polygon-forex", "exchangeratesapi",
+		"massive", "polygon-forex", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
 		"ecb",
 	}
