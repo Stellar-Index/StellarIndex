@@ -109,6 +109,16 @@ against.
   — far more detail per window.
 
 ### Fixed
+- **Completeness verdict false-negative on factory-gated sources (blend).**
+  `compute-completeness` (the daily verdict, ADR-0033) never seeded the
+  factory-child gate registry — only `verify-reconciliation` did. So its
+  childgates were the static `protocol_contracts` seed and went stale as new
+  pools deployed: `blend` reported `complete=false` (`expected=0`) on windows
+  whose activity was on pools missing from the seed, while the live decoder
+  (self-seeding from deploy events) captured them — i.e. a checker bug, not a
+  served-data gap. Now `compute-completeness` preseeds factory children from the
+  creation events `[genesis, lo)` before each re-derive (matching
+  `verify-reconciliation`), making the watchdog self-maintaining as pools deploy.
 - **CoinGecko Pro key would have 404'd — the poller now auto-switches to
   `pro-api.coingecko.com`.** A Pro key (`COINGECKO_API_KEY`) only authenticates
   against the paid host; the poller hard-coded the public host
