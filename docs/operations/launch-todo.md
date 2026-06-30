@@ -52,11 +52,11 @@ status: living document
   coingecko correctly flagged).
 
 **P2 — launch-blocking infra (skip Stripe) — code-side COMPLETE 2026-06-30:**
-- **P2-4 pricing polish — ✅ done (code).** (a) /price/tip fiat:USD verified live;
-  (b) **crypto:USDC self-peg FIXED** (`aggregate.FiatProxy` arm in
+- **P2-4 pricing polish — ✅ done + deploying.** (a) /price/tip fiat:USD verified
+  live; (b) **crypto:USDC self-peg FIXED** (`aggregate.FiatProxy` arm in
   `tryStablecoinFiatProxy` → `1.0`/peg for `crypto:<STABLE>`/its-peg-fiat across
   /price, /price/tip, /observations, /oracle; cross-peg stays 404); (c)
-  `min_usd_volume=0` verified intentional. **Needs deploy (rc.151 API).**
+  `min_usd_volume=0` verified intentional. **rc.151 cut + deploying to r1.**
 - **P2-1 hardening — ✅ code/config done on r1** (verified via
   `scripts/ops/pre-launch-check.sh`): loopback bind, CORS narrow, services/timers,
   Caddy :443, zero SECURITY warnings. Remainder = operator-secret accounts only.
@@ -66,22 +66,37 @@ status: living document
   reviewed clean. **P2-5 cutover** — api/explorer already DNS-live + TLS-valid;
   remainder operator (CF orange-cloud + announce). **P2-6** — launch-day ops.
 
-**NEXT after P2:**
-- **P3 — multi-region** (committed): R2 (AWS) + R3 (Vultr) provisioning,
-  cross-region DNS + Postgres replication, failover chaos. Mostly `[OPS]`.
+**Alerting migrated Slack→Discord (2026-06-30).** R1 standalone config +
+multi-host Ansible template now use `discord_configs` (two webhooks: #pages /
+#alerts). Operator supplies `DISCORD_WEBHOOK_URL_PAGES`/`_ALERTS`.
+
+**P3 — multi-region (operator-independent code-side COMPLETE):**
+- **P3-7 (Redis Sentinel role + ha-plan §3.4) — ✅ done** (role fully built;
+  §3.4 amended + ADR-0024). Was a stale `🔴`.
+- P3-1…P3-6 all require the R2/R3 hosts to exist first → **operator-gated**
+  (provisioning AWS/Vultr). Nothing parallelizable code-side until hosts land.
+
+**Operator-independent launch work is now COMPLETE** — remaining launch items
+are all operator-only (below). Doc-hygiene sweep this session reconciled 6 stale
+"outstanding" snapshots that were actually resolved (pgBackRest backups healthy,
+sla-probe active, blend BackfillSafe=true, both completeness timers installed,
+P3-7 done, stellar-focus units A-C shipped).
 
 **PENDING OPERATOR ACTIONS (only humans can do):**
 1. **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
 2. **Create Healthchecks.io account + Discord webhooks** → paste the 4×
    `HEALTHCHECKS_URL_*` + deadmansswitch + `DISCORD_WEBHOOK_URL_PAGES`/`_ALERTS`
    on r1, rerun `pre-launch-check.sh` (P2-1). (Alerting is Discord, not Slack.)
-3. Sequence/approve the remaining heavy backfills (P1-2 /v1/tx index, P1-4) when
+3. **Provision R2 (AWS) + R3 (Vultr) hosts** → then the `redis-sentinel` +
+   region bringup roles can run (P3-1…P3-6; all gated on hosts existing).
+4. Sequence/approve the remaining heavy backfills (P1-2 /v1/tx index, P1-4) when
    wanted — all paced, none blocking.
-4. Optional: Cloudflare orange-cloud in front of `api.` (P2-1 ④); book external
+5. Optional: Cloudflare orange-cloud in front of `api.` (P2-1 ④); book external
    security review (P2-3); launch-day cutover + announcement (P2-5/P2-6).
 
-**Release train:** latest tag **rc.150**; **rc.151 cut this session** (API:
-crypto:USDC self-peg, P2-4b). Last commit: `d42a84c2`.
+**Release train:** **rc.151** cut + deploying to r1 this session (API:
+crypto:USDC self-peg, P2-4b). Discord-migration + doc-hygiene commits also
+landed on main (config/docs, no binary).
 
 ---
 
