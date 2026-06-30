@@ -42,7 +42,8 @@ AlertManager routes by label. The config template lives at
 [`configs/ansible/roles/prometheus/templates/alertmanager.yml.j2`](../../configs/ansible/roles/prometheus/templates/alertmanager.yml.j2)
 — rendered to `/etc/alertmanager/alertmanager.yml` on `mon-01..02`
 by the `prometheus` ansible role. Routes split by `severity:` to
-PagerDuty (page) / Slack + Discord (ticket) / informational digest.
+Discord #pages + PagerDuty (page) / Discord #alerts (ticket) /
+informational digest (Alertmanager UI only).
 
 ## Validating locally
 

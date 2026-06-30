@@ -10,8 +10,14 @@
 # the two is config shape, not severity vocabulary.
 #
 # Apply via configs/alertmanager/apply.sh — it env-substitutes the
-# four placeholder URLs from a sourced env file (kept off-disk in
-# git per the deadmansswitch runbook).
+# placeholder URLs from a sourced env file (kept off-disk in git per
+# the deadmansswitch runbook).
+#
+# Chat fanout is Discord (Alertmanager-native discord_configs,
+# v0.25+). Discord incoming webhooks are locked to one channel each,
+# so pages and alerts use two separate webhook URLs
+# (DISCORD_WEBHOOK_URL_PAGES, DISCORD_WEBHOOK_URL_ALERTS) — point both
+# at the same webhook if you only want one channel.
 
 global:
   resolve_timeout: 5m
@@ -74,31 +80,30 @@ receivers:
       - url: ${HEALTHCHECKS_DEADMANSSWITCH_URL}
         send_resolved: false
 
-  # Page-severity fanout. Sends to whichever Slack + PagerDuty
-  # endpoints are wired; degrades silently if neither is set.
+  # Page-severity fanout → Discord #stellarindex-pages webhook.
+  # Degrades silently if the URL isn't set.
   - name: chat-page
-    slack_configs:
-      - api_url: ${SLACK_WEBHOOK_URL}
-        channel: '#stellarindex-pages'
+    discord_configs:
+      - webhook_url: ${DISCORD_WEBHOOK_URL_PAGES}
         send_resolved: true
         title: '🚨 PAGE — {{ .GroupLabels.alertname }}'
-        text: |
+        message: |
           {{ range .Alerts }}
-          *{{ .Annotations.summary }}*
+          **{{ .Annotations.summary }}**
           {{ .Annotations.description }}
           {{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
           {{ end }}
 
-  # Ticket-severity + default. Same Slack channel, less urgent text.
+  # Ticket-severity + default → Discord #stellarindex-alerts webhook,
+  # less urgent text.
   - name: chat-default
-    slack_configs:
-      - api_url: ${SLACK_WEBHOOK_URL}
-        channel: '#stellarindex-alerts'
+    discord_configs:
+      - webhook_url: ${DISCORD_WEBHOOK_URL_ALERTS}
         send_resolved: true
         title: '{{ .GroupLabels.alertname }}'
-        text: |
+        message: |
           {{ range .Alerts }}
-          *[{{ .Labels.severity | toUpper }}]* {{ .Annotations.summary }}
+          **[{{ .Labels.severity | toUpper }}]** {{ .Annotations.summary }}
           {{ .Annotations.description }}
           {{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
           {{ end }}

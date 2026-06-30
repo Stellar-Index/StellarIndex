@@ -313,7 +313,7 @@ read from the same S3 bucket.
 - Operators can SSH-tunnel to `log-01:3100` and query via
   `logcli` for ad-hoc forensics.
 - Existing alert rules with `runbook_url` annotations work
-  symmetrically: alerts route via PagerDuty/Slack (Prometheus
+  symmetrically: alerts route via PagerDuty/Discord (Prometheus
   role); on-call queries Loki for the surrounding logs of the
   alerted service.
 

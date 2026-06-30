@@ -87,7 +87,7 @@ postmortem:                                  # leave empty until the postmortem 
 `affected_components:` values are operator-defined string
 labels (e.g. `api`, `indexer`, `aggregator`, `storage`) — the
 status page renders them as badges on the incident card. Pick
-the same labels you'd use in Slack so customers and operators
+the same labels you'd use in Discord so customers and operators
 read the same vocabulary.
 
 `severity` accepts `SEV-1`, `SEV-2`, or `SEV-3` (`incidents.go`

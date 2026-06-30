@@ -181,7 +181,7 @@ on the clone could affect the private repo's reflog. `--no-local
 5. **Stop CI on private.** Set workflows to `workflow_dispatch`-only
    on the private repo, so it stops auto-burning Actions minutes.
    Keep the repo itself alive — it remains the audit trail.
-6. **Announcement.** `#stellar-index-public` Slack channel
+6. **Announcement.** `#stellar-index-public` Discord channel
    announcement; tweet from the project handle if applicable.
 7. **Decommission cron jobs / Renovate / Dependabot** scoped to the
    private repo (re-scope to public).

@@ -370,7 +370,7 @@ extend significantly.
 | Free | $0 | 60 / IP-min | 100K | No key required; IP-bucket |
 | Starter | $0 | 1,000 / key-min | 1M | Self-service; one key |
 | Pro | $99/mo | 10,000 / key-min | 25M | Multiple keys; usage analytics |
-| Business | $499/mo | 50,000 / key-min | 200M | Slack channel; 24h SLA |
+| Business | $499/mo | 50,000 / key-min | 200M | Discord channel; 24h SLA |
 | Enterprise | Custom | Custom | Custom | SEP-10 / multi-tenant / dedicated capacity |
 
 **Overage policy:** soft cap with email alerts at 80% / 100%.

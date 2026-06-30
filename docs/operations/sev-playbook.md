@@ -93,7 +93,7 @@ re-probe.
 └───────┬──────┘            real incident
          │                        │
          ▼                        ▼
- acknowledge ≤ 5 min   ──── open #incident-<id> Slack channel
+ acknowledge ≤ 5 min   ──── open #incident-<id> Discord channel
          │                        │
          ▼                        ▼
  declare severity    ──── post initial status update
@@ -122,10 +122,10 @@ Acknowledgement does NOT mean the incident is resolved. It means:
 
 ### 4.2 Incident channel
 
-Every SEV-1 / SEV-2 gets a dedicated Slack channel named
+Every SEV-1 / SEV-2 gets a dedicated Discord channel named
 `#incident-<YYYYMMDD>-<short-slug>` (e.g.
-`#incident-20260515-timescale-primary-down`). Channel-creation is
-automated by a PagerDuty → Slack integration.
+`#incident-20260515-timescale-primary-down`), created under the
+incidents category by the on-call responder.
 
 Topic of the channel carries:
 - Severity + declared-at timestamp
@@ -137,7 +137,7 @@ Topic of the channel carries:
 - **Incident Commander (IC)** — first responder auto-assumes until
   a manager joins and takes over.
 - **Communications lead** — posts status-page updates + user
-  Slack / Discord messages.
+  Discord messages.
 - **Technical lead** — runs the actual diagnostics + fixes.
   On a small team (SEV-2) the IC can wear both IC + tech hats; on
   SEV-1 we split.
@@ -254,9 +254,9 @@ Status-page states (modelled after Atlassian Statuspage):
 > restored. Root cause: {one-line summary}. We'll post a
 > full postmortem within {SEV-1: 72 h, SEV-2: 5 business days}.
 
-### 5.3 User Slack / Discord
+### 5.3 User Discord
 
-The `#stellarindex-ops` Slack (internal) is primary. Major
+The `#stellarindex-ops` Discord (internal) is primary. Major
 users have our direct channel for real-time updates during
 incidents. Update cadence there matches the status page.
 
@@ -326,7 +326,7 @@ Oncall rotations live in PagerDuty. Nightly coverage is
 @ash-primary / @alex-backup (as of Week 1; rotation starts Week 2).
 
 If all oncall unreachable for > 30 min during a SEV-1:
-1. Declare the incident in the public Slack anyway (community
+1. Declare the incident in the public Discord anyway (community
    visibility > silence).
 2. Use the break-glass credentials in `vault/sealed/incident-
    recovery.seal` (procedure in `docs/operations/runbooks/break-

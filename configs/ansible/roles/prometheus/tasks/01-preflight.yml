@@ -46,18 +46,17 @@
       Set the vault entry before production.
   when: alertmanager_pagerduty_key | default('') | length == 0
 
-- name: warn when neither chat-fanout webhook is set
+- name: warn when no Discord chat-fanout webhook is set
   debug:
     msg: >-
-      WARNING: both alertmanager_slack_webhook_url and
-      alertmanager_discord_webhook_url are empty — warning/info
-      alerts have no chat-fanout receiver and will only show in
-      the AlertManager UI. Set at least one webhook in vault, or
-      both for parallel fanout (the route emits to whichever
-      receivers have a non-empty URL).
+      WARNING: both alertmanager_discord_webhook_url_pages and
+      alertmanager_discord_webhook_url_alerts are empty — page and
+      ticket alerts have no chat-fanout receiver and will only show
+      in the AlertManager UI. Set the Discord webhook(s) in vault
+      (point both at the same webhook for a single channel).
   when:
-    - alertmanager_slack_webhook_url | default('') | length == 0
-    - alertmanager_discord_webhook_url | default('') | length == 0
+    - alertmanager_discord_webhook_url_pages | default('') | length == 0
+    - alertmanager_discord_webhook_url_alerts | default('') | length == 0
 
 # F-1288 (codex audit-2026-05-13): pre-fix this assert used a
 # convoluted `ansible_mounts | selectattr | first | default`

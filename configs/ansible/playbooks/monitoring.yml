@@ -15,11 +15,9 @@
 #
 # Per-deployment configuration (set in inventory `vars:`):
 #   - alertmanager_healthchecks_deadmansswitch_url
-#   - alertmanager_slack_webhook_url       (defaults: empty → no chat fanout)
-#   - alertmanager_slack_channel           (defaults: "#stellarindex-alerts")
-#   - alertmanager_slack_channel_pages     (defaults: "#stellarindex-pages")
-#   - alertmanager_discord_webhook_url     (optional)
-#   - alertmanager_pagerduty_key           (optional)
+#   - alertmanager_discord_webhook_url_pages   (page tier → #pages; empty → no fanout)
+#   - alertmanager_discord_webhook_url_alerts  (ticket tier → #alerts; empty → no fanout)
+#   - alertmanager_pagerduty_key               (optional)
 #
 # Secret handling: pass the webhook URLs via ansible-vault (e.g. an
 # encrypted inventory/r1.secrets.yml file you `--ask-vault-pass`

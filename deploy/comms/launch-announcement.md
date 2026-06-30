@@ -4,9 +4,9 @@ cut completes per launch-day-checklist.md §T-0 step 6).
 
 Channels:
   - Email to the launch contacts (Stellar + Freighter)
-  - Slack: #stellar-index-public
+  - Discord: #stellar-index-public
   - Project handle (Twitter / Mastodon / wherever applicable)
-  - Customer Slack/Discord presence if applicable
+  - Customer Discord presence if applicable
 
 Tone: factual, short, surfaces-first. The reader should be
 able to make their first request in under 60 seconds.

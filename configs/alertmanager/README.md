@@ -23,8 +23,8 @@ vocabulary defined in the
 
 | Severity | Receiver | Cadence |
 |----------|----------|---------|
-| `page` | `chat-page` (Slack `#stellarindex-pages`) | every 12 h while firing |
-| `ticket` | `chat-default` (Slack `#stellarindex-alerts`) | every 24 h while firing |
+| `page` | `chat-page` (Discord `#stellarindex-pages`) | every 12 h while firing |
+| `ticket` | `chat-default` (Discord `#stellarindex-alerts`) | every 24 h while firing |
 | `informational` | `silent` (Alertmanager UI only) | — |
 | `stellarindex_deadmansswitch` | `deadmansswitch` (Healthchecks.io) | every 60 s |
 
@@ -40,11 +40,16 @@ channel, catching outages of Prometheus or Alertmanager itself.
    ```sh
    # /etc/default/alertmanager-secrets — chmod 0600, root:root
    HEALTHCHECKS_DEADMANSSWITCH_URL='https://hc-ping.com/<your-uuid>'
-   SLACK_WEBHOOK_URL='https://hooks.slack.com/services/T.../...'
+   # Discord incoming webhooks (Server Settings → Integrations →
+   # Webhooks → New Webhook → Copy URL). One per channel; point both
+   # at the same URL if you only want a single channel.
+   DISCORD_WEBHOOK_URL_PAGES='https://discord.com/api/webhooks/<id>/<token>'
+   DISCORD_WEBHOOK_URL_ALERTS='https://discord.com/api/webhooks/<id>/<token>'
    ```
 
-   Either URL can be left empty — the matching receiver degrades
-   silently (alerts still accumulate in the Alertmanager UI).
+   Any URL can be left empty — the matching receiver's config block
+   is dropped and it degrades silently (alerts still accumulate in
+   the Alertmanager UI).
 
 2. **Run apply.sh** as root on R1:
 
@@ -68,7 +73,7 @@ amtool alert add \
   --alertmanager.url=http://localhost:9093 \
   alertname=TEST_ALERT severity=ticket
 
-# 30 seconds later, expect a Slack message in #stellarindex-alerts.
+# 30 seconds later, expect a Discord message in #stellarindex-alerts.
 # Resolve:
 amtool alert add \
   --alertmanager.url=http://localhost:9093 \
