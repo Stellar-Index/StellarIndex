@@ -143,3 +143,15 @@ description = "Codex audit evidence doc — a cross-file-interactions findings t
 paths = [
   '''docs/audit-2026-05-12-codex/evidence/cross-file-interactions\.md''',
 ]
+
+# ── curl-auth-header (default rule) ─────────────────────────────────
+# The default ruleset flags any `curl -H "Authorization: Bearer …"`
+# string. The explorer API-docs page embeds exactly that as a usage
+# EXAMPLE; the bearer value is an obvious placeholder, not a real key.
+[[rules]]
+id = "curl-auth-header"
+[[rules.allowlists]]
+description = "Explorer API-docs page (/docs) — a `curl -H \"Authorization: Bearer sip_your_key_here\"` usage example showing how to pass an API key. `sip_your_key_here` is a literal placeholder (the whole point of the snippet is to show the header shape); not a credential. Path-scoped so a real secret added to this file under any other rule is still caught."
+paths = [
+  '''web/explorer/src/app/docs/page\.tsx''',
+]
