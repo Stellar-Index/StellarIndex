@@ -390,7 +390,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 // verify the served tier is faithful within what it retains; the full-history
 // coverage claim rests on substrate. Pure entity/oracle sources verify the
 // whole [genesis, hi].
-func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) { //nolint:gocognit // two linear reconcile branches (census vs event re-derive) over the target list; clearer unsplit, the retention floor is already extracted.
+func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) { //nolint:gocognit,gocyclo // three linear reconcile branches (callDec / census / event re-derive) over the target list + the factory preseed; clearer unsplit, the retention floor is already extracted.
 	lo := genesis
 	if hasTradesTarget(src) && retentionStart > genesis {
 		lo = retentionStart
@@ -460,6 +460,23 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 			}
 		}
 		return totalDelta, strings.Join(details, "; "), nil
+	}
+
+	// Factory-anchored sources (ADR-0035): seed the gate registry from the
+	// factory's creation events [genesis, lo) before the re-derive, so children
+	// deployed before this window aren't dropped — exactly as
+	// verify-reconciliation does (verify_reconciliation.go). Without this the
+	// daily verdict's childgate was only the static protocol_contracts seed and
+	// went STALE as new pools deployed: blend reported complete=false
+	// (expected=0) on windows whose activity was on pools missing from the seed,
+	// while the live decoder (which self-seeds from deploy events) captured them.
+	// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
+	// soroban_events landing zone for the rare, indexed creation events; a
+	// CH-native preseed for full -ch purity is a follow-up.)
+	if len(src.factories) > 0 {
+		if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
+			return 0, "", fmt.Errorf("%s preseed: %w", src.name, perr)
+		}
 	}
 
 	byKind, derr := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
