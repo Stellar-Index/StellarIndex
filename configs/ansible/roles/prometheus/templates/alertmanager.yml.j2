@@ -88,17 +88,16 @@ receivers:
     # "Prometheus or Alertmanager itself is down" detection.
 {% endif %}
 
-  # Page-tier fanout — Slack + (future) PagerDuty.
+  # Page-tier fanout — Discord #pages + (future) PagerDuty.
   - name: chat-page
-{% if alertmanager_slack_webhook_url %}
-    slack_configs:
-      - api_url: {{ alertmanager_slack_webhook_url }}
-        channel: '{{ alertmanager_slack_channel_pages }}'
+{% if alertmanager_discord_webhook_url_pages %}
+    discord_configs:
+      - webhook_url: {{ alertmanager_discord_webhook_url_pages }}
         send_resolved: true
         title: '🚨 PAGE — {{ "{{" }} .GroupLabels.alertname {{ "}}" }}'
-        text: |
+        message: |
           {{ "{{" }} range .Alerts {{ "}}" }}
-          *{{ "{{" }} .Annotations.summary {{ "}}" }}*
+          **{{ "{{" }} .Annotations.summary {{ "}}" }}**
           {{ "{{" }} .Annotations.description {{ "}}" }}
           {{ "{{" }} if .Annotations.runbook_url {{ "}}" }}Runbook: {{ "{{" }} .Annotations.runbook_url {{ "}}" }}{{ "{{" }} end {{ "}}" }}
           {{ "{{" }} end {{ "}}" }}
@@ -108,32 +107,17 @@ receivers:
       - service_key: {{ alertmanager_pagerduty_key }}
         send_resolved: true
 {% endif %}
-{% if not alertmanager_slack_webhook_url and not alertmanager_pagerduty_key %}
+{% if not alertmanager_discord_webhook_url_pages and not alertmanager_pagerduty_key %}
     # No chat / pagerduty wiring on page-tier — alerts visible only
-    # in Alertmanager UI. Set alertmanager_slack_webhook_url and/or
-    # alertmanager_pagerduty_key.
+    # in Alertmanager UI. Set alertmanager_discord_webhook_url_pages
+    # and/or alertmanager_pagerduty_key.
 {% endif %}
 
-  # Ticket-tier + default. Slack only (no page-out).
+  # Ticket-tier + default — Discord #alerts (no page-out).
   - name: chat-default
-{% if alertmanager_slack_webhook_url %}
-    slack_configs:
-      - api_url: {{ alertmanager_slack_webhook_url }}
-        channel: '{{ alertmanager_slack_channel }}'
-        send_resolved: true
-        title: '{{ "{{" }} .GroupLabels.alertname {{ "}}" }}'
-        text: |
-          {{ "{{" }} range .Alerts {{ "}}" }}
-          *[{{ "{{" }} .Labels.severity | toUpper {{ "}}" }}]* {{ "{{" }} .Annotations.summary {{ "}}" }}
-          {{ "{{" }} .Annotations.description {{ "}}" }}
-          {{ "{{" }} if .Annotations.runbook_url {{ "}}" }}Runbook: {{ "{{" }} .Annotations.runbook_url {{ "}}" }}{{ "{{" }} end {{ "}}" }}
-          {{ "{{" }} end {{ "}}" }}
-{% endif %}
-{% if alertmanager_discord_webhook_url %}
-    # Parallel Discord fanout for "discord/slack" alert integration
-    # — this keeps both channels in lockstep when both webhooks are set.
+{% if alertmanager_discord_webhook_url_alerts %}
     discord_configs:
-      - webhook_url: {{ alertmanager_discord_webhook_url }}
+      - webhook_url: {{ alertmanager_discord_webhook_url_alerts }}
         send_resolved: true
         title: '{{ "{{" }} .GroupLabels.alertname {{ "}}" }}'
         message: |
@@ -142,10 +126,9 @@ receivers:
           {{ "{{" }} .Annotations.description {{ "}}" }}
           {{ "{{" }} if .Annotations.runbook_url {{ "}}" }}Runbook: {{ "{{" }} .Annotations.runbook_url {{ "}}" }}{{ "{{" }} end {{ "}}" }}
           {{ "{{" }} end {{ "}}" }}
-{% endif %}
-{% if not alertmanager_slack_webhook_url and not alertmanager_discord_webhook_url %}
-    # Neither Slack nor Discord wired — ticket alerts visible only
-    # in the Alertmanager UI. Set at least one webhook.
+{% else %}
+    # No alertmanager_discord_webhook_url_alerts — ticket alerts
+    # visible only in the Alertmanager UI. Set the webhook to fan out.
 {% endif %}
 
   # Silent — informational alerts accumulate in the Alertmanager UI

@@ -7,7 +7,7 @@ Deploy a 2-host Prometheus + AlertManager pair per
 - Each Prometheus independently scrapes all targets — data
   duplication is the HA mechanism.
 - AlertManagers cluster via gossip on port 9094 (TCP+UDP) and
-  dedupe alerts before fanout to PagerDuty + Slack.
+  dedupe alerts before fanout to PagerDuty + Discord.
 - Rule files synced from
   [`deploy/monitoring/rules/`](../../../../deploy/monitoring/rules/)
   (1721 LoC of alerts shipped today).
@@ -35,13 +35,13 @@ emitted metrics. Design rationale lives in
   the corresponding fanout doesn't happen):
   - `alertmanager_pagerduty_key` — PagerDuty integration key
     (used for the `page`-severity route).
-  - `alertmanager_slack_webhook_url` — Slack incoming-webhook
-    URL (used for the `ticket` + `informational` routes via
-    `chat-fanout`).
-  - `alertmanager_discord_webhook_url` — Discord webhook URL
-    (used for the `ticket` + `informational` routes via
-    `chat-fanout`, parallel to Slack — operators can run either,
-    both, or neither). Supports Discord/Slack alert integration.
+  - `alertmanager_discord_webhook_url_pages` — Discord incoming-
+    webhook URL for the `page`-severity route (its own #pages
+    channel so on-call can mute tickets without missing pages).
+  - `alertmanager_discord_webhook_url_alerts` — Discord webhook URL
+    for the `ticket` route (#alerts channel). Discord webhooks are
+    locked to one channel each; point both vars at the same webhook
+    if you only want a single channel.
 
   Note: the template uses the shared
   `page / ticket / informational` severity vocabulary that
@@ -82,7 +82,7 @@ all:
         prom-02: { ansible_host: 10.0.0.62 }
       vars:
         prometheus_retention_days: 30
-        alertmanager_slack_channel: "#stellarindex-alerts"
+        # alertmanager_discord_webhook_url_pages / _alerts via vault
 
     # Scrape-target groups (any one is required for preflight to pass)
     stellarindex_api:        { hosts: { ... } }
@@ -133,9 +133,9 @@ on `prometheus_pair`. No manual scrape-config edits.
 ## Alert routing
 
 ```
-page          → PagerDuty
-ticket        → chat-fanout (Slack + Discord, whichever are wired)
-informational → chat-fanout (Slack + Discord, whichever are wired)
+page          → chat-page    (Discord #pages + PagerDuty when wired)
+ticket        → chat-default  (Discord #alerts)
+informational → silent        (Alertmanager UI only — no fanout)
 ```
 
 Inhibit rules:
@@ -143,10 +143,11 @@ Inhibit rules:
   mutes `ticket` + `informational` alerts for the same pair to
   avoid stacking.
 
-When `alertmanager_pagerduty_key` is empty the `page` route
-is unconfigured. When BOTH `alertmanager_slack_webhook_url` AND
-`alertmanager_discord_webhook_url` are empty the chat-fanout
-receiver has no destinations and alerts accumulate in the
+When `alertmanager_pagerduty_key` is empty the `page` route's
+PagerDuty leg is unconfigured. When BOTH
+`alertmanager_discord_webhook_url_pages` AND
+`alertmanager_discord_webhook_url_alerts` are empty the chat
+receivers have no destinations and alerts accumulate in the
 AlertManager UI (`http://127.0.0.1:9093/` via SSH-tunnel) but
 don't reach a chat channel. Setting one webhook routes warnings
 and info to that channel; setting both produces parallel fanout.

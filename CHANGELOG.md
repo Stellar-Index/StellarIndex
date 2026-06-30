@@ -347,6 +347,22 @@ against.
   so the in-progress (not-yet-materialized) hour is computed live
   instead of reading as zero until the hour closed.
 
+### Changed
+- **Alerting fanout migrated from Slack to Discord.** Both the R1
+  standalone Alertmanager config (`configs/alertmanager/`) and the
+  multi-host Ansible template now use Alertmanager-native
+  `discord_configs`. Discord incoming webhooks are locked to one
+  channel each, so the page tier and ticket tier take separate webhook
+  URLs (`DISCORD_WEBHOOK_URL_PAGES` / `DISCORD_WEBHOOK_URL_ALERTS` in
+  `/etc/default/alertmanager-secrets`; `alertmanager_discord_webhook_url_pages`
+  / `_alerts` vault vars for the Ansible role) — point both at the same
+  webhook for a single channel. `apply.sh` now drops each receiver's
+  config block independently when its URL is unset (marker-specific
+  strip, so one empty URL never collateral-removes the other Discord
+  receiver). Operator runbooks, the SEV playbook comms channels, and
+  `pre-launch-check.sh` updated accordingly. The old `SLACK_WEBHOOK_URL`
+  / `alertmanager_slack_*` knobs are removed.
+
 ## [v0.5.0-rc.128] — 2026-06-19
 
 ### Added

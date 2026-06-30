@@ -129,7 +129,7 @@ echo "  Alertmanager"
 if [ ! -f "$AM_ENV" ]; then
   fail "AM env file missing" "$AM_ENV"
 else
-  for v in HEALTHCHECKS_DEADMANSSWITCH_URL SLACK_WEBHOOK_URL; do
+  for v in HEALTHCHECKS_DEADMANSSWITCH_URL DISCORD_WEBHOOK_URL_PAGES DISCORD_WEBHOOK_URL_ALERTS; do
     if grep -q "^$v=https://" "$AM_ENV" 2>/dev/null; then
       pass "$v" "set"
     else

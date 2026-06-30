@@ -75,17 +75,17 @@ prometheus_node_scrape_interval: 30s
 # Vault-supplied. Empty = preflight WARN; alerts accumulate in
 # the AlertManager UI but don't fan out.
 #
-# Slack and Discord both wire onto the warning + info routes.
-# Operators can run either, both, or neither — the template
-# emits whichever receivers have a webhook set, and unset
-# webhooks degrade silently to "alerts visible in AM UI only".
+# Chat fanout is Discord (Alertmanager-native discord_configs).
+# Discord incoming webhooks are locked to one channel each, so the
+# page tier and the ticket/default tier take separate webhook URLs
+# (point both at the same webhook if you only want one channel).
+# Unset webhooks degrade silently to "alerts visible in AM UI only".
 alertmanager_pagerduty_key: ""
-alertmanager_slack_webhook_url: ""
-alertmanager_slack_channel: "#stellarindex-alerts"
-# Page-tier (SEV-1) goes to a dedicated channel so the on-call
-# rotation can mute the ticket channel without missing pages.
-alertmanager_slack_channel_pages: "#stellarindex-pages"
-alertmanager_discord_webhook_url: ""
+# Page-tier (SEV-1) → a dedicated #pages Discord channel so the
+# on-call rotation can mute the ticket channel without missing pages.
+alertmanager_discord_webhook_url_pages: ""
+# Ticket-tier + default → the #alerts Discord channel.
+alertmanager_discord_webhook_url_alerts: ""
 
 # Healthchecks.io deadmansswitch endpoint. The
 # `stellarindex_deadmansswitch` alert fires every 60 s while

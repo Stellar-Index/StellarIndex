@@ -102,7 +102,7 @@ The week before the cut. Done while everything is still calm.
       `stellarindex.io/status`; `internal/incidents/data/`
       has no open SEV entries (no `status: investigating |
       identified | monitoring` rows).
-- [ ] **Customer comms ready.** Email/Slack draft for the
+- [ ] **Customer comms ready.** Email/Discord draft for the
       announcement is approved by stakeholders, ready to send
       post-cut.
 - [ ] **Rollback plan rehearsed.** Walked through
@@ -186,7 +186,7 @@ Order matters. Don't skip.
    so Cloudflare Pages re-deploys with `status: resolved`.
    Verify `stellarindex.io/status` shows no active incidents.
 
-7. **Send customer comms.** Email + Slack templates from T-1 day.
+7. **Send customer comms.** Email + Discord templates from T-1 day.
    Public announcement on the project handle if applicable.
 
 8. **Open the L6.7 24-h watch.**

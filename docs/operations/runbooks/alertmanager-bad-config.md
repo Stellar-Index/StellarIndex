@@ -67,8 +67,8 @@ diff <(ssh root@mon-01 cat /etc/alertmanager/alertmanager.yml) \
 
 - [ ] Step 1 — `amtool check-config` locally on the role's
       `alertmanager.yml.j2` rendered to a temp file. Fix syntax.
-- [ ] Step 2 — ensure any vault-backed receiver creds (Slack /
-      Discord webhook URLs, PagerDuty integration keys) referenced
+- [ ] Step 2 — ensure any vault-backed receiver creds (Discord
+      webhook URLs, PagerDuty integration keys) referenced
       by the config are present and reachable.
 - [ ] Step 3 — push via the normal flow: `ansible-playbook` with
       the prometheus role (don't hand-edit

@@ -1,7 +1,7 @@
 ---
 # External health monitoring — push-based heartbeat to a
 # Healthchecks.io-compatible endpoint every 5 min. If the heartbeat
-# stops or reports failure, operators get an email/Slack/SMS.
+# stops or reports failure, operators get an email/Discord/SMS.
 #
 # This is LAYER 1 monitoring: external watcher survives local-box
 # death. It's the absolute minimum that would have caught an

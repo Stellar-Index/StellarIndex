@@ -1,6 +1,6 @@
 ---
 title: Prometheus + AlertManager ansible role — design note
-last_verified: 2026-05-02
+last_verified: 2026-06-30
 status: shipped (Task #72 / #83 — configs/ansible/roles/prometheus)
 related:
   - docs/architecture/ha-plan.md §7 (observability)
@@ -41,8 +41,8 @@ related:
     + alerting side.
   - **PagerDuty integration secret** — config plumbed but the
     actual integration-key lives in vault; operator supplies.
-  - **Slack alerts** — config plumbed similarly; operator supplies
-    webhook URL.
+  - **Discord alerts** — config plumbed similarly; operator supplies
+    the webhook URL(s) (one per channel: #pages, #alerts).
 
 ## Topology
 
@@ -52,7 +52,7 @@ duplication is the HA mechanism). Alertmanagers cluster via gossip
 on port 9094 and dedupe alerts before fanout.
 
 ```
-       PagerDuty / Slack
+      PagerDuty / Discord
               ▲
               │
   ┌───────────┴───────────┐
@@ -138,23 +138,26 @@ route:
   routes:
     - match:
         severity: page
-      receiver: 'pagerduty-default'
+      receiver: 'chat-page'
     - match:
         severity: ticket
-      receiver: 'slack-default'
+      receiver: 'chat-default'
     - match:
         severity: informational
-      receiver: 'slack-default'
+      receiver: 'silent'
 
 receivers:
-  - name: 'pagerduty-default'
+  - name: 'chat-page'
     pagerduty_configs:
       - service_key: '{{ alertmanager_pagerduty_key }}'
-  - name: 'slack-default'
-    slack_configs:
-      - api_url: '{{ alertmanager_slack_webhook_url }}'
-        channel: '{{ alertmanager_slack_channel | default("#alerts") }}'
+    discord_configs:
+      - webhook_url: '{{ alertmanager_discord_webhook_url_pages }}'
+        title: '🚨 PAGE — {{ '{{' }} .GroupLabels.alertname {{ '}}' }}'
+  - name: 'chat-default'
+    discord_configs:
+      - webhook_url: '{{ alertmanager_discord_webhook_url_alerts }}'
         title: '{{ '{{' }} .GroupLabels.alertname {{ '}}' }}'
+  - name: 'silent'   # informational — Alertmanager UI only
 ```
 
 F-1265 (2026-05-13): the severity vocabulary above used to be
@@ -163,8 +166,9 @@ default. The runnable configs and operator docs converged on
 `page / ticket / informational` after R1 standup; this design
 note's example now matches what the templates actually render.
 
-`alertmanager_pagerduty_key` and `alertmanager_slack_webhook_url`
-are vault-supplied. When absent, the role still installs but the
+`alertmanager_pagerduty_key` and the two Discord webhook URLs
+(`alertmanager_discord_webhook_url_pages`/`_alerts`) are
+vault-supplied. When absent, the role still installs but the
 notification routes are unconfigured — alerts accumulate in the
 AlertManager UI but don't fan out. (Useful for non-prod.)
 
@@ -179,8 +183,9 @@ all:
         prom-02: { ansible_host: 10.0.0.62 }
       vars:
         prometheus_retention_days: 30
-        alertmanager_slack_channel: "#stellarindex-alerts"
-        # vault: alertmanager_pagerduty_key, alertmanager_slack_webhook_url
+        # vault: alertmanager_pagerduty_key,
+        #        alertmanager_discord_webhook_url_pages,
+        #        alertmanager_discord_webhook_url_alerts
     stellarindex_api:        { hosts: { ... } }
     stellarindex_aggregator: { hosts: { ... } }
     stellarindex_indexer:    { hosts: { ... } }
@@ -242,7 +247,7 @@ configs/ansible/roles/prometheus/
    no auto-discovery (we deliberately don't run Consul / DNS-SD
    at this scale).
 
-5. **PagerDuty + Slack vault truthiness**: the role tolerates
+5. **PagerDuty + Discord vault truthiness**: the role tolerates
    missing vault entries — emits a `WARN` at preflight and
    leaves the notification routes empty. A misconfigured
    PagerDuty + missing operator → alerts go nowhere. Document

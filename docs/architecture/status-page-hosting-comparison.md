@@ -200,7 +200,7 @@ Instatus:
 5. **Status page itself going down**: Instatus's own uptime is
    a vendor commitment, not ours. Document in the runbook that
    if status.stellarindex.io is unreachable, post to
-   `#stellar-index-public` Slack channel as the fallback
+   `#stellar-index-public` Discord channel as the fallback
    communication channel.
 
 ## Cost summary

@@ -148,11 +148,16 @@ HEALTHCHECKS_URL_SMOKE='https://hc-ping.com/<uuid-smoke>'
 HEALTHCHECKS_URL_SLA_PROBE='https://hc-ping.com/<uuid-sla-probe>'
 ```
 
-Plus the deadmansswitch URL into `/etc/default/alertmanager-secrets`:
+Plus the deadmansswitch + Discord webhook URLs into
+`/etc/default/alertmanager-secrets`:
 
 ```sh
 HEALTHCHECKS_DEADMANSSWITCH_URL='https://hc-ping.com/<uuid-dms>'
-SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...'
+# Discord incoming webhooks (Server Settings → Integrations →
+# Webhooks). One per channel; point both at the same URL for a
+# single channel.
+DISCORD_WEBHOOK_URL_PAGES='https://discord.com/api/webhooks/<id>/<token>'
+DISCORD_WEBHOOK_URL_ALERTS='https://discord.com/api/webhooks/<id>/<token>'
 ```
 
 Apply:
