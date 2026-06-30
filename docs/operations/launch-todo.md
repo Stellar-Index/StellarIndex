@@ -29,9 +29,12 @@ status: living document
 
 ## Phase 0 — Operational fixes (low-hanging fruit, do first)
 
-**Status 2026-06-30: substantially COMPLETE.** P0-1/P0-2/P0-5/P0-6 done; P0-4 was
-a false alarm; P0-3 code done (operator purchase pending); P0-7 reclassified as
-not-a-bug. Only genuine residual = the CoinGecko purchase (operator action).
+**Status 2026-06-30: COMPLETE.** P0-1/P0-2/P0-5/P0-6/P0-7 done; P0-4 was a false
+alarm; P0-3 code done (operator purchase pending).
+
+> ⏳ **PENDING OPERATOR ACTION:** buy a **CoinGecko Pro** plan (P0-3), then set
+> `COINGECKO_API_KEY` on r1 + restart the indexer — the only Phase-0 residual.
+> @ash to do later (noted 2026-06-30).
 
 | # | Item | Type | Status |
 |---|------|------|--------|
