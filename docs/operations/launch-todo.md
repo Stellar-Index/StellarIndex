@@ -67,11 +67,14 @@ alarm; P0-3 code done (operator purchase pending).
   preseeds factory children from the creation events before each re-derive —
   making the watchdog **self-maintaining** as pools deploy. **Verified on r1:
   blend → `complete=true`; the full verdict is now 15/15 green.**
-- **SEP-41 is EXCLUDED from the verdict** (the `event_index` PK-collapse, per
-  the reconcile-catalogue comment) — so "15/15 green" does NOT cover SEP-41.
-  Bringing SEP-41 into the reconcile is part of Phase C / P1-7: fix the PK so it
-  can be reconciled, then re-derive the historical loss, then it joins the
-  certificate. Until then, SEP-41 completeness is unverified by the watchdog.
+- **SEP-41 is EXCLUDED from the Postgres-observer verdict** (the `event_index`
+  PK-collapse) — but this is now **moot for supply**: SEP-41 token supply is
+  served from the lake directly (`supply_flows`, summed on-demand), so it's
+  tautologically lake-faithful (served == an on-demand lake sum), not dependent
+  on the observer tables. Verified complete vs the lake (P1-7 ✅). The observer
+  *audit-trail* (`sep41_transfers` per-account positions) remains a separate
+  watch-list-gated feature; the lake holds its full history for on-demand serving
+  if/when that feature is built.
 - **FX-path debt** — the X2.5 triangulation forex-snap (`FXQuoteAtOrBefore`) reads the **`trades`** table filtered by `FXSources()` (the disabled connector-path sources), so it *always* soft-falls-back (`AggregatorFXSnapFallbackTotal`). The active FX feed `massive` writes **`fx_quotes`**, a different table. Unify the two FX paths — point the snap at `fx_quotes`, or collapse the redundant `massive`↔`polygon-forex` (same upstream provider). Low impact today (only non-USD-fiat-quoted pairs hit an FX leg).
 - **ZFS-dataset drift** — `data/{clickhouse,loki,pgbackrest}` exist on r1 but aren't in the Ansible `zfs_datasets` defaults — reconcile in a dedicated pass.
 
@@ -95,7 +98,7 @@ running a multi-hour backfill.
 | P1-4 | **CH Phase 4 — `ch-rebuild-projected`** re-derive projected sources from the lake. | ❓ **Verify post-catch-up** (closes rc.107 mis-keyed-forward data). CH-heavy. |
 | P1-5 | **`ch-supply` partition dedup + re-run** — `supply_flows` has **213M dup rows** (820.6M→607.4M FINAL, verified). | 🟡 **REAL but CH-INTERNAL** — served `/v1/assets` supply comes from `asset_supply_history`+`supply_1d` (live observers), NOT `ch-supply`'s `token_supply`. So the dup inflates the lake-side estimate + costs a 40× FINAL-read penalty, but does NOT corrupt served data. Lower priority. `OPTIMIZE … PARTITION FINAL` + re-run. CH-heavy. |
 | P1-6 | Broad CAGG recompute (after retention migrations) | ✅ **DONE** — the 2015-deep `prices_1m`/`prices_1d` materialization IS this recompute. |
-| P1-7 | **SEP-41 historical counterparty re-derive** — CAP-67 topic-shape loss (commit 99d2c2b0) was forward-only; r1-lake-verified ~99.96% mints + 100% clawbacks lost since P23. | 🔴 **REAL pending — TOP supply item** (this DOES hit served data: undercounts `total_supply` for SEP-41 tokens via `asset_supply_history`). Dispatcher-based re-derive over the historical range; CH/lake-heavy. |
+| P1-7 | **SEP-41 token supply** — every SEP-41 token's `total_supply` complete + served. | ✅ **DONE.** Solved from the LAKE, not the Postgres observers: `/v1/assets/{id}/supply` (all tokens) + `/v1/assets/{id}` detail (traded tokens, rc.150) sum `supply_flows` FINAL on-demand (Σmint−Σburn−Σclawback over the certified CH lake, `sep41_lake_flows` basis). Verified `supply_flows` is **complete vs the lake** (pre-fix P23 window == `contract_events` exactly — the CH path never had the Postgres observer's counterparty loss) and **deduped** (213M dup rows from the v1 `-final=false` populate removed → was inflated). Live-written + current; defensive `ch-supply` gap-fill timer + watchdog keep it so. The Postgres observer tables (`sep41_supply_events`/`sep41_transfers`, watch-list-gated, empty) are bypassed — not needed for supply. |
 | P1-8 | Data-truth / Phase-C contract-WASM backfill (`state-snapshot -write`). | 🟢 **In progress.** |
 | P1-9 | Pre-P20 ClaimAtom + pre-P23 classic-movement coverage. | 🟡 Low-priority historical caveat. |
 | P1-10 | **CH Phase 8 — decommission** — drop `soroban_events`/old tables, refactor projector to read CH. | ⏳ **Do LAST** (gated on P1-4 + Phases 5–7). |
