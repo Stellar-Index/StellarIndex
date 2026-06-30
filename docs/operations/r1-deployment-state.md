@@ -236,12 +236,15 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    `docs/operations/wasm-audits/{<source>.md,evidence/}`. The
    2026-04-30 walk re-verified the picture against r1's full
    archive (`docs/operations/wasm-audits/r1-walk-2026-05-01.md`).
-   **Blend audit (Task #53) remains:** Phase 1 done via stellar.expert
-   (PR #339, all 9 pool addresses + current WASM bytes); Phase 2
-   (mid-life-upgrade walk on r1) is the wide-net re-launch we
-   kicked off 2026-05-01 22:05 (PID 1447513, `-to 62249727`).
-   `BackfillSafe=false` on `blend` until that finishes + a
-   per-WASM-hash review per
+   **Blend audit — DONE 2026-05-02.** The Phase-2 mid-life-upgrade
+   walk completed (5h4m over [50457424, 62249727], 11 contracts /
+   3 unique WASMs, no mid-life upgrades observed), so
+   `BackfillSafe: true` is set on `blend` in
+   `internal/sources/external/registry.go` (evidence:
+   `docs/operations/wasm-audits/blend.md §"Phase 2 results"`). The
+   "remains / `BackfillSafe=false`" text above is a stale snapshot.
+   Per-WASM-hash discipline still applies to any future Blend
+   upgrade per
    [docs/architecture/contract-schema-evolution.md](../architecture/contract-schema-evolution.md).
 
 5e. **Tagged-release deploy workflow available.**
@@ -351,7 +354,18 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    X2.5 fx-snap-fallback alert added 2026-05-01) have no
    evaluator wired up.
 
-5. **pgBackRest** not configured. Postgres has no backups.
+5. ~~**pgBackRest** not configured. Postgres has no backups.~~
+   **RESOLVED (verified 2026-06-30).** pgBackRest is configured
+   (`/etc/pgbackrest/pgbackrest.conf`, PG15) and the
+   `pgbackrest-backup.timer` runs daily via
+   `/usr/local/bin/pgbackrest-backup.sh`. `pgbackrest info
+   --stanza=stellarindex` = **status: ok** — weekly full + daily
+   diff + continuous WAL archive (latest full 2026-06-21:
+   1499 GB db → 272.8 GB repo; daily diffs since). NOTE the stanza
+   is **`stellarindex`**, not `main` — `--stanza=main` reports a
+   spurious "missing stanza path". (A stale `/etc/pgbackrest.conf`
+   with a commented-out PG13 `pg1-path` also lingers; harmless, the
+   dir-based config takes precedence — clean it up opportunistically.)
 
 5a. ~~**Aggregator emitting zero VWAP rows on-chain pairs.**~~
    **RESOLVED 2026-05-04 20:09 UTC.** Headline product
@@ -717,12 +731,14 @@ Post-roll `systemctl list-timers --all` shows all four scheduled:
     indexer cursor and subtracts 64 ledgers of safety margin,
     writing the value to `/run/archive-completeness.env` which
     the EnvironmentFile pulls in. Fires every 4 h.
-  - **`stellarindex-sla-probe.timer`** — ⚠️ DISABLED. Binary updated on R1 to
-    v0.5.0-rc.49-r1-patch (uses `/assets` not `/coins`). Still
-    incompatible with anon-tier rate-limits at any reasonable
-    load. Needs vault-minted `STELLARINDEX_PROBE_API_KEY` at
-    Partner/Operator tier in `/etc/default/stellarindex-healthchecks` before
-    re-enabling.
+  - **`stellarindex-sla-probe.timer`** — ✅ active (verified
+    2026-06-30; fires every 15 min, last run minutes ago). The
+    earlier "⚠️ DISABLED" snapshot is stale — the timer was
+    re-enabled after the `/assets`-path binary + freshness-target
+    flag landed (see [[project_incidents_2026_06_11_pm]]). If anon-
+    tier rate-limits bite again under real load, mint a
+    `STELLARINDEX_PROBE_API_KEY` at Partner/Operator tier in
+    `/etc/default/stellarindex-healthchecks`.
   - In-repo `stellarindex-sla-probe.service` had an unquoted
     `Environment=PAIRS=-pair native,fiat:USD` that systemd
     parsed as two assignments — fixed (now
