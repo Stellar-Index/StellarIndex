@@ -81,6 +81,11 @@ against.
   feeds (CEX / FX / aggregators / Chainlink).
 
 ### Changed
+- **Prometheus TSDB relocated off the 49G OS root onto a ZFS dataset.** The
+  ~13G TSDB kept the root chronically >90% full (`stellarindex_node_root_disk_full`
+  alert). Moved to `data/prometheus` (zstd, ~12× → 1.31G on disk); root dropped
+  94%→60%. Added the dataset to the archival-node ZFS-role defaults so a rebuild
+  doesn't reland it on root. (launch-todo P0-5.)
 - The `/network` page is now Stellar-only: "Top markets" reads
   `/v1/pools` (on-chain DEX pools, not the CEX-dominated `/v1/markets`),
   "Most active sources" + the venue-composition donut + the hero
@@ -96,6 +101,13 @@ against.
   — far more detail per window.
 
 ### Fixed
+- **CoinGecko Pro key would have 404'd — the poller now auto-switches to
+  `pro-api.coingecko.com`.** A Pro key (`COINGECKO_API_KEY`) only authenticates
+  against the paid host; the poller hard-coded the public host
+  (`api.coingecko.com`), so an operator upgrading to the paid tier (to fix the
+  dead oracle feed — it had hit the 10k free-tier limit) would have silently
+  kept failing. The poller now selects `pro-api.coingecko.com` whenever a Pro
+  key is set and the endpoint wasn't explicitly overridden. (launch-todo P0-3.)
 - **`sep1-refresh` could never reach good issuers — failed fetches now bump
   `sep1_resolved_at`.** A resolve failure (dead `home_domain`, TLS error,
   SSRF-blocked) used to `continue` without writing anything, leaving the

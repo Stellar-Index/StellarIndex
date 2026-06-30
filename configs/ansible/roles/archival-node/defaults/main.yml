@@ -102,6 +102,17 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/srv/history-archive"
+  - name: "prometheus"
+    # The Prometheus TSDB (~12-13G) lived on the 49G OS root and kept it
+    # chronically >90% full; relocated to ZFS 2026-06-30 (launch-todo P0-5),
+    # where zstd compresses it ~12x. recordsize 128K suits its chunk writes.
+    recordsize: "128K"
+    compression: "zstd"
+    atime: "off"
+    mountpoint: "/var/lib/prometheus"
+  # NOTE (2026-06-30 audit): r1 also runs data/clickhouse, data/loki, and
+  # data/pgbackrest datasets created out-of-band that are NOT yet codified
+  # here — a pre-existing drift to reconcile in a dedicated pass.
 
 # ───── OS kernel tuning ──────────────────────────────────────────────
 sysctl_tunings:

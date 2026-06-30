@@ -29,17 +29,22 @@ status: living document
 
 ## Phase 0 — Operational fixes (low-hanging fruit, do first)
 
-Cheap, high-signal fixes that close active data-staleness. None block each other.
+**Status 2026-06-30: substantially COMPLETE.** P0-1/P0-2/P0-5/P0-6 done; P0-4 was
+a false alarm; P0-3 code done (operator purchase pending); P0-7 reclassified as
+not-a-bug. Only genuine residual = the CoinGecko purchase (operator action).
 
-| # | Item | Type | Notes |
-|---|------|------|-------|
-| P0-1 | **`sep1-refresh` systemd timer** — no timer exists anywhere; issuer `org_name`/`org_verified` re-freezes without it. Add an Ansible timer template (daily `-limit 500 -older-than 24h`). | [code] | Completes #46 (bidirectional org-verify, rc.147). Queue-progress fix already shipped. |
-| P0-2 | **`compute-completeness` systemd timer** — no timer; the ADR-0033 verdict (`completeness_snapshots`) is frozen **17–21 days** (watermarks ~63.0M, network 63.27M). Add daily/6-hourly timer. | [code] | Gap-detector (`source_coverage_snapshots`) IS fresh + zero-gap; only the authoritative verdict is stale. |
-| P0-3 | **CoinGecko paid plan** — oracle feed dead 11 days (hit 10k free-tier limit → 429 loop). Operator buys the tier; then update the r1 key + re-raise poll cadence/ticker set. | [OPS+code] | Decision made: upgrade. Divergence path (separate, lower volume) stayed fresh. |
-| P0-4 | **Massive FX poller stalled ~12h** — `fx_quotes` last 05:37, no forex logs in 24h, `MASSIVE_API_KEY` present. Diagnose (likely key quota/expiry) + restart. | [OPS] | Hourly-grain source; >1h stale = wedged. |
-| P0-5 | **Prometheus off the 49G root** — `/var/lib/prometheus` is 12G of root (chronic 90%+). Relocate TSDB to ZFS (same pattern as the June ClickHouse-log move). | [OPS] | Disk reclaimed 94%→85% this session; this is the structural fix. |
-| P0-6 | **Rate-limit `nft-drop` syslog spam** — firewall logs ~10k dropped-packet lines / 200k syslog lines; inflates `/var/log` continuously. | [code] | nftables limit rule. |
-| P0-7 | **Source-catalogue drift** — `/v1/sources` lists `exchangeratesapi`/`polygon-forex`/`cryptocompare`/`coinmarketcap` but live FX source is `massive` and CMC has no impl. Reconcile the registry to what actually ingests. | [code] | Honesty / wire-shape correctness. |
+| # | Item | Type | Status |
+|---|------|------|--------|
+| P0-1 | **`sep1-refresh` systemd timer** — no timer existed; issuer `org_name`/`org_verified` re-froze without it. | [code] | ✅ **DONE** — Ansible templates added (daily 05:12 UTC); installed + enabled on r1; ran once. Completes #46. |
+| P0-2 | **`compute-completeness` systemd timer** — no timer; ADR-0033 verdict frozen 17–21 days. | [code] | ✅ **DONE** — daily 05:30 UTC timer + `run-compute-completeness.sh` self-chunking per-source driver (25k windows so the SDEX reconcile never hits ClickHouse's 12 GiB limit; never regresses ahead sources). Installed + enabled; catch-up kicked off. |
+| P0-3 | **CoinGecko paid plan** — oracle feed dead 11 days (10k free-tier limit → 429 loop). | [OPS+code] | 🟡 **CODE DONE** — poller now auto-switches to `pro-api.coingecko.com` when a Pro key is set (was a foot-gun: Pro keys 404 on the public host). ⏳ **Operator:** buy the Pro plan, set `COINGECKO_API_KEY` in `/etc/default/stellarindex`, restart indexer. |
+| P0-4 | ~~Massive FX poller stalled~~ | [OPS] | ✅ **FALSE ALARM** — FX is healthy; the worker runs in the **API** binary (`fx_quotes persisted rows:797` hourly). The audit misread `observed_at` (data-publish time, not write time). No action. |
+| P0-5 | **Prometheus off the 49G root** — 13G of root, chronic >90%. | [OPS] | ✅ **DONE** — relocated to a `data/prometheus` ZFS dataset (zstd 11.87×, 13G→1.31G); root **94%→60%**. Codified in the ZFS role defaults. Prometheus verified healthy. |
+| P0-6 | **`nft-drop` syslog spam** — ~10k dropped-packet lines / 200k. | [code] | ✅ **DONE** — rsyslog routes `nft-drop` to a logrotated `/var/log/nft-drop.log` and stops (off syslog). Safe (no firewall edit). |
+| P0-7 | ~~Source-catalogue drift~~ | [code] | 🟡 **RECLASSIFIED — not a bug.** `coinmarketcap`/`cryptocompare`/`polygon-forex`/`exchangeratesapi` are intentionally-present **disabled paid connectors** (config structs + key envs + 62 refs); `/v1/sources` honestly lists available-but-off sources. Only real gap: the active FX source `massive` lives in `internal/sources/forex/` (not `external.Registry`), so it's absent from `/v1/sources` — a framework-bridge PR, deferred. |
+
+### Disk follow-ups surfaced during P0-5 (not blockers)
+- ZFS-dataset drift: `data/{clickhouse,loki,pgbackrest}` exist on r1 but aren't in the Ansible `zfs_datasets` defaults — reconcile in a dedicated pass.
 
 ---
 

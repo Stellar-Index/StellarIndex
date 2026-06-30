@@ -48,8 +48,13 @@ import (
 // emits. Must match the registry key.
 const SourceName = "coingecko"
 
-// DefaultEndpoint is the public REST base.
+// DefaultEndpoint is the public / demo-tier REST base.
 const DefaultEndpoint = "https://api.coingecko.com"
+
+// ProEndpoint is the paid-tier REST base. A Pro key (COINGECKO_API_KEY)
+// authenticates only here; the poller auto-selects it when a Pro key is set
+// and Endpoint wasn't explicitly overridden.
+const ProEndpoint = "https://pro-api.coingecko.com"
 
 // SimplePricePath is the batch-price endpoint.
 const SimplePricePath = "/api/v3/simple/price"
@@ -247,6 +252,14 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	endpoint := p.Endpoint
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
+	}
+	// A Pro key only authenticates against pro-api.coingecko.com — the
+	// public host (api.coingecko.com) rejects it. Auto-switch when a Pro
+	// key is set and the endpoint wasn't explicitly overridden, so an
+	// operator upgrading to the paid tier just sets COINGECKO_API_KEY
+	// without also having to know the host changes.
+	if p.APIKey != "" && endpoint == DefaultEndpoint {
+		endpoint = ProEndpoint
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+SimplePricePath+"?"+q.Encode(), nil)
 	if err != nil {
