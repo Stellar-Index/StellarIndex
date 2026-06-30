@@ -29,6 +29,14 @@ const (
 	// (extended locked-set) and max_supply.
 	BasisOverride Basis = "override"
 
+	// BasisSEP41LakeFlows — Algorithm 3, lake-derived: a SEP-41 token's raw
+	// on-chain total (Σmint−Σburn−Σclawback) summed over the certified
+	// ClickHouse lake (ch-supply's token_supply). Used when no LCM observer
+	// snapshot exists — i.e. for SEP-41 tokens not on an operator watch-list,
+	// which is the vast majority. NOT admin-excluded (that needs per-contract
+	// admin tracking the flow sum doesn't carry); total == circulating here.
+	BasisSEP41LakeFlows Basis = "sep41_lake_flows"
+
 	// BasisNoMetadata — we don't have a defensible value for
 	// at least one of total / circulating / max. Per ADR-0011
 	// "we don't fabricate" — the corresponding field is nil.
