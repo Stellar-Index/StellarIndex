@@ -23,7 +23,7 @@ CH() { curl -sS --max-time 3600 http://localhost:8123/ --data-binary "$1" 2>/dev
 
 TIP=$(psql "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
 [ -n "$TIP" ] && [ "$TIP" != "0" ] || { echo "$(date -u) ch-supply: tip unresolved" >> "$LOG"; exit 1; }
-FROM=$(CH "SELECT max(ledger)+1 FROM stellar.supply_flows" | tr -d '[:space:]')
+FROM=$(CH "SELECT max(ledger_seq)+1 FROM stellar.supply_flows" | tr -d '[:space:]')
 [ -n "$FROM" ] && [ "$FROM" != "0" ] || FROM=2
 
 echo "$(date -u) ch-supply refresh: seed [$FROM,$TIP] (chunk=$CHUNK) then aggregate" >> "$LOG"
