@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Added
+- **SEP-41 token supply now served on `/v1/assets/{id}`.** A Soroban (SEP-41)
+  token has no LCM observer supply snapshot unless its contract is on an
+  operator watch-list — impractical at 10k+ tokens, so Algorithm 3 produced
+  nothing and `total_supply` was null for every SEP-41 token. `/v1/assets/{id}`
+  now falls back to the **lake-derived per-token supply** (`ch-supply`'s
+  `token_supply`, Σmint−Σburn−Σclawback over the certified ClickHouse lake — the
+  same source `/v1/assets/{id}/supply` already uses) for Soroban-contract assets
+  with no observer snapshot, with a new `sep41_lake_flows` supply basis. Every
+  SEP-41 token's `total_supply` / `circulating_supply` / `market_cap_usd` is now
+  complete + served from the full archive. The CH read fires only for Soroban
+  tokens (classic assets keep their Algorithm-2 snapshot).
 - **Data-freshness watchdog — the "never get behind" alert.** New
   `data-freshness.sh` (every 15 min via `data-freshness.timer`) emits per-domain
   ingest-freshness gauges (`stellarindex_data_freshness_{age_seconds,stale}`) AND
