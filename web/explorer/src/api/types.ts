@@ -451,6 +451,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/external/assets/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * External asset detail (fiat / reference coin).
+         * @description `GlobalAssetView` detail for a NON-Stellar asset (fiat currency
+         *     or reference-only coin) by catalogue slug or ticker. The Stellar
+         *     counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
+         *     (usdc, aqua, …) returns **404** here, and a non-Stellar slug
+         *     returns 404 on `/assets/{asset_id}` — each asset resolves on
+         *     exactly one path (LC-001, no redirect).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Catalogue slug (e.g. `us-dollar`, `bitcoin`) or ticker (`USD`, `BTC`). */
+                    slug: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description External asset detail. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GlobalAssetEnvelope"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assets/verified": {
         parameters: {
             query?: never;
@@ -512,11 +563,14 @@ export interface paths {
          * Asset detail — per-Stellar-asset view OR verified-currency global view.
          * @description Dispatch depends on the `asset_id` path parameter:
          *
-         *     - **Verified-currency slug** (e.g. `usdc`, `eurc`, `aqua`) →
-         *       returns the `GlobalAssetView` shape: ticker, slug, name,
-         *       verified-issuer attribution, and the current USD price +
-         *       price authority. Per-issuance Stellar detail lives on the
-         *       canonical asset_id form below.
+         *     - **Verified-currency slug WITH a Stellar issuance** (e.g.
+         *       `usdc`, `eurc`, `aqua`) → returns the `GlobalAssetView` shape:
+         *       ticker, slug, name, verified-issuer attribution, and the
+         *       current USD price + price authority. Per-issuance Stellar
+         *       detail lives on the canonical asset_id form below. A slug for
+         *       a NON-Stellar asset (fiat, reference-only coin) returns **404**
+         *       here — its detail lives on `/external/assets/{slug}` (LC-001);
+         *       there is no redirect.
          *     - **Canonical Stellar asset_id** (`native`, `CODE-G…`,
          *       `C…` SAC contract, `fiat:CODE`) → returns the existing
          *       `Asset` shape (per-Stellar-asset detail with SEP-1

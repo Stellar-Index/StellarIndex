@@ -199,7 +199,7 @@ func TestAssetGet_Fiat_USDIdentity(t *testing.T) {
 	})
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/assets/us-dollar")
+	resp := mustGet(t, ts.URL+"/v1/external/assets/us-dollar")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -250,7 +250,7 @@ func TestAssetGet_Fiat_CNY_MarketCap(t *testing.T) {
 	})
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/assets/chinese-yuan")
+	resp := mustGet(t, ts.URL+"/v1/external/assets/chinese-yuan")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -295,3 +295,32 @@ func TestAssetMetadataRouteWorks(t *testing.T) {
 
 // /v1/coins removed (no production consumers); deprecation-header
 // test deleted along with the routes.
+
+// TestAssetGet_StellarExternalGate pins the LC-001 detail split: an external
+// asset (fiat) 404s on /v1/assets/{slug}, and a Stellar asset (usdc) 404s on
+// /v1/external/assets/{slug}. No redirect — each lives on exactly one path.
+func TestAssetGet_StellarExternalGate(t *testing.T) {
+	cat := newTestCatalogue(t)
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		GlobalPrice:        &stubGlobalPriceReader{},
+	})
+	ts := httpTestServer(t, srv)
+
+	// External (fiat) must NOT resolve on the Stellar detail route.
+	if resp := mustGet(t, ts.URL+"/v1/assets/us-dollar"); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("/v1/assets/us-dollar (external) status = %d, want 404", resp.StatusCode)
+	}
+	// External (fiat) DOES resolve on the external detail route.
+	if resp := mustGet(t, ts.URL+"/v1/external/assets/us-dollar"); resp.StatusCode != http.StatusOK {
+		t.Errorf("/v1/external/assets/us-dollar status = %d, want 200", resp.StatusCode)
+	}
+	// Stellar (usdc) must NOT resolve on the external detail route.
+	if resp := mustGet(t, ts.URL+"/v1/external/assets/usdc"); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("/v1/external/assets/usdc (Stellar) status = %d, want 404", resp.StatusCode)
+	}
+	// Stellar (usdc) DOES resolve on the Stellar detail route.
+	if resp := mustGet(t, ts.URL+"/v1/assets/usdc"); resp.StatusCode != http.StatusOK {
+		t.Errorf("/v1/assets/usdc status = %d, want 200", resp.StatusCode)
+	}
+}

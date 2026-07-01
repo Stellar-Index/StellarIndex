@@ -339,6 +339,34 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /external/assets/{slug}:
+    get:
+      tags: [assets]
+      summary: External asset detail (fiat / reference coin).
+      description: |
+        `GlobalAssetView` detail for a NON-Stellar asset (fiat currency
+        or reference-only coin) by catalogue slug or ticker. The Stellar
+        counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
+        (usdc, aqua, …) returns **404** here, and a non-Stellar slug
+        returns 404 on `/assets/{asset_id}` — each asset resolves on
+        exactly one path (LC-001, no redirect).
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Catalogue slug (e.g. `us-dollar`, `bitcoin`) or ticker (`USD`, `BTC`).
+          schema: { type: string }
+      responses:
+        "200":
+          description: External asset detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GlobalAssetEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /assets/verified:
     get:
       tags: [assets]
@@ -370,11 +398,14 @@ paths:
       description: |
         Dispatch depends on the `asset_id` path parameter:
 
-        - **Verified-currency slug** (e.g. `usdc`, `eurc`, `aqua`) →
-          returns the `GlobalAssetView` shape: ticker, slug, name,
-          verified-issuer attribution, and the current USD price +
-          price authority. Per-issuance Stellar detail lives on the
-          canonical asset_id form below.
+        - **Verified-currency slug WITH a Stellar issuance** (e.g.
+          `usdc`, `eurc`, `aqua`) → returns the `GlobalAssetView` shape:
+          ticker, slug, name, verified-issuer attribution, and the
+          current USD price + price authority. Per-issuance Stellar
+          detail lives on the canonical asset_id form below. A slug for
+          a NON-Stellar asset (fiat, reference-only coin) returns **404**
+          here — its detail lives on `/external/assets/{slug}` (LC-001);
+          there is no redirect.
         - **Canonical Stellar asset_id** (`native`, `CODE-G…`,
           `C…` SAC contract, `fiat:CODE`) → returns the existing
           `Asset` shape (per-Stellar-asset detail with SEP-1
