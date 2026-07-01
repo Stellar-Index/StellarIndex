@@ -31,6 +31,7 @@ func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 		if p.Quote.Type != canonical.AssetFiat || p.Quote.Code != "USD" {
 			continue
 		}
+		//exhaustive:ignore // test only asserts the Native + Crypto XLM/USD pairs exist
 		switch p.Base.Type {
 		case canonical.AssetNative:
 			hasNativeUSD = true

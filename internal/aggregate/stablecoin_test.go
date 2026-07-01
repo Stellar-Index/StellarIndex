@@ -253,6 +253,7 @@ func TestExpandTargetPair_FiatTargetReturnsDirectPlusBackers(t *testing.T) {
 	foundDirect := false
 	foundBackers := map[string]bool{}
 	for _, p := range got {
+		//exhaustive:ignore // test only inspects Fiat (direct) + Crypto (stablecoin backers)
 		switch p.Quote.Type {
 		case canonical.AssetFiat:
 			if p.Equal(target) {

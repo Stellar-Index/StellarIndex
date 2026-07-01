@@ -89,6 +89,12 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return d.decodeStakeEvent(&ev, fieldTopic, closedAt, true)
 	case actionUnbond:
 		return d.decodeStakeEvent(&ev, fieldTopic, closedAt, false)
+	case actionUnknown, actionAdmin, actionInitialize:
+		// Non-trade Phoenix actions (admin/init/unrecognised) — recognised
+		// so the dispatcher doesn't file them as unmatched, but they emit no
+		// trade. Explicit per the EVERY-event policy: a NEW phoenix action
+		// lands here and trips `exhaustive` until it's decided.
+		return nil, nil
 	}
 	return nil, nil
 }

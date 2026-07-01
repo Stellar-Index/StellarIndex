@@ -176,6 +176,9 @@ func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 	for _, p := range r.pairs {
 		outcome := r.tickOne(ctx, p)
 		r.emitter.Outcome(outcome.Kind)
+		// Only outcomes with a computed divergence emit the stroops gauge;
+		// Missing / ReadError have no divergence to report.
+		//exhaustive:ignore
 		switch outcome.Kind {
 		case CrossCheckOutcomeWithin, CrossCheckOutcomeOver:
 			stroops, _ := outcome.Result.DivergenceStroops.Float64()

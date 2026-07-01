@@ -204,10 +204,17 @@ func IsFXSource(source string) bool {
 // source is listed above), so that only matters for tests/typos.
 func IsOnChain(source string) bool {
 	m := Lookup(source)
+	// Off-chain subclasses short-circuit to false; every other subclass
+	// (incl. on-chain DEX) falls through to the class check + on-chain default.
+	//exhaustive:ignore
 	switch m.Subclass {
 	case SubclassCEX, SubclassFX:
 		return false
 	}
+	// Reference-pricing classes are off-chain; the remaining classes
+	// (Exchange DEX, Oracle, Lending, Router, Bridge) are Soroban on-chain
+	// and fall through to `return true`.
+	//exhaustive:ignore
 	switch m.Class {
 	case ClassAggregator, ClassAuthoritySanity:
 		return false
