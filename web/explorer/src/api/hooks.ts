@@ -505,13 +505,18 @@ export function useAssets(
   cursor: string,
   q: string | undefined,
   options?: { sparkline7d?: boolean },
+  // endpoint selects the listing surface. Defaults to the Stellar-only
+  // `/v1/assets`; the external directory (`/external/assets`) passes
+  // `/v1/external/assets` (fiat + reference-only coins, same wire shape).
+  // Included in the query key so the two surfaces cache separately.
+  endpoint = '/v1/assets',
 ) {
   const includeParts: string[] = [];
   if (options?.sparkline7d) includeParts.push('sparkline7d');
   const include = includeParts.length > 0 ? includeParts.join(',') : undefined;
   return useQuery<AssetsPage>({
     queryKey: [
-      '/v1/assets',
+      endpoint,
       'unified',
       assetClass,
       limit,
@@ -520,7 +525,7 @@ export function useAssets(
       include ?? '',
     ],
     queryFn: async () => {
-      const env = await apiGet<AssetsListEnvelope>('/v1/assets', {
+      const env = await apiGet<AssetsListEnvelope>(endpoint, {
         asset_class: assetClass,
         limit,
         ...(cursor ? { cursor } : {}),
