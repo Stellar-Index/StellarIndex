@@ -1352,12 +1352,17 @@ func processAndPersistCursor(
 	// check, which is the whole point).
 	recordLedgerIngest(ctx, store, logger, lcm, networkPassphrase)
 	if err := store.UpsertCursor(ctx, cursorSource, "", lcm.LedgerSequence()); err != nil {
+		// CS-029: do NOT advance the cursor gauge on a persist failure. The
+		// gauge tracks the DURABLE resume position — on restart, ingest
+		// resumes from the last successfully-upserted cursor, so a gauge that
+		// advanced past it would hide the stall/gap from the cursor-lag alert.
 		logger.Warn("cursor upsert",
 			"ledger", lcm.LedgerSequence(),
 			"err", err,
 		)
+	} else {
+		recordCursorMetric(lcm.LedgerSequence())
 	}
-	recordCursorMetric(lcm.LedgerSequence())
 	return nil
 }
 
