@@ -155,6 +155,12 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	circulating.Sub(circulating, comps.AdminBalance)
 	circulating.Sub(circulating, comps.LockedAccountBalances)
 	circulating.Sub(circulating, comps.LockedContractBalances)
+	// CS-038: clamp at zero. A locked-set exceeding total (operator
+	// misconfig, or a locked-holder snapshot fresher than total's) would
+	// otherwise publish a negative circulating supply → negative market cap.
+	if circulating.Sign() < 0 {
+		circulating.SetInt64(0)
+	}
 
 	// max_supply: operator override beats nil (SEP-1 overlay future PR).
 	var maxSupply *big.Int

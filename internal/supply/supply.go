@@ -16,6 +16,16 @@ const (
 	// circulating.
 	BasisXLMSDFReserveExclusion Basis = "xlm_sdf_reserve_exclusion"
 
+	// BasisXLMTotalOnly — Algorithm 1 with NO reserve accounts
+	// configured: circulating == total (nothing was excluded). Kept
+	// distinct from BasisXLMSDFReserveExclusion so the wire never
+	// claims an SDF exclusion that didn't happen (CS-010) — a
+	// circulating==total XLM figure labelled "sdf_reserve_exclusion"
+	// silently overstates circulating supply (and market cap) by the
+	// unsubtracted ~18-19B SDF-held stroops. Configure
+	// sdf_reserve_accounts + balances to get the real circulating.
+	BasisXLMTotalOnly Basis = "xlm_total_only"
+
 	// BasisIssuerExclusion — Algorithm 2 default: classic credit
 	// assets where circulating excludes the issuer's own balance.
 	BasisIssuerExclusion Basis = "issuer_exclusion"

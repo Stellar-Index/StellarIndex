@@ -163,6 +163,17 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 
 	circulating := new(big.Int).Sub(total, reserved)
 
+	// CS-010: only claim an SDF-reserve exclusion when we actually
+	// excluded reserves. With no reserve accounts configured,
+	// circulating == total; labelling that "xlm_sdf_reserve_exclusion"
+	// would tell every consumer an exclusion happened when it didn't,
+	// overstating circulating supply + market cap. Emit an honest basis
+	// instead so the misconfiguration is self-evident on the API.
+	basis := BasisXLMSDFReserveExclusion
+	if len(c.reserveAccounts) == 0 {
+		basis = BasisXLMTotalOnly
+	}
+
 	// F-1236 (codex audit-2026-05-12): if the reader implements
 	// [ReserveBalanceFreshnessReader], probe it for the
 	// per-account observation freshness signal. A failure here
@@ -183,7 +194,7 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 		TotalSupply:        total,
 		CirculatingSupply:  circulating,
 		MaxSupply:          new(big.Int).Set(total),
-		Basis:              BasisXLMSDFReserveExclusion,
+		Basis:              basis,
 		LedgerSequence:     ledger,
 		ObservedAt:         observedAt.UTC(),
 		MinComponentLedger: minLedger,
