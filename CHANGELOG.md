@@ -19,11 +19,17 @@ against.
 - **`GET /v1/external/assets` + `GET /v1/external/assets/{slug}`.** The non-Stellar
   side of the assets split (LC-001) — fiat currencies + reference-only coins. See
   the BREAKING note under Changed.
-- **Regression guardrails.** Enabled the `exhaustive` linter (ADR-0010), scoped to
-  our domain enums, so a new `AssetType`/`Class`/etc. variant added to a switch
-  without handling fails CI. Added foundation-purity import rules
-  (`internal/canonical`, `nettools`, `sources/external/scale`, `version` pinned to
-  their dependency floor). Both in `make verify`.
+- **`flags.divergence_checked` on the price envelope (CS-087).** Signals whether
+  the cross-reference divergence check actually ran (≥1 responding reference). When
+  false, `divergence_warning` is blind and must not be read as "prices agree".
+- **Regression guardrails.** (1) `scripts/ci/lint-i128.sh` (ADR-0003) — rejects
+  `int64(x.Lo)` i128 truncation + BIGINT/float monetary migration columns; (2) the
+  `exhaustive` linter (ADR-0010), scoped to our domain enums, so a new
+  `AssetType`/`Class`/etc. variant added to a switch without handling fails CI;
+  (3) foundation-purity import rules (`internal/canonical`, `nettools`,
+  `sources/external/scale`, `version` pinned to their dependency floor); (4) the
+  testcontainers **integration suite now RUNS in CI** as a blocking gate (CS-070 —
+  it was previously only compiled). All in `make verify` / CI.
 - **Contributor docs for agents.** `/CAPABILITY-INVENTORY.md` (intent→symbol index,
   to stop rebuilding existing helpers) + `docs/contributing/` checklists (add a
   source / CEX / endpoint / metric / migration / observer).
@@ -161,6 +167,11 @@ against.
   apps to React 19.2 / Next 16 / TypeScript 6 / Tailwind CSS 4 / ESLint 10 (flat
   config; ESLint 10 via a one-line `eslint-plugin-react` pnpm patch), and the
   **React Compiler** (`babel-plugin-react-compiler` 1.0) is now enabled.
+- **Re-enabled the `min_usd_volume` VWAP gate at $10k (r1 template).** Pinned to 0
+  during the on-chain-only bootstrap; the CEX connectors now flow live volume
+  (binance/coinbase/kraken/bitstamp), so fiat:USD pairs clear the floor easily
+  while thin/manipulable pairs are gated. The CS-040 fix (per-source `Decimals` in
+  the USD-volume sum) makes the gate FX-safe.
 - **Prometheus TSDB relocated off the 49G OS root onto a ZFS dataset.** The
   ~13G TSDB kept the root chronically >90% full (`stellarindex_node_root_disk_full`
   alert). Moved to `data/prometheus` (zstd, ~12× → 1.31G on disk); root dropped
