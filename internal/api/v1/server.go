@@ -1128,6 +1128,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// /v1/external/assets — non-Stellar assets (fiat + reference-only coins)
 	// split off /v1/assets (LC-001). /v1/assets is Stellar-only.
 	s.mux.HandleFunc("GET /v1/external/assets", s.handleExternalAssetList)
+	s.mux.HandleFunc("GET /v1/external/assets/{slug}", s.handleExternalAssetGet)
 	// /v1/assets/verified must register before /v1/assets/{asset_id}
 	// — Go 1.22+ ServeMux picks the more-specific pattern, but
 	// listing the static path first keeps the precedence obvious

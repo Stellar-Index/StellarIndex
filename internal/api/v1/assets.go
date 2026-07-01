@@ -1420,15 +1420,61 @@ func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw
 	if s.verifiedCurrencies == nil {
 		return false
 	}
-	if vc, ok := s.verifiedCurrencies.LookupBySlug(raw); ok {
-		s.handleGlobalAsset(w, r, vc)
+	vc := s.lookupCatalogue(raw)
+	if vc == nil {
+		return false
+	}
+	// LC-001: /v1/assets is Stellar-only. An external catalogue slug (a fiat
+	// currency or a reference-only coin — no Stellar issuance) is NOT served
+	// here; its detail lives on /v1/external/assets/{slug}. 404 with a pointer
+	// (no redirect, per the split's contract).
+	if vc.StellarEntry() == nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/asset-is-external",
+			"Asset is external (non-Stellar)", http.StatusNotFound,
+			fmt.Sprintf("%q is a non-Stellar asset; its detail lives at /v1/external/assets/%s", raw, vc.Slug))
 		return true
+	}
+	s.handleGlobalAsset(w, r, vc)
+	return true
+}
+
+// lookupCatalogue resolves a slug OR ticker to a verified currency (slug wins),
+// case-insensitive. Returns nil when neither matches.
+func (s *Server) lookupCatalogue(raw string) *currency.VerifiedCurrency {
+	if s.verifiedCurrencies == nil {
+		return nil
+	}
+	if vc, ok := s.verifiedCurrencies.LookupBySlug(raw); ok {
+		return vc
 	}
 	if vc, ok := s.verifiedCurrencies.LookupByTicker(raw); ok {
-		s.handleGlobalAsset(w, r, vc)
-		return true
+		return vc
 	}
-	return false
+	return nil
+}
+
+// handleExternalAssetGet serves GET /v1/external/assets/{slug} — the detail
+// view for a NON-Stellar asset (fiat currency or reference-only coin). A
+// Stellar asset 404s here (its detail lives on /v1/assets/{slug}); LC-001.
+func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) {
+	raw := normaliseAssetIDInput(r.PathValue("slug"))
+	vc := s.lookupCatalogue(raw)
+	if vc == nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/asset-not-found",
+			"Asset not found", http.StatusNotFound,
+			fmt.Sprintf("no external asset %q in the verified-currency catalogue", raw))
+		return
+	}
+	if vc.StellarEntry() != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/asset-is-stellar",
+			"Asset is Stellar", http.StatusNotFound,
+			fmt.Sprintf("%q is a Stellar asset; its detail lives at /v1/assets/%s", raw, vc.Slug))
+		return
+	}
+	s.handleGlobalAsset(w, r, vc)
 }
 
 // verifiedCurrencyFlags applies the unverified-collision warning
