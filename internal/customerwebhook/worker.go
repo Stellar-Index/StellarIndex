@@ -29,6 +29,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,7 +87,7 @@ type Worker struct {
 	opts   Options
 	stopCh chan struct{}
 	doneCh chan struct{}
-	signFn func(secret, payload []byte) string
+	signFn func(secret []byte, ts int64, payload []byte) string
 }
 
 // New constructs a Worker. store must be non-nil; opts gets
@@ -212,7 +213,8 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		return
 	}
 
-	signature := w.signFn(wh.SecretHash, d.Payload)
+	sigTS := w.opts.Clock().Unix()
+	signature := w.signFn(wh.SecretHash, sigTS, d.Payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(d.Payload))
 	if err != nil {
 		// URL malformed at request-build time. This is
@@ -230,6 +232,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-StellarIndex-Event", d.EventType)
+	req.Header.Set("X-StellarIndex-Timestamp", strconv.FormatInt(sigTS, 10))
 	req.Header.Set("X-StellarIndex-Signature", "sha256="+signature)
 	req.Header.Set("X-StellarIndex-Delivery-Id", d.ID.String())
 
@@ -323,12 +326,17 @@ func (w *Worker) scheduleRetry(nextAttempt int) time.Time {
 	return w.opts.Clock().Add(delay)
 }
 
-// signHMACSHA256 produces the hex-encoded HMAC-SHA-256 signature
-// over `payload` using `secret`. Consumers verify by recomputing
-// HMAC-SHA-256(secret, body) and comparing against the
-// `X-StellarIndex-Signature: sha256=…` header.
-func signHMACSHA256(secret, payload []byte) string {
+// signHMACSHA256 produces the hex-encoded HMAC-SHA-256 signature over the
+// timestamped payload `"<unix_ts>." + body` using `secret` (CS-055 —
+// signing the body alone made a captured delivery replayable forever).
+// Consumers verify by recomputing HMAC-SHA-256(secret, "<X-StellarIndex-
+// Timestamp>." + rawBody), constant-time-comparing against the
+// `X-StellarIndex-Signature: sha256=…` header, AND rejecting a timestamp
+// outside a tolerance window (~5 min) to bound replay.
+func signHMACSHA256(secret []byte, ts int64, payload []byte) string {
 	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(strconv.FormatInt(ts, 10)))
+	mac.Write([]byte{'.'})
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }

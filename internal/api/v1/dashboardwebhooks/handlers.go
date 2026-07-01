@@ -168,8 +168,10 @@ type createResponse struct {
 	Webhook webhookDTO `json:"webhook"`
 	// Secret is the HMAC-SHA-256 signing key plaintext, returned
 	// once at create + never again. The customer stores it
-	// server-side + uses it to verify the X-StellarIndex-Signature
-	// header on inbound webhook POSTs.
+	// server-side + verifies each delivery by recomputing
+	// HMAC-SHA-256(secret, X-StellarIndex-Timestamp + "." + rawBody)
+	// against X-StellarIndex-Signature (sha256=…), and rejecting a
+	// timestamp outside a tolerance window to bound replay (CS-055).
 	Secret string `json:"secret"`
 }
 

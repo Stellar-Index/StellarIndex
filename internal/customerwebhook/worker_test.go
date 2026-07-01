@@ -127,11 +127,13 @@ func runOneTick(t *testing.T, store *fakeStore, opts customerwebhook.Options) {
 func TestWorker_DeliversOn2xx(t *testing.T) {
 	var (
 		gotSignature string
+		gotTimestamp string
 		gotEventHdr  string
 		gotBody      []byte
 	)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSignature = r.Header.Get("X-StellarIndex-Signature")
+		gotTimestamp = r.Header.Get("X-StellarIndex-Timestamp")
 		gotEventHdr = r.Header.Get("X-StellarIndex-Event")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -166,8 +168,15 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 		t.Errorf("delivery not marked OK: delivered=%v", store.delivered)
 	}
 
-	// Verify the signature matches HMAC-SHA-256(secret, body).
+	// CS-055: the signature is over "<timestamp>." + body, and the
+	// timestamp is sent in X-StellarIndex-Timestamp so the consumer can
+	// bound replay. Verify both.
+	if gotTimestamp == "" {
+		t.Error("X-StellarIndex-Timestamp header missing")
+	}
 	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(gotTimestamp))
+	mac.Write([]byte{'.'})
 	mac.Write(payload)
 	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	if gotSignature != want {
