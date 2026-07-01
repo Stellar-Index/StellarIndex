@@ -66,6 +66,9 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 		if !r.Kind.IsValid() {
 			return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d invalid Kind %q", i, r.Kind)
 		}
+		// Only value-bearing kinds require a non-negative Amount; SetAdmin /
+		// SetAuthorized carry no amount (Authorized is checked separately below).
+		//exhaustive:ignore
 		switch r.Kind {
 		case SEP41Transfer, SEP41Approve:
 			if r.Amount == nil {

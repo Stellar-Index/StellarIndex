@@ -29,6 +29,11 @@ linters:
     - wastedassign
     - ineffassign
     - gosec
+    # Exhaustiveness — ADR-0010. Catches enum switches that silently
+    # drop a variant when a new one is added (a switch on an AssetType /
+    # Basis / Class / EventKind that forgets a case). default-signifies-
+    # exhaustive keeps false positives near zero.
+    - exhaustive
 
     # Style / clarity
     #
@@ -47,6 +52,20 @@ linters:
     - funlen
 
   settings:
+    exhaustive:
+      # A `default:` case counts as handling the remaining variants — so
+      # exhaustive only flags a switch that is BOTH missing enum cases AND
+      # has no default. This is the low-noise setting: it catches the real
+      # "forgot to add the new variant" bug without forcing a case-per-
+      # variant on switches that intentionally default.
+      default-signifies-exhaustive: true
+      # Ignore enums we don't own: the go-stellar-sdk `xdr.*` enums have
+      # 20+ variants and our decoders intentionally handle a subset (a
+      # ManageOffer decoder shouldn't enumerate every OperationType), and
+      # `time.Duration` isn't a real enum (its named constants are units).
+      # Enforcement is scoped to OUR domain enums, where a forgotten
+      # variant is a real bug.
+      ignore-enum-types: 'xdr\.|time\.Duration'
     gocognit:
       # Soft limit per engineering-standards.md §4.8 — 20 lets
       # genuinely linear state-machines and dispatcher tables

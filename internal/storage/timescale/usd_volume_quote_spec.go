@@ -102,6 +102,9 @@ func (s *USDVolumeQuoteSpec) QuoteUSDPegInfo(asset canonical.Asset) (decimals in
 	if s == nil {
 		return 0, false
 	}
+	// Only Classic + Soroban(SAC) assets can resolve to a USD-pegged classic;
+	// Native / Fiat / Crypto / RWA fall through to (0, false).
+	//exhaustive:ignore
 	switch asset.Type {
 	case canonical.AssetClassic:
 		if _, pegged := s.classicUSDPegs[classicKey(asset)]; pegged {

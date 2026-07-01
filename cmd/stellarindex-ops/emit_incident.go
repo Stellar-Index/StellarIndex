@@ -40,6 +40,10 @@ func findIncidentForEmit(all []incidents.Incident, slug string, eventType platfo
 	if found == nil {
 		return nil, fmt.Errorf("no incident with slug %q in the embedded corpus — add internal/incidents/data/%s.md and rebuild", slug, slug)
 	}
+	// Only the two incident-corpus event types get corpus validation here;
+	// other WebhookEventTypes (anomaly-freeze, divergence-firing) aren't
+	// corpus-backed and take no validation on this path.
+	//exhaustive:ignore
 	switch eventType {
 	case platform.WebhookEventIncidentResolved:
 		if found.Status != incidents.StatusResolved {
