@@ -94,7 +94,8 @@ type Config struct {
 	// the in-site dashboard (typically https://stellarindex.io).
 	// The magic-link callback URL embedded in emails is
 	// `{DashboardBaseURL}/auth/callback?token=<plaintext>` and the
-	// post-login redirect lands on `{DashboardBaseURL}/account`.
+	// post-login redirect lands on `{DashboardBaseURL}{next}` (next
+	// defaults to "/"; the dashboard itself lives under /dashboard/*).
 	DashboardBaseURL string
 	// EmailFrom is the From: address (e.g.
 	// `Stellar Index <hello@stellarindex.io>`).
@@ -177,7 +178,7 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/verify-code", h.HandleVerifyCode)
 	mux.HandleFunc("POST /v1/auth/logout", h.HandleLogout)
 	// Staff customer look-up — session-gated (RequireSession) AND staff-gated
-	// (HandleAdminLookup checks IsStaff). Backs /account/admin's first tool.
+	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
 	mux.Handle("GET /v1/account/admin/lookup",
 		RequireSession(h.cfg)(http.HandlerFunc(h.HandleAdminLookup)))
 }

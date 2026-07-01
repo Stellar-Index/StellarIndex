@@ -102,15 +102,18 @@ const NAV: NavGroup[] = [
 const ACCOUNT_GROUP: NavGroup = {
   title: 'Account',
   items: [
-    { href: '/account', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-    { href: '/account/keys', label: 'API keys', icon: KeyRound },
-    { href: '/account/usage', label: 'Usage', icon: Gauge },
-    { href: '/account/settings', label: 'Settings', icon: Settings },
+    // LC-020: link the ACTUAL served routes (/dashboard/*). These used to
+    // point at /account/* and relied on a Cloudflare 301 — so the active
+    // state never matched the served URL and the links 404'd under `next dev`.
+    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    { href: '/dashboard/keys', label: 'API keys', icon: KeyRound },
+    { href: '/dashboard/usage', label: 'Usage', icon: Gauge },
+    { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   ],
 };
 
 const ADMIN_ITEM: NavItem = {
-  href: '/account/admin',
+  href: '/dashboard/admin',
   label: 'Admin',
   icon: ShieldCheck,
 };
@@ -312,7 +315,7 @@ function AccountMenu({ email }: { email?: string }) {
           className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border border-line bg-surface p-2 shadow-elevated"
         >
           <Link
-            href="/account"
+            href="/dashboard"
             onClick={() => setOpen(false)}
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-surface-subtle"
           >
