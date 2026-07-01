@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 func buildPairMap(t *testing.T) map[string]canonical.Pair {
@@ -215,7 +216,7 @@ func TestDecimalStringToScaledInt_KrakenPrecision(t *testing.T) {
 		{"12345.12345678", big.NewInt(1234512345678)},
 	}
 	for _, tc := range cases {
-		got, err := decimalStringToScaledInt(tc.in, externalAmountDecimals)
+		got, err := scale.DecimalStringToScaledInt(tc.in, externalAmountDecimals)
 		if err != nil {
 			t.Errorf("%q: unexpected error %v", tc.in, err)
 			continue

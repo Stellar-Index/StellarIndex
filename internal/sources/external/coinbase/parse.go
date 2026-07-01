@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 const externalAmountDecimals = 8
@@ -96,15 +97,15 @@ func buildTrade(m matchPayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		return canonical.Trade{}, fmt.Errorf("%w: %q", ErrUnknownProduct, m.ProductID)
 	}
 
-	base, err := decimalStringToScaledInt(m.Size, externalAmountDecimals)
+	base, err := scale.DecimalStringToScaledInt(m.Size, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: size %q: %w", ErrMalformedFrame, m.Size, err)
 	}
-	price, err := decimalStringToScaledInt(m.Price, externalAmountDecimals)
+	price, err := scale.DecimalStringToScaledInt(m.Price, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: price %q: %w", ErrMalformedFrame, m.Price, err)
 	}
-	quote := new(big.Int).Quo(new(big.Int).Mul(base, price), pow10(externalAmountDecimals))
+	quote := new(big.Int).Quo(new(big.Int).Mul(base, price), scale.Pow10(externalAmountDecimals))
 	// Dust filter — when base × price floor-divides to 0 (e.g. a
 	// 1e-8 XLM lot at $0.16, or any size where size_float ×
 	// price_float < 1e-8 USD), the canonical validator would
@@ -130,50 +131,6 @@ func buildTrade(m matchPayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		BaseAmount:  canonical.NewAmount(base),
 		QuoteAmount: canonical.NewAmount(quote),
 	}, nil
-}
-
-// decimalStringToScaledInt — standard off-chain scaling.
-// decimalStringToScaledInt — targetDecimals kept as param for symmetry with the other external parsers.
-//
-//nolint:unparam // currently always externalAmountDecimals
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	v, ok := new(big.Int).SetString(intPart+fracPart, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
-}
-
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
 // formatTxHash — 64-char hex from (product_id, trade_id). Dash

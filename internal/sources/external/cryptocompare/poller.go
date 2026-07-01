@@ -24,15 +24,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 const (
@@ -198,7 +197,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			if priceFloat <= 0 {
 				continue
 			}
-			scaled, err := floatToScaledInt(priceFloat, int(DefaultDecimals))
+			scaled, err := scale.FloatToScaledInt(priceFloat, int(DefaultDecimals))
 			if err != nil || scaled.Sign() <= 0 {
 				continue
 			}
@@ -219,52 +218,6 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		}
 	}
 	return nil, updates, nil
-}
-
-// Helpers — identical shape to the other aggregator packages. Kept
-// per-package rather than promoted to shared because source-specific
-// scaling conventions may diverge as connectors mature.
-func floatToScaledInt(v float64, decimals int) (*big.Int, error) {
-	if v < 0 || v != v {
-		return nil, fmt.Errorf("bad value %v", v)
-	}
-	return decimalStringToScaledInt(strconv.FormatFloat(v, 'f', decimals+2, 64), decimals)
-}
-
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	v, ok := new(big.Int).SetString(intPart+fracPart, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
 }
 
 func syntheticTxHash(ticker, currency string, ts int64) string {

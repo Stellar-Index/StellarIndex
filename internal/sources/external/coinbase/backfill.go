@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // RESTEndpoint is Coinbase Exchange's public REST base.
@@ -215,14 +216,14 @@ func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair
 	// to avoid float-state leakage into our integer math. At
 	// 8dp this is lossless for any realistic candle volume
 	// (<2^53).
-	base, err := decimalStringToScaledInt(
+	base, err := scale.DecimalStringToScaledInt(
 		strconv.FormatFloat(vol, 'f', externalAmountDecimals, 64),
 		externalAmountDecimals,
 	)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("volume: %w", err)
 	}
-	price, err := decimalStringToScaledInt(
+	price, err := scale.DecimalStringToScaledInt(
 		strconv.FormatFloat(closePrice, 'f', externalAmountDecimals, 64),
 		externalAmountDecimals,
 	)
@@ -230,7 +231,7 @@ func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair
 		return canonical.Trade{}, fmt.Errorf("close: %w", err)
 	}
 	quoteRaw := new(big.Int).Mul(base, price)
-	quote := new(big.Int).Quo(quoteRaw, pow10(externalAmountDecimals))
+	quote := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}

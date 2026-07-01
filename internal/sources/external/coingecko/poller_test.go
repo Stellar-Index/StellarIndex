@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 func buildPairs(t *testing.T) []canonical.Pair {
@@ -214,7 +215,7 @@ func TestPollInterval_Default(t *testing.T) {
 
 func TestFloatToScaledInt_Precision(t *testing.T) {
 	// 0.17582 at 10^8 should round to 17_582_000 (±1).
-	got, err := floatToScaledInt(0.17582, 8)
+	got, err := scale.FloatToScaledInt(0.17582, 8)
 	if err != nil {
 		t.Fatalf("floatToScaledInt: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestFloatToScaledInt_Precision(t *testing.T) {
 		t.Errorf("0.17582 → %d, expected ≈17582000", n)
 	}
 	// Negative rejected.
-	if _, err := floatToScaledInt(-1, 8); err == nil {
+	if _, err := scale.FloatToScaledInt(-1, 8); err == nil {
 		t.Error("expected error for negative")
 	}
 }

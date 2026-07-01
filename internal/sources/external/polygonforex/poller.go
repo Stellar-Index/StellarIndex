@@ -12,6 +12,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // Poller implements external.Poller for Polygon.io Forex.
@@ -190,14 +191,14 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		if err != nil {
 			continue
 		}
-		scaled, err := decimalStringToScaledInt(mid, int(DefaultDecimals))
+		scaled, err := scale.DecimalStringToScaledInt(mid, int(DefaultDecimals))
 		if err != nil || scaled.Sign() <= 0 {
 			continue
 		}
 
 		// Polygon quotes "1 base = X quote"; we emit "price of
 		// <quote> in <base>" — invert.
-		scalePow := pow10(int(DefaultDecimals))
+		scalePow := scale.Pow10(int(DefaultDecimals))
 		inverted := new(big.Int).Div(
 			new(big.Int).Mul(scalePow, scalePow),
 			scaled,
@@ -245,11 +246,11 @@ func parseCurrencyTicker(t string) (string, string, error) {
 // midPriceString returns (ask+bid)/2 as a decimal string. If only
 // one side is present we use that; if both zero or empty, error.
 func midPriceString(ask, bid string) (string, error) {
-	askInt, err := decimalStringToScaledInt(ask, int(DefaultDecimals))
+	askInt, err := scale.DecimalStringToScaledInt(ask, int(DefaultDecimals))
 	if err != nil || askInt == nil {
 		askInt = big.NewInt(0)
 	}
-	bidInt, err := decimalStringToScaledInt(bid, int(DefaultDecimals))
+	bidInt, err := scale.DecimalStringToScaledInt(bid, int(DefaultDecimals))
 	if err != nil || bidInt == nil {
 		bidInt = big.NewInt(0)
 	}
@@ -264,44 +265,6 @@ func midPriceString(ask, bid string) (string, error) {
 		return intToDecimalString(bidInt, int(DefaultDecimals)), nil
 	}
 	return "", fmt.Errorf("no usable ask/bid")
-}
-
-// decimalStringToScaledInt — shared helper replicating the
-// per-package scaling convention.
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	v, ok := new(big.Int).SetString(intPart+fracPart, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
 }
 
 // intToDecimalString re-formats a scaled integer as "<int>.<frac>"
@@ -321,10 +284,6 @@ func intToDecimalString(n *big.Int, decimals int) string {
 	}
 	cut := len(s) - decimals
 	return s[:cut] + "." + s[cut:]
-}
-
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
 // syntheticTxHash synthesises a 64-hex-char hash from

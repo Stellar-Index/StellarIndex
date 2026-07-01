@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // externalAmountDecimals mirrors the Binance constant: every
@@ -113,17 +114,17 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		return canonical.Trade{}, fmt.Errorf("%w: %q", ErrUnknownSymbol, t.Symbol)
 	}
 
-	base, err := decimalStringToScaledInt(t.Qty.String(), externalAmountDecimals)
+	base, err := scale.DecimalStringToScaledInt(t.Qty.String(), externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: qty %q: %w", ErrMalformedFrame, t.Qty.String(), err)
 	}
-	price, err := decimalStringToScaledInt(t.Price.String(), externalAmountDecimals)
+	price, err := scale.DecimalStringToScaledInt(t.Price.String(), externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: price %q: %w", ErrMalformedFrame, t.Price.String(), err)
 	}
 	// quote = base × price / 10^8
 	quoteRaw := new(big.Int).Mul(base, price)
-	quote := new(big.Int).Quo(quoteRaw, pow10(externalAmountDecimals))
+	quote := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
 
 	// Dust filter — when base × price floor-divides to 0 (e.g.
 	// a 1e-8 XLM lot at $0.16), the canonical validator rejects
@@ -150,55 +151,6 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		BaseAmount:  canonical.NewAmount(base),
 		QuoteAmount: canonical.NewAmount(quote),
 	}, nil
-}
-
-// decimalStringToScaledInt converts a decimal string to a *big.Int
-// scaled by 10^targetDecimals. Semantics identical to the Binance
-// helper — duplicated rather than shared because the amount-scaling
-// convention is source-package-local and a future refactor to
-// per-source scales would prefer the duplication.
-// decimalStringToScaledInt — targetDecimals kept as param for symmetry with the other external parsers.
-//
-//nolint:unparam // currently always externalAmountDecimals
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	combined := intPart + fracPart
-	v, ok := new(big.Int).SetString(combined, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
-}
-
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
 // formatTxHash — see binance.formatTxHash for rationale. 64-char

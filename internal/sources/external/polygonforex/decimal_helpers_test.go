@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // decimalStringToScaledInt + intToDecimalString are inverses
@@ -31,7 +33,7 @@ func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
-			got, err := decimalStringToScaledInt(c.in, c.decimals)
+			got, err := scale.DecimalStringToScaledInt(c.in, c.decimals)
 			if c.wantError {
 				if err == nil {
 					t.Errorf("expected error for %q, got %v", c.in, got)

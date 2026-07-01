@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // RESTEndpoint is the Binance Spot REST API base for klines +
@@ -234,11 +235,11 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade,
 	if !ok {
 		return canonical.Trade{}, fmt.Errorf("kline missing quote volume")
 	}
-	base, err := decimalStringToScaledInt(baseStr, externalAmountDecimals)
+	base, err := scale.DecimalStringToScaledInt(baseStr, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("base volume %q: %w", baseStr, err)
 	}
-	quote, err := decimalStringToScaledInt(quoteStr, externalAmountDecimals)
+	quote, err := scale.DecimalStringToScaledInt(quoteStr, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("quote volume %q: %w", quoteStr, err)
 	}

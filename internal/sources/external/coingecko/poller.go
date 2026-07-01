@@ -31,7 +31,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,6 +41,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // SourceName is stamped on every canonical.OracleUpdate this package
@@ -333,7 +333,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			if priceFloat <= 0 {
 				continue
 			}
-			scaled, err := floatToScaledInt(priceFloat, int(DefaultDecimals))
+			scaled, err := scale.FloatToScaledInt(priceFloat, int(DefaultDecimals))
 			if err != nil || scaled.Sign() <= 0 {
 				continue
 			}
@@ -449,56 +449,6 @@ func truncate(s string, n int) string {
 		end--
 	}
 	return s[:end] + "…"
-}
-
-// floatToScaledInt converts a float64 price to a scaled *big.Int.
-// CoinGecko emits JSON numbers; we format via strconv at
-// decimals+2 precision to preserve enough sig figs for integer math
-// at our 10^8 scale before feeding decimalStringToScaledInt.
-func floatToScaledInt(v float64, decimals int) (*big.Int, error) {
-	if v < 0 || v != v {
-		return nil, fmt.Errorf("bad value %v", v)
-	}
-	s := strconv.FormatFloat(v, 'f', decimals+2, 64)
-	return decimalStringToScaledInt(s, decimals)
-}
-
-// decimalStringToScaledInt — per-package scaling helper, matches
-// the convention used by every external source.
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	v, ok := new(big.Int).SetString(intPart+fracPart, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
 }
 
 // syntheticTxHash derives a 64-char hex from (ticker, currency, ts).

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // fixtureXML is a real-shape ECB daily file (condensed). The
@@ -203,7 +204,7 @@ func TestInversionMath_MatchesExpected(t *testing.T) {
 	// Direct check of the inversion pipeline: ECB's rate=1.0825 →
 	// emitted price should be 1/1.0825 = 0.92378... at 10^6 scale
 	// ≈ 923787.
-	scaled, err := floatToScaledInt(1.0825, 6)
+	scaled, err := scale.FloatToScaledInt(1.0825, 6)
 	if err != nil {
 		t.Fatalf("floatToScaledInt: %v", err)
 	}

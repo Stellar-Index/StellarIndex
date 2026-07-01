@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // buildPairMap builds a small test pair map. XLMUSDT and BTCUSDT —
@@ -142,7 +143,7 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			got, err := decimalStringToScaledInt(tc.in, tc.targetDP)
+			got, err := scale.DecimalStringToScaledInt(tc.in, tc.targetDP)
 			if tc.expectError {
 				if err == nil {
 					t.Errorf("want error, got nil (value=%s)", got)
@@ -153,7 +154,7 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got.Cmp(tc.want) != 0 {
-				t.Errorf("decimalStringToScaledInt(%q, %d) = %s, want %s", tc.in, tc.targetDP, got, tc.want)
+				t.Errorf("scale.DecimalStringToScaledInt(%q, %d) = %s, want %s", tc.in, tc.targetDP, got, tc.want)
 			}
 		})
 	}

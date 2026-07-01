@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // RESTEndpoint is Bitstamp's public v2 REST base. Trade and OHLC
@@ -166,19 +167,19 @@ func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair,
 	}
 	closeSec := openSec + int64(stepSec) - 1
 
-	base, err := decimalStringToScaledInt(c.Volume, externalAmountDecimals)
+	base, err := scale.DecimalStringToScaledInt(c.Volume, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", c.Volume, err)
 	}
 	if base.Sign() == 0 {
 		return canonical.Trade{}, fmt.Errorf("zero volume")
 	}
-	price, err := decimalStringToScaledInt(c.Close, externalAmountDecimals)
+	price, err := scale.DecimalStringToScaledInt(c.Close, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("close %q: %w", c.Close, err)
 	}
 	quoteRaw := new(big.Int).Mul(base, price)
-	quote := new(big.Int).Quo(quoteRaw, pow10(externalAmountDecimals))
+	quote := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
 
 	// Dust filter — see parse.go:parseTrade for the rationale. Same
 	// underflow can happen on a candle whose `volume` * `close`

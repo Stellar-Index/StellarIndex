@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // externalAmountDecimals is the fixed integer scale every off-chain
@@ -81,11 +82,11 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 		return canonical.Trade{}, fmt.Errorf("%w: %q", ErrUnknownSymbol, ev.Symbol)
 	}
 
-	baseAmt, err := decimalStringToScaledInt(ev.Quantity, externalAmountDecimals)
+	baseAmt, err := scale.DecimalStringToScaledInt(ev.Quantity, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: quantity %q: %w", ErrMalformedFrame, ev.Quantity, err)
 	}
-	priceScaled, err := decimalStringToScaledInt(ev.Price, externalAmountDecimals)
+	priceScaled, err := scale.DecimalStringToScaledInt(ev.Price, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: price %q: %w", ErrMalformedFrame, ev.Price, err)
 	}
@@ -93,7 +94,7 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 	// quote = base × price, both at 10^8 scale, so raw product is
 	// at 10^16 — divide by 10^8 to land at 10^8 consistently.
 	quoteRaw := new(big.Int).Mul(baseAmt, priceScaled)
-	quoteAmt := new(big.Int).Quo(quoteRaw, pow10(externalAmountDecimals))
+	quoteAmt := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
 	// Dust filter — same rationale as coinbase: tiny lots underflow
 	// integer scale; drop silently rather than fail validation.
 	if quoteAmt.Sign() == 0 {
@@ -110,64 +111,6 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 		BaseAmount:  canonical.NewAmount(baseAmt),
 		QuoteAmount: canonical.NewAmount(quoteAmt),
 	}, nil
-}
-
-// decimalStringToScaledInt converts a decimal string to a *big.Int
-// scaled by 10^targetDecimals. Rejects scientific notation (no
-// '1.5e3' inputs) and fractional overflow beyond the target scale
-// (lossy truncation would silently change prices).
-//
-//	"0.17582", 8 → 17582000
-//	"152.34",  8 → 15234000000
-//	"1",       8 → 100000000
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	// Pad or truncate fractional part to exactly targetDecimals.
-	// Over-precision (e.g. "0.123456789" at target=8) truncates —
-	// document rather than error so vendor-side precision drift
-	// doesn't break ingestion. 8dp is already below the noise
-	// floor of CEX tick sizes.
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-
-	combined := intPart + fracPart
-	v, ok := new(big.Int).SetString(combined, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
-}
-
-// pow10 returns 10^n as a *big.Int. Unmemoised — n is always small
-// (≤18 in realistic use) and this is called once per trade.
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
 // formatTxHash synthesises a 64-hex-char identifier from the venue

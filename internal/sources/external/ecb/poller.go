@@ -57,6 +57,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 const (
@@ -214,7 +215,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	updates := make([]canonical.OracleUpdate, 0, len(wanted))
-	scalePow := pow10(int(DefaultDecimals))
+	scalePow := scale.Pow10(int(DefaultDecimals))
 
 	for _, row := range day.Rates {
 		code := strings.ToUpper(row.Currency)
@@ -228,7 +229,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			continue
 		}
 		// Invert + scale: price of currency in EUR = 1 / rate.
-		rateScaled, err := floatToScaledInt(rate, int(DefaultDecimals))
+		rateScaled, err := scale.FloatToScaledInt(rate, int(DefaultDecimals))
 		if err != nil || rateScaled.Sign() <= 0 {
 			continue
 		}
@@ -260,53 +261,6 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 
 // floatToScaledInt / decimalStringToScaledInt / syntheticTxHash —
 // package-local scaling helpers, parallel to the other pollers.
-
-func floatToScaledInt(v float64, decimals int) (*big.Int, error) {
-	if v < 0 || v != v {
-		return nil, fmt.Errorf("bad value %v", v)
-	}
-	return decimalStringToScaledInt(strconv.FormatFloat(v, 'f', decimals+2, 64), decimals)
-}
-
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		return nil, fmt.Errorf("scientific notation %q not supported", s)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	v, ok := new(big.Int).SetString(intPart+fracPart, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
-}
-
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
-}
 
 // syntheticTxHash derives a stable 64-char hex from (currency, ts).
 // Same-day reruns collide on (currency, unix_day) so the idempotent

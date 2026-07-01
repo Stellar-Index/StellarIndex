@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // floatToScaledInt rejects NaN and negative values; ECB rates are
@@ -11,21 +13,21 @@ import (
 // the precision-preserving worker for the formatted JSON value.
 
 func TestFloatToScaledInt_rejectsNaN(t *testing.T) {
-	if _, err := floatToScaledInt(math.NaN(), 8); err == nil {
+	if _, err := scale.FloatToScaledInt(math.NaN(), 8); err == nil {
 		t.Error("expected error for NaN, got nil")
 	}
 }
 
 func TestFloatToScaledInt_rejectsNegative(t *testing.T) {
-	if _, err := floatToScaledInt(-1.5, 8); err == nil {
+	if _, err := scale.FloatToScaledInt(-1.5, 8); err == nil {
 		t.Error("expected error for negative, got nil")
 	}
 }
 
 func TestFloatToScaledInt_happyPath(t *testing.T) {
-	got, err := floatToScaledInt(1.5, 8)
+	got, err := scale.FloatToScaledInt(1.5, 8)
 	if err != nil {
-		t.Fatalf("floatToScaledInt(1.5, 8): %v", err)
+		t.Fatalf("scale.FloatToScaledInt(1.5, 8): %v", err)
 	}
 	if got.String() != "150000000" {
 		t.Errorf("got %s, want 150000000", got.String())
@@ -50,7 +52,7 @@ func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
-			got, err := decimalStringToScaledInt(c.in, c.decimals)
+			got, err := scale.DecimalStringToScaledInt(c.in, c.decimals)
 			if c.wantError {
 				if err == nil {
 					t.Errorf("expected error for %q, got %v", c.in, got)

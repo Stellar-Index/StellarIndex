@@ -3,6 +3,8 @@ package coinbase
 import (
 	"strings"
 	"testing"
+
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // Error and edge-case tests for decimalStringToScaledInt. The
@@ -11,7 +13,7 @@ import (
 // branches to match the shape of the binance + bitstamp suites.
 
 func TestDecimalStringToScaledInt_emptyRejected(t *testing.T) {
-	_, err := decimalStringToScaledInt("", 8)
+	_, err := scale.DecimalStringToScaledInt("", 8)
 	if err == nil {
 		t.Error("expected error on empty string, got nil")
 	}
@@ -22,7 +24,7 @@ func TestDecimalStringToScaledInt_emptyRejected(t *testing.T) {
 
 func TestDecimalStringToScaledInt_scientificRejected(t *testing.T) {
 	for _, s := range []string{"1e3", "1.5E-3", "2e0"} {
-		_, err := decimalStringToScaledInt(s, 8)
+		_, err := scale.DecimalStringToScaledInt(s, 8)
 		if err == nil {
 			t.Errorf("expected error on %q, got nil", s)
 		}
@@ -34,7 +36,7 @@ func TestDecimalStringToScaledInt_scientificRejected(t *testing.T) {
 
 func TestDecimalStringToScaledInt_nonNumericRejected(t *testing.T) {
 	for _, s := range []string{"not-a-number", "0xff", "abc"} {
-		_, err := decimalStringToScaledInt(s, 8)
+		_, err := scale.DecimalStringToScaledInt(s, 8)
 		if err == nil {
 			t.Errorf("expected error on %q, got nil", s)
 		}
@@ -42,9 +44,9 @@ func TestDecimalStringToScaledInt_nonNumericRejected(t *testing.T) {
 }
 
 func TestDecimalStringToScaledInt_negative(t *testing.T) {
-	got, err := decimalStringToScaledInt("-1.5", 8)
+	got, err := scale.DecimalStringToScaledInt("-1.5", 8)
 	if err != nil {
-		t.Fatalf("decimalStringToScaledInt(-1.5): %v", err)
+		t.Fatalf("scale.DecimalStringToScaledInt(-1.5): %v", err)
 	}
 	if got.Sign() >= 0 {
 		t.Errorf("Sign() = %d, want -1", got.Sign())
@@ -53,7 +55,7 @@ func TestDecimalStringToScaledInt_negative(t *testing.T) {
 
 func TestDecimalStringToScaledInt_leadingDotAndTrailingDot(t *testing.T) {
 	// ".5" — empty integer part, fractional only.
-	got, err := decimalStringToScaledInt(".5", 8)
+	got, err := scale.DecimalStringToScaledInt(".5", 8)
 	if err != nil {
 		t.Fatalf(".5: %v", err)
 	}
@@ -61,7 +63,7 @@ func TestDecimalStringToScaledInt_leadingDotAndTrailingDot(t *testing.T) {
 		t.Errorf(".5 → %s, want 50000000", got)
 	}
 	// "5." — empty fractional part, integer only.
-	got, err = decimalStringToScaledInt("5.", 8)
+	got, err = scale.DecimalStringToScaledInt("5.", 8)
 	if err != nil {
 		t.Fatalf("5.: %v", err)
 	}

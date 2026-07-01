@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // RESTEndpoint is Kraken's public REST base. Public endpoints need
@@ -228,20 +229,20 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 			return canonical.Trade{}, fmt.Errorf("missing vwap + close")
 		}
 	}
-	base, err := decimalStringToScaledInt(volStr, externalAmountDecimals)
+	base, err := scale.DecimalStringToScaledInt(volStr, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", volStr, err)
 	}
 	if base.Sign() == 0 {
 		return canonical.Trade{}, fmt.Errorf("zero volume")
 	}
-	price, err := decimalStringToScaledInt(vwapStr, externalAmountDecimals)
+	price, err := scale.DecimalStringToScaledInt(vwapStr, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("vwap %q: %w", vwapStr, err)
 	}
 	// quote = base × price / 10^8
 	quoteRaw := new(big.Int).Mul(base, price)
-	quote := new(big.Int).Quo(quoteRaw, pow10(externalAmountDecimals))
+	quote := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
 	// Dust filter — see parse.go::buildTrade for the rationale.
 	// Same underflow can happen on a candle whose `volume` * `vwap`
 	// rounds to 0 at our 10^8 precision floor.
