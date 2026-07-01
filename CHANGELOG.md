@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`GET /v1/external/assets` + `GET /v1/external/assets/{slug}`.** The non-Stellar
+  side of the assets split (LC-001) — fiat currencies + reference-only coins. See
+  the BREAKING note under Changed.
+- **Regression guardrails.** Enabled the `exhaustive` linter (ADR-0010), scoped to
+  our domain enums, so a new `AssetType`/`Class`/etc. variant added to a switch
+  without handling fails CI. Added foundation-purity import rules
+  (`internal/canonical`, `nettools`, `sources/external/scale`, `version` pinned to
+  their dependency floor). Both in `make verify`.
+- **Contributor docs for agents.** `/CAPABILITY-INVENTORY.md` (intent→symbol index,
+  to stop rebuilding existing helpers) + `docs/contributing/` checklists (add a
+  source / CEX / endpoint / metric / migration / observer).
 - **Stablecoin self-peg pricing for the crypto-ticker form.**
   `/v1/price?asset=crypto:USDC&quote=fiat:USD` (and the EUR/MXN pegs,
   `/v1/price/tip`, `/v1/observations`, `/v1/oracle`) now returns the `~$1` peg
@@ -127,6 +138,29 @@ against.
   feeds (CEX / FX / aggregators / Chainlink).
 
 ### Changed
+- **BREAKING — assets split into Stellar (`/v1/assets`) and external
+  (`/v1/external/assets`) (LC-001).** `/v1/assets` now lists **Stellar assets
+  only** (native XLM, classic credits, Soroban tokens, and verified-catalogue
+  currencies with a Stellar issuance — USDC, EURC, AQUA). Fiat currencies and
+  reference-only coins (BTC, ETH, …) — which have no Stellar issuance — moved to
+  the new **`GET /v1/external/assets`** listing and **`GET /v1/external/assets/{slug}`**
+  detail. A non-Stellar slug now returns 404 on `/v1/assets/{slug}` (with a
+  cross-pointer; no redirect), and vice-versa — each asset resolves on exactly
+  one path. `asset_class=fiat` returns an empty page on `/v1/assets`. The
+  explorer gains an `/external/assets` directory + detail page and drops the
+  fiat chip from `/assets`. Root cause of the old mixing: the browse listing fed
+  off `catalogue.Browseable()`, which drops reference-only coins but still
+  included fiat.
+- **XLM circulating-supply basis is now honest when no SDF reserves are
+  configured.** Previously stamped `xlm_sdf_reserve_exclusion` even with an empty
+  reserve set (circulating == total), silently overstating circulating supply +
+  market cap; now emits `xlm_total_only` so the misconfiguration is self-evident.
+  (The correct circulating still needs `sdf_reserve_accounts` set in inventory.)
+- **Dependencies brought to latest.** `go-stellar-sdk` v0.5→v0.6 (adapts the new
+  `datastore.GetFile` size return; VERSIONS.md compat pass); the explorer + status
+  apps to React 19.2 / Next 16 / TypeScript 6 / Tailwind CSS 4 / ESLint 10 (flat
+  config; ESLint 10 via a one-line `eslint-plugin-react` pnpm patch), and the
+  **React Compiler** (`babel-plugin-react-compiler` 1.0) is now enabled.
 - **Prometheus TSDB relocated off the 49G OS root onto a ZFS dataset.** The
   ~13G TSDB kept the root chronically >90% full (`stellarindex_node_root_disk_full`
   alert). Moved to `data/prometheus` (zstd, ~12× → 1.31G on disk); root dropped
@@ -147,6 +181,40 @@ against.
   — far more detail per window.
 
 ### Fixed
+- **Security & correctness audit remediation (2026-07-01).** Highlights:
+  - **SSE crash + DoS.** `streaming.Hub.Publish` could send on a closed
+    subscriber channel (process-crashing panic) when a client disconnected
+    mid-publish — now guarded by a per-subscription mutex. The SSE handler
+    cleared its write deadline entirely, so a non-reading client leaked its
+    goroutine/conn/FD forever — now a rolling per-write deadline + a concurrent-
+    stream cap (CS-012 / CS-013).
+  - **Dashboard CSRF.** The session cookie was `SameSite=None` though the
+    dashboard and API are same-site — now `SameSite=Lax`, blocking cross-site
+    credentialed POSTs to the `/v1/dashboard/*` mutation handlers (CS-124).
+  - **SSRF.** The OG-image edge function double-decoded + interpolated the URL
+    path unescaped into satori markup (blind SSRF) — now escaped/single-decoded
+    (CS-009). The three copies of the outbound-URL SSRF blocklist (SEP-1 +
+    webhook registration/delivery) diverged — two missed Oracle Cloud's metadata
+    IP `192.0.0.192`; unified into one `internal/nettools` guard (CS-008).
+  - **Issuer impersonation.** `/v1/issuers/{id}` dropped `org_verified`, so the
+    explorer rendered an unverified self-declared `org_name` as authoritative —
+    now surfaced + shown with a Verified/Unverified chip (CS-100).
+  - **Webhook replay.** Delivery HMAC signed only the body — now timestamp-bound
+    (`X-StellarIndex-Timestamp`) so a captured delivery can't be replayed (CS-055).
+  - **Data-truth signals.** Completeness watermark could regress to a stale tip
+    (now GREATEST-guarded, CS-083); a total divergence-reference outage counted
+    as success (now a distinct `no_reference` outcome + alert, CS-088); the
+    ingest cursor gauge advanced even on a failed persist (CS-029); dormant-pair
+    VWAP served `stale=false` forever (CS-017); the USD-volume gate assumed 1e8
+    for FX sources that stamp 1e6 (CS-040); negative circulating supply clamp
+    (CS-038).
+  - **Accessibility.** The API-request dialog + mobile nav drawer gained a real
+    focus-trap/escape/restore; form errors/success now announce to screen
+    readers (LC-050 / LC-051 / LC-052).
+  - **Ops config.** Alertmanager rendered webhook secrets world-readable (now
+    `0640`, CS-121); the sshd password-auth Ansible gate inverted on a string
+    override (now `| bool`, CS-120); the User-Agent was injected unescaped into
+    the plaintext magic-link email (CS-071).
 - **Completeness verdict false-negative on factory-gated sources (blend).**
   `compute-completeness` (the daily verdict, ADR-0033) never seeded the
   factory-child gate registry — only `verify-reconciliation` did. So its
