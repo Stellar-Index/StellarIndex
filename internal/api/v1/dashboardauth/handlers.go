@@ -292,15 +292,19 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionSameSite picks the session-cookie SameSite policy. The explorer at
-// stellarindex.io calls the API at api.stellarindex.io — cross-origin (same
-// site) — so the cookie must be SameSite=None for the browser to send it on
-// those credentialed requests (the in-site /account section). Browsers only
-// honour SameSite=None on Secure cookies; dev (http://localhost, Secure=false)
-// falls back to Lax. (F-03 cross-origin cookie work.)
-func sessionSameSite(secure bool) http.SameSite {
-	if secure {
-		return http.SameSiteNoneMode
-	}
+// stellarindex.io calls the API at api.stellarindex.io — cross-*origin* but
+// **same-site** (both are the `stellarindex.io` registrable domain). SameSite
+// is a *site*-level control, so Lax is sent on those credentialed same-site
+// requests while blocking genuine cross-*site* (e.g. evil.com) requests.
+//
+// CS-124: this previously returned SameSite=None (unnecessary — None is only
+// needed for a different registrable domain), which let any site auto-submit a
+// credentialed POST to the cookie-authed /v1/dashboard/* mutation handlers
+// (CSRF — e.g. creating a webhook that exfiltrates the victim's payloads). Lax
+// closes that with no impact on the legitimate same-site flow. If the dashboard
+// is ever served from a truly different site, add a CSRF token — do NOT revert
+// to None.
+func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
 
@@ -490,7 +494,7 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		Expires:  sess.ExpiresAt,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(h.cfg.CookieSecure),
+		SameSite: sessionSameSite(),
 	})
 	return nil
 }
@@ -516,7 +520,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(h.cfg.CookieSecure),
+		SameSite: sessionSameSite(),
 	})
 	w.WriteHeader(http.StatusOK)
 }
@@ -775,6 +779,21 @@ func clientIP(r *http.Request) net.IP {
 
 func truncateUA(ua string) string {
 	const maxUALen = 256
+	// CS-071: the UA is rendered verbatim into the plaintext magic-link
+	// email body, so a client-supplied CR/LF (or other control char) could
+	// inject arbitrary lines ("URGENT: account compromised — call …") into a
+	// trusted, DKIM-signed, branded email. Strip control characters before
+	// it reaches the template. (The HTML variant is html/template-escaped;
+	// this closes the plaintext gap.)
+	ua = strings.Map(func(rr rune) rune {
+		if rr == '\t' {
+			return ' '
+		}
+		if rr < 0x20 || rr == 0x7f {
+			return -1 // drop CR, LF, and other control chars
+		}
+		return rr
+	}, ua)
 	if len(ua) <= maxUALen {
 		return ua
 	}
