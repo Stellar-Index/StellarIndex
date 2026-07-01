@@ -111,3 +111,32 @@ groups:
             Check the upstream reference's status, then the aggregator's
             `divergence refresher wired` startup log line for which
             references are configured.
+
+      # CS-088: every configured reference went dark for a pair
+      # (SuccessCount==0). RefreshPair now emits outcome="no_reference"
+      # instead of masking it as "ok", so this alert can see the "silent
+      # checker" case the error-dominant alert above cannot (no_reference is
+      # neither refresh_error nor ok). flags.divergence_warning freezes at its
+      # last value during the outage — a live depeg would go unflagged.
+      - alert: stellarindex_divergence_no_reference
+        expr: |
+          sum(rate(stellarindex_divergence_refresh_total{outcome="no_reference"}[5m]))
+            >
+          sum(rate(stellarindex_divergence_refresh_total{outcome="ok"}[5m]))
+          and
+          sum(rate(stellarindex_divergence_refresh_total{outcome="no_reference"}[5m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/divergence-no-reference.md
+        annotations:
+          summary: "Divergence checker running blind — no reference responded (P3)"
+          description: |
+            For 30+ min more pairs received zero reference responses than got a
+            healthy comparison. Every divergence reference (CoinGecko,
+            Chainlink) is unreachable for those pairs, so
+            flags.divergence_warning is frozen — a live depeg would go
+            unflagged. Check the CoinGecko Pro key / 429 state and Chainlink
+            RPC reachability; see the runbook.

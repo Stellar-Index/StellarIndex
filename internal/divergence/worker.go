@@ -235,6 +235,14 @@ func NewService(opts ServiceOptions) (*Service, error) {
 // error when Compare's network calls all fail, but cache-write
 // errors are returned separately so the caller can decide whether
 // to retry.
+// ErrNoReferenceResponded is returned by RefreshPair when references ARE
+// configured but every one failed for this pair (SuccessCount == 0). The
+// cache is still written (recording the outage state), but the caller gets a
+// distinct signal so a total reference outage can be alerted on instead of
+// silently counting as a successful refresh (CS-088). It is NOT returned when
+// no references are configured at all — that's an intentional-disabled state.
+var ErrNoReferenceResponded = errors.New("divergence: no reference responded for pair")
+
 func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error {
 	if len(s.refs) == 0 {
 		return nil
@@ -310,6 +318,13 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		if cached.WarningFired && !prev {
 			s.onWarning(ctx, pair, cached)
 		}
+	}
+	// CS-088: references were configured but none responded — the cache now
+	// holds a SuccessCount=0 / WarningFired=false result that looks identical
+	// on the wire to "checked, no divergence". Signal the outage so the
+	// refresh loop can emit a distinct outcome and page on a dark checker.
+	if res.SuccessCount == 0 {
+		return ErrNoReferenceResponded
 	}
 	return nil
 }

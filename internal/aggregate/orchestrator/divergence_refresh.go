@@ -2,10 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/StellarIndex/stellar-index/internal/divergence"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
@@ -90,10 +92,17 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 			continue
 		}
 		if err := o.cfg.DivergenceRefresher.RefreshPair(ctx, pair, ourPrice, now); err != nil {
-			obs.DivergenceRefreshTotal.WithLabelValues("refresh_error").Inc()
-			obs.DivergenceRefreshDurationSeconds.WithLabelValues("refresh_error").Observe(time.Since(start).Seconds())
+			// CS-088: distinguish "all references dark" from a real refresh
+			// error so a total reference outage is alertable, not silently
+			// folded into the healthy path. Both still `continue`.
+			outcome := "refresh_error"
+			if errors.Is(err, divergence.ErrNoReferenceResponded) {
+				outcome = "no_reference"
+			}
+			obs.DivergenceRefreshTotal.WithLabelValues(outcome).Inc()
+			obs.DivergenceRefreshDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 			o.logger.Warn("divergence refresh failed",
-				"pair", pair.String(), "err", err)
+				"pair", pair.String(), "outcome", outcome, "err", err)
 			continue
 		}
 		obs.DivergenceRefreshTotal.WithLabelValues("ok").Inc()
