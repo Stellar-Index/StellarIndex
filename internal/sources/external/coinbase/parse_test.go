@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 func mustPairs(t *testing.T) map[string]canonical.Pair {
@@ -158,7 +159,7 @@ func TestDecimalStringToScaledInt_CoinbasePrecision(t *testing.T) {
 		{"0.123456789", big.NewInt(12_345_678)}, // truncated to 8dp
 	}
 	for _, tc := range cases {
-		got, err := decimalStringToScaledInt(tc.in, externalAmountDecimals)
+		got, err := scale.DecimalStringToScaledInt(tc.in, externalAmountDecimals)
 		if err != nil {
 			t.Errorf("%q: err %v", tc.in, err)
 			continue

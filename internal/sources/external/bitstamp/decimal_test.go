@@ -4,6 +4,8 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // decimalStringToScaledInt converts a decimal string (e.g. "0.123")
@@ -40,7 +42,7 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := decimalStringToScaledInt(tc.in, tc.targetDP)
+			got, err := scale.DecimalStringToScaledInt(tc.in, tc.targetDP)
 			if tc.expectError {
 				if err == nil {
 					t.Errorf("expected error, got %v", got)
@@ -48,7 +50,7 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("decimalStringToScaledInt(%q, %d): %v", tc.in, tc.targetDP, err)
+				t.Fatalf("scale.DecimalStringToScaledInt(%q, %d): %v", tc.in, tc.targetDP, err)
 			}
 			if got.Cmp(tc.want) != 0 {
 				t.Errorf("got %s, want %s", got, tc.want)
@@ -63,9 +65,9 @@ func TestDecimalStringToScaledInt_scientificNotationRejected(t *testing.T) {
 	// shouldn't ever serialize that way, but a future API change
 	// must surface as a parse failure not a wrong-value bug.
 	for _, s := range []string{"1e10", "1.5E-3", "2e0"} {
-		_, err := decimalStringToScaledInt(s, 8)
+		_, err := scale.DecimalStringToScaledInt(s, 8)
 		if err == nil {
-			t.Errorf("decimalStringToScaledInt(%q) returned nil error; want rejection", s)
+			t.Errorf("scale.DecimalStringToScaledInt(%q) returned nil error; want rejection", s)
 		}
 		if !strings.Contains(err.Error(), "scientific") {
 			t.Errorf("error %q missing \"scientific\" fragment", err.Error())

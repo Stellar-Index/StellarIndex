@@ -15,6 +15,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
 // Poller implements external.Poller for exchangeratesapi.io. One
@@ -223,7 +224,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		// Invert: we want "price of symAsset in baseAsset units."
 		// venueRate = base per 1 symbol  →  our price = 1 / venueRate.
 		// Do this in big.Int at 10^(2*decimals) then divide.
-		scalePow := pow10(int(DefaultDecimals))
+		scalePow := scale.Pow10(int(DefaultDecimals))
 		inverted := new(big.Int).Div(
 			new(big.Int).Mul(scalePow, scalePow),
 			scaled,
@@ -324,10 +325,6 @@ func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
 		v.Neg(v)
 	}
 	return v, nil
-}
-
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
 // redactURLError converts a transport error into a string with the
