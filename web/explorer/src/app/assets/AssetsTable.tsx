@@ -88,9 +88,10 @@ export function AssetsTable({
    */
   endpoint?: string;
   /**
-   * Base path for the filter/pagination URL updates (`router.push`).
-   * `/assets` (default) or `/external/assets`. Per-row DETAIL links
-   * stay `/assets/{slug}` regardless — detail is still unified.
+   * Base path for the filter/pagination URL updates (`router.push`)
+   * AND per-row detail links. `/assets` (default) routes rows to the
+   * Stellar detail page; `/external/assets` routes them to the
+   * external (fiat / reference-coin) detail page (LC-001 split).
    */
   basePath?: string;
   /**
@@ -218,6 +219,7 @@ export function AssetsTable({
                     coin={coin}
                     rank={idx + 1}
                     verified={verifiedSlugSet.has(coin.slug.toLowerCase())}
+                    basePath={basePath}
                   />
                 ))}
             </TBody>
@@ -323,10 +325,12 @@ function AssetRow({
   coin,
   rank,
   verified,
+  basePath,
 }: {
   coin: Coin;
   rank: number;
   verified: boolean;
+  basePath: string;
 }) {
   const price = parseDec(coin.price_usd);
   const marketCapRaw = parseDec(coin.market_cap_usd);
@@ -353,7 +357,7 @@ function AssetRow({
       </Td>
       <Td>
         <Link
-          href={`/assets/${coin.slug}`}
+          href={`${basePath}/${coin.slug}`}
           className="group flex items-baseline gap-2"
         >
           <span className="font-medium text-ink group-hover:text-brand-600">
