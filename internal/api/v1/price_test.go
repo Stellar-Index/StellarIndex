@@ -492,14 +492,15 @@ func TestPrice_StablecoinFiatProxy_CrossPegQuoteSkips(t *testing.T) {
 // firing controls what DivergenceFiringFor returns; err is the
 // surfaced error (nil = clean response).
 type stubDivergenceLooker struct {
-	firing bool
-	err    error
-	calls  int
+	firing  bool
+	checked bool
+	err     error
+	calls   int
 }
 
-func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _ canonical.Asset) (bool, error) {
+func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _ canonical.Asset) (firing, checked bool, err error) {
 	s.calls++
-	return s.firing, s.err
+	return s.firing, s.checked, s.err
 }
 
 // stubConfidenceLooker is a minimal v1.ConfidenceLooker for tests.

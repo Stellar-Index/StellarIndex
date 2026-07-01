@@ -1475,15 +1475,18 @@ type divergenceAdapter struct {
 	svc *divergence.Service
 }
 
-func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (bool, error) {
+func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error) {
 	cached, found, err := a.svc.LookupCached(ctx, asset)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if !found {
-		return false, nil
+		return false, false, nil
 	}
-	return cached.WarningFired, nil
+	// checked only when the cached result had a live reference — a
+	// SuccessCount of 0 means every reference was dark, so WarningFired
+	// (necessarily false) is not meaningful (CS-087).
+	return cached.WarningFired, cached.SuccessCount > 0, nil
 }
 
 // storeChecker adapts *timescale.Store to the v1.ReadyChecker

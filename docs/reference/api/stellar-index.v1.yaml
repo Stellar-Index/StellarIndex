@@ -5025,6 +5025,14 @@ components:
         reduced_redundancy:          { type: boolean, default: false }
         triangulated:                { type: boolean, default: false }
         divergence_warning:          { type: boolean, default: false }
+        divergence_checked:
+          type: boolean
+          default: false
+          description: >
+            True only when a live cross-reference divergence check ran (at least
+            one responding reference). When false, `divergence_warning` is NOT
+            meaningful — the check is blind (references dark, or no record yet),
+            so a `false` warning must not be read as "prices agree" (CS-087).
         frozen:                      { type: boolean, default: false }
         single_source:               { type: boolean, default: false }
         unverified_ticker_collision: { type: boolean, default: false }

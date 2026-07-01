@@ -7286,6 +7286,11 @@ export interface components {
             triangulated: boolean;
             /** @default false */
             divergence_warning: boolean;
+            /**
+             * @description True only when a live cross-reference divergence check ran (at least one responding reference). When false, `divergence_warning` is NOT meaningful — the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree" (CS-087).
+             * @default false
+             */
+            divergence_checked: boolean;
             /** @default false */
             frozen: boolean;
             /** @default false */
