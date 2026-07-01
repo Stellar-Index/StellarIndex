@@ -46,16 +46,17 @@ import {
 // is too thin for the cap to be a confident number.
 const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 
-// ASSET_CLASS_OPTIONS — surface labels per the redesign spec.
-// "blockchain" is the explorer's name for the catalogue's "crypto"
-// class (CMC's "Cryptocurrencies" tab); the server normalises
-// blockchain→crypto in `normaliseAssetClass`.
-const ASSET_CLASS_OPTIONS: { value: AssetClassFilter; label: string }[] = [
-  { value: 'all', label: 'All Assets' },
-  { value: 'fiat', label: 'Fiat Currency' },
-  { value: 'blockchain', label: 'Crypto' },
-  { value: 'stablecoin', label: 'Stablecoin' },
-];
+// STELLAR_ASSET_CLASS_OPTIONS — surface labels for the Stellar-only
+// `/assets` directory. "blockchain" is the explorer's name for the
+// catalogue's "crypto" class (CMC's "Cryptocurrencies" tab); the server
+// normalises blockchain→crypto in `normaliseAssetClass`. Fiat is dropped
+// here — fiat currencies moved to the external directory (/external/assets).
+const STELLAR_ASSET_CLASS_OPTIONS: { value: AssetClassFilter; label: string }[] =
+  [
+    { value: 'all', label: 'All Assets' },
+    { value: 'blockchain', label: 'Crypto' },
+    { value: 'stablecoin', label: 'Stablecoin' },
+  ];
 
 function parseAssetClass(raw: string | null): AssetClassFilter {
   switch (raw) {
@@ -70,6 +71,9 @@ function parseAssetClass(raw: string | null): AssetClassFilter {
 
 export function AssetsTable({
   verifiedSlugs = [],
+  endpoint = '/v1/assets',
+  basePath = '/assets',
+  classOptions = STELLAR_ASSET_CLASS_OPTIONS,
 }: {
   /**
    * Slugs from `/v1/assets/verified` (fetched server-side and
@@ -77,6 +81,23 @@ export function AssetsTable({
    * verified badge. Empty array is the safe default.
    */
   verifiedSlugs?: string[];
+  /**
+   * Listing endpoint. `/v1/assets` (Stellar-only, default) or
+   * `/v1/external/assets` (fiat + reference coins). Passed through
+   * to `useAssets` and surfaced in the footer hint.
+   */
+  endpoint?: string;
+  /**
+   * Base path for the filter/pagination URL updates (`router.push`).
+   * `/assets` (default) or `/external/assets`. Per-row DETAIL links
+   * stay `/assets/{slug}` regardless — detail is still unified.
+   */
+  basePath?: string;
+  /**
+   * Class-filter chips. Defaults to the Stellar set (All / Crypto /
+   * Stablecoin — no Fiat). The external page passes its own set.
+   */
+  classOptions?: { value: AssetClassFilter; label: string }[];
 } = {}) {
   const router = useRouter();
   const params = useSearchParams();
@@ -94,6 +115,7 @@ export function AssetsTable({
     cursor,
     queryParam || undefined,
     { sparkline7d: true },
+    endpoint,
   );
 
   // Local input state, debounced into the URL so the server-side
@@ -124,7 +146,7 @@ export function AssetsTable({
       if (v === '' || v === undefined) next.delete(k);
       else next.set(k, v);
     }
-    router.push(`/assets?${next.toString()}`);
+    router.push(`${basePath}?${next.toString()}`);
   }
 
   if (isError) {
@@ -143,6 +165,7 @@ export function AssetsTable({
         limit={limit}
         onLimitChange={(v) => setQuery({ limit: String(v), cursor: '' })}
         assetClass={assetClass}
+        classOptions={classOptions}
         onAssetClassChange={(v) =>
           setQuery({
             asset_class: v === 'all' ? '' : v,
@@ -214,7 +237,7 @@ export function AssetsTable({
       <p className="text-xs text-ink-muted">
         Live data from{' '}
         <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[11px]">
-          /v1/assets?asset_class={assetClass}
+          {endpoint}?asset_class={assetClass}
         </code>
         . Catalogue rows surface first (market-cap desc — fiats top
         the chart), then long-tail Stellar-classic rows by 24h
@@ -234,6 +257,7 @@ function FilterBar({
   limit,
   onLimitChange,
   assetClass,
+  classOptions,
   onAssetClassChange,
 }: {
   q: string;
@@ -241,13 +265,14 @@ function FilterBar({
   limit: number;
   onLimitChange: (v: number) => void;
   assetClass: AssetClassFilter;
+  classOptions: { value: AssetClassFilter; label: string }[];
   onAssetClassChange: (v: AssetClassFilter) => void;
 }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-ink-muted">Asset type:</span>
-        {ASSET_CLASS_OPTIONS.map((opt) => (
+        {classOptions.map((opt) => (
           <button
             key={opt.value}
             type="button"

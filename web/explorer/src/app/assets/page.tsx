@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Suspense } from 'react';
 
 import { Container, PageHeader, Skeleton } from '@/components/ui';
@@ -37,6 +38,15 @@ export default async function AssetsPage() {
         title="Assets"
         description="Every classic + Soroban asset observed on Stellar. Live price via VWAP across on-chain DEXes, classic SDEX, and major off-chain venues. Click through for live charts, recent trades, supply detail, and issuer profile."
       />
+      <p className="text-sm text-ink-muted">
+        Looking for fiat &amp; reference prices?{' '}
+        <Link
+          href="/external/assets"
+          className="font-medium text-brand-600 hover:text-brand-700"
+        >
+          External assets →
+        </Link>
+      </p>
       <VerifiedCurrenciesStrip verified={verified} />
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <AssetsTable verifiedSlugs={verifiedSlugs} />
