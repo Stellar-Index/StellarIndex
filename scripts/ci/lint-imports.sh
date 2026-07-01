@@ -108,6 +108,7 @@ RULES = [
             "internal/storage/clickhouse/",     # Tier-1 raw-lake structural decoder: walks LCM, stores raw XDR blobs (NOT SCVal decoding) (ADR-0034)
             "internal/xdrjson/",                # network-explorer classic-XDR→JSON decoder: decodes op bodies/keys/entries (NOT SCVal events) (ADR-0038)
             "internal/sources/sdex/",           # SDEX decodes non-SCVal xdr (classic ops) (PR 165c)
+            "internal/sdexclaim/",              # shared ClaimAtom count/amount helpers (dispatcher + clickhouse); xdr.ClaimAtom only
             "internal/sources/accounts/",       # AccountEntry observer reads ledger-meta deltas (ADR-0021)
             "internal/sources/trustlines/",     # TrustlineEntry observer reads ledger-meta deltas (ADR-0022)
             "internal/sources/claimable_balances/", # ClaimableBalance observer reads ledger-meta deltas (ADR-0022)
