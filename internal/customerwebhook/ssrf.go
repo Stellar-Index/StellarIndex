@@ -7,8 +7,9 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/nettools"
 )
 
 // ssrfGuardedDialContext is the [net/http.Transport]'s DialContext
@@ -32,7 +33,7 @@ func ssrfGuardedDialContext(ctx context.Context, network, addr string) (net.Conn
 
 	// Literal IP: check directly.
 	if ip := net.ParseIP(host); ip != nil {
-		if isInternalIP(ip) {
+		if nettools.IsBlockedIP(ip) {
 			return nil, fmt.Errorf("customerwebhook: refusing to dial internal address %s (SSRF defence)", ip.String())
 		}
 		dialer := &net.Dialer{Timeout: 10 * time.Second}
@@ -49,7 +50,7 @@ func ssrfGuardedDialContext(ctx context.Context, network, addr string) (net.Conn
 		return nil, fmt.Errorf("customerwebhook: host %q resolved to zero addresses", host)
 	}
 	for _, ip := range ips {
-		if isInternalIP(ip) {
+		if nettools.IsBlockedIP(ip) {
 			return nil, fmt.Errorf("customerwebhook: host %q resolved to internal address %s (SSRF defence)", host, ip.String())
 		}
 	}
@@ -60,41 +61,6 @@ func ssrfGuardedDialContext(ctx context.Context, network, addr string) (net.Conn
 	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
 }
 
-// isInternalIP mirrors the same-named function in
-// `internal/api/v1/dashboardwebhooks/handlers.go`. Duplicated here
-// rather than imported so the delivery worker stays self-contained
-// and the API package's import boundary isn't crossed by a
-// non-api package.
-func isInternalIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil {
-		if v4[0] == 100 && (v4[1]&0xC0) == 64 {
-			return true
-		}
-		if v4[0] == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// IsReservedTLD is a small helper kept exported so the worker's
-// tests can reuse the same "this is documentation TLD" branch.
-// Not used by ssrfGuardedDialContext itself — at delivery time we
-// always re-resolve, and the resolver will fail for genuinely
-// reserved TLDs.
-func IsReservedTLD(host string) bool {
-	h := strings.ToLower(host)
-	for _, tld := range []string{".example", ".test", ".invalid", ".localhost"} {
-		if h == tld[1:] || strings.HasSuffix(h, tld) {
-			return true
-		}
-	}
-	return false
-}
+// IsReservedTLD reports a documentation/reserved TLD. Thin delegate to the
+// canonical implementation; kept exported for the worker's existing tests.
+func IsReservedTLD(host string) bool { return nettools.IsReservedTLD(host) }

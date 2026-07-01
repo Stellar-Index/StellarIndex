@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
+	"github.com/StellarIndex/stellar-index/internal/nettools"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
@@ -486,7 +487,7 @@ func rejectInternalHost(parent context.Context, host string) error {
 	}
 	// Literal IP gets checked directly; named host gets resolved.
 	if ip := net.ParseIP(host); ip != nil {
-		if isInternalIP(ip) {
+		if nettools.IsBlockedIP(ip) {
 			return fmt.Errorf("url host %q resolves to an internal address — webhook destinations must be publicly routable", host)
 		}
 		return nil
@@ -502,7 +503,7 @@ func rejectInternalHost(parent context.Context, host string) error {
 		return nil //nolint:nilerr // intentional: tolerate transient DNS at registration
 	}
 	for _, ipa := range addrs {
-		if isInternalIP(ipa.IP) {
+		if nettools.IsBlockedIP(ipa.IP) {
 			return fmt.Errorf("url host %q resolves to an internal address (%s) — webhook destinations must be publicly routable", host, ipa.IP.String())
 		}
 	}
@@ -522,33 +523,9 @@ func isReservedTLD(host string) bool {
 	return false
 }
 
-// isInternalIP reports whether `ip` is in any range that customer
-// webhooks must NOT target — loopback, link-local, private
-// (RFC1918), unique-local IPv6 (RFC4193), multicast, or unspecified.
-// The IP-block list is deliberately conservative; expand only with
-// security review.
-func isInternalIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
-		return true
-	}
-	// IPv4 carrier-grade NAT space (100.64.0.0/10) — RFC6598, not
-	// covered by IsPrivate.
-	if v4 := ip.To4(); v4 != nil {
-		if v4[0] == 100 && (v4[1]&0xC0) == 64 {
-			return true
-		}
-		// 169.254.169.254 cloud metadata is already IsLinkLocalUnicast.
-		// 0.0.0.0/8 reserved.
-		if v4[0] == 0 {
-			return true
-		}
-	}
-	return false
-}
+// (SSRF IP-block logic moved to internal/nettools.IsBlockedIP — the single
+// canonical union blocklist shared with SEP-1 resolution + webhook delivery,
+// CS-008. Registration + delivery now agree by construction.)
 
 // validEventTypes pins the closed event set the worker fans out.
 // Mirrors the constants in `internal/platform/webhook.go` —
