@@ -89,8 +89,8 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 
 	// Concurrent-stream cap (CS-013): refuse new connections past the
 	// ceiling so a connection flood can't exhaust FDs/goroutines.
-	if cap := atomic.LoadInt64(&maxConcurrentStreams); cap > 0 {
-		if atomic.AddInt64(&activeStreams, 1) > cap {
+	if limit := atomic.LoadInt64(&maxConcurrentStreams); limit > 0 {
+		if atomic.AddInt64(&activeStreams, 1) > limit {
 			atomic.AddInt64(&activeStreams, -1)
 			http.Error(w, "too many concurrent streams", http.StatusServiceUnavailable)
 			return
