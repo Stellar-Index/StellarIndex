@@ -90,8 +90,11 @@ func TestNewXLMComputer_AllowsNilReaderWithEmptyReserves(t *testing.T) {
 	if got.AssetKey != "XLM" {
 		t.Errorf("AssetKey = %q, want %q", got.AssetKey, "XLM")
 	}
-	if got.Basis != supply.BasisXLMSDFReserveExclusion {
-		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisXLMSDFReserveExclusion)
+	// CS-010: with no reserve accounts configured, circulating == total,
+	// so the basis must be the honest xlm_total_only — NOT
+	// xlm_sdf_reserve_exclusion, which would claim an exclusion happened.
+	if got.Basis != supply.BasisXLMTotalOnly {
+		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisXLMTotalOnly)
 	}
 }
 

@@ -157,6 +157,11 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 	circulating.Sub(circulating, comps.IssuerBalance)
 	circulating.Sub(circulating, comps.LockedAccountBalances)
 	circulating.Sub(circulating, comps.LockedContractBalances)
+	// CS-038: clamp at zero — a locked-set exceeding total (misconfig or
+	// snapshot-freshness skew) must not publish negative circulating/market-cap.
+	if circulating.Sign() < 0 {
+		circulating.SetInt64(0)
+	}
 
 	// max_supply: operator override beats the default nil. SEP-1
 	// declaration overlay is a future PR.
