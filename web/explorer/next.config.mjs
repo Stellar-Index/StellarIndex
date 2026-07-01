@@ -2,6 +2,13 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // React Compiler (babel-plugin-react-compiler 1.0, stable) — auto-memoizes
+  // components at build time so manual useMemo/useCallback are mostly
+  // unnecessary. Safe to enable now that the react-hooks/* rules (its
+  // rules-of-react prerequisite) are enforced clean; the compiler bails out
+  // (skips) any component it can't prove safe rather than miscompiling.
+  reactCompiler: true,
+
   // Static-export the entire site. Deployed to Cloudflare Pages
   // (or rsync'd to r1 nginx behind Cloudflare CDN) — same vendor
   // story as api.stellarindex.io per docs/operations/cdn-setup.md.
