@@ -2,7 +2,6 @@ package bitstamp
 
 import (
 	"errors"
-	"net/http"
 	"testing"
 	"time"
 )
@@ -41,19 +40,5 @@ func TestClassifyDisconnect(t *testing.T) {
 				t.Errorf("classifyDisconnect(%v) = %q, want %q", tc.err, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestKeepAliveHTTPClient_HasKeepaliveDialer(t *testing.T) {
-	c := keepAliveHTTPClient()
-	if c == nil {
-		t.Fatal("keepAliveHTTPClient returned nil")
-	}
-	tr, ok := c.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("Transport type = %T, want *http.Transport", c.Transport)
-	}
-	if tr.DialContext == nil {
-		t.Fatal("Transport.DialContext is nil")
 	}
 }

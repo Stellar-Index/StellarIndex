@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
-	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -17,6 +14,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
 )
 
 // healthyConnectionThreshold — if a connection survived at least this
@@ -149,7 +147,7 @@ func (s *Streamer) run(ctx context.Context, streamURL string, logger *slog.Logge
 			return
 		}
 		lifetime := time.Since(connectedAt)
-		reason := classifyDisconnect(err)
+		reason := wsclient.ClassifyDisconnect(err)
 		obs.CEXStreamDisconnectTotal.WithLabelValues(SourceName, reason).Inc()
 
 		// Healthy-lifetime reset: a long-lived connection that finally
@@ -163,7 +161,7 @@ func (s *Streamer) run(ctx context.Context, streamURL string, logger *slog.Logge
 			"source", SourceName, "err", err,
 			"lifetime", lifetime, "backoff", backoff, "reason", reason)
 
-		sleep := jitter(backoff)
+		sleep := wsclient.Jitter(backoff)
 		select {
 		case <-ctx.Done():
 			return
@@ -177,61 +175,13 @@ func (s *Streamer) run(ctx context.Context, streamURL string, logger *slog.Logge
 	}
 }
 
-// classifyDisconnect maps a runOnce error into one of a small,
-// bounded reason label set — keeps the disconnect counter's
-// cardinality low while still distinguishing the wire-level cause.
-// Reasons: "reset" (TCP RST from venue), "broken_pipe" (write failed,
-// peer hung up mid-frame), "timeout" (read timed out), "dial"
-// (handshake failed), "other" (everything else, including EOF /
-// context cancellations that slipped past the ctx.Err() check).
-func classifyDisconnect(err error) string {
-	if err == nil {
-		return "other"
-	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "connection reset by peer"):
-		return "reset"
-	case strings.Contains(msg, "broken pipe"):
-		return "broken_pipe"
-	case strings.Contains(msg, "i/o timeout"), strings.Contains(msg, "timeout"):
-		return "timeout"
-	case strings.HasPrefix(msg, "dial:"):
-		return "dial"
-	default:
-		return "other"
-	}
-}
-
-// keepAliveHTTPClient builds an *http.Client whose Transport dials
-// TCP with a 30 s OS-level keepalive. Go's net.Dialer defaults to
-// no keepalive on the underlying socket; venues that issue TCP RST
-// after their own timeout window then surface as "connection reset
-// by peer" reads instead of being detected earlier by the dialer.
-// F-0029.
-func keepAliveHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          4,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-	return &http.Client{Transport: transport}
-}
-
 // runOnce handles one connect-and-read cycle. Returns on EOF, ctx
 // cancel (the caller checks ctx), or read/parse error. Successful
 // close returns nil; disconnect scenarios return an error so run()
 // can decide whether to backoff.
 func (s *Streamer) runOnce(ctx context.Context, streamURL string, out chan<- canonical.Trade) error {
 	conn, resp, err := websocket.Dial(ctx, streamURL, &websocket.DialOptions{
-		HTTPClient: keepAliveHTTPClient(),
+		HTTPClient: wsclient.KeepAliveHTTPClient(),
 	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
@@ -318,16 +268,4 @@ func (s *Streamer) buildStreamURL(symbols []string) (string, error) {
 	q.Set("streams", strings.Join(streams, "/"))
 	u.RawQuery = q.Encode()
 	return u.String(), nil
-}
-
-// jitter adds ±25% random variation to a backoff duration to avoid
-// thundering-herd reconnects if many streamers happen to time their
-// retries on the same boundary.
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	delta := float64(d) * 0.25
-	offset := (rand.Float64()*2 - 1) * delta
-	return d + time.Duration(offset)
 }

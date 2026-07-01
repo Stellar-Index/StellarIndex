@@ -6,10 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
-	"net"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -17,6 +13,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
 )
 
 // healthyConnectionThreshold — if a connection survived at least this
@@ -132,7 +129,7 @@ func (s *Streamer) run(ctx context.Context, products []string, logger *slog.Logg
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(jitter(backoff)):
+		case <-time.After(wsclient.Jitter(backoff)):
 		}
 		backoff *= 2
 		if backoff > maxBackoff {
@@ -141,52 +138,15 @@ func (s *Streamer) run(ctx context.Context, products []string, logger *slog.Logg
 	}
 }
 
-// classifyDisconnect maps a runOnce error into a small, bounded reason
-// label set — keeps the disconnect counter's cardinality low while
-// distinguishing the wire-level cause. The ErrSubscriptionRejected
-// case gets its own label so operators can tell a config-reject loop
-// apart from transient wire drops. Mirrors the binance helper.
+// classifyDisconnect handles Coinbase's venue-specific
+// ErrSubscriptionRejected label — so operators can tell a config-reject
+// loop apart from transient wire drops — then delegates the wire-level
+// cases to wsclient.ClassifyDisconnect.
 func classifyDisconnect(err error) string {
-	if err == nil {
-		return "other"
-	}
 	if errors.Is(err, ErrSubscriptionRejected) {
 		return "subscription_rejected"
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "connection reset by peer"):
-		return "reset"
-	case strings.Contains(msg, "broken pipe"):
-		return "broken_pipe"
-	case strings.Contains(msg, "i/o timeout"), strings.Contains(msg, "timeout"):
-		return "timeout"
-	case strings.HasPrefix(msg, "dial:"):
-		return "dial"
-	default:
-		return "other"
-	}
-}
-
-// keepAliveHTTPClient builds an *http.Client whose Transport dials TCP
-// with a 30 s OS-level keepalive. Go's net.Dialer defaults to no
-// keepalive on the underlying socket; venues that issue TCP RST after
-// their own timeout window then surface as "connection reset by peer"
-// reads instead of being detected earlier by the dialer. F-0029.
-func keepAliveHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          4,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-	return &http.Client{Transport: transport}
+	return wsclient.ClassifyDisconnect(err)
 }
 
 func (s *Streamer) runOnce(ctx context.Context, products []string, out chan<- canonical.Trade) error {
@@ -194,7 +154,7 @@ func (s *Streamer) runOnce(ctx context.Context, products []string, out chan<- ca
 		s.Endpoint = WSEndpoint
 	}
 	conn, resp, err := websocket.Dial(ctx, s.Endpoint, &websocket.DialOptions{
-		HTTPClient: keepAliveHTTPClient(),
+		HTTPClient: wsclient.KeepAliveHTTPClient(),
 	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
@@ -261,13 +221,4 @@ func (s *Streamer) productsFor(pairs []canonical.Pair) ([]string, error) {
 		out = append(out, sym)
 	}
 	return out, nil
-}
-
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	delta := float64(d) * 0.25
-	offset := (rand.Float64()*2 - 1) * delta
-	return d + time.Duration(offset)
 }

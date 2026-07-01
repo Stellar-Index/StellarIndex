@@ -6,10 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
-	"net"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -17,6 +13,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
 )
 
 // healthyConnectionThreshold — a connection that lived this long
@@ -132,7 +129,7 @@ func (s *Streamer) run(ctx context.Context, symbols []string, logger *slog.Logge
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(jitter(backoff)):
+		case <-time.After(wsclient.Jitter(backoff)):
 		}
 		backoff *= 2
 		if backoff > maxBackoff {
@@ -141,46 +138,14 @@ func (s *Streamer) run(ctx context.Context, symbols []string, logger *slog.Logge
 	}
 }
 
-// classifyDisconnect maps a runOnce error into a small reason label
-// for the disconnect counter. See binance.classifyDisconnect for the
-// same logic — duplicated rather than shared so this package stays
-// independently auditable. F-0029.
+// classifyDisconnect handles Bitstamp's venue-specific
+// ErrRequestedReconnect label — a benign server-initiated reconnect — then
+// delegates the wire-level cases to wsclient.ClassifyDisconnect.
 func classifyDisconnect(err error) string {
-	if err == nil {
-		return "other"
-	}
 	if errors.Is(err, ErrRequestedReconnect) {
 		return "server_requested"
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "connection reset by peer"):
-		return "reset"
-	case strings.Contains(msg, "broken pipe"):
-		return "broken_pipe"
-	case strings.Contains(msg, "i/o timeout"), strings.Contains(msg, "timeout"):
-		return "timeout"
-	case strings.HasPrefix(msg, "dial:"):
-		return "dial"
-	default:
-		return "other"
-	}
-}
-
-// keepAliveHTTPClient — see binance.keepAliveHTTPClient. F-0029.
-func keepAliveHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
-		MaxIdleConns:          4,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-	return &http.Client{Transport: transport}
+	return wsclient.ClassifyDisconnect(err)
 }
 
 func (s *Streamer) runOnce(ctx context.Context, symbols []string, out chan<- canonical.Trade) error { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
@@ -188,7 +153,7 @@ func (s *Streamer) runOnce(ctx context.Context, symbols []string, out chan<- can
 		s.Endpoint = WSEndpoint
 	}
 	conn, resp, err := websocket.Dial(ctx, s.Endpoint, &websocket.DialOptions{
-		HTTPClient: keepAliveHTTPClient(),
+		HTTPClient: wsclient.KeepAliveHTTPClient(),
 	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
@@ -257,13 +222,4 @@ func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {
 		out = append(out, sym)
 	}
 	return out, nil
-}
-
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	delta := float64(d) * 0.25
-	offset := (rand.Float64()*2 - 1) * delta
-	return d + time.Duration(offset)
 }

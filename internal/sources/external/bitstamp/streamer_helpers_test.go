@@ -2,7 +2,6 @@ package bitstamp
 
 import (
 	"testing"
-	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
@@ -63,30 +62,5 @@ func TestSymbolsFor_unknownPairRejected(t *testing.T) {
 
 	if _, err := s.symbolsFor([]canonical.Pair{missing}); err == nil {
 		t.Fatal("expected error for MATIC/USD (not in DefaultPairs), got nil")
-	}
-}
-
-// jitter scatters reconnect timers ±25% so a fleet doesn't
-// thunder-herd a venue after a shared disconnect. Verify the
-// envelope is respected and degenerate inputs pass through.
-
-func TestJitter_withinEnvelope(t *testing.T) {
-	base := 4 * time.Second
-	low := base - base/4
-	high := base + base/4
-	for i := 0; i < 200; i++ {
-		got := jitter(base)
-		if got < low || got > high {
-			t.Fatalf("jitter(%v) = %v, outside [%v,%v]", base, got, low, high)
-		}
-	}
-}
-
-func TestJitter_zeroOrNegativePassthrough(t *testing.T) {
-	if got := jitter(0); got != 0 {
-		t.Errorf("jitter(0) = %v, want 0", got)
-	}
-	if got := jitter(-1 * time.Second); got != -1*time.Second {
-		t.Errorf("jitter(-1s) = %v, want -1s", got)
 	}
 }
