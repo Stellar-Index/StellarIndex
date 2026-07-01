@@ -120,6 +120,31 @@ pass on current main). Triaged:
   (all use checkout → runner-compatible); earlier `web/status` failure was the
   Next-16 lint issue (now fixed on main). Rebased onto fixed main — merge once green.
 
+## Dependency upgrades — COMPLETE (2026-07-01, follow-up pass)
+
+The deferred deps + a full outdated-sweep, done as individual verified commits:
+- **go-stellar-sdk v0.5→v0.6** (the Stellar one) — compat pass done: adapted the
+  `datastore.GetFile` size-return across ledgerstream + ops; VERSIONS.md pin bumped.
+- **Safe Go deps** — clickhouse, go-redis, aws, google-api, testcontainers, miniredis.
+- **TypeScript 5→6** (both apps; dropped deprecated `baseUrl`).
+- **ESLint → flat config + eslint-config-next 16** (both apps; removed the
+  `next lint` stopgap; new React-Compiler react-hooks rules adopted as advisory).
+- **Tailwind v3→v4** (both apps; official codemod, design system verified via a
+  styleguide render — every token/type/button correct).
+- **Safe web deps** (react-query, tailwind-merge v3 for status, postcss, etc.);
+  **removed the unused `zod` dep**.
+- Final `verify.sh` green; **0 open Dependabot PRs**.
+
+**Still deferred (ecosystem-blocked / follow-up):**
+- **ESLint 9→10** — `eslint-config-next 16` + `typescript-eslint` peer-cap at
+  eslint `^9`; revisit when they ship eslint-10 support.
+- **React-Compiler react-hooks rules** — ~21 sites flagged (set-state-in-effect
+  etc.), set to `warn`; promoting to error + fixing is a code-quality pass.
+- **Tailwind v4 visual QA + browser-baseline** — build + styleguide render verified;
+  a full visual pass across pages + the Safari 16.4+/Chrome 111+ baseline decision
+  are yours.
+
 ## Verification
 Every code fix built + its package tests passed at commit time; `bash
 scripts/dev/verify.sh` run before the batch pushes. Explorer changes `tsc`-clean.
+Tailwind v4 additionally spot-checked by rendering the homepage + styleguide.
