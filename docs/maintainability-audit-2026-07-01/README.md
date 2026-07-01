@@ -1,8 +1,13 @@
 ---
 title: Maintainability / streamlining audit — 2026-07-01
-status: planning
+status: ✅ COMPLETE — all 10 dimensions executed; see SYNTHESIS.md
 goal: make the project streamlined — easy for agents AND humans to understand, maintain, and scale
 ---
+
+> **Start here:** [SYNTHESIS.md](SYNTHESIS.md) (the through-line + the sequenced
+> streamlining plan). Flagship artifact: [CAPABILITY-INVENTORY.md](CAPABILITY-INVENTORY.md).
+> Per-dimension: D1-structural · D2-naming · D3-dry · D4-agent-docs · D5-guardrails ·
+> D6-style · D7-type-modeling · D8-dependency-direction · D9-checklists · D10-test-conventions.
 
 # Maintainability / streamlining audit
 
