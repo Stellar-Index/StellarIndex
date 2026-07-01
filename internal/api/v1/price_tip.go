@@ -115,7 +115,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	// staleness bit PriceReader sets for /v1/price; tip has its own
 	// envelope contract.
 	flags := Flags{SingleSource: len(sources) == 1}
-	flags.DivergenceWarning = s.lookupDivergenceFlag(r, asset)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r, asset)
 	writeJSON(w, snapshot, flags, sources...)
 }
 
@@ -326,19 +326,19 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 // lookup. Pulled into a helper so the tip handler doesn't duplicate
 // the error-handling shape. Returns false when no DivergenceLooker is
 // wired or when the lookup errors.
-func (s *Server) lookupDivergenceFlag(r *http.Request, asset canonical.Asset) bool {
+func (s *Server) lookupDivergenceFlag(r *http.Request, asset canonical.Asset) (firing, checked bool) {
 	if s.divergence == nil {
-		return false
+		return false, false
 	}
-	firing, err := s.divergence.DivergenceFiringFor(r.Context(), asset)
+	firing, checked, err := s.divergence.DivergenceFiringFor(r.Context(), asset)
 	if err != nil {
 		if !clientAborted(r, err) {
 			s.logger.Warn("divergence lookup failed (tip)",
 				"err", err, "asset", asset.String())
 		}
-		return false
+		return false, false
 	}
-	return firing
+	return firing, checked
 }
 
 // distinctTradeSources returns the unique source names from a slice

@@ -36,7 +36,14 @@ const priceBatchMaxAssetsPOST = 1000
 // expected steady-state for assets the divergence worker hasn't
 // reached yet (TTL'd out, never refreshed, etc.).
 type DivergenceLooker interface {
-	DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (bool, error)
+	// DivergenceFiringFor reports whether the cross-reference divergence
+	// warning is firing for the asset, AND whether the check was actually
+	// live: `checked` is true only when a cached result exists with at least
+	// one responding reference. When `checked` is false the warning is not
+	// meaningful — either no divergence record exists yet, or every reference
+	// was dark (CS-087) — so consumers must not read a `false` firing as
+	// "prices agree".
+	DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error)
 }
 
 // FrozenLooker is the read-side interface the v1 server uses to
@@ -404,8 +411,9 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		// WARN and falls through with the flag unset — better to
 		// serve a fresh price without a warning than to 5xx because
 		// a Redis blip lost the cached divergence record.
-		if firing, derr := s.divergence.DivergenceFiringFor(r.Context(), asset); derr == nil {
+		if firing, checked, derr := s.divergence.DivergenceFiringFor(r.Context(), asset); derr == nil {
 			flags.DivergenceWarning = firing
+			flags.DivergenceChecked = checked
 		} else if !clientAborted(r, derr) {
 			s.logger.Warn("divergence lookup failed",
 				"err", derr,
