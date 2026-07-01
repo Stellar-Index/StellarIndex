@@ -95,23 +95,30 @@ data-gated, or are large enough to warrant their own focused change + review.
 `govulncheck+gitleaks`, `prometheus rule validation` — were stale artifacts that
 pass on current main). Triaged:
 
-- **Merged (safe — build/lint/test/web all green on the PR):** GitHub Actions
-  minors (setup-go, pnpm-action-setup, golangci-lint-action, buildx); Go modules
-  (google-api, aws-config, aws-s3, coder/websocket); web bumps incl.
-  **tailwind-merge v3** (major — explorer typecheck + install verified clean),
-  next (explorer+status), date-fns, lucide/prettier. Lockfile-conflict cascades
-  resolved via `@dependabot rebase`. Main rebuilt + `go mod verify` clean after
-  the Go bumps.
-- **Deferred #1347 — go-stellar-sdk v0.5→v0.6 (HELD, not merged).** VERSIONS.md
-  mandates a compat pass; v0.6 breaks `datastore.GetFile` (now returns file size
-  `(io.ReadCloser, int64, error)`). Adaptation is contained — `internal/ledgerstream/
-  tiered.go` (`GetFile`/`coldGetFile`), `tiered_test.go:43` (`fakeStore.GetFile`),
-  `cmd/stellarindex-ops/rehydrate_galexie_archive.go:157` — but must be its own
-  reviewed change + VERSIONS.md bump + r1 ingest smoke. PR left open with this note.
-- **#1353 — actions/checkout v6→v7 (major).** Rebased for a fresh CI run: build/
-  lint/unit-tests pass with v7 (all use checkout), so the runner supports it; the
-  lone `Build all Dockerfiles` failure is flaky Docker-build noise (that job runs
-  only on PRs). Merge if the fresh run is green.
+- **Merged (safe):** GitHub Actions minors (setup-go, pnpm-action-setup,
+  golangci-lint-action, buildx); Go modules (google-api, aws-config, aws-s3,
+  coder/websocket); web bumps incl. **tailwind-merge v3** (major — explorer
+  verified clean), **next group → Next 16** (explorer+status), date-fns,
+  lucide/prettier. Lockfile-conflict cascades resolved via `@dependabot rebase`;
+  the lucide-react ^1.23 explorer bump (#1370) was applied manually after its
+  siblings merged. Main rebuilt + `go mod verify` clean after the Go bumps.
+- **Follow-up caught + fixed:** the merged **Next 16** bump REMOVED `next lint`, so
+  `pnpm lint` failed and the `web/status` CI job went red on main. Next 16 itself
+  builds+typechecks+lints fine — migrated both apps' `lint` scripts to the ESLint
+  CLI (commit `ff729b29`). Stopgap uses `ESLINT_USE_FLAT_CONFIG=false`; the flat-
+  config migration rides with the deferred tooling-group below.
+- **Deferred #1347 — go-stellar-sdk v0.5→v0.6 (HELD).** VERSIONS.md mandates a
+  compat pass; v0.6 breaks `datastore.GetFile` (now returns file size). Contained
+  adaptation (`internal/ledgerstream/tiered.go` `GetFile`/`coldGetFile`,
+  `tiered_test.go:43`, `cmd/stellarindex-ops/rehydrate_galexie_archive.go:157`) +
+  VERSIONS.md bump + r1 ingest smoke — its own reviewed change. PR open with note.
+- **Deferred #1368 + #1369 — tooling groups (HELD).** Coordinated dev-tooling
+  **majors**: `tailwindcss v3→v4` (ground-up rewrite, CSS-first config migration),
+  `typescript 5→6`, `eslint 9→10`, `eslint-config-next 15→16`, `@types/node 22→26`.
+  Needs its own migration + visual QA + the eslint flat-config move. PRs open with note.
+- **#1353 — actions/checkout v6→v7 (major).** build/lint/unit-tests pass with v7
+  (all use checkout → runner-compatible); earlier `web/status` failure was the
+  Next-16 lint issue (now fixed on main). Rebased onto fixed main — merge once green.
 
 ## Verification
 Every code fix built + its package tests passed at commit time; `bash
