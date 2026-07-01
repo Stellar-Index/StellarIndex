@@ -56,20 +56,29 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const parts = url.pathname.replace(/^\/og\/?/, '').split('/').filter(Boolean);
   const type = (parts[0] || 'home').replace(/[^a-z0-9-]/gi, '');
+  // CS-009: decode the path segment AT MOST ONCE (the previous 2× loop
+  // defeated the upstream ogImageFor encodeURIComponent, resurfacing raw
+  // markup). Combined with esc() below this closes the SSRF/injection sink.
   let rawId = parts.slice(1).join('/') || '';
-  for (let i = 0; i < 2; i++) {
-    try { const d = decodeURIComponent(rawId); if (d === rawId) break; rawId = d; } catch { break; }
-  }
+  try { rawId = decodeURIComponent(rawId); } catch { /* leave as-is */ }
   const label = prettyLabel(type, rawId) || 'Stellar pricing & protocol explorer';
   const kicker = TYPE_LABEL[type] ? `Stellar Index · ${TYPE_LABEL[type]}` : 'Stellar Index';
   const sub = await liveSubline(type, rawId);
 
+  // CS-009: HTML-escape every interpolated value. Unescaped attacker input
+  // reaching satori markup lets an injected `<img src=…>` trigger an
+  // unauthenticated blind SSRF (satori fetches the src with no allow-list).
+  const esc = (s) =>
+    String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+    );
+
   const html = `
     <div style="display:flex;flex-direction:column;justify-content:space-between;width:1200px;height:630px;background:#0b0f1a;color:#ffffff;padding:84px;font-family:sans-serif;">
-      <div style="display:flex;font-size:30px;color:#7aa2ff;font-weight:600;">${kicker}</div>
+      <div style="display:flex;font-size:30px;color:#7aa2ff;font-weight:600;">${esc(kicker)}</div>
       <div style="display:flex;flex-direction:column;">
-        <div style="display:flex;font-size:76px;font-weight:700;line-height:1.05;">${label}</div>
-        ${sub ? `<div style="display:flex;font-size:40px;color:#cdd6e6;margin-top:18px;">${sub}</div>` : ''}
+        <div style="display:flex;font-size:76px;font-weight:700;line-height:1.05;">${esc(label)}</div>
+        ${sub ? `<div style="display:flex;font-size:40px;color:#cdd6e6;margin-top:18px;">${esc(sub)}</div>` : ''}
       </div>
       <div style="display:flex;font-size:26px;color:#8a93a6;">stellarindex.io</div>
     </div>`;

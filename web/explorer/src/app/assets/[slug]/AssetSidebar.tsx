@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { formatCompact, formatPrice } from '@/lib/format';
+import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetConverter } from './AssetConverter';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
@@ -140,18 +141,26 @@ export function AssetSidebar({
 
       {/* Links / issuer / activity */}
       <div className="rounded-card border border-line bg-surface">
+        {/* CS-102: home_domain is attacker-controlled on-chain data; only
+            render it as a clickable link when it passes isSafeHomeDomain
+            (the guard the issuer pages already use). Otherwise show plain
+            text so a smuggled userinfo/path can't produce a phishing link. */}
         {homeDomain && (
           <StatRow
             label="Website"
             value={
-              <a
-                href={`https://${homeDomain}`}
-                target="_blank"
-                rel="noreferrer noopener nofollow"
-                className="font-mono text-xs text-brand-600 hover:underline"
-              >
-                {homeDomain}
-              </a>
+              isSafeHomeDomain(homeDomain) ? (
+                <a
+                  href={`https://${homeDomain}`}
+                  target="_blank"
+                  rel="noreferrer noopener nofollow"
+                  className="font-mono text-xs text-brand-600 hover:underline"
+                >
+                  {homeDomain}
+                </a>
+              ) : (
+                <span className="font-mono text-xs text-ink-muted">{homeDomain}</span>
+              )
             }
           />
         )}
