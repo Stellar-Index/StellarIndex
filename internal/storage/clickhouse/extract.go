@@ -12,6 +12,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/StellarIndex/stellar-index/internal/sdexclaim"
 	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
 
@@ -333,13 +334,13 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 		if !ok || r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 			return 0
 		}
-		return realTradeCount(r.MustSuccess().OffersClaimed)
+		return sdexclaim.RealTradeCount(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeManageBuyOffer:
 		r, ok := tr.GetManageBuyOfferResult()
 		if !ok || r.Code != xdr.ManageBuyOfferResultCodeManageBuyOfferSuccess {
 			return 0
 		}
-		return realTradeCount(r.MustSuccess().OffersClaimed)
+		return sdexclaim.RealTradeCount(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeCreatePassiveSellOffer:
 		// stellar-core emits passive-offer results under the ManageSellOffer
 		// arm (passive offers are processed as manage-sell-offers), so
@@ -351,13 +352,13 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 				return 0
 			}
-			return realTradeCount(r.MustSuccess().OffersClaimed)
+			return sdexclaim.RealTradeCount(r.MustSuccess().OffersClaimed)
 		}
 		if r, ok := tr.GetManageSellOfferResult(); ok {
 			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 				return 0
 			}
-			return realTradeCount(r.MustSuccess().OffersClaimed)
+			return sdexclaim.RealTradeCount(r.MustSuccess().OffersClaimed)
 		}
 		return 0
 	case xdr.OperationTypePathPaymentStrictReceive:
@@ -365,48 +366,20 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 		if !ok || r.Code != xdr.PathPaymentStrictReceiveResultCodePathPaymentStrictReceiveSuccess {
 			return 0
 		}
-		return realTradeCount(r.MustSuccess().Offers)
+		return sdexclaim.RealTradeCount(r.MustSuccess().Offers)
 	case xdr.OperationTypePathPaymentStrictSend:
 		r, ok := tr.GetPathPaymentStrictSendResult()
 		if !ok || r.Code != xdr.PathPaymentStrictSendResultCodePathPaymentStrictSendSuccess {
 			return 0
 		}
-		return realTradeCount(r.MustSuccess().Offers)
+		return sdexclaim.RealTradeCount(r.MustSuccess().Offers)
 	}
 	return 0
 }
 
-// realTradeCount counts claim atoms that actually moved value — NOT the
-// both-zero no-op crosses stellar-core emits when an offer is touched but both
-// legs round to 0 (dust / integer-rounding artifacts; ~2% of SDEX claims).
-// Mirrors sdex.decodeClaimAtom + dispatcher.realTradeCount EXACTLY (one-side-zero
-// fills are KEPT) so the census equals COUNT(trades) instead of over-counting no-ops.
-func realTradeCount(claims []xdr.ClaimAtom) int {
-	n := 0
-	for i := range claims {
-		s, b := claimAtomAmounts(claims[i])
-		if s > 0 || b > 0 {
-			n++
-		}
-	}
-	return n
-}
-
-// claimAtomAmounts returns sold/bought across the three ClaimAtom shapes.
-func claimAtomAmounts(a xdr.ClaimAtom) (sold, bought xdr.Int64) {
-	switch a.Type {
-	case xdr.ClaimAtomTypeClaimAtomTypeOrderBook:
-		ob := a.MustOrderBook()
-		return ob.AmountSold, ob.AmountBought
-	case xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool:
-		lp := a.MustLiquidityPool()
-		return lp.AmountSold, lp.AmountBought
-	case xdr.ClaimAtomTypeClaimAtomTypeV0:
-		v0 := a.MustV0()
-		return v0.AmountSold, v0.AmountBought
-	}
-	return 0, 0
-}
+// (realTradeCount / claimAtomAmounts moved to internal/sdexclaim — shared with
+// the dispatcher census. Both-zero no-op crosses are excluded, one-side-zero
+// rounding-artifact fills kept, so the census equals COUNT(trades).)
 
 func hashHex(h xdr.Hash) string { return hex.EncodeToString(h[:]) }
 
