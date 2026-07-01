@@ -51,9 +51,6 @@ importers:
       workers-og:
         specifier: ^0.0.27
         version: 0.0.27
-      zod:
-        specifier: ^3.23.8
-        version: 3.25.76
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.2
