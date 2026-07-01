@@ -754,9 +754,48 @@ func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Req
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
-	matched := filterCatalogueByClass(s.verifiedCurrencies.Browseable(), currency.AssetClass(class))
+	// StellarIssued (not Browseable): /v1/assets is Stellar-only post-split
+	// (LC-001), so asset_class=fiat yields nothing here (fiat lives on
+	// /v1/external/assets); stablecoin/crypto yield only Stellar-issued rows.
+	matched := filterCatalogueByClass(s.verifiedCurrencies.StellarIssued(), currency.AssetClass(class))
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := projectCatalogueRows(matched, caps)
+	sortAssetDetailsByMarketCapDesc(rows)
+	s.writeCataloguePage(w, r, rows, limit, cursor)
+}
+
+// handleExternalAssetList serves GET /v1/external/assets — the NON-Stellar
+// assets split off /v1/assets (LC-001): fiat currencies (USD, EUR, …) and
+// reference-only coins (BTC, ETH, …) that have no Stellar issuance. An
+// optional ?asset_class=fiat|crypto|stablecoin narrows to one class. Same
+// GlobalAssetView catalogue wire shape + offset-cursor pagination as the
+// Stellar catalogue-class listing; market_cap_usd is populated per row
+// (fiat via the fxHistory path, others null until crypto-supply lands).
+func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request) {
+	cursor := r.URL.Query().Get("cursor")
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-limit",
+				"Invalid limit", http.StatusBadRequest,
+				"limit must be an integer in [1, 500]")
+			return
+		}
+		limit = parsed
+	}
+
+	if s.verifiedCurrencies == nil {
+		writeJSON(w, []AssetDetail{}, Flags{})
+		return
+	}
+	entries := s.verifiedCurrencies.External()
+	if class := normaliseAssetClass(r.URL.Query().Get("asset_class")); class == "fiat" || class == "stablecoin" || class == "crypto" {
+		entries = filterCatalogueByClass(entries, currency.AssetClass(class))
+	}
+	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
+	rows := projectCatalogueRows(entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	s.writeCataloguePage(w, r, rows, limit, cursor)
 }
@@ -1071,7 +1110,10 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 		s.serveClassicUnifiedPage(w, r, limit, "")
 		return
 	}
-	entries := s.verifiedCurrencies.Browseable()
+	// StellarIssued (not Browseable): the unified /v1/assets listing is
+	// Stellar-only post-split (LC-001) — fiat + reference-only coins move to
+	// /v1/external/assets. classic_assets (the classic phase) are all Stellar.
+	entries := s.verifiedCurrencies.StellarIssued()
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := projectCatalogueRows(entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)

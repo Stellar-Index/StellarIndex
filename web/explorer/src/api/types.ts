@@ -292,16 +292,23 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List indexed assets.
-         * @description Paginated list of every asset that has appeared (as base or
-         *     quote) in the trades hypertable. Cursor is opaque; `limit` is
-         *     rejected with 400 when outside [1, 500] (NOT clamped).
+         * List Stellar assets.
+         * @description Paginated list of **Stellar** assets — native XLM, classic
+         *     credits, Soroban tokens, and verified-catalogue currencies that
+         *     have a Stellar on-chain issuance (USDC, EURC, AQUA, …). Cursor is
+         *     opaque; `limit` is rejected with 400 when outside [1, 500] (NOT
+         *     clamped).
+         *
+         *     NON-Stellar assets — fiat currencies (USD, EUR, …) and
+         *     reference-only coins (BTC, ETH, …) that have no Stellar issuance
+         *     — are served by **`GET /external/assets`**, not here (LC-001).
+         *     `asset_class=fiat` therefore returns an empty page on this route.
          *
          *     The `asset_class` query param is the major dispatch (see its
-         *     own parameter below): `fiat` / `stablecoin` / `crypto` serve
-         *     a class-filtered view from the verified-currency catalogue;
-         *     `all` returns the unified cross-class listing; omitting it
-         *     returns the legacy classic-assets page.
+         *     own parameter below): `stablecoin` / `crypto` serve a
+         *     class-filtered view of the Stellar catalogue; `all` returns the
+         *     unified Stellar listing; omitting it returns the legacy
+         *     classic-assets page.
          */
         get: {
             parameters: {
@@ -350,6 +357,78 @@ export interface paths {
             requestBody?: never;
             responses: {
                 /** @description Page of assets. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AssetListEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/external/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List non-Stellar (external) assets.
+         * @description Paginated list of the NON-Stellar assets split off `/assets`
+         *     (LC-001): fiat currencies (USD, EUR, …) and reference-only coins
+         *     (BTC, ETH, …) from the verified-currency catalogue that have no
+         *     Stellar on-chain issuance. These exist to feed the pricing /
+         *     divergence pipeline and are surfaced here for browsing; they are
+         *     deliberately excluded from `/assets`, which is Stellar-only.
+         *
+         *     Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
+         *     `asset_id` = slug, `type` = "global", no issuer/contract_id).
+         *     `market_cap_usd` is populated for fiat (fxHistory-backed).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /**
+                     * @description Opaque pagination token echoed from a prior response's
+                     *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
+                     *     blob whose internal shape is an implementation detail and
+                     *     changes without notice. Clients MUST NOT parse, decode, or
+                     *     construct cursors by hand.
+                     *
+                     *     A cursor is stable across retries but not across schema
+                     *     changes; treat it as short-lived (minutes, not days). Empty
+                     *     means "start from the beginning".
+                     */
+                    cursor?: components["parameters"]["Cursor"];
+                    limit?: components["parameters"]["Limit"];
+                    /**
+                     * @description Optional class filter within the external set: `fiat` or
+                     *     `crypto` (reference coins). Omitted returns all external rows,
+                     *     market-cap ordered (fiats first).
+                     */
+                    asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page of external assets. */
                 200: {
                     headers: {
                         [name: string]: unknown;

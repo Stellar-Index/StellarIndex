@@ -237,17 +237,24 @@ paths:
   /assets:
     get:
       tags: [assets]
-      summary: List indexed assets.
+      summary: List Stellar assets.
       description: |
-        Paginated list of every asset that has appeared (as base or
-        quote) in the trades hypertable. Cursor is opaque; `limit` is
-        rejected with 400 when outside [1, 500] (NOT clamped).
+        Paginated list of **Stellar** assets — native XLM, classic
+        credits, Soroban tokens, and verified-catalogue currencies that
+        have a Stellar on-chain issuance (USDC, EURC, AQUA, …). Cursor is
+        opaque; `limit` is rejected with 400 when outside [1, 500] (NOT
+        clamped).
+
+        NON-Stellar assets — fiat currencies (USD, EUR, …) and
+        reference-only coins (BTC, ETH, …) that have no Stellar issuance
+        — are served by **`GET /external/assets`**, not here (LC-001).
+        `asset_class=fiat` therefore returns an empty page on this route.
 
         The `asset_class` query param is the major dispatch (see its
-        own parameter below): `fiat` / `stablecoin` / `crypto` serve
-        a class-filtered view from the verified-currency catalogue;
-        `all` returns the unified cross-class listing; omitting it
-        returns the legacy classic-assets page.
+        own parameter below): `stablecoin` / `crypto` serve a
+        class-filtered view of the Stellar catalogue; `all` returns the
+        unified Stellar listing; omitting it returns the legacy
+        classic-assets page.
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
@@ -285,6 +292,45 @@ paths:
       responses:
         "200":
           description: Page of assets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetListEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /external/assets:
+    get:
+      tags: [assets]
+      summary: List non-Stellar (external) assets.
+      description: |
+        Paginated list of the NON-Stellar assets split off `/assets`
+        (LC-001): fiat currencies (USD, EUR, …) and reference-only coins
+        (BTC, ETH, …) from the verified-currency catalogue that have no
+        Stellar on-chain issuance. These exist to feed the pricing /
+        divergence pipeline and are surfaced here for browsing; they are
+        deliberately excluded from `/assets`, which is Stellar-only.
+
+        Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
+        `asset_id` = slug, `type` = "global", no issuer/contract_id).
+        `market_cap_usd` is populated for fiat (fxHistory-backed).
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+        - name: asset_class
+          in: query
+          required: false
+          description: |
+            Optional class filter within the external set: `fiat` or
+            `crypto` (reference coins). Omitted returns all external rows,
+            market-cap ordered (fiats first).
+          schema:
+            type: string
+            enum: [fiat, stablecoin, crypto, blockchain, cryptocurrency, cryptocurrencies]
+      responses:
+        "200":
+          description: Page of external assets.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }

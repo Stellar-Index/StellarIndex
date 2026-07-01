@@ -344,6 +344,42 @@ func (c *Catalogue) Browseable() []*VerifiedCurrency {
 	return out
 }
 
+// StellarIssued returns the catalogue entries that have a Stellar on-chain
+// issuance (StellarEntry() != nil) — the set that belongs on /v1/assets after
+// the Stellar/external split (LC-001). This EXCLUDES both reference-only coins
+// (BTC/ETH) AND fiat currencies (USD/EUR) — both have no Stellar issuance, so
+// they live on /v1/external/assets. (Browseable only drops reference-only, so
+// it still leaks fiat into the Stellar listing — do not use it for the browse
+// surface.) Order preserved; freshly allocated.
+func (c *Catalogue) StellarIssued() []*VerifiedCurrency {
+	if c == nil {
+		return nil
+	}
+	out := make([]*VerifiedCurrency, 0, len(c.entries))
+	for _, vc := range c.entries {
+		if vc.StellarEntry() != nil {
+			out = append(out, vc)
+		}
+	}
+	return out
+}
+
+// External returns the catalogue entries with NO Stellar issuance
+// (StellarEntry() == nil): fiat currencies + reference-only coins. This is the
+// set for /v1/external/assets (LC-001). Order preserved; freshly allocated.
+func (c *Catalogue) External() []*VerifiedCurrency {
+	if c == nil {
+		return nil
+	}
+	out := make([]*VerifiedCurrency, 0, len(c.entries))
+	for _, vc := range c.entries {
+		if vc.StellarEntry() == nil {
+			out = append(out, vc)
+		}
+	}
+	return out
+}
+
 // LookupBySlug returns the verified currency for a URL slug
 // ("usdc"). Case-insensitive.
 func (c *Catalogue) LookupBySlug(slug string) (*VerifiedCurrency, bool) {
