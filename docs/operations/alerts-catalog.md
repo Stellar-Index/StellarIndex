@@ -41,6 +41,10 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | P3 | [orphan-events](runbooks/orphan-events.md) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | P3 | [decode-errors](runbooks/decode-errors.md) |
 | `stellarindex_ingestion_discovery_drops` | `increase(stellarindex_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | P3 | [discovery-drops](runbooks/discovery-drops.md) |
+| `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | P3 | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` | > 48 h | P3 | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_ingestion_ch_live_sink_drops` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m])` | > 0 sustained 10 min | P3 | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
+| `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | P2 | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_insert_errors` | `rate(stellarindex_source_insert_errors_total[5m])` per (source, kind) | > 0.1/s (≈6/min) sustained 5 min | P2 | [insert-errors](runbooks/insert-errors.md) |
 | `stellarindex_ingestion_duplicate_flood` | `rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])` AND `rate(...{outcome="new"}[10m]) == 0` per source | duplicates > 0.5/s with zero new for 10 min | P2 | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
 | `stellarindex_ingestion_source_insert_stale` | `time() - stellarindex_source_last_insert_unix` per source AND `source_enabled=1` | > 3600 s for ≥ 10 min | P2 | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
