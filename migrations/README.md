@@ -66,6 +66,23 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
    self-grant no-op. The fix is operational (apply as the app
    role), not schema.
 
+8. **Ratio aggregates use the single-division exact form.** A
+   volume-weighted price in a CAGG is
+   `sum(quote_amount) / sum(base_amount)` — one division at the
+   end, exact under NUMERIC. Never the per-row form
+   `sum((quote/base) * base) / sum(base)`: each per-row division
+   rounds at NUMERIC division scale, so the result is inexact by
+   construction. The legacy `prices_*` CAGGs (migration 0002) use
+   the per-row form; measured on r1 2026-07-02 the divergence is
+   ≤ 1.0e-16 relative (40,565 1h-bucket comparisons) — below the
+   12-decimal wire truncation, so NOT worth rematerializing seven
+   indefinite CAGGs. New aggregates must use the exact form. Note
+   also the 0002 CAGGs materialize a `twap` column that is an
+   equal-weight mean (`avg(quote/base)`), NOT time-weighted, and is
+   read by nothing — the served TWAP is computed on demand from raw
+   trades (`internal/aggregate/twap.go`). Do not start reading that
+   column; treat it as dead.
+
 ## Conventions
 
 - Statement terminators on their own line; always semicolon-end.
