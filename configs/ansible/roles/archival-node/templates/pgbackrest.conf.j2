@@ -1,0 +1,46 @@
+# {{ ansible_managed }}
+# pgBackRest configuration — templated from the live r1 config
+# (fetched 2026-07-02) + the ADR-0043 offsite repo2 block.
+#
+# repo1 = fast local restore copy (SAME failure domain as the DB —
+# that is exactly why repo2 exists).
+# repo2 = the survival copy: offsite S3-compatible object storage
+# (CS-111). Rendered only when pgbackrest_repo2_s3_bucket is set;
+# credentials come from the vault-managed env vars referenced below —
+# never inline in this file.
+
+[global]
+repo1-path=/var/lib/pgbackrest
+repo1-retention-full=2
+repo1-bundle=y
+repo1-block=y
+{% if pgbackrest_repo2_s3_bucket | default('') != '' %}
+repo2-type=s3
+repo2-s3-endpoint={{ pgbackrest_repo2_s3_endpoint }}
+repo2-s3-bucket={{ pgbackrest_repo2_s3_bucket }}
+repo2-s3-region={{ pgbackrest_repo2_s3_region | default('auto') }}
+repo2-s3-key={{ pgbackrest_repo2_s3_key }}
+repo2-s3-key-secret={{ pgbackrest_repo2_s3_key_secret }}
+repo2-path=/pgbackrest
+repo2-retention-full=4
+repo2-bundle=y
+repo2-block=y
+# Offsite copies are encrypted at rest by US, not just the provider.
+repo2-cipher-type=aes-256-cbc
+repo2-cipher-pass={{ pgbackrest_repo2_cipher_pass }}
+{% endif %}
+compress-type=zst
+compress-level=3
+process-max=4
+log-level-console=info
+log-level-file=detail
+start-fast=y
+delta=y
+archive-async=y
+spool-path=/var/spool/pgbackrest
+
+[stellarindex]
+pg1-path=/var/lib/postgresql/{{ postgres_version | default(15) }}/main
+pg1-port=5432
+pg1-user=postgres
+pg1-database=postgres

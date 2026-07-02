@@ -74,13 +74,18 @@ its `ExecStartPre` writes `/run/archive-completeness.env` and its report lands
 in the galexie-owned `/var/lib/galexie`; follow-up is `RuntimeDirectory=` +
 report relocation (see the unit template comment).
 
-## Disaster recovery (infra decisions — CS-110/111/112)
-- [ ] **Off-host the pgBackRest repo** (add `repo2` offsite) — backups currently sit in the
-  same-host MinIO/ZFS pool as the DB (single failure domain).
-- [ ] **Drill a real restore** to scratch (backups are verified only by `pgbackrest info`,
-  never restored) + a `drop_chunks`-on-staging chaos drill.
-- [ ] **Back up (or document + test the rebuild of) the ClickHouse lake** — the ADR-0034
-  source of truth has zero backup and isn't Ansible-provisioned.
+## Disaster recovery (CS-110/111/112 — design + tooling shipped, ADR-0043; your half:)
+- [ ] **Provision the offsite bucket for `repo2`** (Hetzner Storage Box or Backblaze B2,
+  ~1.1 TB for 4 fulls at today's 273 GB compressed) → set the `pgbackrest_repo2_*`
+  vars + cipher pass in vault, flip `pgbackrest_manage_conf: true` after reviewing
+  the rendered `pgbackrest.conf` diff, run `stanza-upgrade` + a first full to repo2.
+- [ ] **Run `scripts/ops/restore-drill.sh` by hand twice** (once `DRILL_REPO=1`, once
+  `=2` when repo2 exists; add `DRILL_CH_WINDOW=100000` on one run to measure the CH
+  re-derive RTO). Commit the appended `docs/operations/drills/restore-drills.md`
+  entries; then we wire the monthly timer.
+- [ ] **CH lake tail + DDL offsite push** (ADR-0043 §2.1/2.3) — script rides with the
+  repo2 provisioning (same bucket); the full-CH-backup decision waits on the drill's
+  measured re-derive throughput, deliberately.
 
 ## Multi-region / HA (gated on hosts existing — P3)
 - [ ] Provision R2 (AWS) + R3 (Vultr); then the `redis-sentinel`/patroni/bringup roles run.

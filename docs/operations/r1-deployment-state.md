@@ -362,7 +362,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    --stanza=stellarindex` = **status: ok** — weekly full + daily
    diff + continuous WAL archive (latest full 2026-06-21:
    1499 GB db → 272.8 GB repo; daily diffs since). NOTE the stanza
-   is **`stellarindex`**, not `main` — `--stanza=main` reports a
+   is **`stellarindex`**, not `main` — `--stanza=stellarindex` reports a
    spurious "missing stanza path". (A stale `/etc/pgbackrest.conf`
    with a commented-out PG13 `pg1-path` also lingers; harmless, the
    dir-based config takes precedence — clean it up opportunistically.)

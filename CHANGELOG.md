@@ -38,6 +38,19 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **ADR-0043 (Proposed) + `scripts/ops/restore-drill.sh`: the DR answer to
+  CS-110/111/112.** Design: pgBackRest gains an offsite encrypted `repo2`
+  (templated into the ansible role, gated off until the operator reviews the
+  rendered diff; refuses to render repo2 without its cipher pass); the CH lake
+  is protected by drilled RE-DERIVE + daily DDL/tail push instead of multi-TiB
+  full backups (the lake is derived data — the raw LCM exists in two archives;
+  the full-backup decision deliberately waits on the drill's measured
+  throughput). The restore drill is a non-destructive scratch restore on r1
+  (throwaway postgres on :5499, tip-lag + hash-chain + window row-count
+  verification, optional CH re-derive RTO measurement) appending to an
+  append-only evidence log. Runbook footguns fixed: `--stanza=main` →
+  `stellarindex` (CS-114) and dr-activation's false "Drilled" claim replaced
+  with the honest status (CS-113).
 - **ADR-0042 (Proposed): the v1 wire shape.** The decision package for the
   public flip, awaiting @ash sign-off: execute the Unit-D Tier-3 cross-chain
   wire collapse pre-flip (rejecting the freeze fallback — pre-v1 with zero

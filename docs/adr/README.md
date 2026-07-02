@@ -82,6 +82,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0040](0040-completing-contract-gating.md) | Proposed | Completing contract-identity gating: phoenix/defindex curated-set gates, aquarius enumeration, comet WASM-hash gate (closes CS-026) | 2026-07-02 |
 | [0041](0041-ingest-durability-semantics.md) | Proposed | Ingest durability semantics — cursor is a resume hint, verdict is the durability claim; CH sink defaults on; drop alerting | 2026-07-02 |
 | [0042](0042-v1-wire-shape.md) | Proposed | The v1 wire shape — Unit-D collapse pre-flip, /v1/assets/{slug} kind discriminator, v1.0 freeze contract with x-stability tiers | 2026-07-02 |
+| [0043](0043-backup-and-restore-strategy.md) | Proposed | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
 
 ## Related
 

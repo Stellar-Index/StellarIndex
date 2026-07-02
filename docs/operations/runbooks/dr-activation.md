@@ -24,10 +24,15 @@ severity, follow [`sev-playbook.md`](../sev-playbook.md) §4 for the
 incident-management overlay. The steps below are the technical
 flip; the IC drives + validates in parallel.
 
-**Drilled:** the [annual DR exercise](../sev-playbook.md#83-annual-dr)
-walks this end-to-end on a controlled-loss simulation; quarterly
-chaos drills (sev2 / partial-region degradation) exercise pieces
-of it. If you're reading this for the first time *during* an
+**Drill status (honest, CS-113):** this runbook has NOT been executed
+end-to-end — there is no standby region to cut over to (R2/R3 are
+unprovisioned; single-host r1 is the entire deployment), and no
+restore has ever been performed from the pgBackRest repo (CS-110;
+`scripts/ops/restore-drill.sh` is the scratch-restore drill to run
+until a real standby exists). The annual DR exercise described in
+[sev-playbook §8.3](../sev-playbook.md#83-annual-dr) is the INTENDED
+cadence once multi-region lands; treat every multi-region step below
+as untested design, not verified procedure. If you're reading this for the first time *during* an
 incident, follow it from §3.
 
 ---

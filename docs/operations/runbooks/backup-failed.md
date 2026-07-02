@@ -28,11 +28,13 @@ severity: P1
 
 ```sh
 # Most recent backup status
-pgbackrest --stanza=main info
+pgbackrest --stanza=stellarindex info
 #   Look at: backup timeline, last backup status, repository size.
 
 # Why did the last run fail?
-ssh root@<patroni-leader> "journalctl -u pgbackrest-backup.service \
+# Single-host r1 today: run directly on r1 (Patroni is not deployed;
+# when multi-region lands, run on the Patroni leader).
+ssh root@136.243.90.96 "journalctl -u pgbackrest-backup.service \
   --since '2 hours ago' --no-pager"
 
 # Is the backup target (MinIO/S3) reachable?
@@ -70,7 +72,7 @@ psql -c "SELECT now(), pg_is_in_recovery();"
 - [ ] Step 1 — immediate: run a manual backup to verify the
       system works:
       ```sh
-      pgbackrest --stanza=main backup --type=diff
+      pgbackrest --stanza=stellarindex backup --type=diff
       ```
 - [ ] Step 2 — if manual works: investigate scheduler.
 - [ ] Step 3 — if manual fails: fix the specific error

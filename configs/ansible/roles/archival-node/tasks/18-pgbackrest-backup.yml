@@ -38,3 +38,32 @@
     state: started
     daemon_reload: "{{ pgbackrest_backup_units is changed }}"
   when: pgbackrest_backup_enabled | default(true)
+
+# ADR-0043: pgBackRest core config is now templated (repo1 faithful to
+# the live r1 config + the conditional offsite repo2 block, CS-111).
+# Gated OFF by default so a plain role apply cannot clobber a
+# hand-tuned live config — the operator flips pgbackrest_manage_conf
+# after reviewing the rendered diff. When repo2 vars are set, run
+# `pgbackrest --stanza=stellarindex stanza-upgrade` then a full backup
+# to repo2 (see the operator register).
+- name: Install pgBackRest core config (repo1 + optional offsite repo2)
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  when: pgbackrest_manage_conf | default(false)
+
+- name: Refuse repo2 without its cipher pass (offsite copies are encrypted by us)
+  ansible.builtin.assert:
+    that:
+      - pgbackrest_repo2_cipher_pass | default('') != ''
+      - pgbackrest_repo2_s3_key | default('') != ''
+      - pgbackrest_repo2_s3_key_secret | default('') != ''
+      - pgbackrest_repo2_s3_endpoint | default('') != ''
+    quiet: true
+  no_log: true
+  when:
+    - pgbackrest_manage_conf | default(false)
+    - pgbackrest_repo2_s3_bucket | default('') != ''
