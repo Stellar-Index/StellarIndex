@@ -1,19 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import { formatCompact } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Breadcrumbs } from '@/components/ui';
 import { PairChart } from './PairChart';
 import { SourceBreakdown } from './SourceBreakdown';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ pair: string }>;
 
@@ -118,22 +111,19 @@ export async function generateStaticParams() {
       ),
     },
   ];
-  if (isCIStub) return fallback;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/markets?limit=500&order_by=volume_24h_usd_desc`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: Market[] };
-    const markets = env.data ?? [];
-    const out = markets
-      .filter((m) => m.base && m.quote)
-      .map((m) => ({ pair: pairSlug(m.base, m.quote) }));
-    return out.length > 0 ? out : fallback;
-  } catch {
-    return fallback;
-  }
+  // Fail-hard (src/lib/buildFetch.ts): an unreachable or empty markets
+  // listing throws so the build fails instead of exporting only the
+  // fallback route. CI-stub builds fall through to the fallback.
+  const markets = requireRows(
+    await buildFetchData<Market[]>(
+      '/v1/markets?limit=500&order_by=volume_24h_usd_desc',
+    ),
+    '/v1/markets listing for /markets/[pair] static params',
+  );
+  const out = markets
+    .filter((m) => m.base && m.quote)
+    .map((m) => ({ pair: pairSlug(m.base, m.quote) }));
+  return out.length > 0 ? out : fallback;
 }
 
 export async function generateMetadata({
@@ -185,72 +175,42 @@ export async function generateMetadata({
   };
 }
 
-async function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: PriceResp };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+// Enrichment fetches below ride src/lib/buildFetch.ts: retried +
+// memoised, THROW on persistent transport failure (fail-hard), and
+// return null/[] only when the API authoritatively answered 4xx —
+// a pair with no direct VWAP or no recent trades is a legitimate
+// state the page renders honestly as "—".
+function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
+  return buildFetchData<PriceResp>(
+    `/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+  );
 }
 
-async function fetchChart(base: string, quote: string): Promise<ChartResp | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: ChartResp };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+function fetchChart(base: string, quote: string): Promise<ChartResp | null> {
+  return buildFetchData<ChartResp>(
+    `/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
+  );
 }
 
-async function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
-  if (isCIStub) return null;
-  try {
-    // /v1/ohlc returns a single bar over [from, to). Default window
-    // is "now - 1h" → "now" when both are absent — exactly what we
-    // want for the markets-pair OHLC strip. The earlier `interval=1h`
-    // param was silently ignored (not in the API schema) but the
-    // default-window happened to match. Drop it for honesty.
-    const res = await fetch(
-      `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: OhlcResp };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
+  // /v1/ohlc returns a single bar over [from, to). Default window
+  // is "now - 1h" → "now" when both are absent — exactly what we
+  // want for the markets-pair OHLC strip. The earlier `interval=1h`
+  // param was silently ignored (not in the API schema) but the
+  // default-window happened to match. Drop it for honesty.
+  return buildFetchData<OhlcResp>(
+    `/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+  );
 }
 
 async function fetchHistory(
   base: string,
   quote: string,
 ): Promise<HistoryTrade[]> {
-  if (isCIStub) return [];
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/history?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data: HistoryTrade[] };
-    return env.data ?? [];
-  } catch {
-    return [];
-  }
+  const rows = await buildFetchData<HistoryTrade[]>(
+    `/v1/history?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
+  );
+  return rows ?? [];
 }
 
 interface PoolRow {
@@ -262,21 +222,13 @@ interface PoolRow {
 }
 
 async function fetchSourceBreakdown(base: string, quote: string): Promise<PoolRow[]> {
-  if (isCIStub) return [];
-  try {
-    // /v1/pools?base=&quote= returns one row per source contributing
-    // to this exact pair. Naturally sorted by 24h USD volume (the
-    // endpoint default), which is the right order for the panel.
-    const res = await fetch(
-      `${API_BASE_URL}/v1/pools?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data: PoolRow[] };
-    return env.data ?? [];
-  } catch {
-    return [];
-  }
+  // /v1/pools?base=&quote= returns one row per source contributing
+  // to this exact pair. Naturally sorted by 24h USD volume (the
+  // endpoint default), which is the right order for the panel.
+  const rows = await buildFetchData<PoolRow[]>(
+    `/v1/pools?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
+  );
+  return rows ?? [];
 }
 
 export default async function PairPage({ params }: { params: Params }) {

@@ -4,18 +4,11 @@ import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs } from '@/components/ui';
+import { buildFetchData, failBuild } from '@/lib/buildFetch';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { PoolReserves } from './PoolReserves';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ pool: string }>;
 
@@ -101,26 +94,20 @@ export async function generateStaticParams() {
   // list so the routes pre-render even when the auction-stream
   // listing is empty.
   const curatedKeys = Object.keys(BLEND_POOL_LABELS).map((pool) => ({ pool }));
-  if (isCIStub) return curatedKeys;
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/lending/pools`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: LendingPool[] };
-    const fromAPI = (env.data ?? [])
-      .map((p) => ({ pool: p.pool ?? '' }))
-      .filter((p) => p.pool);
-    const seen = new Set<string>();
-    const merged = [...fromAPI, ...curatedKeys].filter((p) => {
-      if (seen.has(p.pool)) return false;
-      seen.add(p.pool);
-      return true;
-    });
-    return merged.length > 0 ? merged : curatedKeys;
-  } catch {
-    return curatedKeys;
-  }
+  // fetchLendingPools throws on persistent transport failure
+  // (fail-hard, src/lib/buildFetch.ts); null = CI stub. An empty
+  // listing is tolerable here — the curated keys carry the route.
+  const pools = await fetchLendingPools();
+  const fromAPI = (pools ?? [])
+    .map((p) => ({ pool: p.pool ?? '' }))
+    .filter((p) => p.pool);
+  const seen = new Set<string>();
+  const merged = [...fromAPI, ...curatedKeys].filter((p) => {
+    if (seen.has(p.pool)) return false;
+    seen.add(p.pool);
+    return true;
+  });
+  return merged;
 }
 
 export async function generateMetadata({
@@ -142,24 +129,34 @@ export async function generateMetadata({
   };
 }
 
+// Memoised via buildFetch: generateStaticParams and every
+// /lending/[pool] page render share ONE /v1/lending/pools call.
+function fetchLendingPools(): Promise<LendingPool[] | null> {
+  return buildFetchData<LendingPool[]>('/v1/lending/pools');
+}
+
 async function fetchPool(pool: string): Promise<LendingPool | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/lending/pools`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: LendingPool[] };
-    return (env.data ?? []).find((p) => p.pool === pool) ?? null;
-  } catch {
-    return null;
-  }
+  const pools = await fetchLendingPools();
+  // A null row is legitimate for the curated factory/backstop
+  // contracts — they don't emit auctions so they never appear in the
+  // listing; the page renders zeroed stats for them. But an auction
+  // pool that generateStaticParams took FROM the listing must resolve.
+  return pools?.find((p) => p.pool === pool) ?? null;
 }
 
 export default async function LendingPoolPage({ params }: { params: Params }) {
   const { pool } = await params;
   const data = await fetchPool(pool);
   const label = BLEND_POOL_LABELS[pool];
+  if (!data && !label) {
+    // Real build: a param that is neither curated nor in the listing
+    // can only mean generateStaticParams' source data vanished
+    // mid-build — fail rather than bake an all-zero page for a real
+    // pool (fail-hard contract, src/lib/buildFetch.ts).
+    failBuild(
+      `/lending/${pool}: promised by generateStaticParams but /v1/lending/pools no longer lists it`,
+    );
+  }
 
   // Schema.org BreadcrumbList — Home → Lending → <pool name or short hash>.
   const poolName = label?.name || `${pool.slice(0, 8)}…${pool.slice(-8)}`;

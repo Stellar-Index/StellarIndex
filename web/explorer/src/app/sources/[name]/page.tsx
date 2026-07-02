@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Breadcrumbs } from '@/components/ui';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
+import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact } from '@/lib/format';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
 
@@ -11,14 +12,6 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo'
 // offer a "view as …" cross-link from the generic source profile.
 const DEX_PAGES = new Set(['soroswap', 'phoenix', 'aquarius', 'sdex', 'comet']);
 const EXCHANGE_PAGES = new Set(['binance', 'coinbase', 'kraken', 'bitstamp']);
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
-
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ name: string }>;
 
@@ -54,20 +47,15 @@ export async function generateStaticParams() {
   // Pre-render every registered source so deep links resolve at
   // build time. CI stub falls back to `sdex` (the highest-volume
   // on-chain venue) so static export anchors on something
-  // recognisable.
+  // recognisable. Fail-hard (src/lib/buildFetch.ts): an unreachable
+  // or empty source registry fails the build on a real host.
   const fallback = [{ name: 'sdex' }];
-  if (isCIStub) return fallback;
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/sources`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: Source[] };
-    const names = env.data?.map((s) => s.name).filter(Boolean) ?? [];
-    return names.length > 0 ? names.map((name) => ({ name })) : fallback;
-  } catch {
-    return fallback;
-  }
+  const rows = requireRows(
+    await buildFetchData<Source[]>('/v1/sources'),
+    '/v1/sources listing for /sources/[name] static params',
+  );
+  const names = rows.map((s) => s.name).filter(Boolean);
+  return names.length > 0 ? names.map((name) => ({ name })) : fallback;
 }
 
 export async function generateMetadata({
@@ -89,39 +77,23 @@ export async function generateMetadata({
 }
 
 async function fetchSource(name: string): Promise<Source | null> {
-  if (isCIStub) return null;
-  try {
-    // Plain /v1/sources (no stats/sparkline). The unfiltered
-    // call returns the full registry projection in <100ms and
-    // is enough to render the registry-profile panel +
-    // not-found check. Per-source 24h stats + sparkline used
-    // to be in-line via include=stats,sparkline but that
-    // endpoint takes 10-25s under cold-cache and was timing
-    // out static-export budgets at build time. The stats now
-    // load client-side via SourceStatsBlock below.
-    const res = await fetch(`${API_BASE_URL}/v1/sources`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: Source[] };
-    return env.data?.find((s) => s.name === name) ?? null;
-  } catch {
-    return null;
-  }
+  // Plain /v1/sources (no stats/sparkline). The unfiltered
+  // call returns the full registry projection in <100ms and
+  // is enough to render the registry-profile panel +
+  // not-found check. Per-source 24h stats + sparkline used
+  // to be in-line via include=stats,sparkline but that
+  // endpoint takes 10-25s under cold-cache and was timing
+  // out static-export budgets at build time. The stats now
+  // load client-side via SourceStatsBlock below.
+  // buildFetch memoises the listing, so every /sources/[name]
+  // page of the build shares ONE registry call.
+  const rows = await buildFetchData<Source[]>('/v1/sources');
+  return rows?.find((s) => s.name === name) ?? null;
 }
 
 async function fetchCursors(): Promise<CursorRow[]> {
-  if (isCIStub) return [];
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/diagnostics/cursors`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data: CursorRow[] };
-    return env.data ?? [];
-  } catch {
-    return [];
-  }
+  const rows = await buildFetchData<CursorRow[]>('/v1/diagnostics/cursors');
+  return rows ?? [];
 }
 
 interface MarketRow {
@@ -134,21 +106,14 @@ interface MarketRow {
 }
 
 async function fetchSourceMarkets(name: string): Promise<MarketRow[]> {
-  if (isCIStub) return [];
-  try {
-    // /v1/markets accepts ?source=<name> filter (DistinctPairs scoped
-    // to one venue). Sort by volume desc and cap at 25 — the page
-    // wants a "top markets" preview, not the full enumeration.
-    const res = await fetch(
-      `${API_BASE_URL}/v1/markets?source=${encodeURIComponent(name)}&order_by=volume_24h_usd_desc&limit=25`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data: MarketRow[] };
-    return env.data ?? [];
-  } catch {
-    return [];
-  }
+  // /v1/markets accepts ?source=<name> filter (DistinctPairs scoped
+  // to one venue). Sort by volume desc and cap at 25 — the page
+  // wants a "top markets" preview, not the full enumeration. An empty
+  // list is legitimate (quiet venue); transport failure throws.
+  const rows = await buildFetchData<MarketRow[]>(
+    `/v1/markets?source=${encodeURIComponent(name)}&order_by=volume_24h_usd_desc&limit=25`,
+  );
+  return rows ?? [];
 }
 
 export default async function SourceDetailPage({
@@ -164,6 +129,14 @@ export default async function SourceDetailPage({
   ]);
 
   if (!source) {
+    // Real build: this name was promised by generateStaticParams off
+    // the SAME /v1/sources listing — a miss here means the registry
+    // changed mid-build or the API broke. Fail the build rather than
+    // bake "Source not found" for a real venue. The panel below
+    // renders only on CI-stub builds.
+    failBuild(
+      `/sources/${name}: promised by generateStaticParams but /v1/sources no longer lists it`,
+    );
     return (
       <div className="mx-auto max-w-3xl px-6 py-16 text-center">
         <h1 className="text-2xl font-semibold">Source not found</h1>
