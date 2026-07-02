@@ -15,9 +15,16 @@ const ENV = (typeof __ENV !== 'undefined') ? __ENV : {};
 export const baseUrl = (ENV.K6_TARGET || '').replace(/\/$/, '');
 export const apiKey = ENV.STELLARINDEX_LOAD_API_KEY || '';
 
+// Current production API host + the legacy pre-rebrand domains (which
+// may still route to production). The two rebrand sweeps mapped BOTH
+// legacy hosts onto api.stellarindex.io, silently collapsing this
+// list to a duplicate — keep the legacy entries distinct. Deliberately
+// NOT a bare 'stellarindex.io' substring: that would also match the
+// documented staging target (api.staging.stellarindex.io).
 const PROD_HOSTS = [
   'api.stellarindex.io',
-  'api.stellarindex.io',
+  'api.ratesengine.net',
+  'api.ratesengine.io',
   'rates.stellar.org',
 ];
 
