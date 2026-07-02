@@ -213,6 +213,12 @@ type authProblem struct {
 
 func writeAuthProblem(w http.ResponseWriter, status int, typeURL, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
+	// Override the route directive the CacheControl middleware set
+	// before auth ran. Without this a 401/403 on a publicly-cacheable
+	// route (e.g. /v1/price) inherits `public, max-age, s-maxage` and
+	// a shared cache may store the per-key denial against the same
+	// key as the success response (see cachecontrol.go's invariant).
+	w.Header().Set("Cache-Control", "no-store")
 	// RFC 7235 §3.1: every 401 MUST advertise at least one
 	// challenge so clients can discover the accepted auth scheme.
 	// All authenticated v1 endpoints accept Bearer (API key +

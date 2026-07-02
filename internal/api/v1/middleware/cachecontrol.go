@@ -40,12 +40,13 @@ import (
 // Override is the exception, not the rule — the middleware's
 // directive is the right answer for >99% of requests.
 //
-// Errors override the route's directive at the writer side. All
-// problem+json paths (writeProblem in v1/envelope.go, the rate
-// limiter's writeRateLimitProblem, the recoverer's panic body, and
-// the envelope404 middleware that rewrites the mux's text/plain
-// 404/405) explicitly set `Cache-Control: no-store` before
-// WriteHeader. Without that override an error response would inherit
+// Errors override the route's directive at the writer side. ALL
+// problem+json writers (writeProblem in v1/envelope.go, the rate
+// limiter's writeRateLimitProblem, the recoverer's panic body, the
+// envelope404 middleware that rewrites the mux's text/plain 404/405,
+// writeAuthProblem, writeKeyPolicyDenied, writeEmailUnverified, and
+// the monthly-quota writer) explicitly set `Cache-Control: no-store`
+// before WriteHeader — a new problem writer MUST do the same. Without that override an error response would inherit
 // (e.g.) `public, max-age=60, s-maxage=300` from the catalogue
 // surface and a CDN would happily cache the transient failure for
 // 5 minutes against the same key as the success response.

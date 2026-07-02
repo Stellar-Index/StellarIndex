@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Security
+- **Middleware rejections (401/403/429) are no longer shared-cacheable.**
+  Four problem+json writers — auth 401s (`writeAuthProblem`), per-key policy
+  403s (`writeKeyPolicyDenied`), signup email-verification 403s, and monthly-
+  quota 429s — never overrode the route directive the CacheControl middleware
+  pre-sets, so on publicly-cacheable routes (e.g. `/v1/price`) a per-key/per-IP
+  denial carried `public, max-age, s-maxage` and a shared cache keyed on the
+  URL could store one caller's rejection and replay it to everyone. All four
+  now set `Cache-Control: no-store` (matching every other problem writer), the
+  cachecontrol.go invariant doc now enumerates them, and a regression test
+  drives all four rejection paths through the real CacheControl composition.
+
 ## [v0.6.2] — 2026-07-02
 
 ### Changed

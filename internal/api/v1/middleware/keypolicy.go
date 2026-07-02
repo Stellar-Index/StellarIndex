@@ -154,6 +154,10 @@ func permissionMatches(r *http.Request, entries []auth.SubjectPermissionEntry) b
 // endpoint with this key" without parsing the detail string.
 func writeKeyPolicyDenied(w http.ResponseWriter, r *http.Request, slug, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
+	// Override the route directive CacheControl pre-set — a 403 on a
+	// publicly-cacheable route must never be shared-cacheable (the
+	// denial is per-key/per-IP, the cache key is per-URL).
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusForbidden)
 	body, _ := json.Marshal(map[string]any{
 		"type":     "https://api.stellarindex.io/errors/" + slug,

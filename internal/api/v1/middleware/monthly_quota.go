@@ -106,6 +106,10 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 		body = []byte(`{"title":"Monthly quota exceeded","status":429}`)
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	// Per-key denial on a per-URL cache key — never shared-cacheable
+	// (overrides the route directive CacheControl pre-set; matches
+	// the rate limiter's 429 handling in ratelimit.go).
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-StellarIndex-Monthly-Quota", itoa(quota))
 	w.Header().Set("X-StellarIndex-Monthly-Used", itoa(used))
 	w.WriteHeader(http.StatusTooManyRequests)
