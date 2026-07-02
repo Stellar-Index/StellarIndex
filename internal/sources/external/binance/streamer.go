@@ -9,22 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
 	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
 )
-
-// healthyConnectionThreshold — if a connection survived at least this
-// long before disconnecting, treat the next reconnect as a fresh start
-// and reset backoff to InitialBackoff. Without this, an indefinite
-// stream of healthy 6-12 min Binance cycles (their 24h policy plus
-// PING-driven recycles) eventually pins backoff at MaxBackoff (60 s)
-// forever — losing ~60 s of data per cycle instead of the expected
-// 5 s (F-0029).
-const healthyConnectionThreshold = 5 * time.Minute
 
 // Streamer implements external.Streamer for Binance's combined
 // aggTrade feed. One instance per indexer process — serialises all
@@ -57,11 +45,11 @@ type Streamer struct {
 // sensible defaults for the rest. Logger defaults to slog.Default().
 //
 // Backoff defaults (F-0029, audit-2026-05-27): InitialBackoff 5 s,
-// MaxBackoff 60 s. Combined with the healthy-connection reset in
-// run() (a connection that stays alive ≥ healthyConnectionThreshold
-// rewinds backoff to InitialBackoff on its next failure), the effect
-// is bounded 5-60 s reconnect windows instead of the 60 s blanket
-// observed pre-fix on r1.
+// MaxBackoff 60 s. Combined with the healthy-connection reset in the
+// shared wsclient.Loop (a connection that stays alive ≥
+// wsclient.DefaultHealthyConnectionThreshold rewinds backoff to
+// InitialBackoff on its next failure), the effect is bounded 5-60 s
+// reconnect windows instead of the 60 s blanket observed pre-fix on r1.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
@@ -108,121 +96,28 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 
 	out := make(chan canonical.Trade, 128)
 
-	go s.run(ctx, streamURL, logger, out)
+	// Binance disconnects clients after 24h of connection life —
+	// deliberate server-side policy. The shared loop handles that
+	// like any other disconnect; bounded backoff reconnects.
+	loop := &wsclient.Loop{
+		Source:         SourceName,
+		URL:            streamURL,
+		Logger:         logger,
+		InitialBackoff: s.InitialBackoff,
+		MaxBackoff:     s.MaxBackoff,
+		// Subscription rides the combined-stream URL — no
+		// post-dial subscribe frame.
+		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
+			trade, err := parseAggTradeFrame(data, s.PairMap)
+			if err != nil {
+				return nil, err
+			}
+			return []canonical.Trade{trade}, nil
+		},
+	}
+	go loop.Run(ctx, out)
 
 	return out, nil
-}
-
-// run is the reconnect-forever loop. Closes `out` on ctx
-// cancellation; transient errors cause exponential-backoff reconnect
-// without closing the channel (downstream consumers see a gap in
-// timestamps but no stream termination).
-//
-// F-0029 (audit-2026-05-27): backoff resets to InitialBackoff on any
-// runOnce that lived ≥ healthyConnectionThreshold. Before the fix,
-// production r1 logs showed backoff pinned at 60 s because every
-// Binance recycle (every 6-12 min) doubled an already-large window
-// and there was no reset path; the indexer was dropping ~60 s of CEX
-// trades per cycle.
-func (s *Streamer) run(ctx context.Context, streamURL string, logger *slog.Logger, out chan<- canonical.Trade) {
-	defer close(out)
-
-	initialBackoff := s.InitialBackoff
-	if initialBackoff <= 0 {
-		initialBackoff = 5 * time.Second
-	}
-	maxBackoff := s.MaxBackoff
-	if maxBackoff <= 0 {
-		maxBackoff = 60 * time.Second
-	}
-	backoff := initialBackoff
-
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		connectedAt := time.Now()
-		err := s.runOnce(ctx, streamURL, out)
-		if ctx.Err() != nil {
-			return
-		}
-		lifetime := time.Since(connectedAt)
-		reason := wsclient.ClassifyDisconnect(err)
-		obs.CEXStreamDisconnectTotal.WithLabelValues(SourceName, reason).Inc()
-
-		// Healthy-lifetime reset: a long-lived connection that finally
-		// dropped is NOT evidence of a wedged venue — reset the
-		// backoff so the next cycle isn't penalised for prior failures.
-		if lifetime >= healthyConnectionThreshold {
-			backoff = initialBackoff
-		}
-		// Transient — log, backoff, retry.
-		logger.Warn("binance stream disconnected, reconnecting",
-			"source", SourceName, "err", err,
-			"lifetime", lifetime, "backoff", backoff, "reason", reason)
-
-		sleep := wsclient.Jitter(backoff)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(sleep):
-		}
-
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-	}
-}
-
-// runOnce handles one connect-and-read cycle. Returns on EOF, ctx
-// cancel (the caller checks ctx), or read/parse error. Successful
-// close returns nil; disconnect scenarios return an error so run()
-// can decide whether to backoff.
-func (s *Streamer) runOnce(ctx context.Context, streamURL string, out chan<- canonical.Trade) error {
-	conn, resp, err := websocket.Dial(ctx, streamURL, &websocket.DialOptions{
-		HTTPClient: wsclient.KeepAliveHTTPClient(),
-	})
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	defer func() {
-		_ = conn.Close(websocket.StatusNormalClosure, "client shutdown")
-	}()
-
-	// Binance disconnects clients after 24h of connection life —
-	// deliberate server-side policy. We just handle that like any
-	// other disconnect; bounded backoff reconnects.
-
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			return fmt.Errorf("read: %w", err)
-		}
-		trade, err := parseAggTradeFrame(data, s.PairMap)
-		if err != nil {
-			// Single-frame parse errors are non-fatal (e.g. a new
-			// symbol subscribed that isn't in PairMap yet). Count
-			// + continue; dropping the whole stream would be a
-			// gross overreaction to one bad line. F-1235 (codex
-			// audit-2026-05-12): the count line was previously
-			// missing — operators had no signal on schema drift
-			// despite the runbook claiming decode-error coverage.
-			obs.SourceDecodeErrorsTotal.WithLabelValues("binance").Inc()
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case out <- trade:
-		}
-	}
 }
 
 // symbolsFor resolves canonical.Pair → Binance symbol by inverting

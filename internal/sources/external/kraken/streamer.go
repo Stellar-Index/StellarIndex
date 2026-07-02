@@ -11,18 +11,9 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
 	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
 )
-
-// healthyConnectionThreshold — if a connection survived at least this
-// long before disconnecting, treat the next reconnect as a fresh start
-// and reset backoff to InitialBackoff. Without this, an indefinite
-// stream of healthy multi-minute Kraken cycles eventually pins backoff
-// at MaxBackoff forever — losing up to MaxBackoff of data per cycle
-// instead of the expected InitialBackoff (F-0029, ported G10-03).
-const healthyConnectionThreshold = 5 * time.Minute
 
 // Streamer implements external.Streamer for Kraken's v2 WebSocket
 // trade channel. Single connection per process, reconnects with
@@ -42,10 +33,11 @@ type Streamer struct {
 // NewStreamer constructs a Streamer with sensible defaults.
 //
 // Backoff defaults (F-0029, ported G10-03): InitialBackoff 5 s,
-// MaxBackoff 60 s. Combined with the healthy-connection reset in run()
-// (a connection that stays alive ≥ healthyConnectionThreshold rewinds
-// backoff to InitialBackoff on its next failure), the effect is bounded
-// 5-60 s reconnect windows instead of a 60 s blanket.
+// MaxBackoff 60 s. Combined with the healthy-connection reset in the
+// shared wsclient.Loop (a connection that stays alive ≥
+// wsclient.DefaultHealthyConnectionThreshold rewinds backoff to
+// InitialBackoff on its next failure), the effect is bounded 5-60 s
+// reconnect windows instead of a 60 s blanket.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
@@ -93,117 +85,44 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 		logger = slog.Default()
 	}
 
-	out := make(chan canonical.Trade, 128)
-	go s.run(ctx, symbols, logger, out)
-	return out, nil
-}
-
-func (s *Streamer) run(ctx context.Context, symbols []string, logger *slog.Logger, out chan<- canonical.Trade) {
-	defer close(out)
-
-	initialBackoff := s.InitialBackoff
-	if initialBackoff <= 0 {
-		initialBackoff = 5 * time.Second
-	}
-	maxBackoff := s.MaxBackoff
-	if maxBackoff <= 0 {
-		maxBackoff = 60 * time.Second
-	}
-	backoff := initialBackoff
-
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		connectedAt := time.Now()
-		err := s.runOnce(ctx, symbols, out)
-		if ctx.Err() != nil {
-			return
-		}
-		lifetime := time.Since(connectedAt)
-		reason := wsclient.ClassifyDisconnect(err)
-		obs.CEXStreamDisconnectTotal.WithLabelValues(SourceName, reason).Inc()
-
-		// Healthy-lifetime reset (F-0029): a long-lived connection that
-		// finally dropped is NOT evidence of a wedged venue — reset the
-		// backoff so the next cycle isn't penalised for prior failures.
-		if lifetime >= healthyConnectionThreshold {
-			backoff = initialBackoff
-		}
-		logger.Warn("kraken stream disconnected, reconnecting",
-			"source", SourceName, "err", err,
-			"lifetime", lifetime, "backoff", backoff, "reason", reason)
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(wsclient.Jitter(backoff)):
-		}
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-	}
-}
-
-func (s *Streamer) runOnce(ctx context.Context, symbols []string, out chan<- canonical.Trade) error {
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint
 	}
-	conn, resp, err := websocket.Dial(ctx, s.Endpoint, &websocket.DialOptions{
-		HTTPClient: wsclient.KeepAliveHTTPClient(),
-	})
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "client shutdown") }()
 
-	// Send subscribe AFTER the status frame arrives on real
-	// Kraken. Doing so upfront works too — v2 queues the
-	// subscription until the session is ready. We send immediately
-	// for simplicity.
-	sub := subscribeReq{
-		Method: "subscribe",
-		Params: subscribeParam{
-			Channel: ChannelTrade,
-			Symbol:  symbols,
+	out := make(chan canonical.Trade, 128)
+	loop := &wsclient.Loop{
+		Source:         SourceName,
+		URL:            s.Endpoint,
+		Logger:         logger,
+		InitialBackoff: s.InitialBackoff,
+		MaxBackoff:     s.MaxBackoff,
+		// Send subscribe AFTER the status frame arrives on real
+		// Kraken. Doing so upfront works too — v2 queues the
+		// subscription until the session is ready. We send
+		// immediately for simplicity.
+		Subscribe: func(ctx context.Context, conn *websocket.Conn) error {
+			sub := subscribeReq{
+				Method: "subscribe",
+				Params: subscribeParam{
+					Channel: ChannelTrade,
+					Symbol:  symbols,
+				},
+			}
+			subBytes, err := json.Marshal(sub)
+			if err != nil {
+				return fmt.Errorf("marshal subscribe: %w", err)
+			}
+			if err := conn.Write(ctx, websocket.MessageText, subBytes); err != nil {
+				return fmt.Errorf("write subscribe: %w", err)
+			}
+			return nil
+		},
+		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
+			return parseFrame(data, s.PairMap)
 		},
 	}
-	subBytes, err := json.Marshal(sub)
-	if err != nil {
-		return fmt.Errorf("marshal subscribe: %w", err)
-	}
-	if err := conn.Write(ctx, websocket.MessageText, subBytes); err != nil {
-		return fmt.Errorf("write subscribe: %w", err)
-	}
-
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			return fmt.Errorf("read: %w", err)
-		}
-		trades, err := parseFrame(data, s.PairMap)
-		if err != nil {
-			// Malformed frame — skip, stream stays up.
-			// F-1235 (codex audit-2026-05-12): count it so the
-			// decode-error runbook signals on schema drift.
-			obs.SourceDecodeErrorsTotal.WithLabelValues("kraken").Inc()
-			continue
-		}
-		for _, t := range trades {
-			select {
-			case <-ctx.Done():
-				return nil
-			case out <- t:
-			}
-		}
-	}
+	go loop.Run(ctx, out)
+	return out, nil
 }
 
 func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {

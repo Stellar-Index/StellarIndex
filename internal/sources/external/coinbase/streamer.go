@@ -11,17 +11,9 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
 	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
 )
-
-// healthyConnectionThreshold — if a connection survived at least this
-// long before disconnecting, treat the next reconnect as a fresh start
-// and reset backoff to InitialBackoff. Prevents an indefinite stream
-// of healthy multi-minute Coinbase cycles from pinning backoff at
-// MaxBackoff forever (F-0029, ported G10-03).
-const healthyConnectionThreshold = 5 * time.Minute
 
 // Streamer implements external.Streamer for Coinbase Exchange.
 // Single subscription (with an array of product_ids) covers every
@@ -37,7 +29,8 @@ type Streamer struct {
 // NewStreamer constructs a Streamer with sensible defaults.
 //
 // Backoff defaults (F-0029, ported G10-03): InitialBackoff 5 s,
-// MaxBackoff 60 s, plus the healthy-connection reset in run().
+// MaxBackoff 60 s, plus the healthy-connection reset in the shared
+// wsclient.Loop.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
@@ -77,65 +70,64 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if s.Endpoint == "" {
+		s.Endpoint = WSEndpoint
+	}
+
 	out := make(chan canonical.Trade, 128)
-	go s.run(ctx, products, logger, out)
-	return out, nil
-}
-
-func (s *Streamer) run(ctx context.Context, products []string, logger *slog.Logger, out chan<- canonical.Trade) {
-	defer close(out)
-
-	initialBackoff := s.InitialBackoff
-	if initialBackoff <= 0 {
-		initialBackoff = 5 * time.Second
-	}
-	maxBackoff := s.MaxBackoff
-	if maxBackoff <= 0 {
-		maxBackoff = 60 * time.Second
-	}
-	backoff := initialBackoff
-
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		connectedAt := time.Now()
-		err := s.runOnce(ctx, products, out)
-		if ctx.Err() != nil {
-			return
-		}
-		lifetime := time.Since(connectedAt)
-		reason := classifyDisconnect(err)
-		obs.CEXStreamDisconnectTotal.WithLabelValues(SourceName, reason).Inc()
-
-		// Healthy-lifetime reset (F-0029): a long-lived connection that
-		// finally dropped is NOT evidence of a wedged venue — reset the
-		// backoff so the next cycle isn't penalised for prior failures.
-		if lifetime >= healthyConnectionThreshold {
-			backoff = initialBackoff
-		}
-
+	loop := &wsclient.Loop{
+		Source:         SourceName,
+		URL:            s.Endpoint,
+		Logger:         logger,
+		InitialBackoff: s.InitialBackoff,
+		MaxBackoff:     s.MaxBackoff,
+		Subscribe: func(ctx context.Context, conn *websocket.Conn) error {
+			sub := subscribeReq{
+				Type: "subscribe",
+				Channels: []subscribeChannel{
+					{Name: ChannelName, ProductIDs: products},
+				},
+			}
+			bs, err := json.Marshal(sub)
+			if err != nil {
+				return fmt.Errorf("marshal subscribe: %w", err)
+			}
+			if err := conn.Write(ctx, websocket.MessageText, bs); err != nil {
+				return fmt.Errorf("write subscribe: %w", err)
+			}
+			return nil
+		},
+		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
+			trade, isTrade, err := parseFrame(data, s.PairMap)
+			if err != nil {
+				return nil, err
+			}
+			if !isTrade {
+				return nil, nil
+			}
+			return []canonical.Trade{trade}, nil
+		},
+		// A rejected subscription must drop the connection (it flows
+		// to the classifier below) instead of being skipped as a
+		// decode error.
+		FatalFrameErr: func(err error) bool {
+			return errors.Is(err, ErrSubscriptionRejected)
+		},
+		Classify: classifyDisconnect,
 		// Subscription rejection is usually a config bug — log
 		// loudly but still reconnect (operator may have fixed the
 		// config mid-flight).
-		if errors.Is(err, ErrSubscriptionRejected) {
-			logger.Error("coinbase subscription rejected — check product_ids in DefaultPairs",
-				"source", SourceName, "err", err, "reason", reason)
-		} else {
-			logger.Warn("coinbase stream disconnected, reconnecting",
-				"source", SourceName, "err", err,
-				"lifetime", lifetime, "backoff", backoff, "reason", reason)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(wsclient.Jitter(backoff)):
-		}
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
+		OnDisconnect: func(logger *slog.Logger, err error, reason string) (handled, resetBackoff bool) {
+			if errors.Is(err, ErrSubscriptionRejected) {
+				logger.Error("coinbase subscription rejected — check product_ids in DefaultPairs",
+					"source", SourceName, "err", err, "reason", reason)
+				return true, false
+			}
+			return false, false
+		},
 	}
+	go loop.Run(ctx, out)
+	return out, nil
 }
 
 // classifyDisconnect handles Coinbase's venue-specific
@@ -147,64 +139,6 @@ func classifyDisconnect(err error) string {
 		return "subscription_rejected"
 	}
 	return wsclient.ClassifyDisconnect(err)
-}
-
-func (s *Streamer) runOnce(ctx context.Context, products []string, out chan<- canonical.Trade) error {
-	if s.Endpoint == "" {
-		s.Endpoint = WSEndpoint
-	}
-	conn, resp, err := websocket.Dial(ctx, s.Endpoint, &websocket.DialOptions{
-		HTTPClient: wsclient.KeepAliveHTTPClient(),
-	})
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "client shutdown") }()
-
-	sub := subscribeReq{
-		Type: "subscribe",
-		Channels: []subscribeChannel{
-			{Name: ChannelName, ProductIDs: products},
-		},
-	}
-	bs, err := json.Marshal(sub)
-	if err != nil {
-		return fmt.Errorf("marshal subscribe: %w", err)
-	}
-	if err := conn.Write(ctx, websocket.MessageText, bs); err != nil {
-		return fmt.Errorf("write subscribe: %w", err)
-	}
-
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			return fmt.Errorf("read: %w", err)
-		}
-		trade, isTrade, err := parseFrame(data, s.PairMap)
-		if err != nil {
-			if errors.Is(err, ErrSubscriptionRejected) {
-				return err
-			}
-			// F-1235 (codex audit-2026-05-12): count parse errors
-			// so the decode-error runbook signals on schema drift.
-			obs.SourceDecodeErrorsTotal.WithLabelValues("coinbase").Inc()
-			continue
-		}
-		if !isTrade {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case out <- trade:
-		}
-	}
 }
 
 func (s *Streamer) productsFor(pairs []canonical.Pair) ([]string, error) {
