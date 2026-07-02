@@ -1455,6 +1455,7 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger)
 					Address:  f.Address,
 					Decimals: f.Decimals,
 					Invert:   f.Invert,
+					MaxAge:   time.Duration(f.MaxAgeHours) * time.Hour,
 				}
 			}
 			refs = append(refs, divergence.NewChainlinkReference(divergence.ChainlinkOptions{

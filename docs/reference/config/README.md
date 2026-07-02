@@ -230,6 +230,7 @@ the `env:` column.
 | `divergence.chainlink.feeds.<key>.address` | `string` | _(required)_ | — | 0x-prefixed mainnet feed contract address. |
 | `divergence.chainlink.feeds.<key>.decimals` | `int` | `8` | — | Power-of-10 divisor for the raw int256. Defaults to 8 (Chainlink standard). |
 | `divergence.chainlink.feeds.<key>.invert` | `bool` | `false` | — | Set true when canonical pair is reciprocal of the feed's natural quote. |
+| `divergence.chainlink.feeds.<key>.max_age_hours` | `int` | `0` | — | Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = 3h crypto default; use ~76 for FX feeds (they pause over market closes). |
 
 ### `[obs]`
 

@@ -58,6 +58,17 @@ against.
   route↔spec↔SDK triangle (lint-docs.sh already reconciles routes↔spec).
 
 ### Fixed
+- **CS-089: the Chainlink divergence reference now rejects stale rounds.** It
+  read `latestAnswer()` — no timestamp at all — so a frozen feed was served as
+  a fresh reference, able to both mask a real divergence and fabricate a false
+  one. Now calls `latestRoundData()`, decodes `updatedAt`, and rejects rounds
+  older than the feed's `MaxAge` as `ErrPriceUnavailable` (reference
+  unavailable — feeding the CS-088 `no_reference` machinery). Defaults: 3h for
+  crypto feeds (≤1h heartbeat), 76h for the FX feeds (24h heartbeat + they
+  pause over market closes, so a Friday round is legitimately ~72h old on
+  Sunday). Operator override via new `[divergence.chainlink.feeds]`
+  `max_age_hours`. A proxy answering the legacy 32-byte shape now fails loudly
+  instead of decoding garbage.
 - **CS-084 (High): the `-ch` completeness projection reconcile is now strict
   per-ledger.** The production path compared window TOTALS (Σ expected vs Σ
   served), so a real drop in ledger L netting against a phantom overcount
