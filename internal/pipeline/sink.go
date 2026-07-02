@@ -266,7 +266,12 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 //
 // MUST stay in lockstep with `internal/projector/registry.go`
 // `buildSource` — every consumer.Event a registered source can emit
-// must return true here. ADR-0030 lint guard catches drift.
+// must return true here. Guarded by lockstep_ast_test.go
+// (TestLockstep_RegistrySourcesFullyWired), which AST-walks this
+// switch, the registry cases, and every projected source package's
+// consumer.Event implementations — a missed wiring edit fails CI
+// instead of silently dropping rows (F-1316 class). A prior version
+// of this comment cited an "ADR-0030 lint guard" that never existed.
 func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
 	case soroswap.TradeEvent, soroswap.SkimEvent,
