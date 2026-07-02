@@ -1245,13 +1245,14 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { type: object }
-                  pagination:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/PoolRow" }
+                    required: [data]
 
   /lending/pools:
     get:
@@ -5114,6 +5115,11 @@ components:
       type: object
       properties:
         status: { type: string, enum: [ok, degraded] }
+        # The handler serves the same healthResponse struct on both
+        # /healthz and /readyz — uptime + status_root are always
+        # populated on /healthz too (checks stays absent there).
+        uptime: { type: string, description: "Human-readable process uptime, truncated to the second (e.g. `3h12m4s`)." }
+        status_root: { type: string, description: "Pointer at `/v1/status` — the SLA-truth rollup (F-1210)." }
       required: [status]
 
     # /readyz body shape (enveloped). `status` carries three values:
@@ -5334,6 +5340,7 @@ components:
         total_supply:       { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null when no snapshot exists." }
         max_supply:         { type: string, nullable: true, description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
         price_usd:          { type: string, nullable: true, description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived." }
+        change_24h_pct:     { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
         market_cap_usd:     { type: string, nullable: true, description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable." }
         fdv_usd:            { type: string, nullable: true, description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable." }
         supply_basis:
@@ -5583,6 +5590,13 @@ components:
     # in the OpenAPI sense means "the key will appear", not "it will
     # have a value".
     Price:
+      # The /v1/price family payload — EXACTLY the fields the handler's
+      # PriceSnapshot serves (internal/api/v1/price.go). Asset-level
+      # enrichment (market cap, supply, change_%, sparklines, ATH,
+      # top_markets, scam flags) lives on the Asset schema served by
+      # /v1/assets — it was previously (wrongly) documented here too;
+      # the price surface never carried those fields. Contract-tested
+      # against the SDK in pkg/client/spec_contract_test.go.
       type: object
       properties:
         asset_id:          { type: string }
@@ -5602,66 +5616,6 @@ components:
         # (for vwap/twap). RFC 3339, UTC.
         observed_at:       { type: string, format: date-time }
         window_seconds:    { type: integer, nullable: true, description: "Window size for vwap/twap; omitted for last_trade." }
-        # F2 fields per ADR-0011 / Freighter V2 — populated when
-        # the aggregator's supply-snapshot writer + volume worker
-        # have run. Null when no snapshot or volume row is available
-        # yet (e.g. fresh deploy before the first cycle, or asset
-        # below the operator's coverage set).
-        change_24h_pct:    { type: string, nullable: true, description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Computed as (now - then) / then * 100 against the latest closed prices_1m bucket whose end is at-or-before now-24h. Null when the asset has no current USD price OR no comparison bucket in the 24h-ago window." }
-        # Coin-equivalence extension (R-018 final). Populated when a
-        # CoinsReader is wired and the asset has a coin row.
-        price_usd:         { type: string, nullable: true, description: "Latest VWAP/last-trade USD price. Mirror of CoinSummary.price_usd." }
-        change_1h_pct:     { type: string, nullable: true, description: "Trailing-1h price change as a signed percentage." }
-        change_7d_pct:     { type: string, nullable: true, description: "Trailing-7d price change as a signed percentage." }
-        top_markets:
-          type: array
-          nullable: true
-          description: "Top 5 markets by 24h USD volume. Each row is the counterparty of a (base, quote) pair the asset participated in."
-          items:
-            type: object
-            properties:
-              counterparty:    { type: string, description: "The OTHER side of the pair." }
-              side:            { type: string, enum: [base, quote], description: "Which side this asset took." }
-              volume_24h_usd:  { type: string, nullable: true }
-              trade_count_24h: { type: integer }
-            required: [counterparty, side, trade_count_24h]
-        price_history_24h:
-          type: array
-          nullable: true
-          description: "24 hourly USD-price samples (oldest first) for sparkline rendering."
-          items:
-            type: object
-            properties:
-              t: { type: string, format: date-time }
-              p: { type: string, nullable: true }
-            required: [t]
-        price_history_7d:
-          type: array
-          nullable: true
-          description: "7 daily USD-price samples (oldest first)."
-          items:
-            type: object
-            properties:
-              t: { type: string, format: date-time }
-              p: { type: string, nullable: true }
-            required: [t]
-        markets_count:     { type: integer, nullable: true, description: "Distinct (base, quote) pairs the asset participated in over the trailing 24h." }
-        trade_count_24h:   { type: integer, nullable: true, description: "Total trades the asset participated in (as base or quote) over the trailing 24h." }
-        ath:
-          type: object
-          nullable: true
-          description: "All-time-high USD price + day it was set. Null when the asset has no USD-quoted history."
-          properties:
-            usd: { type: string }
-            at:  { type: string, format: date-time }
-          required: [usd, at]
-        issuer_scam_reason: { type: string, description: "Non-empty when this asset's issuer appears in the curated scam directory." }
-        volume_24h_usd:    { type: string, nullable: true, description: "aggregator" }
-        market_cap_usd:    { type: string, nullable: true, description: "aggregator + supply derivation" }
-        fdv_usd:           { type: string, nullable: true, description: "aggregator + supply derivation" }
-        circulating_supply: { type: string, nullable: true, description: "supply derivation" }
-        total_supply:      { type: string, nullable: true, description: "supply derivation" }
-        max_supply:        { type: string, nullable: true, description: "supply derivation" }
         # Confidence score per ADR-0019. Populated only on /v1/price
         # (the closed-bucket surface) when the aggregator's
         # confidence-compute path has cached a fresh score for the
@@ -6061,7 +6015,32 @@ components:
           type: string
           nullable: true
           description: "Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price."
+        volume_history_24h:
+          type: array
+          description: "Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise."
+          items:
+            type: object
+            properties:
+              hour:       { type: string, format: date-time }
+              volume_usd: { type: string, description: "Decimal string." }
+            required: [hour, volume_usd]
       required: [base, quote, last_trade_at, bucket_close_at, trade_count_24h]
+
+    # /v1/pools row — MarketRow plus the `source` (venue) dimension:
+    # the same physical pair traded on two DEXes appears as two rows,
+    # each with its own per-venue last_price. Mirrors
+    # internal/api/v1/markets.go `Pool`.
+    PoolRow:
+      type: object
+      properties:
+        source:          { type: string, description: "DEX source name (soroswap, phoenix, aquarius, comet, sdex)." }
+        base:            { type: string }
+        quote:           { type: string }
+        last_trade_at:   { type: string, format: date-time }
+        trade_count_24h: { type: integer }
+        volume_24h_usd:  { type: string, nullable: true, description: "Decimal string. Null when no USD-equivalent trades." }
+        last_price:      { type: string, nullable: true, description: "Most recent quote-per-base price observed on THIS venue. Decimal string." }
+      required: [source, base, quote, last_trade_at, trade_count_24h]
 
     MarketsEnvelope:
       allOf:
@@ -6087,6 +6066,26 @@ components:
         default_weight:     { type: integer, description: "Default per-source weight for weighted-aggregation paths (when those land)." }
         on_chain:           { type: boolean, description: "Whether the source observes the Stellar network directly (dispatcher-path ingest) rather than reading an off-chain vendor API. `false` for CEX / FX / aggregators / Chainlink (an Ethereum oracle). The explorer's Stellar-network surfaces filter on this." }
         trade_count_24h:    { type: integer, description: "Trailing-24h trade count for this source. Populated only when the request used `?include=stats`; absent (omitted) otherwise." }
+        volume_24h_usd:     { type: string, description: "Trailing-24h USD volume for this source. Decimal string. Populated only with `?include=stats`; absent otherwise (empty when the source had no priced trades)." }
+        markets_count_24h:  { type: integer, description: "Distinct (base, quote) pairs this source traded in the trailing 24h. Populated only with `?include=stats`; absent otherwise." }
+        volume_history_24h:
+          type: array
+          description: "Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled (24 entries). Populated only when the request includes `sparkline` (e.g. `?include=stats,sparkline`)."
+          items:
+            type: object
+            properties:
+              hour:       { type: string, format: date-time }
+              volume_usd: { type: string, description: "Decimal string." }
+            required: [hour, volume_usd]
+        volume_history_7d:
+          type: array
+          description: "Same per-hour shape over the trailing 7 days (168 buckets). Populated only when the request includes `sparkline7d`."
+          items:
+            type: object
+            properties:
+              hour:       { type: string, format: date-time }
+              volume_usd: { type: string, description: "Decimal string." }
+            required: [hour, volume_usd]
       required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight, on_chain]
 
     Methodology:

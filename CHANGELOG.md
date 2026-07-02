@@ -26,7 +26,32 @@ against.
   and is read by nothing — documented as do-not-use in the TWAP/OHLC methodology
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
+### Added
+- **SDK↔OpenAPI contract test** (`pkg/client/spec_contract_test.go`). Three
+  gates: every SDK method's route must exist in the spec; every spec operation
+  must be either SDK-covered or explicitly allowlisted with a reason (new
+  endpoints now fail CI until consciously triaged); and for covered endpoints
+  the spec's `data` schema properties must exactly match the SDK payload
+  struct's JSON tags in both directions. Closes the third edge of the
+  route↔spec↔SDK triangle (lint-docs.sh already reconciles routes↔spec).
+
 ### Fixed
+- **The contract test's first run caught real three-way drift, all fixed:**
+  the spec's `Price` schema documented ~19 asset-enrichment fields
+  (`market_cap_usd`, `top_markets`, `ath`, supplies, sparklines…) that the
+  /v1/price handler has never served — trimmed to the honest 8-field
+  PriceSnapshot shape; `/v1/pools` items were documented as a bare untyped
+  `object` — now a real `PoolRow` schema; the healthz schema omitted the
+  always-served `uptime`/`status_root`; the `Asset` schema omitted the served
+  `change_24h_pct`; `Source`/`MarketRow` omitted the served stats + sparkline
+  fields. **SDK (`pkg/client`)**: gained the served-but-missing fields —
+  `PriceSnapshot.confidence(+factors)`, `HistorySeries.price_type`,
+  `Source.on_chain`+stats, `Market.last_price`+sparkline, `LendingPool`
+  30d net-flow fields, `Issuer.org_verified` (CS-100 was never mirrored),
+  `Account.key_prefix`, `KeyCreated.key_prefix`, `Health.checks/status_root` —
+  and **lost `AssetDetail.is_experimental`**, which no handler and no spec ever
+  served (SDK invention; it always decoded to false). Stale `rek_` prefix
+  examples in auth comments updated to `sip_`.
 - **Load-test production guard had a collapsed host list.** The two rebrand
   sweeps mapped both legacy hosts (`api.ratesengine.net`, `api.ratesengine.io`)
   onto `api.stellarindex.io`, leaving the guard in the Makefile and
