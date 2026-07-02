@@ -4,6 +4,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
+
 	"github.com/StellarIndex/stellar-index/internal/consumer"
 	"github.com/StellarIndex/stellar-index/internal/events"
 )
@@ -31,11 +33,25 @@ type Decoder struct {
 	// obs.SourceOrphanEventsTotal in the per-ledger stats path
 	// (internal/pipeline/processor.go).
 	evictedOrphans int
+	// reg gates Matches() on contract identity (ADR-0035/0040).
+	reg *childgate.Registry
 }
 
 // NewDecoder constructs a Phoenix Decoder with a fresh buffer.
-func NewDecoder() *Decoder {
-	return &Decoder{buf: newBuffer()}
+// NewDecoder constructs a phoenix Decoder. Contract-identity gating
+// (ADR-0035/0040): the curated mainnet set (pools + stake contracts,
+// docs/protocols/phoenix.md) is ALWAYS seeded — the factory's
+// creation events predate the lake, so unlike blend the in-code seed
+// is the trust root, not a warm-start. Caller opts layer the
+// protocol_contracts DB warm + live-upsert hook on top (harmless
+// no-ops today; load-bearing if the factory ever emits a creation
+// event we can decode).
+func NewDecoder(opts ...childgate.Option) *Decoder {
+	base := []childgate.Option{
+		childgate.WithFactories([]string{MainnetFactory}),
+		childgate.WithSeed(MainnetGatedSet()),
+	}
+	return &Decoder{buf: newBuffer(), reg: childgate.New(append(base, opts...)...)}
 }
 
 // Name implements [dispatcher.Decoder].
@@ -52,9 +68,17 @@ func (*Decoder) Name() string { return SourceName }
 //   - bond / unbond (per-pool stake contracts)
 //
 // Each action's per-field correlation is independent.
-func (*Decoder) Matches(ev events.Event) bool {
+func (d *Decoder) Matches(ev events.Event) bool {
 	a, _ := classifyAny(&ev)
-	return a != actionUnknown
+	if a == actionUnknown {
+		return false
+	}
+	// ADR-0035/0040 (CS-026): topic shape alone is forgeable — any
+	// pubnet contract can publish ("swap","sender") string tuples.
+	// Only the curated phoenix set (pools + stake contracts) is
+	// attributed; a foreign emitter of the same shape is left for
+	// the recognition audit to surface.
+	return d.reg.Has(ev.ContractID)
 }
 
 // Decode implements [dispatcher.Decoder]. Routes to the per-action

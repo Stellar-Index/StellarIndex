@@ -12,8 +12,12 @@
 >   to enumerate from).
 > - **Last verified:** 2026-06-12 (r1 lake event activity; pool list from
 >   the 2026-05-01 WASM-history walk).
-> - **Gate status:** 🔎 enumerated; decoder gate pending (the curated pool
->   list below is the intended gated set).
+> - **Gate status:** ✅ Gated code-side (2026-07-02, ADR-0040 §1 mechanism 2
+>   — curated-set registry: the 11 pools + 3 stake contracts below are the
+>   in-code seed `phoenix.MainnetGatedSet`; factory creation events predate
+>   the lake so the seed is the trust root). Operator rollout remaining per
+>   ADR-0040 §2: deploy, lake re-derive, one green verdict cycle. An
+>   unlisted pool/stake contract fail-closes into a recognition gap.
 
 ## Factory & multihop
 

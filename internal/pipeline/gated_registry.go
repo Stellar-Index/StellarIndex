@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
@@ -38,6 +40,17 @@ type GatedMeta struct {
 // SoroswapPersistenceOptions. Comet is the open case (shared Balancer-v1
 // WASM, no factory namespace — ADR-0035 "Open: Comet").
 var gatedSources = map[string]GatedMeta{
+	phoenix.SourceName: {
+		// Curated-set gate (ADR-0040 §1 mechanism 2): the factory's
+		// creation events predate the lake, so the decoder's in-code
+		// seed (MainnetGatedSet) is the trust root; this entry adds
+		// the protocol_contracts warm + live-upsert hook on top
+		// (no-ops until a decodable creation event ever appears).
+		Factories:   []string{phoenix.MainnetFactory},
+		CreationSym: "create",
+		Genesis:     51_572_016,
+		NewDecoder:  func(opts ...childgate.Option) dispatcher.Decoder { return phoenix.NewDecoder(opts...) },
+	},
 	blend.SourceName: {
 		Factories:   blend.MainnetPoolFactories,
 		CreationSym: blend.EventDeploy,
