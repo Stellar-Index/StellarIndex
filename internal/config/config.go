@@ -457,13 +457,13 @@ type StorageConfig struct {
 	// CH pressure rather than stalling ingest); the catch-up timer backstops
 	// drops. Off by default — flipping it on is the real-time activation.
 	ClickHouseAddr     string `toml:"clickhouse_addr" doc:"ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink." default:"127.0.0.1:9300"`
-	ClickHouseLiveSink bool   `toml:"clickhouse_live_sink" doc:"Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. Off by default." default:"false"`
+	ClickHouseLiveSink bool   `toml:"clickhouse_live_sink" doc:"Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three." default:"true"`
 	// ClickHouseProjectorSource feed-switch (ADR-0034 #10): when true, the
 	// projector reads forward events from the CH lake's contract_events instead
 	// of the Postgres soroban_events landing zone, so soroban_events can be
 	// decommissioned. Requires the dual-sink (ClickHouseLiveSink) so CH is
 	// authoritative for forward events. Off by default.
-	ClickHouseProjectorSource bool `toml:"clickhouse_projector_source" doc:"Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. Off by default." default:"false"`
+	ClickHouseProjectorSource bool `toml:"clickhouse_projector_source" doc:"Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology." default:"true"`
 }
 
 // ColdTieringEnabled reports whether the cold-tier read path
@@ -1016,6 +1016,11 @@ func Default() Config {
 			S3AccessKeyEnv:     "STELLARINDEX_S3_ACCESS_KEY",
 			S3SecretKeyEnv:     "STELLARINDEX_S3_SECRET_KEY",
 			ClickHouseAddr:     "127.0.0.1:9300",
+			// ADR-0041: the certified-lake substrate is on by
+			// default — it backs the coverage claim, the CH
+			// completeness path, and lake-derived supply.
+			ClickHouseLiveSink:        true,
+			ClickHouseProjectorSource: true,
 		},
 		Ingestion: IngestionConfig{
 			EnabledSources:     []string{"soroswap", "aquarius", "phoenix"},

@@ -207,6 +207,40 @@ groups:
             stall the main ingest path, but discovery coverage is degrading
             under recorder pressure or buffer saturation.
 
+      - alert: stellarindex_ingestion_ch_live_sink_drops
+        expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m]) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+        annotations:
+          summary: "ClickHouse live-sink is dropping ledger extracts"
+          description: |
+            The real-time CH dual-sink dropped at least one whole ledger
+            extract in the last 10 minutes and kept doing so for 10
+            minutes. Drops are healed by the ch-live-catchup timer, so
+            this is "the heal path is being exercised abnormally" —
+            check CH health and sink buffer pressure before the lake
+            tail integrity degrades (ADR-0041).
+
+      - alert: stellarindex_ingestion_ch_live_sink_drops_sustained
+        expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h]) > 0
+        for: 1h
+        labels:
+          severity: page
+          team: stellarindex
+          component: ingestion
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+        annotations:
+          summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"
+          description: |
+            Ledger extracts have been dropping continuously for an hour.
+            ch-live-catchup is either down or cannot keep up; the
+            certified-lake tail (the coverage claim's substrate) is at
+            risk. Treat as data-loss-risk (ADR-0041).
+
       - alert: stellarindex_ingestion_insert_errors
         expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
         for: 5m
