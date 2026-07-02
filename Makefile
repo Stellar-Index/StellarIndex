@@ -129,7 +129,7 @@ test-load-guard:
 	  echo "STELLARINDEX_LOAD_API_KEY is required (mint from vault)"; exit 2; \
 	fi
 	@case "$$K6_TARGET" in \
-	  *api.stellarindex.io*|*api.stellarindex.io*|*rates.stellar.org*) \
+	  *api.stellarindex.io*|*api.ratesengine.net*|*api.ratesengine.io*|*rates.stellar.org*) \
 	    echo "Refusing to load-test production target $$K6_TARGET"; exit 2;; \
 	esac
 

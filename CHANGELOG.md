@@ -27,6 +27,13 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Fixed
+- **Load-test production guard had a collapsed host list.** The two rebrand
+  sweeps mapped both legacy hosts (`api.ratesengine.net`, `api.ratesengine.io`)
+  onto `api.stellarindex.io`, leaving the guard in the Makefile and
+  `test/load/scenarios/lib/env.js` with a duplicate entry — the legacy domains
+  (which may still route to production) were unguarded against accidental k6
+  targeting. Restored the distinct legacy hosts; verified prod + legacy are
+  refused and the documented staging target still passes.
 - **Per-row handler fan-out is now concurrency-bounded.** The catalogue
   market-cap/price fills (`/v1/assets` listings, `/v1/assets/verified`) and the
   slug-expansion markets merge spawned one goroutine + one DB round-trip per
