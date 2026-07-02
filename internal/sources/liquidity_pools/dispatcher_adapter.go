@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/StellarIndex/stellar-index/internal/supply"
+
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -32,6 +34,10 @@ var (
 func NewObserver(watched []string) (*Observer, error) {
 	if len(watched) == 0 {
 		return nil, ErrEmptyWatchSet
+	}
+	watched, err := supply.CanonicalizeWatchedClassic(watched)
+	if err != nil {
+		return nil, err
 	}
 	set := make(map[string]struct{}, len(watched))
 	for _, k := range watched {

@@ -2,6 +2,7 @@ package supply
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
@@ -33,4 +34,33 @@ func AssetKey(a canonical.Asset) (string, error) {
 	default:
 		return "", fmt.Errorf("supply: unknown asset type %q", a.Type)
 	}
+}
+
+// CanonicalizeWatchedClassic converts operator-config entries
+// (canonical "CODE-ISSUER" wire form, per the [supply]
+// watched_classic_assets doc) into the CODE:ISSUER AssetKey form the
+// classic-supply observers' decoders produce. THE BUG THIS FIXES
+// (2026-07-02, found by verify-served-values): the raw config strings
+// went straight into the observers' watched sets, so dash-form
+// entries never matched colon-form decoded keys and the trustline /
+// claimable / LP observers silently observed NOTHING — every classic
+// asset's served supply degraded to its SAC-held slice (USDC read
+// 40M vs ~266M real, an 85% under-read on the flagship stablecoin).
+// Entries already in colon form pass through; anything unparseable
+// is a loud error so a config typo can never silently zero a supply
+// component again.
+func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.Contains(e, ":") { // already CODE:ISSUER
+			out = append(out, e)
+			continue
+		}
+		a, err := canonical.ParseAsset(e)
+		if err != nil || a.Type != canonical.AssetClassic {
+			return nil, fmt.Errorf("supply: watched classic asset %q: want canonical CODE-ISSUER form: %w", e, err)
+		}
+		out = append(out, a.Code+":"+a.Issuer)
+	}
+	return out, nil
 }

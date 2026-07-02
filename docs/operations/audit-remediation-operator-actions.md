@@ -74,6 +74,26 @@ its `ExecStartPre` writes `/run/archive-completeness.env` and its report lands
 in the galexie-owned `/var/lib/galexie`; follow-up is `RuntimeDirectory=` +
 report relocation (see the unit template comment).
 
+## Classic supply under-read (found 2026-07-02 by verify-served-values)
+The trustline/claimable/LP observers matched their watched set in
+CODE:ISSUER form while the config (correctly, per its docs) supplies
+CODE-ISSUER — so all three observed NOTHING since they shipped and every
+classic asset's served supply degraded to its SAC-held slice (USDC read
+40M vs ~266M; lake supply_flows cross-check: net SAC flows 272.9M vs
+Stellar Expert 265.9M, i.e. the lake is right and the served tier was
+missing the classic trustline component entirely). Code fix landed
+(supply.CanonicalizeWatchedClassic); your half, in order:
+- [ ] Deploy the fixed indexer; confirm `trustline_observations` starts
+  filling (`stellarindex_source_events_total{source="trustlines"}` > 0).
+- [ ] **Seed historical state** — observers only see CHANGES; balances
+  that existed before the fix stay invisible until first touched. Run the
+  state seed (`stellarindex-ops state-snapshot` for the watched classic
+  assets, or a lake `ledger_entries_current` trustline derive) so the
+  supply refresher's next tick sums the full holder set.
+- [ ] Watch `verify-served-values`: the `usdc_total_supply` check should
+  drop from rel_err≈0.85 to <0.02 once both land; XLM circulating stays
+  red until `sdf_reserve_accounts` is set (separate row above).
+
 ## Disaster recovery (CS-110/111/112 — design + tooling shipped, ADR-0043; your half:)
 - [ ] **Provision the offsite bucket for `repo2`** (Hetzner Storage Box or Backblaze B2,
   ~1.1 TB for 4 fulls at today's 273 GB compressed) → set the `pgbackrest_repo2_*`
