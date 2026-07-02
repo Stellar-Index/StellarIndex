@@ -3,8 +3,9 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 
 import { Panel } from '@/components/reveal';
-import { asExample, API_BASE_URL } from '@/api/client';
+import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
+import { buildFetchData, failBuild } from '@/lib/buildFetch';
 import { formatCompact, formatPrice } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import {
@@ -37,31 +38,36 @@ import { lookupGlobalAsset, getCatalogue, type GlobalAssetView } from '../catalo
  */
 export async function generateStaticParams() {
   // Build-time fetch from the live API so every asset returned
-  // by /v1/coins (capped at 500 per page today) gets a
+  // by /v1/assets (capped at 500 per page today) gets a
   // pre-rendered route. CI builds without network connectivity
   // fall back to a single canonical slug so static export has
   // something to anchor on — Next.js refuses to build a dynamic
   // route under output:'export' with zero params.
   //
   // Native XLM is always force-included: it has no row in
-  // classic_assets so `/v1/coins?limit=500` never returns it,
-  // but the API has a special-case path for slug "XLM" / "native"
-  // (see handleCoin → GetNativeCoinRow). Without this, the most
-  // important asset on the network would 404 on the explorer.
+  // classic_assets so the listing never returns it, but the API
+  // has a special-case path for slug "XLM" / "native". Without
+  // this, the most important asset on the network would 404 on
+  // the explorer.
   const fallback = [{ slug: 'XLM' }, { slug: 'native' }];
-  // Reuse the build-time listing cache that fetchCoin populates
-  // — generateStaticParams runs first, so this is what primes
-  // the cache for the per-page renders that follow. One API call
-  // does double duty.
+  // Reuse the build-time listing cache that fetchCoin reads —
+  // generateStaticParams runs first, so this primes the cache for
+  // the per-page renders that follow. One API call does double duty.
   const cache = await getBuildCoinsCache();
   // Verified-currency catalogue slugs (us-dollar, chinese-yuan,
-  // usdc, …) aren't in /v1/coins (which only knows about Stellar-
-  // network assets), but they ARE valid /assets/[slug] routes that
-  // render the cross-chain identity view. Pull them from
-  // /v1/assets/verified so they get pre-rendered too.
+  // usdc, …) aren't in the assets listing (which only knows about
+  // Stellar-network assets), but they ARE valid /assets/[slug]
+  // routes that render the cross-chain identity view. Pull them
+  // from /v1/assets/verified so they get pre-rendered too.
   const verifiedSlugs = await fetchVerifiedSlugsForStaticParams();
-  if ((!cache || cache.size === 0) && verifiedSlugs.length === 0) {
-    return fallback;
+  if (!cache || cache.bySlug.size === 0 || verifiedSlugs.length === 0) {
+    // Real build: an empty listing or catalogue means the API is
+    // unhealthy — fail the build rather than export only the two
+    // fallback routes (fail-hard contract, src/lib/buildFetch.ts).
+    failBuild(
+      '/assets/[slug] static params: /v1/assets listing or verified catalogue came back empty',
+    );
+    return fallback; // CI stub only
   }
   // Emit BOTH cases for EVERY slug so user-typed URLs resolve
   // regardless of casing. The /v1/assets listing keys slugs uppercase
@@ -73,10 +79,9 @@ export async function generateStaticParams() {
   // API call per page).
   const seen = new Set<string>();
   const out: { slug: string }[] = [];
-  const cacheKeys = cache ? Array.from(cache.keys()) : [];
   for (const slug of [
     ...verifiedSlugs,
-    ...cacheKeys,
+    ...Array.from(cache.bySlug.keys()),
     ...fallback.map((f) => f.slug),
   ]) {
     for (const variant of [slug, slug.toLowerCase(), slug.toUpperCase()]) {
@@ -92,15 +97,13 @@ export async function generateStaticParams() {
   // so they add no per-page API load (the reason emitting asset_ids
   // previously hung the build is now removed). Single case — asset_ids
   // aren't case-variant.
-  if (buildCoinsByAssetId) {
-    for (const assetId of buildCoinsByAssetId.keys()) {
-      if (assetId && !seen.has(assetId)) {
-        seen.add(assetId);
-        out.push({ slug: assetId });
-      }
+  for (const assetId of cache.byAssetId.keys()) {
+    if (assetId && !seen.has(assetId)) {
+      seen.add(assetId);
+      out.push({ slug: assetId });
     }
   }
-  return out.length > 0 ? out : fallback;
+  return out;
 }
 
 type Params = Promise<{ slug: string }>;
@@ -203,102 +206,67 @@ type PriceResp = Partial<
  */
 // GlobalAssetView lives in ../catalogue.ts.
 
-// Static export hits every page once at build time. CI's stub
-// hostname doesn't resolve, and Node's DNS retry budget swallows
-// the AbortSignal — bypass network entirely when the URL looks
-// like a CI placeholder.
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
+// ── Build-time data layer ─────────────────────────────────────────
+// All transport goes through src/lib/buildFetch.ts: bounded
+// retry/backoff, a per-build per-URL memo (dedupes the fetches shared
+// by the ~3 casing variants + canonical asset_id route of one asset),
+// and the FAIL-HARD contract — persistent API failure throws so the
+// build fails instead of baking "Asset not found" HTML for real
+// entities. The per-page timeout/retry/memo scaffolding that used to
+// live here (and the incidents that grew it) is documented there.
 
-// 8s per fetch. The previous 2s was too aggressive — every detail
-// page was rendering "Asset not found" because the build's first
-// /v1/coins/{slug} hit (cold connection pool) timed out, fetchCoin
-// returned null, and the page render branched into the not-found
-// state. With ~500 pages × 4 fetches × 8s worst case = ~30 min,
-// well within CF Pages's 20-min build window per page (parallelised),
-// and in practice the API responds in <300ms steady-state.
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
+interface BuildCoinsCache {
+  // Keyed by the listing's canonical slug casing (USDC, AQUA, BTC).
+  bySlug: Map<string, CoinSummary>;
+  // Case-insensitive side index (lowercased slug, first row wins =
+  // highest volume on the volume-sorted listing). generateStaticParams
+  // emits lower/UPPER variants of EVERY slug, and mixed-case slugs
+  // (SolarCity, sBNB) resolve to none of exact/upper/lower — the
+  // variant pages used to silently bake the "couldn't be prerendered"
+  // fallback HTML until the fail-hard build caught it (2026-07-02).
+  bySlugCI: Map<string, CoinSummary>;
+  // Side index for canonical-id routes (/assets/USDC-GA5Z…) — kept
+  // OUT of the slug map so route generation still derives short slugs
+  // from bySlug (double-indexing one map once emitted ~1000 duplicate
+  // routes and hung the CF Pages build worker).
+  byAssetId: Map<string, CoinSummary>;
+}
 
-// Build-time listing cache. The previous per-slug fetchCoin made
-// up to 500 parallel `/v1/coins/{slug}` calls during static
-// export — even at ~300ms steady-state that's an api-side burst
-// that ran into the per-handler 8s ceiling for slugs that landed
-// during a brief slow window. The fallback "couldn't be
-// prerendered" message then baked into the HTML for the unlucky
-// slugs (XLM hit this in production).
-//
-// Fix: fetch the entire 500-row listing ONCE (with the same
-// includes the page needs), build a Map<slug, CoinSummary>, and
-// have fetchCoin read from the cache first. Falls back to the
-// per-slug retry loop only when the slug isn't in the cache
-// (e.g. a slug Next was asked about that wasn't in the listing —
-// shouldn't happen normally since generateStaticParams derives
-// from the same listing).
-let buildCoinsCachePromise:
-  | Promise<Map<string, CoinSummary> | null>
-  | null = null;
+let coinsCachePromise: Promise<BuildCoinsCache | null> | null = null;
 
-// Side index by asset_id, populated by getBuildCoinsCache. Lets
-// canonical-id routes (/assets/USDC-GA5Z…) and the catalogue resolve
-// without a per-page API call.
-let buildCoinsByAssetId: Map<string, CoinSummary> | null = null;
-
-// Build-time memo for the per-page detail + price fetches. The [slug]
-// route renders BOTH casings + the canonical asset_id of the same
-// asset, all keyed off the same asset_id — without memoising, each
-// duplicate page re-fetched /v1/assets/{id} + /v1/price, doubling the
-// build's API load (which spiked r1 on the 2026-06-19 deploy). Keyed by
-// asset_id so every page form of one asset shares one fetch.
-const buildDetailMemo = new Map<string, Promise<AssetDetail | null>>();
-const buildPriceMemo = new Map<string, Promise<PriceResp | null>>();
-
-function getBuildCoinsCache(): Promise<Map<string, CoinSummary> | null> {
-  if (buildCoinsCachePromise) return buildCoinsCachePromise;
-  buildCoinsCachePromise = (async () => {
-    if (isCIStub) return null;
-    try {
-      // Migrated to /v1/assets?limit=500 — R-018 finish. Wire shape
-      // is `{data: [AssetDetail], pagination: {next}}`. AssetDetail
-      // is a superset of CoinSummary so every read column on this
-      // page still resolves. Defensive on both shapes during the
-      // migration overlap (in case a stale build hits an older API).
-      const res = await fetch(
-        `${API_BASE_URL}/v1/assets?limit=500&include=sparkline,sparkline7d,ath`,
-        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS * 2) },
-      );
-      if (!res.ok) return null;
-      const env = (await res.json()) as {
-        data: { coins?: CoinSummary[] } | CoinSummary[];
-      };
-      const rows = Array.isArray(env.data)
-        ? env.data
-        : (env.data?.coins ?? []);
-      // Index by slug ONLY — not asset_id. The cache previously
-      // double-indexed (slug + asset_id), which made
-      // generateStaticParams emit ~1000 routes (500 short-form
-      // slugs + 500 long-form asset_ids like USDC-GA5Z…). Both
-      // routes rendered the same content; the long-form copies
-      // were duplicate static work that consistently hung the
-      // CF Pages build worker (180s × 3 retries on
-      // /assets/USDC-GA5Z…). The canonical URL is the short
-      // slug anyway; long-form navigations resolve via the same
-      // page through the API at runtime.
-      const map = new Map<string, CoinSummary>();
-      const byId = new Map<string, CoinSummary>();
-      for (const c of rows) {
-        if (c.slug) map.set(c.slug, c);
-        if (c.asset_id) byId.set(c.asset_id, c);
+// getBuildCoinsCache fetches the entire 500-row /v1/assets listing
+// ONCE per build (with the same includes the page needs) and indexes
+// it by slug + asset_id. One API call serves generateStaticParams AND
+// every per-page render — the previous per-slug fetches during export
+// burst r1's anon-tier rate limit and baked "Asset not found" for the
+// unlucky slugs (XLM hit this in production).
+function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
+  if (coinsCachePromise) return coinsCachePromise;
+  coinsCachePromise = (async () => {
+    // Wire shape is `{data: [AssetDetail]}`; defensive on the legacy
+    // `{data: {coins: […]}}` shape in case a stale build hits an older
+    // API. Double timeout — the heaviest listing call of the build.
+    const data = await buildFetchData<
+      { coins?: CoinSummary[] } | CoinSummary[]
+    >('/v1/assets?limit=500&include=sparkline,sparkline7d,ath', {
+      timeoutMs: 16_000,
+    });
+    if (!data) return null; // CI stub (a 4xx here is caught by generateStaticParams' fail-hard check)
+    const rows = Array.isArray(data) ? data : (data.coins ?? []);
+    const bySlug = new Map<string, CoinSummary>();
+    const bySlugCI = new Map<string, CoinSummary>();
+    const byAssetId = new Map<string, CoinSummary>();
+    for (const c of rows) {
+      if (c.slug) {
+        bySlug.set(c.slug, c);
+        const ci = c.slug.toLowerCase();
+        if (!bySlugCI.has(ci)) bySlugCI.set(ci, c);
       }
-      // Side index by asset_id for LOOKUP only (canonical-id routes like
-      // /assets/USDC-GA5Z…). Kept out of the slug map so route
-      // generation (cache.keys()) still emits only short slugs.
-      buildCoinsByAssetId = byId;
-      return map;
-    } catch {
-      return null;
+      if (c.asset_id) byAssetId.set(c.asset_id, c);
     }
+    return { bySlug, bySlugCI, byAssetId };
   })();
-  return buildCoinsCachePromise;
+  return coinsCachePromise;
 }
 
 // fetchVerifiedSlugsForStaticParams pulls the verified-currency
@@ -310,12 +278,10 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
   return Array.from(map.keys());
 }
 
-// fetchCoin retries up to 3x with a 500ms backoff on network /
-// 5xx errors. Build-time fetch failures previously baked
-// "Asset not found" into the static HTML for every slug rendered
-// during a bad CF Pages build window — the retry plus the client
-// fallback in the !coin branch make that scenario survivable.
-// 4xx (404 included) returns null on the first try, no retry.
+// fetchCoinDirect fetches /v1/assets/{idOrSlug} and returns the rich
+// CoinSummary (an AssetDetail superset), or null on an authoritative
+// 404 / the GlobalAssetView shape. Transport failure throws
+// (fail-hard) instead of the old return-null-and-bake-not-found.
 //
 // Shape discriminator: /v1/assets/{slug} returns TWO different
 // wire shapes (per CLAUDE.md "Things that will surprise you"):
@@ -324,53 +290,20 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 //     asset_id, NO code.
 //   - AssetDetail (canonical asset_id like "USDC-GA5Z...",
 //     "native"): keys are asset_id/code/issuer/...
-// fetchCoin only handles the AssetDetail case — when the response
-// is a GlobalAssetView shape, return null so the page routes to
-// VerifiedCurrencyView via the !coin branch. The discriminator is
-// `asset_id` being present + truthy.
-// fetchCoinDirect fetches /v1/assets/{idOrSlug} and returns the rich
-// CoinSummary (an AssetDetail superset), or null on 4xx / the
-// GlobalAssetView shape (no asset_id) / repeated failure. Retries 3×
-// with 500ms backoff on 5xx/network. Used for cache misses and the
-// XLM special-case below.
+// When the response is a GlobalAssetView shape, return null so the
+// page routes to VerifiedCurrencyView via the !coin branch. The
+// discriminator is `asset_id` being present + truthy.
 async function fetchCoinDirect(idOrSlug: string): Promise<CoinSummary | null> {
-  if (isCIStub) return null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/v1/assets/${encodeURIComponent(idOrSlug)}`,
-        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-      );
-      if (res.status >= 400 && res.status < 500) return null;
-      if (!res.ok) {
-        if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          continue;
-        }
-        return null;
-      }
-      const env = (await res.json()) as { data: CoinSummary };
-      const data = env.data ?? null;
-      // GlobalAssetView (catalogue slug) discriminator — the catalogue
-      // dispatch response has no asset_id. Treat as null so the caller
-      // renders VerifiedCurrencyView.
-      if (!data || typeof data.asset_id !== 'string' || !data.asset_id) {
-        return null;
-      }
-      return data;
-    } catch {
-      if (attempt < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        continue;
-      }
-      return null;
-    }
+  const data = await buildFetchData<CoinSummary>(
+    `/v1/assets/${encodeURIComponent(idOrSlug)}`,
+  );
+  if (!data || typeof data.asset_id !== 'string' || !data.asset_id) {
+    return null;
   }
-  return null;
+  return data;
 }
 
 async function fetchCoin(slug: string): Promise<CoinSummary | null> {
-  if (isCIStub) return null;
   const norm = slug.toLowerCase();
   // XLM / native special-case (CRITICAL FIX): a wrapped-XLM classic
   // asset ("XLM-GAE5…WXLM") ALSO carries slug "XLM" in the listing, so
@@ -388,12 +321,16 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   const cache = await getBuildCoinsCache();
   if (cache) {
     const hit =
-      cache.get(slug) ??
-      cache.get(slug.toUpperCase()) ??
-      cache.get(norm) ??
+      cache.bySlug.get(slug) ??
+      cache.bySlug.get(slug.toUpperCase()) ??
+      cache.bySlug.get(norm) ??
+      // Mixed-case canonical slugs (SolarCity, sBNB): the generated
+      // lower/UPPER variant routes resolve via the case-insensitive
+      // index.
+      cache.bySlugCI.get(norm) ??
       // Canonical asset_id route (/assets/USDC-GA5Z…) — served from the
       // asset_id side index so it needs no per-page API call.
-      buildCoinsByAssetId?.get(slug);
+      cache.byAssetId.get(slug);
     if (hit) return hit;
   }
   // Cache miss: a slug the listing didn't return — e.g. a long-tail
@@ -401,55 +338,34 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   return fetchCoinDirect(slug);
 }
 
-async function fetchAssetDetail(assetId: string): Promise<AssetDetail | null> {
-  const memo = buildDetailMemo.get(assetId);
-  if (memo) return memo;
-  const p = (async (): Promise<AssetDetail | null> => {
-    if (isCIStub) return null;
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/v1/assets/${encodeURIComponent(assetId)}`,
-        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-      );
-      if (!res.ok) return null;
-      const env = (await res.json()) as { data: AssetDetail };
-      return env.data ?? null;
-    } catch {
-      return null;
-    }
-  })();
-  buildDetailMemo.set(assetId, p);
-  return p;
+// buildFetch's per-URL memo makes the detail + price fetches one-shot
+// per build even though the casing variants + canonical-id route of
+// one asset all render off the same asset_id (unmemoised duplicates
+// spiked r1 on the 2026-06-19 deploy).
+function fetchAssetDetail(assetId: string): Promise<AssetDetail | null> {
+  return buildFetchData<AssetDetail>(
+    `/v1/assets/${encodeURIComponent(assetId)}`,
+  );
 }
 
 /**
  * fetchGlobalAsset reads from the shared build-time catalogue
- * (single /v1/assets/verified call, retried on 429, memoised at
- * module level — see ../catalogue.ts). Per-slug /v1/assets/{slug}
- * calls at build time would 429 in parallel against r1's
- * anon-tier rate limit and leave every cross-chain page rendering
- * as "Asset not found".
+ * (single /v1/assets/verified call, memoised per build — see
+ * ../catalogue.ts). Per-slug /v1/assets/{slug} calls at build time
+ * would 429 in parallel against r1's anon-tier rate limit and leave
+ * every cross-chain page rendering as "Asset not found".
  */
 async function fetchGlobalAsset(slug: string): Promise<GlobalAssetView | null> {
   return lookupGlobalAsset(slug);
 }
 
-async function fetchPriceDirect(
+function fetchPriceDirect(
   asset: string,
   quote: string,
 ): Promise<PriceResp | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: PriceResp };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+  return buildFetchData<PriceResp>(
+    `/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
+  );
 }
 
 // fetchPrice tries direct asset→USD first; on 404 it triangulates
@@ -462,14 +378,6 @@ async function fetchPriceDirect(
 // XLM (asset_id "native") short-circuits — its direct USD VWAP
 // is the canonical answer.
 async function fetchPrice(assetId: string): Promise<PriceResp | null> {
-  const memo = buildPriceMemo.get(assetId);
-  if (memo) return memo;
-  const p = fetchPriceUncached(assetId);
-  buildPriceMemo.set(assetId, p);
-  return p;
-}
-
-async function fetchPriceUncached(assetId: string): Promise<PriceResp | null> {
   if (assetId === 'native') {
     return fetchPriceDirect('native', 'fiat:USD');
   }
@@ -583,12 +491,20 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   if (!coin) {
     // No Stellar asset row for this slug. If it's a verified-currency
     // catalogue entry that doesn't trade on Stellar (us-dollar, wbtc,
-    // …), render the cross-chain identity view. Otherwise either the
-    // slug doesn't exist OR the build host couldn't reach the API —
-    // fall back to the client component to retry from the browser.
+    // …), render the cross-chain identity view.
     if (globalViewEarly) {
       return <VerifiedCurrencyView slug={slug} view={globalViewEarly} />;
     }
+    // Real build: every rendered param was promised by
+    // generateStaticParams (output:'export'), so no coin row AND no
+    // catalogue entry means the API contradicted its own listing —
+    // fail the build rather than bake a not-found shell for a real
+    // entity (fail-hard contract, src/lib/buildFetch.ts).
+    failBuild(
+      `/assets/${slug}: promised by generateStaticParams but /v1/assets returned no row`,
+    );
+    // CI stub only: render the client-side fallback so the
+    // networkless export still hydrates and retries from the browser.
     return (
       <Container className="space-y-8 py-8 sm:py-10">
         <header className="space-y-3">

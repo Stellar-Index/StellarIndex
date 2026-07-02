@@ -3,7 +3,8 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs } from '@/components/ui';
-import { asExample, API_BASE_URL } from '@/api/client';
+import { asExample } from '@/api/client';
+import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { serializeJsonLd, ogImageFor } from '@/lib/seo';
@@ -46,40 +47,30 @@ interface IssuerDetail {
   assets?: IssuedAsset[];
 }
 
-const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
-
 export async function generateStaticParams() {
   const fallback = [
     { g_strkey: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' },
   ];
-  if (isCIStub) return fallback;
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/issuers?limit=100`, {
-      signal: AbortSignal.timeout(2_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: { g_strkey: string }[] };
-    const keys = env.data?.map((i) => i.g_strkey) ?? [];
-    return keys.length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
-  } catch {
-    return fallback;
-  }
+  // Fail-hard (src/lib/buildFetch.ts): an unreachable or empty issuers
+  // listing throws so the build fails instead of exporting only the
+  // fallback route. CI-stub builds fall through to the fallback.
+  const rows = requireRows(
+    await buildFetchData<{ g_strkey: string }[]>('/v1/issuers?limit=100'),
+    '/v1/issuers listing for /issuers/[g_strkey] static params',
+  );
+  const keys = rows.map((i) => i.g_strkey).filter(Boolean);
+  return keys.length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
 }
 
-async function fetchIssuer(gStrkey: string): Promise<IssuerDetail | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/issuers/${encodeURIComponent(gStrkey)}`,
-      { signal: AbortSignal.timeout(2_000) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: IssuerDetail };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+function fetchIssuer(gStrkey: string): Promise<IssuerDetail | null> {
+  // 20s budget: issuer detail is the slowest per-entity endpoint of
+  // the export (~4s steady-state; >8s under the build's 9-worker
+  // concurrency — measured when the first fail-hard build tripped
+  // here, 2026-07-02). The old 2s timeout baked "Issuer not found".
+  return buildFetchData<IssuerDetail>(
+    `/v1/issuers/${encodeURIComponent(gStrkey)}`,
+    { timeoutMs: 20_000 },
+  );
 }
 
 interface CoinPriceRow {
@@ -91,22 +82,16 @@ interface CoinPriceRow {
 
 async function fetchIssuerCoins(gStrkey: string): Promise<Map<string, CoinPriceRow>> {
   const out = new Map<string, CoinPriceRow>();
-  if (isCIStub) return out;
-  try {
-    // Migrated to /v1/assets?issuer= (rc.47 R-018 finish). Wire
-    // shape is `{data: [AssetDetail]}` — fields match CoinPriceRow
-    // for the read columns this page renders.
-    const res = await fetch(
-      `${API_BASE_URL}/v1/assets?issuer=${encodeURIComponent(gStrkey)}&limit=500`,
-      { signal: AbortSignal.timeout(2_000) },
-    );
-    if (!res.ok) return out;
-    const env = (await res.json()) as { data?: CoinPriceRow[] };
-    for (const c of env.data ?? []) out.set(c.asset_id, c);
-    return out;
-  } catch {
-    return out;
-  }
+  // /v1/assets?issuer= (rc.47 R-018 finish). Wire shape is
+  // `{data: [AssetDetail]}` — fields match CoinPriceRow for the read
+  // columns this page renders. An empty list is legitimate (issuer
+  // with no priced assets); transport failure throws via buildFetch.
+  const rows = await buildFetchData<CoinPriceRow[]>(
+    `/v1/assets?issuer=${encodeURIComponent(gStrkey)}&limit=500`,
+    { timeoutMs: 20_000 },
+  );
+  for (const c of rows ?? []) out.set(c.asset_id, c);
+  return out;
 }
 
 export async function generateMetadata({
@@ -139,6 +124,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   ]);
 
   if (!detail) {
+    // Real build: this g_strkey was promised by generateStaticParams —
+    // a missing detail row means the API contradicted its own listing.
+    // Fail the build rather than bake "Issuer not found" for a real
+    // issuer (fail-hard contract, src/lib/buildFetch.ts). The panel
+    // below renders only on CI-stub builds.
+    failBuild(
+      `/issuers/${g_strkey}: promised by generateStaticParams but /v1/issuers returned no row`,
+    );
     return (
       <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
         <header className="space-y-3">
