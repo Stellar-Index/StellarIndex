@@ -2,6 +2,7 @@ package cctp
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
@@ -38,6 +39,20 @@ var cctpContracts = map[string]struct{}{
 	MainnetTokenMessengerMinter: {},
 	MainnetMessageTransmitter:   {},
 	MainnetCctpForwarder:        {},
+}
+
+// MainnetContracts returns the known Circle CCTP v2 contract set —
+// the recognition-attribution pin for the ADR-0033 catalogue
+// (board #31: without contract pinning, an unhandled cctp topic fell
+// into the system-wide recognition bucket instead of capping this
+// source).
+func MainnetContracts() []string {
+	out := make([]string, 0, len(cctpContracts))
+	for id := range cctpContracts {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // IsCCTPContract reports whether id is one of the known Circle CCTP v2
@@ -98,6 +113,12 @@ func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{eventFromMessageReceived(r, observedAt)}, nil
+	case EventMintAndForward:
+		m, err := DecodeMintAndForward(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromMintAndForward(m, observedAt)}, nil
 	}
 	// Unreachable while Classify and this switch stay in lockstep —
 	// Classify already returned non-empty above, and every kind it

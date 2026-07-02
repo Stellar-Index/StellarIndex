@@ -117,9 +117,17 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
 		}},
-		{name: "cctp", genesis: 62_403_000, dec: cctp.NewDecoder(), targets: []reconTarget{
-			{"cctp_events", "", []string{"cctp.event"}},
-		}},
+		{
+			name: "cctp", genesis: 62_403_000, dec: cctp.NewDecoder(),
+			// contractIDs pins recognition attribution (board #31):
+			// without it an unhandled cctp topic (mint_and_forward
+			// was one until 2026-07-02) fell into the system-wide
+			// recognition bucket instead of capping THIS source.
+			contractIDs: cctp.MainnetContracts(),
+			targets: []reconTarget{
+				{"cctp_events", "", []string{"cctp.event"}},
+			},
+		},
 		{name: "rozo", genesis: 62_403_000, dec: rozo.NewDecoder(), targets: []reconTarget{
 			{"rozo_events", "", []string{"rozo.event"}},
 		}},
