@@ -5,13 +5,15 @@ namespace: /service/
 name: {{ inventory_hostname }}
 
 restapi:
+  # CS-122: listen is the private/cluster interface (never 0.0.0.0)
+  # and the authentication block is UNCONDITIONAL — 06-patroni-configure
+  # asserts both credentials are non-empty before this template renders,
+  # so the old "omit auth when vars are empty" silent-unauth path is gone.
   listen: {{ patroni_rest_listen }}
   connect_address: {{ patroni_rest_connect_address }}
-{% if patroni_rest_basic_auth_user and patroni_rest_basic_auth_password %}
   authentication:
     username: {{ patroni_rest_basic_auth_user }}
     password: {{ patroni_rest_basic_auth_password }}
-{% endif %}
 
 etcd3:
   hosts:

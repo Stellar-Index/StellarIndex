@@ -4,6 +4,28 @@
 # already running, skip overwriting — operators amend live config
 # via `patronictl edit-config`.
 
+- name: assert REST API basic-auth credentials are set (CS-122)
+  # The REST API's mutating endpoints (/switchover, /failover,
+  # /restart, /reinitialize = datadir wipe) are unauthenticated
+  # unless basic auth is configured. This assert lives HERE — next
+  # to the render — rather than only in 01-preflight, so a partial
+  # run (`--tags config`) can never render an unauthenticated
+  # config.
+  assert:
+    that:
+      - patroni_rest_basic_auth_user is defined
+      - patroni_rest_basic_auth_user | length > 0
+      - patroni_rest_basic_auth_password is defined
+      - patroni_rest_basic_auth_password | length > 0
+    fail_msg: >-
+      patroni_rest_basic_auth_user + patroni_rest_basic_auth_password
+      must be non-empty (set them from vault, e.g.
+      inventory/<region>.secrets.yml). Refusing to render a Patroni
+      REST API without basic auth — its mutating endpoints
+      (/switchover, /failover, /reinitialize) would be open to the
+      whole internal range (CS-122, audit-2026-06-30).
+  no_log: true
+
 - name: detect existing Patroni state
   uri:
     url: "http://127.0.0.1:8008/cluster"

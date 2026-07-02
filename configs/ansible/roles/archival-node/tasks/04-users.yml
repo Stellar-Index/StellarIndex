@@ -3,6 +3,20 @@
 # UID with no login shell. Ownership of ZFS dataset mountpoints is
 # fixed here once users exist.
 
+- name: Service user — stellarindex
+  # CS-119 (audit-2026-06-30): this user was referenced by unit files
+  # and chowns (10-observability textfile dir, the hardened units in
+  # deploy/systemd/) but never created, so a clean apply / DR rebuild
+  # failed. Created FIRST, before anything installs or chowns.
+  # /var/lib/stellarindex is the "os" ZFS dataset mountpoint (03-zfs).
+  ansible.builtin.user:
+    name: stellarindex
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/stellarindex
+    create_home: false
+    state: present
+
 - name: Service user — stellar
   ansible.builtin.user:
     name: stellar
@@ -30,6 +44,17 @@
     create_home: false
     state: present
   when: run_minio | bool
+
+- name: Ownership — stellarindex data dir
+  # WorkingDirectory + verify-archive state file + deployed-versions
+  # sidecars live here. deploy-one-binary.yml writes the sidecars as
+  # root, which still works inside a stellarindex-owned dir.
+  ansible.builtin.file:
+    path: /var/lib/stellarindex
+    state: directory
+    owner: stellarindex
+    group: stellarindex
+    mode: "0750"
 
 - name: Ownership — stellar-core data dir
   ansible.builtin.file:

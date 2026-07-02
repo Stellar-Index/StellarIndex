@@ -27,10 +27,11 @@ Environment=COMPLETENESS_CHUNK=25000
 
 ExecStart=/usr/local/sbin/run-compute-completeness.sh
 
-# Runs as root for consistency with the stellarindex-* daemons (the in-repo
-# unit set User=stellarindex but r1 has no such user yet — F-1205).
-User=root
-Group=root
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). Talks Postgres + ClickHouse over the
+# loopback only; writes nothing to disk.
+User=stellarindex
+Group=stellarindex
 
 # Read-only most of the filesystem; the driver writes nothing to disk (it
 # talks to Postgres + ClickHouse over the loopback only).

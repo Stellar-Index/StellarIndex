@@ -34,9 +34,10 @@ ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   -timeout ${RUN_TIMEOUT} \
   ${EXTRA_FLAGS}
 
-# Runs as root for consistency with the stellarindex-* daemons (F-1205).
-User=root
-Group=root
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). Only reads config + writes Postgres.
+User=stellarindex
+Group=stellarindex
 
 # Read-only filesystem — the refresh only reads config + writes to Postgres.
 ProtectSystem=strict

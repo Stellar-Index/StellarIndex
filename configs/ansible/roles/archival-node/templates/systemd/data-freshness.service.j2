@@ -19,8 +19,11 @@ Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/data_fresh
 
 ExecStart=/usr/local/sbin/data-freshness.sh
 
-User=root
-Group=root
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). The textfile_collector dir is
+# stellarindex-owned (10-observability.yml), so the .prom emit still works.
+User=stellarindex
+Group=stellarindex
 
 # Read-only except the textfile collector dir it writes the .prom to.
 ProtectSystem=strict

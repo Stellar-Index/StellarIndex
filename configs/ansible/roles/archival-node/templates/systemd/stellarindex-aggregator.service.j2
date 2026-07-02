@@ -1,3 +1,13 @@
+# Rendered by Ansible (archival-node role).
+#
+# CS-118 (audit-2026-06-30): runs de-privileged as the stellarindex
+# service user with the hardening block from the in-repo unit at
+# deploy/systemd/stellarindex-aggregator.service (which was drifting
+# unused while this template ran the daemon as root). The
+# stellarindex user is created by 04-users.yml (CS-119).
+# EnvironmentFile is read by systemd (PID 1), not the service user;
+# it stays 0640 root:stellarindex.
+
 [Unit]
 Description=Stellar Index — aggregator (VWAP/TWAP/divergence/freeze/supply tick)
 After=network-online.target postgresql@{{ postgres_version }}-main.service redis-server.service stellarindex-indexer.service
@@ -5,7 +15,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=stellarindex
+Group=stellarindex
 WorkingDirectory=/var/lib/stellarindex
 EnvironmentFile=/etc/default/stellarindex
 ExecStart=/usr/local/bin/stellarindex-aggregator -config /etc/stellarindex.toml
@@ -15,10 +26,15 @@ LimitNOFILE=1048576
 Restart=on-failure
 RestartSec=10s
 
+# Hardening — read-only most of the filesystem, write only the
+# working dir. Mirrors deploy/systemd/stellarindex-aggregator.service.
 NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+ReadWritePaths=/var/lib/stellarindex
 
 [Install]
 WantedBy=multi-user.target

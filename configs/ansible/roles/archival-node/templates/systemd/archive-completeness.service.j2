@@ -2,8 +2,7 @@
 #
 # Rendered by Ansible. Reflects r1's EFFECTIVE running config — the
 # base unit plus the compute-to.conf + override.conf drop-ins are
-# folded directly into this template (the role runs every
-# stellarindex-* unit as root, and ARCHIVE_TO must be computed at
+# folded directly into this template (ARCHIVE_TO must be computed at
 # start time or the verify is a no-op).
 #
 # Per ADR-0017 §"Daily completeness cron". Runs once on each timer
@@ -40,9 +39,12 @@ ExecStart=/usr/local/bin/stellarindex-ops archive-completeness verify \
   -textfile-output ${TEXTFILE_OUTPUT} \
   -output-file ${REPORT_OUTPUT}
 
-# Runs as root for consistency with the stellarindex-* daemons (the
-# in-repo unit set User=stellarindex but r1 has no such user yet —
-# F-1205, audit-2026-05-12).
+# Still root — the only stellarindex-* unit left as root after CS-118
+# (audit-2026-06-30) de-privileged the rest: ExecStartPre writes
+# /run/archive-completeness.env (needs RuntimeDirectory= plumbing to move)
+# and REPORT_OUTPUT lands in the galexie-owned /var/lib/galexie. Follow-up:
+# RuntimeDirectory=archive-completeness + relocate the report, then flip
+# to User=stellarindex like the sibling units.
 User=root
 Group=root
 
