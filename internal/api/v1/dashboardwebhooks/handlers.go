@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
+	"github.com/StellarIndex/stellar-index/internal/httpx"
 	"github.com/StellarIndex/stellar-index/internal/nettools"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 )
@@ -154,7 +155,7 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	for _, hk := range hooks {
 		out.Webhooks = append(out.Webhooks, toDTO(hk))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type createRequest struct {
@@ -247,7 +248,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	writeJSON(w, http.StatusCreated, createResponse{Webhook: toDTO(out), Secret: secret})
+	httpx.WriteJSON(w, http.StatusCreated, createResponse{Webhook: toDTO(out), Secret: secret})
 }
 
 type updateRequest struct {
@@ -320,7 +321,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := h.cfg.Webhooks.GetWebhook(r.Context(), id)
-	writeJSON(w, http.StatusOK, toDTO(updated))
+	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
 // HandleDelete removes the webhook + cascades to deliveries.
@@ -373,7 +374,7 @@ func (h *Handlers) HandleListDeliveries(w http.ResponseWriter, r *http.Request) 
 	for _, d := range deliveries {
 		out.Deliveries = append(out.Deliveries, toDeliveryDTO(d))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // ─── helpers ────────────────────────────────────────────────────
@@ -578,26 +579,10 @@ func generateSecret() (string, error) {
 	return "wsec_" + hex.EncodeToString(buf[:]), nil
 }
 
-// ─── response helpers (mirror dashboardkeys' pattern) ──────────
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
+// ─── response helpers (shared httpx; type URL pinned here) ─────
 
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type":     "https://api.stellarindex.io/errors/dashboard",
-		"title":    http.StatusText(status),
-		"status":   status,
-		"detail":   detail,
-		"instance": instance,
-	})
+	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/dashboard", status, detail, instance)
 }
 
 // shaPlaceholder keeps crypto/sha256 import live in case future
