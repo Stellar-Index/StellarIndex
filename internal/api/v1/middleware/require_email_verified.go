@@ -87,6 +87,9 @@ func writeEmailUnverified(w http.ResponseWriter, r *http.Request) {
 		body = []byte(`{"title":"Email verification required","status":403}`)
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	// Per-key denial on a per-URL cache key — never shared-cacheable
+	// (overrides the route directive CacheControl pre-set).
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-StellarIndex-Signup-Verify-Required", "true")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write(body)
