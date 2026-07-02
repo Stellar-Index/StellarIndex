@@ -34,10 +34,13 @@ these wait for you.
   out of the repo dir; rotate if it was ever shared; confirm the SA is still used.
 
 ## Set config values (code is ready; values are yours)
-- [ ] **Set `sdf_reserve_accounts` (+ their balances) in the r1 inventory** (CS-010). The
-  code now emits an honest `xlm_total_only` basis when the list is empty (so the "+58%
-  market cap" no longer *lies*), but the *correct* circulating supply needs SDF's
-  directed/reserve account list. This is the config half of the XLM fix.
+- [x] **`sdf_reserve_accounts` — DONE 2026-07-02 (agent, with evidence).** The 16
+  accounts from SDF's own dashboard source (stellar/dashboard common/lumens.js:
+  escrows, direct development, growth, product+innovation, assets+liquidity,
+  network upgrade reserve) + lake-read balances; the sum matches SDF's published
+  mandate+upgradeReserve to 4e-13. Live result: served circulating 33.99B vs
+  SDF 33.98B (rel_err 0.0003 — the residual is the protocol fee pool, ~0.03%,
+  not an account). verify-served-values pins it green continuously.
 - [ ] **Re-raise `min_usd_volume` to the 10000 default** once CEX/CoinGecko data flows
   (currently 0 to serve on-chain-only micro-volume; CS-040 makes the gate scale-correct).
 
@@ -83,16 +86,14 @@ classic asset's served supply degraded to its SAC-held slice (USDC read
 Stellar Expert 265.9M, i.e. the lake is right and the served tier was
 missing the classic trustline component entirely). Code fix landed
 (supply.CanonicalizeWatchedClassic); your half, in order:
-- [ ] Deploy the fixed indexer; confirm `trustline_observations` starts
-  filling (`stellarindex_source_events_total{source="trustlines"}` > 0).
-- [ ] **Seed historical state** — observers only see CHANGES; balances
-  that existed before the fix stay invisible until first touched. Run the
-  state seed (`stellarindex-ops state-snapshot` for the watched classic
-  assets, or a lake `ledger_entries_current` trustline derive) so the
-  supply refresher's next tick sums the full holder set.
-- [ ] Watch `verify-served-values`: the `usdc_total_supply` check should
-  drop from rel_err≈0.85 to <0.02 once both land; XLM circulating stays
-  red until `sdf_reserve_accounts` is set (separate row above).
+- [x] Deploy — DONE 2026-07-02 (v0.7.0): all five observers wired; trustlines
+  observed 6,260 events in the first 45 seconds.
+- [x] **Historical state seed — DONE 2026-07-03 (agent).** Full checkpoint
+  state-snapshot (48M entries) into the lake, then 2.69M trustline rows
+  seeded into `trustline_observations` for the 8 watched assets from
+  `ledger_entries_current FINAL`.
+- [x] **verify-served-values: ALL GREEN 2026-07-03** — xlm_total 4e-7,
+  xlm_circulating 3e-4, usdc_total 1.3e-3 (served 272.84M vs SE 272.49M).
 
 ## Disaster recovery (CS-110/111/112 — design + tooling shipped, ADR-0043; your half:)
 - [ ] **Provision the offsite bucket for `repo2`** (Hetzner Storage Box or Backblaze B2,
@@ -138,10 +139,10 @@ operator can supply — a gate on an UNCONFIRMED factory either drops real trade
       ADR-0040 §3 enumeration (creation-op chain + wasm-hash cross-check),
       or the team answers the page's open question (factory view /
       authoritative list).
-- [ ] **cctp `mint_and_forward` catch-up** — the event decodes as of
-      2026-07-02 (board #31) but historical occurrences (from genesis
-      62,403,000) predate the fix: run `projector-replay -source cctp
-      -from 62403000` after deploy.
+- [x] **cctp `mint_and_forward` catch-up — DONE 2026-07-03 (agent).** The
+      rollout found TWO more gating layers (migration 0038's SQL CHECK +
+      the storage enum) → migration 0070 + v0.7.1 patch release + replay;
+      1,577 historical rows persisted, all five event types live.
 - [ ] **aquarius** — pin the complete pool set (docs/protocols/aquarius.md: "pool
       enumeration not yet pinned"). Until enumerated, no gate is possible.
 - [ ] **comet** — has NO factory namespace (shared `("POOL",…)` topic). Decide the

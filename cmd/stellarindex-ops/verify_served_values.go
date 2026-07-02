@@ -122,7 +122,7 @@ func servedValueChecks() []servedValueCheck {
 		},
 		{
 			name: "xlm_circulating_supply", tolerance: 0.02,
-			note:   "vs SDF lumen API circulatingSupply; served basis may be xlm_total_only until sdf_reserve_accounts is configured (CS-010 config half) — tolerance widens to 100% then, the check still records rel_err for trend",
+			note:   "vs SDF lumen API circulatingSupply. sdf_reserve_accounts configured 2026-07-02 (16 accounts from stellar/dashboard common/lumens.js; lake-verified to 4e-13) — residual ≈ the protocol fee pool (~0.03%), which is not an account and is deliberately not excluded.",
 			served: servedSupplyField("native", "circulating_supply", 7),
 			truth:  lumenAPIField("circulatingSupply"),
 		},
