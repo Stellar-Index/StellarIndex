@@ -38,6 +38,25 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **ADR-0042 (Proposed): the v1 wire shape.** The decision package for the
+  public flip, awaiting @ash sign-off: execute the Unit-D Tier-3 cross-chain
+  wire collapse pre-flip (rejecting the freeze fallback — pre-v1 with zero
+  consumers is the only free moment), give the dual-shape `/v1/assets/{slug}`
+  an explicit `kind` discriminator (`catalogue`/`stellar_asset`, oneOf +
+  typed SDK union, explorer stops shape-sniffing), and define the v1.0 freeze
+  contract: spec = the contract, SDK-coverage register = honest SDK scope,
+  explorer surfaces marked `x-stability: experimental` at v1.0.
+- **Ansible: non-root services + the missing system user (CS-118/119/122).**
+  The `stellarindex` user is now created FIRST in the role (a clean apply
+  previously FAILED chowning to a user that never existed); the api /
+  indexer / aggregator daemons and six timer oneshots run
+  `User=stellarindex` with the hardened-unit settings ported into the
+  role's real templates; env files go `0640 root:stellarindex`;
+  `archive-completeness` deliberately stays root (documented follow-up).
+  Patroni's REST API now defaults to the private interface and REFUSES to
+  render without basic-auth credentials (assert + unconditional auth block)
+  so it can never land unauthenticated on 0.0.0.0. Ordered r1 migration
+  steps live in the operator register; deploy workflow verified compatible.
 - **`stellarindex-ops verify-served-values` — the data-truth harness.** The
   recurring audit theme was "code-correct ≠ data-correct" (CS-010: XLM market
   cap read +58% until hand-sampled). The new subcommand reconciles a curated
