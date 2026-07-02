@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
@@ -631,24 +630,11 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 		rows []Market
 		err  error
 	}
-	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		results []result
-	)
-	results = make([]result, len(assets))
-	for i, a := range assets {
-		i, a := i, a
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			rows, _, err := reader.AssetMarkets(ctx, a, "", limit, order)
-			mu.Lock()
-			results[i] = result{rows: rows, err: err}
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
+	results := make([]result, len(assets))
+	forEachBounded(len(assets), readFanoutConcurrency, func(i int) {
+		rows, _, err := reader.AssetMarkets(ctx, assets[i], "", limit, order)
+		results[i] = result{rows: rows, err: err} // distinct indices — no mutex needed
+	})
 	// Surface the first error if any. We don't fail-fast on partial
 	// success because a single asset_id with no recent trades is
 	// not an error condition — it just contributes zero rows.
