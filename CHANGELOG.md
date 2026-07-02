@@ -27,6 +27,17 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **Prometheus rule-tree semantic differ** (`scripts/ci/lint-rule-equivalence`,
+  wired into `make monitoring-check`). The multi-host and r1-overlay rule
+  trees are hand-maintained near-copies; file pairing was checked but nothing
+  enforced that paired rules stay semantically equivalent — a threshold fixed
+  in one tree silently diverged the other (the api.yml header has warned about
+  this since F-1222). The differ compares every paired rule's expr (job labels
+  normalized), `for`, and `labels`; the two genuine host-shape divergences
+  (redis replica expectation, scrape-job list) live in a shrink-only
+  `rule-equivalence.baseline` covered by the CS-098 growth guard.
+  Probe-verified: a one-line `for:` change in one tree fails with a precise
+  diagnosis.
 - **Pipeline lockstep guard** (`internal/pipeline/lockstep_ast_test.go`). The
   five hand-synced wiring sites (HandleEvent / IsProjectedEvent /
   tradeFromEvent / projector `buildSource` / dispatcher registration) had no

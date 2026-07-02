@@ -1,0 +1,10 @@
+# Intentional semantic divergences between the two Prometheus rule
+# trees (deploy/monitoring/rules ↔ configs/prometheus/rules.r1),
+# checked by scripts/ci/lint-rule-equivalence.
+#
+# Format: <file>:<rule>[:<field>]  # reason
+# Shrink-only: stale entries fail the lint; ADDING an entry requires
+# a `Baseline-Growth:` commit trailer (lint-baseline-growth.sh).
+
+cache.yml:stellarindex_redis_replication_broken:expr  # multi-host asserts >=2 replicas; single-host r1 compares against its own redis_expected_slaves recording (0 on one box)
+meta.yml:stellarindex_prometheus_scrape_failing:expr  # the job list mirrors each deployment's scrape config: r1 scrapes prometheus/caddy/galexie directly and its exporter set differs from the ansible multi-host template

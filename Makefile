@@ -240,6 +240,12 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@# has a producer. This guard catches dead stellarindex_* references
 	@# (an alert that can never fire because nothing emits its metric).
 	@./scripts/ci/lint-metric-refs.sh
+	@# The two trees are hand-maintained near-copies; presence pairing
+	@# is lint-docs.sh's job, but nothing checked they stay
+	@# SEMANTICALLY equivalent (expr/for/labels, job labels
+	@# normalized). Intentional host-shape divergences live in
+	@# scripts/ci/rule-equivalence.baseline (shrink-only, growth-guarded).
+	@go run ./scripts/ci/lint-rule-equivalence deploy/monitoring/rules configs/prometheus/rules.r1 scripts/ci/rule-equivalence.baseline
 
 .PHONY: vuln
 vuln: ## Run govulncheck against the module
