@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
+import type { components, paths } from '@/api/types';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
@@ -41,50 +42,20 @@ const LEDGER_STREAM_REOPEN_MS = 60_000;
 // flap on a single missed close. (WB-04)
 const LEDGER_STREAM_STALE_MS = 60_000;
 
+// Client-side status union: the wire's StatusResponse.overall is
+// "ok" | "degraded" | "down"; "unknown" is this page's local state
+// before the first successful poll.
 type ServiceStatus = 'ok' | 'degraded' | 'down' | 'unknown';
 
-interface ServiceEntry {
-  name: string;
-  status: ServiceStatus;
-  last_seen?: string;
-}
+// Wire shapes from the generated OpenAPI contract (src/api/types.ts,
+// `make web-generate-api`).
+type ServiceEntry = components['schemas']['StatusService'];
 
-interface IncidentEntry {
-  name: string;
-  severity: 'page' | 'ticket' | 'informational';
-  runbook_url?: string;
-  description?: string;
-}
+type IncidentEntry = components['schemas']['ActiveIncident'];
 
-interface StatusResponse {
-  overall: ServiceStatus;
-  region: { name: string; deployment: string };
-  services: ServiceEntry[];
-  latency: {
-    p50_ms: number;
-    p95_ms: number;
-    p99_ms: number;
-    window_secs: number;
-  };
-  freshness: {
-    last_aggregator_tick: string;
-    active_sources: number;
-    total_sources: number;
-  };
-  incidents: {
-    active_count: number;
-    page_count: number;
-    ticket_count: number;
-    informational_count: number;
-    active: IncidentEntry[];
-  };
-}
+type StatusResponse = components['schemas']['StatusResponse'];
 
-interface Envelope {
-  data: StatusResponse;
-  as_of: string;
-  flags: { stale?: boolean };
-}
+type Envelope = components['schemas']['StatusEnvelope'];
 
 // REGIONS is the deployment fleet the status page queries. One
 // entry today (r1); r2/r3 join as their deploys land — just append
@@ -109,80 +80,42 @@ const REGIONS: RegionDef[] = [
 // `/v1/diagnostics/ingestion`. Field-for-field with the Go
 // IngestionDiagnostics struct — see
 // `internal/api/v1/diagnostics_ingestion.go`.
-interface IngestionSnapshot {
-  region: { name: string; deployment: string };
-  version: {
-    version: string;
-    build_date: string;
-    commit: string;
-    dirty: string;
-    go_version: string;
-  };
-  ledger: {
-    latest_ledger: number;
-    lag_seconds: number;
-    volume_24h_usd?: string;
-    markets_count_24h: number;
-    assets_indexed: number;
-  };
-  backfill: Array<{
-    decoder: string;
-    ranges_total: number;
-    ranges_complete: number;
-    ranges_running: number;
-    ranges_stalled: number;
-    ranges_active: number;
-    oldest_updated_at?: string;
-    oldest_lag_seconds: number;
-    newest_ledger: number;
-  }>;
-  backfill_coverage: Array<{
-    source: string;
-    applies: boolean;
-    genesis_ledger?: number;
-    earliest_ledger?: number;
-    latest_ledger?: number;
-    entries: number;
-    coverage_pct?: number;
-    density_pct?: number;
-    gap_free_pct?: number;
-    covered_ledgers?: number;
-    expected_ledgers?: number;
-    // ADR-0033 Phase 6: watermark-based completeness (substrate +
-    // projection verified, no sparsity threshold). Preferred headline
-    // when present; falls back to gap_free coverage otherwise.
-    completeness_pct?: number;
-    completeness_watermark?: number;
-    completeness_complete?: boolean;
-  }>;
-  backfill_coverage_as_of?: string;
-  fx_backfill: {
-    earliest_quote?: string;
-    latest_quote?: string;
-    total_quotes: number;
-    currencies_count: number;
-  };
-  supply: {
-    classic_assets_with_supply: number;
-    sep41_assets_with_supply: number;
-    last_snapshot_at?: string;
-    latest_ledger?: number;
-  };
-  sources: Array<{
-    name: string;
-    class: string;
-    subclass?: string;
-    include_in_vwap: boolean;
-    backfill_safe: boolean;
-    trade_count_24h: number;
-    // entries_24h: universal trailing-24h per-source event count
-    // (stellarindex_source_events_total). Non-zero for every active
-    // source, unlike trade_count_24h (trades-table only).
-    entries_24h: number;
-    volume_24h_usd?: string;
-    markets_count_24h: number;
-  }>;
-}
+// IngestionSnapshot — `/v1/diagnostics/ingestion` body from the
+// generated contract, plus the SPEC-GAP fields below that the Go
+// handler serves (internal/api/v1/diagnostics_ingestion.go) but the
+// spec's inline schema doesn't declare yet.
+type IngestionSnapshotWire = (paths['/diagnostics/ingestion']['get']['responses'][200]['content']['application/json'])['data'];
+
+type IngestionSnapshot = Omit<
+  IngestionSnapshotWire,
+  'backfill_coverage' | 'sources'
+> & {
+  backfill_coverage: Array<
+    IngestionSnapshotWire['backfill_coverage'][number] & {
+      // SPEC-GAP: density/gap-free coverage fields
+      // (diagnostics_ingestion.go BackfillCoverageView).
+      density_pct?: number;
+      gap_free_pct?: number;
+      covered_ledgers?: number;
+      expected_ledgers?: number;
+      // SPEC-GAP: ADR-0033 Phase 6 watermark-based completeness
+      // (substrate + projection verified, no sparsity threshold).
+      // Preferred headline when present; falls back to gap_free
+      // coverage otherwise.
+      completeness_pct?: number;
+      completeness_watermark?: number;
+      completeness_complete?: boolean;
+    }
+  >;
+  sources: Array<
+    IngestionSnapshotWire['sources'][number] & {
+      // SPEC-GAP: entries_24h — universal trailing-24h per-source event
+      // count (stellarindex_source_events_total). Non-zero for every
+      // active source, unlike trade_count_24h (trades-table only).
+      entries_24h: number;
+    }
+  >;
+};
 
 // Public-facing endpoints we surface on the status page.
 // Not auto-derived from the OpenAPI spec because not every
@@ -657,7 +590,7 @@ export default function StatusPageClient({
           <LatencyStrip latency={status.latency} />
           <FreshnessRow freshness={status.freshness} />
           <IngestionRegions regions={REGIONS} snapshots={ingestionByRegion} />
-          <ActiveIncidents incidents={status.incidents.active} />
+          <ActiveIncidents incidents={status.incidents?.active ?? []} />
         </>
       )}
       {/* EndpointMatrix and IncidentHistory render UNCONDITIONALLY —
@@ -781,13 +714,15 @@ function ServiceCard({ service }: { service: ServiceEntry }) {
 function LatencyStrip({ latency }: { latency: StatusResponse['latency'] }) {
   return (
     <section>
-      <SectionHead aside={`${Math.round(latency.window_secs / 60)}-min window`}>
+      <SectionHead
+        aside={`${Math.round((latency?.window_secs ?? 0) / 60)}-min window`}
+      >
         Request latency
       </SectionHead>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <LatencyCell label="p50" value={latency.p50_ms} target={50} />
-        <LatencyCell label="p95" value={latency.p95_ms} target={200} />
-        <LatencyCell label="p99" value={latency.p99_ms} target={500} />
+        <LatencyCell label="p50" value={latency?.p50_ms ?? 0} target={50} />
+        <LatencyCell label="p95" value={latency?.p95_ms ?? 0} target={200} />
+        <LatencyCell label="p99" value={latency?.p99_ms ?? 0} target={500} />
       </div>
     </section>
   );
@@ -838,10 +773,10 @@ function FreshnessRow({
 }: {
   freshness: StatusResponse['freshness'];
 }) {
+  const activeSources = freshness?.active_sources ?? 0;
+  const totalSources = freshness?.total_sources ?? 0;
   const sourcePct =
-    freshness.total_sources > 0
-      ? (freshness.active_sources / freshness.total_sources) * 100
-      : 0;
+    totalSources > 0 ? (activeSources / totalSources) * 100 : 0;
   return (
     <section>
       <SectionHead>Ingest freshness</SectionHead>
@@ -851,7 +786,7 @@ function FreshnessRow({
             Last aggregator tick
           </div>
           <div className="mt-1 font-mono text-sm text-ink">
-            {timeSince(freshness.last_aggregator_tick)} ago
+            {timeSince(freshness?.last_aggregator_tick ?? '')} ago
           </div>
         </Card>
         <Card className="p-4">
@@ -860,10 +795,10 @@ function FreshnessRow({
           </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="tnum text-2xl font-semibold text-ink">
-              {freshness.active_sources}
+              {activeSources}
             </span>
             <span className="text-sm text-ink-muted">
-              / {freshness.total_sources}
+              / {totalSources}
             </span>
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle">

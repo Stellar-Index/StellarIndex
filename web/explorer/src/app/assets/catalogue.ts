@@ -15,28 +15,19 @@
  */
 
 import { API_BASE_URL } from '@/api/client';
+import type { components } from '@/api/types';
 
-export interface GlobalAssetView {
-  ticker: string;
-  slug: string;
-  name: string;
-  description?: string;
-  class?: 'fiat' | 'crypto' | 'stablecoin';
-  verified_issuer?: string;
-  coingecko_id?: string;
-  coinmarketcap_id?: string;
-  price_usd?: string | null;
-  price_authority?: 'vwap_native' | 'aggregator_avg' | 'triangulated';
-  price_sources?: string[];
-  price_as_of?: string | null;
-}
+// Wire shapes from the generated OpenAPI contract (src/api/types.ts).
+type VerifiedCurrencyListItem = components['schemas']['VerifiedCurrencyListItem'];
 
-interface VerifiedCurrencyListItem {
-  ticker: string;
-  slug: string;
-  name: string;
-  class?: string;
-}
+export type GlobalAssetView = components['schemas']['GlobalAssetView'] & {
+  // SPEC-GAP: /v1/assets/{slug}'s GlobalAssetView carries `class`
+  // (internal/api/v1/assets_global.go GlobalAssetView.Class, required)
+  // but the spec's GlobalAssetView schema omits it. Optional here
+  // because this catalogue map is also built from the /v1/assets/verified
+  // listing where the field is copied over client-side.
+  class?: VerifiedCurrencyListItem['class'];
+};
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
@@ -79,7 +70,7 @@ async function fetchCatalogueWithRetry(): Promise<Map<string, GlobalAssetView>> 
           ticker: item.ticker,
           slug: item.slug,
           name: item.name,
-          class: item.class as GlobalAssetView['class'],
+          class: item.class,
         });
       }
       return map;

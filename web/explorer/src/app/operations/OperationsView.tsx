@@ -7,31 +7,17 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
-import { type Envelope, formatTimestamp } from '../explorer-shared';
+import { type Envelope, type TxOperation, formatTimestamp } from '../explorer-shared';
+import type { paths } from '@/api/types';
 
-interface OpView {
-  ledger: number;
-  close_time: string;
-  tx_hash: string;
-  tx_index: number;
-  op_index: number;
-  type: string;
-  source_account?: string;
-  fields?: Record<string, unknown>;
-  raw_xdr?: string;
-}
+// GET /v1/operations response body + row shapes from the generated
+// OpenAPI contract (src/api/types.ts, `make web-generate-api`). Rows
+// are the spec Operation schema (aliased TxOperation in explorer-shared).
+type OperationsResp = NonNullable<
+  paths['/operations']['get']['responses'][200]['content']['application/json']['data']
+>;
 
-interface OpTypeStat {
-  type: string;
-  count: number;
-}
-
-interface OperationsResp {
-  ledger: number;
-  operations: OpView[];
-  next_cursor?: string;
-  op_type_stats?: OpTypeStat[];
-}
+type OpView = TxOperation;
 
 const PAGE_SIZE = 50;
 
@@ -90,7 +76,7 @@ export function OperationsView() {
                 className="inline-flex items-center gap-1.5 rounded-sm bg-surface-muted px-2 py-1 text-ink-body"
               >
                 <code className="font-mono">{s.type}</code>
-                <span className="text-ink-muted">{formatCompact(s.count)}</span>
+                <span className="text-ink-muted">{formatCompact(s.count ?? 0)}</span>
               </span>
             ))}
           </div>
@@ -160,7 +146,7 @@ export function OperationsView() {
                         href={`/ledgers/${op.ledger}/`}
                         className="font-mono tabular-nums text-xs text-ink-body hover:text-brand-600"
                       >
-                        {op.ledger.toLocaleString()}
+                        {(op.ledger ?? 0).toLocaleString()}
                       </Link>
                     </td>
                     <td className="px-4 py-3">
@@ -169,7 +155,7 @@ export function OperationsView() {
                         className="font-mono text-xs text-brand-600 hover:underline"
                         title={op.tx_hash}
                       >
-                        {op.tx_hash.slice(0, 8)}…
+                        {(op.tx_hash ?? '').slice(0, 8)}…
                       </Link>
                     </td>
                     <td className="px-4 py-3 font-mono text-[11px] text-ink-muted">

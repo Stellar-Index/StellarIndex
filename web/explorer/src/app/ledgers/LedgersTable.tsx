@@ -71,7 +71,8 @@ export function LedgersTable() {
       </Panel>
     );
   }
-  if (data.ledgers.length === 0) {
+  const ledgers = data.ledgers ?? [];
+  if (ledgers.length === 0) {
     return (
       <Panel
         title="Ledgers"
@@ -83,12 +84,12 @@ export function LedgersTable() {
     );
   }
 
-  const newest = data.ledgers[0]?.sequence;
-  const oldest = data.ledgers[data.ledgers.length - 1]?.sequence;
+  const newest = ledgers[0]?.sequence;
+  const oldest = ledgers[ledgers.length - 1]?.sequence;
 
   return (
     <Panel
-      title={`${data.ledgers.length} ledgers`}
+      title={`${ledgers.length} ledgers`}
       hint={
         newest != null && oldest != null
           ? `#${oldest.toLocaleString()} → #${newest.toLocaleString()}`
@@ -109,7 +110,7 @@ export function LedgersTable() {
             </tr>
           </thead>
           <tbody className="divide-y divide-line-subtle">
-            {data.ledgers.map((l) => (
+            {ledgers.map((l) => (
               <tr
                 key={l.sequence}
                 className="hover:bg-surface-muted"
@@ -119,7 +120,7 @@ export function LedgersTable() {
                     href={`/ledgers/${l.sequence}/`}
                     className="font-mono font-medium text-ink-body hover:text-brand-600"
                   >
-                    #{l.sequence.toLocaleString()}
+                    #{(l.sequence ?? 0).toLocaleString()}
                   </Link>
                 </Td>
                 <Td>
@@ -132,18 +133,18 @@ export function LedgersTable() {
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums">
-                    {formatCompact(l.tx_count)}
+                    {formatCompact(l.tx_count ?? 0)}
                   </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-ink-body">
-                    {formatCompact(l.op_count)}
+                    {formatCompact(l.op_count ?? 0)}
                   </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-ink-body">
-                    {l.soroban_event_count > 0
-                      ? formatCompact(l.soroban_event_count)
+                    {(l.soroban_event_count ?? 0) > 0
+                      ? formatCompact(l.soroban_event_count ?? 0)
                       : '—'}
                   </span>
                 </Td>

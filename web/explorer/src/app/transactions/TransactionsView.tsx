@@ -167,16 +167,16 @@ function TxTable({
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={t.hash}
                   >
-                    {t.hash.slice(0, 10)}…{t.hash.slice(-6)}
+                    {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
                   </Link>
                 </td>
                 <td className="px-4 py-3">
                   <Link
-                    href={`/accounts/${encodeURIComponent(t.source_account)}/`}
+                    href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
                     className="font-mono text-xs text-ink-body hover:text-brand-600"
                     title={t.source_account}
                   >
-                    {t.source_account.slice(0, 6)}…{t.source_account.slice(-4)}
+                    {(t.source_account ?? '').slice(0, 6)}…{(t.source_account ?? '').slice(-4)}
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-right">

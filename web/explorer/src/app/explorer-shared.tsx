@@ -13,9 +13,28 @@
 import { Check, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import type { components, paths } from '@/api/types';
+
 // ---------------------------------------------------------------------------
 // Wire shapes — every endpoint is wrapped as { data, as_of, flags }.
+//
+// Derived from the generated OpenAPI contract (src/api/types.ts,
+// `make web-generate-api`) so spec drift fails the build instead of
+// shipping as undefined in the UI. Fields the API serves but the spec
+// doesn't declare yet are kept as `SPEC-GAP:` intersections.
 // ---------------------------------------------------------------------------
+
+type Schemas = components['schemas'];
+
+// GetJSON extracts the application/json body of a GET 200 response for
+// endpoints whose response shape is declared inline on the path.
+type GetJSON<P extends keyof paths> = paths[P] extends {
+  get: {
+    responses: { 200: { content: { 'application/json': infer B } } };
+  };
+}
+  ? B
+  : never;
 
 export type Envelope<T> = {
   data: T;
@@ -23,154 +42,56 @@ export type Envelope<T> = {
   flags?: Record<string, unknown>;
 };
 
-export interface Ledger {
-  sequence: number;
-  close_time: string;
-  hash: string;
-  prev_hash: string;
-  protocol_version: number;
-  tx_count: number;
-  op_count: number;
-  soroban_event_count: number;
-  total_coins?: string;
-  fee_pool?: string;
-  base_fee?: number;
-  base_reserve?: number;
-}
+export type Ledger = Schemas['Ledger'];
 
-export interface LedgersPage {
-  ledgers: Ledger[];
-  next_before?: number;
-}
+export type LedgersPage = NonNullable<GetJSON<'/ledgers'>['data']>;
 
-export interface LedgerTransaction {
-  hash: string;
-  ledger: number;
-  close_time: string;
-  index?: number;
-  source_account: string;
-  fee_charged?: number;
-  max_fee?: number;
-  operation_count: number;
-  successful: boolean;
-  // XDR transaction-result code as a numeric int32 (0 = txSUCCESS,
-  // non-zero = the failure code). Render success from the `successful`
-  // bool, NOT from this code's truthiness (0 is falsy in JS).
-  result_code?: number;
-  memo_type?: string;
-  memo?: string;
-}
+// Transaction summary rows (ledger / tx listings). Render success from
+// the `successful` bool, NOT from `result_code`'s truthiness (0 =
+// txSUCCESS is falsy in JS).
+export type LedgerTransaction = Schemas['TxSummary'];
 
-export interface LedgerTransactionsResp {
-  ledger: number;
-  transactions: LedgerTransaction[];
-}
+export type LedgerTransactionsResp = NonNullable<
+  GetJSON<'/ledgers/{seq}/transactions'>['data']
+>;
 
-export interface TxOperation {
-  ledger?: number;
-  close_time?: string;
-  tx_hash?: string;
-  tx_index?: number;
-  op_index: number;
-  type: string;
-  source_account?: string;
-  fields?: Record<string, unknown>;
-  raw_xdr?: string;
-  // XDR operation-result code as a numeric int32 (0 = opSUCCESS,
-  // non-zero = the failure code). Present only in the per-tx view;
-  // absent (undefined) in the ledger op list. Derive success from
-  // `=== 0`, never from truthiness.
-  result_code?: number;
-}
+// Decoded operation. `result_code` is present only in the per-tx view;
+// derive success from `=== 0`, never from truthiness.
+export type TxOperation = Schemas['Operation'];
 
-export interface TxEvent {
-  op_index: number;
-  event_index?: number;
-  contract_id: string;
-  event_type: string;
-  topic_0?: string;
-}
+export type TxEvent = Schemas['ContractEvent'] & {
+  // SPEC-GAP: the per-tx event rows carry contract_id
+  // (internal/api/v1/explorer_tx.go TxEventView) but the spec's shared
+  // ContractEvent schema omits it (the per-contract listing hoists it
+  // to the top level instead).
+  contract_id?: string;
+};
 
-export interface TxSummary {
-  hash: string;
-  ledger: number;
-  close_time: string;
-  source_account: string;
-  fee_charged?: number;
-  max_fee?: number;
-  successful: boolean;
-  // XDR transaction-result code as a numeric int32 (0 = txSUCCESS).
-  // The tx-level success indicator is the `successful` bool above;
-  // this code is the raw numeric detail.
-  result_code?: number;
-  memo_type?: string;
-  memo?: string;
-  operations?: TxOperation[];
+// Full transaction detail (summary + decoded operations + events).
+export type TxSummary = Omit<Schemas['TxDetail'], 'events'> & {
   events?: TxEvent[];
-}
+};
 
-export interface ContractEvent {
-  ledger: number;
-  close_time: string;
-  tx_hash: string;
-  op_index: number;
-  event_index?: number;
-  event_type: string;
-  topic_0?: string;
-}
+export type ContractEvent = Schemas['ContractEvent'];
 
-export interface ContractResp {
-  contract_id: string;
-  events: ContractEvent[];
-  // Opaque composite keyset cursor (ledger.op_index.event_index) for the
-  // next older page; echo back as ?cursor=. Replaces the old next_before —
-  // a ledger-only cursor lost rows when a contract emitted >limit events
-  // in one ledger. Treat as opaque.
-  next_cursor?: string;
-}
+// Per-contract recent events. `next_cursor` is the opaque composite
+// keyset cursor (ledger.op_index.event_index); echo back as ?cursor=.
+export type ContractResp = NonNullable<
+  GetJSON<'/contracts/{contract_id}'>['data']
+>;
 
-// Account activity endpoints (ADR-0038 Phase B). `scope` documents
-// that this is source/submitter activity only — the transactions the
-// account itself sourced, NOT incoming transfers / participant
-// activity (which needs the participant index, coming in Phase C).
+// Account activity endpoints (ADR-0038 Phase B). `scope: "all"` =
+// sourced plus incoming/participant activity.
 //
 // GET /v1/accounts/{id}/transactions → AccountTransactionsResp
-// (transactions[] are the same TxSummaryView shape as the ledger /
-// tx-summary wire, i.e. LedgerTransaction).
-export interface AccountTransactionsResp {
-  account: string;
-  transactions: LedgerTransaction[];
-  // Opaque composite keyset cursor (ledger.tx_index); echo back as ?cursor=.
-  next_cursor?: string;
-  scope: string;
-}
+export type AccountTransactionsResp = Schemas['AccountTransactions'];
 
 // GET /v1/accounts/{id}/operations → AccountOperationsResp
-// (operations[] are the same decoded OpView shape as the tx page).
-export interface AccountOperationsResp {
-  account: string;
-  operations: TxOperation[];
-  // Opaque composite keyset cursor (ledger.tx_index.op_index); echo as ?cursor=.
-  next_cursor?: string;
-  scope: string;
-}
+export type AccountOperationsResp = Schemas['AccountOperations'];
 
-export type SearchKind =
-  | 'transaction'
-  | 'ledger'
-  | 'account'
-  | 'contract'
-  | 'asset'
-  | 'unknown';
+export type SearchResult = NonNullable<GetJSON<'/search'>['data']>;
 
-export interface SearchResult {
-  query: string;
-  kind: SearchKind;
-  canonical?: string;
-  href?: string;
-  supported?: boolean;
-  note?: string;
-}
+export type SearchKind = NonNullable<SearchResult['kind']>;
 
 // ---------------------------------------------------------------------------
 // Formatting helpers (explorer-local — the wider site uses @/lib/format

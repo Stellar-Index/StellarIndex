@@ -7,16 +7,13 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { stroopsToXlm } from '../../explorer-shared';
+import type { paths } from '@/api/types';
 
-interface Holder {
-  account_id: string;
-  balance: string;
-}
-interface HoldersResp {
-  asset: string;
-  holder_count: number;
-  holders: Holder[];
-}
+// GET /v1/assets/{id}/holders response body from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type HoldersResp = NonNullable<
+  paths['/assets/{asset_id}/holders']['get']['responses'][200]['content']['application/json']['data']
+>;
 
 /**
  * HoldersTabPanel — top holders of an asset by current trustline balance,
@@ -44,7 +41,7 @@ export function HoldersTabPanel({ assetID }: { assetID: string }) {
 
   return (
     <Panel
-      title={data && data.holder_count > 0 ? `Holders (${formatCompact(data.holder_count)})` : 'Holders'}
+      title={data && (data.holder_count ?? 0) > 0 ? `Holders (${formatCompact(data.holder_count ?? 0)})` : 'Holders'}
       hint={holders.length > 0 ? 'top 100 by balance' : undefined}
       source={source}
       bodyClassName="-mx-4"
@@ -74,11 +71,11 @@ export function HoldersTabPanel({ assetID }: { assetID: string }) {
                   <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
                   <td className="px-4 py-3">
                     <Link
-                      href={`/accounts/${encodeURIComponent(h.account_id)}/`}
+                      href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
                       className="font-mono text-xs text-brand-600 hover:underline"
                       title={h.account_id}
                     >
-                      {h.account_id.slice(0, 8)}…{h.account_id.slice(-6)}
+                      {(h.account_id ?? '').slice(0, 8)}…{(h.account_id ?? '').slice(-6)}
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">

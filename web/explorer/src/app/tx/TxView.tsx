@@ -129,7 +129,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
   const tx = data;
 
   return (
-    <Shell hash={tx.hash}>
+    <Shell hash={tx.hash ?? null}>
       <Panel
         title="Transaction"
         hint={formatTimestamp(tx.close_time)}
@@ -144,12 +144,12 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
               href={`/ledgers/${tx.ledger}/`}
               className="font-mono text-xs text-brand-600 hover:underline"
             >
-              #{tx.ledger.toLocaleString()}
+              #{(tx.ledger ?? 0).toLocaleString()}
             </Link>
           </Field>
           <Field label="Close time" value={formatTimestamp(tx.close_time)} />
           <Field label="Result">
-            <SuccessBadge ok={tx.successful} code={tx.result_code} />
+            <SuccessBadge ok={tx.successful ?? false} code={tx.result_code} />
           </Field>
           <Field
             label="Fee charged"
@@ -177,20 +177,20 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           <FieldWide label="Source account">
             <span className="inline-flex items-center gap-2">
               <Link
-                href={`/accounts/${encodeURIComponent(tx.source_account)}/`}
+                href={`/accounts/${encodeURIComponent(tx.source_account ?? '')}/`}
                 className="font-mono text-xs text-brand-600 hover:underline"
                 title={tx.source_account}
               >
-                {tx.source_account.slice(0, 12)}…{tx.source_account.slice(-8)}
+                {(tx.source_account ?? '').slice(0, 12)}…{(tx.source_account ?? '').slice(-8)}
               </Link>
-              <CopyValue value={tx.source_account} />
+              <CopyValue value={tx.source_account ?? ''} />
             </span>
           </FieldWide>
         </dl>
       </Panel>
 
-      <OperationsPanel hash={tx.hash} operations={tx.operations ?? []} />
-      <EventsPanel hash={tx.hash} events={tx.events ?? []} />
+      <OperationsPanel hash={tx.hash ?? ''} operations={tx.operations ?? []} />
+      <EventsPanel hash={tx.hash ?? ''} events={tx.events ?? []} />
     </Shell>
   );
 }
@@ -383,7 +383,7 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={ev.contract_id}
                   >
-                    {ev.contract_id.slice(0, 8)}…{ev.contract_id.slice(-6)}
+                    {(ev.contract_id ?? '').slice(0, 8)}…{(ev.contract_id ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td>

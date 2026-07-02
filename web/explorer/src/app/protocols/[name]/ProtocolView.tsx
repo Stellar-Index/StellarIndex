@@ -12,56 +12,29 @@ import { CopyHash, relativeAge, formatTimestamp } from '../../explorer-shared';
 import { categoryTone } from '../registry';
 import { TimeSeriesChart } from './TimeSeriesChart';
 import { BespokeSection, type Bespoke } from './BespokeSection';
+import type { paths } from '@/api/types';
 
-// ─── Wire shapes (mirror internal/api/v1/protocols.go ProtocolDetailView) ───
+// ─── Wire shapes — derived from the generated OpenAPI contract
+// (src/api/types.ts, `make web-generate-api`); mirror
+// internal/api/v1/protocols.go ProtocolDetailView. ───
 
-interface CompletenessView {
-  complete: boolean;
-  watermark_ledger: number;
-}
+type ProtocolDetailWire = NonNullable<
+  paths['/protocols/{name}']['get']['responses'][200]['content']['application/json']['data']
+>;
 
-interface ProtocolContract {
-  contract_id: string;
-  factory_id?: string;
-  first_ledger?: number;
-  token0?: string;
-  token1?: string;
-  kind?: 'factory' | 'instance';
-  events?: number;
-  last_seen?: string;
-}
+type ProtocolContract = ProtocolDetailWire['contracts'][number];
 
-interface EventTypeCount {
-  event_type: string;
-  count: number;
-}
+type EventTypeCount = NonNullable<
+  ProtocolDetailWire['event_breakdown']
+>[number];
 
-interface ActivityPoint {
-  date: string; // YYYY-MM-DD
-  events: number;
-}
-
-interface ProtocolDetail {
-  name: string;
-  category: string;
-  description: string;
-  genesis_ledger: number;
-  factories: string[];
-  contract_count: number;
-  events_24h: number;
-  completeness?: CompletenessView;
-  contracts: ProtocolContract[];
-  event_kinds: string[];
-  verification_page?: string;
-  // Lake analytics (omitempty when the lake reader is down).
-  event_breakdown?: EventTypeCount[];
-  activity_series?: ActivityPoint[];
-  activity_window_days?: number;
-  events_total?: number;
-  // Bespoke per-category analytics block (omitempty — absent when no
-  // bespoke reader is wired or the category has none yet).
+type ProtocolDetail = ProtocolDetailWire & {
+  // SPEC-GAP: the bespoke per-category analytics block
+  // (internal/api/v1/protocols.go ProtocolDetailView / ProtocolBespoke,
+  // omitempty — absent when no bespoke reader is wired or the category
+  // has none yet) isn't in the spec's /protocols/{name} schema.
   bespoke?: Bespoke;
-}
+};
 
 /**
  * ProtocolView — the per-protocol analytics page. Fetches
@@ -180,8 +153,8 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         ) : (
           <TimeSeriesChart
             points={(data.activity_series ?? []).map((p) => ({
-              date: p.date,
-              value: p.events,
+              date: p.date ?? '',
+              value: p.events ?? 0,
             }))}
             label="Daily on-chain events"
             unit="events"
@@ -299,7 +272,7 @@ function CategoryChip({ category }: { category: string }) {
 function CompletenessBadge({
   completeness,
 }: {
-  completeness?: CompletenessView;
+  completeness?: ProtocolDetail['completeness'];
 }) {
   if (!completeness) {
     return (
@@ -372,7 +345,7 @@ function AtAGlance({
   const topEvent = useMemo(() => {
     if (!data.event_breakdown || data.event_breakdown.length === 0) return null;
     return data.event_breakdown.reduce((best, b) =>
-      b.count > best.count ? b : best,
+      (b.count ?? 0) > (best.count ?? 0) ? b : best,
     );
   }, [data.event_breakdown]);
 
@@ -395,7 +368,7 @@ function AtAGlance({
   );
   if (topEvent) {
     bits.push(
-      <Glance key="top" label={topEvent.event_type} unit="busiest event" mono />,
+      <Glance key="top" label={topEvent.event_type ?? ''} unit="busiest event" mono />,
     );
   }
 
@@ -449,7 +422,7 @@ function EventBreakdown({
   total: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const max = breakdown.reduce((m, b) => Math.max(m, b.count), 0);
+  const max = breakdown.reduce((m, b) => Math.max(m, b.count ?? 0), 0);
   const overflow = breakdown.length - EVENT_BREAKDOWN_TOP_N;
   const visible =
     expanded || overflow <= 0
@@ -460,8 +433,9 @@ function EventBreakdown({
     <div className="space-y-3">
       <ul className="space-y-2.5">
         {visible.map((b) => {
-          const pct = total > 0 ? (b.count / total) * 100 : 0;
-          const barPct = max > 0 ? (b.count / max) * 100 : 0;
+          const count = b.count ?? 0;
+          const pct = total > 0 ? (count / total) * 100 : 0;
+          const barPct = max > 0 ? (count / max) * 100 : 0;
           return (
             <li key={b.event_type}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
@@ -473,7 +447,7 @@ function EventBreakdown({
                 </span>
                 <span className="shrink-0 tabular-nums text-ink-muted">
                   <span className="font-mono text-ink-body">
-                    {formatCompact(b.count)}
+                    {formatCompact(count)}
                   </span>{' '}
                   · {pct.toFixed(pct >= 10 ? 0 : 1)}%
                 </span>

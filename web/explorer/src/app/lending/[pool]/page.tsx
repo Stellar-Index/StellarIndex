@@ -5,6 +5,7 @@ import { ExternalLink } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs } from '@/components/ui';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import type { paths } from '@/api/types';
 
 import { PoolReserves } from './PoolReserves';
 
@@ -18,14 +19,11 @@ const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ pool: string }>;
 
-interface LendingPool {
-  protocol: string;
-  pool: string;
-  auctions_24h: number;
-  auctions_total: number;
-  unique_users_30d: number;
-  last_seen: string;
-}
+// One /v1/lending/pools row, derived from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type LendingPool = NonNullable<
+  paths['/lending/pools']['get']['responses'][200]['content']['application/json']['data']
+>[number];
 
 // Curated annotations for every Blend mainnet contract we track.
 // Mirrors the BLEND_POOL_META map in LendingPoolsTable; kept in
@@ -110,7 +108,9 @@ export async function generateStaticParams() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const env = (await res.json()) as { data: LendingPool[] };
-    const fromAPI = (env.data ?? []).map((p) => ({ pool: p.pool })).filter((p) => p.pool);
+    const fromAPI = (env.data ?? [])
+      .map((p) => ({ pool: p.pool ?? '' }))
+      .filter((p) => p.pool);
     const seen = new Set<string>();
     const merged = [...fromAPI, ...curatedKeys].filter((p) => {
       if (seen.has(p.pool)) return false;
@@ -272,7 +272,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             <div className="text-ink-body">
               Most recent auction event:{' '}
               <span className="font-mono text-ink">
-                {new Date(data.last_seen).toUTCString()}
+                {data.last_seen ? new Date(data.last_seen).toUTCString() : '—'}
               </span>
             </div>
           </div>

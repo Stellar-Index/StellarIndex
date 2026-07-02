@@ -9,26 +9,13 @@ import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
 
-interface SourceRow {
-  name: string;
-  class: string;
-  subclass: string;
-  trade_count_24h?: number;
-  markets_count_24h?: number;
-  volume_24h_usd?: string | null;
-}
+// Wire shapes from the generated OpenAPI contract: /v1/sources rows via
+// the shared hooks alias; /v1/oracle/streams rows are the spec's
+// OracleReading schema.
+import type { Source as SourceRow } from '@/api/hooks';
+import type { components } from '@/api/types';
 
-interface OracleStream {
-  source: string;
-  contract_id?: string;
-  asset: string;
-  quote: string;
-  ts: string;
-  price: string;
-  decimals: number;
-  confidence?: number;
-  observer?: string;
-}
+type OracleStream = components['schemas']['OracleReading'];
 
 const TONE: Record<string, string> = {
   'reflector-dex': 'bg-up-subtle text-up-strong',

@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
+import type { components } from '@/api/types';
 import { formatCompact, formatPrice } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import {
@@ -104,22 +105,28 @@ export async function generateStaticParams() {
 
 type Params = Promise<{ slug: string }>;
 
-interface CoinSummary {
-  asset_id: string;
-  code: string;
+// Wire shapes below derive from the generated OpenAPI contract
+// (src/api/types.ts, `make web-generate-api`) so spec drift breaks the
+// build here instead of rendering as `—`/NaN. Fields the API serves but
+// the spec doesn't declare yet are kept as `SPEC-GAP:` intersections.
+type AssetSchema = components['schemas']['Asset'];
+
+// CoinSummary — the rich /v1/assets row this page renders. The spec
+// models the surface as `Asset`; the coin-overlay extension fields
+// (internal/api/v1/assets.go AssetDetail's "Coin-equivalence extension")
+// aren't in the spec yet.
+type CoinSummary = Omit<AssetSchema, 'type'> & {
+  // SPEC-GAP: the spec's Asset.type enum omits "global" (catalogue
+  // rows) and "external" — widened until the spec covers the
+  // unified-listing dispatch.
+  type?: string;
+  // SPEC-GAP fields below: served by /v1/assets (assets.go
+  // "Coin-equivalence extension") but missing from the spec's Asset.
   slug: string;
-  issuer: string;
   observation_count: number;
   first_seen_ledger: number;
   last_seen_ledger: number;
-  // Optional per-row metrics from /v1/coins/{slug} — null when
-  // the asset has no off-chain peg / supply snapshot yet.
-  price_usd?: string | null;
-  volume_24h_usd?: string | null;
-  market_cap_usd?: string | null;
-  circulating_supply?: string | null;
   change_1h_pct?: string | null;
-  change_24h_pct?: string | null;
   change_7d_pct?: string | null;
   // Top 5 markets the asset participates in (as base or
   // quote), ordered by 24h USD volume desc. Empty array
@@ -151,8 +158,10 @@ interface CoinSummary {
   // detail page can render a warning at first paint instead of
   // waiting for the IssuerPanel fetch to complete.
   issuer_scam_reason?: string | null;
-}
+};
 
+// SPEC-GAP: top_markets rows (assets.go CoinTopMarket) aren't in the
+// spec's Asset schema either.
 interface TopMarket {
   counterparty: string;
   side: 'base' | 'quote';
@@ -160,40 +169,25 @@ interface TopMarket {
   trade_count_24h: number;
 }
 
-interface AssetDetail {
-  asset_id: string;
-  code: string;
-  issuer?: string;
-  type?: string;
-  home_domain?: string;
-  total_supply?: string;
-  circulating_supply?: string;
-  max_supply?: string;
-  market_cap_usd?: string;
-  fdv_usd?: string;
-  volume_24h_usd?: string;
-  supply_basis?: string;
-  // Verified-currency collision warning (R-018 Phase 1.4a). Present
-  // when the requested asset's code matches a verified currency's
-  // Stellar ticker (USDC, EURC, AQUA, …) but the issuer doesn't
-  // match the verified entry — someone has issued a fake "USDC" on
-  // Stellar with their own G-strkey. Renders a prominent banner
-  // linking to the verified asset.
-  unverified_warning?: {
-    verified_slug: string;
-    verified_asset_id: string;
-    verified_name: string;
-    verified_issuer?: string;
-    note: string;
-  };
-}
+// Per-asset detail from /v1/assets/{id} — the spec's `Asset` schema.
+// Only the fields this page renders matter; the alias keeps them
+// compile-checked against the contract.
+type AssetDetail = AssetSchema;
 
-interface PriceResp {
-  price?: string;
-  quote?: string;
+// /v1/price response body — the spec's `Price` schema, minus the
+// fields this page never reads. `age_seconds` + the narrowed `flags`
+// are CLIENT-SIDE additions: fetchPriceUncached fabricates a
+// triangulated PriceResp (asset/XLM × XLM/USD) with a synthetic
+// age_seconds + flags.triangulated when no direct USD pair exists.
+type PriceResp = Partial<
+  Pick<components['schemas']['Price'], 'price' | 'quote'>
+> & {
+  // Client-side: max staleness of the two triangulation legs.
   age_seconds?: number;
+  // Envelope flags subset (mirrors Flags.stale / Flags.triangulated);
+  // also set client-side on the triangulated path.
   flags?: { stale?: boolean; triangulated?: boolean };
-}
+};
 
 /**
  * GlobalAssetView is the wire shape `/v1/assets/{slug}` returns

@@ -4,15 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-
-interface SourceRow {
-  name: string;
-  class: string;
-  paid?: boolean;
-  backfill_available?: boolean;
-  trade_count_24h?: number;
-  volume_24h_usd?: string | null;
-}
+// /v1/sources row from the generated OpenAPI contract, via the shared
+// alias in src/api/hooks.ts.
+import type { Source as SourceRow } from '@/api/hooks';
 
 const NAMES: Record<string, string> = {
   coingecko: 'CoinGecko',

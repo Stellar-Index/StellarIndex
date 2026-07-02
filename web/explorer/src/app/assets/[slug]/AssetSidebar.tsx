@@ -11,7 +11,7 @@ export interface SidebarCoin {
   code: string;
   slug: string;
   asset_id: string;
-  issuer?: string;
+  issuer?: string | null;
   price_usd?: string | null;
   volume_24h_usd?: string | null;
   market_cap_usd?: string | null;
@@ -25,13 +25,13 @@ export interface SidebarCoin {
 }
 
 export interface SidebarDetail {
-  total_supply?: string;
-  circulating_supply?: string;
-  max_supply?: string;
-  market_cap_usd?: string;
-  fdv_usd?: string;
-  volume_24h_usd?: string;
-  home_domain?: string;
+  total_supply?: string | null;
+  circulating_supply?: string | null;
+  max_supply?: string | null;
+  market_cap_usd?: string | null;
+  fdv_usd?: string | null;
+  volume_24h_usd?: string | null;
+  home_domain?: string | null;
 }
 
 /**

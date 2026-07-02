@@ -481,7 +481,8 @@ function TransactionsPanel({
       </Panel>
     );
   }
-  if (data.transactions.length === 0) {
+  const transactions = data.transactions ?? [];
+  if (transactions.length === 0) {
     return (
       <Panel
         title="Transactions"
@@ -494,7 +495,7 @@ function TransactionsPanel({
   }
   return (
     <Panel
-      title={`Sourced transactions (${data.transactions.length})`}
+      title={`Sourced transactions (${transactions.length})`}
       source={source}
       bodyClassName="-mx-4"
     >
@@ -511,7 +512,7 @@ function TransactionsPanel({
             </tr>
           </thead>
           <tbody className="divide-y divide-line-subtle">
-            {data.transactions.map((t: LedgerTransaction) => (
+            {transactions.map((t: LedgerTransaction) => (
               <tr
                 key={t.hash}
                 className="hover:bg-surface-muted"
@@ -522,7 +523,7 @@ function TransactionsPanel({
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={t.hash}
                   >
-                    {t.hash.slice(0, 10)}…{t.hash.slice(-6)}
+                    {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td>
@@ -530,7 +531,7 @@ function TransactionsPanel({
                     href={`/ledgers/${t.ledger}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                   >
-                    #{t.ledger.toLocaleString()}
+                    #{(t.ledger ?? 0).toLocaleString()}
                   </Link>
                 </Td>
                 <Td align="right">
@@ -539,7 +540,7 @@ function TransactionsPanel({
                   </span>
                 </Td>
                 <Td>
-                  <SuccessBadge ok={t.successful} code={t.result_code} />
+                  <SuccessBadge ok={t.successful ?? false} code={t.result_code} />
                 </Td>
                 <Td align="right">
                   <span className="font-mono text-xs tabular-nums text-ink-muted">
@@ -607,7 +608,8 @@ function OperationsPanel({
       </Panel>
     );
   }
-  if (data.operations.length === 0) {
+  const operations = data.operations ?? [];
+  if (operations.length === 0) {
     return (
       <Panel
         title="Operations"
@@ -620,11 +622,11 @@ function OperationsPanel({
   }
   return (
     <Panel
-      title={`Sourced operations (${data.operations.length})`}
+      title={`Sourced operations (${operations.length})`}
       source={source}
       bodyClassName="space-y-3"
     >
-      {data.operations.map((op: TxOperation, i: number) => (
+      {operations.map((op: TxOperation, i: number) => (
         <OperationCard key={`${op.tx_hash ?? ''}-${op.op_index}-${i}`} op={op} />
       ))}
     </Panel>

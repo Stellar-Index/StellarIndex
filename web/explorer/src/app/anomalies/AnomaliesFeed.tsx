@@ -5,29 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
+import type { paths } from '@/api/types';
 
-interface ReasonCount {
-  reason: string;
-  count: number;
-}
-
-interface FreezeEvent {
-  asset_id: string;
-  quote_id: string;
-  frozen_at: string;
-  frozen_at_ledger: number;
-  reason: string;
-  frozen_value: string;
-  recovered_at: string | null;
-  recovered_at_ledger: number | null;
-  firing: boolean;
-}
-
-interface AnomaliesResp {
-  firing_count: number;
-  reason_tally: ReasonCount[];
-  events: FreezeEvent[];
-}
+// GET /v1/anomalies response body, derived from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type AnomaliesResp = NonNullable<
+  paths['/anomalies']['get']['responses'][200]['content']['application/json']['data']
+>;
 
 function fmtTs(iso: string): string {
   const d = new Date(iso);
@@ -69,14 +53,14 @@ export function AnomaliesFeed() {
           <div className="flex flex-wrap gap-2 text-xs">
             <span
               className={`inline-flex items-center gap-1 rounded px-2 py-1 font-medium ${
-                data.firing_count > 0
+                (data.firing_count ?? 0) > 0
                   ? 'bg-down-subtle text-down-strong'
                   : 'bg-up-subtle text-up-strong'
               }`}
             >
-              {data.firing_count > 0 ? `${data.firing_count} firing now` : 'Nothing firing'}
+              {(data.firing_count ?? 0) > 0 ? `${data.firing_count} firing now` : 'Nothing firing'}
             </span>
-            {data.reason_tally.map((t) => (
+            {(data.reason_tally ?? []).map((t) => (
               <span key={t.reason} className="inline-flex items-center gap-1 rounded-sm bg-surface-muted px-2 py-1 text-ink-body">
                 <code className="font-mono">{t.reason}</code>
                 <span className="text-ink-muted">×{t.count}</span>
@@ -118,9 +102,9 @@ export function AnomaliesFeed() {
                   <td className="py-1.5 pr-4">
                     <code className="text-[11px]">{e.reason}</code>
                   </td>
-                  <td className="py-1.5 pr-4 font-mono text-[11px] text-ink-muted">{fmtTs(e.frozen_at)}</td>
+                  <td className="py-1.5 pr-4 font-mono text-[11px] text-ink-muted">{fmtTs(e.frozen_at ?? '')}</td>
                   <td className="py-1.5 pr-4 font-mono tabular-nums text-ink-muted">
-                    {duration(e.frozen_at, e.recovered_at)}
+                    {duration(e.frozen_at ?? '', e.recovered_at ?? null)}
                   </td>
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{e.frozen_value}</td>
                   <td className="py-1.5">

@@ -16,16 +16,9 @@ import {
   TR,
 } from '@/components/ui';
 
-interface Trade {
-  source: string;
-  ts: string;
-  base_asset: string;
-  quote_asset: string;
-  price: string;
-  base_amount?: string;
-  quote_amount?: string;
-  tx_hash?: string;
-}
+// /v1/history row from the generated OpenAPI contract, via the shared
+// alias in src/api/hooks.ts (TradeRow).
+import type { TradeRow as Trade } from '@/api/hooks';
 
 const REFRESH_INTERVAL_MS = 30_000;
 const TOP_PAIRS = 3;
