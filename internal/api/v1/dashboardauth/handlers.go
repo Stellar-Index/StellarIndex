@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/StellarIndex/stellar-index/internal/httpx"
 	"github.com/StellarIndex/stellar-index/internal/notify"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 )
@@ -829,17 +830,10 @@ func slugFromEmail(email string) string {
 }
 
 // writeProblem emits a problem+json error body matching the
-// rest of the v1 surface. Local helper because we don't want
-// dashboardauth depending on internal/api/v1's writeProblem.
+// rest of the v1 surface, via the shared httpx helper. Kept as a
+// local one-liner only to pin this surface's type URL —
+// dashboardauth must not depend on internal/api/v1's enveloped
+// writeProblem.
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type":     "https://api.stellarindex.io/errors/auth",
-		"title":    http.StatusText(status),
-		"status":   status,
-		"detail":   detail,
-		"instance": instance,
-	})
+	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/auth", status, detail, instance)
 }

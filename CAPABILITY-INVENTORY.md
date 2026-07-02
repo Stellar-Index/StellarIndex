@@ -58,6 +58,10 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Per-subject daily / MTD counter → `usage.New(rdb, opts...).Increment/MonthToDate/Read` ⚠ (not in CLAUDE.md)
 - **A full throttle family already exists** (`auth.NewRedisLoginThrottle`, `NewRedisSignupIPThrottle`, …) — don't hand-roll a Redis throttle
 
+## HTTP response writers
+- Enveloped public v1 surface → `internal/api/v1/envelope.go` (`writeJSON`/`writeProblem` — canonical, package-private by design)
+- Non-enveloped handler packages (dashboard session surfaces) → `httpx.WriteJSON(w, status, body)` / `httpx.WriteProblem(w, typeURL, status, detail, instance)` — never copy response writers into a new handler package
+
 ## Cache keys — `internal/cachekeys` (the ONLY canonical key builder, ADR-0007)
 - `cachekeys.VWAP/OHLC/Price/Confidence/Freeze/RateLimitKey/TOML/Metadata/Divergence/APIKey/AssetsList/MarketsList/…` — never hand-format a Redis key; prewarm must call readers with byte-identical args
 

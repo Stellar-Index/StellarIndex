@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
+	"github.com/StellarIndex/stellar-index/internal/httpx"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
@@ -189,7 +190,7 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	for _, k := range keys {
 		out.Keys = append(out.Keys, toDTO(k))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type createRequest struct {
@@ -311,7 +312,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createResponse{
+	httpx.WriteJSON(w, http.StatusCreated, createResponse{
 		Plaintext: plaintext,
 		Key:       toDTO(out),
 	})
@@ -507,30 +508,11 @@ func parsePrefixes(raws []string) ([]netip.Prefix, error) {
 	return out, nil
 }
 
-// writeJSON sends `body` as application/json with the given
-// status. Cache-Control: no-store keeps responses out of
-// intermediate caches — these endpoints carry session-scoped
-// data.
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
-// writeProblem mirrors dashboardauth.writeProblem so the error
-// shape is consistent across the dashboard surface.
+// writeProblem delegates to the shared httpx helper with the
+// dashboard surface's type URL so the error shape stays consistent
+// across the dashboard packages.
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type":     "https://api.stellarindex.io/errors/dashboard",
-		"title":    http.StatusText(status),
-		"status":   status,
-		"detail":   detail,
-		"instance": instance,
-	})
+	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/dashboard", status, detail, instance)
 }
 
 // Compile-time assertion: dashboardauth.SessionContext.User.ID
