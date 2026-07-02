@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 )
 
 // DefaultSignupThrottleDwellTime is the F-0049 / F-0149 dwell-time
@@ -51,9 +53,8 @@ const DefaultSignupThrottleDwellTime = 30 * time.Second
 // Redis success resets the clock so transient blips never trip the
 // threshold.
 type RedisSignupIPThrottle struct {
-	rdb       redis.UniversalClient
+	counter   *ratelimit.FixedWindowCounter
 	max       int
-	window    time.Duration
 	keyPrefix string
 	dwellTime time.Duration
 
@@ -121,9 +122,8 @@ func NewRedisSignupIPThrottle(rdb redis.UniversalClient, opts SignupIPThrottleOp
 		nowFn = time.Now
 	}
 	return &RedisSignupIPThrottle{
-		rdb:       rdb,
+		counter:   ratelimit.NewFixedWindowCounter(rdb, opts.Window, nowFn),
 		max:       opts.Max,
-		window:    opts.Window,
 		keyPrefix: opts.KeyPrefix,
 		dwellTime: opts.DwellTime,
 		nowFn:     nowFn,
@@ -147,28 +147,20 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 		// shouldn't see — Caddy + Cloudflare always populate one).
 		return nil
 	}
-	// Use the same window-bucket trick as ratelimit.Bucket: round
-	// the current minute to the window. Sliding-window approximate;
-	// gives at most 2× the cap during a window-crossing burst,
-	// which is acceptable for an abuse-prevention threshold (not
-	// for a strict billing meter).
-	windowStart := t.nowFn().Unix() / int64(t.window.Seconds())
-	key := fmt.Sprintf("%s%s:%d", t.keyPrefix, ip, windowStart)
-
-	count, err := t.rdb.Incr(ctx, key).Result()
+	// The shared counter uses the same window-bucket trick as
+	// ratelimit.Bucket (round the current time to the window) and owns
+	// the first-touch drain TTL. Sliding-window approximate; gives at
+	// most 2× the cap during a window-crossing burst, which is
+	// acceptable for an abuse-prevention threshold (not for a strict
+	// billing meter).
+	count, err := t.counter.Incr(ctx, t.keyPrefix+ip)
 	if err != nil {
 		if t.observeRedisFailure() {
 			return ErrThrottleUnavailable
 		}
-		return fmt.Errorf("signup throttle: INCR %s: %w", key, err)
+		return fmt.Errorf("signup throttle: %w", err)
 	}
 	t.observeRedisSuccess()
-	// Set the TTL on first increment so the bucket drains on its own.
-	if count == 1 {
-		// Best-effort EXPIRE; if it fails the key persists until the
-		// next manual cleanup but the next increment still works.
-		_ = t.rdb.Expire(ctx, key, t.window*2).Err()
-	}
 	if int(count) > t.max {
 		return ErrSignupRateLimited
 	}
