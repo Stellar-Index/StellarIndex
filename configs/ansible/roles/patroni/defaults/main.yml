@@ -17,10 +17,19 @@ patroni_postgres_port: 5432
 patroni_postgres_max_connections: 200
 
 # ── Patroni REST API ───────────────────────────────────────────
-patroni_rest_listen: "0.0.0.0:8008"
+# CS-122 (audit-2026-06-30): the REST API exposes mutating endpoints
+# (/switchover, /failover, /restart, /reinitialize = datadir wipe).
+# It must NEVER bind 0.0.0.0 unauthenticated. Listen on the host's
+# private/cluster interface (ansible_host — the same address the
+# role already uses for etcd peering + connect_address), and basic
+# auth is REQUIRED: 06-patroni-configure asserts both vars are
+# non-empty before rendering, so an unauthenticated Patroni cannot
+# be deployed by this role.
+patroni_rest_listen: "{{ ansible_host }}:8008"
 patroni_rest_connect_address: "{{ ansible_host }}:8008"
-# Basic Auth on the REST API. Set patroni_rest_basic_auth_user
-# + patroni_rest_basic_auth_password from vault to enable.
+# Basic Auth on the REST API — REQUIRED. Set patroni_rest_basic_auth_user
+# + patroni_rest_basic_auth_password from vault (typically
+# inventory/<region>.secrets.yml). Empty values fail the play.
 patroni_rest_basic_auth_user: ""
 patroni_rest_basic_auth_password: ""
 

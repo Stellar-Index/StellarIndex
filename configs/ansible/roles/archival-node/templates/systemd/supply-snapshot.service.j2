@@ -39,11 +39,11 @@ ExecStart=/bin/sh -c '/usr/local/bin/stellarindex-ops supply snapshot \
   $(if [ -n "${TEXTFILE_OUTPUT}" ]; then echo "-textfile-output ${TEXTFILE_OUTPUT}"; fi) \
   ${EXTRA_FLAGS}'
 
-# Runs as root for consistency with the stellarindex-* daemons (the
-# in-repo unit set User=stellarindex but r1 has no such user yet —
-# F-1205, audit-2026-05-12).
-User=root
-Group=root
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). The textfile_collector dir is
+# stellarindex-owned (10-observability.yml), so the metric emit still works.
+User=stellarindex
+Group=stellarindex
 
 # Hardening — config is read-only; textfile_collector dir is the
 # only writable path. Operators that change TEXTFILE_OUTPUT to a

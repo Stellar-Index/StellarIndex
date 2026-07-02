@@ -293,12 +293,15 @@
   # carries the application-db password so the file-on-disk
   # /etc/stellarindex.toml stays password-free.
   #
-  # Mode 0640 + group root for now; tighten to a `stellarindex`
-  # service group once the indexer/api have a dedicated user.
+  # Mode 0640 root:stellarindex (CS-118/CS-121 pattern) — the
+  # stellarindex service user (04-users.yml, CS-119) needs group read
+  # for the units + interactive `stellarindex-ops` runs that source
+  # this file after de-privileging. Note: 09-minio runs after
+  # 04-users, so the group exists by the time this templates.
   ansible.builtin.copy:
     dest: /etc/default/stellarindex-ops
     owner: root
-    group: root
+    group: stellarindex
     mode: "0640"
     content: |
       # Rendered by Ansible. Do not edit by hand — regenerate via

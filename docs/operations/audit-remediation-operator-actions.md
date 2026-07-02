@@ -41,6 +41,39 @@ these wait for you.
 - [ ] **Re-raise `min_usd_volume` to the 10000 default** once CEX/CoinGecko data flows
   (currently 0 to serve on-chain-only micro-volume; CS-040 makes the gate scale-correct).
 
+## r1 migration to non-root services (CS-118/CS-119) — ordered, no-surprise
+The Ansible role now creates the `stellarindex` system user (04-users.yml) and
+runs the app daemons + timer oneshots as `User=stellarindex` (hardened units
+ported from `deploy/systemd/`). Applying `--tags users,minio,observability,stellarindex`
+to r1 does most of this, but the RUNNING host needs the ownership flips done in
+order so nothing restarts onto files it can't read. By hand (or verify the role
+did each step):
+
+1. **Create the user/group** (idempotent):
+   `useradd --system --shell /usr/sbin/nologin --home-dir /var/lib/stellarindex --no-create-home stellarindex || true`
+2. **Stop the daemons** (timer oneshots: just confirm none is mid-run via
+   `systemctl list-units 'stellarindex-*' '*completeness*' 'ch-supply*' 'sep1-*' 'data-freshness*' 'supply-snapshot*' 'verify-archive-*'`):
+   `systemctl stop stellarindex-api stellarindex-aggregator stellarindex-indexer`
+3. **Chown state + env files** (binaries in `/usr/local/bin` STAY root:root 0755 —
+   world-exec, root-owned is correct for non-root services):
+   - `chown -R stellarindex:stellarindex /var/lib/stellarindex`
+   - `chown -R stellarindex:stellarindex /var/lib/node_exporter/textfile_collector`
+   - `chgrp stellarindex /etc/default/stellarindex /etc/default/stellarindex-ops && chmod 0640 /etc/default/stellarindex /etc/default/stellarindex-ops`
+4. **Install the new unit files** (ansible `--tags stellarindex`, or copy the
+   rendered units) then `systemctl daemon-reload`.
+5. **Start + verify**:
+   `systemctl start stellarindex-indexer stellarindex-aggregator stellarindex-api`,
+   confirm `ps -o user= -p $(systemctl show -p MainPID --value stellarindex-api)`
+   says `stellarindex` (per unit), then `bash scripts/dev/r1-smoke.sh`.
+6. **Rollback** if anything misbehaves: reinstall the previous unit files
+   (root ones), `daemon-reload`, start — the chowns are backwards-compatible
+   (root reads everything).
+
+Note: `archive-completeness.service` intentionally stays `User=root` for now —
+its `ExecStartPre` writes `/run/archive-completeness.env` and its report lands
+in the galexie-owned `/var/lib/galexie`; follow-up is `RuntimeDirectory=` +
+report relocation (see the unit template comment).
+
 ## Disaster recovery (infra decisions — CS-110/111/112)
 - [ ] **Off-host the pgBackRest repo** (add `repo2` offsite) — backups currently sit in the
   same-host MinIO/ZFS pool as the DB (single failure domain).
@@ -52,7 +85,9 @@ these wait for you.
 ## Multi-region / HA (gated on hosts existing — P3)
 - [ ] Provision R2 (AWS) + R3 (Vultr); then the `redis-sentinel`/patroni/bringup roles run.
 - [ ] **Patroni REST auth** (CS-122) — set `patroni_rest_basic_auth_user/password` in vault
-  before Patroni deploys (defaults to unauth on 0.0.0.0).
+  before Patroni deploys. The role now FAILS the play if they're empty and listens on
+  the private interface (`ansible_host`), not 0.0.0.0 — so the only operator action
+  left is choosing the credentials.
 - [ ] Narrow `allowed_ssh_cidrs` from `0.0.0.0/0` once a stable admin range exists.
 - [ ] Optional: Cloudflare orange-cloud in front of `api.` (WAF/L7).
 

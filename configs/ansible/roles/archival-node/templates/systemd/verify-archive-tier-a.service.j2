@@ -70,10 +70,15 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
   -from-last-verified \
   -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP}
 
-User=root
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). Reads the archive via S3 (network)
+# and writes only the state file under /var/lib/stellarindex, which is
+# stellarindex-owned (04-users.yml).
+User=stellarindex
+Group=stellarindex
 
-# Hardening. The binary reads /etc/stellarindex.toml; it doesn't
-# need write access to the filesystem (logs go to journald).
+# Hardening. The binary reads /etc/stellarindex.toml; the only write
+# is the state file (logs go to journald).
 ProtectSystem=full
 PrivateTmp=true
 NoNewPrivileges=true
