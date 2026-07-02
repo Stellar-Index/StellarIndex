@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
@@ -827,21 +826,15 @@ func (s *Server) computeCatalogueMarketCaps(ctx context.Context, matched []*curr
 	if class != "fiat" {
 		return caps
 	}
-	var wg sync.WaitGroup
-	for i, vc := range matched {
+	forEachBounded(len(matched), readFanoutConcurrency, func(i int) {
+		vc := matched[i]
 		if vc.CirculatingSupply == "" {
-			continue
+			return
 		}
-		i, vc := i, vc
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-				caps[i] = *capStr
-			}
-		}()
-	}
-	wg.Wait()
+		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+			caps[i] = *capStr
+		}
+	})
 	return caps
 }
 
@@ -935,27 +928,20 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 	}
 	priceCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	var wg sync.WaitGroup
-	for i := range page {
+	forEachBounded(len(page), readFanoutConcurrency, func(i int) {
 		if page[i].PriceUSD != nil {
-			continue
+			return
 		}
 		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
-			continue
+			return
 		}
-		i, vc := i, vc
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			price, mcap := s.catalogueRowPricing(priceCtx, vc)
-			page[i].PriceUSD = price
-			if page[i].MarketCapUSD == nil {
-				page[i].MarketCapUSD = mcap
-			}
-		}()
-	}
-	wg.Wait()
+		price, mcap := s.catalogueRowPricing(priceCtx, vc)
+		page[i].PriceUSD = price
+		if page[i].MarketCapUSD == nil {
+			page[i].MarketCapUSD = mcap
+		}
+	})
 }
 
 // catalogueRowPricing resolves the headline USD price (and market cap) for
@@ -1211,21 +1197,15 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // no market_cap available.
 func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency) []string {
 	caps := make([]string, len(entries))
-	var wg sync.WaitGroup
-	for i, vc := range entries {
+	forEachBounded(len(entries), readFanoutConcurrency, func(i int) {
+		vc := entries[i]
 		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
-			continue
+			return
 		}
-		i, vc := i, vc
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-				caps[i] = *capStr
-			}
-		}()
-	}
-	wg.Wait()
+		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+			caps[i] = *capStr
+		}
+	})
 	return caps
 }
 

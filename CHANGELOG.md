@@ -26,6 +26,16 @@ against.
   and is read by nothing — documented as do-not-use in the TWAP/OHLC methodology
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
+### Fixed
+- **Per-row handler fan-out is now concurrency-bounded.** The catalogue
+  market-cap/price fills (`/v1/assets` listings, `/v1/assets/verified`) and the
+  slug-expansion markets merge spawned one goroutine + one DB round-trip per
+  row with no cap — safe only because the verified catalogue is small today,
+  but a latent connection-pool-exhaustion vector as it grows. All five sites
+  now go through a shared `forEachBounded` helper (cap 16, the same bound as
+  the price batch, which was already correct). Race-tested that the bound is
+  actually respected.
+
 ### Security
 - **Middleware rejections (401/403/429) are no longer shared-cacheable.**
   Four problem+json writers — auth 401s (`writeAuthProblem`), per-key policy

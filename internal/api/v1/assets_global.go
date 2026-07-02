@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/aggregate"
@@ -403,19 +402,13 @@ func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.V
 	if s.prices == nil {
 		return
 	}
-	var wg sync.WaitGroup
-	for i, vc := range entries {
+	forEachBounded(len(entries), readFanoutConcurrency, func(i int) {
+		vc := entries[i]
 		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
-			continue
+			return
 		}
-		i, vc := i, vc
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-				out[i].MarketCapUSD = *capStr
-			}
-		}()
-	}
-	wg.Wait()
+		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+			out[i].MarketCapUSD = *capStr
+		}
+	})
 }
