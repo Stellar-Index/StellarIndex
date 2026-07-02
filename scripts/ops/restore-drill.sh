@@ -28,6 +28,10 @@ PG_VERSION="${PG_VERSION:-15}"
 PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
 LIVE_DSN="${STELLARINDEX_POSTGRES_DSN:-}"
 DRILL_LOG_NOTE="${DRILL_LOG_NOTE:-}"
+# WAL replay from the last backup to now legitimately takes tens of
+# minutes (third drill failure mode: a daily-diff schedule means up
+# to ~24h of a busy ingest DB's WAL replays through archive-get).
+PG_START_TIMEOUT="${PG_START_TIMEOUT:-7200}"
 
 fail_count=0
 note() { echo "restore-drill: $*" >&2; }
@@ -124,7 +128,7 @@ max_parallel_workers = 2
 timescaledb.max_background_workers = 2
 hot_standby = on
 CONF
-if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" -w -t 600 start; then
+if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" -w -t "$PG_START_TIMEOUT" start; then
   check "pg_start" 1 "scratch instance up on :$DRILL_PG_PORT (recovery complete)"
 else
   check "pg_start" 0 "scratch instance failed to reach consistency"
