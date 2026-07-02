@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.0] — 2026-07-02
+
 ### Added
 - **CCTP `mint_and_forward` is decoded (board #31).** The CctpForwarder
   contract emits a fifth event our decoder didn't handle — those events
@@ -44,25 +46,6 @@ against.
   ADR-0040 §3 cross-check enumeration (pages + ADR updated with the
   evidence).
 
-### Fixed
-- **The explorer-surface OpenAPI gaps are closed** — every field the handlers
-  serve that the generated-types migration had to bridge with `SPEC-GAP`
-  intersections is now in the spec: the Asset coin-overlay block (slug,
-  class, change_1h/7d_pct, first/last_seen_ledger, observation_count,
-  markets/trade counts, price_history_24h/7d, ath, top_markets,
-  issuer_scam_reason) + `type` enum values global/external;
-  GlobalAssetView.class (required); Source.class enum gains
-  bridge/lending/router (all live in the registry); issuers list rows gain
-  org_verified + scam_reason (detail gains scam_reason); ContractEvent gains
-  contract_id; /account/me documents the session-cookie user/account shape;
-  the protocols `bespoke` block and evolving diagnostics fields are
-  documented as described-loose surfaces per ADR-0042's experimental tier.
-  SDK types mirror every addition (contract test green); all three artifacts
-  regenerated; zero `SPEC-GAP` markers remain — the surviving intersections
-  are re-labeled for what they now are: required-narrowing over spec-optional
-  fields.
-
-### Added
 - **Explorer error boundaries** — `global-error.tsx` (own html/body, inline
   styles) + a shared design-system `RouteError` + 19 per-segment `error.tsx`
   wrappers across the data-heavy routes; previously ONE boundary existed and
@@ -76,56 +59,6 @@ against.
   precedence); Business tier consistently 60,000 req/min (backend truth);
   billing copy no longer promises self-service that doesn't exist.
 
-### Changed
-- **Explorer builds fail hard instead of baking fallback HTML.** New
-  `buildFetch.ts` (bounded 429-aware retry, per-build memo, incident-history
-  contract): a build-time fetch failure for a promised entity now FAILS
-  `next build` — the class behind baked "Asset not found" pages and the
-  XLM/WXLM 330× price incident. ~200 lines of per-page scaffolding deleted;
-  the new layer immediately caught two real pre-existing baking bugs
-  (mixed-case slug variants; issuer fetches timing out under build
-  concurrency). Full 3,830-page build green against the live API.
-- **Four D3 duplication extractions** (net −LoC, behavior-preserving,
-  CAPABILITY-INVENTORY updated): `wsclient.Loop` (the ~50-line WS reconnect
-  loop duplicated across binance/kraken/coinbase/bitstamp — venue behavior
-  preserved via hooks), `internal/httpx` WriteJSON/WriteProblem (dashboard
-  handler copies), `ratelimit.FixedWindowCounter` (login/signup throttles,
-  Redis key bytes unchanged), `canonical.SafeUnixSeconds/Millis` (three
-  decoder timestamp-clamp copies; bound-checks the raw u64 before the cast —
-  the router deadline_ts wrap-negative class).
-- **The explorer now derives every wire type from the generated OpenAPI
-  contract.** `src/api/types.ts` (generated, CI-drift-checked) was imported
-  nowhere; all consumed shapes were hand-typed across hooks.ts,
-  explorer-shared.tsx, and ~20 pages — an API field rename shipped to prod
-  undetected. All hand interfaces are now aliases into
-  `components['schemas']` (35 files, −448 net lines; ~90 call sites gained
-  honest null-narrowing, zero `!`/`as` casts), so spec drift is a `tsc`
-  failure. Eight `// SPEC-GAP` intersections remain where the HANDLER serves
-  fields the spec under-documents — tracked for spec-side fixes.
-
-### Documentation
-- **Docs-integrity sweep: the institutional-knowledge layer agrees with
-  itself again.** `docs/architecture/overview.md` now EXISTS (CLAUDE.md and
-  engineering-standards.md cited it for months; it routes to the real docs);
-  the CS-129 kubectl-on-a-systemd-fleet commands in insert-errors +
-  all-ingestion-down are systemd/psql; the CS-008 finding-ID collision is
-  re-IDed with a register note; the remediation STATUS deferred list and
-  launch-todo carry staleness banners naming what shipped since they were
-  written; the coverage tracker's header/table contradiction is annotated;
-  and the never-emitted `stellarindex_source_lag_ledgers` gauge (its only
-  setter was the deleted Orchestrator) is removed from obs + docs, with the
-  two archived runbooks that cited it scrubbed to historical prose.
-- **CAGG price-math verified vs the exact engine; `twap` column marked dead.**
-  The `prices_*` continuous aggregates compute `vwap` with the per-row form
-  `sum((quote/base)*base)/sum(base)` instead of the exact `sum(quote)/sum(base)`;
-  measured on r1 the divergence is ≤ 1.0e-16 relative (40,565 1h-bucket
-  comparisons) — below the 12-decimal wire truncation, so no rematerialization.
-  New aggregates must use the exact single-division form (migrations/README.md
-  rule 8). The CAGGs' `twap` column is an equal-weight mean, not time-weighted,
-  and is read by nothing — documented as do-not-use in the TWAP/OHLC methodology
-  doc (`/v1/twap` computes real TWAP on demand from raw trades).
-
-### Added
 - **The agent skill library** (`.claude/skills/`, indexed in CLAUDE.md): nine
   executable skills encoding this repo's procedures AND its incident-corpus
   judgment so sonnet-class agents (and humans) work at standard without
@@ -197,69 +130,51 @@ against.
   85% below Stellar Expert (under investigation). Price cross-checks stay with
   the divergence worker; lake↔served counts stay with compute-completeness.
 
-### Removed
-- **The dead `consumer.Orchestrator` seam (−896 LoC).** The per-source-
-  goroutine runner + `Source`/`CursorStore`/`Cursor` types had zero production
-  callers and were exactly the RPC-era topology docs/architecture/ingest-
-  pipeline.md forbids — yet doc.go presented them as a reference template.
-  `consumer.Event` (the load-bearing contract) moved to `event.go` untouched;
-  doc.go now states the retirement + points at the dispatcher path. Stale
-  comments advertising the deleted `<source>-backfill` subcommands fixed in
-  sorobanevents/timescale. Follow-up: `stellarindex_source_lag_ledgers` lost
-  its only (never-production) setter — retirement folded into the
-  docs-integrity sweep.
-
-- **ADR-0041: ingest durability semantics.** Settles CS-028's cursor question:
-  the ledgerstream cursor is a RESUME HINT, not a durability claim — the
-  ADR-0033 completeness verdict (strict per-ledger since CS-084) is the
-  durability claim, with the lake as the heal source. Consequences shipped
-  with the ADR: `clickhouse_live_sink` + `clickhouse_projector_source` now
-  **default to `true`** (r1 already ran both; the certified-lake substrate
-  must not be opt-in for the coverage claim to mean anything — explicit
-  opt-out documented for CH-less deployments), and the previously-unalerted
-  `ch_live_sink_ledgers_total{outcome="dropped"}` counter gains a two-tier
-  alert (ticket at 10m of drops, page at 1h sustained) in BOTH rule trees +
-  a new runbook (`ch-live-sink-drops.md`).
-- **ADR-0040: completing contract-identity gating (CS-026).** Design for the
-  four still-ungated decoders: phoenix + defindex ship as curated-set /
-  factory-descended childgate registries (both already enumerated in
-  docs/protocols/ — the "waiting on team data" framing was stale), aquarius
-  gets a lake-derived enumeration procedure, and comet — the no-factory hard
-  case — gets a WASM-code-hash gate design (audited hash set + off-hot-path
-  registry sweep). Includes the rollout preconditions (seed before gate
-  binary, lake re-derive, verdict green) that prevent a fail-closed gate from
-  dropping live trades.
-- **Prometheus rule-tree semantic differ** (`scripts/ci/lint-rule-equivalence`,
-  wired into `make monitoring-check`). The multi-host and r1-overlay rule
-  trees are hand-maintained near-copies; file pairing was checked but nothing
-  enforced that paired rules stay semantically equivalent — a threshold fixed
-  in one tree silently diverged the other (the api.yml header has warned about
-  this since F-1222). The differ compares every paired rule's expr (job labels
-  normalized), `for`, and `labels`; the two genuine host-shape divergences
-  (redis replica expectation, scrape-job list) live in a shrink-only
-  `rule-equivalence.baseline` covered by the CS-098 growth guard.
-  Probe-verified: a one-line `for:` change in one tree fails with a precise
-  diagnosis.
-- **Pipeline lockstep guard** (`internal/pipeline/lockstep_ast_test.go`). The
-  five hand-synced wiring sites (HandleEvent / IsProjectedEvent /
-  tradeFromEvent / projector `buildSource` / dispatcher registration) had no
-  machine check — the IsProjectedEvent comment cited an "ADR-0030 lint guard"
-  that never existed, and drift is silent data loss (F-1316). The new test
-  AST-walks the switches and every projected source package's consumer.Event
-  implementations: a projected event without a persist arm, a source package
-  event missing from IsProjectedEvent, a stale entry after a rename, or an
-  IsProjectedEvent package with no registry case now fails CI. Probe-verified
-  (removing `rozo.Event` from IsProjectedEvent fails with the exact F-1316
-  diagnosis).
-- **SDK↔OpenAPI contract test** (`pkg/client/spec_contract_test.go`). Three
-  gates: every SDK method's route must exist in the spec; every spec operation
-  must be either SDK-covered or explicitly allowlisted with a reason (new
-  endpoints now fail CI until consciously triaged); and for covered endpoints
-  the spec's `data` schema properties must exactly match the SDK payload
-  struct's JSON tags in both directions. Closes the third edge of the
-  route↔spec↔SDK triangle (lint-docs.sh already reconciles routes↔spec).
+### Changed
+- **Explorer builds fail hard instead of baking fallback HTML.** New
+  `buildFetch.ts` (bounded 429-aware retry, per-build memo, incident-history
+  contract): a build-time fetch failure for a promised entity now FAILS
+  `next build` — the class behind baked "Asset not found" pages and the
+  XLM/WXLM 330× price incident. ~200 lines of per-page scaffolding deleted;
+  the new layer immediately caught two real pre-existing baking bugs
+  (mixed-case slug variants; issuer fetches timing out under build
+  concurrency). Full 3,830-page build green against the live API.
+- **Four D3 duplication extractions** (net −LoC, behavior-preserving,
+  CAPABILITY-INVENTORY updated): `wsclient.Loop` (the ~50-line WS reconnect
+  loop duplicated across binance/kraken/coinbase/bitstamp — venue behavior
+  preserved via hooks), `internal/httpx` WriteJSON/WriteProblem (dashboard
+  handler copies), `ratelimit.FixedWindowCounter` (login/signup throttles,
+  Redis key bytes unchanged), `canonical.SafeUnixSeconds/Millis` (three
+  decoder timestamp-clamp copies; bound-checks the raw u64 before the cast —
+  the router deadline_ts wrap-negative class).
+- **The explorer now derives every wire type from the generated OpenAPI
+  contract.** `src/api/types.ts` (generated, CI-drift-checked) was imported
+  nowhere; all consumed shapes were hand-typed across hooks.ts,
+  explorer-shared.tsx, and ~20 pages — an API field rename shipped to prod
+  undetected. All hand interfaces are now aliases into
+  `components['schemas']` (35 files, −448 net lines; ~90 call sites gained
+  honest null-narrowing, zero `!`/`as` casts), so spec drift is a `tsc`
+  failure. Eight `// SPEC-GAP` intersections remain where the HANDLER serves
+  fields the spec under-documents — tracked for spec-side fixes.
 
 ### Fixed
+- **The explorer-surface OpenAPI gaps are closed** — every field the handlers
+  serve that the generated-types migration had to bridge with `SPEC-GAP`
+  intersections is now in the spec: the Asset coin-overlay block (slug,
+  class, change_1h/7d_pct, first/last_seen_ledger, observation_count,
+  markets/trade counts, price_history_24h/7d, ath, top_markets,
+  issuer_scam_reason) + `type` enum values global/external;
+  GlobalAssetView.class (required); Source.class enum gains
+  bridge/lending/router (all live in the registry); issuers list rows gain
+  org_verified + scam_reason (detail gains scam_reason); ContractEvent gains
+  contract_id; /account/me documents the session-cookie user/account shape;
+  the protocols `bespoke` block and evolving diagnostics fields are
+  documented as described-loose surfaces per ADR-0042's experimental tier.
+  SDK types mirror every addition (contract test green); all three artifacts
+  regenerated; zero `SPEC-GAP` markers remain — the surviving intersections
+  are re-labeled for what they now are: required-narrowing over spec-optional
+  fields.
+
 - **Classic-asset supply was silently SAC-only — the trustline/claimable/LP
   observers never matched their watched set.** Root-caused from the
   verify-served-values USDC finding (served 40M vs Stellar Expert 265.9M):
@@ -356,6 +271,90 @@ against.
   now set `Cache-Control: no-store` (matching every other problem writer), the
   cachecontrol.go invariant doc now enumerates them, and a regression test
   drives all four rejection paths through the real CacheControl composition.
+
+### Removed
+- **The dead `consumer.Orchestrator` seam (−896 LoC).** The per-source-
+  goroutine runner + `Source`/`CursorStore`/`Cursor` types had zero production
+  callers and were exactly the RPC-era topology docs/architecture/ingest-
+  pipeline.md forbids — yet doc.go presented them as a reference template.
+  `consumer.Event` (the load-bearing contract) moved to `event.go` untouched;
+  doc.go now states the retirement + points at the dispatcher path. Stale
+  comments advertising the deleted `<source>-backfill` subcommands fixed in
+  sorobanevents/timescale. Follow-up: `stellarindex_source_lag_ledgers` lost
+  its only (never-production) setter — retirement folded into the
+  docs-integrity sweep.
+
+- **ADR-0041: ingest durability semantics.** Settles CS-028's cursor question:
+  the ledgerstream cursor is a RESUME HINT, not a durability claim — the
+  ADR-0033 completeness verdict (strict per-ledger since CS-084) is the
+  durability claim, with the lake as the heal source. Consequences shipped
+  with the ADR: `clickhouse_live_sink` + `clickhouse_projector_source` now
+  **default to `true`** (r1 already ran both; the certified-lake substrate
+  must not be opt-in for the coverage claim to mean anything — explicit
+  opt-out documented for CH-less deployments), and the previously-unalerted
+  `ch_live_sink_ledgers_total{outcome="dropped"}` counter gains a two-tier
+  alert (ticket at 10m of drops, page at 1h sustained) in BOTH rule trees +
+  a new runbook (`ch-live-sink-drops.md`).
+- **ADR-0040: completing contract-identity gating (CS-026).** Design for the
+  four still-ungated decoders: phoenix + defindex ship as curated-set /
+  factory-descended childgate registries (both already enumerated in
+  docs/protocols/ — the "waiting on team data" framing was stale), aquarius
+  gets a lake-derived enumeration procedure, and comet — the no-factory hard
+  case — gets a WASM-code-hash gate design (audited hash set + off-hot-path
+  registry sweep). Includes the rollout preconditions (seed before gate
+  binary, lake re-derive, verdict green) that prevent a fail-closed gate from
+  dropping live trades.
+- **Prometheus rule-tree semantic differ** (`scripts/ci/lint-rule-equivalence`,
+  wired into `make monitoring-check`). The multi-host and r1-overlay rule
+  trees are hand-maintained near-copies; file pairing was checked but nothing
+  enforced that paired rules stay semantically equivalent — a threshold fixed
+  in one tree silently diverged the other (the api.yml header has warned about
+  this since F-1222). The differ compares every paired rule's expr (job labels
+  normalized), `for`, and `labels`; the two genuine host-shape divergences
+  (redis replica expectation, scrape-job list) live in a shrink-only
+  `rule-equivalence.baseline` covered by the CS-098 growth guard.
+  Probe-verified: a one-line `for:` change in one tree fails with a precise
+  diagnosis.
+- **Pipeline lockstep guard** (`internal/pipeline/lockstep_ast_test.go`). The
+  five hand-synced wiring sites (HandleEvent / IsProjectedEvent /
+  tradeFromEvent / projector `buildSource` / dispatcher registration) had no
+  machine check — the IsProjectedEvent comment cited an "ADR-0030 lint guard"
+  that never existed, and drift is silent data loss (F-1316). The new test
+  AST-walks the switches and every projected source package's consumer.Event
+  implementations: a projected event without a persist arm, a source package
+  event missing from IsProjectedEvent, a stale entry after a rename, or an
+  IsProjectedEvent package with no registry case now fails CI. Probe-verified
+  (removing `rozo.Event` from IsProjectedEvent fails with the exact F-1316
+  diagnosis).
+- **SDK↔OpenAPI contract test** (`pkg/client/spec_contract_test.go`). Three
+  gates: every SDK method's route must exist in the spec; every spec operation
+  must be either SDK-covered or explicitly allowlisted with a reason (new
+  endpoints now fail CI until consciously triaged); and for covered endpoints
+  the spec's `data` schema properties must exactly match the SDK payload
+  struct's JSON tags in both directions. Closes the third edge of the
+  route↔spec↔SDK triangle (lint-docs.sh already reconciles routes↔spec).
+
+### Documentation
+- **Docs-integrity sweep: the institutional-knowledge layer agrees with
+  itself again.** `docs/architecture/overview.md` now EXISTS (CLAUDE.md and
+  engineering-standards.md cited it for months; it routes to the real docs);
+  the CS-129 kubectl-on-a-systemd-fleet commands in insert-errors +
+  all-ingestion-down are systemd/psql; the CS-008 finding-ID collision is
+  re-IDed with a register note; the remediation STATUS deferred list and
+  launch-todo carry staleness banners naming what shipped since they were
+  written; the coverage tracker's header/table contradiction is annotated;
+  and the never-emitted `stellarindex_source_lag_ledgers` gauge (its only
+  setter was the deleted Orchestrator) is removed from obs + docs, with the
+  two archived runbooks that cited it scrubbed to historical prose.
+- **CAGG price-math verified vs the exact engine; `twap` column marked dead.**
+  The `prices_*` continuous aggregates compute `vwap` with the per-row form
+  `sum((quote/base)*base)/sum(base)` instead of the exact `sum(quote)/sum(base)`;
+  measured on r1 the divergence is ≤ 1.0e-16 relative (40,565 1h-bucket
+  comparisons) — below the 12-decimal wire truncation, so no rematerialization.
+  New aggregates must use the exact single-division form (migrations/README.md
+  rule 8). The CAGGs' `twap` column is an equal-weight mean, not time-weighted,
+  and is read by nothing — documented as do-not-use in the TWAP/OHLC methodology
+  doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ## [v0.6.2] — 2026-07-02
 
