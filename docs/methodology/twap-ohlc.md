@@ -1,6 +1,6 @@
 ---
 title: TWAP / OHLC methodology + freshness semantics
-last_verified: 2026-05-28
+last_verified: 2026-07-02
 status: ratified
 ---
 
@@ -110,6 +110,26 @@ the streaming window, because the next valid TWAP doesn't exist
 yet. Quietly emitting yesterday's TWAP into a today-anchored
 stream would be a correctness regression, not a robustness win.
 
+## The `twap` column in the `prices_*` CAGGs is NOT the served TWAP
+
+The continuous aggregates created by migration 0002 materialize a
+column named `twap` computed as `avg(quote_amount / base_amount)` —
+an **equal-weight mean of per-trade prices**, not a time-weighted
+average. No code reads it: the TWAP served by `/v1/twap` is always
+computed on demand from raw trades by `internal/aggregate/twap.go`
+(exact `big.Rat`, genuinely time-weighted). Do not start reading the
+CAGG column; it exists only because dropping a column from an
+indefinite continuous aggregate requires a full rematerialization,
+which is not worth it for dead storage.
+
+Relatedly: the CAGG `vwap` uses the per-row form
+`sum((quote/base)*base)/sum(base)` rather than the exact
+`sum(quote)/sum(base)`. Measured on r1 (2026-07-02, 40,565 1h-bucket
+comparisons) the divergence from exact is ≤ 1.0e-16 relative — below
+the 12-decimal wire truncation, so the served historical VWAP and
+the live exact-rational VWAP agree at wire precision. New aggregates
+must use the exact single-division form (migrations/README.md rule 8).
+
 ## Cross-reference
 
 - `internal/api/v1/twap.go::handleTWAP` — TWAP path.
@@ -121,3 +141,5 @@ stream would be a correctness regression, not a robustness win.
 ## Changelog
 
 - 2026-05-28 — initial draft.
+- 2026-07-02 — documented the dead CAGG `twap` column + the verified-
+  immaterial (≤1e-16) CAGG `vwap` numeric-form divergence.

@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Documentation
+- **CAGG price-math verified vs the exact engine; `twap` column marked dead.**
+  The `prices_*` continuous aggregates compute `vwap` with the per-row form
+  `sum((quote/base)*base)/sum(base)` instead of the exact `sum(quote)/sum(base)`;
+  measured on r1 the divergence is ≤ 1.0e-16 relative (40,565 1h-bucket
+  comparisons) — below the 12-decimal wire truncation, so no rematerialization.
+  New aggregates must use the exact single-division form (migrations/README.md
+  rule 8). The CAGGs' `twap` column is an equal-weight mean, not time-weighted,
+  and is read by nothing — documented as do-not-use in the TWAP/OHLC methodology
+  doc (`/v1/twap` computes real TWAP on demand from raw trades).
+
 ### Security
 - **Middleware rejections (401/403/429) are no longer shared-cacheable.**
   Four problem+json writers — auth 401s (`writeAuthProblem`), per-key policy
