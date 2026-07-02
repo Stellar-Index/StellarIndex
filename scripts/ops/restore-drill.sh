@@ -58,7 +58,11 @@ cleanup() {
   if [[ -f "$DATA_DIR/postmaster.pid" ]]; then
     sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" stop -m immediate || true
   fi
-  rm -rf "$DATA_DIR"
+  if [[ "$fail_count" -eq 0 ]]; then
+    rm -rf "$DATA_DIR"
+  else
+    echo "restore-drill: KEEPING $DATA_DIR for diagnosis (failures=$fail_count); delete it manually" >&2
+  fi
 }
 trap cleanup EXIT
 
@@ -78,11 +82,25 @@ fi
 # ─── phase 2: start scratch instance + recover ──────────────────────
 # Recovery target: end of archived WAL. Disposable instance — no
 # archive_command, loopback only, alternate port.
+# Scratch-instance overrides: the restored postgresql.conf carries
+# PRODUCTION sizing (tens-of-GB shared_buffers, wide lock tables) —
+# a second instance at those settings fails or starves the live DB.
+# Downsize everything except what recovery correctness needs
+# (timescaledb preload + a lock table big enough for the chunk count).
 sudo -u postgres tee -a "$DATA_DIR/postgresql.auto.conf" >/dev/null <<CONF
 port = $DRILL_PG_PORT
 listen_addresses = '127.0.0.1'
 archive_mode = off
 shared_preload_libraries = 'timescaledb'
+shared_buffers = 2GB
+effective_cache_size = 4GB
+maintenance_work_mem = 256MB
+work_mem = 16MB
+max_connections = 20
+max_locks_per_transaction = 4096
+max_parallel_workers = 2
+timescaledb.max_background_workers = 2
+hot_standby = on
 CONF
 if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" -w -t 600 start; then
   check "pg_start" 1 "scratch instance up on :$DRILL_PG_PORT (recovery complete)"
