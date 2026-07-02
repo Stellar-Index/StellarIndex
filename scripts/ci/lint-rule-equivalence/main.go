@@ -89,7 +89,7 @@ func normalize(expr string) string {
 }
 
 func loadRules(path string) (map[string]rule, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // CI tool — rule-tree paths are CLI args by design
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func loadRules(path string) (map[string]rule, error) {
 
 func loadBaseline(path string) (map[string]bool, error) {
 	out := map[string]bool{}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // CI tool — baseline path is a CLI arg by design
 	if err != nil {
 		if os.IsNotExist(err) {
 			return out, nil
@@ -180,61 +180,7 @@ func main() {
 	}
 
 	for _, r1Path := range r1Files {
-		base := filepath.Base(r1Path)
-		multiPath := filepath.Join(multiDir, base)
-		if _, err := os.Stat(multiPath); os.IsNotExist(err) {
-			continue // pairing is lint-docs.sh's job
-		}
-		r1Rules, err := loadRules(r1Path)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-		multiRules, err := loadRules(multiPath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-
-		names := map[string]bool{}
-		for n := range r1Rules {
-			names[n] = true
-		}
-		for n := range multiRules {
-			names[n] = true
-		}
-		sorted := make([]string, 0, len(names))
-		for n := range names {
-			sorted = append(sorted, n)
-		}
-		sort.Strings(sorted)
-
-		for _, n := range sorted {
-			key := base + ":" + n
-			r1r, inR1 := r1Rules[n]
-			mr, inMulti := multiRules[n]
-			switch {
-			case !inR1:
-				if !allowed(key + ":presence") {
-					fail("%s: rule %q exists in multi-host but not in the r1 overlay", base, n)
-				}
-				continue
-			case !inMulti:
-				if !allowed(key + ":presence") {
-					fail("%s: rule %q exists in the r1 overlay but not in multi-host", base, n)
-				}
-				continue
-			}
-			if normalize(r1r.Expr) != normalize(mr.Expr) && !allowed(key+":expr") {
-				fail("%s: %q expr differs\n  multi: %s\n  r1:    %s", base, n, normalize(mr.Expr), normalize(r1r.Expr))
-			}
-			if r1r.For != mr.For && !allowed(key+":for") {
-				fail("%s: %q `for` differs (multi=%q r1=%q)", base, n, mr.For, r1r.For)
-			}
-			if !labelsEqual(r1r.Labels, mr.Labels) && !allowed(key+":labels") {
-				fail("%s: %q labels differ (multi=%v r1=%v)", base, n, mr.Labels, r1r.Labels)
-			}
-		}
+		compareFile(multiDir, r1Path, allowed, fail)
 	}
 
 	// Stale baseline entries fail — shrink-only.
@@ -255,4 +201,68 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("lint-rule-equivalence: the two rule trees are semantically equivalent.")
+}
+
+// compareFile diffs one paired rule file's alert/record rules across
+// the two trees, reporting divergences through fail (respecting the
+// baseline via allowed). A missing multi-host sibling is skipped —
+// file PAIRING is lint-docs.sh's job.
+//
+//nolint:gocognit // presence/expr/for/labels checks are one linear ladder per rule; splitting them hides the diff semantics
+func compareFile(multiDir, r1Path string, allowed func(string) bool, fail func(string, ...any)) {
+	base := filepath.Base(r1Path)
+	multiPath := filepath.Join(multiDir, base)
+	if _, err := os.Stat(multiPath); os.IsNotExist(err) { //nolint:gosec // CI tool — dir roots are CLI args by design
+		return
+	}
+	r1Rules, err := loadRules(r1Path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	multiRules, err := loadRules(multiPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+
+	names := map[string]bool{}
+	for n := range r1Rules {
+		names[n] = true
+	}
+	for n := range multiRules {
+		names[n] = true
+	}
+	sorted := make([]string, 0, len(names))
+	for n := range names {
+		sorted = append(sorted, n)
+	}
+	sort.Strings(sorted)
+
+	for _, n := range sorted {
+		key := base + ":" + n
+		r1r, inR1 := r1Rules[n]
+		mr, inMulti := multiRules[n]
+		switch {
+		case !inR1:
+			if !allowed(key + ":presence") {
+				fail("%s: rule %q exists in multi-host but not in the r1 overlay", base, n)
+			}
+			continue
+		case !inMulti:
+			if !allowed(key + ":presence") {
+				fail("%s: rule %q exists in the r1 overlay but not in multi-host", base, n)
+			}
+			continue
+		}
+		if normalize(r1r.Expr) != normalize(mr.Expr) && !allowed(key+":expr") {
+			fail("%s: %q expr differs\n  multi: %s\n  r1:    %s", base, n, normalize(mr.Expr), normalize(r1r.Expr))
+		}
+		if r1r.For != mr.For && !allowed(key+":for") {
+			fail("%s: %q `for` differs (multi=%q r1=%q)", base, n, mr.For, r1r.For)
+		}
+		if !labelsEqual(r1r.Labels, mr.Labels) && !allowed(key+":labels") {
+			fail("%s: %q labels differ (multi=%v r1=%v)", base, n, mr.Labels, r1r.Labels)
+		}
+	}
 }
