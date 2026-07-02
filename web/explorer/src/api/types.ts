@@ -2120,9 +2120,8 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": {
-                            data?: Record<string, never>[];
-                            pagination?: Record<string, never>;
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data: components["schemas"]["PoolRow"][];
                         };
                     };
                 };
@@ -7357,6 +7356,10 @@ export interface components {
         HealthResponse: {
             /** @enum {string} */
             status: "ok" | "degraded";
+            /** @description Human-readable process uptime, truncated to the second (e.g. `3h12m4s`). */
+            uptime?: string;
+            /** @description Pointer at `/v1/status` — the SLA-truth rollup (F-1210). */
+            status_root?: string;
         };
         ReadyResponse: {
             /**
@@ -7533,6 +7536,8 @@ export interface components {
             max_supply?: string | null;
             /** @description Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived. */
             price_usd?: string | null;
+            /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
+            change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable. */
             market_cap_usd?: string | null;
             /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null or USD price unavailable. */
@@ -7789,62 +7794,6 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number | null;
-            /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Computed as (now - then) / then * 100 against the latest closed prices_1m bucket whose end is at-or-before now-24h. Null when the asset has no current USD price OR no comparison bucket in the 24h-ago window. */
-            change_24h_pct?: string | null;
-            /** @description Latest VWAP/last-trade USD price. Mirror of CoinSummary.price_usd. */
-            price_usd?: string | null;
-            /** @description Trailing-1h price change as a signed percentage. */
-            change_1h_pct?: string | null;
-            /** @description Trailing-7d price change as a signed percentage. */
-            change_7d_pct?: string | null;
-            /** @description Top 5 markets by 24h USD volume. Each row is the counterparty of a (base, quote) pair the asset participated in. */
-            top_markets?: {
-                /** @description The OTHER side of the pair. */
-                counterparty: string;
-                /**
-                 * @description Which side this asset took.
-                 * @enum {string}
-                 */
-                side: "base" | "quote";
-                volume_24h_usd?: string | null;
-                trade_count_24h: number;
-            }[] | null;
-            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. */
-            price_history_24h?: {
-                /** Format: date-time */
-                t: string;
-                p?: string | null;
-            }[] | null;
-            /** @description 7 daily USD-price samples (oldest first). */
-            price_history_7d?: {
-                /** Format: date-time */
-                t: string;
-                p?: string | null;
-            }[] | null;
-            /** @description Distinct (base, quote) pairs the asset participated in over the trailing 24h. */
-            markets_count?: number | null;
-            /** @description Total trades the asset participated in (as base or quote) over the trailing 24h. */
-            trade_count_24h?: number | null;
-            /** @description All-time-high USD price + day it was set. Null when the asset has no USD-quoted history. */
-            ath?: {
-                usd: string;
-                /** Format: date-time */
-                at: string;
-            } | null;
-            /** @description Non-empty when this asset's issuer appears in the curated scam directory. */
-            issuer_scam_reason?: string;
-            /** @description aggregator */
-            volume_24h_usd?: string | null;
-            /** @description aggregator + supply derivation */
-            market_cap_usd?: string | null;
-            /** @description aggregator + supply derivation */
-            fdv_usd?: string | null;
-            /** @description supply derivation */
-            circulating_supply?: string | null;
-            /** @description supply derivation */
-            total_supply?: string | null;
-            /** @description supply derivation */
-            max_supply?: string | null;
             /**
              * Format: float
              * @description Multi-factor confidence score in [0, 1] (ADR-0019).
@@ -8133,6 +8082,26 @@ export interface components {
             volume_24h_usd?: string | null;
             /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
             last_price?: string | null;
+            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise. */
+            volume_history_24h?: {
+                /** Format: date-time */
+                hour: string;
+                /** @description Decimal string. */
+                volume_usd: string;
+            }[];
+        };
+        PoolRow: {
+            /** @description DEX source name (soroswap, phoenix, aquarius, comet, sdex). */
+            source: string;
+            base: string;
+            quote: string;
+            /** Format: date-time */
+            last_trade_at: string;
+            trade_count_24h: number;
+            /** @description Decimal string. Null when no USD-equivalent trades. */
+            volume_24h_usd?: string | null;
+            /** @description Most recent quote-per-base price observed on THIS venue. Decimal string. */
+            last_price?: string | null;
         };
         MarketsEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["MarketRow"][];
@@ -8165,6 +8134,24 @@ export interface components {
             on_chain: boolean;
             /** @description Trailing-24h trade count for this source. Populated only when the request used `?include=stats`; absent (omitted) otherwise. */
             trade_count_24h?: number;
+            /** @description Trailing-24h USD volume for this source. Decimal string. Populated only with `?include=stats`; absent otherwise (empty when the source had no priced trades). */
+            volume_24h_usd?: string;
+            /** @description Distinct (base, quote) pairs this source traded in the trailing 24h. Populated only with `?include=stats`; absent otherwise. */
+            markets_count_24h?: number;
+            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled (24 entries). Populated only when the request includes `sparkline` (e.g. `?include=stats,sparkline`). */
+            volume_history_24h?: {
+                /** Format: date-time */
+                hour: string;
+                /** @description Decimal string. */
+                volume_usd: string;
+            }[];
+            /** @description Same per-hour shape over the trailing 7 days (168 buckets). Populated only when the request includes `sparkline7d`. */
+            volume_history_7d?: {
+                /** Format: date-time */
+                hour: string;
+                /** @description Decimal string. */
+                volume_usd: string;
+            }[];
         };
         Methodology: {
             /** @description On-disk shape version. Bumps on breaking changes. */

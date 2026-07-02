@@ -66,7 +66,8 @@ type APIKeyRecord struct {
 	Label string `json:"label,omitempty"`
 
 	// KeyPrefix — first N characters of the plaintext key (e.g.
-	// `rek_4f9c1d8b`). Stored at creation time; safe to log
+	// `sip_4f9c1d8b`; legacy pre-rebrand keys read `rek_…`).
+	// Stored at creation time; safe to log
 	// because it's not enough to authenticate (the secret tail is
 	// what makes the key). Customers see this in dashboard
 	// listings to identify which row corresponds to which key in

@@ -57,13 +57,36 @@ type PriceSnapshot struct {
 	PriceType     string    `json:"price_type"`
 	ObservedAt    time.Time `json:"observed_at"`
 	WindowSeconds int       `json:"window_seconds,omitempty"`
+	// Confidence is the multi-factor confidence score per ADR-0019,
+	// in [0, 1]. Populated only on /v1/price (the closed-bucket
+	// surface) when the aggregator has cached a fresh score. Nil
+	// means "unknown", NOT "low" — clients gating on confidence
+	// must treat absence accordingly.
+	Confidence *float64 `json:"confidence,omitempty"`
+	// ConfidenceFactors is the per-factor decomposition that
+	// accompanies Confidence; nil with the same semantics.
+	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
+}
+
+// ConfidenceFactors is the per-factor decomposition of a
+// [PriceSnapshot]'s Confidence score (ADR-0019).
+type ConfidenceFactors struct {
+	ZScore          float64 `json:"z_score"`
+	SourceCount     float64 `json:"source_count"`
+	Diversity       float64 `json:"diversity"`
+	Liquidity       float64 `json:"liquidity"`
+	CrossOracle     float64 `json:"cross_oracle"`
+	BaselineQuality float64 `json:"baseline_quality"`
 }
 
 // HistorySeries is the data shape returned by
 // [Client.HistorySinceInception].
 type HistorySeries struct {
-	AssetID     string         `json:"asset_id"`
-	Quote       string         `json:"quote"`
+	AssetID string `json:"asset_id"`
+	Quote   string `json:"quote"`
+	// PriceType names the aggregation each point carries — "vwap"
+	// today; TWAP planned.
+	PriceType   string         `json:"price_type"`
 	Granularity string         `json:"granularity"`
 	Points      []HistoryPoint `json:"points"`
 }
@@ -94,10 +117,6 @@ type AssetDetail struct {
 	// "verified" / "no_match" / "unreachable" — see the API design
 	// reference for the full state machine.
 	Sep1Status string `json:"sep1_status"`
-
-	// IsExperimental flags assets the operator has marked as
-	// pre-production.
-	IsExperimental bool `json:"is_experimental,omitempty"`
 
 	// ─── SEP-1 overlay (populated when Sep1Status == "verified") ──
 
@@ -305,6 +324,29 @@ type Source struct {
 	BackfillAvailable bool   `json:"backfill_available"`
 	BackfillSafe      bool   `json:"backfill_safe"`
 	DefaultWeight     int    `json:"default_weight"`
+	// OnChain is true when the source observes the Stellar network
+	// directly (dispatcher-path ingest) rather than an off-chain
+	// vendor API. False for CEX / FX / aggregators / Chainlink.
+	OnChain bool `json:"on_chain"`
+	// Stats columns — populated only when the request used
+	// `?include=stats`; zero values otherwise.
+	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
+	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
+	MarketsCount24h int64  `json:"markets_count_24h,omitempty"`
+	// VolumeHistory24h / VolumeHistory7d — per-hour USD-volume
+	// buckets (24 / 168 entries, oldest → newest, zero-filled).
+	// Populated only when the request includes `sparkline` /
+	// `sparkline7d` respectively.
+	VolumeHistory24h []VolumeBucket `json:"volume_history_24h,omitempty"`
+	VolumeHistory7d  []VolumeBucket `json:"volume_history_7d,omitempty"`
+}
+
+// VolumeBucket is one hourly USD-volume datapoint in a source or
+// market sparkline series. VolumeUSD is a decimal string per
+// ADR-0003.
+type VolumeBucket struct {
+	Hour      time.Time `json:"hour"`
+	VolumeUSD string    `json:"volume_usd"`
 }
 
 // Methodology is the data shape returned by [Client.Methodology].
@@ -383,6 +425,13 @@ type Market struct {
 	// prices_1m's per-bucket volume_usd. Decimal string per
 	// ADR-0003. Nil when the pair has no USD-equivalent trades.
 	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
+	// LastPrice is the most recent quote-per-base price observed
+	// for this pair (cross-source) within the trailing 24h. Nil
+	// when no recent bucket carries one.
+	LastPrice *string `json:"last_price,omitempty"`
+	// VolumeHistory24h — per-hour USD-volume sparkline buckets.
+	// Populated only when the request sets `?include=sparkline`.
+	VolumeHistory24h []VolumeBucket `json:"volume_history_24h,omitempty"`
 }
 
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]
@@ -415,8 +464,12 @@ type AssetMetadata struct {
 
 // Account is the data shape returned by [Client.Me].
 type Account struct {
-	KeyID           string    `json:"key_id"`
-	Label           string    `json:"label,omitempty"`
+	KeyID string `json:"key_id"`
+	Label string `json:"label,omitempty"`
+	// KeyPrefix is the first characters of the plaintext key
+	// (`sip_<8hex>`) — safe to log/display; customers use it to
+	// identify which key a row refers to.
+	KeyPrefix       string    `json:"key_prefix,omitempty"`
 	Tier            string    `json:"tier"`
 	RateLimitPerMin int       `json:"rate_limit_per_min,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -437,6 +490,9 @@ type KeyCreated struct {
 	KeyID     string `json:"key_id"`
 	Plaintext string `json:"plaintext"`
 	Label     string `json:"label,omitempty"`
+	// KeyPrefix is the first 12 chars of the plaintext
+	// (`sip_<8hex>`) — safe to display; identifies the key later.
+	KeyPrefix string `json:"key_prefix,omitempty"`
 }
 
 // Coin + CoinsPage types removed — `/v1/coins` HTTP surface
@@ -482,7 +538,12 @@ type Issuer struct {
 	// OrgName is the issuer's organisation name from
 	// `[DOCUMENTATION].ORG_NAME` in stellar.toml. Populated by
 	// the SEP-1 fetcher; empty until resolved.
-	OrgName        string  `json:"org_name,omitempty"`
+	OrgName string `json:"org_name,omitempty"`
+	// OrgVerified is true only when the SEP-1 verification is
+	// BIDIRECTIONAL: the issuer's home_domain serves a stellar.toml
+	// that lists this issuer back. One-way resolution is spoofable
+	// and does NOT set this flag (CS-100).
+	OrgVerified    bool    `json:"org_verified"`
 	AuthRequired   *bool   `json:"auth_required,omitempty"`
 	AuthRevocable  *bool   `json:"auth_revocable,omitempty"`
 	AuthImmutable  *bool   `json:"auth_immutable,omitempty"`
@@ -580,6 +641,20 @@ type ActiveIncident struct {
 type Health struct {
 	Status string `json:"status"`
 	Uptime string `json:"uptime,omitempty"`
+	// Checks is populated on /readyz with per-dependency ping
+	// results; absent on /healthz.
+	Checks []HealthCheck `json:"checks,omitempty"`
+	// StatusRoot points at /v1/status — the SLA-truth rollup
+	// covering ingest lag, freshness, and per-pair latency.
+	StatusRoot string `json:"status_root,omitempty"`
+}
+
+// HealthCheck is one per-dependency result in [Health].Checks.
+type HealthCheck struct {
+	Name string `json:"name"`
+	OK   bool   `json:"ok"`
+	// Error is populated only when OK is false.
+	Error string `json:"error,omitempty"`
 }
 
 // Version is the data shape returned by [Client.Version] — build
@@ -701,6 +776,14 @@ type LendingPool struct {
 	AuctionsTotal  int64     `json:"auctions_total"`
 	UniqueUsers30d int64     `json:"unique_users_30d"`
 	LastSeen       time.Time `json:"last_seen"`
+	// NetSupplied30d / NetBorrowed30d are 30-day NET-FLOW proxies in
+	// token base-units (decimal strings) — not all-time TVL or
+	// current reserve balances.
+	NetSupplied30d string `json:"net_supplied_30d"`
+	NetBorrowed30d string `json:"net_borrowed_30d"`
+	// Utilization30dPct is the borrow/supply window ratio; nil when
+	// net supply ≤ 0.
+	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"`
 }
 
 // VWAPResult is the data shape returned by [Client.VWAP] —
