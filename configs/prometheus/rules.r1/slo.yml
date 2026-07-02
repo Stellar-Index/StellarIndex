@@ -83,6 +83,18 @@ groups:
         labels:
           slo: api_latency_p95_under_200ms
 
+      # Request rate over the SLO-scoped routes — feeds the min-traffic guard
+      # on the burn alerts below. At near-zero real traffic the ratio is
+      # dominated by a handful of synthetic (smoke + prewarm) requests, so a
+      # few cold-cache outliers can trip the 0.1% budget. The guard suppresses
+      # the burn alerts until real traffic clears the synthetic baseline
+      # (~2.4 req/s measured 2026-07-02); floor set to 5 req/s (2× headroom).
+      - record: stellarindex:api_latency_slo_request_rate:1h
+        expr: |
+          sum(rate(http_request_duration_seconds_count{job="stellarindex-api",route=~"/v1/price|/v1/price/batch|/v1/oracle/latest|/v1/oracle/lastprice|/v1/oracle/prices|/v1/oracle/x_last_price"}[1h]))
+        labels:
+          slo: api_latency_p95_under_200ms
+
       # The "fraction below 200ms" math is `1 - bucket_le_0.2 / count`,
       # but the bucket is cumulative so we subtract directly. Above
       # we recorded the GOOD ratio (≤ 200 ms); the burn-rate alerts
@@ -98,6 +110,9 @@ groups:
           (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > (14.4 * 0.001)
           and
           (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > (14.4 * 0.001)
+          # min-traffic guard — don't burn on synthetic-only traffic
+          and on(slo)
+          (stellarindex:api_latency_slo_request_rate:1h{slo="api_latency_p95_under_200ms"} > 5)
         for: 2m
         labels:
           severity: page
@@ -119,6 +134,9 @@ groups:
           (1 - stellarindex:api_slow_request_ratio:30m{slo="api_latency_p95_under_200ms"}) > (6 * 0.001)
           and
           (1 - stellarindex:api_slow_request_ratio:6h{slo="api_latency_p95_under_200ms"}) > (6 * 0.001)
+          # min-traffic guard — don't burn on synthetic-only traffic
+          and on(slo)
+          (stellarindex:api_latency_slo_request_rate:1h{slo="api_latency_p95_under_200ms"} > 5)
         for: 5m
         labels:
           severity: page
@@ -138,6 +156,9 @@ groups:
           (1 - stellarindex:api_slow_request_ratio:6h{slo="api_latency_p95_under_200ms"}) > (1 * 0.001)
           and
           (1 - stellarindex:api_slow_request_ratio:24h{slo="api_latency_p95_under_200ms"}) > (1 * 0.001)
+          # min-traffic guard — don't burn on synthetic-only traffic
+          and on(slo)
+          (stellarindex:api_latency_slo_request_rate:1h{slo="api_latency_p95_under_200ms"} > 5)
         for: 30m
         labels:
           severity: ticket
