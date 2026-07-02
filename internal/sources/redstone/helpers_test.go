@@ -1,89 +1,9 @@
 package redstone
 
 import (
-	"math"
 	"strings"
 	"testing"
-	"time"
 )
-
-// ─── pickTimestamp ─────────────────────────────────────────────
-
-func TestPickTimestamp_zeroFallsBackToClosedAt(t *testing.T) {
-	closedAt := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
-	got := pickTimestamp(0, closedAt)
-	if !got.Equal(closedAt) {
-		t.Errorf("got %v, want %v (closedAt fallback)", got, closedAt)
-	}
-}
-
-func TestPickTimestamp_packageMsPreferred(t *testing.T) {
-	// packageMs is the contract-declared package timestamp in
-	// milliseconds; non-zero values must be honoured even when
-	// closedAt is wildly later.
-	closedAt := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
-	pkgMs := uint64(1_700_000_000_000) // 2023-11-14T22:13:20Z
-	got := pickTimestamp(pkgMs, closedAt)
-	want := time.UnixMilli(1_700_000_000_000).UTC()
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestPickTimestamp_farFutureClampsToClosedAt(t *testing.T) {
-	// A sentinel / garbage far-future packageMs (same overflow class
-	// as the soroswap-router deadline_ts) must fall back to the
-	// ledger close time instead of overflowing the timestamptz
-	// INSERT.
-	closedAt := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
-	pkgMs := uint64(3_000_000_000_000_000) // ~year 96000
-	got := pickTimestamp(pkgMs, closedAt)
-	if !got.Equal(closedAt) {
-		t.Errorf("got %v, want %v (far-future packageMs should clamp to closedAt)", got, closedAt)
-	}
-}
-
-func TestPickTimestamp_overflowWrapsClampToClosedAt(t *testing.T) {
-	// packageMs values ABOVE math.MaxInt64 wrap NEGATIVE in the int64
-	// cast → a far-PAST time that the old future-only After() guard
-	// missed (it's not After the close) and that overflows the
-	// timestamptz INSERT. Must clamp to ledger close.
-	closedAt := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
-	for name, pkgMs := range map[string]uint64{
-		"justOverMaxInt64": uint64(math.MaxInt64) + 1,
-		"1e19wrapsFarPast": 10_000_000_000_000_000_000,
-		"maxUint64":        math.MaxUint64,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := pickTimestamp(pkgMs, closedAt); !got.Equal(closedAt) {
-				t.Errorf("got %v, want %v (>MaxInt64 packageMs must clamp, not wrap)", got, closedAt)
-			}
-		})
-	}
-}
-
-func TestPickTimestamp_withinWindowHonoured(t *testing.T) {
-	// A packageMs slightly after the ledger close (clock skew) but
-	// within the sanity window is still honoured.
-	closedAt := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
-	pkgMs := uint64(closedAt.Add(time.Hour).UnixMilli())
-	got := pickTimestamp(pkgMs, closedAt)
-	want := time.UnixMilli(int64(pkgMs)).UTC()
-	if !got.Equal(want) {
-		t.Errorf("got %v, want %v (in-window value honoured)", got, want)
-	}
-}
-
-func TestPickTimestamp_resultIsUTC(t *testing.T) {
-	loc, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		t.Skip("no timezone data")
-	}
-	got := pickTimestamp(0, time.Date(2026, 4, 26, 12, 0, 0, 0, loc))
-	if got.Location() != time.UTC {
-		t.Errorf("Location() = %v, want UTC", got.Location())
-	}
-}
 
 // ─── feedIDsFromOpArgs ─────────────────────────────────────────
 

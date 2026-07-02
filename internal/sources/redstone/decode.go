@@ -97,8 +97,12 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// OpIndex uses a fixed stride per-event so two Redstone
 			// events in one tx (unlikely but possible) can't collide
 			// on the oracle_updates PK.
-			OpIndex:   uint32(e.OperationIndex)*opIndexFanoutStride + uint32(i),
-			Timestamp: pickTimestamp(pd.PackageTimestamp, closedAt),
+			OpIndex: uint32(e.OperationIndex)*opIndexFanoutStride + uint32(i),
+			// canonical.SafeUnixMillis prefers the contract-supplied
+			// PackageTimestamp but clamps 0 / sentinel / far-future
+			// garbage (incl. the >MaxInt64 wrap class of the router
+			// deadline_ts overflow) to the ledger close time.
+			Timestamp: canonical.SafeUnixMillis(pd.PackageTimestamp, closedAt),
 			Asset:     entry.Base,
 			// Per-feed quote — USD for all but EUROC/EUR (ADR-0028).
 			// Pre-#53 this was hardcoded USD, mislabelling EUROC.
@@ -300,37 +304,4 @@ func sdkDecodeFeedIDsFromArg(sv scval.ScVal) ([]string, error) {
 // formatting for all address types.
 func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 	return scval.AsAddressStrkey(sv)
-}
-
-// sanityFutureWindow bounds how far past the ledger close a decoded
-// oracle timestamp may sit before we treat it as garbage and fall
-// back to the ledger close time. Absorbs clock skew without admitting
-// sentinel / overflow values that error the timestamptz INSERT
-// (cf. the soroswap-router deadline_ts fix).
-const sanityFutureWindow = 24 * time.Hour
-
-// pickTimestamp prefers the contract-supplied PackageTimestamp
-// (ms UNIX) but falls back to the ledger close time when the
-// contract reports 0 — a defensive case against a contract
-// upgrade that relaxes the "non-zero timestamp" invariant — or when
-// the value is a sentinel / garbage far-future timestamp (same class
-// as the router deadline_ts overflow) that would error the
-// timestamptz INSERT.
-func pickTimestamp(packageMs uint64, closedAt time.Time) time.Time {
-	if packageMs == 0 {
-		return closedAt.UTC()
-	}
-	// Bound the RAW u64 before the int64 cast. The old guard cast first
-	// and checked `ts.After(close+24h)`, which catches far-future values
-	// below math.MaxInt64 — but a packageMs > math.MaxInt64 wraps
-	// NEGATIVE in the cast and produces a far-PAST time that the
-	// future-only check misses and that overflows the oracle_updates
-	// timestamptz INSERT (same class as the band/router deadline_ts bug).
-	// Checking the raw u64 upper bound catches both and keeps the cast
-	// provably in range.
-	maxMs := uint64(closedAt.Add(sanityFutureWindow).UnixMilli())
-	if packageMs > maxMs {
-		return closedAt.UTC()
-	}
-	return time.UnixMilli(int64(packageMs)).UTC()
 }

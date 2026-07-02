@@ -46,7 +46,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
 		// Fail closed rather than substituting time.Now(): closedAt
-		// is the fallback pickTimestamp uses when a PriceData's
+		// is the fallback canonical.SafeUnixMillis uses when a PriceData's
 		// PackageTimestamp is 0 / out of its sanity window, so a
 		// wall-clock value here would mis-timestamp the row during a
 		// backfill replay (cf. the comet sibling).

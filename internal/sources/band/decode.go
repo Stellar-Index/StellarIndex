@@ -17,14 +17,6 @@ import (
 // submission), well under 1024.
 const opIndexFanoutStride = 1024
 
-// sanityFutureWindow bounds how far past the ledger close a decoded
-// oracle timestamp may sit before we treat it as garbage and fall
-// back to the ledger close time. A real relayer payload is at or
-// before the ledger close; a small grace window absorbs clock skew
-// without admitting sentinel / overflow values that error the
-// timestamptz INSERT (cf. the soroswap-router deadline_ts fix).
-const sanityFutureWindow = 24 * time.Hour
-
 // decodeRelayArgs converts one Band relay/force_relay InvokeContract
 // call into a slice of canonical.OracleUpdate — one per (symbol,
 // rate) pair in symbol_rates.
@@ -110,23 +102,13 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve_time: %w", ErrMalformedArgs, err)
 	}
-	// Defensive fallback: relayer-supplied resolve_time is a u64, so a
-	// garbage value out of the sane window falls back to ledger close.
-	//   - too small (resolve_time=0 / pre-2001) → bogus old timestamp.
-	//   - too large (> close+24h) → far-future sentinel; and crucially
-	//     anything > math.MaxInt64 (~9.2e18) WRAPS NEGATIVE in the
-	//     int64() cast below and would stamp a far-PAST time that
-	//     overflows the timestamptz INSERT — the same overflow class as
-	//     the router deadline_ts bug. (The old guard cast first and
-	//     checked `ts.After(...)`, which the wrapped far-past value
-	//     slips past in both directions.) Bound-checking the RAW u64
-	//     first catches both ends and keeps the cast provably in range.
-	// Real-world Band payloads are post-2020 UNIX seconds ≤ the close.
-	maxResolve := uint64(closedAt.Add(sanityFutureWindow).Unix())
-	ts := closedAt
-	if resolveSeconds >= 1_000_000_000 && resolveSeconds <= maxResolve {
-		ts = time.Unix(int64(resolveSeconds), 0).UTC()
-	}
+	// Defensive fallback: relayer-supplied resolve_time is a u64;
+	// canonical.SafeUnixSeconds bound-checks the RAW u64 (pre-2001
+	// floor + close+24h ceiling, catching the >MaxInt64 wrap class of
+	// the router deadline_ts bug) and falls back to the ledger close
+	// on garbage. Real-world Band payloads are post-2020 UNIX seconds
+	// ≤ the close.
+	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
 
 	usdQuote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
