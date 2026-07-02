@@ -36,7 +36,7 @@ severity: P2
 ## Symptoms
 
 - `stellarindex_stellar_rpc_latest_ledger_age_seconds > 300` sustained 5 min.
-- Upstream: all `stellarindex_source_lag_ledgers` climb together — the hallmark of a shared-upstream issue (vs single-source).
+- Upstream: all per-source lag signals climb together (historically the `source_lag_ledgers` gauge, deleted 2026-07-02; today: data-freshness ages across sources) — the hallmark of a shared-upstream issue (vs single-source).
 - API `/v1/readyz` may still return 200 (we only probe Timescale + Redis there, not the RPC).
 
 ## Quick diagnosis (≤ 5 min)

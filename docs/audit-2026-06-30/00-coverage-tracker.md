@@ -5,7 +5,7 @@ status: ✅ COMPLETE — all 34 areas + cross-cutting + Audit-2 executed with ad
 
 # Coverage tracker
 
-> **✅ ALL AREAS EXECUTED.** Every A1–A36 area below and every Audit-2 workstream
+> **✅ ALL AREAS EXECUTED (the per-row ⏳/🟡 marks below are a stale point-in-time snapshot from mid-audit — 03-synthesis.md is the completion record; this table was not re-marked).** Every A1–A36 area below and every Audit-2 workstream
 > was reviewed by an independent adversarial agent (or executed directly) with a
 > refute-pass; findings are in the CS-###/LC-### registers. No row is
 > "surface-mapped" or deferred to a later wave. Cross-cutting hunts CC-1…CC-7 were

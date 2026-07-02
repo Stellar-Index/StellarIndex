@@ -42,7 +42,7 @@ Each fix landed as its own commit on `main` (see `git log`).
 | CS-083 | High | completeness watermark regressed on smaller re-run (`complete=true` at stale tip) → `WHERE` guard |
 | CS-090 | Med | stale-tip verdict invisible → `completeness_watermark_lag_ledgers` gauge in freshness watchdog |
 | CS-088 | High | divergence checker went dark silently (all refs fail = `outcome=ok`) → `no_reference` outcome + alert + runbook |
-| CS-008 | Med(sec) | 3 divergent SSRF blocklists (webhook guards missed Oracle metadata IP) → one `internal/nettools` union guard |
+| CS-008-ssrf¹ | Med(sec) | 3 divergent SSRF blocklists (webhook guards missed Oracle metadata IP) → one `internal/nettools` union guard |
 | CS-029 | Med | cursor gauge advanced on persist failure (hid stall) → gauge only on success |
 | CS-100 | High | issuer detail dropped `org_verified` (impersonation) → thread through API + Verified/Unverified chip |
 | CS-055 | Med | webhook HMAC replayable (body-only) → timestamp-bound signature + `X-StellarIndex-Timestamp` |
@@ -63,6 +63,19 @@ Each fix landed as its own commit on `main` (see `git log`).
 | D4 | `/CAPABILITY-INVENTORY.md` (intent→symbol index) at repo root |
 | D9 | `docs/contributing/` — 6 copy-followable checklists, CLAUDE.md points at them |
 | D3 | `internal/nettools` (SSRF union) + `internal/sources/external/scale` (10 dup helper copies → 1, −335 LoC) |
+
+> **Staleness note (2026-07-02):** several rows below shipped in
+> v0.6.0 AFTER this file was written: the LC-001 fiat split, the
+> exhaustive linter (D7), the import-boundary rules (D8), CS-070's
+> blocking integration-CI job, and the ADR-0003 i128/BIGINT lints.
+> Cross-check CHANGELOG v0.6.0 before acting on the deferred list.
+> Newly DONE 2026-07-02 (this session): CS-084 (per-ledger -ch
+> reconcile), CS-089 (chainlink staleness), CS-097/098 (branch
+> protection + baseline growth guard), CS-113/114 (DR runbook
+> honesty), CS-118/119/122 (ansible non-root), the D3 wsclient/httpx
+> extractions, the consumer.Orchestrator retirement, and ADR-0040/
+> 0041/0042/0043. CS-026 has a design + implementation plan
+> (ADR-0040, board #32).
 
 ## ⏭ Deferred — need @ash direction or are large/design-gated
 
@@ -159,3 +172,5 @@ The deferred deps + a full outdated-sweep, done as individual verified commits:
 Every code fix built + its package tests passed at commit time; `bash
 scripts/dev/verify.sh` run before the batch pushes. Explorer changes `tsc`-clean.
 Tailwind v4 additionally spot-checked by rendering the homepage + styleguide.
+
+¹ Register note (2026-07-02): this row was originally logged as CS-008, colliding with the cold-audit's CS-008 (tenant isolation in handlers, Low — 01-cold-system-findings.md). Re-IDed here as CS-008-ssrf; the findings doc keeps the original.

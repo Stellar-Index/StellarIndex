@@ -48,7 +48,6 @@ func registerAppMetrics() {
 		APICacheOpsTotal,
 
 		SourceEventsTotal,
-		SourceLagLedgers,
 		SourceLastEventUnix,
 		SourceLastInsertUnix,
 		SourceEnabled,
@@ -450,16 +449,6 @@ var SourceEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_events_total",
 		Help: "Total events emitted by each ingestion source.",
-	},
-	[]string{"source"},
-)
-
-// SourceLagLedgers — per-source gauge, how many ledgers behind the
-// network tip a source is. Zero at tip.
-var SourceLagLedgers = prometheus.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Name: "stellarindex_source_lag_ledgers",
-		Help: "How many ledgers behind the network tip each source currently is.",
 	},
 	[]string{"source"},
 )

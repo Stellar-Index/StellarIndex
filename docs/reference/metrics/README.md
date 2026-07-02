@@ -216,15 +216,6 @@ Gauge, label `source`.
 qualify source-level alerts so intentionally disabled sources do not
 page.
 
-### `stellarindex_source_lag_ledgers`
-
-Gauge, label `source`.
-
-Legacy metric from the pre-dispatcher orchestrator topology. The
-current `ledgerstream -> dispatcher` indexer does not emit this gauge,
-so no live alert should depend on it until a replacement per-source
-lag signal exists.
-
 ### `stellarindex_source_last_event_unix`
 
 Gauge, label `source`. Unix-seconds timestamp of the most recent

@@ -33,15 +33,15 @@ curl -s http://api:9464/metrics |
 
 # Is it the storage layer itself?
 stellarindex-ops rpc-probe https://mainnet.sorobanrpc.com   # rules out upstream — r1 has no local stellar-rpc, point at a public endpoint
-kubectl exec -it timescale-0 -- psql -c "SELECT now(), pg_is_in_recovery();"
+sudo -u postgres psql -d stellarindex -c "SELECT now(), pg_is_in_recovery();"
 
 # Actual failure reason is in the indexer's logs:
-kubectl logs deploy/stellarindex-indexer | grep "insert trade failed\|insert oracle update failed" | tail
+journalctl -u stellarindex-indexer --since -2h | grep -E "insert (trade|oracle update) failed" | tail
 ```
 
 If the log line says:
 - `connection refused` → Timescale is down or network partitioned. Jump to `timescale-primary-down.md`.
-- `disk full` / `no space` → Timescale volume out of space. Scale PVC or evict old chunks.
+- `disk full` / `no space` → Timescale volume out of space. Free space on the ZFS pool or evict old chunks (see db-disk-full.md).
 - `duplicate key value` → should be impossible; the idempotent ON CONFLICT swallows these. If you see this, the primary-key invariant is broken and this is a data-integrity incident, not a capacity one. Escalate.
 - `violates check constraint` → a source sent malformed data (negative amounts, bad tx_hash). Decode bug, not a storage bug; check `stellarindex_source_decode_errors_total` on the same source.
 

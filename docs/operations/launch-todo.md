@@ -27,6 +27,15 @@ status: living document
 
 ---
 
+> **Staleness banner (2026-07-02):** this doc's ⭐ block predates
+> v0.6.0–v0.6.2 and the 2026-07-02 audit-hardening session. Since it
+> was written: the LC-001 fiat split shipped, min_usd_volume was
+> re-raised, integration tests became a blocking CI gate, main gained
+> branch protection, CS-084/089 landed, ADR-0040–0043 exist, and the
+> operator register (audit-remediation-operator-actions.md) is the
+> living list for human actions. Treat the CURRENT STATUS block as
+> history; the task-level sections remain useful for P3/P4 scope.
+
 ## ⭐ CURRENT STATUS — where we are (updated 2026-06-30, end of long session)
 
 **Two numbering schemes — don't conflate them:**
