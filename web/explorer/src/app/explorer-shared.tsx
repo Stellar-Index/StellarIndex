@@ -21,7 +21,7 @@ import type { components, paths } from '@/api/types';
 // Derived from the generated OpenAPI contract (src/api/types.ts,
 // `make web-generate-api`) so spec drift fails the build instead of
 // shipping as undefined in the UI. Fields the API serves but the spec
-// doesn't declare yet are kept as `SPEC-GAP:` intersections.
+// under-declares are locally narrowed (see per-site comments).
 // ---------------------------------------------------------------------------
 
 type Schemas = components['schemas'];
@@ -59,13 +59,8 @@ export type LedgerTransactionsResp = NonNullable<
 // derive success from `=== 0`, never from truthiness.
 export type TxOperation = Schemas['Operation'];
 
-export type TxEvent = Schemas['ContractEvent'] & {
-  // SPEC-GAP: the per-tx event rows carry contract_id
-  // (internal/api/v1/explorer_tx.go TxEventView) but the spec's shared
-  // ContractEvent schema omits it (the per-contract listing hoists it
-  // to the top level instead).
-  contract_id?: string;
-};
+// contract_id is spec'd on ContractEvent since board #33.
+export type TxEvent = Schemas['ContractEvent'];
 
 // Full transaction detail (summary + decoded operations + events).
 export type TxSummary = Omit<Schemas['TxDetail'], 'events'> & {

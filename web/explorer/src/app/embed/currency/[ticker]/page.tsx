@@ -17,12 +17,8 @@ type Params = Promise<{ ticker: string }>;
 // returns GlobalAssetView when the ticker resolves to a verified
 // currency (F-1201 migrated this from /v1/currencies/{ticker}).
 // Derived from the generated OpenAPI contract.
-type GlobalAssetView = components['schemas']['GlobalAssetView'] & {
-  // SPEC-GAP: the wire carries `class` (crypto | stablecoin | fiat;
-  // internal/api/v1/assets_global.go GlobalAssetView.Class, required)
-  // but the spec's GlobalAssetView schema omits it.
-  class?: string;
-};
+// class is spec'd on GlobalAssetView since board #33.
+type GlobalAssetView = components['schemas']['GlobalAssetView'];
 
 interface CurrencyDetail {
   ticker: string;

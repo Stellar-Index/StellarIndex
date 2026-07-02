@@ -81,7 +81,7 @@ const REGIONS: RegionDef[] = [
 // IngestionDiagnostics struct — see
 // `internal/api/v1/diagnostics_ingestion.go`.
 // IngestionSnapshot — `/v1/diagnostics/ingestion` body from the
-// generated contract, plus the SPEC-GAP fields below that the Go
+// generated contract, plus the evolving diagnostics fields below that the Go
 // handler serves (internal/api/v1/diagnostics_ingestion.go) but the
 // spec's inline schema doesn't declare yet.
 type IngestionSnapshotWire = (paths['/diagnostics/ingestion']['get']['responses'][200]['content']['application/json'])['data'];
@@ -92,13 +92,14 @@ type IngestionSnapshot = Omit<
 > & {
   backfill_coverage: Array<
     IngestionSnapshotWire['backfill_coverage'][number] & {
-      // SPEC-GAP: density/gap-free coverage fields
+      // Evolving (spec documents the diagnostics surface as its stable core
+      // + a described evolving remainder — board #33): density/gap-free fields
       // (diagnostics_ingestion.go BackfillCoverageView).
       density_pct?: number;
       gap_free_pct?: number;
       covered_ledgers?: number;
       expected_ledgers?: number;
-      // SPEC-GAP: ADR-0033 Phase 6 watermark-based completeness
+      // Evolving: ADR-0033 Phase 6 watermark-based completeness
       // (substrate + projection verified, no sparsity threshold).
       // Preferred headline when present; falls back to gap_free
       // coverage otherwise.
@@ -109,7 +110,7 @@ type IngestionSnapshot = Omit<
   >;
   sources: Array<
     IngestionSnapshotWire['sources'][number] & {
-      // SPEC-GAP: entries_24h — universal trailing-24h per-source event
+      // Evolving: entries_24h — universal trailing-24h per-source event
       // count (stellarindex_source_events_total). Non-zero for every
       // active source, unlike trade_count_24h (trades-table only).
       entries_24h: number;

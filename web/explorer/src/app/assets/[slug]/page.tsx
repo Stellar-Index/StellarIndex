@@ -111,7 +111,7 @@ type Params = Promise<{ slug: string }>;
 // Wire shapes below derive from the generated OpenAPI contract
 // (src/api/types.ts, `make web-generate-api`) so spec drift breaks the
 // build here instead of rendering as `—`/NaN. Fields the API serves but
-// the spec doesn't declare yet are kept as `SPEC-GAP:` intersections.
+// under-declares are locally narrowed (see per-field comments).
 type AssetSchema = components['schemas']['Asset'];
 
 // CoinSummary — the rich /v1/assets row this page renders. The spec
@@ -119,12 +119,13 @@ type AssetSchema = components['schemas']['Asset'];
 // (internal/api/v1/assets.go AssetDetail's "Coin-equivalence extension")
 // aren't in the spec yet.
 type CoinSummary = Omit<AssetSchema, 'type'> & {
-  // SPEC-GAP: the spec's Asset.type enum omits "global" (catalogue
-  // rows) and "external" — widened until the spec covers the
-  // unified-listing dispatch.
+  // Spec'd since board #33 (Asset.type now includes global/external);
+  // kept widened to plain string for forward-compat.
   type?: string;
-  // SPEC-GAP fields below: served by /v1/assets (assets.go
-  // "Coin-equivalence extension") but missing from the spec's Asset.
+  // Spec'd on Asset since board #33 (optional there). This page
+  // fetches the FULL detail, so the intersection narrows the fields
+  // it renders unconditionally to required — a typing guarantee, not
+  // a spec gap.
   slug: string;
   observation_count: number;
   first_seen_ledger: number;
@@ -163,7 +164,7 @@ type CoinSummary = Omit<AssetSchema, 'type'> & {
   issuer_scam_reason?: string | null;
 };
 
-// SPEC-GAP: top_markets rows (assets.go CoinTopMarket) aren't in the
+// top_markets rows are spec'd since board #33; typed locally for the
 // spec's Asset schema either.
 interface TopMarket {
   counterparty: string;

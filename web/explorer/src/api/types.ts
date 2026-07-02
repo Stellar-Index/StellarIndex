@@ -2801,6 +2801,15 @@ export interface paths {
                                 asset_count: number;
                                 /** Format: int64 */
                                 total_observation_count: number;
+                                /**
+                                 * @description True only when SEP-1 verification is
+                                 *     bidirectional (the issuer's toml lists this
+                                 *     issuer back — CS-100). When false, org_name
+                                 *     is unverified self-declared metadata.
+                                 */
+                                org_verified?: boolean;
+                                /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
+                                scam_reason?: string;
                             }[];
                         };
                     };
@@ -2866,6 +2875,8 @@ export interface paths {
                                  *     authoritative without checking `org_verified`.
                                  */
                                 org_name?: string;
+                                /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
+                                scam_reason?: string;
                                 /**
                                  * @description True only when the issuer's SEP-1 toml lists this
                                  *     issuer back (bidirectional proof; one-way is
@@ -3274,6 +3285,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            /** @description Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042). */
                             data: {
                                 region: {
                                     /** @example r1 */
@@ -3760,6 +3772,20 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: components["schemas"]["ProtocolRow"] & {
+                                /**
+                                 * @description Per-category analytics block (dex / amm /
+                                 *     lending / yield / oracle / bridge — see
+                                 *     internal/api/v1/protocols.go ProtocolBespoke).
+                                 *     Top-level keys vary by protocol category;
+                                 *     documented as a free-form object because the
+                                 *     per-category sub-shapes evolve with each
+                                 *     protocol integration (spec'd loosely on
+                                 *     purpose, board #33 — x-stability:
+                                 *     experimental per ADR-0042 applies).
+                                 */
+                                bespoke?: {
+                                    [key: string]: unknown;
+                                };
                                 contracts: {
                                     /** @description Instance C-strkey. */
                                     contract_id: string;
@@ -6955,6 +6981,8 @@ export interface components {
         };
         /** @description A contract event (tx-detail + contract-activity views). */
         ContractEvent: {
+            /** @description Emitting contract (C-strkey). Present on per-tx event rows (explorer_tx.go TxEventView). */
+            contract_id?: string;
             ledger?: number;
             /** Format: date-time */
             close_time?: string;
@@ -7497,8 +7525,11 @@ export interface components {
         };
         Asset: {
             asset_id: string;
-            /** @enum {string} */
-            type: "native" | "classic" | "soroban" | "fiat";
+            /**
+             * @description `global` = a catalogue-identity listing row (slug id); `external` = a reference-only (non-Stellar-issued) asset. Both appear on listing surfaces (assets.go projectCatalogueRow).
+             * @enum {string}
+             */
+            type: "native" | "classic" | "soroban" | "fiat" | "global" | "external";
             code: string;
             issuer?: string | null;
             contract_id?: string | null;
@@ -7584,6 +7615,68 @@ export interface components {
              *     phase 2 lands additively without a wire-shape change.
              */
             volume_24h_usd?: string | null;
+            /** @description Catalogue slug when the asset has a verified-currency identity (e.g. "usdc"). */
+            slug?: string;
+            /**
+             * @description Verified-currency taxonomy when catalogued.
+             * @enum {string}
+             */
+            class?: "crypto" | "stablecoin" | "fiat";
+            /** @description Trailing-1h price change, signed decimal percentage. */
+            change_1h_pct?: string | null;
+            /** @description Trailing-7d price change, signed decimal percentage. */
+            change_7d_pct?: string | null;
+            /**
+             * Format: int64
+             * @description First ledger this asset was observed trading.
+             */
+            first_seen_ledger?: number | null;
+            /**
+             * Format: int64
+             * @description Most recent ledger this asset was observed trading.
+             */
+            last_seen_ledger?: number | null;
+            /**
+             * Format: int64
+             * @description Total observed trade rows for this asset.
+             */
+            observation_count?: number | null;
+            /** @description Distinct (base, quote) pairs over the trailing 24h. */
+            markets_count?: number | null;
+            /** @description Trades the asset participated in over the trailing 24h. */
+            trade_count_24h?: number | null;
+            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. */
+            price_history_24h?: {
+                /** Format: date-time */
+                t: string;
+                p?: string | null;
+            }[] | null;
+            /** @description 7 daily USD-price samples (oldest first). */
+            price_history_7d?: {
+                /** Format: date-time */
+                t: string;
+                p?: string | null;
+            }[] | null;
+            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history. */
+            ath?: {
+                usd: string;
+                /** Format: date-time */
+                at: string;
+            } | null;
+            /** @description Top markets by 24h USD volume; each row is the counterparty of a pair the asset participated in. */
+            top_markets?: {
+                /** @description The OTHER side of the pair. */
+                counterparty: string;
+                /**
+                 * @description Which side this asset took.
+                 * @enum {string}
+                 */
+                side: "base" | "quote";
+                volume_24h_usd?: string | null;
+                trade_count_24h: number;
+            }[] | null;
+            /** @description Non-empty when this asset's issuer appears in the curated scam directory. */
+            issuer_scam_reason?: string;
             /**
              * @description Attached when the requested asset's code matches a
              *     verified currency's Stellar ticker (USDC, EURC, AQUA, …)
@@ -7624,6 +7717,11 @@ export interface components {
          *     canonical asset_id (e.g. `USDC-GA5Z…`).
          */
         GlobalAssetView: {
+            /**
+             * @description Asset taxonomy for the catalogue identity. Always present (assets_global.go).
+             * @enum {string}
+             */
+            class?: "crypto" | "stablecoin" | "fiat";
             /** @description Display ticker (e.g. "USDC"). */
             ticker: string;
             /** @description URL slug (lowercase, e.g. "usdc"). */
@@ -8114,7 +8212,7 @@ export interface components {
              * @description Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default.
              * @enum {string}
              */
-            class: "exchange" | "aggregator" | "oracle" | "authority_sanity";
+            class: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "bridge" | "lending" | "router";
             /**
              * @description Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes.
              * @enum {string}
@@ -8217,6 +8315,14 @@ export interface components {
             }[];
         };
         Account: {
+            /** @description Magic-link session caller's user info (id, email, display_name, role, is_staff, …) — present on cookie-session /v1/account/me responses only (account.go AccountUser). */
+            user?: {
+                [key: string]: unknown;
+            };
+            /** @description Session caller's parent account (id, name, slug, tier, status) — present on cookie-session responses only (account.go AccountInfo). */
+            account?: {
+                [key: string]: unknown;
+            };
             key_id?: string;
             label?: string;
             /**

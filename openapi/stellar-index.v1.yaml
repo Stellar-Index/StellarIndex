@@ -1730,6 +1730,16 @@ paths:
                                 has been resolved.
                             asset_count: { type: integer, format: int64 }
                             total_observation_count: { type: integer, format: int64 }
+                            org_verified:
+                              type: boolean
+                              description: |
+                                True only when SEP-1 verification is
+                                bidirectional (the issuer's toml lists this
+                                issuer back — CS-100). When false, org_name
+                                is unverified self-declared metadata.
+                            scam_reason:
+                              type: string
+                              description: "Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning."
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -1780,6 +1790,9 @@ paths:
                               listing endpoint surfaces. SELF-DECLARED unless
                               `org_verified` is true — do NOT render as
                               authoritative without checking `org_verified`.
+                          scam_reason:
+                            type: string
+                            description: "Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning."
                           org_verified:
                             type: boolean
                             description: |
@@ -2160,6 +2173,7 @@ paths:
                     properties:
                       data:
                         type: object
+                        description: "Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042)."
                         required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, market_cap, supply, sources]
                         properties:
                           region:
@@ -2520,6 +2534,19 @@ paths:
                           - type: object
                             required: [contracts, event_kinds]
                             properties:
+                              bespoke:
+                                type: object
+                                additionalProperties: true
+                                description: |
+                                  Per-category analytics block (dex / amm /
+                                  lending / yield / oracle / bridge — see
+                                  internal/api/v1/protocols.go ProtocolBespoke).
+                                  Top-level keys vary by protocol category;
+                                  documented as a free-form object because the
+                                  per-category sub-shapes evolve with each
+                                  protocol integration (spec'd loosely on
+                                  purpose, board #33 — x-stability:
+                                  experimental per ADR-0042 applies).
                               contracts:
                                 type: array
                                 items:
@@ -4693,6 +4720,7 @@ components:
       type: object
       description: A contract event (tx-detail + contract-activity views).
       properties:
+        contract_id: { type: string, description: "Emitting contract (C-strkey). Present on per-tx event rows (explorer_tx.go TxEventView)." }
         ledger: { type: integer }
         close_time: { type: string, format: date-time }
         tx_hash: { type: string }
@@ -5289,7 +5317,7 @@ components:
       type: object
       properties:
         asset_id:     { type: string }
-        type:         { type: string, enum: [native, classic, soroban, fiat] }
+        type:         { type: string, enum: [native, classic, soroban, fiat, global, external], description: "`global` = a catalogue-identity listing row (slug id); `external` = a reference-only (non-Stellar-issued) asset. Both appear on listing surfaces (assets.go projectCatalogueRow)." }
         code:         { type: string }
         issuer:       { type: string, nullable: true }
         contract_id:  { type: string, nullable: true }
@@ -5387,6 +5415,60 @@ components:
             multiplication for non-USD on-chain quotes is L2.2
             phase 2, post-launch. The schema is forward-compatible:
             phase 2 lands additively without a wire-shape change.
+        # ─── Coin-overlay listing fields (assets.go applyCoinExtensionFields
+        # + projectCatalogueRow) — populated on listing/detail surfaces when
+        # the CoinsReader is wired; null/absent otherwise. Documented
+        # 2026-07-02 (board #33): these were served but unspecced.
+        slug:               { type: string, description: "Catalogue slug when the asset has a verified-currency identity (e.g. \"usdc\")." }
+        class:              { type: string, enum: [crypto, stablecoin, fiat], description: "Verified-currency taxonomy when catalogued." }
+        change_1h_pct:      { type: string, nullable: true, description: "Trailing-1h price change, signed decimal percentage." }
+        change_7d_pct:      { type: string, nullable: true, description: "Trailing-7d price change, signed decimal percentage." }
+        first_seen_ledger:  { type: integer, format: int64, nullable: true, description: "First ledger this asset was observed trading." }
+        last_seen_ledger:   { type: integer, format: int64, nullable: true, description: "Most recent ledger this asset was observed trading." }
+        observation_count:  { type: integer, format: int64, nullable: true, description: "Total observed trade rows for this asset." }
+        markets_count:      { type: integer, nullable: true, description: "Distinct (base, quote) pairs over the trailing 24h." }
+        trade_count_24h:    { type: integer, nullable: true, description: "Trades the asset participated in over the trailing 24h." }
+        price_history_24h:
+          type: array
+          nullable: true
+          description: "24 hourly USD-price samples (oldest first) for sparkline rendering."
+          items:
+            type: object
+            properties:
+              t: { type: string, format: date-time }
+              p: { type: string, nullable: true }
+            required: [t]
+        price_history_7d:
+          type: array
+          nullable: true
+          description: "7 daily USD-price samples (oldest first)."
+          items:
+            type: object
+            properties:
+              t: { type: string, format: date-time }
+              p: { type: string, nullable: true }
+            required: [t]
+        ath:
+          type: object
+          nullable: true
+          description: "All-time-high USD price + when it was set. Null when no USD-quoted history."
+          properties:
+            usd: { type: string }
+            at:  { type: string, format: date-time }
+          required: [usd, at]
+        top_markets:
+          type: array
+          nullable: true
+          description: "Top markets by 24h USD volume; each row is the counterparty of a pair the asset participated in."
+          items:
+            type: object
+            properties:
+              counterparty:    { type: string, description: "The OTHER side of the pair." }
+              side:            { type: string, enum: [base, quote], description: "Which side this asset took." }
+              volume_24h_usd:  { type: string, nullable: true }
+              trade_count_24h: { type: integer }
+            required: [counterparty, side, trade_count_24h]
+        issuer_scam_reason: { type: string, description: "Non-empty when this asset's issuer appears in the curated scam directory." }
         unverified_warning:
           allOf:
             - { $ref: "#/components/schemas/UnverifiedWarning" }
@@ -5428,6 +5510,7 @@ components:
         slug (e.g. `usdc`); the `Asset` surface is reached by passing a
         canonical asset_id (e.g. `USDC-GA5Z…`).
       properties:
+        class:            { type: string, enum: [crypto, stablecoin, fiat], description: "Asset taxonomy for the catalogue identity. Always present (assets_global.go)." }
         ticker:           { type: string,  description: "Display ticker (e.g. \"USDC\")." }
         slug:             { type: string,  description: "URL slug (lowercase, e.g. \"usdc\")." }
         name:             { type: string,  description: "Human-readable currency name." }
@@ -6057,7 +6140,7 @@ components:
       type: object
       properties:
         name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
-        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity], description: "Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default." }
+        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity, bridge, lending, router], description: "Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default." }
         subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes." }
         include_in_vwap:    { type: boolean, description: "Whether this source's trades contribute to VWAP." }
         paid:               { type: boolean, description: "Whether this connector requires a paid licence / API key." }
@@ -6213,6 +6296,14 @@ components:
     Account:
       type: object
       properties:
+        user:
+          type: object
+          additionalProperties: true
+          description: "Magic-link session caller's user info (id, email, display_name, role, is_staff, …) — present on cookie-session /v1/account/me responses only (account.go AccountUser)."
+        account:
+          type: object
+          additionalProperties: true
+          description: "Session caller's parent account (id, name, slug, tier, status) — present on cookie-session responses only (account.go AccountInfo)."
         key_id:           { type: string }
         label:            { type: string }
         key_prefix:

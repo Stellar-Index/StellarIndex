@@ -22,14 +22,8 @@ import { buildFetchData, failBuild } from '@/lib/buildFetch';
 // Wire shapes from the generated OpenAPI contract (src/api/types.ts).
 type VerifiedCurrencyListItem = components['schemas']['VerifiedCurrencyListItem'];
 
-export type GlobalAssetView = components['schemas']['GlobalAssetView'] & {
-  // SPEC-GAP: /v1/assets/{slug}'s GlobalAssetView carries `class`
-  // (internal/api/v1/assets_global.go GlobalAssetView.Class, required)
-  // but the spec's GlobalAssetView schema omits it. Optional here
-  // because this catalogue map is also built from the /v1/assets/verified
-  // listing where the field is copied over client-side.
-  class?: VerifiedCurrencyListItem['class'];
-};
+// class is spec'd on GlobalAssetView since board #33; the alias is pure.
+export type GlobalAssetView = components['schemas']['GlobalAssetView'];
 
 let cataloguePromise: Promise<Map<string, GlobalAssetView>> | null = null;
 

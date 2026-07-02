@@ -29,7 +29,7 @@ import type { components, paths } from './types';
 // the UI.
 //
 // Fields the API demonstrably serves but the spec doesn't declare yet
-// are kept via `& { … }` intersections tagged `SPEC-GAP:` — each cites
+// are kept via `& { … }` intersections tagged `spec'd since board #33; local narrowing retained:` — each cites
 // the Go handler that emits the field. Remove the intersection once the
 // spec catches up.
 // ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ export function useStatus() {
 // MeResponse — /v1/account/me. The spec's `Account` schema documents the
 // API-key caller shape (key_id / tier / rate_limit_per_min / …).
 export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
-  // SPEC-GAP: session-cookie callers (the dashboard flow) get `user` +
+  // spec'd since board #33; local narrowing retained: session-cookie callers (the dashboard flow) get `user` +
   // `account` objects from internal/api/v1/account.go handleMe; the spec
   // only documents the API-key shape.
   user?: {
@@ -178,7 +178,7 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
     tier?: string;
     status?: string;
   };
-  // SPEC-GAP: the spec enum ("anonymous" | "apikey" | "partner") omits
+  // spec'd since board #33; local narrowing retained: the spec enum ("anonymous" | "apikey" | "partner") omits
   // the platform tiers the dashboard session flow reports (free /
   // starter / pro / …) — widened until the spec covers them.
   tier?: string;
@@ -275,7 +275,7 @@ export function useChangeSummary(
 }
 
 export type Source = Omit<Schemas['Source'], 'class'> & {
-  // SPEC-GAP: the spec's Source.class enum omits the on-chain analytic
+  // spec'd since board #33; local narrowing retained: the spec's Source.class enum omits the on-chain analytic
   // classes 'lending' | 'router' | 'bridge', which are live on the wire
   // for blend / soroswap-router+defindex / cctp+rozo (see
   // internal/sources/external ClassLending / ClassRouter / ClassBridge).
@@ -392,19 +392,19 @@ export function useNativeUsdPrice() {
 // Coin — one row of the /v1/assets listing. The spec models listing rows
 // as `Asset` (the per-asset detail schema); the coin-overlay extension
 // fields (internal/api/v1/assets.go AssetDetail's "Coin-equivalence
-// extension") are not in the spec yet, so they're kept as a SPEC-GAP
+// extension") are not in the spec yet, so they're kept as a spec'd since board #33; local narrowing retained
 // intersection below.
 export type Coin = Omit<Schemas['Asset'], 'type'> & {
-  // SPEC-GAP: the spec's Asset.type enum ("native" | "classic" |
+  // spec'd since board #33; local narrowing retained: the spec's Asset.type enum ("native" | "classic" |
   // "soroban" | "fiat") omits "global" (catalogue cross-chain rows —
   // assets.go:978) and "external" — widened to string until the spec
   // covers the unified-listing dispatch.
   type?: string;
-  // SPEC-GAP: class — populated for catalogue-backed rows ("fiat" |
+  // spec'd since board #33; local narrowing retained: class — populated for catalogue-backed rows ("fiat" |
   // "stablecoin" | "crypto"; assets.go AssetDetail.Class). Absent on
   // classic_assets rows and from the spec's Asset schema.
   class?: string;
-  // SPEC-GAP: the coin-overlay listing fields below are served by
+  // spec'd since board #33; local narrowing retained: the coin-overlay listing fields below are served by
   // /v1/assets (assets.go "Coin-equivalence extension") but missing
   // from the spec's Asset schema.
   slug: string;
@@ -574,13 +574,13 @@ export function useCoins(
 }
 
 export type IssuerListEntry = GetJSON<'/issuers'>['data'][number] & {
-  // SPEC-GAP: org_verified is served by /v1/issuers
+  // spec'd since board #33; local narrowing retained: org_verified is served by /v1/issuers
   // (internal/api/v1/issuers.go IssuerSummary) but missing from the
   // spec's inline row schema. True only when the issuer's SEP-1 toml
   // lists it back (bidirectional). Show a verified badge; safe to
   // group/merge issuers by org only when true.
   org_verified?: boolean;
-  // SPEC-GAP: scam_reason (issuers.go IssuerSummary.ScamReason) —
+  // spec'd since board #33; local narrowing retained: scam_reason (issuers.go IssuerSummary.ScamReason) —
   // non-empty when the issuer is on the curated scam list (sourced
   // from stellar.expert's directory). Render a warning badge on
   // any UI that surfaces this issuer's row.
@@ -613,7 +613,7 @@ type IssuerDetailData = GetJSON<'/issuers/{g_strkey}'>['data'];
 export type IssuedAsset = NonNullable<IssuerDetailData['assets']>[number];
 
 export type Issuer = IssuerDetailData & {
-  // SPEC-GAP: scam_reason is served by /v1/issuers/{g_strkey}
+  // spec'd since board #33; local narrowing retained: scam_reason is served by /v1/issuers/{g_strkey}
   // (internal/api/v1/issuers.go IssuerDetail.ScamReason) but missing
   // from the spec's inline detail schema.
   scam_reason?: string;

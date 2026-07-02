@@ -29,7 +29,7 @@ type EventTypeCount = NonNullable<
 >[number];
 
 type ProtocolDetail = ProtocolDetailWire & {
-  // SPEC-GAP: the bespoke per-category analytics block
+  // spec documents `bespoke` as a described free-form object (board #33); typed precisely here: the bespoke per-category analytics block
   // (internal/api/v1/protocols.go ProtocolDetailView / ProtocolBespoke,
   // omitempty — absent when no bespoke reader is wired or the category
   // has none yet) isn't in the spec's /protocols/{name} schema.

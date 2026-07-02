@@ -235,6 +235,23 @@ type AssetDetail struct {
 	// on the envelope. See R-018 /
 	// docs/architecture/multi-network-assets-migration.md.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
+
+	// ─── Coin-overlay listing fields (spec'd 2026-07-02, board #33;
+	// populated when the server's CoinsReader is wired) ─────────────
+	Slug             string          `json:"slug,omitempty"`
+	Class            string          `json:"class,omitempty"`
+	Change1hPct      *string         `json:"change_1h_pct,omitempty"`
+	Change7dPct      *string         `json:"change_7d_pct,omitempty"`
+	FirstSeenLedger  *int64          `json:"first_seen_ledger,omitempty"`
+	LastSeenLedger   *int64          `json:"last_seen_ledger,omitempty"`
+	ObservationCount *int64          `json:"observation_count,omitempty"`
+	MarketsCount     *int            `json:"markets_count,omitempty"`
+	TradeCount24h    *int            `json:"trade_count_24h,omitempty"`
+	PriceHistory24h  []PricePoint    `json:"price_history_24h,omitempty"`
+	PriceHistory7d   []PricePoint    `json:"price_history_7d,omitempty"`
+	ATH              *ATHPoint       `json:"ath,omitempty"`
+	IssuerScamReason string          `json:"issuer_scam_reason,omitempty"`
+	TopMarkets       []CoinTopMarket `json:"top_markets,omitempty"`
 }
 
 // UnverifiedWarning is the warning body attached to AssetDetail
@@ -473,6 +490,11 @@ type Account struct {
 	Tier            string    `json:"tier"`
 	RateLimitPerMin int       `json:"rate_limit_per_min,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	// User / AccountInfo are the magic-link session caller's info —
+	// present on cookie-session responses only (dashboard flows);
+	// nil on API-key responses.
+	User        *AccountUser `json:"user,omitempty"`
+	AccountInfo *AccountOrg  `json:"account,omitempty"`
 }
 
 // UsageRow is one entry in the array returned by [Client.Usage].
@@ -514,6 +536,11 @@ type IssuerListEntry struct {
 	OrgName               string `json:"org_name,omitempty"`
 	AssetCount            int64  `json:"asset_count"`
 	TotalObservationCount int64  `json:"total_observation_count"`
+	// OrgVerified — bidirectional SEP-1 proof (CS-100).
+	OrgVerified bool `json:"org_verified"`
+	// ScamReason is non-empty when the issuer is in the curated
+	// scam directory.
+	ScamReason string `json:"scam_reason,omitempty"`
 }
 
 // IssuedAsset is one entry in [Issuer.Assets] — a classic asset
@@ -543,7 +570,10 @@ type Issuer struct {
 	// BIDIRECTIONAL: the issuer's home_domain serves a stellar.toml
 	// that lists this issuer back. One-way resolution is spoofable
 	// and does NOT set this flag (CS-100).
-	OrgVerified    bool    `json:"org_verified"`
+	OrgVerified bool `json:"org_verified"`
+	// ScamReason is non-empty when the issuer is in the curated
+	// scam directory — render as a warning.
+	ScamReason     string  `json:"scam_reason,omitempty"`
 	AuthRequired   *bool   `json:"auth_required,omitempty"`
 	AuthRevocable  *bool   `json:"auth_revocable,omitempty"`
 	AuthImmutable  *bool   `json:"auth_immutable,omitempty"`
@@ -890,4 +920,47 @@ type VerifiedCurrencyListItem struct {
 	// rate). Empty for crypto/stablecoin rows. Decimal string with
 	// 2 fractional digits.
 	MarketCapUSD string `json:"market_cap_usd,omitempty"`
+}
+
+// PricePoint is one sparkline sample in [AssetDetail]'s
+// price_history_24h / price_history_7d arrays.
+type PricePoint struct {
+	T time.Time `json:"t"`
+	P *string   `json:"p,omitempty"`
+}
+
+// ATHPoint is [AssetDetail]'s all-time-high marker.
+type ATHPoint struct {
+	USD string    `json:"usd"`
+	At  time.Time `json:"at"`
+}
+
+// CoinTopMarket is one row of [AssetDetail].TopMarkets.
+type CoinTopMarket struct {
+	Counterparty  string  `json:"counterparty"`
+	Side          string  `json:"side"`
+	Volume24hUSD  *string `json:"volume_24h_usd,omitempty"`
+	TradeCount24h int     `json:"trade_count_24h"`
+}
+
+// AccountUser is the magic-link session caller's user info on
+// [Account].User.
+type AccountUser struct {
+	ID              string     `json:"id"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name,omitempty"`
+	Role            string     `json:"role,omitempty"`
+	IsStaff         bool       `json:"is_staff"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
+}
+
+// AccountOrg is the session caller's parent account on
+// [Account].AccountInfo.
+type AccountOrg struct {
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Slug   string `json:"slug,omitempty"`
+	Tier   string `json:"tier,omitempty"`
+	Status string `json:"status,omitempty"`
 }

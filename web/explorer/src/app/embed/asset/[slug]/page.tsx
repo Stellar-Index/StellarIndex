@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 // The /v1/assets row shape, derived from the generated OpenAPI
 // contract via the shared alias in src/api/hooks.ts (spec `Asset`
-// plus the SPEC-GAP coin-overlay fields this widget reads:
+// plus the spec'd since board #33; narrowed-to-required here coin-overlay fields this widget reads:
 // price_history_24h / change_1h_pct / change_7d_pct).
 import type { Coin } from '@/api/hooks';
 

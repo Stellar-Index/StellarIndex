@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **The explorer-surface OpenAPI gaps are closed** — every field the handlers
+  serve that the generated-types migration had to bridge with `SPEC-GAP`
+  intersections is now in the spec: the Asset coin-overlay block (slug,
+  class, change_1h/7d_pct, first/last_seen_ledger, observation_count,
+  markets/trade counts, price_history_24h/7d, ath, top_markets,
+  issuer_scam_reason) + `type` enum values global/external;
+  GlobalAssetView.class (required); Source.class enum gains
+  bridge/lending/router (all live in the registry); issuers list rows gain
+  org_verified + scam_reason (detail gains scam_reason); ContractEvent gains
+  contract_id; /account/me documents the session-cookie user/account shape;
+  the protocols `bespoke` block and evolving diagnostics fields are
+  documented as described-loose surfaces per ADR-0042's experimental tier.
+  SDK types mirror every addition (contract test green); all three artifacts
+  regenerated; zero `SPEC-GAP` markers remain — the surviving intersections
+  are re-labeled for what they now are: required-narrowing over spec-optional
+  fields.
+
 ### Added
 - **Explorer error boundaries** — `global-error.tsx` (own html/body, inline
   styles) + a shared design-system `RouteError` + 19 per-segment `error.tsx`
