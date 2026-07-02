@@ -27,6 +27,15 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **ADR-0040: completing contract-identity gating (CS-026).** Design for the
+  four still-ungated decoders: phoenix + defindex ship as curated-set /
+  factory-descended childgate registries (both already enumerated in
+  docs/protocols/ — the "waiting on team data" framing was stale), aquarius
+  gets a lake-derived enumeration procedure, and comet — the no-factory hard
+  case — gets a WASM-code-hash gate design (audited hash set + off-hot-path
+  registry sweep). Includes the rollout preconditions (seed before gate
+  binary, lake re-derive, verdict green) that prevent a fail-closed gate from
+  dropping live trades.
 - **Prometheus rule-tree semantic differ** (`scripts/ci/lint-rule-equivalence`,
   wired into `make monitoring-check`). The multi-host and r1-overlay rule
   trees are hand-maintained near-copies; file pairing was checked but nothing

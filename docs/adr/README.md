@@ -79,6 +79,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0035](0035-factory-anchored-contract-gating.md) | Accepted | Factory-anchored contract gating for Soroban decoders (reverses match-broadly/filter-downstream) | 2026-06-12 |
 | [0038](0038-network-explorer.md) | Accepted | Network explorer (full Stellar + Soroban) over the certified lake | 2026-06-14 |
 | [0039](0039-soroban-contract-state-reader.md) | Accepted | Soroban contract current-state reader — read-time decode from the lake | 2026-06-18 |
+| [0040](0040-completing-contract-gating.md) | Proposed | Completing contract-identity gating: phoenix/defindex curated-set gates, aquarius enumeration, comet WASM-hash gate (closes CS-026) | 2026-07-02 |
 
 ## Related
 
