@@ -55,6 +55,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 
 ## Rate limiting / usage — Redis
 - Token-bucket → `ratelimit.New(rdb, limit, window, opts...).Take(ctx, key)` / `TakeN` (atomic Lua, fail-open w/ dwell)
+- N-per-window abuse cap → `ratelimit.NewFixedWindowCounter(rdb, window, nowFn).Incr(ctx, keyBase)` (INCR + drain TTL; the primitive under the auth throttles — never hand-roll INCR/EXPIRE)
 - Per-subject daily / MTD counter → `usage.New(rdb, opts...).Increment/MonthToDate/Read` ⚠ (not in CLAUDE.md)
 - **A full throttle family already exists** (`auth.NewRedisLoginThrottle`, `NewRedisSignupIPThrottle`, …) — don't hand-roll a Redis throttle
 

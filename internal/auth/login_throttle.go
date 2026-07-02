@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 )
 
 // RedisLoginThrottle implements [dashboardauth.LoginThrottle] — the
@@ -29,12 +31,10 @@ import (
 // fail-CLOSED inversion: a magic-link flood is a nuisance, not the
 // bulk-account-mint vector signup guards.)
 type RedisLoginThrottle struct {
-	rdb        redis.UniversalClient
+	counter    *ratelimit.FixedWindowCounter
 	maxPerIP   int
 	maxPerMail int
-	window     time.Duration
 	keyPrefix  string
-	nowFn      func() time.Time
 }
 
 // LoginThrottleOptions tunes a [RedisLoginThrottle]. Zero values pick the
@@ -70,12 +70,10 @@ func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions)
 		nowFn = time.Now
 	}
 	return &RedisLoginThrottle{
-		rdb:        rdb,
+		counter:    ratelimit.NewFixedWindowCounter(rdb, opts.Window, nowFn),
 		maxPerIP:   opts.MaxPerIP,
 		maxPerMail: opts.MaxPerEmail,
-		window:     opts.Window,
 		keyPrefix:  opts.KeyPrefix,
-		nowFn:      nowFn,
 	}
 }
 
@@ -85,14 +83,12 @@ func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions)
 // email is hashed (sha256, 16-hex prefix) before it becomes a Redis key, so
 // plaintext addresses never land in Redis.
 func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
-	windowStart := t.nowFn().Unix() / int64(t.window.Seconds())
-
 	allowed := true
 
 	// Per-target-email cap (the email-bomb dimension). An empty email
 	// shouldn't reach here (handler validates first) but guard anyway.
 	if email != "" {
-		ok, err := t.incrUnderCap(ctx, fmt.Sprintf("%smail:%s:%d", t.keyPrefix, hashEmail(email), windowStart), t.maxPerMail)
+		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"mail:"+hashEmail(email), t.maxPerMail)
 		if err != nil {
 			return false, err
 		}
@@ -103,7 +99,7 @@ func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool,
 	// call (production shouldn't see one — Caddy/Cloudflare populate it)
 	// skips the IP dimension, same as the signup throttle.
 	if ip != "" {
-		ok, err := t.incrUnderCap(ctx, fmt.Sprintf("%sip:%s:%d", t.keyPrefix, ip, windowStart), t.maxPerIP)
+		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"ip:"+ip, t.maxPerIP)
 		if err != nil {
 			return false, err
 		}
@@ -113,15 +109,13 @@ func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool,
 	return allowed, nil
 }
 
-// incrUnderCap increments key, sets a drain TTL on first touch, and reports
-// whether the post-increment count is within limit.
-func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, key string, limit int) (bool, error) {
-	count, err := t.rdb.Incr(ctx, key).Result()
+// incrUnderCap bumps the shared fixed-window counter (which appends the
+// window bucket + owns the drain TTL) and reports whether the
+// post-increment count is within limit.
+func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, limit int) (bool, error) {
+	count, err := t.counter.Incr(ctx, keyBase)
 	if err != nil {
-		return false, fmt.Errorf("login throttle: INCR %s: %w", key, err)
-	}
-	if count == 1 {
-		_ = t.rdb.Expire(ctx, key, t.window*2).Err()
+		return false, fmt.Errorf("login throttle: %w", err)
 	}
 	return int(count) <= limit, nil
 }
