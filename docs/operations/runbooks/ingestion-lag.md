@@ -8,7 +8,7 @@ severity: P2
 # Runbook — `stellarindex_ingestion_lag_high`
 
 This alert is currently retired. The pre-dispatcher orchestrator emitted
-`stellarindex_source_lag_ledgers`; the current `ledgerstream -> dispatcher`
+a per-source lag gauge (`source_lag_ledgers`, deleted from internal/obs 2026-07-02 — zero production emitters ever); the current `ledgerstream -> dispatcher`
 indexer does not. Keep this file only as historical operator context until a
 replacement per-source lag signal lands.
 
@@ -24,7 +24,7 @@ replacement per-source lag signal lands.
 
 ## Symptoms
 
-- `stellarindex_source_lag_ledgers{source=<X>} > 1000` for ≥ 10 min.
+- (historical) the per-source lag gauge exceeding 1000 for ≥ 10 min.
 - `source_last_event_unix` still advancing (so the source isn't
   stopped — it's just slow).
 - `price-stale.md` may also fire for assets that source quotes.
@@ -33,8 +33,8 @@ replacement per-source lag signal lands.
 
 ```sh
 # Who's behind and by how much?
-curl -s http://indexer:9464/metrics |
-  awk '/stellarindex_source_lag_ledgers/ && $2 > 100 {print}'
+# (historical — the gauge no longer exists; per-source freshness
+# now comes from data-freshness.sh + source_coverage_snapshots)
 
 # Is the source's processing rate > production rate?
 #   Production: ~1 ledger/5 s = 0.2 ledger/s

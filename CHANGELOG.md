@@ -27,6 +27,17 @@ against.
   fields the spec under-documents — tracked for spec-side fixes.
 
 ### Documentation
+- **Docs-integrity sweep: the institutional-knowledge layer agrees with
+  itself again.** `docs/architecture/overview.md` now EXISTS (CLAUDE.md and
+  engineering-standards.md cited it for months; it routes to the real docs);
+  the CS-129 kubectl-on-a-systemd-fleet commands in insert-errors +
+  all-ingestion-down are systemd/psql; the CS-008 finding-ID collision is
+  re-IDed with a register note; the remediation STATUS deferred list and
+  launch-todo carry staleness banners naming what shipped since they were
+  written; the coverage tracker's header/table contradiction is annotated;
+  and the never-emitted `stellarindex_source_lag_ledgers` gauge (its only
+  setter was the deleted Orchestrator) is removed from obs + docs, with the
+  two archived runbooks that cited it scrubbed to historical prose.
 - **CAGG price-math verified vs the exact engine; `twap` column marked dead.**
   The `prices_*` continuous aggregates compute `vwap` with the per-row form
   `sum((quote/base)*base)/sum(base)` instead of the exact `sum(quote)/sum(base)`;

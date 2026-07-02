@@ -19,7 +19,6 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.HTTPRequestsTotal.WithLabelValues("GET", "/_warmup", "200").Inc()
 	obs.HTTPRequestDuration.WithLabelValues("GET", "/_warmup").Observe(0.001)
 	obs.SourceEventsTotal.WithLabelValues("_warmup").Inc()
-	obs.SourceLagLedgers.WithLabelValues("_warmup").Set(0)
 	obs.SourceLastEventUnix.WithLabelValues("_warmup").Set(0)
 	obs.SourceEnabled.WithLabelValues("_warmup").Set(0)
 	obs.SourceDecodeErrorsTotal.WithLabelValues("_warmup").Inc()
@@ -55,7 +54,6 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"http_requests_total",
 		"http_request_duration_seconds",
 		"stellarindex_source_events_total",
-		"stellarindex_source_lag_ledgers",
 		"stellarindex_source_last_event_unix",
 		"stellarindex_source_enabled",
 		"stellarindex_source_decode_errors_total",

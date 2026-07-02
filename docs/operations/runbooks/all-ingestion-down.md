@@ -47,7 +47,7 @@ The "all sources down" shape usually means one of three common roots: Galexie's 
 # 1. Is the indexer running?
 systemctl status stellarindex-indexer      # baremetal
 # or
-kubectl -n stellarindex get pod -l app=stellarindex-indexer
+systemctl status stellarindex-indexer
 
 # 2. What do its logs say?
 journalctl -u stellarindex-indexer -n 200 --no-pager | tail -40
@@ -110,7 +110,7 @@ Route by the result:
   ```sh
   systemctl restart stellarindex-indexer
   # or
-  kubectl -n stellarindex rollout restart deployment/stellarindex-indexer
+  systemctl restart stellarindex-indexer
   ```
 - Confirm recovery:
   - `stellarindex_source_events_total` rate > 0 within 60 s.
