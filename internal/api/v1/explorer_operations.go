@@ -3,11 +3,55 @@ package v1
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
+
+// opsDirTTL bounds how stale the cached /v1/operations directory first page can
+// be. The directory changes each ledger (~5s close time), so a few seconds keeps
+// it within ~one ledger while absorbing repeated hits under real traffic.
+const opsDirTTL = 3 * time.Second
+
+// opsDirCache is a tiny TTL cache for the network-wide /v1/operations directory
+// FIRST page (no cursor). That page is identical for every caller between
+// ledgers, but assembling it is a ~300ms multi-column DESC-LIMIT read over the
+// 24B-row lake plus the 24h op-type aggregation. Caching the assembled view for
+// opsDirTTL makes the endpoint effectively free once traffic is concurrent.
+// Keyed by limit; cursor pages are unique + cheaper (they skip the stats) so
+// they're never cached. Zero value is ready to use (map lazily created).
+type opsDirCache struct {
+	mu      sync.Mutex
+	entries map[int]opsDirEntry
+}
+
+type opsDirEntry struct {
+	view    OperationsView
+	expires time.Time
+}
+
+// get returns the cached first-page view for limit if still fresh.
+func (c *opsDirCache) get(limit int) (OperationsView, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[limit]
+	if !ok || time.Now().After(e.expires) {
+		return OperationsView{}, false
+	}
+	return e.view, true
+}
+
+// put caches the assembled first-page view for limit.
+func (c *opsDirCache) put(limit int, view OperationsView) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[int]opsDirEntry)
+	}
+	c.entries[limit] = opsDirEntry{view: view, expires: time.Now().Add(opsDirTTL)}
+}
 
 // OpView is the wire shape for a decoded operation. Type is the snake_case op
 // type; Fields holds the decoded, human-readable body (empty for not-yet-decoded
@@ -195,6 +239,15 @@ func (s *Server) handleOperationsDirectory(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	// The first page (no cursor) is the hot, cacheable path — same for every
+	// caller between ledgers. Serve it from the short-TTL cache when warm.
+	firstPage := !cur.IsSet()
+	if firstPage {
+		if view, hit := s.opsDir.get(limit); hit {
+			writeJSON(w, view, Flags{})
+			return
+		}
+	}
 	rows, err := s.explorer.RecentOperations(r.Context(), limit, cur)
 	if err != nil {
 		if clientAborted(r, err) {
@@ -216,7 +269,7 @@ func (s *Server) handleOperationsDirectory(w http.ResponseWriter, r *http.Reques
 	// Op-type stats are best-effort context — a failure here shouldn't
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
-	if !cur.IsSet() {
+	if firstPage {
 		if stats, serr := s.explorer.OperationTypeStats(r.Context(), 0); serr == nil {
 			out.OpTypeStats = make([]OpTypeStatV, len(stats))
 			for i, st := range stats {
@@ -225,6 +278,7 @@ func (s *Server) handleOperationsDirectory(w http.ResponseWriter, r *http.Reques
 		} else if !clientAborted(r, serr) {
 			s.logger.Warn("explorer OperationTypeStats failed", "err", serr)
 		}
+		s.opsDir.put(limit, out) // warm the cache with the assembled first page
 	}
 	writeJSON(w, out, Flags{})
 }

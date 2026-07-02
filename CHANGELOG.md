@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+## [v0.6.2] — 2026-07-02
+
+### Changed
+- **`/v1/operations` directory first page is now short-TTL cached (3s).** The
+  network-wide directory page is identical for every caller between ledgers but
+  costs a ~300ms multi-column DESC-LIMIT read over the lake + a 24h op-type
+  aggregation; a small per-`limit` in-process cache makes it effectively free
+  once traffic is concurrent, at most ~one ledger stale. Cursor (paged) requests
+  are unaffected. Follows the v0.6.1 summary-shape change.
+
 ## [v0.6.1] — 2026-07-02
 
 ### Changed

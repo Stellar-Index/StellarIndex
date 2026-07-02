@@ -117,6 +117,7 @@ type Server struct {
 	divergences          DivergenceReader
 	currencies           CurrenciesReader
 	explorer             ExplorerReader
+	opsDir               opsDirCache // short-TTL cache for the /v1/operations directory first page
 	fxHistory            FXHistoryReader
 	sessionPeeker        SessionPeeker
 	incidents            []incidents.Incident
