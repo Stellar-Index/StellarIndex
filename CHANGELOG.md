@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.1] — 2026-07-03
+
+### Fixed
+- **`mint_and_forward` rows were rejected at TWO layers the v0.7.0 change
+  missed.** Rollout verification on r1 (1,684 insert errors, zero rows
+  persisted) found the event type gated in three places, not one: the
+  decoder (fixed in v0.7.0), migration 0038's SQL CHECK (new migration
+  0070 extends it), and the storage layer's `CCTPEventType.IsValid` Go
+  enum (extended here, with the three-layer lesson documented on the
+  type). Replay after deploy populates the historical rows.
+
 ## [v0.7.0] — 2026-07-02
 
 ### Added

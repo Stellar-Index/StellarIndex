@@ -9,9 +9,13 @@ import (
 	"time"
 )
 
-// CCTPEventType discriminates the four Circle CCTP v2 event variants.
+// CCTPEventType discriminates the five Circle CCTP v2 event variants.
 // String values match the cctp_events.event_type CHECK constraint
-// (migration 0038) and internal/sources/cctp's event-name constants.
+// (migration 0038, extended by 0070) and internal/sources/cctp's
+// event-name constants. LESSON (board #31, v0.7.0→v0.7.1): the type
+// is gated in THREE layers — the decoder's Classify, this enum's
+// IsValid, and the SQL CHECK. Adding an event means all three, or
+// rows are rejected at whichever layer was missed.
 type CCTPEventType string
 
 const (
@@ -19,12 +23,13 @@ const (
 	CCTPMintAndWithdraw CCTPEventType = "mint_and_withdraw"
 	CCTPMessageSent     CCTPEventType = "message_sent"
 	CCTPMessageReceived CCTPEventType = "message_received"
+	CCTPMintAndForward  CCTPEventType = "mint_and_forward"
 )
 
-// IsValid reports whether t is one of the four known CCTP events.
+// IsValid reports whether t is one of the five known CCTP events.
 func (t CCTPEventType) IsValid() bool {
 	switch t {
-	case CCTPDepositForBurn, CCTPMintAndWithdraw, CCTPMessageSent, CCTPMessageReceived:
+	case CCTPDepositForBurn, CCTPMintAndWithdraw, CCTPMessageSent, CCTPMessageReceived, CCTPMintAndForward:
 		return true
 	}
 	return false
