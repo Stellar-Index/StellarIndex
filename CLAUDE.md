@@ -84,7 +84,7 @@ development. If one does, it's a bug.
 ├── internal/                  private packages (Go-enforced, not importable externally)
 │   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
 │   ├── config/                   config loading + schema
-│   ├── consumer/                 transport-neutral ingest contracts — the load-bearing `consumer.Event` / `consumer.Source` types used across indexer/ops/dispatcher/pipeline. (`consumer.Orchestrator` is a legacy seam with no callers; prod ingest is dispatcher-based.)
+│   ├── consumer/                 transport-neutral ingest contract — the load-bearing `consumer.Event` interface used across indexer/ops/dispatcher/pipeline. (The legacy `Source`/`Orchestrator` per-source-goroutine seam was deleted 2026-07; prod ingest is dispatcher-based.)
 │   ├── ledgerstream/             archive/live LedgerCloseMeta streaming
 │   ├── dispatcher/               production ledger walker + decoder router
 │   ├── pipeline/                 shared ingest-pipeline glue used by both indexer + `stellarindex-ops backfill`

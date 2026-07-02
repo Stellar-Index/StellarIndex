@@ -114,14 +114,16 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []sorobaneven
 // (ledger_close_time, ledger, tx_hash, op_index, event_index) order
 // — event_index makes the per-op replay order deterministic so
 // multi-event ops (Phoenix's 8-events-per-swap) reconstruct stably
-// (ADR-0033). Used by
-// per-source `stellarindex-ops <source>-backfill` subcommands to
-// re-feed historical rows through the live Go decoders without a
-// MinIO walk.
+// (ADR-0033). Used by the projector's tail loop (and its
+// `stellarindex-ops projector-replay` catch-up path — the one
+// catch-up mechanism per ADR-0032; the old per-source
+// `<source>-backfill` subcommands were deleted) plus the ADR-0033
+// completeness reconciler, to re-feed historical rows through the
+// live Go decoders without a MinIO walk.
 //
 // `contractIDs` and `topic0Syms` are inclusive filters: empty means
 // "no filter on this dimension". Passing both is the common case
-// (per-source backfill scopes by both contract set + emitted topic
+// (per-source replay scopes by both contract set + emitted topic
 // names) and pushes the filter into Postgres so we don't stream
 // billions of irrelevant rows over the network.
 //
