@@ -43,6 +43,8 @@ func Classify(e *events.Event) string {
 		return EventMessageSent
 	case TopicSymbolMessageReceived:
 		return EventMessageReceived
+	case TopicSymbolMintAndForward:
+		return EventMintAndForward
 	}
 	return ""
 }
@@ -400,5 +402,62 @@ func DecodeMessageReceived(e *events.Event) (MessageReceived, error) {
 		SourceDomain:              sourceDomain,
 		Sender:                    hex.EncodeToString(senderBytes),
 		MessageBody:               hex.EncodeToString(messageBodyBytes),
+	}, nil
+}
+
+// DecodeMintAndForward turns one mint_and_forward event into the
+// canonical struct.
+//
+// Topic layout (verified against mainnet ledger 63098002):
+//
+//	topic[0] = Symbol("mint_and_forward")   — the ONLY topic
+//
+// Body: { amount: i128, forward_recipient: Address, token: Address }.
+func DecodeMintAndForward(e *events.Event) (MintAndForward, error) {
+	if len(e.Topic) < 1 {
+		return MintAndForward{}, fmt.Errorf("%w: mint_and_forward needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("cctp: mint_and_forward body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("cctp: mint_and_forward body not a map: %w", err)
+	}
+	amountSV, err := scval.MustMapField(entries, "amount")
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("%w: missing 'amount': %w", ErrMalformedBody, err)
+	}
+	amount, err := scval.AsAmountFromI128(amountSV)
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("cctp: mint_and_forward amount: %w", err)
+	}
+	recipSV, err := scval.MustMapField(entries, "forward_recipient")
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("%w: missing 'forward_recipient': %w", ErrMalformedBody, err)
+	}
+	recip, err := scval.AsAddressStrkey(recipSV)
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("cctp: mint_and_forward forward_recipient: %w", err)
+	}
+	tokenSV, err := scval.MustMapField(entries, "token")
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("%w: missing 'token': %w", ErrMalformedBody, err)
+	}
+	token, err := scval.AsAddressStrkey(tokenSV)
+	if err != nil {
+		return MintAndForward{}, fmt.Errorf("cctp: mint_and_forward token: %w", err)
+	}
+	return MintAndForward{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+
+		ForwardRecipient: recip,
+		Token:            token,
+		Amount:           amount.String(),
 	}, nil
 }

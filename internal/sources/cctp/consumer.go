@@ -126,3 +126,22 @@ func eventFromMessageReceived(r MessageReceived, observedAt time.Time) Event {
 		},
 	}
 }
+
+// eventFromMintAndForward projects a decoded MintAndForward. The
+// forward_recipient lands in Attributes (same convention as
+// mint_and_withdraw's mint_recipient).
+func eventFromMintAndForward(m MintAndForward, observedAt time.Time) Event {
+	return Event{
+		ContractID: m.ContractID,
+		Ledger:     m.Ledger,
+		TxHash:     m.TxHash,
+		OpIndex:    m.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventMintAndForward,
+		Amount:     m.Amount,
+		Token:      m.Token,
+		Attributes: map[string]any{
+			"forward_recipient": m.ForwardRecipient,
+		},
+	}
+}

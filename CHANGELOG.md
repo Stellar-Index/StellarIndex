@@ -16,6 +16,18 @@ against.
 ## [Unreleased]
 
 ### Added
+- **CCTP `mint_and_forward` is decoded (board #31).** The CctpForwarder
+  contract emits a fifth event our decoder didn't handle — those events
+  reached the lake but never `cctp_events`. Schema reverse-engineered from
+  real mainnet events (single Symbol topic; body map `{amount: i128,
+  forward_recipient: Address, token: Address}`), golden-tested against the
+  actual lake fixture; no migration needed (the generic cctp_events shape
+  fits). The recognition blind spot is closed too: cctp's three contracts
+  are now pinned in the reconciliation catalogue, so a future unhandled
+  cctp topic caps THIS source's verdict instead of vanishing into the
+  system-wide bucket. New docs/protocols/cctp.md records the full inventory.
+  Historical catch-up (operator): `projector-replay -source cctp -from
+  62403000`.
 - **Phoenix is contract-identity gated (ADR-0040 §1 mechanism 2, CS-026).**
   `Matches()` now requires the emitting contract to be in the curated mainnet
   set (`phoenix.MainnetGatedSet`: the page-verified 11 pools + 3 stake

@@ -61,6 +61,7 @@ const (
 	EventMintAndWithdraw = "mint_and_withdraw" // TokenMessengerMinter
 	EventMessageSent     = "message_sent"      // MessageTransmitter
 	EventMessageReceived = "message_received"  // MessageTransmitter
+	EventMintAndForward  = "mint_and_forward"  // CctpForwarder — mint relayed onward to the recipient
 )
 
 // Topic[0] pre-encoded base64 — package-init constants so
@@ -75,6 +76,7 @@ var (
 	TopicSymbolMintAndWithdraw = scval.MustEncodeSymbol(EventMintAndWithdraw)
 	TopicSymbolMessageSent     = scval.MustEncodeSymbol(EventMessageSent)
 	TopicSymbolMessageReceived = scval.MustEncodeSymbol(EventMessageReceived)
+	TopicSymbolMintAndForward  = scval.MustEncodeSymbol(EventMintAndForward)
 )
 
 // DepositForBurn is the canonical projection of one
@@ -158,6 +160,24 @@ type MintAndWithdraw struct {
 
 	Amount       string // i128
 	FeeCollected string // i128
+}
+
+// MintAndForward is the canonical projection of one
+// `mint_and_forward` event — the CctpForwarder minting and relaying
+// onward to the final recipient. Discovered undecoded in the lake
+// 2026-07-02 (board #31); schema reverse-engineered from real
+// mainnet events (single Symbol topic; body map
+// {amount: i128, forward_recipient: Address, token: Address}).
+type MintAndForward struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	ForwardRecipient string // Stellar Address strkey
+	Token            string // Stellar Address strkey (contract)
+	Amount           string // i128
 }
 
 // MessageSent is the canonical projection of one `MessageSent`

@@ -138,6 +138,10 @@ operator can supply — a gate on an UNCONFIRMED factory either drops real trade
       ADR-0040 §3 enumeration (creation-op chain + wasm-hash cross-check),
       or the team answers the page's open question (factory view /
       authoritative list).
+- [ ] **cctp `mint_and_forward` catch-up** — the event decodes as of
+      2026-07-02 (board #31) but historical occurrences (from genesis
+      62,403,000) predate the fix: run `projector-replay -source cctp
+      -from 62403000` after deploy.
 - [ ] **aquarius** — pin the complete pool set (docs/protocols/aquarius.md: "pool
       enumeration not yet pinned"). Until enumerated, no gate is possible.
 - [ ] **comet** — has NO factory namespace (shared `("POOL",…)` topic). Decide the
