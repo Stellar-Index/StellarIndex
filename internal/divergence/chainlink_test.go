@@ -51,7 +51,7 @@ func TestChainlink_LookupPrice_HappyPath_BTC_USD(t *testing.T) {
 	// 0x0000000000000000000000000000000000000000000000000000005F3115DBE80
 	// Wait — 6543210000000 = 0x5F3115DBE80 (44 bits). Pad to 64 hex chars.
 	answer := big.NewInt(6_543_210_000_000)
-	hexStr := bigInt256Hex(answer)
+	hexStr := roundDataHex(answer, time.Now().Add(-time.Minute))
 
 	srv := fakeChainlinkRPC(t, hexStr)
 	ref := NewChainlinkReference(ChainlinkOptions{
@@ -79,7 +79,7 @@ func TestChainlink_LookupPrice_Inverted(t *testing.T) {
 	// Feed publishes EUR/USD = 1.08. Operator wants USD/EUR.
 	// Raw answer: 108,000,000 (1.08 × 10^8). Inverted = 0.9259...
 	answer := big.NewInt(108_000_000)
-	hexStr := bigInt256Hex(answer)
+	hexStr := roundDataHex(answer, time.Now().Add(-time.Minute))
 
 	srv := fakeChainlinkRPC(t, hexStr)
 	ref := NewChainlinkReference(ChainlinkOptions{
@@ -194,7 +194,7 @@ func TestChainlink_Name(t *testing.T) {
 func TestChainlink_DefaultFeedMapCoversCommonPairs(t *testing.T) {
 	// Fake RPC: every call returns 100 * 10^8 = 10_000_000_000.
 	answer := big.NewInt(10_000_000_000)
-	srv := fakeChainlinkRPC(t, bigInt256Hex(answer))
+	srv := fakeChainlinkRPC(t, roundDataHex(answer, time.Now().Add(-time.Minute)))
 
 	ref := NewChainlinkReference(ChainlinkOptions{
 		RPCURL: srv.URL,
@@ -246,6 +246,22 @@ func TestChainlink_OperatorOverridesDefault(t *testing.T) {
 // ─── Helpers ─────────────────────────────────────────────────────
 
 // bigInt256Hex pads a positive big.Int to 32-byte 0x-prefixed hex.
+// roundDataHex builds a 160-byte latestRoundData() eth_call result:
+// (roundId, answer, startedAt, updatedAt, answeredInRound), one
+// 32-byte word each. roundId/startedAt/answeredInRound are dummies.
+func roundDataHex(answer *big.Int, updatedAt time.Time) string {
+	word := func(n *big.Int) string {
+		h := n.Text(16)
+		for len(h) < 64 {
+			h = "0" + h
+		}
+		return h
+	}
+	one := big.NewInt(1)
+	ts := big.NewInt(updatedAt.Unix())
+	return "0x" + word(one) + word(answer) + word(ts) + word(ts) + word(one)
+}
+
 func bigInt256Hex(n *big.Int) string {
 	hexStr := n.Text(16)
 	for len(hexStr) < 64 {
@@ -259,4 +275,68 @@ func abs(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// TestChainlink_StaleRoundRejected pins the CS-089 fix: a round
+// whose updatedAt exceeds the feed's MaxAge (relative to the
+// comparison's observedAt) must surface as ErrPriceUnavailable —
+// "reference unavailable", never a fresh-looking price that can
+// mask or fabricate divergence.
+func TestChainlink_StaleRoundRejected(t *testing.T) {
+	answer := big.NewInt(6_543_210_000_000)
+	observedAt := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name      string
+		maxAge    time.Duration
+		updatedAt time.Time
+		wantStale bool
+	}{
+		{"fresh crypto round passes", 0 /* default 3h */, observedAt.Add(-30 * time.Minute), false},
+		{"crypto round beyond default 3h rejected", 0, observedAt.Add(-4 * time.Hour), true},
+		{"fx weekend round passes under 76h", 76 * time.Hour, observedAt.Add(-70 * time.Hour), false},
+		{"frozen feed beyond explicit MaxAge rejected", 76 * time.Hour, observedAt.Add(-80 * time.Hour), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeChainlinkRPC(t, roundDataHex(answer, tc.updatedAt))
+			ref := NewChainlinkReference(ChainlinkOptions{
+				RPCURL: srv.URL,
+				FeedMap: map[string]ChainlinkFeed{
+					"native/fiat:USD": {
+						Address:  "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c",
+						Decimals: 8,
+						MaxAge:   tc.maxAge,
+					},
+				},
+			})
+			pair := mustPair(t, "native", "fiat:USD")
+			_, err := ref.LookupPrice(context.Background(), pair, observedAt)
+			if tc.wantStale {
+				if !errors.Is(err, ErrPriceUnavailable) {
+					t.Fatalf("want ErrPriceUnavailable for stale round, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("fresh round rejected: %v", err)
+			}
+		})
+	}
+}
+
+// TestChainlink_LegacyAnswerShapeFailsLoudly — a proxy answering the
+// 32-byte latestAnswer shape must error, not decode garbage.
+func TestChainlink_LegacyAnswerShapeFailsLoudly(t *testing.T) {
+	srv := fakeChainlinkRPC(t, bigInt256Hex(big.NewInt(6_543_210_000_000)))
+	ref := NewChainlinkReference(ChainlinkOptions{
+		RPCURL: srv.URL,
+		FeedMap: map[string]ChainlinkFeed{
+			"native/fiat:USD": {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: 8},
+		},
+	})
+	_, err := ref.LookupPrice(context.Background(), mustPair(t, "native", "fiat:USD"), time.Now())
+	if err == nil || !strings.Contains(err.Error(), "too short") {
+		t.Fatalf("want too-short decode error for legacy 32-byte result, got %v", err)
+	}
 }

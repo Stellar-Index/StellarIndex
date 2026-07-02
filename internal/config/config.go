@@ -133,6 +133,11 @@ type ChainlinkFeedConfig struct {
 	Address  string `toml:"address" doc:"0x-prefixed mainnet feed contract address." default:""`
 	Decimals int    `toml:"decimals" doc:"Power-of-10 divisor for the raw int256. Defaults to 8 (Chainlink standard)." default:"8"`
 	Invert   bool   `toml:"invert" doc:"Set true when canonical pair is reciprocal of the feed's natural quote." default:"false"`
+	// MaxAgeHours is the CS-089 staleness ceiling: a latestRoundData
+	// round older than this is rejected as reference-unavailable.
+	// 0 = the crypto default (3h). FX feeds pause over market
+	// closes — set ~76 for those.
+	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = 3h crypto default; use ~76 for FX feeds (they pause over market closes)." default:"0"`
 }
 
 // defaultDivergenceConfig returns the Default()-shape divergence

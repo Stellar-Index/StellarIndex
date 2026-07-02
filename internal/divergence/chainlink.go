@@ -58,6 +58,16 @@ type chainlinkFeedSpec struct {
 	Address  string // 0x-prefixed
 	Decimals int    // power-of-10 to divide raw answer by
 	Invert   bool
+	// MaxAge is the staleness ceiling: a round whose updatedAt is
+	// older than this (relative to the comparison's observedAt) is
+	// rejected as ErrPriceUnavailable instead of being served as a
+	// fresh reference (CS-089 — a frozen feed must read as
+	// "reference unavailable", never as agreement/divergence).
+	// Calibrated per feed class: crypto/USD feeds heartbeat at
+	// ≤1h, FX feeds at 24h AND pause over market closes (a Friday
+	// close legitimately ages ~72h by Sunday), hence the two
+	// defaults in defaultChainlinkFeedMap.
+	MaxAge time.Duration
 }
 
 // ChainlinkOptions configures [NewChainlinkReference].
@@ -113,7 +123,23 @@ type ChainlinkFeed struct {
 	// the feed publishes EUR/USD). When set, LookupPrice returns
 	// 1 / raw_price instead of raw_price.
 	Invert bool
+
+	// MaxAge is the staleness ceiling for the feed's latestRoundData
+	// updatedAt (CS-089). Zero = the crypto default (3h). FX feeds
+	// pause over market closes — configure ~76h for those.
+	MaxAge time.Duration
 }
+
+// Chainlink staleness defaults (CS-089). Crypto/USD mainnet feeds
+// heartbeat at ≤1h (plus deviation triggers), so 3h means "missed
+// two heartbeats + slack". FX feeds heartbeat at 24h and pause over
+// market closes — a Friday-close round is legitimately ~72h old on
+// Sunday night, so 76h tolerates the weekend without masking a
+// genuinely frozen feed for a week.
+const (
+	defaultChainlinkMaxAgeCrypto = 3 * time.Hour
+	defaultChainlinkMaxAgeFX     = 76 * time.Hour
+)
 
 // NewChainlinkReference constructs a Chainlink-backed reference.
 //
@@ -151,6 +177,11 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 		if spec.Decimals == 0 {
 			spec.Decimals = 8 // Chainlink's overwhelming default
 		}
+		if spec.MaxAge == 0 {
+			// Crypto default — FX operators set ~76h explicitly
+			// (see defaultChainlinkMaxAgeFX's rationale).
+			spec.MaxAge = defaultChainlinkMaxAgeCrypto
+		}
 		feedMap[k] = spec
 	}
 	return &ChainlinkReference{
@@ -180,15 +211,16 @@ func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
 	const dec = 8
 	return map[string]chainlinkFeedSpec{
 		// Crypto / USD — covers our default top-of-book pairs.
-		"crypto:BTC/fiat:USD":  {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: dec},
-		"crypto:ETH/fiat:USD":  {Address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", Decimals: dec},
-		"crypto:LINK/fiat:USD": {Address: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c", Decimals: dec},
+		"crypto:BTC/fiat:USD":  {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: dec, MaxAge: defaultChainlinkMaxAgeCrypto},
+		"crypto:ETH/fiat:USD":  {Address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", Decimals: dec, MaxAge: defaultChainlinkMaxAgeCrypto},
+		"crypto:LINK/fiat:USD": {Address: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c", Decimals: dec, MaxAge: defaultChainlinkMaxAgeCrypto},
 		// Fiat / USD — anchors the FX-cross fallback used when the
 		// aggregator triangulates X/fiat:Y via X/fiat:USD +
-		// fiat:USD/fiat:Y.
-		"fiat:EUR/fiat:USD": {Address: "0xb49f677943BC038e9857d61E7d053CaA2C1734C1", Decimals: dec},
-		"fiat:GBP/fiat:USD": {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", Decimals: dec},
-		"fiat:JPY/fiat:USD": {Address: "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3", Decimals: dec},
+		// fiat:USD/fiat:Y. FX feeds pause over market closes, hence
+		// the weekend-tolerant MaxAge.
+		"fiat:EUR/fiat:USD": {Address: "0xb49f677943BC038e9857d61E7d053CaA2C1734C1", Decimals: dec, MaxAge: defaultChainlinkMaxAgeFX},
+		"fiat:GBP/fiat:USD": {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", Decimals: dec, MaxAge: defaultChainlinkMaxAgeFX},
+		"fiat:JPY/fiat:USD": {Address: "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3", Decimals: dec, MaxAge: defaultChainlinkMaxAgeFX},
 	}
 }
 
@@ -198,36 +230,35 @@ func (*ChainlinkReference) Name() string { return "chainlink" }
 // LookupPrice implements [Reference].
 //
 // Constructs an eth_call JSON-RPC request against the configured
-// AggregatorV3 contract's `latestAnswer()` view function (selector
-// 0x50d25bcd). Decodes the int256 result, applies the feed's
-// decimals, and (optionally) inverts. Returns ErrAssetUnsupported
-// when the pair has no feed mapping; transport / decode errors
-// surface as wrapped errors so the divergence worker can treat
-// them as "reference unavailable this run".
-//
-// observedAt is currently ignored — `latestAnswer()` returns the
-// most-recent feed value with no historical lookup. Acceptable
-// for divergence cross-check (the bucket is at most minutes old;
-// Chainlink updates its feeds on heartbeat + deviation triggers
-// so the gap is bounded). Future implementations could use
-// `getRoundData(roundId)` + binary search if historical accuracy
-// becomes load-bearing.
-func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pair, _ time.Time) (float64, error) {
+// AggregatorV3 contract's `latestRoundData()` view function
+// (selector 0xfeaf968c). Decodes the answer AND the round's
+// updatedAt, applies the feed's decimals, (optionally) inverts, and
+// — CS-089 — REJECTS the answer as ErrPriceUnavailable when
+// updatedAt is older than the feed's MaxAge relative to observedAt:
+// a frozen feed served as fresh can both mask a real divergence and
+// fabricate a false one, and the pre-fix `latestAnswer()` carried no
+// timestamp at all. Returns ErrAssetUnsupported when the pair has no
+// feed mapping; transport / decode / staleness errors surface as
+// wrapped errors so the divergence worker treats them as "reference
+// unavailable this run" (feeding the CS-088 no_reference outcome).
+func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
 	spec, ok := r.feedMap[pair.String()]
 	if !ok {
 		return 0, fmt.Errorf("%w: chainlink: no feed configured for %s", ErrAssetUnsupported, pair.String())
 	}
 
-	// `latestAnswer()` selector. AggregatorV3Interface.
-	// keccak256("latestAnswer()")[:4] = 50d25bcd
-	const latestAnswerSelector = "0x50d25bcd"
+	// `latestRoundData()` selector. AggregatorV3Interface.
+	// keccak256("latestRoundData()")[:4] = feaf968c. Returns
+	// (roundId uint80, answer int256, startedAt uint256,
+	// updatedAt uint256, answeredInRound uint80) — 160 bytes.
+	const latestRoundDataSelector = "0xfeaf968c"
 
 	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "eth_call",
 		"params": []any{
-			map[string]string{"to": spec.Address, "data": latestAnswerSelector},
+			map[string]string{"to": spec.Address, "data": latestRoundDataSelector},
 			"latest",
 		},
 	})
@@ -273,12 +304,24 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 		return 0, fmt.Errorf("chainlink: empty rpc result for %s", pair.String())
 	}
 
-	answer, err := decodeChainlinkInt256(rpcResp.Result)
+	answer, updatedAt, err := decodeChainlinkRoundData(rpcResp.Result)
 	if err != nil {
-		return 0, fmt.Errorf("chainlink: decode answer for %s: %w", pair.String(), err)
+		return 0, fmt.Errorf("chainlink: decode round data for %s: %w", pair.String(), err)
 	}
 	if answer.Sign() <= 0 {
 		return 0, fmt.Errorf("chainlink: non-positive answer for %s: %s", pair.String(), answer.String())
+	}
+
+	// CS-089 staleness gate. observedAt is the comparison timestamp
+	// Compare passes through (also our injected clock for tests);
+	// zero falls back to wall time defensively.
+	asOf := observedAt
+	if asOf.IsZero() {
+		asOf = time.Now().UTC()
+	}
+	if age := asOf.Sub(updatedAt); age > spec.MaxAge {
+		return 0, fmt.Errorf("%w: chainlink: %s round is stale (updated %s ago, max %s)",
+			ErrPriceUnavailable, pair.String(), age.Truncate(time.Second), spec.MaxAge)
 	}
 
 	priceFloat, err := scaleChainlinkAnswer(answer, spec.Decimals)
@@ -292,6 +335,33 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 		priceFloat = 1.0 / priceFloat
 	}
 	return priceFloat, nil
+}
+
+// decodeChainlinkRoundData parses the 160-byte `latestRoundData()`
+// eth_call result: (roundId uint80, answer int256, startedAt
+// uint256, updatedAt uint256, answeredInRound uint80), one 32-byte
+// word each. Returns the answer (two's-complement int256) and
+// updatedAt as UTC time. Rejects results shorter than 5 words —
+// a proxy answering the legacy latestAnswer shape must fail loudly,
+// not decode garbage.
+func decodeChainlinkRoundData(hexStr string) (*big.Int, time.Time, error) {
+	raw, err := hex.DecodeString(strings.TrimPrefix(hexStr, "0x"))
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("round data hex: %w", err)
+	}
+	if len(raw) < 160 {
+		return nil, time.Time{}, fmt.Errorf("round data too short: %d bytes, want 160", len(raw))
+	}
+	answer := new(big.Int).SetBytes(raw[32:64])
+	// Two's complement for negative int256 (sign bit set).
+	if raw[32]&0x80 != 0 {
+		answer.Sub(answer, new(big.Int).Lsh(big.NewInt(1), 256))
+	}
+	updatedRaw := new(big.Int).SetBytes(raw[96:128])
+	if !updatedRaw.IsInt64() {
+		return nil, time.Time{}, fmt.Errorf("updatedAt overflows int64: %s", updatedRaw.String())
+	}
+	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil
 }
 
 // decodeChainlinkInt256 parses a 0x-prefixed hex string returned by
