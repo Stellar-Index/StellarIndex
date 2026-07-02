@@ -108,11 +108,14 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   }
 
   const l = ledgerQ.data;
+  // The generated contract marks every Ledger field optional; a served
+  // row always carries the header fields, so default the ones we format.
+  const sequence = l.sequence ?? seq;
 
   return (
     <Shell seq={seq}>
       <Panel
-        title={`Ledger #${l.sequence.toLocaleString()}`}
+        title={`Ledger #${sequence.toLocaleString()}`}
         hint={formatTimestamp(l.close_time)}
         source={asExample(`/v1/ledgers/${seq}`)}
       >
@@ -120,17 +123,17 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           <Field
             label="Sequence"
             mono
-            value={`#${l.sequence.toLocaleString()}`}
+            value={`#${sequence.toLocaleString()}`}
           />
           <Field label="Close time" value={formatTimestamp(l.close_time)} />
           <Field label="Protocol" mono value={String(l.protocol_version)} />
-          <Field label="Transactions" value={formatCompact(l.tx_count)} />
-          <Field label="Operations" value={formatCompact(l.op_count)} />
+          <Field label="Transactions" value={formatCompact(l.tx_count ?? 0)} />
+          <Field label="Operations" value={formatCompact(l.op_count ?? 0)} />
           <Field
             label="Soroban events"
             value={
-              l.soroban_event_count > 0
-                ? formatCompact(l.soroban_event_count)
+              (l.soroban_event_count ?? 0) > 0
+                ? formatCompact(l.soroban_event_count ?? 0)
                 : '0'
             }
           />
@@ -165,11 +168,11 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
             {l.prev_hash ? (
               <span className="inline-flex items-center gap-2">
                 <Link
-                  href={`/ledgers/${l.sequence - 1}/`}
+                  href={`/ledgers/${sequence - 1}/`}
                   className="font-mono text-xs text-brand-600 hover:underline"
-                  title={`Ledger #${(l.sequence - 1).toLocaleString()}`}
+                  title={`Ledger #${(sequence - 1).toLocaleString()}`}
                 >
-                  ← #{(l.sequence - 1).toLocaleString()}
+                  ← #{(sequence - 1).toLocaleString()}
                 </Link>
                 <CopyHash value={l.prev_hash} head={12} tail={12} />
               </span>
@@ -267,7 +270,8 @@ function TransactionsPanel({
       </Panel>
     );
   }
-  if (data.transactions.length === 0) {
+  const transactions = data.transactions ?? [];
+  if (transactions.length === 0) {
     return (
       <Panel
         title="Transactions"
@@ -280,7 +284,7 @@ function TransactionsPanel({
   }
   return (
     <Panel
-      title={`Transactions (${data.transactions.length})`}
+      title={`Transactions (${transactions.length})`}
       source={source}
       bodyClassName="-mx-4"
     >
@@ -297,7 +301,7 @@ function TransactionsPanel({
             </tr>
           </thead>
           <tbody className="divide-y divide-line-subtle">
-            {data.transactions.map((t) => (
+            {transactions.map((t) => (
               <tr
                 key={t.hash}
                 className="hover:bg-surface-muted"
@@ -308,16 +312,16 @@ function TransactionsPanel({
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={t.hash}
                   >
-                    {t.hash.slice(0, 10)}…{t.hash.slice(-6)}
+                    {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td>
                   <Link
-                    href={`/accounts/${encodeURIComponent(t.source_account)}/`}
+                    href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
                     className="font-mono text-xs text-ink-body hover:text-brand-600"
                     title={t.source_account}
                   >
-                    {t.source_account.slice(0, 6)}…{t.source_account.slice(-4)}
+                    {(t.source_account ?? '').slice(0, 6)}…{(t.source_account ?? '').slice(-4)}
                   </Link>
                 </Td>
                 <Td align="right">
@@ -326,7 +330,7 @@ function TransactionsPanel({
                   </span>
                 </Td>
                 <Td>
-                  <SuccessBadge ok={t.successful} code={t.result_code} />
+                  <SuccessBadge ok={t.successful ?? false} code={t.result_code} />
                 </Td>
                 <Td align="right">
                   <span className="font-mono text-xs tabular-nums text-ink-muted">

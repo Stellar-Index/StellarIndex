@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { assetHrefFor } from '@/lib/fiat-slugs';
+import type { components } from '@/api/types';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
@@ -14,14 +15,14 @@ type Params = Promise<{ ticker: string }>;
 
 // Wire shape of /v1/assets/{ticker} for a fiat catalogue entry —
 // returns GlobalAssetView when the ticker resolves to a verified
-// currency. F-1201 migrated this from /v1/currencies/{ticker}.
-interface GlobalAssetView {
-  ticker: string;
-  slug: string;
-  name: string;
-  class: string; // crypto | stablecoin | fiat
-  price_usd?: string | null; // "1 unit of asset = X USD" (decimal string)
-}
+// currency (F-1201 migrated this from /v1/currencies/{ticker}).
+// Derived from the generated OpenAPI contract.
+type GlobalAssetView = components['schemas']['GlobalAssetView'] & {
+  // SPEC-GAP: the wire carries `class` (crypto | stablecoin | fiat;
+  // internal/api/v1/assets_global.go GlobalAssetView.Class, required)
+  // but the spec's GlobalAssetView schema omits it.
+  class?: string;
+};
 
 interface CurrencyDetail {
   ticker: string;
@@ -64,10 +65,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
-interface ChartPoint {
-  t: string;
-  p?: string | null;
-}
+type ChartPoint = components['schemas']['HistoryPoint'];
 
 // fetchFxSeries pulls the trailing-7d daily FX series (1 ticker = X USD)
 // from /v1/chart so the widget shows a real sparkline + 7d change rather

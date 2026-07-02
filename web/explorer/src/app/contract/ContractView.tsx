@@ -15,6 +15,18 @@ import {
   formatTimestamp,
   relativeAge,
 } from '../explorer-shared';
+import type { paths } from '@/api/types';
+
+// GetJSON extracts the application/json body of a GET 200 response for
+// the per-contract sub-resources (wasm / code-history / interactions)
+// from the generated OpenAPI contract (src/api/types.ts).
+type GetJSON<P extends keyof paths> = paths[P] extends {
+  get: {
+    responses: { 200: { content: { 'application/json': infer B } } };
+  };
+}
+  ? B
+  : never;
 
 // Stellar contract IDs are 56 chars: 'C' + 55 base32 alphanumerics.
 const CONTRACT_RE = /^C[A-Z2-7]{55}$/;
@@ -197,20 +209,10 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
 // contract's resolved wasm hash + size, its exported function table (always
 // present — parsed natively), and best-effort WAT + wasm-decompile pseudocode
 // (present once the wabt toolchain is installed server-side).
-interface WasmExport {
-  name: string;
-  params: string[];
-  results: string[];
-}
-interface ContractWasmResp {
-  contract_id: string;
-  wasm_hash: string;
-  size_bytes: number;
-  exports: WasmExport[];
-  wat?: string;
-  decompiled?: string;
-  source_note: string;
-}
+type ContractWasmResp = NonNullable<
+  GetJSON<'/contracts/{contract_id}/wasm'>['data']
+>;
+type WasmExport = ContractWasmResp['exports'][number];
 
 function exportSignature(e: WasmExport): string {
   const p = e.params.length ? e.params.join(', ') : '';
@@ -367,15 +369,9 @@ function CodeDisclosure({ label, code }: { label: string; code: string }) {
 // ── Code history (change over time) ─────────────────────────────────────
 // Mirrors api/v1.ContractCodeHistoryView (GET /v1/contracts/{id}/code-history):
 // the contract's WASM-hash timeline — each in-place upgrade as a new version.
-interface CodeVersion {
-  ledger: number;
-  close_time: string;
-  wasm_hash: string;
-}
-interface CodeHistoryResp {
-  contract_id: string;
-  versions: CodeVersion[];
-}
+type CodeHistoryResp = NonNullable<
+  GetJSON<'/contracts/{contract_id}/code-history'>['data']
+>;
 
 function CodeHistoryPanel({ id }: { id: string }) {
   const { data, isLoading, isError } = useQuery<CodeHistoryResp>({
@@ -433,14 +429,14 @@ function CodeHistoryPanel({ id }: { id: string }) {
                 <td className="px-4 py-3 font-mono text-xs text-ink-faint">{i + 1}</td>
                 <td className="px-4 py-3">
                   <Link href={`/ledgers/${v.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
-                    #{v.ledger.toLocaleString()}
+                    #{(v.ledger ?? 0).toLocaleString()}
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-xs text-ink-muted" title={formatTimestamp(v.close_time)}>
                   {relativeAge(v.close_time)}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-ink-body" title={v.wasm_hash}>
-                  {v.wasm_hash.slice(0, 12)}…{v.wasm_hash.slice(-8)}
+                  {(v.wasm_hash ?? '').slice(0, 12)}…{(v.wasm_hash ?? '').slice(-8)}
                 </td>
               </tr>
             ))}
@@ -455,17 +451,9 @@ function CodeHistoryPanel({ id }: { id: string }) {
 // Mirrors api/v1.ContractInteractionsView (GET /v1/contracts/{id}/interactions):
 // the contracts that emitted events in the same transactions as this one — a
 // proxy for cross-contract calls (Soroban sub-invocations nest within one tx).
-interface InteractionEdge {
-  contract_id: string;
-  shared_txs: number;
-  protocol?: string;
-}
-interface InteractionsResp {
-  contract_id: string;
-  window_days: number;
-  since_ledger: number;
-  interactions: InteractionEdge[];
-}
+type InteractionsResp = NonNullable<
+  GetJSON<'/contracts/{contract_id}/interactions'>['data']
+>;
 
 /**
  * InteractionsPanel — the contract's cross-contract interaction map: other
@@ -528,11 +516,11 @@ function InteractionsPanel({ id }: { id: string }) {
               <tr key={e.contract_id} className="hover:bg-surface-muted">
                 <td className="px-4 py-3">
                   <Link
-                    href={`/contracts/${encodeURIComponent(e.contract_id)}/`}
+                    href={`/contracts/${encodeURIComponent(e.contract_id ?? '')}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={e.contract_id}
                   >
-                    {e.contract_id.slice(0, 8)}…{e.contract_id.slice(-6)}
+                    {(e.contract_id ?? '').slice(0, 8)}…{(e.contract_id ?? '').slice(-6)}
                   </Link>
                 </td>
                 <td className="px-4 py-3">
@@ -548,7 +536,7 @@ function InteractionsPanel({ id }: { id: string }) {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
-                  {e.shared_txs.toLocaleString()}
+                  {(e.shared_txs ?? 0).toLocaleString()}
                 </td>
               </tr>
             ))}
@@ -584,7 +572,7 @@ function Shell({
 }
 
 function EventsPanel({
-  events,
+  events = [],
   nextCursor,
   cursor,
   isFetching,
@@ -640,7 +628,7 @@ function EventsPanel({
                     href={`/ledgers/${ev.ledger}/`}
                     className="font-mono text-xs text-brand-600 hover:underline"
                   >
-                    #{ev.ledger.toLocaleString()}
+                    #{(ev.ledger ?? 0).toLocaleString()}
                   </Link>
                 </Td>
                 <Td>
@@ -657,7 +645,7 @@ function EventsPanel({
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={ev.tx_hash}
                   >
-                    {ev.tx_hash.slice(0, 8)}…{ev.tx_hash.slice(-6)}
+                    {(ev.tx_hash ?? '').slice(0, 8)}…{(ev.tx_hash ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td>

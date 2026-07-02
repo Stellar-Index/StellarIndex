@@ -85,10 +85,10 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           )}
         </dl>
         <div className="mt-4 flex flex-wrap gap-1">
-          <FlagPill on={data.auth_required} label="auth_required" />
-          <FlagPill on={data.auth_revocable} label="auth_revocable" />
-          <FlagPill on={data.auth_immutable} label="auth_immutable" />
-          <FlagPill on={data.auth_clawback} label="auth_clawback" />
+          <FlagPill on={data.auth_required ?? undefined} label="auth_required" />
+          <FlagPill on={data.auth_revocable ?? undefined} label="auth_revocable" />
+          <FlagPill on={data.auth_immutable ?? undefined} label="auth_immutable" />
+          <FlagPill on={data.auth_clawback ?? undefined} label="auth_clawback" />
         </div>
       </Panel>
 
@@ -150,17 +150,17 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums">
-                    {formatCompact(a.observation_count)}
+                    {formatCompact(a.observation_count ?? 0)}
                   </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    #{a.first_seen_ledger.toLocaleString()}
+                    #{(a.first_seen_ledger ?? 0).toLocaleString()}
                   </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    #{a.last_seen_ledger.toLocaleString()}
+                    #{(a.last_seen_ledger ?? 0).toLocaleString()}
                   </span>
                 </Td>
               </tr>

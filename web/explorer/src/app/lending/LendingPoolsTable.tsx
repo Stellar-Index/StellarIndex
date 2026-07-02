@@ -6,18 +6,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
+import type { paths } from '@/api/types';
 
-interface LendingPool {
-  protocol: string;
-  pool: string;
-  auctions_24h: number;
-  auctions_total: number;
-  unique_users_30d: number;
-  last_seen: string;
-  net_supplied_30d?: string;
-  net_borrowed_30d?: string;
-  utilization_30d_pct?: number | null;
-}
+// One /v1/lending/pools row, derived from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type LendingPool = NonNullable<
+  paths['/lending/pools']['get']['responses'][200]['content']['application/json']['data']
+>[number];
 
 // Compact display of a token base-units magnitude (string big-int).
 // Display-only; precision loss past 2^53 is fine for an at-a-glance
@@ -150,9 +145,10 @@ export function LendingPoolsTable() {
               </tr>
             )}
             {rows.map((p) => {
-              const meta = BLEND_POOL_META[p.pool];
+              const poolId = p.pool ?? '';
+              const meta = BLEND_POOL_META[poolId];
               return (
-                <tr key={p.pool} className="hover:bg-surface-muted">
+                <tr key={poolId} className="hover:bg-surface-muted">
                   <Td>
                     <span className="inline-block rounded-sm bg-up-subtle px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-up-strong">
                       {p.protocol}
@@ -161,11 +157,11 @@ export function LendingPoolsTable() {
                   <Td>
                     <div className="space-y-0.5">
                       <Link
-                        href={`/lending/${p.pool}`}
+                        href={`/lending/${poolId}`}
                         className="block font-mono text-[11px] hover:text-brand-600"
-                        title={p.pool}
+                        title={poolId}
                       >
-                        {p.pool.slice(0, 6)}…{p.pool.slice(-6)}
+                        {poolId.slice(0, 6)}…{poolId.slice(-6)}
                       </Link>
                       {/* Curated label where we have one; else a generic
                           "Blend pool" tag so newer/unmapped pools are still
@@ -197,12 +193,12 @@ export function LendingPoolsTable() {
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
-                      {p.auctions_24h.toLocaleString()}
+                      {(p.auctions_24h ?? 0).toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
-                      {p.auctions_total.toLocaleString()}
+                      {(p.auctions_total ?? 0).toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">
@@ -217,7 +213,7 @@ export function LendingPoolsTable() {
                   </Td>
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
-                      {p.unique_users_30d.toLocaleString()}
+                      {(p.unique_users_30d ?? 0).toLocaleString()}
                     </span>
                   </Td>
                   <Td align="right">

@@ -120,10 +120,10 @@ export function OperationView() {
 
   if (!op) {
     return (
-      <Shell hash={tx.hash} idx={idx}>
+      <Shell hash={tx.hash ?? null} idx={idx}>
         <Panel title="Operation not found" source={asExample(`/v1/tx/${tx.hash}`)} bodyClassName="text-sm text-ink-body">
           <p>
-            Transaction <span className="font-mono">{tx.hash.slice(0, 12)}…</span>{' '}
+            Transaction <span className="font-mono">{(tx.hash ?? '').slice(0, 12)}…</span>{' '}
             has {(tx.operations ?? []).length} operation(s); index {idx} is out of
             range.{' '}
             <Link href={`/transactions/${tx.hash}/`} className="text-brand-600 hover:underline">
@@ -136,7 +136,7 @@ export function OperationView() {
   }
 
   return (
-    <Shell hash={tx.hash} idx={idx} type={op.type}>
+    <Shell hash={tx.hash ?? null} idx={idx} type={op.type}>
       <Panel
         title={op.type}
         hint={formatTimestamp(tx.close_time)}
@@ -149,16 +149,16 @@ export function OperationView() {
           </Field>
           <Field label="Ledger">
             <Link href={`/ledgers/${tx.ledger}/`} className="font-mono text-xs text-brand-600 hover:underline">
-              #{tx.ledger.toLocaleString()}
+              #{(tx.ledger ?? 0).toLocaleString()}
             </Link>
           </Field>
           <Field label="Close time" value={formatTimestamp(tx.close_time)} />
           <FieldWide label="Transaction">
             <span className="inline-flex items-center gap-2">
               <Link href={`/transactions/${tx.hash}/`} className="font-mono text-xs text-brand-600 hover:underline" title={tx.hash}>
-                {tx.hash.slice(0, 16)}…{tx.hash.slice(-16)}
+                {(tx.hash ?? '').slice(0, 16)}…{(tx.hash ?? '').slice(-16)}
               </Link>
-              <CopyValue value={tx.hash} />
+              <CopyValue value={tx.hash ?? ''} />
             </span>
           </FieldWide>
           <FieldWide label="Source account">
@@ -176,7 +176,7 @@ export function OperationView() {
             ) : (
               <span className="inline-flex items-center gap-2 text-sm text-ink-muted">
                 <span className="font-mono text-xs">inherits tx source</span>
-                <Link href={`/accounts/${encodeURIComponent(tx.source_account)}/`} className="text-brand-600 hover:underline">
+                <Link href={`/accounts/${encodeURIComponent(tx.source_account ?? '')}/`} className="text-brand-600 hover:underline">
                   <CopyHash value={tx.source_account} head={6} tail={4} />
                 </Link>
               </span>
@@ -186,7 +186,7 @@ export function OperationView() {
       </Panel>
 
       <DecodedFields op={op} />
-      <OpEventsPanel hash={tx.hash} events={opEvents} />
+      <OpEventsPanel hash={tx.hash ?? ''} events={opEvents} />
     </Shell>
   );
 }
@@ -250,7 +250,7 @@ function OpEventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
                     className="font-mono text-xs text-brand-600 hover:underline"
                     title={ev.contract_id}
                   >
-                    {ev.contract_id.slice(0, 8)}…{ev.contract_id.slice(-6)}
+                    {(ev.contract_id ?? '').slice(0, 8)}…{(ev.contract_id ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td className="font-mono text-xs text-ink-body">{ev.event_type || '—'}</Td>

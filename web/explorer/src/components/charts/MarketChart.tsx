@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
+import type { components } from '@/api/types';
 
 // CandleChart pulls in lightweight-charts (~155 KB). Lazy-load it so
 // the surrounding page renders without paying the bundle tax up front.
@@ -29,16 +30,9 @@ const TIMEFRAMES: { key: TF; label: string; interval: string; limit: number }[] 
   { key: 'all', label: 'All', interval: '1w', limit: 600 }, // full history (daily would blow the cap)
 ];
 
-interface OHLCBar {
-  t: string;
-  o: string;
-  h: string;
-  l: string;
-  c: string;
-  v_base: string;
-  v_quote: string;
-  n: number;
-}
+// One /v1/ohlc?interval= series bar, from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type OHLCBar = components['schemas']['OHLCSeriesBar'];
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 

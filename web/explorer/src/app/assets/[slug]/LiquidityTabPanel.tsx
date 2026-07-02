@@ -3,16 +3,9 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact } from '@/lib/format';
-
-interface PoolRow {
-  source: string;
-  base: string;
-  quote: string;
-  last_trade_at: string;
-  trade_count_24h: number;
-  volume_24h_usd?: string | null;
-  last_price?: string | null;
-}
+// /v1/pools row from the generated OpenAPI contract (spec PoolRow, via
+// the shared alias in src/api/hooks.ts).
+import type { Pool as PoolRow } from '@/api/hooks';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');

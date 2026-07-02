@@ -6,12 +6,9 @@ import { useQuery } from '@tanstack/react-query';
 import { apiGet, asExample } from '@/api/client';
 import { Panel } from '@/components/reveal';
 import { MarketChart } from '@/components/charts/MarketChart';
-
-interface Market {
-  base: string;
-  quote: string;
-  volume_24h_usd?: string | null;
-}
+// /v1/markets row from the generated OpenAPI contract, via the shared
+// alias in src/api/hooks.ts (Market = MarketRow).
+import type { Market } from '@/api/hooks';
 
 /**
  * VenueChart — the price chart for a CEX venue. Fetches the venue's

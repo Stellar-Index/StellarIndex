@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
 
+// Wire shapes from the generated OpenAPI contract (src/api/types.ts,
+// `make web-generate-api`).
+import type { components } from '@/api/types';
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
@@ -12,30 +16,13 @@ const PAIR_SEPARATOR = '~';
 
 type Params = Promise<{ pair: string }>;
 
-interface Market {
-  base: string;
-  quote: string;
-  trade_count_24h: number;
-  last_trade_at: string;
-  volume_24h_usd?: string | null;
-}
+type Market = components['schemas']['MarketRow'];
 
-interface PriceResp {
-  asset_id: string;
-  quote: string;
-  price?: string;
-  observed_at?: string;
-}
+type PriceResp = components['schemas']['Price'];
 
-interface ChartPoint {
-  t: string;
-  p: string;
-  v_usd?: string | null;
-}
-
-interface ChartResp {
-  points: ChartPoint[];
-}
+type ChartResp = {
+  points: components['schemas']['HistoryPoint'][];
+};
 
 function decodePairSlug(slug: string): { base: string; quote: string } | null {
   const decoded = decodeURIComponent(slug);

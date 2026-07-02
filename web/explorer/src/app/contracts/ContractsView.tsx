@@ -8,20 +8,13 @@ import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { Container, PageHeader } from '@/components/ui';
 import { formatTimestamp } from '../explorer-shared';
+import type { paths } from '@/api/types';
 
-interface ContractRow {
-  contract_id: string;
-  events: number;
-  last_ledger: number;
-  last_seen: string;
-  protocol?: string;
-}
-
-interface DirectoryResp {
-  window_days: number;
-  since_ledger: number;
-  contracts: ContractRow[];
-}
+// GET /v1/contracts response body, derived from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type DirectoryResp = NonNullable<
+  paths['/contracts']['get']['responses'][200]['content']['application/json']['data']
+>;
 
 /**
  * ContractsView — the contracts directory: the most active Soroban contracts
@@ -86,11 +79,11 @@ export function ContractsView() {
                   <tr key={c.contract_id} className="hover:bg-surface-muted">
                     <td className="px-4 py-3">
                       <Link
-                        href={`/contracts/${encodeURIComponent(c.contract_id)}/`}
+                        href={`/contracts/${encodeURIComponent(c.contract_id ?? '')}/`}
                         className="font-mono text-xs text-brand-600 hover:underline"
                         title={c.contract_id}
                       >
-                        {c.contract_id.slice(0, 8)}…{c.contract_id.slice(-6)}
+                        {(c.contract_id ?? '').slice(0, 8)}…{(c.contract_id ?? '').slice(-6)}
                       </Link>
                     </td>
                     <td className="px-4 py-3">
@@ -106,7 +99,7 @@ export function ContractsView() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
-                      {formatCompact(c.events)}
+                      {formatCompact(c.events ?? 0)}
                     </td>
                     <td className="px-4 py-3 text-xs text-ink-muted">
                       {formatTimestamp(c.last_seen)}

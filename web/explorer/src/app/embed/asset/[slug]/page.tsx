@@ -1,5 +1,11 @@
 import type { Metadata } from 'next';
 
+// The /v1/assets row shape, derived from the generated OpenAPI
+// contract via the shared alias in src/api/hooks.ts (spec `Asset`
+// plus the SPEC-GAP coin-overlay fields this widget reads:
+// price_history_24h / change_1h_pct / change_7d_pct).
+import type { Coin } from '@/api/hooks';
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
@@ -9,18 +15,6 @@ const isCIStub =
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ slug: string }>;
-
-interface Coin {
-  asset_id: string;
-  code: string;
-  slug: string;
-  price_usd?: string | null;
-  change_1h_pct?: string | null;
-  change_24h_pct?: string | null;
-  change_7d_pct?: string | null;
-  price_history_24h?: { t: string; p?: string | null }[];
-  volume_24h_usd?: string | null;
-}
 
 export async function generateStaticParams() {
   const fallback = [{ slug: 'XLM' }];

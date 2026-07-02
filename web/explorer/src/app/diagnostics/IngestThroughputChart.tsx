@@ -8,23 +8,18 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { type Envelope } from '../explorer-shared';
+import type { paths } from '@/api/types';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
   { ssr: false, loading: () => <div className="h-[260px]" /> },
 );
 
-interface Bucket {
-  day: string;
-  ledgers: number;
-  txs: number;
-  ops: number;
-  events: number;
-}
-interface ThroughputResp {
-  window_days: number;
-  buckets: Bucket[];
-}
+// GET /v1/network/throughput response body from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type ThroughputResp = NonNullable<
+  paths['/network/throughput']['get']['responses'][200]['content']['application/json']['data']
+>;
 
 type Metric = 'ops' | 'events' | 'txs' | 'ledgers';
 const METRICS: { key: Metric; label: string }[] = [
@@ -51,10 +46,10 @@ export function IngestThroughputChart() {
 
   const buckets = q.data?.buckets ?? [];
   const points = buckets.map((b) => ({
-    time: Math.floor(Date.parse(`${b.day}T00:00:00Z`) / 1000),
-    value: b[metric],
+    time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),
+    value: b[metric] ?? 0,
   }));
-  const total = buckets.reduce((s, b) => s + b[metric], 0);
+  const total = buckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
 
   return (
     <Panel

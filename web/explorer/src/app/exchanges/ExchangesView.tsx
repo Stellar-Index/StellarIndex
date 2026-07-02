@@ -21,20 +21,9 @@ import {
   THead,
 } from '@/components/ui';
 
-interface VolumeBucket {
-  hour: string;
-  volume_usd: string;
-}
-
-interface SourceRow {
-  name: string;
-  class: string;
-  subclass: string;
-  trade_count_24h?: number;
-  markets_count_24h?: number;
-  volume_24h_usd?: string | null;
-  volume_history_24h?: VolumeBucket[];
-}
+// /v1/sources + /v1/markets rows from the generated OpenAPI contract,
+// via the shared aliases in src/api/hooks.ts.
+import type { Market, Source as SourceRow } from '@/api/hooks';
 
 const TONE: Record<string, string> = {
   binance: 'bg-yellow-100 text-yellow-800',
@@ -216,15 +205,14 @@ export function ExchangesView() {
   );
 }
 
-interface CEXMarket {
-  base: string;
-  quote: string;
+// /v1/markets row (MarketRow via the hooks Market alias) plus the
+// client-side `source` tag AllCEXMarkets stamps on each row when it
+// merges the four per-venue fetches.
+type CEXMarket = Market & {
+  // Client-side: which venue the row was fetched for (the /v1/markets
+  // wire row itself carries no source column).
   source?: string;
-  last_trade_at: string;
-  trade_count_24h: number;
-  volume_24h_usd?: string | null;
-  last_price?: string | null;
-}
+};
 
 // AllCEXMarkets surfaces every CEX pair we observed in the last
 // 14 days, sorted by 24h USD volume. The four venue-scoped fetches

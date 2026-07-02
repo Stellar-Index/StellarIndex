@@ -5,22 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
+import type { paths } from '@/api/types';
 
-interface DivergenceObs {
-  asset_id: string;
-  quote_id: string;
-  reference: string;
-  observed_at: string;
-  observed_at_ledger: number;
-  our_price: string;
-  ref_price: string;
-  delta_pct: string;
-  status: string;
-}
-
-interface DivergenceResp {
-  observations: DivergenceObs[];
-}
+// GET /v1/divergence response body, derived from the generated OpenAPI
+// contract (src/api/types.ts, `make web-generate-api`).
+type DivergenceResp = NonNullable<
+  paths['/divergence']['get']['responses'][200]['content']['application/json']['data']
+>;
 
 function fmtTs(iso: string): string {
   const d = new Date(iso);
@@ -96,9 +87,9 @@ export function DivergenceFeed() {
                       firing ? 'text-down-strong' : 'text-ink-body'
                     }`}
                   >
-                    {fmtDelta(d.delta_pct)}
+                    {fmtDelta(d.delta_pct ?? '')}
                   </td>
-                  <td className="py-1.5 pr-4 font-mono text-[11px] text-ink-muted">{fmtTs(d.observed_at)}</td>
+                  <td className="py-1.5 pr-4 font-mono text-[11px] text-ink-muted">{fmtTs(d.observed_at ?? '')}</td>
                   <td className="py-1.5">
                     {firing ? (
                       <span className="rounded-sm bg-down-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase text-down-strong">

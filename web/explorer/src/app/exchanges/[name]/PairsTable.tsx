@@ -8,15 +8,9 @@ import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact, formatRelative } from '@/lib/format';
-
-interface Market {
-  base: string;
-  quote: string;
-  last_trade_at: string;
-  trade_count_24h: number;
-  volume_24h_usd?: string | null;
-  last_price?: string | null;
-}
+// /v1/markets row from the generated OpenAPI contract, via the shared
+// alias in src/api/hooks.ts (Market = MarketRow).
+import type { Market } from '@/api/hooks';
 
 type Order = 'volume_24h_usd_desc' | 'pair';
 

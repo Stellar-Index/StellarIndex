@@ -23,6 +23,8 @@ import {
   TR,
 } from '@/components/ui';
 import { usePools, useSources, isOnChainSource } from '@/api/hooks';
+import type { NetworkStats } from '@/api/hooks';
+import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { formatCompact } from '@/lib/format';
 import {
@@ -38,36 +40,17 @@ const LineChart = dynamic(
   { ssr: false, loading: () => <div className="h-[320px]" /> },
 );
 
-interface NetworkStats {
-  volume_24h_usd?: string | null;
-  markets_count_24h: number;
-  assets_indexed: number;
-  latest_ledger: number;
-  exchange_sources: number;
-  total_sources: number;
-}
+// Wire shapes derived from the generated OpenAPI contract
+// (src/api/types.ts, `make web-generate-api`).
+type ThroughputResp = NonNullable<
+  paths['/network/throughput']['get']['responses'][200]['content']['application/json']['data']
+>;
 
-interface ThroughputBucket {
-  day: string;
-  ledgers: number;
-  txs: number;
-  ops: number;
-  events: number;
-}
+type OperationsResp = NonNullable<
+  paths['/operations']['get']['responses'][200]['content']['application/json']['data']
+>;
 
-interface ThroughputResp {
-  window_days: number;
-  buckets: ThroughputBucket[];
-}
-
-interface OpTypeStat {
-  type: string;
-  count: number;
-}
-
-interface OperationsResp {
-  op_type_stats?: OpTypeStat[];
-}
+type OpTypeStat = NonNullable<OperationsResp['op_type_stats']>[number];
 
 type Metric = 'ops' | 'txs' | 'events' | 'ledgers';
 const METRICS: { key: Metric; label: string }[] = [
@@ -112,10 +95,10 @@ export function NetworkView() {
 
   const buckets = tpQ.data?.buckets ?? [];
   const points = buckets.map((b) => ({
-    time: Math.floor(Date.parse(`${b.day}T00:00:00Z`) / 1000),
-    value: b[metric],
+    time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),
+    value: b[metric] ?? 0,
   }));
-  const total = buckets.reduce((s, b) => s + b[metric], 0);
+  const total = buckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
 
   const s = statsQ.data;
   const tip = ledgersQ.data?.ledgers?.[0];
@@ -279,7 +262,7 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
         <Stat
           label="Network"
           value="Pubnet"
-          sub={tip ? `${formatCompact(tip.tx_count)} tx · ${formatCompact(tip.op_count)} ops last ledger` : 'mainnet'}
+          sub={tip ? `${formatCompact(tip.tx_count ?? 0)} tx · ${formatCompact(tip.op_count ?? 0)} ops last ledger` : 'mainnet'}
         />
       </StatCell>
     </StatGrid>
@@ -298,9 +281,11 @@ function OperationMix({
   loading: boolean;
   error: boolean;
 }) {
-  const sorted = [...(stats ?? [])].sort((a, b) => b.count - a.count).slice(0, 10);
-  const max = sorted.reduce((m, x) => Math.max(m, x.count), 0) || 1;
-  const grand = (stats ?? []).reduce((sum, x) => sum + x.count, 0) || 1;
+  const sorted = [...(stats ?? [])]
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
+    .slice(0, 10);
+  const max = sorted.reduce((m, x) => Math.max(m, x.count ?? 0), 0) || 1;
+  const grand = (stats ?? []).reduce((sum, x) => sum + (x.count ?? 0), 0) || 1;
 
   return (
     <Panel
@@ -314,25 +299,26 @@ function OperationMix({
         <EmptyState title="No operations in the last 24h." />
       )}
       {sorted.map((st) => {
-        const pct = (st.count / grand) * 100;
+        const count = st.count ?? 0;
+        const pct = (count / grand) * 100;
         return (
           <Link
             key={st.type}
             href="/operations"
             className="group block"
-            title={`${st.count.toLocaleString()} ${st.type} ops (${pct.toFixed(1)}%)`}
+            title={`${count.toLocaleString()} ${st.type} ops (${pct.toFixed(1)}%)`}
           >
             <div className="mb-0.5 flex items-baseline justify-between gap-2 text-xs">
               <code className="truncate text-ink-body group-hover:text-brand-600">{st.type}</code>
               <span className="shrink-0 font-mono tabular-nums text-ink-muted">
-                {formatCompact(st.count)}
+                {formatCompact(count)}
                 <span className="ml-1 text-ink-faint">{pct.toFixed(1)}%</span>
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted">
               <div
                 className="h-full rounded-full bg-brand-500 transition-all group-hover:bg-brand-600"
-                style={{ width: `${(st.count / max) * 100}%` }}
+                style={{ width: `${(count / max) * 100}%` }}
               />
             </div>
           </Link>
@@ -385,12 +371,12 @@ function LatestLedgers({
                       href={`/ledgers/${l.sequence}/`}
                       className="font-mono tabular-nums text-brand-600 hover:underline"
                     >
-                      #{l.sequence.toLocaleString()}
+                      #{(l.sequence ?? 0).toLocaleString()}
                     </Link>
                   </Td>
-                  <Td align="right">{l.tx_count.toLocaleString()}</Td>
-                  <Td align="right">{l.op_count.toLocaleString()}</Td>
-                  <Td align="right">{l.soroban_event_count.toLocaleString()}</Td>
+                  <Td align="right">{(l.tx_count ?? 0).toLocaleString()}</Td>
+                  <Td align="right">{(l.op_count ?? 0).toLocaleString()}</Td>
+                  <Td align="right">{(l.soroban_event_count ?? 0).toLocaleString()}</Td>
                   <Td align="right" className="text-ink-muted">{relativeAge(l.close_time)}</Td>
                 </TR>
               ))}
