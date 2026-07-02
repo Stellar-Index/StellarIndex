@@ -273,8 +273,8 @@ linked design doc has the full detail.
   deploys Balancer-v1 Comet code will look identical on the wire.
   **ADR-0035 factory-anchored contract gating is only PARTIALLY rolled out.**
   Only `soroswap` (pair/factory registry) and `blend` (childgate) currently
-  gate `Matches()` on contract identity. **`phoenix`, `aquarius`, `defindex`,
-  and `comet` still match on topic bytes alone** (ungated) — so a look-alike
+  gate `Matches()` on contract identity. **`aquarius`, `defindex`, and `comet` still match on topic
+  bytes alone** (ungated; phoenix gained its curated-set gate 2026-07-02) — so a look-alike
   contract emitting the same topic shape can inject fabricated trades under
   those sources (see docs/audit-2026-06-30/ CS-026). Comet is the *hardest*
   case (no factory namespace — needs a pool allowlist / WASM-hash gate), not

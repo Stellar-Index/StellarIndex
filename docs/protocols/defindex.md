@@ -9,7 +9,13 @@
 >   `DeFindexVault` / `BlendStrategy` events; topics are namespaced, so
 >   collision risk is low).
 > - **Last verified:** 2026-06-12 (r1 lake).
-> - **Gate status:** 🔎 enumerated; decoder gate pending.
+> - **Gate status:** ⏳ BLOCKED on verified enumeration (2026-07-02): the
+>   lake now shows **88** DeFindexVault + **22** BlendStrategy emitters vs
+>   the 34+7 verified here on 2026-06-12, and the open question below means
+>   the growth CANNOT be deploy-graph-verified from creation events. Gating
+>   on raw emitter lists would bake potential look-alikes into the trust
+>   root — defindex follows the ADR-0040 §3 enumeration procedure (creation-
+>   op chain + wasm-hash cross-check) before its gate ships.
 
 ## Factories (4)
 

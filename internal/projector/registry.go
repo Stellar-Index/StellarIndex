@@ -112,7 +112,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 	case phoenix.SourceName:
 		return Source{
 			Name:              phoenix.SourceName,
-			Decoder:           phoenix.NewDecoder(),
+			Decoder:           phoenix.NewDecoder(gated[phoenix.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case comet.SourceName:

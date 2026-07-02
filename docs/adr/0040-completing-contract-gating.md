@@ -28,7 +28,7 @@ per-protocol verification pages show the picture is better than that:
 | Source | Enumeration state (docs/protocols/) | Gate blocker |
 |---|---|---|
 | phoenix | ✅ 11 pools + factory + multihop + 3 stake contracts, RPC `query_pools()` + lake-verified activity | none — curated set exists |
-| defindex | ✅ 57 contracts via lake deploy-graph, multi-factory | none — deploy-graph exists |
+| defindex | ⚠ REVISED 2026-07-02: lake emitters grew to 88+22 vs the 57 verified 2026-06-12, and `create` events don't carry vault addresses (the page's open question) — the deploy-graph can't verify the growth | §3-style enumeration cross-check |
 | aquarius | ⏳ pool set "not yet pinned" | enumeration work |
 | comet | ❌ no page; **no factory namespace** (shared Balancer-v1 `("POOL",…)` topics) | gate *design* |
 
@@ -140,7 +140,7 @@ missing piece), then mechanism #2.
 
 ## Implementation tracking
 
-Phoenix + defindex gates: task board #32 (mechanical, blend-shaped).
+Phoenix gate: shipped 2026-07-02 (curated-set, board #32). Defindex: moved to the §3 enumeration track after the emitter-set growth was found unverifiable from creation events — see docs/protocols/defindex.md.
 Aquarius enumeration + gate: follows the §3 procedure. Comet: needs
 the wasm-audit hash set confirmed first (`stellarindex-ops
 wasm-history` walk exists; `docs/operations/wasm-audits/`).

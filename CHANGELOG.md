@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Phoenix is contract-identity gated (ADR-0040 §1 mechanism 2, CS-026).**
+  `Matches()` now requires the emitting contract to be in the curated mainnet
+  set (`phoenix.MainnetGatedSet`: the page-verified 11 pools + 3 stake
+  contracts; multihop excluded — it emits no events) — phoenix topics are
+  plain string tuples any pubnet contract can forge, and were previously
+  attributed on shape alone. The factory's creation events predate the lake,
+  so the in-code seed is the trust root (wired into `gatedSources` for the
+  protocol_contracts warm + future live-upsert anyway). Reject test pins the
+  injection vector closed; operator rollout steps (deploy → re-derive →
+  verdict watch) in the register. **Defindex deliberately did NOT ship:** the
+  lake now shows 88+22 emitters vs the 57 verified three weeks ago, and its
+  `create` events don't carry vault addresses — gating on raw emitter lists
+  would bake potential look-alikes into the trust root, so it moves to the
+  ADR-0040 §3 cross-check enumeration (pages + ADR updated with the
+  evidence).
+
 ### Fixed
 - **The explorer-surface OpenAPI gaps are closed** — every field the handlers
   serve that the generated-types migration had to bridge with `SPEC-GAP`

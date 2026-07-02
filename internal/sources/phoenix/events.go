@@ -138,6 +138,52 @@ const (
 	MainnetXLMSAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 )
 
+// MainnetPools is the curated gated pool set (ADR-0040 §1 mechanism
+// 2 — curated-set registry). Source: the factory's `query_pools()`
+// RPC view cross-checked against lake event activity, recorded in
+// docs/protocols/phoenix.md (last verified 2026-06-12). The factory's
+// `("create","liquidity_pool")` events PREDATE the lake's earliest
+// ledger, so live self-registration can never seed these — this
+// in-code seed is load-bearing, not a warm-start optimisation. A
+// pool missing from this list fail-closes and surfaces as an
+// ADR-0033 recognition gap (visible, never silently mis-attributed).
+var MainnetPools = []string{
+	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
+	"CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH",
+	"CD5XNKK3B6BEF2N7ULNHHGAMOKZ7P6456BFNIHRF4WNTEDKBRWAE7IAA",
+	"CBISULYO5ZGS32WTNCBMEFCNKNSLFXCQ4Z3XHVDP4X4FLPSEALGSY3PS",
+	"CDMXKSLG5GITGFYERUW2MRYOBUQCMRT2QE5Y4PU3QZ53EBFWUXAXUTBC",
+	"CB5QUVK5GS3IU23TMFZQ3P5J24YBBZP5PHUQAEJ2SP5K55PFTJRUQG2L",
+	"CC6MJZN3HFOJKXN42ANTSCLRFOMHLFXHWPNAX64DQNUEBDMUYMPHASAV",
+	"CBW5G5SO5SDYUGQVU7RMZ2KJ34POM3AMODOBIV2RQYG4KJDUUBVC3P2T",
+	"CCKOC2LJTPDBKDHTL3M5UO7HFZ2WFIHSOKCELMKQP3TLCIVUBKOQL4HB",
+	"CCUCE5H5CKW3S7JBESGCES6ZGDMWLNRY3HOFET3OH33MXZWKXNJTKSM3",
+	"CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW",
+}
+
+// MainnetStakeContracts — the per-pool stake contracts that emit
+// bond/unbond (separate addresses NOT returned by query_pools();
+// enumerated from lake activity, docs/protocols/phoenix.md). The
+// page notes more may exist (one per pool) that haven't emitted yet
+// — an unlisted one fail-closes into a recognition gap and gets
+// added here.
+var MainnetStakeContracts = []string{
+	"CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO",
+	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
+	"CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM",
+}
+
+// MainnetGatedSet is the full curated child set the decoder seeds:
+// pools + stake contracts. The multihop relay is deliberately
+// EXCLUDED — it emits no swap/liquidity/stake events (it relays to
+// pools), so gating loses nothing (docs/protocols/phoenix.md).
+func MainnetGatedSet() []string {
+	out := make([]string, 0, len(MainnetPools)+len(MainnetStakeContracts))
+	out = append(out, MainnetPools...)
+	out = append(out, MainnetStakeContracts...)
+	return out
+}
+
 // Pre-encoded base64 SCVal::String blobs for topic[0] and topic[1],
 // computed at init via scval.MustEncodeString. Phoenix emits both
 // topic positions as Strings (not Symbols) because the pool contract

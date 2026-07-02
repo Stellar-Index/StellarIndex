@@ -162,7 +162,7 @@ func unbondField(topic1, value, txHash string) events.Event {
 func TestDecoder_ProvideLiquidity_completesOnFifthField(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	fields := []struct{ topic, body string }{
 		{TopicSymbolPLSender, "addr:" + plSender},
@@ -215,7 +215,7 @@ func TestDecoder_ProvideLiquidity_completesOnFifthField(t *testing.T) {
 func TestDecoder_ProvideLiquidity_outOfOrder(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	// Reverse contract emission order — the buffer is order-independent.
 	fields := []struct{ topic, body string }{
@@ -245,7 +245,7 @@ func TestDecoder_ProvideLiquidity_outOfOrder(t *testing.T) {
 func TestDecoder_WithdrawLiquidity_completesOnFourthField(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	fields := []struct{ topic, body string }{
 		{TopicSymbolWLSender, "addr:" + plSender},
@@ -292,7 +292,7 @@ func TestDecoder_WithdrawLiquidity_completesOnFourthField(t *testing.T) {
 func TestDecoder_WithdrawLiquidity_optionalAutoUnbondedIgnored(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	fields := []struct{ topic, body string }{
 		{TopicSymbolWLSender, "addr:" + plSender},
@@ -321,7 +321,7 @@ func TestDecoder_WithdrawLiquidity_optionalAutoUnbondedIgnored(t *testing.T) {
 func TestDecoder_Bond_completesOnThirdField(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	fields := []struct{ topic, body string }{
 		{TopicSymbolStakeUser, "addr:" + stakeUser},
@@ -367,7 +367,7 @@ func TestDecoder_Bond_completesOnThirdField(t *testing.T) {
 func TestDecoder_BondAndUnbond_independentBuffers(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	// Same ledger / tx / op shared across bond + unbond — proves
 	// per-action sharding of the buffer.
@@ -432,7 +432,7 @@ func TestDecoder_BondAndUnbond_independentBuffers(t *testing.T) {
 // ─── Decoder.Matches ────────────────────────────────────────────
 
 func TestDecoder_Matches_allFiveActions(t *testing.T) {
-	d := NewDecoder()
+	d := newTestDecoder()
 	cases := []struct {
 		name  string
 		topic []string
@@ -445,12 +445,12 @@ func TestDecoder_Matches_allFiveActions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !d.Matches(events.Event{Topic: tc.topic}) {
+			if !d.Matches(events.Event{ContractID: plPool, Topic: tc.topic}) {
 				t.Errorf("Matches((%s, …)) = false", tc.name)
 			}
 		})
 	}
-	if d.Matches(events.Event{Topic: []string{"unrelated_action", TopicSymbolSender}}) {
+	if d.Matches(events.Event{ContractID: plPool, Topic: []string{"unrelated_action", TopicSymbolSender}}) {
 		t.Error("Matches(unrelated topic[0]) = true")
 	}
 }
@@ -510,7 +510,7 @@ func TestDecodeStake_incomplete(t *testing.T) {
 func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	old := time.Now().UTC().Add(-6 * time.Hour)
 	fields := []struct{ topic, body string }{
@@ -545,7 +545,7 @@ func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
 func TestDecoder_Liquidity_PopulatesEventIndex(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	fields := []struct{ topic, body string }{
 		{TopicSymbolPLSender, "addr:" + plSender},
@@ -583,7 +583,7 @@ func TestDecoder_Liquidity_PopulatesEventIndex(t *testing.T) {
 func TestDecoder_Stake_PopulatesEventIndex(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	fields := []struct{ topic, body string }{
 		{TopicSymbolStakeUser, "addr:" + plSender},

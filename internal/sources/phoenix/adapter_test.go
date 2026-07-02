@@ -6,6 +6,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
 	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 )
 
 // ─── consumer.go ──────────────────────────────────────────────────
@@ -24,21 +25,23 @@ func TestTradeEvent_implementsConsumerEvent(t *testing.T) {
 // ─── dispatcher_adapter.go ────────────────────────────────────────
 
 func TestDecoder_Name(t *testing.T) {
-	if got := NewDecoder().Name(); got != SourceName {
+	if got := newTestDecoder().Name(); got != SourceName {
 		t.Errorf("Name() = %q, want %q", got, SourceName)
 	}
 }
 
 func TestDecoder_Matches_swapTopic(t *testing.T) {
-	d := NewDecoder()
+	d := newTestDecoder()
 	good := events.Event{
-		Topic: []string{TopicSymbolSwap, TopicSymbolSender},
+		ContractID: "pool-A",
+		Topic:      []string{TopicSymbolSwap, TopicSymbolSender},
 	}
 	if !d.Matches(good) {
 		t.Error("Matches((swap, sender)) = false, want true")
 	}
 	bad := events.Event{
-		Topic: []string{TopicSymbolSender, TopicSymbolSwap},
+		ContractID: "pool-A",
+		Topic:      []string{TopicSymbolSender, TopicSymbolSwap},
 	}
 	if d.Matches(bad) {
 		t.Error("Matches((sender, swap)) = true, want false (wrong topic order)")
@@ -69,7 +72,7 @@ func TestDecoder_Decode_completesAfterEighthField(t *testing.T) {
 	// Feed 7 distinct field events; each should return (nil, nil)
 	// (still buffering). The 8th completes the swap and emits one
 	// TradeEvent.
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	sellToken := makeC(t, 0x20)
 	buyToken := makeC(t, 0x30)
@@ -123,12 +126,12 @@ func TestDecoder_Decode_fieldDecodeErrorPropagates(t *testing.T) {
 	// Send a known-good Sender event followed by a malformed
 	// SellToken (non-base64 body). Decode of the malformed one must
 	// fail — buffer absorption signals the error to the caller.
-	d := NewDecoder()
+	d := newTestDecoder()
 	d.Decode(makeFieldEvent(t, TopicSymbolSender, addrBody(t, makeC(t, 0x10))))
 	// SellToken with a body the buffer's assign will accept structurally
 	// but that decodeSwap can't parse — check error fan-out via decodeSwap.
 	// Easier: send all 8 fields with the OfferAmount body NON-i128.
-	d2 := NewDecoder()
+	d2 := newTestDecoder()
 	bad := []struct{ topic, body string }{
 		{TopicSymbolSender, addrBody(t, makeC(t, 0x10))},
 		{TopicSymbolSellToken, addrBody(t, makeC(t, 0x20))},
@@ -153,7 +156,7 @@ func TestDecoder_Decode_fieldDecodeErrorPropagates(t *testing.T) {
 }
 
 func TestDecoder_EvictedOrphans_initiallyZero(t *testing.T) {
-	d := NewDecoder()
+	d := newTestDecoder()
 	if got := d.EvictedOrphans(); got != 0 {
 		t.Errorf("EvictedOrphans() = %d on a fresh Decoder, want 0", got)
 	}
@@ -163,7 +166,7 @@ func TestDecoder_EvictedOrphans_incrementsOnStaleEviction(t *testing.T) {
 	// Drive the buffer's age-out by feeding two events whose
 	// ClosedAt are >5 min apart. The first sits in the buffer
 	// alone; the second's sweepStale should evict it.
-	d := NewDecoder()
+	d := newTestDecoder()
 
 	// Event 1: t0, only sender, partial buffer entry.
 	evOld := events.Event{
@@ -196,5 +199,43 @@ func TestDecoder_EvictedOrphans_incrementsOnStaleEviction(t *testing.T) {
 
 	if got := d.EvictedOrphans(); got != 1 {
 		t.Errorf("EvictedOrphans() = %d, want 1 (the t0 entry should have aged out)", got)
+	}
+}
+
+// newTestDecoder returns a Decoder whose gate is seeded with the
+// suite's synthetic fixture contract ids (the production curated set
+// is real mainnet ids). Gating behavior itself is pinned by
+// TestDecoder_GateRejectsForeignContract.
+func newTestDecoder() *Decoder {
+	return NewDecoder(childgate.WithSeed([]string{
+		"C-pool-strkey", "pool-A",
+		usdcContract, plPool, wlPool,
+	}))
+}
+
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026):
+// phoenix topics are plain string tuples ANY pubnet contract can
+// emit — a perfect topic shape from an unregistered contract must
+// NOT be attributed to phoenix, while the same event from a curated
+// mainnet pool must.
+func TestDecoder_GateRejectsForeignContract(t *testing.T) {
+	d := NewDecoder() // production gate: curated mainnet set only
+	topics := []string{TopicSymbolSwap, TopicSymbolSender}
+
+	foreign := events.Event{
+		ContractID: "CFOREIGNFAKEPOOL0000000000000000000000000000000000000000",
+		Topic:      topics,
+	}
+	if d.Matches(foreign) {
+		t.Fatal("foreign contract with phoenix-shaped topics matched — the CS-026 injection vector is open")
+	}
+
+	real := events.Event{ContractID: MainnetPools[0], Topic: topics}
+	if !d.Matches(real) {
+		t.Fatal("curated mainnet pool failed to match — gate is over-closed")
+	}
+	stake := events.Event{ContractID: MainnetStakeContracts[0], Topic: []string{TopicSymbolBond, TopicSymbolStakeUser}}
+	if !d.Matches(stake) {
+		t.Fatal("curated stake contract failed to match")
 	}
 }

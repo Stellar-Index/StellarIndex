@@ -288,7 +288,7 @@ func TestDecodeSwap_incomplete(t *testing.T) {
 }
 
 func TestDecoder_NameMatchesSourceName(t *testing.T) {
-	if got := NewDecoder().Name(); got != SourceName {
+	if got := newTestDecoder().Name(); got != SourceName {
 		t.Errorf("Name() = %q, want %q", got, SourceName)
 	}
 }

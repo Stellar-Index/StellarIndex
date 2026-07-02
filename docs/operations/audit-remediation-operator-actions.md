@@ -122,12 +122,22 @@ table + hard-coded factories, gated `Matches()` — as `blend`/`soroswap` alread
 do). Extending it to the 4 ungated sources is blocked on data only the team /
 operator can supply — a gate on an UNCONFIRMED factory either drops real trades
 (fail-closed, unseeded) or bakes in a wrong trust root, so it must not be guessed:
-- [ ] **phoenix** — confirm the pool-factory contract ID with the Phoenix team
-      (docs/protocols/phoenix.md marks it "confirm the factory"); then hard-code
-      it as `phoenix.MainnetPoolFactories` + `seed-protocol-contracts` + lake
-      re-derive. Then I wire the childgate gate (mechanical, ~blend-shaped).
-- [ ] **defindex** — confirm the full `DeFindexFactory` set (the doc notes >1
-      factory + an open question on vault enumeration); then same as phoenix.
+- [x] **phoenix** — GATED code-side 2026-07-02 (curated-set registry: the
+      page's 11 pools + 3 stake contracts are the in-code seed; the factory's
+      creation events predate the lake so the seed is the trust root). Your
+      half per ADR-0040 §2: deploy → lake re-derive (`projector-replay
+      -source phoenix -from 51572016`; foreign-emitter rows, if any existed,
+      surface as per-ledger projection mismatches) → one green
+      `compute-completeness -ch -source phoenix` cycle. Team confirmation of
+      the pool list is now ratification, not a blocker.
+- [ ] **defindex** — RE-BLOCKED with evidence 2026-07-02: lake emitters grew
+      to 88 vaults + 22 strategies vs the 57 verified on 2026-06-12, and the
+      `create` event does NOT carry the vault address (the page's open
+      question), so the growth cannot be deploy-graph-verified. Gating on raw
+      emitter lists would bake look-alikes into the trust root. Path: the
+      ADR-0040 §3 enumeration (creation-op chain + wasm-hash cross-check),
+      or the team answers the page's open question (factory view /
+      authoritative list).
 - [ ] **aquarius** — pin the complete pool set (docs/protocols/aquarius.md: "pool
       enumeration not yet pinned"). Until enumerated, no gate is possible.
 - [ ] **comet** — has NO factory namespace (shared `("POOL",…)` topic). Decide the
