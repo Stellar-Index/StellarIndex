@@ -58,6 +58,21 @@ against.
   route↔spec↔SDK triangle (lint-docs.sh already reconciles routes↔spec).
 
 ### Fixed
+- **CS-084 (High): the `-ch` completeness projection reconcile is now strict
+  per-ledger.** The production path compared window TOTALS (Σ expected vs Σ
+  served), so a real drop in ledger L netting against a phantom overcount
+  elsewhere reported `complete=true` — the per-ledger maps were already
+  computed on both sides; only the comparison collapsed them. All three
+  reconcile branches (event re-derive, SDEX census, ContractCall census) now
+  compare per-ledger via `completeness.ReconcileCounts`. The four oracle
+  sources (reflector-dex/cex/fx, redstone) opt out via a documented
+  `aggregateReconcile` reason (legacy backfill vintages keyed
+  `oracle_updates.ledger` by the oracle-timestamp ledger — strict compare
+  would false-flag the vintage boundary) and keep the totals compare.
+  Verified empirically on r1: per-ledger lake-vs-served counts for cctp match
+  exactly across 200k ledgers once the decoder's topic set is applied. The
+  same spot-check surfaced a NEW finding tracked separately: CCTP contracts
+  emit `mint_and_forward`, which the decoder does not handle.
 - **The contract test's first run caught real three-way drift, all fixed:**
   the spec's `Price` schema documented ~19 asset-enrichment fields
   (`market_cap_usd`, `top_markets`, `ath`, supplies, sparklines…) that the

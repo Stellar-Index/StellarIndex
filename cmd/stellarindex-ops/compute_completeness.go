@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -374,15 +375,19 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 	return mismatched, nil
 }
 
-// reconcileProjectionAggregate is the CH-backed AGGREGATE projection check
-// (ADR-0033 Claim 2b, refined). It compares per-source/target TOTALS
-// (Σ CH-derived expected vs Σ served rows) over the verifiable scope, rather
-// than strict per-ledger counts. Strict per-ledger produces FALSE mismatches
-// for sources whose served `ledger` is keyed differently from the event ledger
-// — reflector's oracle_updates.ledger is the ORACLE TIMESTAMP's ledger, so a
-// per-ledger count by event ledger mis-keys by the oracle's staleness; the
-// aggregate is invariant to that shift while still catching any real net
-// loss/phantom. Returns the total absolute delta across targets (0 = clean).
+// reconcileProjectionAggregate is the CH-backed projection check
+// (ADR-0033 Claim 2b). Since the CS-084 fix it compares STRICT
+// PER-LEDGER counts by default (via projectionDelta →
+// completeness.ReconcileCounts): the totals compare it originally
+// used let a real drop in ledger L net against a phantom overcount
+// elsewhere in the scope and report complete=true. Sources whose
+// served `ledger` keying can differ from the re-derive's event
+// ledger (the oracle sources — legacy backfill vintages keyed
+// oracle_updates.ledger by the ORACLE TIMESTAMP's ledger) opt out
+// via reconSource.aggregateReconcile, keep the totals compare, and
+// accept the documented netting residual. Returns Σ|per-ledger Δ|
+// across targets (0 = clean); the name keeps its historical
+// "Aggregate" for grep continuity with older run logs.
 //
 // Scope: a source with a `trades` target is scoped to [retentionStart, hi] —
 // trades is right-sized to ~90d, so its decoded rows >retention don't exist in
@@ -418,10 +423,9 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 			if aerr != nil {
 				return 0, "", aerr
 			}
-			e, a := sumCounts(expected), sumCounts(actual)
-			if d := absDiff(e, a); d != 0 {
+			if d, detail := projectionDelta(src, tgt.table, expected, actual, flo, hi); d != 0 {
 				totalDelta += d
-				details = append(details, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d]", tgt.table, e, a, d, flo, hi))
+				details = append(details, detail)
 			}
 		}
 		return totalDelta, strings.Join(details, "; "), nil
@@ -453,10 +457,9 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 			if aerr != nil {
 				return 0, "", aerr
 			}
-			e, a := sumCounts(expected), sumCounts(actual)
-			if d := absDiff(e, a); d != 0 {
+			if d, detail := projectionDelta(src, tgt.table, expected, actual, lo, hi); d != 0 {
 				totalDelta += d
-				details = append(details, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d]", tgt.table, e, a, d, lo, hi))
+				details = append(details, detail)
 			}
 		}
 		return totalDelta, strings.Join(details, "; "), nil
@@ -489,10 +492,9 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 		if aerr != nil {
 			return 0, "", aerr
 		}
-		e, a := sumCounts(expected), sumCounts(actual)
-		if d := absDiff(e, a); d != 0 {
+		if d, detail := projectionDelta(src, tgt.table, expected, actual, lo, hi); d != 0 {
 			totalDelta += d
-			details = append(details, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d]", tgt.table, e, a, d, lo, hi))
+			details = append(details, detail)
 		}
 	}
 	return totalDelta, strings.Join(details, "; "), nil
@@ -745,6 +747,42 @@ func absDiff(a, b int) int {
 		return a - b
 	}
 	return b - a
+}
+
+// projectionDelta compares one target's re-derived expected counts
+// against its served counts, both keyed by ledger.
+//
+// Default is STRICT PER-LEDGER via completeness.ReconcileCounts —
+// CS-084: comparing window totals lets a real drop in ledger L net
+// against a phantom overcount elsewhere in the window and report
+// complete=true; the per-ledger maps were already computed on both
+// sides, only the comparison used to collapse them. Sources with a
+// non-empty aggregateReconcile keep the totals compare for the
+// keying reason their catalogue entry documents, and accept that
+// netting residual.
+//
+// Returns Σ|per-ledger Δ| (0 = clean) and a human detail string.
+func projectionDelta(src reconSource, table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
+	if src.aggregateReconcile != "" {
+		e, a := sumCounts(expected), sumCounts(actual)
+		if d := absDiff(e, a); d != 0 {
+			return d, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d] (aggregate compare — %s)",
+				table, e, a, d, lo, hi, src.aggregateReconcile)
+		}
+		return 0, ""
+	}
+	gaps := completeness.ReconcileCounts(expected, actual)
+	if len(gaps) == 0 {
+		return 0, ""
+	}
+	sort.Slice(gaps, func(i, j int) bool { return gaps[i].Ledger < gaps[j].Ledger })
+	delta := 0
+	for _, g := range gaps {
+		delta += absDiff(g.Expected, g.Actual)
+	}
+	first := gaps[0]
+	return delta, fmt.Sprintf("%s: %d mismatched ledger(s), Σ|Δ|=%d, first: ledger=%d expected=%d served=%d [%d,%d]",
+		table, len(gaps), delta, first.Ledger, first.Expected, first.Actual, lo, hi)
 }
 
 // computeRecognitionGapsCH is the CH-backed recognition audit: distinct

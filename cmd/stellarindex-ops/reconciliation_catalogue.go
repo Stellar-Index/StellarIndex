@@ -60,6 +60,16 @@ type reconSource struct {
 	// invoked contract (strkey-decoded to the body_xdr substring filter).
 	callDec      dispatcher.ContractCallDecoder
 	callContract string
+
+	// aggregateReconcile, when non-empty, makes the -ch projection
+	// reconcile compare WINDOW TOTALS instead of strict per-ledger
+	// counts, and documents why. Per-ledger is the default (CS-084:
+	// totals let a real drop in ledger L net against a phantom
+	// elsewhere and report complete=true); only sources whose served
+	// `ledger` keying can legitimately differ from the re-derive's
+	// event ledger may opt out, and they accept the netting residual
+	// the reason string acknowledges.
+	aggregateReconcile string
 }
 
 // buildReconciliationCatalogue assembles the per-source reconciliation
@@ -145,25 +155,29 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	// fast (uses the soroban_events contract index).
 	if a := cfg.Oracle.Reflector.DEXContract; a != "" {
 		cat = append(cat, reconSource{
-			name: "reflector-dex", genesis: 50_644_229, dec: reflector.NewDecoder(reflector.VariantDEX, a), contractIDs: []string{a},
+			name:               "reflector-dex",
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_229, dec: reflector.NewDecoder(reflector.VariantDEX, a), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-dex'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Reflector.CEXContract; a != "" {
 		cat = append(cat, reconSource{
-			name: "reflector-cex", genesis: 50_644_239, dec: reflector.NewDecoder(reflector.VariantCEX, a), contractIDs: []string{a},
+			name:               "reflector-cex",
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_239, dec: reflector.NewDecoder(reflector.VariantCEX, a), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-cex'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Reflector.FXContract; a != "" {
 		cat = append(cat, reconSource{
-			name: "reflector-fx", genesis: 56_733_481, dec: reflector.NewDecoder(reflector.VariantFX, a), contractIDs: []string{a},
+			name:               "reflector-fx",
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 56_733_481, dec: reflector.NewDecoder(reflector.VariantFX, a), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-fx'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Redstone.AdapterContract; a != "" {
 		cat = append(cat, reconSource{
-			name: "redstone", genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
+			name:               "redstone",
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
 		})
 	}
