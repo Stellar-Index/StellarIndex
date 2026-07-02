@@ -183,6 +183,22 @@ against.
   route↔spec↔SDK triangle (lint-docs.sh already reconciles routes↔spec).
 
 ### Fixed
+- **Classic-asset supply was silently SAC-only — the trustline/claimable/LP
+  observers never matched their watched set.** Root-caused from the
+  verify-served-values USDC finding (served 40M vs Stellar Expert 265.9M):
+  the three observers compare decoded keys in `CODE:ISSUER` form, but the
+  config (correctly, per its own docs) supplies `CODE-ISSUER` — the raw
+  strings went straight into the watched sets, so all three observers
+  observed nothing since they shipped and every classic asset's served
+  supply degraded to its Soroban-wrapped slice. Cross-checked against the
+  lake: net SAC supply_flows for USDC ≈ 272.9M vs SE 265.9M — the lake was
+  right; the served tier was missing the entire classic trustline component.
+  Fix: `supply.CanonicalizeWatchedClassic` (one home, loud error on
+  unparseable entries so a config typo can never silently zero a supply
+  component again) applied in all three observer constructors + regression
+  test pinning dash-in/colon-match. Operator follow-ups (deploy, historical
+  state seed, harness watch) are in the register — served values heal only
+  after both.
 - **CS-089: the Chainlink divergence reference now rejects stale rounds.** It
   read `latestAnswer()` — no timestamp at all — so a frozen feed was served as
   a fresh reference, able to both mask a real divergence and fabricate a false

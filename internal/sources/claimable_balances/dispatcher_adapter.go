@@ -3,6 +3,8 @@ package claimable_balances
 import (
 	"errors"
 
+	"github.com/StellarIndex/stellar-index/internal/supply"
+
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
@@ -28,6 +30,10 @@ var ErrEmptyWatchSet = errors.New("claimable_balances: cannot construct Observer
 func NewObserver(watched []string) (*Observer, error) {
 	if len(watched) == 0 {
 		return nil, ErrEmptyWatchSet
+	}
+	watched, err := supply.CanonicalizeWatchedClassic(watched)
+	if err != nil {
+		return nil, err
 	}
 	set := make(map[string]struct{}, len(watched))
 	for _, k := range watched {
