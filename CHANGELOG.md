@@ -44,6 +44,17 @@ against.
   actually respected.
 
 ### Security
+- **`main` is now protected (CS-097) and lint baselines are growth-guarded
+  (CS-098).** Two repo rulesets: `main-integrity` blocks force-pushes and
+  branch deletion for everyone (no bypass); `main-required-checks` makes the 12
+  core CI jobs required status checks, with a repository-admin bypass so the
+  operator's direct-push workflow keeps working (the push-triggered CI run on
+  main stays as the tripwire for that path — its ci.yml comment now says so).
+  New `scripts/ci/lint-baseline-growth.sh` (wired into the import-checks job)
+  fails any change that GROWS `scripts/ci/*.baseline` or the `KNOWN_INERT`
+  metric allowlist unless the commit carries an explicit `Baseline-Growth:`
+  trailer — closing the "edit the gate's own allowlist in the same commit"
+  bypass. Probe-tested all three paths (clean / undeclared growth / declared).
 - **Middleware rejections (401/403/429) are no longer shared-cacheable.**
   Four problem+json writers — auth 401s (`writeAuthProblem`), per-key policy
   403s (`writeKeyPolicyDenied`), signup email-verification 403s, and monthly-

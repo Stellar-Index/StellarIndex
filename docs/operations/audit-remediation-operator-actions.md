@@ -12,10 +12,16 @@ judgment call that's yours. The code-side fixes are being applied separately;
 these wait for you.
 
 ## Repo / CI settings (highest leverage — one setting unlocks every guard)
-- [ ] **Branch-protect `main` + require status checks** (CS-097). This is the single
-  highest-leverage action in either audit: it converts the entire existing lint/test
-  guard layer from *advisory* to *blocking*. GitHub → Settings → Branches → protect
-  `main`, require the `ci` checks + a review. Also enable Dependabot/security alerts.
+- [x] **Branch-protect `main` + require status checks** (CS-097) — DONE 2026-07-02
+  via two repo rulesets: `main-integrity` (force-push + deletion blocked for
+  everyone, no bypass) and `main-required-checks` (the 12 core CI jobs are
+  required status checks; **repository admins bypass** so the live-in-development
+  direct-push workflow keeps working — the push-triggered CI run on main remains
+  the tripwire for that path). CS-098's self-editable-allowlist bypass is closed
+  by `scripts/ci/lint-baseline-growth.sh` (baselines are shrink-only; growth
+  needs an explicit `Baseline-Growth:` commit trailer). **Optional tightening
+  left to you:** remove the admin bypass when the team is >1 / post-launch, and
+  enable Dependabot security alerts if not already on.
 
 ## Accounts / secrets (launch-blocking, operator-only)
 - [ ] **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).

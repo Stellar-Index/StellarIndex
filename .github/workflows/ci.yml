@@ -12,14 +12,18 @@ on:
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
-  # Push-to-main now also fires CI. F-1231 (codex audit-2026-05-12):
-  # hosted GitHub reports `main.protected=false`, so the PR-only
-  # assumption isn't actually enforced — direct pushes (live-in-
-  # development sessions, hot-fix commits, the /loop workflow) can
-  # land code without the canonical suite running. Re-enabling the
-  # push trigger doubles CI burn but covers the gap branch
-  # protection currently doesn't. When main IS protection-enforced,
-  # this trigger becomes redundant and can be removed again.
+  # Push-to-main also fires CI. F-1231 (codex audit-2026-05-12):
+  # direct pushes (live-in-development sessions, hot-fix commits,
+  # the /loop workflow) must still run the canonical suite.
+  #
+  # 2026-07-02 (CS-097): main is now protected by two repo rulesets —
+  # "main-integrity" (force-push + deletion blocked, NO bypass, not
+  # even admins) and "main-required-checks" (the core jobs here are
+  # required status checks; repository admins bypass so the
+  # operator's direct-push workflow keeps working). Because the
+  # admin-bypass path exists BY DESIGN, this push trigger is NOT
+  # redundant: it is what keeps direct pushes honest — a red run on
+  # main is the tripwire. Do not remove it while the bypass exists.
   push:
     branches: [main]
     paths-ignore:
@@ -176,6 +180,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          # lint-baseline-growth diffs against the PR base / push
+          # `before` sha, so it needs more than a depth-1 checkout.
+          fetch-depth: 0
       - name: lint-imports
         # Enforces architectural import rules:
         # - No stellar-rpc in production ingest (removed from r1
@@ -191,6 +199,15 @@ jobs:
         # ADR-0003: reject int64(x.Lo) i128 truncation in Go + BIGINT/float
         # on monetary migration columns (amounts are NUMERIC).
         run: ./scripts/ci/lint-i128.sh
+      - name: lint-baseline-growth
+        # CS-098: lint baselines/allowlists are shrink-only. Growing
+        # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
+        # same change that introduces the violation it hides would
+        # silently defeat the gate — growth must be declared with a
+        # `Baseline-Growth:` commit trailer (auditable in git log).
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/ci/lint-baseline-growth.sh
 
   actions-pinning:
     name: github-actions SHA-pinning lint
