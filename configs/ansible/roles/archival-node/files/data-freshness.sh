@@ -34,7 +34,13 @@ trap 'rm -f "$TMP"' EXIT
 # generous multiple of each domain's natural cadence so only a real stall fires.
 psql "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
-  SELECT 'oracle'  AS domain, source AS src, extract(epoch FROM now()-max(ingested_at)) AS age, 10800 AS thr
+  -- Crypto oracles (reflector/redstone/band/chainlink/coingecko) update every
+  -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
+  -- (publishes ~16:00 CET on TARGET business days, none on weekends/holidays),
+  -- so it needs a 4-day threshold to tolerate a weekend + a holiday without
+  -- false-firing — otherwise it reads stale ~21h of every day.
+  SELECT 'oracle'  AS domain, source AS src, extract(epoch FROM now()-max(ingested_at)) AS age,
+         CASE WHEN source = 'ecb' THEN 345600 ELSE 10800 END AS thr
     FROM oracle_updates WHERE ingested_at > now()-interval '30 days' GROUP BY source
   UNION ALL
   -- FX is daily-grain: observed_at is the data-point time (lags ~a day even
