@@ -38,6 +38,17 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **Two delegation-ready structural specs** (docs/architecture/):
+  `storage-layering-spec.md` — eliminates the 13 verified upward imports from
+  `storage/timescale` into compute/sources via storage-owned `*Row` types +
+  caller-side conversion, in 4 grouped commits, gated by the new
+  `storage-purity` import-lint rule that is the actual payoff; and
+  `wiring-decomposition-spec.md` — extracts the api binary's inline adapters
+  (main.go 3,338 → <800 lines target), collapses the Options/Server
+  triple-touch via embedding (rejecting a DI container as clever), groups the
+  ops CLI's 55-case switch into a declarative subcommand table (rejecting
+  cobra), and scopes the optional per-source pipeline registry now that the
+  lockstep guard exists.
 - **ADR-0043 (Proposed) + `scripts/ops/restore-drill.sh`: the DR answer to
   CS-110/111/112.** Design: pgBackRest gains an offsite encrypted `repo2`
   (templated into the ansible role, gated off until the operator reviews the
