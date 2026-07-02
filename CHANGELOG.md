@@ -49,6 +49,20 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **The agent skill library** (`.claude/skills/`, indexed in CLAUDE.md): nine
+  executable skills encoding this repo's procedures AND its incident-corpus
+  judgment so sonnet-class agents (and humans) work at standard without
+  tribal knowledge. Construction skills (`/add-onchain-source`,
+  `/add-cex-connector`, `/add-endpoint`, `/add-metric`) each end in the
+  machine checks that catch the historical failure mode (lockstep test,
+  contract test, guard chain); ops skills (`/cut-release`, `/deploy-r1`)
+  encode the release/deploy discipline + rollback; `/review-stellarindex`
+  distills the F-####/CS-### corpus into per-subsystem adversarial
+  checklists, each check citing its incident; `/diagnose-stellarindex` turns
+  the runbook corpus into triage decision trees with the exact r1 commands
+  and prior wrong turns; `/verify-done` is the pre-completion gate stack
+  every other skill terminates in (including the new staged-content check
+  from this session's own 6161dd50 near-miss).
 - **Two delegation-ready structural specs** (docs/architecture/):
   `storage-layering-spec.md` — eliminates the 13 verified upward imports from
   `storage/timescale` into compute/sources via storage-owned `*Row` types +

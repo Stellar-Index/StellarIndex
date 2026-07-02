@@ -643,6 +643,24 @@ R2 / R3 are deferred — adding them is mechanical (4 secrets +
 
 ---
 
+## Agent skill library (.claude/skills/)
+
+Nine project skills encode this repo's procedures + incident-corpus
+judgment as executable checklists. If you are an AI agent doing one
+of these tasks, INVOKE THE SKILL rather than working from memory:
+
+| Skill | Use for |
+|---|---|
+| `/add-onchain-source` | new Soroban protocol: six files + six wiring edits + gating + the lockstep checks |
+| `/add-cex-connector` | new CEX/FX venue: Connector framework + the scaling traps |
+| `/add-endpoint` | API route/shape changes: spec + 3 generators + SDK triage + cache policy |
+| `/add-metric` | metric + BOTH rule trees + runbook + the five-lint guard chain |
+| `/cut-release` | CHANGELOG promote + guard-rail tagging (one release per session) |
+| `/deploy-r1` | deploy workflow + post-deploy verification battery + rollback |
+| `/review-stellarindex` | per-subsystem adversarial review checklists from the F-####/CS-### corpus |
+| `/diagnose-stellarindex` | r1 incident decision trees (frozen cursor, stale prices, verdict red) |
+| `/verify-done` | the pre-completion gate stack every other skill ends with |
+
 ## How to ask for help
 
 - **Code review:** the appropriate CODEOWNER (see

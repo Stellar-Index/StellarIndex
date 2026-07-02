@@ -100,7 +100,10 @@ service-account*.json
 /.discovery-repos/
 
 # Agent session state — local only
-/.claude/
+# Claude Code session-local state stays ignored, but the shared
+# agent skill library is versioned.
+/.claude/*
+!/.claude/skills/
 /docs/reference/api/postman-collection.json
 /.wrangler/
 
