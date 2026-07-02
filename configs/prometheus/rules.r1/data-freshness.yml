@@ -66,3 +66,36 @@ groups:
             its last journal on r1.
 
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+
+      - alert: stellarindex_served_value_drift
+        expr: stellarindex_served_value_ok == 0
+        for: 26h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-truth
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/served-value-drift.md
+        annotations:
+          summary: "Served value {{ $labels.check }} diverges from independent ground truth"
+          description: |
+            verify-served-values found {{ $labels.check }} outside its
+            tolerance vs its independent source (SDF lumen API /
+            Stellar Expert) for two consecutive daily runs. This is
+            the CS-010 class — the code is fine but the VALUE we
+            serve is wrong. Investigate the derivation before
+            customers or auditors sample it by hand.
+
+      - alert: stellarindex_served_value_check_stale
+        expr: time() - stellarindex_served_value_last_run_unix > 172800
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-truth
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/served-value-drift.md
+        annotations:
+          summary: "verify-served-values has not completed in 2 days"
+          description: |
+            The daily served-value truth harness hasn't written its
+            textfile in 48h — the timer is dead or the run is
+            crashing. Data-truth reconciliation is dark.

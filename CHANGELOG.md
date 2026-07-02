@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **The explorer now derives every wire type from the generated OpenAPI
+  contract.** `src/api/types.ts` (generated, CI-drift-checked) was imported
+  nowhere; all consumed shapes were hand-typed across hooks.ts,
+  explorer-shared.tsx, and ~20 pages — an API field rename shipped to prod
+  undetected. All hand interfaces are now aliases into
+  `components['schemas']` (35 files, −448 net lines; ~90 call sites gained
+  honest null-narrowing, zero `!`/`as` casts), so spec drift is a `tsc`
+  failure. Eight `// SPEC-GAP` intersections remain where the HANDLER serves
+  fields the spec under-documents — tracked for spec-side fixes.
+
 ### Documentation
 - **CAGG price-math verified vs the exact engine; `twap` column marked dead.**
   The `prices_*` continuous aggregates compute `vwap` with the per-row form
@@ -27,6 +38,43 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **`stellarindex-ops verify-served-values` — the data-truth harness.** The
+  recurring audit theme was "code-correct ≠ data-correct" (CS-010: XLM market
+  cap read +58% until hand-sampled). The new subcommand reconciles a curated
+  set of SERVED values against independent ground truth — XLM total/circulating
+  supply vs the SDF lumen API, USDC-on-Stellar supply vs Stellar Expert — and
+  emits node_exporter textfile gauges (`served_value_{ok,rel_err,last_run_unix}`)
+  with two alerts in both rule trees (drift sustained two daily runs; harness
+  dark 48h) + runbook. Its FIRST live run caught three things: its own unit
+  bug (F2 supply fields are base-unit strings — fixed), the standing CS-010
+  config gap (XLM circulating 47% off until `sdf_reserve_accounts` is set —
+  the alert now stands as pressure), and a NEW finding: served USDC supply is
+  85% below Stellar Expert (under investigation). Price cross-checks stay with
+  the divergence worker; lake↔served counts stay with compute-completeness.
+
+### Removed
+- **The dead `consumer.Orchestrator` seam (−896 LoC).** The per-source-
+  goroutine runner + `Source`/`CursorStore`/`Cursor` types had zero production
+  callers and were exactly the RPC-era topology docs/architecture/ingest-
+  pipeline.md forbids — yet doc.go presented them as a reference template.
+  `consumer.Event` (the load-bearing contract) moved to `event.go` untouched;
+  doc.go now states the retirement + points at the dispatcher path. Stale
+  comments advertising the deleted `<source>-backfill` subcommands fixed in
+  sorobanevents/timescale. Follow-up: `stellarindex_source_lag_ledgers` lost
+  its only (never-production) setter — retirement folded into the
+  docs-integrity sweep.
+
+- **ADR-0041: ingest durability semantics.** Settles CS-028's cursor question:
+  the ledgerstream cursor is a RESUME HINT, not a durability claim — the
+  ADR-0033 completeness verdict (strict per-ledger since CS-084) is the
+  durability claim, with the lake as the heal source. Consequences shipped
+  with the ADR: `clickhouse_live_sink` + `clickhouse_projector_source` now
+  **default to `true`** (r1 already ran both; the certified-lake substrate
+  must not be opt-in for the coverage claim to mean anything — explicit
+  opt-out documented for CH-less deployments), and the previously-unalerted
+  `ch_live_sink_ledgers_total{outcome="dropped"}` counter gains a two-tier
+  alert (ticket at 10m of drops, page at 1h sustained) in BOTH rule trees +
+  a new runbook (`ch-live-sink-drops.md`).
 - **ADR-0040: completing contract-identity gating (CS-026).** Design for the
   four still-ungated decoders: phoenix + defindex ship as curated-set /
   factory-descended childgate registries (both already enumerated in
