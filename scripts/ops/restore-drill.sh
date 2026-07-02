@@ -82,7 +82,29 @@ fi
 # ─── phase 2: start scratch instance + recover ──────────────────────
 # Recovery target: end of archived WAL. Disposable instance — no
 # archive_command, loopback only, alternate port.
-# Scratch-instance overrides: the restored postgresql.conf carries
+# Debian layout: the live cluster's postgresql.conf + pg_hba.conf live
+# under /etc/postgresql, NOT in PGDATA — so the restored datadir has
+# neither (second drill failure mode, 2026-07-03). Synthesize minimal
+# ones: config just includes the auto file; hba is loopback-trust for
+# the postgres OS user only (the instance binds 127.0.0.1 on a
+# non-standard port and dies at drill end).
+if [[ ! -f "$DATA_DIR/postgresql.conf" ]]; then
+  sudo -u postgres tee "$DATA_DIR/postgresql.conf" >/dev/null <<CONF
+# synthesized by restore-drill.sh — Debian keeps the real config in /etc
+include_if_exists = 'postgresql.auto.conf'
+CONF
+fi
+if [[ ! -f "$DATA_DIR/pg_hba.conf" ]]; then
+  sudo -u postgres tee "$DATA_DIR/pg_hba.conf" >/dev/null <<CONF
+local   all  postgres                trust
+host    all  postgres  127.0.0.1/32  trust
+CONF
+fi
+if [[ ! -f "$DATA_DIR/pg_ident.conf" ]]; then
+  sudo -u postgres touch "$DATA_DIR/pg_ident.conf"
+fi
+
+# Scratch-instance overrides: the restored/live postgresql.conf carries
 # PRODUCTION sizing (tens-of-GB shared_buffers, wide lock tables) —
 # a second instance at those settings fails or starves the live DB.
 # Downsize everything except what recovery correctness needs
