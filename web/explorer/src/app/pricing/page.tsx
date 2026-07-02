@@ -84,13 +84,13 @@ const TIERS: Tier[] = [
     name: 'Business',
     price: 'Contact',
     priceSubtitle: 'sales',
-    rateLimit: '50,000 req/min per key',
+    rateLimit: '60,000 req/min per key',
     cta: { label: 'Talk to sales', href: '/contact' },
     description:
       'For exchanges and market-data redistributors. Dedicated AlertManager routes, named on-call engineer, 1h SLA on SEV-1.',
     features: [
       'Everything in Pro',
-      '50,000 requests / minute per key',
+      '60,000 requests / minute per key',
       'Dedicated AlertManager routes',
       'Named on-call engineer',
       '1h SLA on SEV-1 incidents',

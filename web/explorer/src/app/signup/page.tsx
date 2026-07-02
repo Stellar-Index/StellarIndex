@@ -35,7 +35,7 @@ const TIERS = [
   },
   {
     name: 'Business',
-    rateLimit: '50,000 req/min per key',
+    rateLimit: '60,000 req/min per key',
     cost: 'Contact sales',
     notes: 'For exchanges + market-data redistributors. Dedicated AlertManager routes + named on-call + 1h SLA on SEV-1.',
   },
@@ -56,7 +56,7 @@ export default function SignupPage() {
         </h1>
         <p className="mt-3 max-w-2xl text-base text-ink-body">
           Magic-link sign-in — no passwords. Once you&apos;re in, mint
-          API keys, watch usage, and manage billing under your account.
+          API keys and watch usage under your account.
           The free tier covers most prototyping; paid plans unlock
           higher per-key rate limits + dedicated SLAs.
         </p>

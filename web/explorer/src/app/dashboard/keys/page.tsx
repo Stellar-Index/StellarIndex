@@ -232,11 +232,11 @@ function NewKeyReveal({
             {created.key.key_prefix}…
           </code>
           {' · '}
-          Send it as the{' '}
+          Send it as{' '}
           <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono">
-            X-API-Key
+            Authorization: Bearer &lt;key&gt;
           </code>{' '}
-          header on every request.
+          on every request.
         </p>
       </CardBody>
       <CardFooter className="justify-end">

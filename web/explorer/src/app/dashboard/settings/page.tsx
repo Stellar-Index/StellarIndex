@@ -147,7 +147,7 @@ function PlanCard({ me }: { me: MeResponse }) {
           </ButtonLink>
         ) : (
           <ButtonLink href="mailto:sales@stellarindex.io" variant="primary">
-            Upgrade plan
+            Contact us to upgrade
             <ArrowUpRight className="h-4 w-4" />
           </ButtonLink>
         )}

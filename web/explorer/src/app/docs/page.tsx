@@ -126,6 +126,11 @@ export default function DocsPage() {
         </p>
         <Code>{`curl -H "Authorization: Bearer sip_your_key_here" \\
   ${BASE}/v1/price?asset=native&quote=fiat:USD`}</Code>
+        <p>
+          An <code className="font-mono text-sm">X-API-Key: &lt;key&gt;</code>{' '}
+          header is accepted as an alternative; if both are sent, the bearer
+          token wins.
+        </p>
       </Section>
 
       <Section id="rate-limits" title="Rate limits">

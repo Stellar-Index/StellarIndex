@@ -222,15 +222,25 @@ function GettingStarted({
         'We have seen traffic on your keys.'
       ) : (
         <>
-          Try the pricing API:{' '}
-          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[12px]">
-            GET /v1/price/XLM-USD
-          </code>{' '}
-          with your{' '}
-          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[12px]">
-            X-API-Key
-          </code>{' '}
-          header.
+          Try the pricing API — the latest XLM/USD VWAP:
+          <pre className="mt-1.5 overflow-x-auto rounded-md border border-line bg-surface-subtle px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink">
+            {`curl -H "Authorization: Bearer sip_your_key" \\
+  "https://api.stellarindex.io/v1/price?asset=native&quote=fiat:USD"`}
+          </pre>
+          <span className="mt-1 block">
+            Replace{' '}
+            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[12px]">
+              sip_your_key
+            </code>{' '}
+            with a key from{' '}
+            <Link
+              href="/dashboard/keys"
+              className="font-medium text-brand-700 hover:underline"
+            >
+              API keys
+            </Link>
+            .
+          </span>
         </>
       ),
     },
@@ -337,7 +347,7 @@ function PlanCard({ me }: { me: MeResponse }) {
             size="sm"
             className="w-full"
           >
-            Manage plan
+            View plan
             <ArrowUpRight className="h-3.5 w-3.5" />
           </ButtonLink>
         )}
