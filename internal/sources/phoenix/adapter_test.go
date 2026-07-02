@@ -230,8 +230,8 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 		t.Fatal("foreign contract with phoenix-shaped topics matched — the CS-026 injection vector is open")
 	}
 
-	real := events.Event{ContractID: MainnetPools[0], Topic: topics}
-	if !d.Matches(real) {
+	genuine := events.Event{ContractID: MainnetPools[0], Topic: topics}
+	if !d.Matches(genuine) {
 		t.Fatal("curated mainnet pool failed to match — gate is over-closed")
 	}
 	stake := events.Event{ContractID: MainnetStakeContracts[0], Topic: []string{TopicSymbolBond, TopicSymbolStakeUser}}

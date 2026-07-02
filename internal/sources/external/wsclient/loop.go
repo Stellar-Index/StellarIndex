@@ -108,6 +108,8 @@ type Loop struct {
 // r1 logs showed backoff pinned at 60 s because every Binance recycle
 // (every 6-12 min) doubled an already-large window and there was no
 // reset path; the indexer was dropping ~60 s of CEX trades per cycle.
+//
+//nolint:gocognit // the reconnect lifecycle (backoff, jitter, healthy-reset, ctx) was extracted VERBATIM from four streamer copies — splitting it re-fragments the exact logic the extraction unified
 func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
 	defer close(out)
 
@@ -183,6 +185,8 @@ func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
 // cancel (the caller checks ctx), or read/parse error. Successful
 // close returns nil; disconnect scenarios return an error so Run can
 // decide whether to backoff.
+//
+//nolint:gocognit // dial + subscribe + read-loop with per-venue hooks; linear despite the branch count
 func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 	conn, resp, err := websocket.Dial(ctx, l.URL, &websocket.DialOptions{
 		HTTPClient: KeepAliveHTTPClient(),
