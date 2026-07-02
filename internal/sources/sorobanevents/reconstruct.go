@@ -23,9 +23,11 @@ import (
 // ID + TransactionIndex are left empty — they're metadata for
 // stellar-rpc replays, not used by any decoder.
 //
-// Used by `stellarindex-ops <source>-backfill` subcommands to walk
-// soroban_events for a historical range and re-feed the same Go
-// decoder live ingest uses, persisting to the per-source hypertable.
+// Used by the projector (`internal/projector`, including
+// `stellarindex-ops projector-replay` — the one catch-up path per
+// ADR-0032) and the completeness reconciler to walk soroban_events
+// for a range and re-feed the same Go decoder live ingest uses,
+// persisting to the per-source hypertable.
 func Reconstruct(row Row) (events.Event, error) {
 	if row.ContractID == "" {
 		return events.Event{}, fmt.Errorf("sorobanevents.Reconstruct: empty contract_id (ledger=%d)", row.Ledger)
