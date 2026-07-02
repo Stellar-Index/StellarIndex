@@ -1,11 +1,14 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package wsclient holds the shared WebSocket-streamer helpers used by the
-// external CEX connectors (binance / kraken / coinbase / bitstamp): backoff
+// Package wsclient holds the shared WebSocket-streamer lifecycle used by the
+// external CEX connectors (binance / kraken / coinbase / bitstamp): the
+// dial → subscribe → read → reconnect [Loop] (capped exponential backoff,
+// healthy-lifetime reset, per-source disconnect/decode metrics), backoff
 // jitter, the keep-alive HTTP client for upgrade dials, and the disconnect
 // error → metric-label classifier. Extracting them here keeps a single
-// canonical copy instead of four drifting duplicates.
+// canonical copy instead of four drifting duplicates; venues supply only
+// their subscribe frame(s) and frame parser.
 package wsclient
 
 import (
