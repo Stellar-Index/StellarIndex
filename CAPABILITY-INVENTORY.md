@@ -28,6 +28,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Build/parse Pair → `NewPair`, `ParsePair`
 - i128/u128 amount → `canonical.Amount` + `NewAmount(*big.Int)` (ADR-0003, never int64)
 - Core rows → `canonical.Trade`, `Price`, `OracleUpdate`
+- Clamp a raw on-chain u64 timestamp (sentinel/overflow-safe) → `canonical.SafeUnixSeconds(raw, closedAt)` / `SafeUnixMillis` — never cast u64→int64 then range-check (wrap-negative slips a future-only guard)
 
 ## SCVal / i128 decoding — `internal/scval`
 - Parse XDR SCVal → `scval.Parse(b64)`, `ParseBytes(raw)`
