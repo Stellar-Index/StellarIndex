@@ -15,7 +15,37 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Explorer error boundaries** — `global-error.tsx` (own html/body, inline
+  styles) + a shared design-system `RouteError` + 19 per-segment `error.tsx`
+  wrappers across the data-heavy routes; previously ONE boundary existed and
+  a render throw white-screened the route. Verified with a forced throw in a
+  real browser.
+- **Commercial funnel (LC-060/061/062/064/065):** the pricing API is now in
+  the primary nav + a homepage product section; the dashboard's first-request
+  example is a copy-pasteable curl that actually works (the old
+  `/v1/price/XLM-USD` 404s — verified live); Bearer is the one taught auth
+  header (X-API-Key mentioned once as the alternative, matching middleware
+  precedence); Business tier consistently 60,000 req/min (backend truth);
+  billing copy no longer promises self-service that doesn't exist.
+
 ### Changed
+- **Explorer builds fail hard instead of baking fallback HTML.** New
+  `buildFetch.ts` (bounded 429-aware retry, per-build memo, incident-history
+  contract): a build-time fetch failure for a promised entity now FAILS
+  `next build` — the class behind baked "Asset not found" pages and the
+  XLM/WXLM 330× price incident. ~200 lines of per-page scaffolding deleted;
+  the new layer immediately caught two real pre-existing baking bugs
+  (mixed-case slug variants; issuer fetches timing out under build
+  concurrency). Full 3,830-page build green against the live API.
+- **Four D3 duplication extractions** (net −LoC, behavior-preserving,
+  CAPABILITY-INVENTORY updated): `wsclient.Loop` (the ~50-line WS reconnect
+  loop duplicated across binance/kraken/coinbase/bitstamp — venue behavior
+  preserved via hooks), `internal/httpx` WriteJSON/WriteProblem (dashboard
+  handler copies), `ratelimit.FixedWindowCounter` (login/signup throttles,
+  Redis key bytes unchanged), `canonical.SafeUnixSeconds/Millis` (three
+  decoder timestamp-clamp copies; bound-checks the raw u64 before the cast —
+  the router deadline_ts wrap-negative class).
 - **The explorer now derives every wire type from the generated OpenAPI
   contract.** `src/api/types.ts` (generated, CI-drift-checked) was imported
   nowhere; all consumed shapes were hand-typed across hooks.ts,
