@@ -27,6 +27,17 @@ against.
   doc (`/v1/twap` computes real TWAP on demand from raw trades).
 
 ### Added
+- **Pipeline lockstep guard** (`internal/pipeline/lockstep_ast_test.go`). The
+  five hand-synced wiring sites (HandleEvent / IsProjectedEvent /
+  tradeFromEvent / projector `buildSource` / dispatcher registration) had no
+  machine check — the IsProjectedEvent comment cited an "ADR-0030 lint guard"
+  that never existed, and drift is silent data loss (F-1316). The new test
+  AST-walks the switches and every projected source package's consumer.Event
+  implementations: a projected event without a persist arm, a source package
+  event missing from IsProjectedEvent, a stale entry after a rename, or an
+  IsProjectedEvent package with no registry case now fails CI. Probe-verified
+  (removing `rozo.Event` from IsProjectedEvent fails with the exact F-1316
+  diagnosis).
 - **SDK↔OpenAPI contract test** (`pkg/client/spec_contract_test.go`). Three
   gates: every SDK method's route must exist in the spec; every spec operation
   must be either SDK-covered or explicitly allowlisted with a reason (new
