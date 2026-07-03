@@ -17,8 +17,6 @@ type LendingPool = NonNullable<
 // Compact display of a token base-units magnitude (string big-int).
 // Display-only; precision loss past 2^53 is fine for an at-a-glance
 // column (the API ships the exact decimal string).
-const compactNum = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
-
 // Curated metadata for every Blend mainnet contract we know of.
 // Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk,
 // last verified 2026-05-03). Reserve-asset breakdown per pool
