@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.5] — 2026-07-03
+
 ### Fixed
 - **Catalogue enrichment, third time honest** (v0.7.4 follow-up): the Q=
   refinement still merged nothing live — Q substring-matches the
