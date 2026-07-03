@@ -23,13 +23,13 @@ against.
   page can be acted on. Deployed live to r1.
 
 ### Fixed
-- **The 2026-06-11 log-discipline rsyslog rules had drifted off r1** —
-  `/etc/rsyslog.d/` was empty; the loki + clickhouse-server `stop` rules from
-  ansible role 15-log-discipline.yml (the belt-and-braces that keeps a
-  journald flood out of /var/log/syslog) were not live, reopening the syslog
-  half of the root-fill loop. Restored and probe-verified (tagged test line
-  reaches journald, not syslog); the restored file names the ansible role as
-  source of truth so the next drift is traceable.
+- **The 2026-06-11 log-discipline rsyslog rules were never live on r1** —
+  the loki + clickhouse-server `stop` rules (the belt-and-braces that keeps a
+  journald flood out of /var/log/syslog) existed only in ansible role
+  15-log-discipline.yml, which does not auto-run against r1; the postmortem
+  recorded codified-as-applied, leaving the syslog half of the root-fill loop
+  open. Applied and probe-verified (tagged test line reaches journald, not
+  syslog); the file names the ansible role as source of truth.
 
 ## [v0.7.1] — 2026-07-03
 
