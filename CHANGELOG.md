@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Point-in-time price: `GET /v1/price/at?asset=&ts=`** (board #46, the
+  wallet-builder accommodation the RFP audit recommended): the closed
+  1-minute VWAP bucket at-or-before a historical instant — the
+  cost-basis/PnL/tax lookup every portfolio tool needs. `observed_at` is
+  the bucket's own close time (never the requested ts), and a nearest
+  bucket more than 24h before ts is an honest 404 instead of fabricated
+  continuity across dead markets. SDK gains `Client.PriceAt`.
 - **Deep CEX history + queryable per-market inception** (board #44):
   kraken's raw-fills endpoint (`/Trades`, full history, nanosecond-cursor
   pagination) is now a backfill path — `backfill-external -raw-trades`
