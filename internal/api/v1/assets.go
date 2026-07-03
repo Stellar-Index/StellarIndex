@@ -912,6 +912,7 @@ func (s *Server) writeCataloguePage(w http.ResponseWriter, r *http.Request, rows
 	}
 	page := rows[offset:end]
 	s.fillCataloguePricesForPage(r.Context(), page)
+	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
 		next := strconv.Itoa(end)
@@ -1228,6 +1229,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 		out = append(out, assetDetailFromCoinRow(row))
 	}
 	s.fillMarketCapsFromSupply(r.Context(), out)
+	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
@@ -1858,6 +1860,35 @@ func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (ca
 		return canonical.Asset{}, false
 	}
 	return asset, true
+}
+
+// attachSparkline7dIfRequested honours ?include=sparkline7d on the
+// unified listing (AM-03: the explorer's directory requested it since
+// the coins→assets dissolution and the server silently ignored it —
+// a dead chart column on every row). One batch read for the page.
+func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetail) {
+	if s.coins == nil || !strings.Contains(r.URL.Query().Get("include"), "sparkline7d") {
+		return
+	}
+	ids := make([]string, 0, len(rows))
+	for i := range rows {
+		if rows[i].AssetID != "" {
+			ids = append(ids, rows[i].AssetID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	hist, err := s.coins.GetCoinsPriceHistory7dBatch(r.Context(), ids)
+	if err != nil {
+		s.logger.Warn("sparkline7d batch", "err", err)
+		return
+	}
+	for i := range rows {
+		if h, ok := hist[rows[i].AssetID]; ok {
+			rows[i].PriceHistory7d = coinPointsToWire(h)
+		}
+	}
 }
 
 // filterCatalogueRowsByQuery applies the case-insensitive q= substring

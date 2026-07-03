@@ -354,6 +354,15 @@
                 {
                   "disabled": false,
                   "description": {
+                    "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                    "type": "text/plain"
+                  },
+                  "key": "include",
+                  "value": "<string>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
                     "content": "Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail).",
                     "type": "text/plain"
                   },
@@ -430,6 +439,15 @@
                     "{{baseUrl}}"
                   ],
                   "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "type": "text/plain"
+                      },
+                      "key": "include",
+                      "value": "<string>"
+                    },
                     {
                       "disabled": false,
                       "description": {
@@ -513,6 +531,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "type": "text/plain"
+                      },
+                      "key": "include",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail).",
                         "type": "text/plain"
                       },
@@ -590,6 +617,15 @@
                     "{{baseUrl}}"
                   ],
                   "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "type": "text/plain"
+                      },
+                      "key": "include",
+                      "value": "<string>"
+                    },
                     {
                       "disabled": false,
                       "description": {
@@ -709,6 +745,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "type": "text/plain"
+                      },
+                      "key": "include",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail).",
                         "type": "text/plain"
                       },
@@ -786,6 +831,15 @@
                     "{{baseUrl}}"
                   ],
                   "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "type": "text/plain"
+                      },
+                      "key": "include",
+                      "value": "<string>"
+                    },
                     {
                       "disabled": false,
                       "description": {

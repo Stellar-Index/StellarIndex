@@ -26,6 +26,11 @@ against.
   staged migration and the pruned static path supported until cutover.
 
 ### Fixed
+- **`include=sparkline7d` on /v1/assets actually works** (Pass-B AM-03):
+  the explorer's directory has requested it since the coins→assets
+  dissolution and the server silently ignored it — a dead chart column on
+  every row. The unified listing (catalogue + classic phases) now honours
+  it with one batch read per page, and the param is documented.
 - **Transactions, operations, and ledgers pages get insight** (site audit
   S-004/S-005): the three directory pages were bare paginated lists while
   the API already served the aggregates — only /network consumed them. A

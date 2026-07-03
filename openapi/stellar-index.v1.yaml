@@ -256,6 +256,14 @@ paths:
         unified Stellar listing; omitting it returns the legacy
         classic-assets page.
       parameters:
+        - name: include
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            Comma-separated row enrichments. Supported: `sparkline7d`
+            (per-row 7-day price history for chart columns; one batch
+            read per page).
         - name: q
           in: query
           required: false

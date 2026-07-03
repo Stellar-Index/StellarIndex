@@ -313,6 +313,8 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
+                    include?: string;
                     /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
                     q?: string;
                     limit?: components["parameters"]["Limit"];
