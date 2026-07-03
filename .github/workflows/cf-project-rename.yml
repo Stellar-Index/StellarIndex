@@ -1,0 +1,159 @@
+---
+# One-shot: retire the `stellarindex-showcase` CF Pages project name
+# (task #23 from the 2026-07-02 principal taskboard — recorded until
+# now only as a comment in explorer-deploy.yml). Cloudflare Pages
+# projects cannot be renamed in place, so this is create-new + move
+# custom domains + repoint DNS, staged so an operator can verify the
+# new project serves BEFORE the outward-facing domain move:
+#
+#   gh workflow run cf-project-rename.yml -f stage=create-and-deploy
+#   # verify https://stellarindex-explorer.pages.dev serves
+#   gh workflow run cf-project-rename.yml -f stage=cutover
+#
+# After cutover, explorer-deploy.yml's projectName flips to
+# stellarindex-explorer (same PR as this file's removal, once the old
+# project is deleted after a rollback cycle).
+#
+# Uses the same account-level secrets as explorer-deploy.yml.
+
+name: cf-project-rename
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Which stage to run'
+        required: true
+        type: choice
+        options:
+          - create-and-deploy
+          - cutover
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cf-project-rename
+  cancel-in-progress: false
+
+env:
+  OLD_PROJECT: stellarindex-showcase
+  NEW_PROJECT: stellarindex-explorer
+  APEX: stellarindex.io
+
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        if: inputs.stage == 'create-and-deploy'
+        with:
+          package_json_file: web/explorer/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: inputs.stage == 'create-and-deploy'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/explorer/pnpm-lock.yaml
+
+      - name: Create the new Pages project (idempotent)
+        if: inputs.stage == 'create-and-deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "{\"name\":\"$NEW_PROJECT\",\"production_branch\":\"main\"}")
+          ok=$(echo "$resp" | jq -r '.success')
+          if [ "$ok" != "true" ]; then
+            # 8000007 = project already exists — fine on re-runs.
+            code=$(echo "$resp" | jq -r '.errors[0].code // 0')
+            if [ "$code" != "8000007" ]; then
+              echo "$resp" | jq .errors; exit 1
+            fi
+            echo "project already exists — continuing"
+          fi
+
+      - name: Build the explorer (same recipe as explorer-deploy)
+        if: inputs.stage == 'create-and-deploy'
+        working-directory: web/explorer
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.stellarindex.io
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          BEFORE=$(find out -type f | wc -l)
+          find out -type f -name "__next.*" -delete
+          AFTER=$(find out -type f | wc -l)
+          echo "pruned segment files: $BEFORE -> $AFTER"
+
+      - name: Deploy to the new project
+        if: inputs.stage == 'create-and-deploy'
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web/explorer
+          command: pages deploy out --project-name=stellarindex-explorer --branch=main
+
+      - name: Verify the new project serves
+        if: inputs.stage == 'create-and-deploy'
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$NEW_PROJECT.pages.dev/")
+            [ "$CODE" = "200" ] && { echo "new project serving (HTTP 200)"; exit 0; }
+            sleep 10
+          done
+          echo "new project never served"; exit 1
+
+      - name: Move custom domains + repoint DNS
+        if: inputs.stage == 'cutover'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api() { curl -sS -X "$1" "https://api.cloudflare.com/client/v4$2" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" "${@:3}"; }
+
+          # Preflight: the new project must already be serving.
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$NEW_PROJECT.pages.dev/")
+          [ "$CODE" = "200" ] || { echo "new project not serving — run create-and-deploy first"; exit 1; }
+
+          domains=$(api GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT/domains" | jq -r '.result[].name')
+          echo "domains on $OLD_PROJECT: $domains"
+          zone_id=$(api GET "/zones?name=$APEX&account.id=$CLOUDFLARE_ACCOUNT_ID" | jq -r '.result[0].id')
+          [ -n "$zone_id" ] && [ "$zone_id" != "null" ] || { echo "zone lookup failed"; exit 1; }
+
+          for d in $domains; do
+            echo "moving $d ..."
+            api DELETE "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT/domains/$d" | jq -r '.success'
+            api POST "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$NEW_PROJECT/domains" \
+              --data "{\"name\":\"$d\"}" | jq -r '.success'
+            # Repoint the DNS record at the new project's pages.dev target.
+            rec=$(api GET "/zones/$zone_id/dns_records?name=$d" | jq -r '.result[0]')
+            rec_id=$(echo "$rec" | jq -r '.id // empty')
+            rec_type=$(echo "$rec" | jq -r '.type // empty')
+            if [ -n "$rec_id" ] && [ "$rec_type" = "CNAME" ]; then
+              api PATCH "/zones/$zone_id/dns_records/$rec_id" \
+                --data "{\"content\":\"$NEW_PROJECT.pages.dev\"}" | jq -r '.success'
+            else
+              echo "NOTE: $d has no CNAME record in the zone (type=$rec_type) — no DNS change needed"
+            fi
+          done
+
+          # Post-cutover probe through the apex.
+          sleep 20
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$APEX/")
+          echo "apex probe: HTTP $CODE"
+          [ "$CODE" = "200" ] || { echo "apex not serving after cutover — investigate (old project retained)"; exit 1; }
