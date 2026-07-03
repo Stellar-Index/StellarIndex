@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { LivePrice } from '../../LivePrice';
 
 // The /v1/assets row shape, derived from the generated OpenAPI
 // contract via the shared alias in src/api/hooks.ts (spec `Asset`
@@ -146,9 +147,10 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
         </a>
       </div>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-mono text-2xl tabular-nums">
-          {priceNum != null ? formatPrice(priceNum) : '—'}
-        </span>
+        <LivePrice
+          assetId={coin.asset_id}
+          initial={priceNum != null ? formatPrice(priceNum) : '—'}
+        />
         <ChangeChip pct={change1h} label="1h" />
         <ChangeChip pct={change24h} label="24h" />
         <ChangeChip pct={change7d} label="7d" />
