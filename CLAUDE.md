@@ -396,6 +396,17 @@ linked design doc has the full detail.
 
 ---
 
+## r1 configuration is ansible-managed — codify every host change
+
+Since 2026-07-03 the archival-node playbook applies cleanly to r1 and a
+weekly `ansible-drift.yml` workflow fails on divergence. The rule:
+**any config change on r1 lands in `configs/ansible/` in the same PR**
+(secrets → `ansible-vault edit inventory/r1.secrets.yml`). Hand fixes
+without codification WILL page Monday morning. Apply changes via
+`ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml
+--tags <area>` — always `--check --diff` first. Findings log:
+docs/operations/r1-ansible-drift-2026-07-03.md.
+
 ## Common task recipes
 
 ### "Bring up a new archival node" / "recover from disaster"

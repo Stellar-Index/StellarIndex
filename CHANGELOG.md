@@ -16,6 +16,24 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Ansible is now r1's config deployment path, with drift guardrails.**
+  After the two-way audit: 18 `--check --diff` rounds reconciled the
+  archival-node role against live r1 (the dry runs caught an inventory
+  pointing the partition-carver at a live pool disk, a placeholder
+  authorized_keys that would have locked out operator + deploy, a
+  pre-ADR-0034 toml template that would have dropped the ClickHouse config,
+  and stale/broken vault secrets), then staged application converged the
+  host: services de-privileged to the `stellarindex` user (CS-118/119),
+  galexie moved off MinIO root creds onto the dedicated writer user,
+  postgres config single-sourced (the hand-tuned 8GB max_wal_size had been
+  inert behind postgresql.auto.conf all along). One real incident during
+  apply — the role downgrade-broke the upstream OpenZFS userspace and
+  deleted the dkms module (recovered in minutes from the migration debs;
+  packages now apt-mark held, install gated, three new assertions).
+  Guardrails: weekly `ansible-drift.yml` (fails on divergence), CI ansible
+  syntax+lint job, hourly config-assertions (now 12 checks), and the
+  CLAUDE.md rule: every r1 host change lands in configs/ansible in the
+  same PR.
 - **r1 ↔ ansible drift audit + config-assertion watchdog.** Follow-up to the
   rsyslog apply-gap finding: audited BOTH directions between r1's live state
   and the ansible roles. Live-only fixes that a playbook render would have
