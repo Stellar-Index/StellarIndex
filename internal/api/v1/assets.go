@@ -1953,28 +1953,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// matches nothing — the v0.7.4 attempt still merged nothing
 		// live. Issuer is exact; pick the exact asset id from the
 		// issuer's (typically 1-row) result.
-		var twinRow *timescale.CoinRow
-		if entry.AssetID == "native" {
-			row, err := s.coins.GetNativeCoinRow(statsCtx)
-			if err == nil {
-				twinRow = &row
-			}
-		} else if dashIx := strings.Index(entry.AssetID, "-"); dashIx >= 0 {
-			rows, err := s.coins.ListCoinsExt(statsCtx, timescale.ListCoinsOptions{
-				Limit:  50,
-				Issuer: entry.AssetID[dashIx+1:],
-				Order:  timescale.CoinsOrderVolume24hUSDDesc,
-			})
-			if err != nil {
-				return
-			}
-			for j := range rows {
-				if rows[j].AssetID == entry.AssetID {
-					twinRow = &rows[j]
-					break
-				}
-			}
-		}
+		twinRow := s.lookupCatalogueTwin(statsCtx, entry.AssetID)
 		if twinRow == nil {
 			return
 		}
@@ -1984,6 +1963,40 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		s.fillMarketCapsFromSupply(statsCtx, twin)
 		mergeTwinStats(&page[i], twin[0])
 	})
+}
+
+// lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to
+// its listing row: the dedicated native reader for XLM (no
+// classic_assets twin exists), the exact-issuer listing filter for
+// classic ids (Q substring-matches column VALUES, so a full asset id
+// can never match — the lesson of v0.7.4/v0.7.5). Nil when the twin
+// isn't in the served store.
+func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.CoinRow {
+	if assetID == "native" {
+		row, err := s.coins.GetNativeCoinRow(ctx)
+		if err != nil {
+			return nil
+		}
+		return &row
+	}
+	dashIx := strings.Index(assetID, "-")
+	if dashIx < 0 {
+		return nil
+	}
+	rows, err := s.coins.ListCoinsExt(ctx, timescale.ListCoinsOptions{
+		Limit:  50,
+		Issuer: assetID[dashIx+1:],
+		Order:  timescale.CoinsOrderVolume24hUSDDesc,
+	})
+	if err != nil {
+		return nil
+	}
+	for j := range rows {
+		if rows[j].AssetID == assetID {
+			return &rows[j]
+		}
+	}
+	return nil
 }
 
 // mergeTwinStats fills a catalogue row's nil analytics from its
