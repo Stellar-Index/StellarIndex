@@ -26,6 +26,11 @@ against.
   staged migration and the pruned static path supported until cutover.
 
 ### Fixed
+- **The "richest account" is no longer the SDF burn address unlabelled**
+  (Pass-B ACC-1): wealth rows now carry `locked: true` for provably
+  unspendable accounts (master weight 0, all thresholds 0, no signers —
+  decoded from the current account entry) and the explorer badges them,
+  so $11.3B of burned XLM reads as what it is.
 - **`include=sparkline7d` on /v1/assets actually works** (Pass-B AM-03):
   the explorer's directory has requested it since the coins→assets
   dissolution and the server silently ignored it — a dead chart column on

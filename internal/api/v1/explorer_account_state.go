@@ -18,6 +18,10 @@ type AccountsListView struct {
 type AccountWealthRow struct {
 	AccountID string `json:"account_id"`
 	USDValue  string `json:"usd_value"`
+	// Locked marks a provably unspendable burn address (master weight
+	// 0, all thresholds 0, no signers) — the balance is real but no
+	// key can ever move it (ACC-1: the SDF burn account).
+	Locked bool `json:"locked,omitempty"`
 }
 
 // handleAccountsList serves GET /v1/accounts — the accounts directory ranked
@@ -51,9 +55,25 @@ func (s *Server) handleAccountsList(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	// Locked-burn detection (Pass-B ACC-1): the SDF burn address ranked
+	// as the richest account — $11.3B of provably unspendable XLM
+	// presented as wealth. Badge, don't hide: the balance is real, the
+	// spendability isn't.
+	ids := make([]string, len(ranked))
+	for i, a := range ranked {
+		ids[i] = a.AccountID
+	}
+	locked, lockErr := s.explorer.AccountsUnspendable(r.Context(), ids)
+	if lockErr != nil {
+		s.logger.Warn("accounts unspendable", "err", lockErr)
+	}
 	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked))}
 	for i, a := range ranked {
-		out.Accounts[i] = AccountWealthRow{AccountID: a.AccountID, USDValue: strconv.FormatFloat(a.USD, 'f', 2, 64)}
+		out.Accounts[i] = AccountWealthRow{
+			AccountID: a.AccountID,
+			USDValue:  strconv.FormatFloat(a.USD, 'f', 2, 64),
+			Locked:    locked[a.AccountID],
+		}
 	}
 	writeJSON(w, out, Flags{})
 }

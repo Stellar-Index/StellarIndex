@@ -187,7 +187,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
 // asset we hold a verified price for, summed over the current-state projection.
 interface AccountsListResp {
   priced_assets: number;
-  accounts: { account_id: string; usd_value: string }[];
+  accounts: { account_id: string; usd_value: string; locked?: boolean }[];
 }
 
 const DIRECTORY_SIZE = 100;
@@ -264,6 +264,14 @@ function AccountsDirectory() {
                       >
                         {a.account_id.slice(0, 10)}…{a.account_id.slice(-8)}
                       </Link>
+                      {a.locked && (
+                        <span
+                          title="Provably unspendable — master weight 0, all thresholds 0, no signers. The balance is real; no key can ever move it (e.g. the SDF burn address)."
+                          className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted"
+                        >
+                          Locked
+                        </span>
+                      )}
                     </td>
                     <td className="py-1.5 text-right font-mono tabular-nums">
                       {usdFmt.format(Number(a.usd_value))}

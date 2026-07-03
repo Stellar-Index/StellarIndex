@@ -40,6 +40,7 @@ type ExplorerReader interface {
 	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
 	SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error)
 	SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error)
+	AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error)
 }
 
 // explorerUnavailable writes the standard 503 when no explorer reader is wired
