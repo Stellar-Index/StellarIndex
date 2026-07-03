@@ -9,6 +9,9 @@ import { AssetConverter } from './AssetConverter';
 // internal interfaces.
 export interface SidebarCoin {
   code: string;
+  // SEP-1 icon URL (served by the API since v0.7.2; https-only,
+  // sanitized server-side). Letter glyph stays the fallback.
+  image?: string | null;
   slug: string;
   asset_id: string;
   issuer?: string | null;
@@ -79,12 +82,24 @@ export function AssetSidebar({
       {/* Identity + live price */}
       <div className="rounded-card border border-line bg-surface p-4">
         <div className="flex items-center gap-2.5">
-          <span
-            aria-hidden
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-subtle font-mono text-sm font-semibold text-ink"
-          >
-            {code.slice(0, 1)}
-          </span>
+          {coin.image ? (
+            // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate
+            <img
+              src={coin.image}
+              alt=""
+              width={36}
+              height={36}
+              loading="lazy"
+              className="h-9 w-9 rounded-full bg-surface-subtle object-contain"
+            />
+          ) : (
+            <span
+              aria-hidden
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-subtle font-mono text-sm font-semibold text-ink"
+            >
+              {code.slice(0, 1)}
+            </span>
+          )}
           <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <span className="text-lg font-semibold text-ink">{code}</span>
