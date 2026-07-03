@@ -19,13 +19,6 @@ type LendingPool = NonNullable<
 // column (the API ships the exact decimal string).
 const compactNum = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 
-function fmtNetFlow(s: string | undefined): string {
-  if (!s || s === '0') return '—';
-  const n = Number(s);
-  if (!Number.isFinite(n) || n === 0) return '—';
-  return compactNum.format(n);
-}
-
 // Curated metadata for every Blend mainnet contract we know of.
 // Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk,
 // last verified 2026-05-03). Reserve-asset breakdown per pool
@@ -97,6 +90,51 @@ const BLEND_POOL_META: Record<string, PoolMeta> = {
 };
 
 export function LendingPoolsTable() {
+/**
+ * PoolRealStats — TVL (USD) + true utilization from the pool-storage
+ * reader via /v1/lending/pools/{pool}/reserves (site audit S-013: the
+ * list used to render window event proxies in raw base-units —
+ * "578.1T supplied", "222.4% util" — impossible numbers presented as
+ * real ones while the real ones existed one endpoint over).
+ */
+function PoolRealStats({ pool }: { pool: string }) {
+  const q = useQuery<{
+    tvl_usd?: string;
+    reserves?: { supplied_usd?: string; borrowed_usd?: string }[];
+  }>({
+    queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
+    staleTime: 300_000,
+    retry: false,
+    queryFn: async () =>
+      (
+        await apiGet<{ data: { tvl_usd?: string; reserves?: { supplied_usd?: string; borrowed_usd?: string }[] } }>(
+          `/v1/lending/pools/${encodeURIComponent(pool)}/reserves`,
+          {},
+        )
+      ).data,
+  });
+  const tvl = q.data?.tvl_usd ? Number(q.data.tvl_usd) : null;
+  const supplied = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.supplied_usd ?? 0), 0);
+  const borrowed = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.borrowed_usd ?? 0), 0);
+  const util = supplied > 0 ? (borrowed / supplied) * 100 : null;
+  const fmtUsd = (n: number) =>
+    n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString()}`;
+  return (
+    <>
+      <Td align="right">
+        <span className="font-mono tabular-nums text-ink-body">
+          {q.isLoading ? '…' : tvl != null ? fmtUsd(tvl) : '—'}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="font-mono tabular-nums text-ink-body">
+          {q.isLoading ? '…' : util != null ? `${util.toFixed(1)}%` : '—'}
+        </span>
+      </Td>
+    </>
+  );
+}
+
   const q = useQuery<LendingPool[]>({
     queryKey: ['/v1/lending/pools'],
     queryFn: async () => {
@@ -110,7 +148,7 @@ export function LendingPoolsTable() {
   return (
     <Panel
       title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
-      hint="One row per Blend pool. Net flow (30d) + util % are window event proxies in token base-units — not all-time TVL or on-chain utilisation (those need the pool-storage reader)."
+      hint="One row per Blend pool. TVL + utilization read live from pool storage (per-reserve USD); auctions and users from the indexed event stream."
       source={asExample('/v1/lending/pools', {})}
       bodyClassName="-mx-4"
     >
@@ -123,8 +161,8 @@ export function LendingPoolsTable() {
               <Th>Deployed</Th>
               <Th align="right">24h auctions</Th>
               <Th align="right">All-time auctions</Th>
-              <Th align="right">Net supplied (30d)</Th>
-              <Th align="right">Util %</Th>
+              <Th align="right">TVL</Th>
+              <Th align="right">Utilization</Th>
               <Th align="right">Users (30d)</Th>
               <Th align="right">Last activity</Th>
             </tr>
@@ -201,16 +239,7 @@ export function LendingPoolsTable() {
                       {(p.auctions_total ?? 0).toLocaleString()}
                     </span>
                   </Td>
-                  <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body" title={p.net_supplied_30d}>
-                      {fmtNetFlow(p.net_supplied_30d)}
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
-                      {p.utilization_30d_pct != null ? `${p.utilization_30d_pct.toFixed(1)}%` : '—'}
-                    </span>
-                  </Td>
+                  <PoolRealStats pool={p.pool ?? ''} />
                   <Td align="right">
                     <span className="font-mono tabular-nums text-ink-body">
                       {(p.unique_users_30d ?? 0).toLocaleString()}
